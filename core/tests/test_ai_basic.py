@@ -40,6 +40,12 @@ import yaml
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from nurse_scheduling.ai.agent_session import (
+    CANDIDATE_VALIDATION_ERROR,
+    PROVIDER_ERROR,
+    SANDBOX_TURN_TIMEOUT_ERROR,
+    STALE_TURN_ERROR,
+)
 from nurse_scheduling.ai.app import (
     OWNER_COOKIE,
     PROPOSAL_APPROVED_HISTORY,
@@ -50,14 +56,8 @@ from nurse_scheduling.ai.app import (
     request_logger,
 )
 from nurse_scheduling.ai.app import create_app as create_ai_app
-from nurse_scheduling.ai.background import (
-    CANDIDATE_VALIDATION_ERROR,
-    PROVIDER_ERROR,
-    SANDBOX_TURN_TIMEOUT_ERROR,
-    STALE_TURN_ERROR,
-    build_provider_messages,
-)
 from nurse_scheduling.ai.config import AiSettings
+from nurse_scheduling.ai.context import build_provider_messages
 from nurse_scheduling.ai.history import ChatHistory
 from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL, OptimizerArtifact, OptimizerJobPayload
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
@@ -69,7 +69,7 @@ from nurse_scheduling.ai.workspace import (
     WORKSPACE_PENDING_DIFF,
     WORKSPACE_PENDING_PROPOSAL,
     WORKSPACE_SCHEDULE,
-    SandboxTurnTimeoutError,
+    SandboxRunTimeoutError,
 )
 from nurse_scheduling.server.auth import AuthCredential
 
@@ -638,7 +638,7 @@ def test_stop_cancels_background_turn_waiting_behind_foreground_turn() -> None:
                 stopped.status_code,
                 app.state.session_store._sessions[session_id].active,
                 provider.calls,
-                app.state.turns.busy(session_id),
+                app.state.runs.busy(session_id),
             )
 
     status_code, session_active, provider_calls, lock_held = asyncio.run(exercise())
@@ -855,15 +855,15 @@ def test_idle_and_expired_sessions_retain_no_turn_tasks(monkeypatch: pytest.Monk
 
     active = client.post(f"/sessions/{session_id}/messages", json={"message": "Keep this chat active."})
     assert active.status_code == 200
-    assert not app.state.turns.busy(session_id)
+    assert not app.state.runs.busy(session_id)
 
     now = 131.0
     assert client.get(f"/sessions/{session_id}").status_code == 404
-    assert app.state.turns._turns == {}
+    assert app.state.runs._runs == {}
 
     unknown = client.post(f"/sessions/{uuid4()}/messages", json={"message": "No such chat."})
     assert unknown.status_code == 404
-    assert app.state.turns._turns == {}
+    assert app.state.runs._runs == {}
 
 
 def test_finishing_a_turn_keeps_the_deadline_set_when_it_started(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -879,7 +879,7 @@ def test_finishing_a_turn_keeps_the_deadline_set_when_it_started(monkeypatch: py
     assert session.expires_at == 125.0
 
     now = 115.0
-    assert store.finish(session.id, "Question", "Answer", snapshot=revision).turn_saved
+    assert store.finish(session.id, "Question", "Answer", snapshot=revision).run_saved
     assert session.expires_at == 125.0
 
 
@@ -1094,7 +1094,7 @@ def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming(monke
 
 def test_sandbox_timeout_does_not_expose_exception_details() -> None:
     private_error = "Traceback from /srv/sandbox.py: internal-host"
-    provider = FakeProvider([[SandboxTurnTimeoutError(private_error)]])
+    provider = FakeProvider([[SandboxRunTimeoutError(private_error)]])
     client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=provider))
     session_id = create_session(client)
 
@@ -2135,7 +2135,7 @@ def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved()
         snapshot=active_turn_revision,
     )
 
-    assert not completion.turn_saved
+    assert not completion.run_saved
     assert session.history == [
         ChatMessage(role="user", content="First edit"),
         ChatMessage(role="assistant", content="First proposal"),
@@ -2161,13 +2161,13 @@ def test_session_store_queues_steering_once_and_retains_it_with_the_turn() -> No
         "Inspect P1.",
         "P2 is the better target.",
         snapshot=revision,
-        turn_messages=[
+        run_messages=[
             ChatMessage(role="user", content="Inspect P1."),
             ChatMessage(role="assistant", content="P1 needs review."),
             ChatMessage(role="user", content="Focus on P2 instead."),
             ChatMessage(role="assistant", content="P2 is the better target."),
         ],
-    ).turn_saved
+    ).run_saved
     assert session.history == [
         ChatMessage(role="user", content="Inspect P1."),
         ChatMessage(role="assistant", content="P1 needs review."),
@@ -2192,10 +2192,10 @@ def test_session_store_bounds_steering_across_a_whole_turn_not_the_drained_queue
         store.queue_steering(session.id, "browser-owner", "one-too-many", "Keep going.")
 
     assert exc_info.value.status_code == 429
-    assert len(session.turn.steering_ids) == settings.max_history_messages
+    assert len(session.agent.steering_ids) == settings.max_history_messages
 
     # A fresh turn starts the budget over.
-    store.abort(session.id, session.turn)
+    store.abort(session.id, session.snapshot)
     store.begin(session.id, "browser-owner")
     store.queue_steering(session.id, "browser-owner", "queued-0", "Keep going.")
     assert store.take_steering(session.id, False) == [("queued-0", "Keep going.")]

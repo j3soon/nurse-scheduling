@@ -27,7 +27,6 @@ from collections.abc import AsyncIterator
 import httpx
 import pytest
 
-from nurse_scheduling.ai.background import SessionEventBroker
 from nurse_scheduling.ai.optimizer import (
     HttpOptimizerBackend,
     OptimizerArtifact,
@@ -37,6 +36,7 @@ from nurse_scheduling.ai.optimizer import (
     SessionOptimizer,
     optimizer_tool_definition,
 )
+from nurse_scheduling.ai.session_events import SessionEventBroker
 
 from .ai_test_helper import base_schedule_payload, optimizer_workbook_bytes, parse_schedule, schedule_yaml
 

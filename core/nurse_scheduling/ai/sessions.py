@@ -23,13 +23,14 @@ import hashlib
 import math
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from uuid import uuid4
 
 from fastapi import HTTPException
 
-from .background import recent_history
+from .agent_session import AgentSession
 from .config import AiSettings
+from .context import recent_history
 from .lifecycle import RunSnapshot
 from .provider import ChatMessage
 
@@ -52,27 +53,6 @@ def schedule_revision(schedule_yaml: str) -> str:
     return hashlib.sha256(schedule_yaml.encode("utf-8")).hexdigest()
 
 
-@dataclass
-class ChatSession:
-    """Process-local conversation state owned by one browser cookie."""
-
-    id: str
-    owner_token: str
-    expires_at: float
-    schedule_yaml: str
-    revision: str
-    history: list[ChatMessage] = field(default_factory=list)
-    dropped_history_messages: int = 0
-    version: int = 0
-    turn: RunSnapshot | None = None
-    proposal_yaml: str = ""
-    proposal_diff: str = ""
-
-    @property
-    def active(self) -> bool:
-        return self.turn is not None
-
-
 SESSION_MEMORY_LIMIT_MESSAGE = "The AI service has reached its memory limit."
 
 
@@ -85,20 +65,20 @@ def _text_bytes(value: object) -> int:
     return 0
 
 
-def _session_bytes(session: "ChatSession") -> int:
+def _session_bytes(session: "AgentSession") -> int:
     """Return the chat text one session retains."""
     total = _text_bytes(session.schedule_yaml) + _text_bytes(session.proposal_yaml) + _text_bytes(session.proposal_diff)
     total += sum(_text_bytes(message.get("content")) for message in session.history)
-    if session.turn is not None:
-        total += sum(_text_bytes(text) for _message_id, text in session.turn.steering_queue)
+    if session.snapshot is not None:
+        total += sum(_text_bytes(text) for _message_id, text in session.agent.steering_queue)
     return total
 
 
 @dataclass(frozen=True)
 class RunCompletion:
-    """Whether a completed turn and its optional proposal were retained."""
+    """Whether a completed run and its optional proposal were retained."""
 
-    turn_saved: bool
+    run_saved: bool
     proposal_saved: bool
     history_trimmed_count: int = 0
 
@@ -108,7 +88,7 @@ class SessionStore:
 
     def __init__(self, settings: AiSettings) -> None:
         self._settings = settings
-        self._sessions: dict[str, ChatSession] = {}
+        self._sessions: dict[str, AgentSession] = {}
         self._retained_bytes = 0
         self._session_bytes: dict[str, int] = {}
         self._on_retire: Callable[[str], None] | None = None
@@ -122,14 +102,14 @@ class SessionStore:
         """Return the chat text retained across live sessions."""
         return self._retained_bytes
 
-    def _recount(self, session: ChatSession) -> None:
+    def _recount(self, session: AgentSession) -> None:
         """Refresh one session's contribution to the retained total."""
         previous = self._session_bytes.get(session.id, 0)
         current = _session_bytes(session)
         self._session_bytes[session.id] = current
         self._retained_bytes += current - previous
 
-    def _charge(self, session: ChatSession, delta: int) -> None:
+    def _charge(self, session: AgentSession, delta: int) -> None:
         """Apply a known size change to one session's contribution.
 
         Cheaper than `_recount`, which re-encodes the whole history while every session
@@ -155,10 +135,10 @@ class SessionStore:
         if self._retained_bytes + additional_bytes > self._settings.max_session_bytes:
             raise HTTPException(status_code=429, detail=SESSION_MEMORY_LIMIT_MESSAGE)
 
-    def _trim_history_to_budget(self, session: ChatSession, protected_messages: int) -> None:
+    def _trim_history_to_budget(self, session: AgentSession, protected_messages: int) -> None:
         """Drop this session's oldest context until retained text fits the budget.
 
-        A turn grows a session without passing an admission check, so sessions admitted
+        A run grows a session without passing an admission check, so sessions admitted
         cheaply would otherwise accumulate answers and proposals far past the budget and
         hold them until they expire. Older context is the part a later turn needs least,
         and the message cap already truncates from the same end.
@@ -179,7 +159,7 @@ class SessionStore:
             self._charge(session, -sum(_text_bytes(message.get("content")) for message in removed))
             session.dropped_history_messages += len(removed)
 
-    def _effective_trimmed_count(self, session: ChatSession) -> int:
+    def _effective_trimmed_count(self, session: AgentSession) -> int:
         """Count retained-history and prompt-budget omissions visible to a client."""
         return (
             session.dropped_history_messages
@@ -187,7 +167,7 @@ class SessionStore:
             - len(recent_history(session.history, self._settings.max_history_chars))
         )
 
-    def _cap_history(self, session: ChatSession) -> None:
+    def _cap_history(self, session: AgentSession) -> None:
         """Limit retained messages without leaving an assistant reply at the front."""
         overflow = max(0, len(session.history) - max(2, self._settings.max_history_messages))
         if overflow:
@@ -196,13 +176,13 @@ class SessionStore:
             del session.history[:overflow]
             session.dropped_history_messages += overflow
 
-    def create(self, owner_token: str, schedule_yaml: str) -> ChatSession:
+    def create(self, owner_token: str, schedule_yaml: str) -> AgentSession:
         """Create a session after pruning expired entries."""
         self._prune_expired()
         if len(self._sessions) >= self._settings.max_sessions:
             raise HTTPException(status_code=429, detail="The AI service has reached its session limit.")
         self._require_capacity(_text_bytes(schedule_yaml))
-        session = ChatSession(
+        session = AgentSession(
             id=str(uuid4()),
             owner_token=owner_token,
             expires_at=time.monotonic() + self._settings.session_ttl_seconds,
@@ -214,7 +194,7 @@ class SessionStore:
         return session
 
     def begin(self, session_id: str, owner_token: str | None) -> RunSnapshot:
-        """Reserve the current conversation version for one foreground turn."""
+        """Reserve the current conversation version for one foreground run."""
         session = self._get_owned(session_id, owner_token)
         if session.active:
             raise HTTPException(status_code=409, detail="This chat session already has an active response.")
@@ -227,22 +207,22 @@ class SessionStore:
             return None
         return self._reserve(session, accepting_steering=False)
 
-    def _reserve(self, session: ChatSession, *, accepting_steering: bool) -> RunSnapshot:
-        session.turn = RunSnapshot(
+    def _reserve(self, session: AgentSession, *, accepting_steering: bool) -> RunSnapshot:
+        session.agent.open_steering(accepting_steering)
+        session.snapshot = RunSnapshot(
             list(session.history),
             session.schedule_yaml,
             session.version,
             session.proposal_yaml,
             session.proposal_diff,
-            accepting_steering,
             previously_dropped=session.dropped_history_messages,
         )
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
-        return session.turn
+        return session.snapshot
 
-    def require_owned(self, session_id: str, owner_token: str | None) -> None:
-        """Validate access to a session without exposing its state."""
-        self._get_owned(session_id, owner_token)
+    def require_owned(self, session_id: str, owner_token: str | None) -> AgentSession:
+        """Resolve a session after validating browser ownership."""
+        return self._get_owned(session_id, owner_token)
 
     def status(self, session_id: str, owner_token: str | None) -> int:
         """Return the remaining lifetime without extending the session."""
@@ -257,30 +237,31 @@ class SessionStore:
         proposal: tuple[str, str] | None = None,
         *,
         snapshot: RunSnapshot,
-        turn_messages: Sequence[ChatMessage] = (),
+        run_messages: Sequence[ChatMessage] = (),
     ) -> RunCompletion:
-        """Save a completed turn when its schedule revision is still current."""
+        """Save a completed run when its schedule revision is still current."""
         self._prune_expired()
         session = self._sessions.get(session_id)
-        if session is None or session.turn is not snapshot:
-            return RunCompletion(turn_saved=False, proposal_saved=False)
-        session.turn = None
+        if session is None or session.snapshot is not snapshot:
+            return RunCompletion(run_saved=False, proposal_saved=False)
+        session.snapshot = None
+        session.agent.close_steering()
         if session.version != snapshot.version:
             self._recount(session)
-            return RunCompletion(turn_saved=False, proposal_saved=False)
-        completed_turn = turn_messages or (
+            return RunCompletion(run_saved=False, proposal_saved=False)
+        completed_run = run_messages or (
             ChatMessage(role="user", content=user_message),
             ChatMessage(role="assistant", content=assistant_message),
         )
-        session.history.extend(completed_turn)
+        session.history.extend(completed_run)
         self._cap_history(session)
         proposal_saved = proposal is not None
         if proposal_saved:
             session.proposal_yaml, session.proposal_diff = proposal
         self._recount(session)
-        self._trim_history_to_budget(session, min(len(completed_turn), len(session.history)))
+        self._trim_history_to_budget(session, min(len(completed_run), len(session.history)))
         return RunCompletion(
-            turn_saved=True,
+            run_saved=True,
             proposal_saved=proposal_saved,
             history_trimmed_count=self._effective_trimmed_count(session),
         )
@@ -294,19 +275,18 @@ class SessionStore:
     ) -> None:
         """Queue a message for the next model boundary of an active response."""
         session = self._get_owned(session_id, owner_token)
-        turn = session.turn
-        if turn is None or not turn.accepting_steering:
+        agent = session.agent
+        if not session.active or not agent.accepting_steering:
             raise HTTPException(status_code=409, detail="The active response is no longer accepting messages.")
-        if message_id in turn.steering_ids:
+        if message_id in agent.steering_ids:
             return
-        # Counted over the whole turn, not the drained queue, because the seen-ID set
-        # that makes a retried POST idempotent is never emptied mid-turn.
-        if len(turn.steering_ids) >= self._settings.max_history_messages:
+        # Counted over the whole run, not the drained queue, because the seen-ID set
+        # that makes a retried POST idempotent is never emptied mid-run.
+        if len(agent.steering_ids) >= self._settings.max_history_messages:
             raise HTTPException(status_code=429, detail="Too many messages are already queued.")
         message_bytes = _text_bytes(message)
         self._require_capacity(message_bytes)
-        turn.steering_queue.append((message_id, message))
-        turn.steering_ids.add(message_id)
+        agent.steer(message_id, message)
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
         self._charge(session, message_bytes)
 
@@ -315,11 +295,7 @@ class SessionStore:
         session = self._sessions.get(session_id)
         if session is None or not session.active:
             return []
-        turn = session.turn
-        queued = list(turn.steering_queue)
-        turn.steering_queue.clear()
-        if close_if_empty and not queued:
-            turn.accepting_steering = False
+        queued = session.agent.take_steering(close_if_empty)
         self._charge(session, -sum(_text_bytes(text) for _message_id, text in queued))
         return queued
 
@@ -363,7 +339,7 @@ class SessionStore:
         self._recount(session)
         return approved
 
-    def _require_approvable(self, session_id: str, owner_token: str | None, base_sha256: str) -> ChatSession:
+    def _require_approvable(self, session_id: str, owner_token: str | None, base_sha256: str) -> AgentSession:
         """Resolve a session whose pending proposal may still be approved by its browser."""
         session = self._get_owned(session_id, owner_token)
         if not session.proposal_yaml:
@@ -399,16 +375,17 @@ class SessionStore:
     def abort(self, session_id: str, snapshot: RunSnapshot) -> None:
         """Only the owner of a reservation may release it."""
         session = self._sessions.get(session_id)
-        if session is not None and session.turn is snapshot:
-            session.turn = None
+        if session is not None and session.snapshot is snapshot:
+            session.snapshot = None
+            session.agent.close_steering()
             self._recount(session)
 
-    def _append_history_event(self, session: ChatSession, content: str) -> None:
+    def _append_history_event(self, session: AgentSession, content: str) -> None:
         """Append one trusted application event within the retention bound."""
         session.history.append(ChatMessage(role="user", content=content))
         self._cap_history(session)
 
-    def _get_owned(self, session_id: str, owner_token: str | None) -> ChatSession:
+    def _get_owned(self, session_id: str, owner_token: str | None) -> AgentSession:
         self._prune_expired()
         session = self._sessions.get(session_id)
         if session is None or owner_token is None or session.owner_token != owner_token:

@@ -27,9 +27,9 @@ import pytest
 
 from nurse_scheduling.ai.agent_loop import agent_loop
 from nurse_scheduling.ai.agent_types import (
-    AgentReasoning,
     AgentSteering,
-    AgentText,
+    MessageReasoningDelta,
+    MessageTextDelta,
     ToolExecutionEnd,
     ToolExecutionStart,
     ToolResult,
@@ -103,7 +103,7 @@ def _run(provider: FakeProvider, *, tool_ok: bool = True, **limits: int) -> list
 def test_a_question_only_run_streams_text():
     provider = FakeProvider(_text("P1 ", "works."))
 
-    assert _run(provider) == [AgentText("P1 "), AgentText("works.")]
+    assert _run(provider) == [MessageTextDelta("P1 "), MessageTextDelta("works.")]
     assert len(provider.requests) == 1
 
 
@@ -371,7 +371,7 @@ def test_tool_calls_continue_until_the_model_finishes():
 
     assert len([event for event in events if isinstance(event, ToolExecutionEnd)]) == 6
     assert len(provider.requests) == 7
-    assert events[-1] == AgentText("Done.")
+    assert events[-1] == MessageTextDelta("Done.")
 
 
 def test_tool_round_budget_returns_one_final_answer_without_executing_more_calls():
@@ -383,7 +383,7 @@ def test_tool_round_budget_returns_one_final_answer_without_executing_more_calls
     assert [event.ok for event in uses] == [True, False]
     assert "budget is exhausted" in uses[-1].result
     assert provider.requests[-1][1] == []
-    assert events[-1] == AgentText("I could not finish.")
+    assert events[-1] == MessageTextDelta("I could not finish.")
 
 
 def test_tool_call_budget_rejects_a_batch_that_would_partially_execute():
@@ -394,13 +394,13 @@ def test_tool_call_budget_rejects_a_batch_that_would_partially_execute():
     uses = [event for event in events if isinstance(event, ToolExecutionEnd)]
     assert len(uses) == 2
     assert all(not event.ok for event in uses)
-    assert events[-1] == AgentText("Please narrow the task.")
+    assert events[-1] == MessageTextDelta("Please narrow the task.")
 
 
 def test_reasoning_is_reported_without_entering_the_answer():
     provider = FakeProvider([ReasoningDelta("Counting people. "), TextDelta("Two people.")])
 
-    assert _run(provider) == [AgentReasoning("Counting people. "), AgentText("Two people.")]
+    assert _run(provider) == [MessageReasoningDelta("Counting people. "), MessageTextDelta("Two people.")]
 
 
 def test_a_failed_tool_call_is_reported_as_such():
@@ -412,3 +412,82 @@ def test_a_failed_tool_call_is_reported_as_such():
         ToolExecutionStart(BASH_TOOL, '{"command":"rg people"}', "call_0"),
         ToolExecutionEnd(BASH_TOOL, '{"command":"rg people"}', "command result", False, "call_0"),
     ]
+
+
+def test_stateful_agent_tracks_tools_and_consumes_steering_at_the_boundary():
+    from nurse_scheduling.ai.agent import Agent
+    from nurse_scheduling.ai.agent_types import AgentTool
+
+    async def scenario():
+        agent = Agent()
+        agent.open_steering(True)
+        provider = FakeProvider(_calls(), _text("Finished."))
+
+        async def execute(_arguments):
+            assert agent.state.pending_tool_calls == {"call_0"}
+            agent.steer("next", "Check the next day too.")
+            agent.steer("next", "Duplicate delivery.")
+            return ToolResult("result", True)
+
+        events = []
+        async for event in agent.prompt(provider, QUESTION, [AgentTool(TOOLS[0], execute)]):
+            assert agent.state.is_streaming
+            events.append(event)
+        assert [event.text for event in events if isinstance(event, AgentSteering)] == ["Check the next day too."]
+        assert provider.requests[1][0][-1] == {"role": "user", "content": "Check the next day too."}
+        assert not agent.state.is_streaming
+        assert not agent.state.pending_tool_calls
+        assert not agent.accepting_steering
+
+    asyncio.run(scenario())
+
+
+def test_stateful_agent_abort_joins_tool_cleanup_and_resets_execution_state():
+    from nurse_scheduling.ai.agent import Agent
+    from nurse_scheduling.ai.agent_types import AgentTool
+
+    async def scenario():
+        agent = Agent()
+        started = asyncio.Event()
+        cleaned = asyncio.Event()
+
+        async def execute(_arguments):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleaned.set()
+
+        async def consume():
+            async for _event in agent.prompt(FakeProvider(_calls()), QUESTION, [AgentTool(TOOLS[0], execute)]):
+                pass
+
+        task = asyncio.create_task(consume())
+        await started.wait()
+        agent.abort()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert cleaned.is_set()
+        assert not agent.state.is_streaming
+        assert not agent.state.pending_tool_calls
+
+    asyncio.run(scenario())
+
+
+def test_closing_agent_stream_resets_state_before_another_prompt():
+    from nurse_scheduling.ai.agent import Agent
+
+    async def scenario():
+        agent = Agent()
+        events = agent.prompt(FakeProvider(_text("partial", "answer")), QUESTION, [])
+        assert await anext(events) == MessageTextDelta("partial")
+        concurrent = agent.prompt(FakeProvider(_text("conflict")), QUESTION, [])
+        with pytest.raises(RuntimeError, match="already running"):
+            await anext(concurrent)
+        await events.aclose()
+        assert not agent.state.is_streaming
+        assert [event async for event in agent.prompt(FakeProvider(_text("new")), QUESTION, [])] == [
+            MessageTextDelta("new")
+        ]
+
+    asyncio.run(scenario())

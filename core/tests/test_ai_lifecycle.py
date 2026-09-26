@@ -49,7 +49,7 @@ def test_setup_failure_releases_admission_and_the_next_request_can_run(monkeypat
             session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
             response = await client.post(f"/sessions/{session_id}/messages", json={"message": "Question"})
             assert "event: error" in response.text
-            assert not app.state.turns.busy(session_id)
+            assert not app.state.runs.busy(session_id)
             assert not app.state.session_store._sessions[session_id].active
             monkeypatch.setattr(app.state.session_optimizer, "latest_result_artifact", original)
             response = await client.post(f"/sessions/{session_id}/messages", json={"message": "Retry"})
@@ -85,7 +85,7 @@ def test_retirement_cancels_the_owner_and_queued_followups_without_recreating_ev
             store.require_owned(session.id, "owner")
         await asyncio.gather(active, queued, return_exceptions=True)
         assert cancelled.is_set()
-        assert not app.state.turns.busy(session.id)
+        assert not app.state.runs.busy(session.id)
         assert app.state.session_event_broker.events_after(session.id) == ()
         assert session.id not in app.state.session_event_broker._signals
 
@@ -190,7 +190,7 @@ def test_shutdown_joins_cleanup_and_closes_admission():
         assert unavailable.value.status_code == 503
         release.set()
         await closing
-        assert turns._turns == {}
+        assert turns._runs == {}
 
     asyncio.run(exercise())
 
@@ -201,10 +201,10 @@ def test_stale_turn_cannot_release_or_commit_over_its_successor():
     old = store.begin(session.id, "owner")
     store.abort(session.id, old)
     new = store.begin(session.id, "owner")
-    assert not store.finish(session.id, "old", "old", snapshot=old).turn_saved
+    assert not store.finish(session.id, "old", "old", snapshot=old).run_saved
     store.abort(session.id, old)
-    assert session.turn is new
-    assert store.finish(session.id, "new", "new", snapshot=new).turn_saved
+    assert session.snapshot is new
+    assert store.finish(session.id, "new", "new", snapshot=new).run_saved
     assert [message["content"] for message in session.history] == ["new", "new"]
 
 
@@ -215,7 +215,7 @@ def test_schedule_round_trip_invalidates_an_in_flight_snapshot():
     turn = store.begin(session.id, "owner")
     store.update_schedule(session.id, "owner", original + "\n")
     store.update_schedule(session.id, "owner", original)
-    assert not store.finish(session.id, "question", "answer", snapshot=turn).turn_saved
+    assert not store.finish(session.id, "question", "answer", snapshot=turn).run_saved
     assert session.history == []
 
 
@@ -233,7 +233,7 @@ def test_discarding_a_proposal_revokes_a_turn_that_was_using_it(decision):
         with pytest.raises(HTTPException) as stale:
             store.adopt_proposal(session.id, "owner", "0" * 64)
         assert stale.value.status_code == 409
-    assert not store.finish(session.id, "Revise", "Revised", proposal, snapshot=revising).turn_saved
+    assert not store.finish(session.id, "Revise", "Revised", proposal, snapshot=revising).run_saved
     assert session.proposal_yaml == ""
 
 
@@ -265,10 +265,10 @@ def test_stop_during_history_start_waits_for_history_then_releases_the_session(m
             await entered.wait()
             assert (await client.post(f"/sessions/{session_id}/stop")).status_code == 202
             assert (await client.post(f"/sessions/{session_id}/stop")).status_code == 202
-            assert app.state.turns.busy(session_id)
+            assert app.state.runs.busy(session_id)
             release.set()
             await asyncio.wait_for(asyncio.gather(running, return_exceptions=True), timeout=1)
-            assert not app.state.turns.busy(session_id)
+            assert not app.state.runs.busy(session_id)
             assert not app.state.session_store._sessions[session_id].active
             assert provider.calls == []
             assert [operation for operation, _ in records] == ["start_turn", "finish_turn"]
@@ -296,12 +296,12 @@ def test_terminal_background_event_is_published_only_after_history_cleanup(monke
         session = app.state.session_store.create("owner", schedule_yaml())
         running = asyncio.create_task(app.state.session_optimizer._on_completion(session.id, "Review", None))
         await finalizing.wait()
-        assert app.state.turns.busy(session.id)
+        assert app.state.runs.busy(session.id)
         assert [event.type for event in app.state.session_event_broker.events_after(session.id)] == ["turn_start"]
-        app.state.turns.stop(session.id)
+        app.state.runs.stop(session.id)
         release.set()
         await running
-        assert not app.state.turns.busy(session.id)
+        assert not app.state.runs.busy(session.id)
         assert [event.type for event in app.state.session_event_broker.events_after(session.id)] == [
             "turn_start",
             "error",

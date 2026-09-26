@@ -44,10 +44,10 @@ logger = logging.getLogger("nurse_scheduling.ai.agent")
 
 from .agent_types import (
     AgentEvent,
-    AgentReasoning,
     AgentSteering,
-    AgentText,
     AgentToolBatchMetrics,
+    MessageReasoningDelta,
+    MessageTextDelta,
     SteeringSource,
     ToolBatchObserver,
     ToolBatchScope,
@@ -85,9 +85,9 @@ async def agent_loop(
         async for event in provider.stream_events(conversation, [] if final_answer_only else tools):
             if isinstance(event, TextDelta):
                 answer.append(event.text)
-                yield AgentText(event.text)
+                yield MessageTextDelta(event.text)
             elif isinstance(event, ReasoningDelta):
-                yield AgentReasoning(event.text)
+                yield MessageReasoningDelta(event.text)
             elif isinstance(event, TokenUsage):
                 yield event
             elif isinstance(event, ToolCallRequest):

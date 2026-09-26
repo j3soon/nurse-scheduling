@@ -1,4 +1,4 @@
-"""The provider and tool loop behind one assistant answer."""
+"""Workspace tool bindings and run-scoped sandbox integration."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -23,9 +23,10 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import aclosing
 from functools import partial
 
-from .agent_loop import agent_loop
+from .agent import Agent
 from .agent_types import AgentEvent, AgentProposal, AgentTool, AgentToolBatchMetrics, ToolExecutionEnd, ToolResult
 from .candidate import review_schedule_candidate
 from .optimizer import OPTIMIZER_TOOL, optimizer_tool_definition
@@ -36,18 +37,18 @@ from .sandbox_tools import SandboxPiTools
 from .workspace import (
     WORKSPACE_SCHEDULE,
     AgentScheduleChange,
-    SandboxAgentLimits,
     SandboxAttachment,
     SandboxCandidateError,
-    SandboxTurnMetrics,
-    SandboxTurnTimeoutError,
+    SandboxRunMetrics,
+    SandboxRunTimeoutError,
     SandboxWorkspace,
+    WorkspaceLimits,
     _read_candidate,
     _ScheduleCandidateTracker,
     sandbox_workspace,
 )
 
-logger = logging.getLogger("nurse_scheduling.ai.sandbox_agent")
+logger = logging.getLogger("nurse_scheduling.ai.workspace_tools")
 
 
 class WorkspaceTools:
@@ -57,7 +58,7 @@ class WorkspaceTools:
         self,
         sandbox: SandboxWorkspace,
         schedule_yaml: str,
-        limits: SandboxAgentLimits,
+        limits: WorkspaceLimits,
         execute_optimizer: Callable[[str, str], Awaitable[ToolResult]] | None,
     ) -> None:
         self.sandbox = sandbox
@@ -117,13 +118,13 @@ class WorkspaceTools:
         )
 
 
-async def run_sandbox_agent(
+async def run_workspace(
     provider: ToolCapableChatProvider,
     factory: SandboxFactory,
     schedule_yaml: str,
     messages: Sequence[ChatMessage],
-    limits: SandboxAgentLimits,
-    metrics: SandboxTurnMetrics | None = None,
+    limits: WorkspaceLimits,
+    metrics: SandboxRunMetrics | None = None,
     observe_tool_batch: Callable[[AgentToolBatchMetrics], None] | None = None,
     take_steering: Callable[[bool], Sequence[tuple[str, str]]] | None = None,
     pending_proposal_yaml: str = "",
@@ -131,9 +132,11 @@ async def run_sandbox_agent(
     execute_optimizer: Callable[[str, str], Awaitable[ToolResult]] | None = None,
     attachments: Sequence[SandboxAttachment] = (),
     optimizer_result: bytes | None = None,
+    agent: Agent | None = None,
 ) -> AsyncIterator[AgentEvent | AgentScheduleChange]:
-    """Hydrate, run, read, validate, and destroy one fresh sandbox turn."""
-    metrics = metrics or SandboxTurnMetrics()
+    """Hydrate, run, read, validate, and destroy one fresh workspace run."""
+    agent = agent or Agent()
+    metrics = metrics or SandboxRunMetrics()
     try:
         async with asyncio.timeout(limits.turn_timeout_seconds):
             async with sandbox_workspace(
@@ -148,21 +151,22 @@ async def run_sandbox_agent(
             ) as sandbox:
                 toolset = WorkspaceTools(sandbox, schedule_yaml, limits, execute_optimizer)
 
-                async for event in agent_loop(
+                events = agent.prompt(
                     provider,
                     messages,
-                    [tool.definition for tool in toolset.tools],
-                    toolset.execute,
+                    toolset.tools,
+                    unknown_tool=toolset.execute,
                     activity_batch=sandbox.activity_batch,
-                    parallel_tool_names=frozenset(tool.name for tool in toolset.tools if tool.read_only),
                     observe_tool_batch=observe_tool_batch,
                     take_steering=take_steering,
                     max_tool_rounds=limits.max_tool_rounds,
                     max_tool_calls=limits.max_tool_calls,
-                ):
-                    yield event
-                    if isinstance(event, ToolExecutionEnd) and event.details is not None:
-                        yield AgentScheduleChange(event.details["schedule_yaml"])
+                )
+                async with aclosing(events):
+                    async for event in events:
+                        yield event
+                        if isinstance(event, ToolExecutionEnd) and event.details is not None:
+                            yield AgentScheduleChange(event.details["schedule_yaml"])
 
                 if not sandbox.started:
                     return
@@ -179,7 +183,7 @@ async def run_sandbox_agent(
                 if review.proposal is not None:
                     yield AgentProposal(review.proposal.text, review.proposal.diff.render())
     except TimeoutError as exc:
-        raise SandboxTurnTimeoutError(
+        raise SandboxRunTimeoutError(
             f"The sandbox agent turn exceeded its {limits.turn_timeout_seconds:g}-second limit."
         ) from exc
     finally:

@@ -28,14 +28,14 @@ from .provider import TokenUsage, ToolResultImage
 
 
 @dataclass(frozen=True)
-class AgentText:
+class MessageTextDelta:
     """One streamed fragment of the answer shown to the user."""
 
     text: str
 
 
 @dataclass(frozen=True)
-class AgentReasoning:
+class MessageReasoningDelta:
     """One streamed fragment of the model's reasoning, for the reader only."""
 
     text: str
@@ -47,7 +47,7 @@ class ToolExecutionStart:
 
     name: str
     arguments: str
-    tool_call_id: str = ""
+    tool_call_id: str
 
 
 @dataclass(frozen=True)
@@ -58,7 +58,7 @@ class ToolExecutionEnd:
     arguments: str
     result: str
     ok: bool
-    tool_call_id: str = ""
+    tool_call_id: str
     details: dict[str, Any] | None = None
 
 
@@ -79,7 +79,13 @@ class AgentProposal:
 
 
 AgentEvent = (
-    AgentText | AgentReasoning | ToolExecutionStart | ToolExecutionEnd | AgentSteering | AgentProposal | TokenUsage
+    MessageTextDelta
+    | MessageReasoningDelta
+    | ToolExecutionStart
+    | ToolExecutionEnd
+    | AgentSteering
+    | AgentProposal
+    | TokenUsage
 )
 ToolExecutor = Callable[[str, str], Awaitable["ToolResult"]]
 ToolBatchScope = Callable[[], AbstractAsyncContextManager[None]]

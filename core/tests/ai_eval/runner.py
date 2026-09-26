@@ -37,15 +37,15 @@ from ruamel.yaml import YAML
 
 from nurse_scheduling.ai.agent_types import (
     AgentProposal,
-    AgentReasoning,
-    AgentText,
     AgentToolBatchMetrics,
+    MessageReasoningDelta,
+    MessageTextDelta,
     ToolExecutionEnd,
     ToolExecutionStart,
 )
 from nurse_scheduling.ai.app import PROPOSAL_APPROVED_HISTORY, PROPOSAL_REJECTED_HISTORY
-from nurse_scheduling.ai.background import build_provider_messages
 from nurse_scheduling.ai.config import AiSettings
+from nurse_scheduling.ai.context import build_provider_messages
 from nurse_scheduling.ai.provider import (
     ChatMessage,
     ChatStreamEvent,
@@ -57,7 +57,6 @@ from nurse_scheduling.ai.provider import (
 )
 from nurse_scheduling.ai.sandbox import SandboxError, SandboxFactory, managed_sandbox_factory
 from nurse_scheduling.ai.sandbox.factory import create_sandbox_factory
-from nurse_scheduling.ai.sandbox_agent import run_sandbox_agent
 from nurse_scheduling.ai.schema import (
     SCHEMA_REFERENCE_FILES,
     TAIWAN_HOLIDAYS_SOURCE,
@@ -65,7 +64,8 @@ from nurse_scheduling.ai.schema import (
     load_taiwan_holidays_reference,
     load_user_guide_references,
 )
-from nurse_scheduling.ai.workspace import SANDBOX_SYSTEM_PROMPT, SandboxAgentLimits, SandboxTurnMetrics
+from nurse_scheduling.ai.workspace import SANDBOX_SYSTEM_PROMPT, SandboxRunMetrics, WorkspaceLimits
+from nurse_scheduling.ai.workspace_tools import run_workspace
 from nurse_scheduling.loader import _load_yaml
 
 from .attachment_fixtures import load_attachment_fixtures
@@ -104,7 +104,7 @@ class CaseRun:
     token_usage_turns: int = 0
     llm_inference_seconds: float = 0.0
     llm_turn_seconds: list[float] = field(default_factory=list)
-    sandbox_metrics: SandboxTurnMetrics | None = None
+    sandbox_metrics: SandboxRunMetrics | None = None
     provider_attempts: int = 0
     provider_attempts_per_turn: list[int] = field(default_factory=list)
     tool_calls_per_turn: list[int] = field(default_factory=list)
@@ -230,7 +230,7 @@ async def run_case(
     proposal_event: AgentProposal | None = None
     pending_proposal: AgentProposal | None = None
     turn_actions = {action.after_turn: action for action in case.turn_actions}
-    sandbox_metrics = SandboxTurnMetrics()
+    sandbox_metrics = SandboxRunMetrics()
     tool_batch_metrics: list[AgentToolBatchMetrics] = []
     reasoning = 0
     started = time.perf_counter()
@@ -252,12 +252,12 @@ async def run_case(
             turn_answer: list[str] = []
             turn_proposal: AgentProposal | None = None
             events.append({"kind": "user", "turn": turn_index + 1, "text": question})
-            agent_events = run_sandbox_agent(
+            agent_events = run_workspace(
                 counting,
                 sandbox_factory,
                 text,
                 messages,
-                SandboxAgentLimits.from_settings(settings),
+                WorkspaceLimits.from_settings(settings),
                 sandbox_metrics,
                 tool_batch_metrics.append,
                 pending_proposal_yaml=pending_proposal.text if pending_proposal else "",
@@ -265,10 +265,10 @@ async def run_case(
                 attachments=attachments,
             )
             async for event in agent_events:
-                if isinstance(event, AgentText):
+                if isinstance(event, MessageTextDelta):
                     turn_answer.append(event.text)
                     _record_text(events, "text", event.text)
-                elif isinstance(event, AgentReasoning):
+                elif isinstance(event, MessageReasoningDelta):
                     reasoning += len(event.text)
                     _record_text(events, "reasoning", event.text)
                 elif isinstance(event, ToolExecutionStart):
@@ -499,7 +499,7 @@ def _timing_record(
     end_to_end_seconds: float,
     llm_inference_seconds: float,
     llm_turn_seconds: Sequence[float],
-    sandbox: SandboxTurnMetrics | None,
+    sandbox: SandboxRunMetrics | None,
 ) -> dict[str, Any]:
     """Separate overlapping provider and provisioned-sandbox wall times."""
     return {

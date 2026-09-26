@@ -28,7 +28,7 @@ import pytest
 from nurse_scheduling.ai.agent_types import (
     AgentEvent,
     AgentProposal,
-    AgentText,
+    MessageTextDelta,
     ToolExecutionEnd,
     ToolExecutionStart,
     ToolResult,
@@ -41,7 +41,6 @@ from nurse_scheduling.ai.pi.write import WRITE_TOOL
 from nurse_scheduling.ai.provider import ChatMessage, ProviderError, TextDelta, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
-from nurse_scheduling.ai.sandbox_agent import run_sandbox_agent
 from nurse_scheduling.ai.schema import load_taiwan_holidays_reference, load_user_guide_references
 from nurse_scheduling.ai.workspace import (
     REFERENCE_SCHEMAS,
@@ -51,11 +50,12 @@ from nurse_scheduling.ai.workspace import (
     WORKSPACE_PENDING_PROPOSAL,
     WORKSPACE_SCHEDULE,
     AgentScheduleChange,
-    SandboxAgentLimits,
     SandboxAttachment,
     SandboxCandidateError,
-    SandboxTurnTimeoutError,
+    SandboxRunTimeoutError,
+    WorkspaceLimits,
 )
+from nurse_scheduling.ai.workspace_tools import run_workspace
 
 from .ai_test_helper import SCHEDULE_BYTE_LIMIT, schedule_yaml
 
@@ -80,7 +80,7 @@ def _run_call(command: str = "edit") -> list[object]:
     return [ToolCallRequest((ToolCall("call-1", BASH_TOOL, json.dumps({"command": command})),))]
 
 
-def _limits(**overrides) -> SandboxAgentLimits:
+def _limits(**overrides) -> WorkspaceLimits:
     values = {
         "max_schedule_bytes": SCHEDULE_BYTE_LIMIT,
         "turn_timeout_seconds": 2,
@@ -90,7 +90,7 @@ def _limits(**overrides) -> SandboxAgentLimits:
         "max_tool_calls": 20,
     }
     values.update(overrides)
-    return SandboxAgentLimits(**values)
+    return WorkspaceLimits(**values)
 
 
 def _rename_handler(_command: str, _timeout: float | None, backend: FakeSandboxBackend) -> CommandResult:
@@ -116,7 +116,7 @@ def _collect(
     async def collect() -> list:
         return [
             event
-            async for event in run_sandbox_agent(
+            async for event in run_workspace(
                 provider,
                 factory,
                 schedule_yaml(),
@@ -168,7 +168,7 @@ def test_one_turn_hydrates_runs_reads_validates_proposes_and_closes():
     assert "passed trusted server-side validation" in tool_use.result
     schedule_change = next(event for event in events if isinstance(event, AgentScheduleChange))
     assert "description: Head" in schedule_change.schedule_yaml
-    assert AgentText("I propose the description.") in events
+    assert MessageTextDelta("I propose the description.") in events
     proposal = next(event for event in events if isinstance(event, AgentProposal))
     assert "description: Head" in proposal.text
     assert "people.items[0].description" in proposal.diff
@@ -189,7 +189,7 @@ def test_optimizer_tool_receives_the_current_working_schedule() -> None:
     async def collect() -> list:
         return [
             event
-            async for event in run_sandbox_agent(
+            async for event in run_workspace(
                 provider,
                 factory,
                 schedule_yaml(),
@@ -234,7 +234,7 @@ def test_optimizer_rejects_an_invalid_working_schedule_before_submission() -> No
         return ToolResult("Started in the background.", True)
 
     async def collect() -> None:
-        async for _event in run_sandbox_agent(
+        async for _event in run_workspace(
             provider,
             FakeSandboxFactory(),
             schedule_yaml(),
@@ -276,7 +276,7 @@ def test_optimizer_job_controls_work_with_an_invalid_working_schedule(action: st
         return ToolResult("Existing job updated.", True)
 
     async def collect() -> None:
-        async for event in run_sandbox_agent(
+        async for event in run_workspace(
             provider,
             FakeSandboxFactory(),
             schedule_yaml(),
@@ -638,7 +638,7 @@ def test_cancelling_before_a_tool_call_does_not_start_a_sandbox():
         factory = FakeSandboxFactory()
 
         async def collect() -> None:
-            async for _ in run_sandbox_agent(
+            async for _ in run_workspace(
                 WaitingProvider(),
                 factory,
                 schedule_yaml(),
@@ -665,7 +665,7 @@ def test_whole_turn_timeout_before_a_tool_call_does_not_start_a_sandbox():
 
     factory = FakeSandboxFactory()
 
-    with pytest.raises(SandboxTurnTimeoutError, match="0.01-second limit"):
+    with pytest.raises(SandboxRunTimeoutError, match="0.01-second limit"):
         _collect(WaitingProvider(), factory, turn_timeout_seconds=0.01)
 
     assert factory.created == []

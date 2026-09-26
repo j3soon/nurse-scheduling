@@ -39,7 +39,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ..sentry import init_sentry
 from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry
-from .background import SessionEventBroker, run_agent_run
+from .agent_session import SessionRuntime
 from .config import AiSettings, validate_ai_auth_credentials
 from .history import ChatHistory, stop_maintenance
 from .lifecycle import AgentRun, RunEvents, SessionRuns
@@ -53,6 +53,7 @@ from .optimizer import (
 from .provider import OpenAiCompatibleProvider, ToolCapableChatProvider
 from .sandbox import SandboxFactory, managed_sandbox_factory
 from .sandbox.factory import create_sandbox_factory
+from .session_events import SessionEventBroker
 from .sessions import (
     PROPOSAL_APPROVED_HISTORY,
     PROPOSAL_INVALID_HISTORY,
@@ -285,17 +286,17 @@ async def _parse_message_request(
 class RunResponse(StreamingResponse):
     """The response owns cancellation even if ASGI never iterates its body."""
 
-    def __init__(self, *args, turn: AgentRun, **kwargs) -> None:
+    def __init__(self, *args, run: AgentRun, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.turn = turn
+        self.run = run
 
     async def __call__(self, scope, receive, send) -> None:
         try:
             await super().__call__(scope, receive, send)
         finally:
-            self.turn.cancel()
+            self.run.cancel()
             with anyio.CancelScope(shield=True):
-                await asyncio.shield(self.turn.done)
+                await asyncio.shield(self.run.done)
 
 
 def create_app(
@@ -325,7 +326,7 @@ def create_app(
         sandbox_factory = create_sandbox_factory(settings)
     store = SessionStore(settings)
     event_broker = SessionEventBroker(max_sessions=settings.max_sessions)
-    turns = SessionRuns()
+    runs = SessionRuns()
     concurrency_limit = asyncio.Semaphore(settings.max_concurrent_requests)
     auth_registry = create_auth_registry(settings.auth_token, settings.auth_tokens)
     require_auth = create_auth_dependency(auth_registry)
@@ -361,29 +362,25 @@ def create_app(
             if session_id in store._sessions:
                 event_broker.publish(session_id, event_type, data)
 
-        turn = turns.start(
+        session = store._sessions.get(session_id)
+        if session is None:
+            return
+        run = runs.start(
             session_id,
-            lambda turn: run_agent_run(
-                turn,
-                session_id,
+            lambda run: session.run(
+                run,
                 prompt,
-                settings=settings,
-                store=store,
+                runtime=runtime,
                 emit=emit,
-                concurrency_limit=concurrency_limit,
-                history_log=history_log,
-                provider=provider,
-                sandbox_factory=sandbox_factory,
-                session_optimizer=session_optimizer,
                 background=True,
                 artifact=artifact,
             ),
             background=True,
         )
         try:
-            await turn.wait()
+            await run.wait()
         finally:
-            turn.cancel()
+            run.cancel()
 
     async def optimizer_updated(session_id: str, update: dict[str, object]) -> None:
         event_broker.publish(
@@ -405,9 +402,13 @@ def create_app(
         max_schedule_bytes=settings.max_schedule_bytes,
     )
 
+    runtime = SessionRuntime(
+        settings, store, concurrency_limit, history_log, provider, sandbox_factory, session_optimizer
+    )
+
     def retire_session(session_id: str) -> None:
         """Release everything keyed by a session once the store drops it."""
-        turns.stop(session_id)
+        runs.stop(session_id)
         session_optimizer.forget_session(session_id)
         event_broker.forget_session(session_id)
 
@@ -426,8 +427,8 @@ def create_app(
                 try:
                     yield
                 finally:
-                    # Drain turns while their sandbox factory is still available.
-                    await turns.close()
+                    # Drain runs while their sandbox factory is still available.
+                    await runs.close()
                     await session_optimizer.close()
         finally:
             if maintenance is not None:
@@ -452,7 +453,7 @@ def create_app(
     app.state.settings = settings
     app.state.auth_registry = auth_registry
     app.state.session_store = store
-    app.state.turns = turns
+    app.state.runs = runs
     app.state.provider = provider
     app.state.sandbox_factory = sandbox_factory
     app.state.session_optimizer = session_optimizer
@@ -542,9 +543,9 @@ def create_app(
         session_id: str,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> Response:
-        """Cancel the foreground or background assistant turn active in a session."""
+        """Cancel the foreground or background assistant run active in a session."""
         store.require_owned(session_id, owner)
-        turns.stop(session_id)
+        runs.stop(session_id)
         return Response(status_code=status.HTTP_202_ACCEPTED)
 
     @app.get(
@@ -613,34 +614,27 @@ def create_app(
     ) -> StreamingResponse:
         """Stream one answer and retain only text after successful completion."""
         question, attachments = await _parse_message_request(request, settings)
-        store.require_owned(session_id, owner)
+        session = store.require_owned(session_id, owner)
         events = RunEvents()
-        turn = turns.start(
+        run = runs.start(
             session_id,
-            lambda turn: run_agent_run(
-                turn,
-                session_id,
+            lambda run: session.run(
+                run,
                 question,
-                settings=settings,
-                store=store,
+                runtime=runtime,
                 emit=events.emit,
-                concurrency_limit=concurrency_limit,
-                history_log=history_log,
-                provider=provider,
-                sandbox_factory=sandbox_factory,
-                session_optimizer=session_optimizer,
                 owner=owner,
                 credential_id=request.state.auth_credential_id,
                 attachments=attachments,
             ),
         )
         try:
-            if not await asyncio.shield(turn.ready):
-                await turn.wait()
+            if not await asyncio.shield(run.ready):
+                await run.wait()
         except BaseException:
-            turn.cancel()
+            run.cancel()
             with anyio.CancelScope(shield=True):
-                await asyncio.shield(turn.done)
+                await asyncio.shield(run.done)
             raise
         request_logger.info(
             "AI request started session_id=%s question_chars=%s question=%s files=%s",
@@ -651,13 +645,13 @@ def create_app(
         )
 
         async def generate_events():
-            turn.streaming.set()
-            async for event_type, data in events.stream(turn):
+            run.streaming.set()
+            async for event_type, data in events.stream(run):
                 yield _sse_event(event_type, data)
 
         response = RunResponse(
             generate_events(),
-            turn=turn,
+            run=run,
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )

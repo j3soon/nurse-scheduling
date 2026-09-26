@@ -38,10 +38,7 @@ class RunSnapshot:
     version: int
     proposal_yaml: str
     proposal_diff: str
-    accepting_steering: bool
     previously_dropped: int = 0
-    steering_queue: list[tuple[str, str]] = field(default_factory=list)
-    steering_ids: set[str] = field(default_factory=set)
 
 
 @dataclass(eq=False)
@@ -77,57 +74,57 @@ class SessionRuns:
     """
 
     def __init__(self) -> None:
-        self._turns: dict[str, list[AgentRun]] = {}
+        self._runs: dict[str, list[AgentRun]] = {}
         self._closed = False
 
     def busy(self, session_id: str) -> bool:
-        return bool(self._turns.get(session_id))
+        return bool(self._runs.get(session_id))
 
     def start(
-        self, session_id: str, run: Callable[[AgentRun], Awaitable[None]], *, background: bool = False
+        self, session_id: str, execute_run: Callable[[AgentRun], Awaitable[None]], *, background: bool = False
     ) -> AgentRun:
         if self._closed:
             raise HTTPException(status_code=503, detail="The AI service is shutting down.")
-        pending = self._turns.setdefault(session_id, [])
+        pending = self._runs.setdefault(session_id, [])
         if pending and not background:
             raise HTTPException(status_code=409, detail="This chat session already has an active response.")
-        turn = AgentRun()
-        pending.append(turn)
+        run = AgentRun()
+        pending.append(run)
         if len(pending) == 1:
-            turn.admitted.set()
+            run.admitted.set()
 
         async def execute() -> None:
-            await turn.admitted.wait()
-            await run(turn)
+            await run.admitted.wait()
+            await execute_run(run)
 
         def finished(task: asyncio.Task[None]) -> None:
-            was_head = pending[0] is turn
-            pending.remove(turn)
+            was_head = pending[0] is run
+            pending.remove(run)
             if not pending:
-                self._turns.pop(session_id, None)
+                self._runs.pop(session_id, None)
             elif was_head:
                 pending[0].admitted.set()
-            if not turn.ready.done():
-                turn.ready.set_result(False)
-            turn.done.set_result(None)
+            if not run.ready.done():
+                run.ready.set_result(False)
+            run.done.set_result(None)
             if not task.cancelled():
                 # Retrieve even failures whose HTTP reader has already disconnected.
                 task.exception()
 
-        turn.task = asyncio.create_task(execute(), name=f"ai-run-{turn.id}")
-        turn.task.add_done_callback(finished)
-        return turn
+        run.task = asyncio.create_task(execute(), name=f"ai-run-{run.id}")
+        run.task.add_done_callback(finished)
+        return run
 
     def stop(self, session_id: str) -> None:
-        for turn in tuple(self._turns.get(session_id, ())):
-            turn.cancel()
+        for run in tuple(self._runs.get(session_id, ())):
+            run.cancel()
 
     async def close(self) -> None:
         self._closed = True
-        turns = [turn for pending in self._turns.values() for turn in pending]
-        for turn in turns:
-            turn.cancel()
-        await asyncio.gather(*(turn.done for turn in turns))
+        runs = [run for pending in self._runs.values() for run in pending]
+        for run in runs:
+            run.cancel()
+        await asyncio.gather(*(run.done for run in runs))
 
 
 class RunEvents:
@@ -144,21 +141,21 @@ class RunEvents:
             return
         await self._queue.put((event_type, data))
 
-    async def stream(self, turn: AgentRun) -> AsyncIterator[tuple[str, dict[str, object]]]:
+    async def stream(self, run: AgentRun) -> AsyncIterator[tuple[str, dict[str, object]]]:
         while True:
             if not self._queue.empty():
                 yield self._queue.get_nowait()
                 continue
-            if turn.done.done():
+            if run.done.done():
                 if self._terminal is not None:
                     yield self._terminal
                 # Stop is a normal terminal outcome for the streaming transport.
-                if not turn.task.cancelled():
-                    turn.task.result()
+                if not run.task.cancelled():
+                    run.task.result()
                 return
             next_event = asyncio.create_task(self._queue.get())
             try:
-                await asyncio.wait((next_event, turn.done), return_when=asyncio.FIRST_COMPLETED)
+                await asyncio.wait((next_event, run.done), return_when=asyncio.FIRST_COMPLETED)
                 if next_event.done():
                     yield next_event.result()
             finally:

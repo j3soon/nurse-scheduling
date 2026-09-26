@@ -48,7 +48,7 @@ from .schema import (
     load_user_guide_references,
 )
 
-logger = logging.getLogger("nurse_scheduling.ai.sandbox_agent")
+logger = logging.getLogger("nurse_scheduling.ai.workspace")
 WORKSPACE_SCHEDULE = f"/workspace/{SCHEDULE_FILENAME}"
 WORKSPACE_PENDING_PROPOSAL = "/workspace/pending-proposal.yaml"
 WORKSPACE_PENDING_DIFF = "/workspace/pending-proposal.diff"
@@ -70,8 +70,8 @@ class SandboxCandidateError(SandboxError):
     """The final untrusted schedule failed trusted server-side review."""
 
 
-class SandboxTurnTimeoutError(SandboxError):
-    """The complete disposable agent turn exceeded its deadline."""
+class SandboxRunTimeoutError(SandboxError):
+    """The complete disposable agent run exceeded its deadline."""
 
 
 @dataclass(frozen=True)
@@ -91,8 +91,8 @@ class SandboxAttachment:
 
 
 @dataclass(frozen=True)
-class SandboxAgentLimits:
-    """Trusted orchestration and AI-context limits for one sandbox turn."""
+class WorkspaceLimits:
+    """Trusted orchestration and AI-context limits for one workspace run."""
 
     max_schedule_bytes: int
     turn_timeout_seconds: float
@@ -103,8 +103,8 @@ class SandboxAgentLimits:
     optimizer_default_timeout_seconds: int = 300
 
     @classmethod
-    def from_settings(cls, settings: AiSettings) -> "SandboxAgentLimits":
-        """Collect sandbox-turn limits from validated application settings."""
+    def from_settings(cls, settings: AiSettings) -> "WorkspaceLimits":
+        """Collect workspace run limits from validated application settings."""
         return cls(
             max_schedule_bytes=settings.max_schedule_bytes,
             turn_timeout_seconds=settings.sandbox_turn_timeout_seconds,
@@ -117,7 +117,7 @@ class SandboxAgentLimits:
 
 
 @dataclass
-class SandboxTurnMetrics:
+class SandboxRunMetrics:
     """Measured lifecycle and operation time for one disposable sandbox."""
 
     provisioning_seconds: float = 0.0
@@ -138,7 +138,7 @@ class SandboxTurnMetrics:
 async def sandbox_workspace(
     factory: SandboxFactory,
     cleanup_timeout_seconds: float,
-    metrics: SandboxTurnMetrics,
+    metrics: SandboxRunMetrics,
     schedule_yaml: str,
     pending_proposal_yaml: str,
     pending_proposal_diff: str,
@@ -175,7 +175,7 @@ class SandboxWorkspace:
         self,
         factory: SandboxFactory,
         cleanup_timeout_seconds: float,
-        metrics: SandboxTurnMetrics,
+        metrics: SandboxRunMetrics,
         stack: AsyncExitStack,
         schedule_yaml: str,
         pending_proposal_yaml: str,

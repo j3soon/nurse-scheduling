@@ -47,7 +47,7 @@ from nurse_scheduling.ai.schema import (
     TAIWAN_HOLIDAYS_SOURCE,
     load_user_guide_references,
 )
-from nurse_scheduling.ai.workspace import WORKSPACE_ATTACHMENT_MANIFEST, WORKSPACE_SCHEDULE, SandboxTurnMetrics
+from nurse_scheduling.ai.workspace import WORKSPACE_ATTACHMENT_MANIFEST, WORKSPACE_SCHEDULE, SandboxRunMetrics
 
 from .ai_eval.grading import EvalCase, ExpectedDiff, ToolUsageExpectation, TurnAction, load_cases
 from .ai_eval.runner import (
@@ -788,7 +788,7 @@ def test_report_writes_reproducibility_metadata(tmp_path: Path):
 
 
 def test_summary_markdown_reports_every_sandbox_metric_per_case(tmp_path: Path):
-    metrics = SandboxTurnMetrics(
+    metrics = SandboxRunMetrics(
         provisioning_seconds=0.4,
         execution_seconds=1.0,
         pause_transition_seconds=0.3,
