@@ -145,6 +145,7 @@ enabled.
 | Background event replay | `ai/session_events.py` |
 | SessionOptimizer | `ai/optimizer.py` |
 | Browser operation lifecycle | `web-frontend/src/app/experimental-ai/chatLifecycle.ts` |
+| Browser stream output reducer | `web-frontend/src/app/experimental-ai/assistantEvents.ts` |
 
 ### Mapping to Pi
 
