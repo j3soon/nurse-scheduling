@@ -44,6 +44,7 @@ import { generateYamlFromState } from '@/utils/yamlGenerator';
 import yaml from 'js-yaml';
 import { ActivityEntry, AssistantActivity } from './AssistantActivity';
 import { ChatExportMessage, downloadChatExport } from './chatExport';
+import { AssistantEvent, applyAssistantEvent, assistantEventCallbacks, interruptRunningTools, stopResponse } from './assistantEvents';
 import {
   AiCapabilities,
   AiHttpError,
@@ -52,7 +53,6 @@ import {
   LOCAL_AI_API_URL,
   OptimizationActivity,
   PRODUCTION_AI_API_URL,
-  ToolActivity,
   approveProposal,
   createSession,
   downloadOptimization,
@@ -368,42 +368,10 @@ function isAuthenticationError(error: unknown): boolean {
     && error.status === 401;
 }
 
-// Concurrent calls finish in any order, so a result completes the start that shares its ID.
-function finishToolActivity(entries: ActivityEntry[], result: ToolActivity): ActivityEntry[] {
-  const runningIndex = entries.findIndex(entry => (
-    entry.kind === 'tool'
-    && entry.state === 'running'
-    && (result.toolCallId === undefined ? entry.name === result.name : entry.toolCallId === result.toolCallId)
-  ));
-  const completed = { kind: 'tool' as const, ...result };
-  if (runningIndex < 0) return [...entries, completed];
-  return entries.map((entry, index) => (index === runningIndex ? completed : entry));
-}
-
-function interruptRunningTools(entries: ActivityEntry[]): ActivityEntry[] {
-  return entries.map(entry => (
-    entry.kind === 'tool' && entry.state === 'running'
-      ? { ...entry, state: 'interrupted' as const }
-      : entry
-  ));
-}
-
-// A stopped response keeps its partial output instead of gaining synthetic answer text.
-function stopResponse(message: ChatMessage): ChatMessage {
-  return {
-    ...message,
-    status: 'stopped',
-    responseCompletedAt: Date.now(),
-    activity: interruptRunningTools(message.activity ?? []),
-  };
-}
-
-function appendResponseActivity(entries: ActivityEntry[], text: string): ActivityEntry[] {
-  const last = entries[entries.length - 1];
-  if (last?.kind === 'response') {
-    return [...entries.slice(0, -1), { ...last, text: last.text + text }];
-  }
-  return [...entries, { kind: 'response', text }];
+// Output that closes a steering placeholder, so queued input starts a new response.
+function startsVisibleOutput(event: AssistantEvent): boolean {
+  if (event.type === 'delta' || event.type === 'reasoning') return event.text.length > 0;
+  return event.type === 'tool_start';
 }
 
 function OptimizationSparkline({ points }: { points: OptimizationProgressPoint[] }) {
@@ -1141,54 +1109,10 @@ export default function ExperimentalAiPage() {
           if (lifecycle.current('background')?.id !== id) beginBackgroundMessage(id);
         },
         onTurnStart: beginBackgroundMessage,
-        onDelta: text => {
+        ...assistantEventCallbacks(event => {
           resumeBackgroundMessage();
-          updateBackgroundMessage(message => ({
-            ...message,
-            content: message.content + text,
-            activity: appendResponseActivity(message.activity ?? [], text),
-          }));
-        },
-        onReasoning: text => {
-          resumeBackgroundMessage();
-          updateBackgroundMessage(message => {
-            const activity = message.activity ?? [];
-            const last = activity[activity.length - 1];
-            if (last?.kind === 'reasoning') {
-              return { ...message, activity: [...activity.slice(0, -1), { ...last, text: last.text + text }] };
-            }
-            return { ...message, activity: [...activity, { kind: 'reasoning', text }] };
-          });
-        },
-        onToolStart: activity => {
-          resumeBackgroundMessage();
-          updateBackgroundMessage(message => ({
-            ...message,
-            activity: [
-              ...(message.activity ?? []),
-              { kind: 'tool' as const, ...activity, result: '', ok: true, state: 'running' as const },
-            ],
-          }));
-        },
-        onTool: activity => {
-          resumeBackgroundMessage();
-          updateBackgroundMessage(message => ({
-            ...message,
-            activity: finishToolActivity(message.activity ?? [], activity),
-          }));
-        },
-        onScheduleChange: candidate => {
-          resumeBackgroundMessage();
-          const before = sandboxScheduleRef.current ?? scheduleYamlRef.current;
-          sandboxScheduleRef.current = candidate;
-          updateBackgroundMessage(message => ({
-            ...message,
-            activity: [
-              ...(message.activity ?? []),
-              { kind: 'schedule-change' as const, before, after: candidate },
-            ],
-          }));
-        },
+          updateBackgroundMessage(message => applyAssistantEvent(message, event));
+        }, sandboxScheduleRef, scheduleYamlRef),
         onProposal: diff => setProposalDiff(diff),
         onOptimization: activity => {
           if (!activity.terminal) {
@@ -1365,56 +1289,15 @@ export default function ExperimentalAiPage() {
         sessionId,
         question,
         scopedCallbacks({
-          onDelta: text => {
-            if (text) {
+          ...assistantEventCallbacks(event => {
+            if (startsVisibleOutput(event)) {
               activeAssistantHasOutput = true;
               setSteeringAssistantId(null);
             }
             setMessages(previous => previous.map(message => (
-              message.id === activeAssistantId
-                ? {
-                  ...message,
-                  content: message.content + text,
-                  activity: appendResponseActivity(message.activity ?? [], text),
-                }
-                : message
+              message.id === activeAssistantId ? applyAssistantEvent(message, event) : message
             )));
-          },
-          onReasoning: text => {
-            if (text) {
-              activeAssistantHasOutput = true;
-              setSteeringAssistantId(null);
-            }
-            setMessages(previous => previous.map(message => {
-              if (message.id !== activeAssistantId) return message;
-              const activity = message.activity ?? [];
-              const last = activity[activity.length - 1];
-              // Consecutive reasoning belongs to one entry, so the order of work stays readable.
-              if (last?.kind === 'reasoning') {
-                return { ...message, activity: [...activity.slice(0, -1), { ...last, text: last.text + text }] };
-              }
-              return { ...message, activity: [...activity, { kind: 'reasoning', text }] };
-            }));
-          },
-          onToolStart: activity => {
-            activeAssistantHasOutput = true;
-            setSteeringAssistantId(null);
-            setMessages(previous => previous.map(message => (
-              message.id === activeAssistantId
-                ? {
-                  ...message,
-                  activity: [
-                    ...(message.activity ?? []),
-                    { kind: 'tool' as const, ...activity, result: '', ok: true, state: 'running' as const },
-                  ],
-                }
-                : message
-            )));
-          },
-          onTool: activity => setMessages(previous => previous.map(message => {
-            if (message.id !== activeAssistantId) return message;
-            return { ...message, activity: finishToolActivity(message.activity ?? [], activity) };
-          })),
+          }, sandboxScheduleRef, scheduleYamlRef),
           onSteering: (queuedId, queuedMessage) => {
             queuedMessagesRef.current = queuedMessagesRef.current.filter(message => message.id !== queuedId);
             setQueuedMessages(queuedMessagesRef.current);
@@ -1455,21 +1338,6 @@ export default function ExperimentalAiPage() {
             }
             activeQuestion = queuedMessage;
             activeQuestionRequiresAttachments = false;
-          },
-          onScheduleChange: candidate => {
-            const before = sandboxScheduleRef.current ?? scheduleYaml;
-            sandboxScheduleRef.current = candidate;
-            setMessages(previous => previous.map(message => (
-              message.id === activeAssistantId
-                ? {
-                  ...message,
-                  activity: [
-                    ...(message.activity ?? []),
-                    { kind: 'schedule-change' as const, before, after: candidate },
-                  ],
-                }
-                : message
-            )));
           },
           onProposal: diff => setProposalDiff(diff),
           onHistoryTrimmed: setTrimmedHistoryCount,
