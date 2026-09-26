@@ -22,6 +22,7 @@
 import asyncio
 import logging
 from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -559,11 +560,17 @@ def test_agent_multi_tool_batch_pauses_once_after_both_calls():
             await e2b_backend.read_file("/workspace/schedule.yaml")
             return AgentToolResult("schedule", True)
 
+        @asynccontextmanager
+        async def activity_batch(calls: Sequence[ToolCall]) -> AsyncIterator[None]:
+            assert len(calls) == 2
+            async with e2b_backend.activity_batch():
+                yield
+
         async for event in agent_loop(
             TwoCallProvider(),
             [{"role": "user", "content": "Read twice."}],
             [AgentTool({"type": "function", "function": {"name": "read"}}, execute)],
-            e2b_backend.activity_batch,
+            activity_batch,
         ):
             if isinstance(event, ToolExecutionEnd):
                 await asyncio.sleep(0.01)

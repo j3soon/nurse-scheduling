@@ -327,10 +327,7 @@ def test_optimizer_job_controls_do_not_start_a_sandbox(action: str) -> None:
     events = asyncio.run(collect())
     assert controls == [("", arguments)]
     assert factory.created == []
-    assert any(
-        isinstance(event, ToolExecutionEnd) and event.name == OPTIMIZER_TOOL and event.ok
-        for event in events
-    )
+    assert any(isinstance(event, ToolExecutionEnd) and event.name == OPTIMIZER_TOOL and event.ok for event in events)
 
 
 def test_pending_proposal_is_hydrated_as_trusted_read_only_context():
