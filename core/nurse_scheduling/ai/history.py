@@ -21,6 +21,7 @@
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import asdict
 from pathlib import Path
@@ -31,6 +32,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from .provider import TokenUsage
+from .transcript import SessionEntry, entry_record
 
 logger = logging.getLogger("nurse_scheduling.ai.history")
 TurnStatus = Literal["completed", "failed", "cancelled", "stale"]
@@ -106,13 +108,24 @@ class ChatHistory:
         status: TurnStatus,
         error_code: str | None,
         usage: TokenUsage | None,
+        transcript: Sequence[SessionEntry] = (),
     ) -> None:
-        """Keep the first terminal result when cleanup or writes are repeated."""
+        """Keep the first terminal result when cleanup or writes are repeated.
+
+        The transcript orders the run's prompt, queued steering, and answer segments.
+        """
         with self._connect() as connection:
             connection.execute(
                 "UPDATE chat_turns SET assistant_message = %s, status = %s, error_code = %s, "
-                "usage = %s, finished_at = now() WHERE id = %s AND status = 'running'",
-                (answer, status, error_code, Jsonb(asdict(usage)) if usage else None, turn_id),
+                "usage = %s, transcript = %s, finished_at = now() WHERE id = %s AND status = 'running'",
+                (
+                    answer,
+                    status,
+                    error_code,
+                    Jsonb(asdict(usage)) if usage else None,
+                    Jsonb([entry_record(entry) for entry in transcript]) if transcript else None,
+                    turn_id,
+                ),
             )
 
     async def write(self, operation: str, *args) -> bool:

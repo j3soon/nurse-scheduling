@@ -23,7 +23,7 @@
 from dataclasses import dataclass
 from typing import Literal
 
-StopReason = Literal["stop", "aborted"]
+StopReason = Literal["stop", "aborted", "error"]
 ProposalDecision = Literal["approved", "rejected", "invalid"]
 
 
@@ -36,7 +36,7 @@ class UserEntry:
 
 @dataclass(frozen=True)
 class AssistantEntry:
-    """One answer segment. An aborted segment keeps its partial text for accounting only."""
+    """One answer segment. Only a `stop` segment is replayed as written in model context."""
 
     text: str
     stop_reason: StopReason = "stop"
@@ -55,3 +55,12 @@ SessionEntry = UserEntry | AssistantEntry | ProposalDecisionEntry
 def entry_text(entry: SessionEntry) -> str:
     """Return the text an entry retains, which bounds its share of session memory."""
     return "" if isinstance(entry, ProposalDecisionEntry) else entry.text
+
+
+def entry_record(entry: SessionEntry) -> dict[str, str]:
+    """Serialize one entry for the chat history log."""
+    if isinstance(entry, UserEntry):
+        return {"role": "user", "text": entry.text}
+    if isinstance(entry, AssistantEntry):
+        return {"role": "assistant", "text": entry.text, "stop_reason": entry.stop_reason}
+    return {"role": "proposal_decision", "decision": entry.decision}

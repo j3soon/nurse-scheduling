@@ -378,9 +378,10 @@ class AgentSession:
                         wire_event = output.consume(event)
                         if wire_event is not None:
                             await emit(*wire_event)
+            run_entries = output.finish_entries("stop")
             completion = store.finish(
                 session_id,
-                output.finish_entries("stop"),
+                run_entries,
                 (output.proposal.text, output.proposal.diff) if output.proposal is not None else None,
                 snapshot=snapshot,
             )
@@ -390,7 +391,9 @@ class AgentSession:
             if logged:
                 # The history result is part of foreground done. Do not write it again in finally.
                 logged = False
-                history_saved = await write_history("finish_turn", run.id, output.text, outcome, None, output.usage)
+                history_saved = await write_history(
+                    "finish_turn", run.id, output.text, outcome, None, output.usage, run_entries
+                )
             if not completion.run_saved:
                 await emit("stale", {"message": STALE_TURN_ERROR})
                 return
@@ -438,6 +441,15 @@ class AgentSession:
             if not completed:
                 store.abort(session_id, snapshot)
             if logged:
-                await write_history("finish_turn", run.id, output.text, outcome, error_code, output.usage)
+                stop_reason = "aborted" if outcome == "cancelled" else "error"
+                await write_history(
+                    "finish_turn",
+                    run.id,
+                    output.text,
+                    outcome,
+                    error_code,
+                    output.usage,
+                    output.finish_entries(stop_reason),
+                )
             if terminal_event is not None:
                 await publish(*terminal_event)

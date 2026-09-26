@@ -30,6 +30,7 @@ from psycopg import sql
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.history import ChatHistory
 from nurse_scheduling.ai.provider import ProviderError, TextDelta, TokenUsage
+from nurse_scheduling.ai.transcript import AssistantEntry, UserEntry
 
 from . import test_ai_basic as basic
 
@@ -98,6 +99,7 @@ def test_records_text_usage_and_sanitized_failure(recorded_history, failed):
         "failed" if failed else "completed",
         "provider_error" if failed else None,
         TokenUsage(3, 4, 7),
+        [UserEntry("Question"), AssistantEntry("Partial answer", "error" if failed else "stop")],
     )
     if not failed:
         assert basic.parse_sse(response.text)[-1] == ("done", {"message_id": start[0], "history_saved": True})
@@ -135,6 +137,35 @@ def test_final_write_failure_preserves_successful_conversation(recorded_history,
     assert basic.parse_sse(response.text)[-1][1]["history_saved"] is False
     assert "AI history finish_turn failed" in caplog.text
     assert "secret-database-url" not in caplog.text
+
+
+def test_records_queued_steering_in_run_order(recorded_history):
+    class Provider:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def stream_events(self, messages, tools=None):
+            self.calls += 1
+            if self.calls == 1:
+                yield TextDelta("Monday is covered.")
+                store = app.state.session_store
+                (session_id,) = store._sessions
+                store.queue_steering(session_id, store._sessions[session_id].owner_token, "queued-1", "And Tuesday?")
+            else:
+                yield TextDelta("Tuesday is covered.")
+
+    app = basic.create_test_app(settings=basic.make_settings(history_postgres_url="test"), provider=Provider())
+    with basic.AuthenticatedTestClient(app) as client:
+        session_id = basic.create_session(client)
+        client.post(f"/sessions/{session_id}/messages", json={"message": "Is Monday covered?"})
+
+    (finish,) = recorded_history["finishes"]
+    assert finish[5] == [
+        UserEntry("Is Monday covered?"),
+        AssistantEntry("Monday is covered."),
+        UserEntry("And Tuesday?"),
+        AssistantEntry("Tuesday is covered."),
+    ]
 
 
 def test_database_unavailable_prevents_startup(recorded_history, monkeypatch):
@@ -176,7 +207,13 @@ def test_postgres_migrations_duplicates_and_reconnection(postgres_history):
     turn, session = str(uuid4()), str(uuid4())
     history.start_turn(turn, session, "team-a", "What's next?", "model", 3)
     history.start_turn(turn, session, "team-a", "duplicate", "model", 3)
-    history.finish_turn(turn, "Answer", "completed", None, TokenUsage(1, 2, 3))
+    transcript = [
+        UserEntry("What's next?"),
+        AssistantEntry("Checking."),
+        UserEntry("Only nights."),
+        AssistantEntry("Answer"),
+    ]
+    history.finish_turn(turn, "Answer", "completed", None, TokenUsage(1, 2, 3), transcript)
     history.finish_turn(turn, "Overwrite", "cancelled", None, None)
     restarted = ChatHistory("test")
     restarted.initialize()
@@ -198,9 +235,17 @@ def test_postgres_migrations_duplicates_and_reconnection(postgres_history):
         )
         assert row[4] is not None
         assert row[5] == 3
+        assert connection.execute("SELECT transcript FROM chat_turns").fetchone() == (
+            [
+                {"role": "user", "text": "What's next?"},
+                {"role": "assistant", "text": "Checking.", "stop_reason": "stop"},
+                {"role": "user", "text": "Only nights."},
+                {"role": "assistant", "text": "Answer", "stop_reason": "stop"},
+            ],
+        )
         credential_id = connection.execute("SELECT auth_credential_id FROM chat_sessions").fetchone()
         assert credential_id == ("team-a",)
-        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (2,)
+        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (3,)
 
 
 def test_postgres_retention_preserves_recent_turns(postgres_history):

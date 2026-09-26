@@ -38,7 +38,7 @@ The hosted beta AI service is separate from the main optimization backend and re
 
 Assume all AI chats, schedules, attachments, responses, and request metadata are logged and not anonymized. This data may be used to improve our product and the AI provider's product. Do not submit personal, confidential, regulated, or otherwise sensitive information.
 
-Deployments configured with AI chat history additionally store each turn's user and assistant text, model, timestamps, attachment counts, token usage, and status in PostgreSQL, keyed by a chat session and the administrative credential ID when authentication is enabled. Raw attachments, extracted document text, schedule snapshots, tool arguments and results, and reasoning are excluded. Stored turns are deleted after the operator's configured retention window, 30 days by default. Operators configure their own backups and backup retention separately.
+Deployments configured with AI chat history additionally store each turn's user and assistant text, including queued follow-up messages in order, model, timestamps, attachment counts, token usage, and status in PostgreSQL, keyed by a chat session and the administrative credential ID when authentication is enabled. Raw attachments, extracted document text, schedule snapshots, tool arguments and results, and reasoning are excluded. Stored turns are deleted after the operator's configured retention window, 30 days by default. Operators configure their own backups and backup retention separately.
 
 ## Opting Out While Using Hosted Services
 
