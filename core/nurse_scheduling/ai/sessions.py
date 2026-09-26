@@ -27,26 +27,13 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from .agent_session import (
-    PROPOSAL_APPROVED_HISTORY,
-    PROPOSAL_INVALID_HISTORY,
-    PROPOSAL_REJECTED_HISTORY,
-    AgentSession,
-    RunCompletion,
-    schedule_revision,
-)
+from .agent_session import AgentSession, RunCompletion, schedule_revision
 from .config import AiSettings
 from .context import recent_history
 from .lifecycle import RunSnapshot
-from .provider import ChatMessage
+from .transcript import AssistantEntry, ProposalDecision, SessionEntry, entry_text
 
-__all__ = [
-    "PROPOSAL_APPROVED_HISTORY",
-    "PROPOSAL_INVALID_HISTORY",
-    "PROPOSAL_REJECTED_HISTORY",
-    "SessionStore",
-    "schedule_revision",
-]
+__all__ = ["SessionStore", "schedule_revision"]
 
 SESSION_MEMORY_LIMIT_MESSAGE = "The AI service has reached its memory limit."
 
@@ -63,7 +50,7 @@ def _text_bytes(value: object) -> int:
 def _session_bytes(session: "AgentSession") -> int:
     """Return the chat text one session retains."""
     total = _text_bytes(session.schedule_yaml) + _text_bytes(session.proposal_yaml) + _text_bytes(session.proposal_diff)
-    total += sum(_text_bytes(message.get("content")) for message in session.history)
+    total += sum(_text_bytes(entry_text(entry)) for entry in session.transcript)
     if session.snapshot is not None:
         total += sum(_text_bytes(text) for _message_id, text in session.agent.steering_queue)
     return total
@@ -135,31 +122,31 @@ class SessionStore:
         """
         while self._retained_bytes > self._settings.max_session_bytes:
             oldest_answer = next(
-                (index for index, message in enumerate(session.history) if message["role"] == "assistant"),
+                (index for index, entry in enumerate(session.transcript) if isinstance(entry, AssistantEntry)),
                 None,
             )
-            if oldest_answer is None or len(session.history) - oldest_answer - 1 < protected_messages:
+            if oldest_answer is None or len(session.transcript) - oldest_answer - 1 < protected_messages:
                 break
-            removed = session.history[: oldest_answer + 1]
-            del session.history[: oldest_answer + 1]
-            self._charge(session, -sum(_text_bytes(message.get("content")) for message in removed))
+            removed = session.transcript[: oldest_answer + 1]
+            del session.transcript[: oldest_answer + 1]
+            self._charge(session, -sum(_text_bytes(entry_text(entry)) for entry in removed))
             session.dropped_history_messages += len(removed)
 
     def _effective_trimmed_count(self, session: AgentSession) -> int:
         """Count retained-history and prompt-budget omissions visible to a client."""
         return (
             session.dropped_history_messages
-            + len(session.history)
-            - len(recent_history(session.history, self._settings.max_history_chars))
+            + len(session.transcript)
+            - len(recent_history(session.transcript, self._settings.max_history_chars))
         )
 
     def _cap_history(self, session: AgentSession) -> None:
-        """Limit retained messages without leaving an assistant reply at the front."""
-        overflow = max(0, len(session.history) - max(2, self._settings.max_history_messages))
+        """Limit retained entries without leaving an assistant reply at the front."""
+        overflow = max(0, len(session.transcript) - max(2, self._settings.max_history_messages))
         if overflow:
-            while overflow < len(session.history) and session.history[overflow]["role"] != "user":
+            while overflow < len(session.transcript) and isinstance(session.transcript[overflow], AssistantEntry):
                 overflow += 1
-            del session.history[:overflow]
+            del session.transcript[:overflow]
             session.dropped_history_messages += overflow
 
     def create(self, owner_token: str, schedule_yaml: str) -> AgentSession:
@@ -210,29 +197,23 @@ class SessionStore:
     def finish(
         self,
         session_id: str,
-        user_message: str,
-        assistant_message: str,
+        entries: Sequence[SessionEntry],
         proposal: tuple[str, str] | None = None,
         *,
         snapshot: RunSnapshot,
-        run_messages: Sequence[ChatMessage] = (),
     ) -> RunCompletion:
         """Commit through the live session, then apply service retention limits."""
         self._prune_expired()
         session = self._sessions.get(session_id)
         if session is None:
             return RunCompletion(False, False)
-        messages = run_messages or (
-            ChatMessage(role="user", content=user_message),
-            ChatMessage(role="assistant", content=assistant_message),
-        )
-        completion = session.finish_run(snapshot, messages, proposal)
+        completion = session.finish_run(snapshot, entries, proposal)
         if completion.run_saved:
             self._cap_history(session)
         self._recount(session)
         if not completion.run_saved:
             return completion
-        self._trim_history_to_budget(session, min(len(messages), len(session.history)))
+        self._trim_history_to_budget(session, min(len(entries), len(session.transcript)))
         return replace(completion, history_trimmed_count=self._effective_trimmed_count(session))
 
     def queue_steering(
@@ -312,11 +293,11 @@ class SessionStore:
         self,
         session_id: str,
         owner_token: str | None,
-        history_event: str = PROPOSAL_REJECTED_HISTORY,
+        decision: ProposalDecision = "rejected",
     ) -> None:
         """Record a proposal decision and apply service retention limits."""
         session = self._get_owned(session_id, owner_token)
-        session.discard_proposal(history_event)
+        session.discard_proposal(decision)
         self._cap_history(session)
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
         self._recount(session)

@@ -78,6 +78,9 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   and sandbox lifetime and hydration in `SandboxWorkspace`. Session mutations
   belong to `AgentSession`. Keep ownership, expiry, and global retention accounting
   in `SessionStore`, with checks and mutations in the same synchronous operation.
+- Keep the session transcript as typed entries. Put their model-facing
+  projection and wording in `context.py`, so retention, model context, and
+  audit remain separate decisions.
 - Optimizer submissions and jobs belong to the optimizer service, not to the
   requesting turn. Revoke the submission owner on cancellation and dispose of
   late remote responses. Keep progress readers inside the job lifecycle scope.

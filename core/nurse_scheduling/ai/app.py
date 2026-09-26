@@ -54,24 +54,12 @@ from .provider import OpenAiCompatibleProvider, ToolCapableChatProvider
 from .sandbox import SandboxFactory, managed_sandbox_factory
 from .sandbox.factory import create_sandbox_factory
 from .session_events import SessionEventBroker
-from .sessions import (
-    PROPOSAL_APPROVED_HISTORY,
-    PROPOSAL_INVALID_HISTORY,
-    PROPOSAL_REJECTED_HISTORY,
-    SessionStore,
-    schedule_revision,
-)
+from .sessions import SessionStore, schedule_revision
 from .validation import new_schedule_issues, validate_frontend_schedule_yaml
 from .workspace import SandboxAttachment
 
 SERVICE_NAME = "nurse-scheduling-ai-api"
-__all__ = (
-    "PROPOSAL_APPROVED_HISTORY",
-    "PROPOSAL_INVALID_HISTORY",
-    "PROPOSAL_REJECTED_HISTORY",
-    "SessionStore",
-    "schedule_revision",
-)
+__all__ = ("SessionStore", "schedule_revision")
 API_VERSION = "0.2.0"
 OWNER_COOKIE = "nurse_scheduling_ai_owner"
 ORIGIN_REGEX = (
@@ -698,7 +686,7 @@ def create_app(
             replaced_validation = validate_frontend_schedule_yaml(replaced, settings.max_schedule_bytes)
             if new_schedule_issues(replaced_validation, validation):
                 logger.error("Approved proposal failed revalidation session_id=%s", session_id)
-                store.discard_proposal(session_id, owner, PROPOSAL_INVALID_HISTORY)
+                store.discard_proposal(session_id, owner, "invalid")
                 raise HTTPException(status_code=409, detail="The proposed schedule is no longer valid.")
         schedule_yaml = store.adopt_proposal(session_id, owner, request.base_sha256)
         refresh_owner_cookie(response, owner)

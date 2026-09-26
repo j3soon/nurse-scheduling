@@ -43,7 +43,6 @@ from nurse_scheduling.ai.agent_types import (
     ToolExecutionEnd,
     ToolExecutionStart,
 )
-from nurse_scheduling.ai.app import PROPOSAL_APPROVED_HISTORY, PROPOSAL_REJECTED_HISTORY
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.context import build_provider_messages
 from nurse_scheduling.ai.provider import (
@@ -64,6 +63,7 @@ from nurse_scheduling.ai.schema import (
     load_taiwan_holidays_reference,
     load_user_guide_references,
 )
+from nurse_scheduling.ai.transcript import AssistantEntry, ProposalDecisionEntry, SessionEntry, UserEntry
 from nurse_scheduling.ai.workspace import SANDBOX_SYSTEM_PROMPT, SandboxRunMetrics, WorkspaceLimits
 from nurse_scheduling.ai.workspace_tools import run_workspace
 from nurse_scheduling.loader import _load_yaml
@@ -220,7 +220,7 @@ async def run_case(
     initial_text = text
     counting = _CountingProvider(provider)
 
-    history: list[ChatMessage] = []
+    history: list[SessionEntry] = []
     prompt_messages: list[list[ChatMessage]] = []
     answers: list[str] = []
     intermediate_proposals: list[bool] = []
@@ -304,9 +304,7 @@ async def run_case(
                 intermediate_proposals.append(turn_proposal is not None)
             if turn_index + 1 == case.proposal_turn:
                 proposal_event = turn_proposal
-            history.extend(
-                [ChatMessage(role="user", content=question), ChatMessage(role="assistant", content=answer_text)]
-            )
+            history.extend([UserEntry(question), AssistantEntry(answer_text)])
             action = turn_actions.get(turn_index + 1)
             if action is not None:
                 text, pending_proposal = _apply_turn_action(action, text, pending_proposal, history, events)
@@ -385,7 +383,7 @@ def _apply_turn_action(
     action: Any,
     text: str,
     pending: AgentProposal | None,
-    history: list[ChatMessage],
+    history: list[SessionEntry],
     events: list[dict[str, Any]],
 ) -> tuple[str, AgentProposal | None]:
     """Apply one trusted proposal lifecycle action between user turns."""
@@ -394,9 +392,9 @@ def _apply_turn_action(
         return text, None
     if action.action == "approve":
         text = pending.text
-        history.append(ChatMessage(role="user", content=PROPOSAL_APPROVED_HISTORY))
+        history.append(ProposalDecisionEntry("approved"))
     elif action.action == "reject":
-        history.append(ChatMessage(role="user", content=PROPOSAL_REJECTED_HISTORY))
+        history.append(ProposalDecisionEntry("rejected"))
     else:
         schedule = _load_yaml(text.encode("utf-8"))
         schedule.update(dict(action.schedule_patch))

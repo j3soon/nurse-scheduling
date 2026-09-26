@@ -26,14 +26,14 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from .provider import ChatMessage
+from .transcript import SessionEntry
 
 
 @dataclass(eq=False)
 class RunSnapshot:
     """A capability to commit one conversation version and accept its steering."""
 
-    history: list[ChatMessage]
+    transcript: list[SessionEntry]
     schedule_yaml: str
     version: int
     proposal_yaml: str

@@ -45,8 +45,9 @@ from .context import build_provider_messages, recent_history
 from .history import ChatHistory
 from .lifecycle import AgentRun, RunSnapshot
 from .optimizer import OptimizerArtifact, SessionOptimizer
-from .provider import ChatMessage, ProviderError, TokenUsage, ToolCapableChatProvider
+from .provider import ProviderError, TokenUsage, ToolCapableChatProvider
 from .sandbox import SandboxError, SandboxFactory
+from .transcript import AssistantEntry, ProposalDecision, ProposalDecisionEntry, SessionEntry, StopReason, UserEntry
 from .workspace import (
     AgentScheduleChange,
     SandboxAttachment,
@@ -64,20 +65,6 @@ PROVIDER_ERROR = "The AI provider failed. Please try again."
 SANDBOX_TURN_TIMEOUT_ERROR = "The AI response timed out. Please try again."
 STALE_TURN_ERROR = "The schedule changed while this response was generated, so the response was discarded."
 logger = logging.getLogger("nurse_scheduling.ai")
-
-
-PROPOSAL_APPROVED_HISTORY = (
-    "The user approved the previous schedule proposal. Its changes are now part of the current canonical schedule."
-)
-PROPOSAL_REJECTED_HISTORY = (
-    "The user rejected the previous schedule proposal. All schedule changes made during that agent turn were "
-    "discarded. This turn starts with a fresh workspace containing the current canonical schedule."
-)
-PROPOSAL_INVALID_HISTORY = (
-    "The previous schedule proposal failed trusted validation when the user approved it, so it was discarded. All "
-    "schedule changes made during that agent turn were dropped. This turn starts with a fresh workspace containing "
-    "the current canonical schedule."
-)
 
 
 def schedule_revision(schedule_yaml: str) -> str:
@@ -106,12 +93,10 @@ class SessionPersistence(Protocol):
     def finish(
         self,
         session_id: str,
-        user_message: str,
-        assistant_message: str,
+        entries: Sequence[SessionEntry],
         proposal: tuple[str, str] | None = None,
         *,
         snapshot: RunSnapshot,
-        run_messages: Sequence[ChatMessage] = (),
     ) -> RunCompletion: ...
 
     def abort(self, session_id: str, snapshot: RunSnapshot) -> None: ...
@@ -132,9 +117,9 @@ class SessionRuntime:
 
 @dataclass
 class RunOutput:
-    """Collect transactional history and project agent events onto the existing SSE contract."""
+    """Collect provisional transcript entries and project agent events onto the SSE contract."""
 
-    messages: list[ChatMessage]
+    entries: list[SessionEntry]
     assistant_parts: list[str] = field(default_factory=list)
     assistant_segment: list[str] = field(default_factory=list)
     proposal: AgentProposal | None = None
@@ -144,8 +129,9 @@ class RunOutput:
     def text(self) -> str:
         return "".join(self.assistant_parts)
 
-    def finish_messages(self) -> list[ChatMessage]:
-        return [*self.messages, ChatMessage(role="assistant", content="".join(self.assistant_segment))]
+    def finish_entries(self, stop_reason: StopReason) -> list[SessionEntry]:
+        """Close the open answer segment. Only that segment can be aborted."""
+        return [*self.entries, AssistantEntry("".join(self.assistant_segment), stop_reason)]
 
     def consume(self, event: AgentEvent | AgentScheduleChange) -> tuple[str, dict[str, object]] | None:
         if isinstance(event, MessageTextDelta):
@@ -168,8 +154,8 @@ class RunOutput:
             }
         elif isinstance(event, AgentSteering):
             if self.assistant_segment:
-                self.messages.append(ChatMessage(role="assistant", content="".join(self.assistant_segment)))
-            self.messages.append(ChatMessage(role="user", content=event.text))
+                self.entries.append(AssistantEntry("".join(self.assistant_segment)))
+            self.entries.append(UserEntry(event.text))
             self.assistant_segment.clear()
             return "steering", {"message_id": event.message_id, "message": event.text}
         elif isinstance(event, AgentScheduleChange):
@@ -188,7 +174,7 @@ class AgentSession:
     expires_at: float
     schedule_yaml: str
     revision: str
-    history: list[ChatMessage] = field(default_factory=list)
+    transcript: list[SessionEntry] = field(default_factory=list)
     dropped_history_messages: int = 0
     version: int = 0
     snapshot: RunSnapshot | None = None
@@ -206,7 +192,7 @@ class AgentSession:
             raise HTTPException(status_code=409, detail="This chat session already has an active response.")
         self.agent.open_steering(accepting_steering)
         self.snapshot = RunSnapshot(
-            list(self.history),
+            list(self.transcript),
             self.schedule_yaml,
             self.version,
             self.proposal_yaml,
@@ -218,7 +204,7 @@ class AgentSession:
     def finish_run(
         self,
         snapshot: RunSnapshot,
-        messages: Sequence[ChatMessage],
+        entries: Sequence[SessionEntry],
         proposal: tuple[str, str] | None,
     ) -> RunCompletion:
         """Commit only the current reservation, releasing it even when its version is stale."""
@@ -226,7 +212,7 @@ class AgentSession:
             return RunCompletion(False, False)
         if self.version != snapshot.version:
             return RunCompletion(False, False)
-        self.history.extend(messages)
+        self.transcript.extend(entries)
         if proposal is not None:
             self.proposal_yaml, self.proposal_diff = proposal
         return RunCompletion(True, proposal is not None)
@@ -271,17 +257,17 @@ class AgentSession:
         self.version += 1
         self.schedule_yaml = approved
         self.revision = schedule_revision(approved)
-        self.history.append(ChatMessage(role="user", content=PROPOSAL_APPROVED_HISTORY))
+        self.transcript.append(ProposalDecisionEntry("approved"))
         return approved
 
-    def discard_proposal(self, history_event: str = PROPOSAL_REJECTED_HISTORY) -> None:
+    def discard_proposal(self, decision: ProposalDecision = "rejected") -> None:
         """Record a proposal decision once and invalidate results based on it."""
         had_proposal = bool(self.proposal_yaml)
         self.proposal_yaml = ""
         self.proposal_diff = ""
         if had_proposal:
             self.version += 1
-            self.history.append(ChatMessage(role="user", content=history_event))
+            self.transcript.append(ProposalDecisionEntry(decision))
 
     async def run(
         self,
@@ -306,13 +292,13 @@ class AgentSession:
         if snapshot is None:
             return
         self.agent.active_run = run
-        history, schedule_yaml = snapshot.history, snapshot.schedule_yaml
+        transcript, schedule_yaml = snapshot.transcript, snapshot.schedule_yaml
         proposal_yaml, proposal_diff = snapshot.proposal_yaml, snapshot.proposal_diff
         history_question = question
         if attachments:
             filenames = json.dumps([attachment.filename for attachment in attachments], ensure_ascii=False)
             history_question += f"\n[Files were attached: {filenames}.]"
-        output = RunOutput([ChatMessage(role="user", content=history_question)])
+        output = RunOutput([UserEntry(history_question)])
         completed = False
         logged = False
         outcome = "cancelled"
@@ -358,12 +344,12 @@ class AgentSession:
             if not background:
                 artifact = await session_optimizer.latest_result_artifact(session_id)
                 await run.streaming.wait()
-            retained_history = recent_history(history, settings.max_history_chars)
-            dropped_history = snapshot.previously_dropped + len(history) - len(retained_history)
+            retained_history = recent_history(transcript, settings.max_history_chars)
+            dropped_history = snapshot.previously_dropped + len(transcript) - len(retained_history)
             if dropped_history:
                 await emit("history_trimmed", {"dropped": dropped_history})
             messages = build_provider_messages(
-                retained_history,
+                transcript,
                 schedule_yaml,
                 question,
                 attachments,
@@ -395,11 +381,9 @@ class AgentSession:
                             await emit(*wire_event)
             completion = store.finish(
                 session_id,
-                history_question,
-                output.text,
+                output.finish_entries("stop"),
                 (output.proposal.text, output.proposal.diff) if output.proposal is not None else None,
                 snapshot=snapshot,
-                run_messages=output.finish_messages(),
             )
             completed = True
             outcome = "completed" if completion.run_saved else "stale"
@@ -420,6 +404,11 @@ class AgentSession:
                 done["history_saved"] = history_saved
             await emit("done", done)
         except asyncio.CancelledError:
+            if not completed:
+                # Keep the prompt, as Pi keeps an aborted message, so a follow-up can refer to it.
+                # Workspace changes and any proposal were discarded with the sandbox.
+                store.finish(session_id, output.finish_entries("aborted"), snapshot=snapshot)
+                completed = True
             await emit("stopped", {"message_id": run.id})
             raise
         except HTTPException:

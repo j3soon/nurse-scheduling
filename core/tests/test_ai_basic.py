@@ -48,16 +48,19 @@ from nurse_scheduling.ai.agent_session import (
 )
 from nurse_scheduling.ai.app import (
     OWNER_COOKIE,
-    PROPOSAL_APPROVED_HISTORY,
-    PROPOSAL_INVALID_HISTORY,
-    PROPOSAL_REJECTED_HISTORY,
     SERVICE_NAME,
     configure_request_logging,
     request_logger,
 )
 from nurse_scheduling.ai.app import create_app as create_ai_app
 from nurse_scheduling.ai.config import AiSettings
-from nurse_scheduling.ai.context import build_provider_messages
+from nurse_scheduling.ai.context import (
+    ABORTED_RESPONSE_HISTORY,
+    PROPOSAL_APPROVED_HISTORY,
+    PROPOSAL_INVALID_HISTORY,
+    PROPOSAL_REJECTED_HISTORY,
+    build_provider_messages,
+)
 from nurse_scheduling.ai.history import ChatHistory
 from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL, OptimizerArtifact, OptimizerJobPayload
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
@@ -65,6 +68,7 @@ from nurse_scheduling.ai.pi.read import READ_TOOL
 from nurse_scheduling.ai.provider import ChatMessage, ProviderError, TextDelta, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
+from nurse_scheduling.ai.transcript import AssistantEntry, ProposalDecisionEntry, SessionEntry, UserEntry
 from nurse_scheduling.ai.workspace import (
     WORKSPACE_PENDING_DIFF,
     WORKSPACE_PENDING_PROPOSAL,
@@ -441,6 +445,11 @@ def test_insecure_local_ai_owner_cookie_stays_same_site() -> None:
     assert "Secure" not in cookie
 
 
+def exchange(question: str, answer: str) -> list[SessionEntry]:
+    """Return the transcript entries one completed question and answer commit."""
+    return [UserEntry(question), AssistantEntry(answer)]
+
+
 def parse_sse(response_text: str) -> list[tuple[str, dict[str, str]]]:
     """Parse the small SSE subset emitted by the service."""
     events: list[tuple[str, dict[str, str]]] = []
@@ -458,7 +467,7 @@ def test_client_disconnect_cancels_the_turn_and_closes_its_sandbox(wait_stage: s
     monkeypatch.setattr(ChatHistory, "start_turn", lambda *_args: None)
     monkeypatch.setattr(ChatHistory, "finish_turn", lambda _self, *args: saved.append(args))
 
-    async def exercise() -> tuple[FakeSandboxBackend | None, bool, bool, list[ChatMessage]]:
+    async def exercise() -> tuple[FakeSandboxBackend | None, bool, bool, list[SessionEntry]]:
         operation_started = asyncio.Event()
         operation_cancelled = asyncio.Event()
 
@@ -531,7 +540,7 @@ def test_client_disconnect_cancels_the_turn_and_closes_its_sandbox(wait_stage: s
         await asyncio.wait_for(request_task, timeout=1)
 
         backend = factory.created[0] if factory.created else None
-        return backend, operation_cancelled.is_set(), session.active, list(session.history)
+        return backend, operation_cancelled.is_set(), session.active, list(session.transcript)
 
     backend, operation_cancelled, session_active, history = asyncio.run(exercise())
 
@@ -543,7 +552,8 @@ def test_client_disconnect_cancels_the_turn_and_closes_its_sandbox(wait_stage: s
         assert backend.closed
         assert backend.close_calls == 1
     assert not session_active
-    assert history == []
+    # The interrupted prompt stays for a follow-up. Its sandbox work does not.
+    assert history == [UserEntry("Wait for me"), AssistantEntry("", "aborted")]
     assert len(saved) == 1
     assert saved[0][2] == "cancelled"
 
@@ -592,6 +602,52 @@ def test_stop_endpoint_cancels_an_active_assistant_turn() -> None:
     assert events[0] == ("delta", {"text": "Partial answer."})
     assert events[-1][0] == "stopped"
     assert [name for name, _ in events].count("stopped") == 1
+
+
+def test_a_stopped_prompt_stays_in_context_for_the_next_run() -> None:
+    async def exercise() -> tuple[list[SessionEntry], list[ChatMessage]]:
+        started = asyncio.Event()
+
+        class StoppableProvider:
+            def __init__(self) -> None:
+                self.calls: list[list[ChatMessage]] = []
+
+            async def stream_events(self, messages, tools=None):
+                self.calls.append(list(messages))
+                if len(self.calls) == 1:
+                    yield TextDelta("I renamed P1 to")
+                    started.set()
+                    await asyncio.Event().wait()
+                yield TextDelta("Renaming P2.")
+
+        provider = StoppableProvider()
+        app = create_test_app(settings=make_settings(), provider=provider)
+        transport = httpx.ASGITransport(app=app)
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=transport,
+                base_url="http://testserver",
+                headers={"Authorization": f"Bearer {AI_AUTH_TOKEN}"},
+            ) as client,
+        ):
+            session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
+            turn = asyncio.create_task(client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P1."}))
+            await asyncio.wait_for(started.wait(), timeout=1)
+            await client.post(f"/sessions/{session_id}/stop")
+            await turn
+            transcript = list(app.state.session_store._sessions[session_id].transcript)
+            await client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P2 instead."})
+            return transcript, provider.calls[1]
+
+    transcript, follow_up_prompt = asyncio.run(exercise())
+
+    assert transcript == [UserEntry("Rename P1."), AssistantEntry("I renamed P1 to", "aborted")]
+    assert follow_up_prompt[1:] == [
+        ChatMessage(role="user", content="Rename P1."),
+        ChatMessage(role="assistant", content=ABORTED_RESPONSE_HISTORY),
+        ChatMessage(role="user", content="Rename P2 instead."),
+    ]
 
 
 def test_stop_cancels_background_turn_waiting_behind_foreground_turn() -> None:
@@ -884,7 +940,7 @@ def test_finishing_a_turn_keeps_the_deadline_set_when_it_started(monkeypatch: py
     assert session.expires_at == 125.0
 
     now = 115.0
-    assert store.finish(session.id, "Question", "Answer", snapshot=revision).run_saved
+    assert store.finish(session.id, exchange("Question", "Answer"), snapshot=revision).run_saved
     assert session.expires_at == 125.0
 
 
@@ -1390,11 +1446,7 @@ def test_session_budget_keeps_the_latest_exchange_and_reports_all_dropped_messag
         2,
         4,
     ]
-    history = app.state.session_store._sessions[session_id].history
-    assert [(message["role"], message["content"]) for message in history] == [
-        ("user", "C" * 10),
-        ("assistant", "Z" * 20),
-    ]
+    assert app.state.session_store._sessions[session_id].transcript == exchange("C" * 10, "Z" * 20)
     latest_prompt = json.dumps(provider.calls[-1])
     assert "B" * 10 in latest_prompt
     assert "A" * 10 not in latest_prompt
@@ -1409,7 +1461,7 @@ def test_history_prompt_budget_default(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_a_long_history_is_trimmed_to_the_newest_messages_that_fit_the_prompt() -> None:
-    history = [ChatMessage(role="user", content=f"{index:03d} {'x' * 200}") for index in range(50)]
+    history = [UserEntry(f"{index:03d} {'x' * 200}") for index in range(50)]
 
     messages = build_provider_messages(history, "description: schedule\n", "Latest question.", max_history_chars=1000)
 
@@ -1418,17 +1470,36 @@ def test_a_long_history_is_trimmed_to_the_newest_messages_that_fit_the_prompt() 
     retained = messages[1:-1]
     assert 0 < len(retained) < len(history)
     # The newest messages survive so the model keeps the most relevant context.
-    assert retained[-1]["content"] == history[-1]["content"]
-    assert retained[0]["content"] == history[len(history) - len(retained)]["content"]
+    assert retained[-1]["content"] == history[-1].text
+    assert retained[0]["content"] == history[len(history) - len(retained)].text
     assert sum(len(json.dumps(message, ensure_ascii=False)) for message in retained) <= 1000
 
 
 def test_a_short_history_reaches_the_prompt_unchanged() -> None:
-    history = [ChatMessage(role="user", content="Who works Monday?"), ChatMessage(role="assistant", content="Alice.")]
+    history = exchange("Who works Monday?", "Alice.")
 
     messages = build_provider_messages(history, "description: schedule\n", "And Tuesday?")
 
-    assert messages[1:-1] == history
+    assert messages[1:-1] == [
+        ChatMessage(role="user", content="Who works Monday?"),
+        ChatMessage(role="assistant", content="Alice."),
+    ]
+
+
+def test_context_projects_typed_entries_without_replaying_aborted_output() -> None:
+    history = [
+        UserEntry("Rename P1."),
+        AssistantEntry("I renamed P1 to", "aborted"),
+        ProposalDecisionEntry("rejected"),
+    ]
+
+    messages = build_provider_messages(history, "description: schedule\n", "Rename P2 instead.")
+
+    assert messages[1:-1] == [
+        ChatMessage(role="user", content="Rename P1."),
+        ChatMessage(role="assistant", content=ABORTED_RESPONSE_HISTORY),
+        ChatMessage(role="user", content=PROPOSAL_REJECTED_HISTORY),
+    ]
 
 
 def test_optimizer_tool_is_offered_without_an_availability_capability() -> None:
@@ -2087,8 +2158,7 @@ def test_a_proposal_that_fails_revalidation_never_becomes_the_session_schedule()
     base_revision = store.begin(session_id, owner)
     assert store.finish(
         session_id,
-        "Break it",
-        "Broken proposal",
+        exchange("Break it", "Broken proposal"),
         (schedule_yaml(broken_payload), "broken diff"),
         snapshot=base_revision,
     ).proposal_saved
@@ -2127,8 +2197,7 @@ def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved()
     original_revision = store.begin(session.id, "browser-owner")
     assert store.finish(
         session.id,
-        "First edit",
-        "First proposal",
+        exchange("First edit", "First proposal"),
         (first_proposal, "first diff"),
         snapshot=original_revision,
     ).proposal_saved
@@ -2137,17 +2206,16 @@ def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved()
     store.adopt_proposal(session.id, "browser-owner", session.revision)
     completion = store.finish(
         session.id,
-        "Stale edit",
-        "Stale proposal",
+        exchange("Stale edit", "Stale proposal"),
         (stale_proposal, "stale diff"),
         snapshot=active_turn_revision,
     )
 
     assert not completion.run_saved
-    assert session.history == [
-        ChatMessage(role="user", content="First edit"),
-        ChatMessage(role="assistant", content="First proposal"),
-        ChatMessage(role="user", content=PROPOSAL_APPROVED_HISTORY),
+    assert session.transcript == [
+        UserEntry("First edit"),
+        AssistantEntry("First proposal"),
+        ProposalDecisionEntry("approved"),
     ]
     with pytest.raises(HTTPException) as exc_info:
         store.adopt_proposal(session.id, "browser-owner", active_turn_revision)
@@ -2164,24 +2232,14 @@ def test_session_store_queues_steering_once_and_retains_it_with_the_turn() -> No
     store.queue_steering(session.id, "browser-owner", "queued-1", "Focus on P2 instead.")
 
     assert store.take_steering(session.id, False) == [("queued-1", "Focus on P2 instead.")]
-    assert store.finish(
-        session.id,
-        "Inspect P1.",
-        "P2 is the better target.",
-        snapshot=revision,
-        run_messages=[
-            ChatMessage(role="user", content="Inspect P1."),
-            ChatMessage(role="assistant", content="P1 needs review."),
-            ChatMessage(role="user", content="Focus on P2 instead."),
-            ChatMessage(role="assistant", content="P2 is the better target."),
-        ],
-    ).run_saved
-    assert session.history == [
-        ChatMessage(role="user", content="Inspect P1."),
-        ChatMessage(role="assistant", content="P1 needs review."),
-        ChatMessage(role="user", content="Focus on P2 instead."),
-        ChatMessage(role="assistant", content="P2 is the better target."),
+    entries = [
+        UserEntry("Inspect P1."),
+        AssistantEntry("P1 needs review."),
+        UserEntry("Focus on P2 instead."),
+        AssistantEntry("P2 is the better target."),
     ]
+    assert store.finish(session.id, entries, snapshot=revision).run_saved
+    assert session.transcript == entries
 
 
 def test_session_store_bounds_steering_across_a_whole_turn_not_the_drained_queue() -> None:
@@ -2237,11 +2295,11 @@ def test_proposal_history_event_counts_the_exchange_removed_by_the_cap() -> None
     store = app.state.session_store
     session = store.create("browser-owner", "description: test")
     snapshot = store.begin(session.id, "browser-owner")
-    store.finish(session.id, "question", "answer", ("proposal", "diff"), snapshot=snapshot)
+    store.finish(session.id, exchange("question", "answer"), ("proposal", "diff"), snapshot=snapshot)
 
     store.discard_proposal(session.id, "browser-owner")
 
-    assert [message["role"] for message in store._sessions[session.id].history] == ["user"]
+    assert store._sessions[session.id].transcript == [ProposalDecisionEntry("rejected")]
     assert store.begin(session.id, "browser-owner").previously_dropped == 2
 
 
@@ -2253,11 +2311,8 @@ def test_history_message_cap_keeps_complete_exchanges(message_cap: int) -> None:
 
     for question in ("first question", "second question"):
         snapshot = store.begin(session.id, "browser-owner")
-        store.finish(session.id, question, f"answer to {question}", snapshot=snapshot)
-        assert session.history == [
-            ChatMessage(role="user", content=question),
-            ChatMessage(role="assistant", content=f"answer to {question}"),
-        ]
+        store.finish(session.id, exchange(question, f"answer to {question}"), snapshot=snapshot)
+        assert session.transcript == exchange(question, f"answer to {question}")
     assert session.dropped_history_messages == 2
 
 
@@ -2288,16 +2343,13 @@ def test_completed_turns_do_not_accumulate_past_the_budget() -> None:
     for _ in range(6):
         for session in sessions:
             snapshot = store.begin(session.id, "browser-owner")
-            store.finish(session.id, "q" * 100, "A" * 5_000, None, snapshot=snapshot)
+            store.finish(session.id, exchange("q" * 100, "A" * 5_000), None, snapshot=snapshot)
 
     # Each session keeps its schedule and its newest question and answer, so that floor is what
     # remains, independently of how many turns ran.
     assert store.retained_bytes == 5 * (10 + 100 + 5_000)
     for session in sessions:
-        history = store._sessions[session.id].history
-        assert history[-2]["content"] == "q" * 100
-        assert history[-1]["content"] == "A" * 5_000
-        assert len(history) == 2
+        assert store._sessions[session.id].transcript == exchange("q" * 100, "A" * 5_000)
 
 
 def test_discarding_a_stale_proposal_returns_its_share_of_the_budget() -> None:
@@ -2308,8 +2360,7 @@ def test_discarding_a_stale_proposal_returns_its_share_of_the_budget() -> None:
     snapshot = store.begin(session.id, "browser-owner")
     store.finish(
         session.id,
-        "question",
-        "answer",
+        exchange("question", "answer"),
         ("p" * 400, "d" * 100),
         snapshot=snapshot,
     )
@@ -2330,7 +2381,7 @@ def test_replacing_a_schedule_credits_the_proposal_it_drops() -> None:
     store = app.state.session_store
     session = store.create("browser-owner", "a" * 100)
     snapshot = store.begin(session.id, "browser-owner")
-    store.finish(session.id, "q", "a", ("p" * 600, "d" * 100), snapshot=snapshot)
+    store.finish(session.id, exchange("q", "a"), ("p" * 600, "d" * 100), snapshot=snapshot)
 
     # The larger schedule alone exceeds the budget, but it also drops the proposal.
     store.update_schedule(session.id, "browser-owner", "b" * 300)

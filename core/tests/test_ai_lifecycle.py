@@ -29,6 +29,7 @@ from nurse_scheduling.ai.app import SessionStore
 from nurse_scheduling.ai.history import ChatHistory
 from nurse_scheduling.ai.lifecycle import RunEvents, SessionRuns
 from nurse_scheduling.ai.provider import ProviderError
+from nurse_scheduling.ai.transcript import AssistantEntry, UserEntry
 
 from .ai_test_helper import schedule_yaml
 from .test_ai_basic import AI_AUTH_HEADERS, FakeProvider, create_test_app, make_settings
@@ -201,11 +202,11 @@ def test_stale_turn_cannot_release_or_commit_over_its_successor():
     old = store.begin(session.id, "owner")
     store.abort(session.id, old)
     new = store.begin(session.id, "owner")
-    assert not store.finish(session.id, "old", "old", snapshot=old).run_saved
+    assert not store.finish(session.id, [UserEntry("old"), AssistantEntry("old")], snapshot=old).run_saved
     store.abort(session.id, old)
     assert session.snapshot is new
-    assert store.finish(session.id, "new", "new", snapshot=new).run_saved
-    assert [message["content"] for message in session.history] == ["new", "new"]
+    assert store.finish(session.id, [UserEntry("new"), AssistantEntry("new")], snapshot=new).run_saved
+    assert session.transcript == [UserEntry("new"), AssistantEntry("new")]
 
 
 def test_schedule_round_trip_invalidates_an_in_flight_snapshot():
@@ -215,8 +216,8 @@ def test_schedule_round_trip_invalidates_an_in_flight_snapshot():
     turn = store.begin(session.id, "owner")
     store.update_schedule(session.id, "owner", original + "\n")
     store.update_schedule(session.id, "owner", original)
-    assert not store.finish(session.id, "question", "answer", snapshot=turn).run_saved
-    assert session.history == []
+    assert not store.finish(session.id, [UserEntry("question"), AssistantEntry("answer")], snapshot=turn).run_saved
+    assert session.transcript == []
 
 
 @pytest.mark.parametrize("decision", ["reject", "stale-approval"])
@@ -225,7 +226,9 @@ def test_discarding_a_proposal_revokes_a_turn_that_was_using_it(decision):
     session = store.create("owner", schedule_yaml())
     first = store.begin(session.id, "owner")
     proposal = (schedule_yaml() + "\n", "proposal diff")
-    assert store.finish(session.id, "Edit", "Proposal", proposal, snapshot=first).proposal_saved
+    assert store.finish(
+        session.id, [UserEntry("Edit"), AssistantEntry("Proposal")], proposal, snapshot=first
+    ).proposal_saved
     revising = store.begin(session.id, "owner")
     if decision == "reject":
         store.discard_proposal(session.id, "owner")
@@ -233,7 +236,9 @@ def test_discarding_a_proposal_revokes_a_turn_that_was_using_it(decision):
         with pytest.raises(HTTPException) as stale:
             store.adopt_proposal(session.id, "owner", "0" * 64)
         assert stale.value.status_code == 409
-    assert not store.finish(session.id, "Revise", "Revised", proposal, snapshot=revising).run_saved
+    assert not store.finish(
+        session.id, [UserEntry("Revise"), AssistantEntry("Revised")], proposal, snapshot=revising
+    ).run_saved
     assert session.proposal_yaml == ""
 
 

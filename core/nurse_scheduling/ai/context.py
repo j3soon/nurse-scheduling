@@ -26,11 +26,44 @@ from .config import DEFAULT_MAX_HISTORY_CHARS
 from .optimizer import WORKSPACE_OPTIMIZER_RESULT
 from .provider import ChatMessage
 from .schedule_context import describe_schedule
+from .transcript import AssistantEntry, ProposalDecision, SessionEntry, UserEntry
 from .workspace import SANDBOX_SYSTEM_PROMPT, SandboxAttachment
 
+PROPOSAL_APPROVED_HISTORY = (
+    "The user approved the previous schedule proposal. Its changes are now part of the current canonical schedule."
+)
+PROPOSAL_REJECTED_HISTORY = (
+    "The user rejected the previous schedule proposal. All schedule changes made during that agent turn were "
+    "discarded. This turn starts with a fresh workspace containing the current canonical schedule."
+)
+PROPOSAL_INVALID_HISTORY = (
+    "The previous schedule proposal failed trusted validation when the user approved it, so it was discarded. All "
+    "schedule changes made during that agent turn were dropped. This turn starts with a fresh workspace containing "
+    "the current canonical schedule."
+)
+PROPOSAL_DECISION_HISTORY: dict[ProposalDecision, str] = {
+    "approved": PROPOSAL_APPROVED_HISTORY,
+    "rejected": PROPOSAL_REJECTED_HISTORY,
+    "invalid": PROPOSAL_INVALID_HISTORY,
+}
+ABORTED_RESPONSE_HISTORY = "[This response was interrupted before completion. Its workspace changes were discarded.]"
 
-def recent_history(history: list[ChatMessage], max_chars: int) -> list[ChatMessage]:
-    """Keep the newest retained messages that fit the prompt budget, oldest first.
+
+def context_message(entry: SessionEntry) -> ChatMessage:
+    """Project one transcript entry into the provider conversation."""
+    if isinstance(entry, UserEntry):
+        return ChatMessage(role="user", content=entry.text)
+    if isinstance(entry, AssistantEntry):
+        # Like Pi, an aborted answer is kept but not replayed. Its partial text may
+        # describe workspace changes that were discarded with the run.
+        return ChatMessage(
+            role="assistant", content=entry.text if entry.stop_reason == "stop" else ABORTED_RESPONSE_HISTORY
+        )
+    return ChatMessage(role="user", content=PROPOSAL_DECISION_HISTORY[entry.decision])
+
+
+def recent_history(transcript: Sequence[SessionEntry], max_chars: int) -> list[ChatMessage]:
+    """Project the newest transcript entries that fit the prompt budget, oldest first.
 
     Retention bounds how much of a conversation the session holds, not how much a
     provider can accept. A long session would otherwise grow every later prompt past
@@ -38,7 +71,8 @@ def recent_history(history: list[ChatMessage], max_chars: int) -> list[ChatMessa
     """
     kept: list[ChatMessage] = []
     remaining = max_chars
-    for message in reversed(history):
+    for entry in reversed(transcript):
+        message = context_message(entry)
         remaining -= len(json.dumps(message, ensure_ascii=False))
         if remaining < 0:
             break
@@ -48,7 +82,7 @@ def recent_history(history: list[ChatMessage], max_chars: int) -> list[ChatMessa
 
 
 def build_provider_messages(
-    history: list[ChatMessage],
+    transcript: Sequence[SessionEntry],
     schedule_yaml: str,
     question: str,
     attachments: Sequence[SandboxAttachment] = (),
@@ -71,6 +105,6 @@ def build_provider_messages(
         system_content += f"\nOptimization result: {WORKSPACE_OPTIMIZER_RESULT}."
     return [
         ChatMessage(role="system", content=system_content),
-        *recent_history(history, max_history_chars),
+        *recent_history(transcript, max_history_chars),
         ChatMessage(role="user", content=question),
     ]

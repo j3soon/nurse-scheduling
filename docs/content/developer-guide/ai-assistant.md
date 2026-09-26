@@ -57,7 +57,7 @@ stateDiagram-v2
     running --> stale: cleanup, conversation version changed
     running --> failed: cleanup after error
     running --> stopping: Stop, disconnect, or shutdown
-    stopping --> stopped: cleanup finishes
+    stopping --> stopped: cleanup finishes, prompt saved if current
     completed --> [*]
     stale --> [*]
     failed --> [*]
@@ -181,14 +181,16 @@ counterparts, not identical APIs or a mapping of Pi's separate harness runtime.
 
 ```mermaid
 flowchart TB
-    Start[<b>Browser message or optimizer follow-up</b>] --> Admit[<b>Admit run</b><br/>Reserve schedule, history, version]
+    Start[<b>Browser message or optimizer follow-up</b>] --> Admit[<b>Admit run</b><br/>Reserve schedule, transcript, version]
     Admit --> Step{<b>Model step</b>}
     Step -->|Text or reasoning| Text[Stream delta or reasoning] --> Step
     Step -->|Workspace tool| Tool[Run E2B tool<br/>Return result, working-copy preview if valid] --> Step
     Step -->|Optimizer tool| Job[Start, inspect, or finish job<br/>Return tool result] --> Step
     Step -->|Final answer| Cleanup[Read final YAML if used<br/>Cleanup sandbox]
+    Step -->|Stop or disconnect| Cleanup
     Cleanup --> Check{Conversation version and outcome}
     Check -->|Current| Done[Save answer and any proposal<br/>SSE done]
+    Check -->|Stopped| Stopped[Save prompt and aborted answer if current<br/>SSE stopped]
     Check -->|Changed| Stale[SSE stale<br/>Discard result]
     Check -->|Failure| Error[SSE error<br/>Discard result]
 
@@ -208,11 +210,14 @@ the server run continues.
 
 The three paths below show a model step in detail. Text and tool requests can
 occur in the same provider response, and a run may loop through several model
-responses. A failed, stopped, or stale run can leave provisional activity in
-the browser, but its answer and candidate do not enter model conversation
-history. Every run ends with one terminal event. A stopped response keeps its
-partial output under a stopped status, and unfinished tool calls are marked
-interrupted.
+responses. A failed or stale run can leave provisional activity in the
+browser, but its prompt, answer, and candidate do not enter the session
+transcript. A stopped run keeps its prompt so a follow-up can refer to it. Its
+partial answer is stored as aborted, and model context replaces it with a short
+interruption note, much as Pi skips aborted assistant messages. The candidate
+is discarded with the sandbox. Every run ends with one terminal event. The
+browser keeps a stopped response's partial output under a stopped status and
+marks unfinished tool calls interrupted.
 
 ### Text-only response
 
@@ -226,7 +231,7 @@ sequenceDiagram
     participant Model as Model provider
 
     Browser->>AI: POST /messages
-    AI->>Agent: Summary, history, question
+    AI->>Agent: Summary, transcript context, question
     Agent->>Model: Stream response
     loop Text or reasoning chunks
         Model-->>Agent: TextDelta or ReasoningDelta
@@ -237,7 +242,7 @@ sequenceDiagram
     Note over Agent: No E2B sandbox created
     Agent-->>AI: Answer complete
     alt Conversation version current
-        AI->>AI: Save answer to history
+        AI->>AI: Save answer to transcript
         AI-->>Browser: SSE done
     else Version changed
         AI-->>Browser: SSE stale
@@ -246,8 +251,8 @@ sequenceDiagram
 
 </div>
 
-Reasoning is streamed separately from answer text. It is not saved to
-conversation history or sent back to the provider on later runs.
+Reasoning is streamed separately from answer text. It is not saved to the
+session transcript or sent back to the provider on later runs.
 
 ### Workspace and model tools
 
