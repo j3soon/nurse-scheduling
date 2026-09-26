@@ -302,13 +302,13 @@ def test_terminal_background_event_is_published_only_after_history_cleanup(monke
         running = asyncio.create_task(app.state.session_optimizer._on_completion(session.id, "Review", None))
         await finalizing.wait()
         assert app.state.runs.busy(session.id)
-        assert [event.type for event in app.state.session_event_broker.events_after(session.id)] == ["turn_start"]
+        assert [event.type for event in app.state.session_event_broker.events_after(session.id)] == ["run_start"]
         app.state.runs.stop(session.id)
         release.set()
         await running
         assert not app.state.runs.busy(session.id)
         assert [event.type for event in app.state.session_event_broker.events_after(session.id)] == [
-            "turn_start",
+            "run_start",
             "error",
         ]
 

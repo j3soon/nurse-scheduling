@@ -70,8 +70,8 @@ CANDIDATE_VALIDATION_ERROR = (
     "discarded. The canonical schedule was not changed."
 )
 PROVIDER_ERROR = "The AI provider failed. Please try again."
-SANDBOX_TURN_TIMEOUT_ERROR = "The AI response timed out. Please try again."
-STALE_TURN_ERROR = "The schedule changed while this response was generated, so the response was discarded."
+SANDBOX_RUN_TIMEOUT_ERROR = "The AI response timed out. Please try again."
+STALE_RUN_ERROR = "The schedule changed while this response was generated, so the response was discarded."
 logger = logging.getLogger("nurse_scheduling.ai")
 
 
@@ -364,8 +364,8 @@ class AgentSession:
 
         async def emit(event_type: str, data: dict[str, object]) -> None:
             nonlocal terminal_event
-            # Every replayable fragment identifies its turn, even after turn_start expires.
-            data = {**data, "turn_id": run.id} if background else data
+            # Every replayable fragment identifies its run, even after run_start expires.
+            data = {**data, "run_id": run.id} if background else data
             if event_type in TERMINAL_EVENTS:
                 terminal_event = event_type, data
             else:
@@ -382,7 +382,7 @@ class AgentSession:
 
         try:
             if background:
-                await emit("turn_start", {"message_id": run.id, "trigger": "optimizer"})
+                await emit("run_start", {"message_id": run.id, "trigger": "optimizer"})
             if history_log is not None:
                 logged = True
                 logged = await write_history(
@@ -453,7 +453,7 @@ class AgentSession:
                     "finish_turn", run.id, outcome, None, output.usage, output.entries[1:]
                 )
             if not completion.run_saved:
-                await emit("stale", {"message": STALE_TURN_ERROR})
+                await emit("stale", {"message": STALE_RUN_ERROR})
                 return
             if completion.history_trimmed_count and completion.history_trimmed_count != dropped_history:
                 await emit("history_trimmed", {"dropped": completion.history_trimmed_count})
@@ -483,7 +483,7 @@ class AgentSession:
             if isinstance(exc, ProviderError):
                 error_code, message = "provider_error", PROVIDER_ERROR
             elif isinstance(exc, SandboxRunTimeoutError):
-                error_code, message = "sandbox_timeout", SANDBOX_TURN_TIMEOUT_ERROR
+                error_code, message = "sandbox_timeout", SANDBOX_RUN_TIMEOUT_ERROR
             elif isinstance(exc, SandboxCandidateError):
                 error_code, message = "candidate_validation", CANDIDATE_VALIDATION_ERROR
             else:

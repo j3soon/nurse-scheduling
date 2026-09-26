@@ -79,7 +79,7 @@ download is replaced or the page unmounts.
 AI operation state belongs to `ChatLifecycle`. Finish only the operation that
 owns a callback and derive busy/Stop state from its phases. Scope stream callbacks
 to their connection, and scope other async completions to their conversation.
-Replayable events carry turn identity and advance the cursor only after a complete
+Replayable events carry run identity and advance the cursor only after a complete
 SSE frame. Test overlapping foreground completion and background replay explicitly.
 Apply streamed assistant output from both streams through `applyAssistantEvent`
 and keep only stream-specific ownership and terminal handling in the page. When

@@ -95,7 +95,7 @@ class WorkspaceLimits:
     """Trusted orchestration and AI-context limits for one workspace run."""
 
     max_schedule_bytes: int
-    turn_timeout_seconds: float
+    run_timeout_seconds: float
     cleanup_timeout_seconds: float
     bash_command_timeout_seconds: float
     max_tool_rounds: int
@@ -107,7 +107,7 @@ class WorkspaceLimits:
         """Collect workspace run limits from validated application settings."""
         return cls(
             max_schedule_bytes=settings.max_schedule_bytes,
-            turn_timeout_seconds=settings.sandbox_turn_timeout_seconds,
+            run_timeout_seconds=settings.sandbox_turn_timeout_seconds,
             cleanup_timeout_seconds=settings.sandbox_cleanup_timeout_seconds,
             bash_command_timeout_seconds=settings.sandbox_command_timeout_seconds,
             max_tool_rounds=settings.agent_max_tool_rounds,

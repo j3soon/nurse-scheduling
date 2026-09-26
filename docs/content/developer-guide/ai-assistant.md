@@ -9,8 +9,8 @@ browser schedule only after the user approves a proposal.
 
 A **run** spans one complete answer, including cleanup and saving its result.
 A **turn**, following Pi terminology, is one model response plus its requested
-tool executions. An **AgentSession** persists across runs. Existing SSE fields
-such as `turn_id` and `turn_start` still identify a complete run for compatibility.
+tool executions. An **AgentSession** persists across runs. Code, SSE events, and
+chat history name the complete answer a run, such as `run_id` and `run_start`.
 
 This page follows a run from admission through the model, workspace, and
 optimizer paths. It also covers proposals, the HTTP API, and operational checks.
@@ -436,7 +436,7 @@ sequenceDiagram
     participant E2B as E2B sandbox
     participant Jobs as SessionOptimizer
     participant API as Optimizer API
-    participant Turns as SessionRuns / AgentSession
+    participant Runs as SessionRuns / AgentSession
 
     Note over Agent,Jobs: Model requests an optimizer tool within an admitted run
     Agent->>Agent: Open tool batch
@@ -495,9 +495,9 @@ sequenceDiagram
                     Jobs->>API: Delete remote job
                     opt Session still owns job
                         Jobs-->>Browser: Session SSE optimization state
-                        Jobs->>Turns: Queue result review behind active run
-                        Turns-->>Browser: Session SSE turn_start when admitted
-                        Turns->>Agent: Run review run with result JSON and retained XLSX if any
+                        Jobs->>Runs: Queue result review behind active run
+                        Runs-->>Browser: Session SSE run_start when admitted
+                        Runs->>Agent: Start review run with result JSON and retained XLSX if any
                         Agent-->>Browser: Session SSE answer and terminal event
                     end
                 end
@@ -539,7 +539,7 @@ download it through the session-owned route.
 Foreground answers use the message request's SSE stream. Optimizer progress
 and result-review runs use replayable session SSE with `Last-Event-ID`. The
 broker retains up to 1,000 run events and 100 progress events per session.
-Events carry `turn_id` so the browser can attach replayed fragments to the
+Events carry `run_id` so the browser can attach replayed fragments to the
 right answer. Browser operation tokens prevent an older stream callback from
 replacing newer state.
 
@@ -549,7 +549,7 @@ replacing newer state.
 | `tool_start`, `tool` | Tool request and completed result, correlated by `tool_call_id` and including success status. |
 | `schedule_change`, `proposal` | Working-copy preview and final candidate diff. |
 | `steering`, `history_trimmed` | Queued input consumed and prompt-history reduction. |
-| `optimization`, `optimization_progress`, `turn_start` | Job state, progress, and a background review run. |
+| `optimization`, `optimization_progress`, `run_start` | Job state, progress, and a background review run. |
 | `done`, `stopped`, `stale`, `error` | Terminal run outcomes. |
 
 The service retries a provider timeout only before receiving a streamed event,

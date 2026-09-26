@@ -533,7 +533,7 @@ def create_app(
         status_code=status.HTTP_202_ACCEPTED,
         dependencies=[Depends(require_auth)],
     )
-    async def stop_active_turn(
+    async def stop_active_run(
         session_id: str,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> Response:

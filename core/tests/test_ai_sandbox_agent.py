@@ -84,7 +84,7 @@ def _run_call(command: str = "edit") -> list[object]:
 def _limits(**overrides) -> WorkspaceLimits:
     values = {
         "max_schedule_bytes": SCHEDULE_BYTE_LIMIT,
-        "turn_timeout_seconds": 2,
+        "run_timeout_seconds": 2,
         "cleanup_timeout_seconds": 1,
         "bash_command_timeout_seconds": 10,
         "max_tool_rounds": 10,
@@ -644,7 +644,7 @@ def test_cancelling_before_a_tool_call_does_not_start_a_sandbox():
                 factory,
                 schedule_yaml(),
                 MESSAGES,
-                _limits(turn_timeout_seconds=30),
+                _limits(run_timeout_seconds=30),
             ):
                 pass
 
@@ -667,7 +667,7 @@ def test_whole_turn_timeout_before_a_tool_call_does_not_start_a_sandbox():
     factory = FakeSandboxFactory()
 
     with pytest.raises(SandboxRunTimeoutError, match="0.01-second limit"):
-        _collect(WaitingProvider(), factory, turn_timeout_seconds=0.01)
+        _collect(WaitingProvider(), factory, run_timeout_seconds=0.01)
 
     assert factory.created == []
 

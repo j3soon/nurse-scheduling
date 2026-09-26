@@ -38,7 +38,7 @@ const mockQueueMessage = vi.hoisted(() => vi.fn());
 const mockUpdateSessionSchedule = vi.hoisted(() => vi.fn());
 const mockLoadFromYaml = vi.hoisted(() => vi.fn());
 const mockUseTabSwitchWarning = vi.hoisted(() => vi.fn());
-const MockAiStaleTurnError = vi.hoisted(() => class AiStaleTurnError extends Error {});
+const MockAiStaleRunError = vi.hoisted(() => class AiStaleRunError extends Error {});
 const MockAiHttpError = vi.hoisted(() => class AiHttpError extends Error {
   constructor(message: string, readonly status: number) {
     super(message);
@@ -52,7 +52,7 @@ const mockNormalizeAiEndpoint = vi.hoisted(() => (endpoint: string) => {
 
 vi.mock('./aiClient', () => ({
   AiHttpError: MockAiHttpError,
-  AiStaleTurnError: MockAiStaleTurnError,
+  AiStaleRunError: MockAiStaleRunError,
   DEFAULT_SESSION_RETENTION_SECONDS: 172800,
   LOCAL_AI_API_URL: 'http://localhost:8001',
   PRODUCTION_AI_API_URL: 'https://api.nursescheduling.org/ai',
@@ -376,7 +376,7 @@ describe('ExperimentalAiPage', () => {
   it('renders an assistant turn when background optimization wakes the agent', async () => {
     const user = userEvent.setup();
     let backgroundCallbacks: {
-      onTurnStart?: (messageId: string, trigger: string) => void;
+      onRunStart?: (messageId: string, trigger: string) => void;
       onDelta: (text: string) => void;
       onToolStart?: (activity: { name: string; arguments: string }) => void;
       onTool?: (activity: { name: string; arguments: string; result: string; ok: boolean }) => void;
@@ -432,7 +432,7 @@ describe('ExperimentalAiPage', () => {
         terminal: true,
         downloadable: true,
       });
-      backgroundCallbacks?.onTurnStart?.('optimizer-turn', 'optimizer');
+      backgroundCallbacks?.onRunStart?.('optimizer-turn', 'optimizer');
       backgroundCallbacks?.onToolStart?.({ name: 'bash', arguments: '{"command":"echo ready"}' });
     });
     expect(screen.getByText('Background tool running · bash')).toBeInTheDocument();
@@ -528,7 +528,7 @@ describe('ExperimentalAiPage', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
 
-    // The bounded replay buffer dropped turn_start before this reconnect.
+    // The bounded replay buffer dropped run_start before this reconnect.
     act(() => {
       backgroundCallbacks?.onDelta('The optimizer returned score 23.');
       backgroundCallbacks?.onDone?.();
@@ -541,7 +541,7 @@ describe('ExperimentalAiPage', () => {
   it('ends a stale background turn instead of leaving it pending', async () => {
     const user = userEvent.setup();
     let backgroundCallbacks: {
-      onTurnStart?: (messageId: string, trigger: string) => void;
+      onRunStart?: (messageId: string, trigger: string) => void;
       onDelta: (text: string) => void;
       onStale?: (message: string) => void;
     } | undefined;
@@ -559,7 +559,7 @@ describe('ExperimentalAiPage', () => {
     await screen.findByText('Alice works Monday.');
 
     act(() => {
-      backgroundCallbacks?.onTurnStart?.('optimizer-turn', 'optimizer');
+      backgroundCallbacks?.onRunStart?.('optimizer-turn', 'optimizer');
       backgroundCallbacks?.onDelta('Obsolete partial answer.');
       backgroundCallbacks?.onStale?.('The schedule changed while this response was generated.');
     });
@@ -809,7 +809,7 @@ describe('ExperimentalAiPage', () => {
     await user.type(input, 'Optimize');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
-    act(() => background?.onTurnStart?.('review', 'optimizer'));
+    act(() => background?.onRunStart?.('review', 'optimizer'));
     await user.type(input, 'Explain the result');
     fireEvent.submit(input.closest('form')!);
     await waitFor(() => expect(mockQueueMessage).toHaveBeenCalledOnce());
@@ -833,7 +833,7 @@ describe('ExperimentalAiPage', () => {
     await screen.findByText('Alice works Monday.');
     await user.click(screen.getByRole('button', { name: 'Start new chat' }));
     act(() => {
-      background?.onTurnStart?.('old', 'optimizer');
+      background?.onRunStart?.('old', 'optimizer');
       background?.onDelta('Leaked old answer');
       background?.onProposal?.('Old proposal');
       background?.onEventId?.(900);
@@ -846,7 +846,7 @@ describe('ExperimentalAiPage', () => {
   it('stops a background assistant turn through the session endpoint', async () => {
     const user = userEvent.setup();
     let backgroundCallbacks: {
-      onTurnStart?: (messageId: string, trigger: string) => void;
+      onRunStart?: (messageId: string, trigger: string) => void;
       onDelta: (text: string) => void;
       onStopped?: () => void;
     } | undefined;
@@ -862,7 +862,7 @@ describe('ExperimentalAiPage', () => {
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
-    act(() => backgroundCallbacks?.onTurnStart?.('optimizer-turn', 'optimizer'));
+    act(() => backgroundCallbacks?.onRunStart?.('optimizer-turn', 'optimizer'));
 
     await user.click(screen.getByRole('button', { name: 'Stop' }));
     expect(mockStopSession).toHaveBeenCalledWith('session-id', null, '/ai');
@@ -878,7 +878,7 @@ describe('ExperimentalAiPage', () => {
     async outcome => {
       const user = userEvent.setup();
       let backgroundCallbacks: {
-        onTurnStart?: (messageId: string, trigger: string) => void;
+        onRunStart?: (messageId: string, trigger: string) => void;
         onDelta: (text: string) => void;
         onDone?: (messageId?: string) => void;
         onStale?: (message: string) => void;
@@ -896,7 +896,7 @@ describe('ExperimentalAiPage', () => {
       await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
       await user.click(screen.getByRole('button', { name: 'Send' }));
       await screen.findByText('Alice works Monday.');
-      act(() => backgroundCallbacks?.onTurnStart?.('optimizer-turn', 'optimizer'));
+      act(() => backgroundCallbacks?.onRunStart?.('optimizer-turn', 'optimizer'));
 
       await user.click(screen.getByRole('button', { name: 'Stop' }));
       expect(mockStopSession).toHaveBeenCalledWith('session-id', null, '/ai');
@@ -913,7 +913,7 @@ describe('ExperimentalAiPage', () => {
       expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
 
       // A turn that ended any other way must not leave the next one unable to stop.
-      act(() => backgroundCallbacks?.onTurnStart?.('optimizer-turn-2', 'optimizer'));
+      act(() => backgroundCallbacks?.onRunStart?.('optimizer-turn-2', 'optimizer'));
       expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled();
     },
   );
@@ -922,7 +922,7 @@ describe('ExperimentalAiPage', () => {
     const user = userEvent.setup();
     mockStopSession.mockRejectedValue(new Error('network down'));
     let backgroundCallbacks: {
-      onTurnStart?: (messageId: string, trigger: string) => void;
+      onRunStart?: (messageId: string, trigger: string) => void;
       onDelta: (text: string) => void;
     } | undefined;
     mockStreamSessionEvents.mockImplementation(async (
@@ -937,7 +937,7 @@ describe('ExperimentalAiPage', () => {
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
-    act(() => backgroundCallbacks?.onTurnStart?.('optimizer-turn', 'optimizer'));
+    act(() => backgroundCallbacks?.onRunStart?.('optimizer-turn', 'optimizer'));
 
     await user.click(screen.getByRole('button', { name: 'Stop' }));
     await act(async () => {});
@@ -1847,7 +1847,7 @@ describe('ExperimentalAiPage', () => {
     ) => {
       callbacks.onScheduleChange?.('description: obsolete proposal');
       callbacks.onDelta('Obsolete response.');
-      throw new MockAiStaleTurnError('The schedule changed.');
+      throw new MockAiStaleRunError('The schedule changed.');
     });
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);

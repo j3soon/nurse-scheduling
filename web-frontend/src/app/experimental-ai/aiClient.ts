@@ -51,8 +51,8 @@ export interface OptimizationProgressActivity {
 export interface StreamCallbacks {
   lastEventId?: number;
   onEventId?: (id: number) => void;
-  onTurnStart?: (messageId: string, trigger: string) => void;
-  onTurnContext?: (messageId: string) => void;
+  onRunStart?: (messageId: string, trigger: string) => void;
+  onRunContext?: (messageId: string) => void;
   onDelta: (text: string) => void;
   onReasoning?: (text: string) => void;
   onTruncated?: () => void;
@@ -103,7 +103,7 @@ interface SsePayload {
   schedule_yaml?: unknown;
   message_id?: unknown;
   tool_call_id?: unknown;
-  turn_id?: unknown;
+  run_id?: unknown;
   trigger?: unknown;
   job_id?: unknown;
   state?: unknown;
@@ -127,10 +127,10 @@ export class AiHttpError extends Error {
   }
 }
 
-export class AiStaleTurnError extends Error {
+export class AiStaleRunError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'AiStaleTurnError';
+    this.name = 'AiStaleRunError';
   }
 }
 
@@ -271,10 +271,10 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
     callbacks.lastEventId = eventId;
     callbacks.onEventId?.(eventId);
   }
-  if (typeof payload.turn_id === 'string') callbacks.onTurnContext?.(payload.turn_id);
+  if (typeof payload.run_id === 'string') callbacks.onRunContext?.(payload.run_id);
 
-  if (eventType === 'turn_start' && typeof payload.message_id === 'string') {
-    callbacks.onTurnStart?.(
+  if (eventType === 'run_start' && typeof payload.message_id === 'string') {
+    callbacks.onRunStart?.(
       payload.message_id,
       typeof payload.trigger === 'string' ? payload.trigger : 'background work',
     );
@@ -350,7 +350,7 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
   } else if (eventType === 'stale') {
     const message = typeof payload.message === 'string' ? payload.message : 'The AI response became stale.';
     if (callbacks.onStale) callbacks.onStale(message);
-    else throw new AiStaleTurnError(message);
+    else throw new AiStaleRunError(message);
   } else if (eventType === 'history_trimmed') {
     const dropped = payload.dropped;
     if (typeof dropped === 'number' && Number.isInteger(dropped) && dropped > 0) {

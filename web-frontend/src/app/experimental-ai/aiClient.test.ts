@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import {
-  AiStaleTurnError,
+  AiStaleRunError,
   PRODUCTION_AI_API_URL,
   approveProposal,
   createSession,
@@ -227,7 +227,7 @@ describe('AI client', () => {
       { onDelta: vi.fn() },
       new AbortController().signal,
       null,
-    )).rejects.toEqual(new AiStaleTurnError('The schedule changed.'));
+    )).rejects.toEqual(new AiStaleRunError('The schedule changed.'));
   });
 
   it('sends arbitrary files as multipart form data', async () => {
@@ -327,7 +327,7 @@ describe('AI client', () => {
     const fetchMock = vi.fn().mockResolvedValue(streamedResponse([
       'id: 1\nevent: optimization\ndata: {"job_id":"opt-1","state":"running","terminal":false,"downloadable":false}\n\n',
       'id: 2\nevent: optimization_progress\ndata: {"job_id":"opt-1","progress":{"currentBestScore":23,"elapsedSeconds":2,"source":"solver"}}\n\n',
-      'id: 3\nevent: turn_start\ndata: {"message_id":"background-1","trigger":"optimizer"}\n\n',
+      'id: 3\nevent: run_start\ndata: {"message_id":"background-1","trigger":"optimizer"}\n\n',
       'id: 4\nevent: delta\ndata: {"text":"Score 23."}\n\n',
       'id: 5\nevent: done\ndata: {"message_id":"background-1"}\n\n',
     ]));
@@ -342,7 +342,7 @@ describe('AI client', () => {
     await streamSessionEvents(
       'session/id',
       {
-        onTurnStart: (messageId, trigger) => starts.push(`${messageId}:${trigger}`),
+        onRunStart: (messageId, trigger) => starts.push(`${messageId}:${trigger}`),
         onDelta: text => texts.push(text),
         onOptimization: optimizations,
         onOptimizationProgress: progress,
@@ -422,15 +422,15 @@ describe('AI client', () => {
 
   it('deduplicates replay and identifies a turn without its retained start event', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
-      'id: 4\nevent: delta\ndata: {"text":"old","turn_id":"old-turn"}\n\n',
-      'id: 5\nevent: delta\ndata: {"text":"new","turn_id":"new-turn"}\n\n',
-      'id: 5\nevent: delta\ndata: {"text":"duplicate","turn_id":"new-turn"}\n\n',
+      'id: 4\nevent: delta\ndata: {"text":"old","run_id":"old-turn"}\n\n',
+      'id: 5\nevent: delta\ndata: {"text":"new","run_id":"new-turn"}\n\n',
+      'id: 5\nevent: delta\ndata: {"text":"duplicate","run_id":"new-turn"}\n\n',
     ])));
     const delta = vi.fn();
     const context = vi.fn();
     const cursor = vi.fn();
     await streamSessionEvents('session', {
-      lastEventId: 4, onDelta: delta, onTurnContext: context, onEventId: cursor,
+      lastEventId: 4, onDelta: delta, onRunContext: context, onEventId: cursor,
     }, new AbortController().signal, null);
     expect(delta).toHaveBeenCalledExactlyOnceWith('new');
     expect(context).toHaveBeenCalledExactlyOnceWith('new-turn');

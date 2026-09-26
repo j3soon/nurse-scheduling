@@ -48,7 +48,7 @@ import { AssistantEvent, applyAssistantEvent, assistantEventCallbacks, interrupt
 import {
   AiCapabilities,
   AiHttpError,
-  AiStaleTurnError,
+  AiStaleRunError,
   DEFAULT_SESSION_RETENTION_SECONDS,
   LOCAL_AI_API_URL,
   OptimizationActivity,
@@ -1077,7 +1077,7 @@ export default function ExperimentalAiPage() {
         ]);
     };
     // A reconnect replays only retained events, so a long turn can lose its own
-    // turn_start. Adopt the remaining output instead of discarding the answer.
+    // run_start. Adopt the remaining output instead of discarding the answer.
     const resumeBackgroundMessage = () => {
       if (lifecycle.getSnapshot().background?.phase !== 'interrupted' && lifecycle.current('background')) return;
       beginBackgroundMessage(lifecycle.current('background')?.id ?? messageId());
@@ -1087,7 +1087,7 @@ export default function ExperimentalAiPage() {
       if (activeId === undefined) return;
       setMessages(previous => previous.map(message => message.id === activeId ? update(message) : message));
     };
-    const failBackgroundTurn = (message: string) => {
+    const failBackgroundRun = (message: string) => {
       updateBackgroundMessage(entry => ({
         ...entry,
         content: entry.content || message,
@@ -1106,10 +1106,10 @@ export default function ExperimentalAiPage() {
           lastSessionEventIdRef.current = id;
           sessionEventsRetryRef.current = 0;
         },
-        onTurnContext: id => {
+        onRunContext: id => {
           if (lifecycle.current('background')?.id !== id) beginBackgroundMessage(id);
         },
-        onTurnStart: beginBackgroundMessage,
+        onRunStart: beginBackgroundMessage,
         ...assistantEventCallbacks(event => {
           resumeBackgroundMessage();
           updateBackgroundMessage(message => applyAssistantEvent(message, event));
@@ -1185,7 +1185,7 @@ export default function ExperimentalAiPage() {
           setError(message);
         },
         onHistoryTrimmed: setTrimmedHistoryCount,
-        onError: failBackgroundTurn,
+        onError: failBackgroundRun,
       }, () => sessionEventsControllerRef.current === controller && !controller.signal.aborted),
       controller.signal,
       authToken,
@@ -1358,18 +1358,18 @@ export default function ExperimentalAiPage() {
       )));
     } catch (streamError) {
       if (!lifecycle.owns(operation)) return;
-      const staleTurnMessage = streamError instanceof AiStaleTurnError ? streamError.message : null;
+      const staleRunMessage = streamError instanceof AiStaleRunError ? streamError.message : null;
       setMessages(previous => previous.map(message => {
         if (message.id !== activeAssistantId) return message;
         if (controller.signal.aborted) return stopResponse(message);
         return {
           ...message,
-          content: staleTurnMessage ?? message.content,
+          content: staleRunMessage ?? message.content,
           status: 'failed',
           responseCompletedAt: Date.now(),
-          activity: staleTurnMessage === null
+          activity: staleRunMessage === null
             ? interruptRunningTools(message.activity ?? [])
-            : [{ kind: 'response' as const, text: staleTurnMessage }],
+            : [{ kind: 'response' as const, text: staleRunMessage }],
           retry: {
             question: activeQuestion,
             requiresAttachments: activeQuestionRequiresAttachments,
@@ -1378,7 +1378,7 @@ export default function ExperimentalAiPage() {
       }));
       if (streamError instanceof AiHttpError && streamError.status === 404) {
         markConversationUnavailable('This chat expired or is no longer available. Start a new chat to continue.');
-      } else if (!controller.signal.aborted && staleTurnMessage === null) {
+      } else if (!controller.signal.aborted && staleRunMessage === null) {
         reportRequestError(streamError, 'The AI request failed.');
       }
     } finally {

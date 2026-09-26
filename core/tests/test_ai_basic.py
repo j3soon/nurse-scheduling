@@ -43,8 +43,8 @@ from fastapi.testclient import TestClient
 from nurse_scheduling.ai.agent_session import (
     CANDIDATE_VALIDATION_ERROR,
     PROVIDER_ERROR,
-    SANDBOX_TURN_TIMEOUT_ERROR,
-    STALE_TURN_ERROR,
+    SANDBOX_RUN_TIMEOUT_ERROR,
+    STALE_RUN_ERROR,
 )
 from nurse_scheduling.ai.app import (
     OWNER_COOKIE,
@@ -1173,7 +1173,7 @@ def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming(monke
 
     assert parse_sse(response.text) == [
         ("delta", {"text": "Obsolete answer."}),
-        ("stale", {"message": STALE_TURN_ERROR}),
+        ("stale", {"message": STALE_RUN_ERROR}),
     ]
     assert len(saved) == 1
     assert saved[0][1] == "stale"
@@ -1188,7 +1188,7 @@ def test_sandbox_timeout_does_not_expose_exception_details() -> None:
 
     response = client.post(f"/sessions/{session_id}/messages", json={"message": "Wait"})
 
-    assert parse_sse(response.text) == [("error", {"message": SANDBOX_TURN_TIMEOUT_ERROR})]
+    assert parse_sse(response.text) == [("error", {"message": SANDBOX_RUN_TIMEOUT_ERROR})]
     assert private_error not in response.text
 
 
@@ -1821,7 +1821,7 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
             "optimization",
             "optimization_progress",
             "optimization",
-            "turn_start",
+            "run_start",
             "tool_start",
             "tool",
             "delta",
@@ -1832,7 +1832,7 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         assert events[1].data["progress"] == {"currentBestScore": 23, "elapsedSeconds": 2}
         assert events[2].data["state"] == "completed"
         assert events[2].data["downloadable"] is True
-        assert events[6].data == {"text": "The optimizer returned score 23.", "turn_id": events[3].data["message_id"]}
+        assert events[6].data == {"text": "The optimizer returned score 23.", "run_id": events[3].data["message_id"]}
         if history_enabled:
             assert len(history_starts) == 3
             assert history_starts[-1][1] == session_id

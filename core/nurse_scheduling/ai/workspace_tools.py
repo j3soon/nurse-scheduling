@@ -133,7 +133,7 @@ async def run_workspace(
     agent = agent or Agent()
     metrics = metrics or SandboxRunMetrics()
     try:
-        async with asyncio.timeout(limits.turn_timeout_seconds):
+        async with asyncio.timeout(limits.run_timeout_seconds):
             async with sandbox_workspace(
                 factory,
                 limits.cleanup_timeout_seconds,
@@ -179,7 +179,7 @@ async def run_workspace(
                     yield AgentProposal(review.proposal.text, review.proposal.diff.render())
     except TimeoutError as exc:
         raise SandboxRunTimeoutError(
-            f"The sandbox agent turn exceeded its {limits.turn_timeout_seconds:g}-second limit."
+            f"The sandbox agent run exceeded its {limits.run_timeout_seconds:g}-second limit."
         ) from exc
     finally:
         logger.info(
