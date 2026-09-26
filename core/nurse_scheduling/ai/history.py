@@ -33,12 +33,12 @@ from psycopg.types.json import Jsonb
 
 from .provider import TokenUsage
 from .transcript import (
-    AssistantEntry,
+    AgentMessage,
+    AssistantMessage,
     ProposalDecision,
     ProposalDecisionEntry,
-    SessionEntry,
-    ToolResultEntry,
-    UserEntry,
+    ToolResultMessage,
+    UserMessage,
 )
 
 logger = logging.getLogger("nurse_scheduling.ai.history")
@@ -111,7 +111,7 @@ class ChatHistory:
                 (turn_id, session_id, model, attachment_count),
             ).fetchone()
             if inserted is not None:
-                _insert_entries(connection, turn_id, 0, [UserEntry(prompt)])
+                _insert_entries(connection, turn_id, 0, [UserMessage(prompt)])
 
     def finish_turn(
         self,
@@ -119,7 +119,7 @@ class ChatHistory:
         status: TurnStatus,
         error_code: str | None,
         usage: TokenUsage | None,
-        entries: Sequence[SessionEntry] = (),
+        entries: Sequence[AgentMessage] = (),
     ) -> None:
         """Keep the first terminal result when cleanup or writes are repeated.
 
@@ -160,13 +160,13 @@ class ChatHistory:
             await self.write("prune")
 
 
-def _insert_entries(connection, turn_id: str, first_seq: int, entries: Sequence[SessionEntry]) -> None:
+def _insert_entries(connection, turn_id: str, first_seq: int, entries: Sequence[AgentMessage]) -> None:
     rows = []
     for seq, entry in enumerate(entries, first_seq):
         row = dict.fromkeys(_ENTRY_COLUMNS)
-        if isinstance(entry, UserEntry):
+        if isinstance(entry, UserMessage):
             row.update(type="user", text=entry.text)
-        elif isinstance(entry, AssistantEntry):
+        elif isinstance(entry, AssistantMessage):
             row.update(
                 type="assistant",
                 text=entry.text,
@@ -174,7 +174,7 @@ def _insert_entries(connection, turn_id: str, first_seq: int, entries: Sequence[
                 stop_reason=entry.stop_reason,
                 tool_calls=Jsonb([asdict(call) for call in entry.tool_calls]) if entry.tool_calls else None,
             )
-        elif isinstance(entry, ToolResultEntry):
+        elif isinstance(entry, ToolResultMessage):
             row.update(
                 type="tool_result",
                 text=entry.text,

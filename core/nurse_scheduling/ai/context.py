@@ -27,12 +27,12 @@ from .optimizer import WORKSPACE_OPTIMIZER_RESULT
 from .provider import ChatMessage
 from .schedule_context import describe_schedule
 from .transcript import (
-    AssistantEntry,
+    AgentMessage,
+    AssistantMessage,
     ProposalDecision,
     ProposalDecisionEntry,
-    SessionEntry,
-    ToolResultEntry,
-    UserEntry,
+    ToolResultMessage,
+    UserMessage,
 )
 from .workspace import SANDBOX_SYSTEM_PROMPT, SandboxAttachment
 
@@ -56,20 +56,20 @@ PROPOSAL_DECISION_HISTORY: dict[ProposalDecision, str] = {
 ABORTED_RESPONSE_HISTORY = "[This response was interrupted before completion. Its workspace changes were discarded.]"
 
 
-def retained_entries(entries: Sequence[SessionEntry]) -> list[SessionEntry]:
+def retained_entries(entries: Sequence[AgentMessage]) -> list[AgentMessage]:
     """Keep what later model context may use from a run's canonical entries.
 
     Tool calls, tool results, and reasoning describe a sandbox that no longer
     exists, so later runs never see them. The chat history log keeps the full run.
     """
     return [
-        AssistantEntry(entry.text, entry.stop_reason) if isinstance(entry, AssistantEntry) else entry
+        AssistantMessage(entry.text, entry.stop_reason) if isinstance(entry, AssistantMessage) else entry
         for entry in entries
-        if not isinstance(entry, ToolResultEntry)
+        if not isinstance(entry, ToolResultMessage)
     ]
 
 
-def _projected_messages(transcript: Sequence[SessionEntry]) -> list[tuple[bool, ChatMessage]]:
+def _projected_messages(transcript: Sequence[AgentMessage]) -> list[tuple[bool, ChatMessage]]:
     """Project entries into prior-run context, marking which messages are prompts."""
     projected: list[tuple[bool, ChatMessage]] = []
     answer: list[str] = []
@@ -88,12 +88,12 @@ def _projected_messages(transcript: Sequence[SessionEntry]) -> list[tuple[bool, 
         answer, interrupted, answering = [], False, False
 
     for entry in transcript:
-        if isinstance(entry, AssistantEntry):
+        if isinstance(entry, AssistantMessage):
             # The responses between two prompts form one answer, as the user saw it.
             answering = True
             answer.append(entry.text)
             interrupted = interrupted or entry.stop_reason in ("aborted", "error")
-        elif isinstance(entry, UserEntry):
+        elif isinstance(entry, UserMessage):
             close_answer()
             projected.append((True, ChatMessage(role="user", content=entry.text)))
         elif isinstance(entry, ProposalDecisionEntry):
@@ -103,12 +103,12 @@ def _projected_messages(transcript: Sequence[SessionEntry]) -> list[tuple[bool, 
     return projected
 
 
-def projected_history(transcript: Sequence[SessionEntry]) -> list[ChatMessage]:
+def projected_history(transcript: Sequence[AgentMessage]) -> list[ChatMessage]:
     """Project the whole transcript into prior-run messages."""
     return [message for _prompt, message in _projected_messages(transcript)]
 
 
-def recent_history(transcript: Sequence[SessionEntry], max_chars: int) -> list[ChatMessage]:
+def recent_history(transcript: Sequence[AgentMessage], max_chars: int) -> list[ChatMessage]:
     """Project the newest transcript messages that fit the prompt budget, oldest first.
 
     Retention bounds how much of a conversation the session holds, not how much a
@@ -141,7 +141,7 @@ def prepare_provider_request(conversation: Sequence[ChatMessage]) -> list[ChatMe
 
 
 def build_provider_messages(
-    transcript: Sequence[SessionEntry],
+    transcript: Sequence[AgentMessage],
     schedule_yaml: str,
     question: str,
     attachments: Sequence[SandboxAttachment] = (),

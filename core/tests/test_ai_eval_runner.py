@@ -37,7 +37,6 @@ from nurse_scheduling.ai.provider import (
     ReasoningDelta,
     TextDelta,
     TokenUsage,
-    ToolCall,
     ToolCallRequest,
 )
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
@@ -47,6 +46,7 @@ from nurse_scheduling.ai.schema import (
     TAIWAN_HOLIDAYS_SOURCE,
     load_user_guide_references,
 )
+from nurse_scheduling.ai.transcript import ToolCall
 from nurse_scheduling.ai.workspace import WORKSPACE_ATTACHMENT_MANIFEST, WORKSPACE_SCHEDULE, SandboxRunMetrics
 
 from .ai_eval.grading import EvalCase, ExpectedDiff, ToolUsageExpectation, TurnAction, load_cases

@@ -49,12 +49,12 @@ from .optimizer import OptimizerArtifact, SessionOptimizer
 from .provider import ProviderError, TokenUsage, ToolCapableChatProvider
 from .sandbox import SandboxError, SandboxFactory
 from .transcript import (
-    AssistantEntry,
+    AgentMessage,
+    AssistantMessage,
     ProposalDecision,
     ProposalDecisionEntry,
-    SessionEntry,
-    ToolResultEntry,
-    UserEntry,
+    ToolResultMessage,
+    UserMessage,
 )
 from .workspace import (
     AgentScheduleChange,
@@ -101,7 +101,7 @@ class SessionPersistence(Protocol):
     def finish(
         self,
         session_id: str,
-        entries: Sequence[SessionEntry],
+        entries: Sequence[AgentMessage],
         proposal: tuple[str, str] | None = None,
         *,
         snapshot: RunSnapshot,
@@ -127,7 +127,7 @@ class SessionRuntime:
 class RunOutput:
     """Build the run's canonical entries and project agent events onto the SSE contract."""
 
-    entries: list[SessionEntry]
+    entries: list[AgentMessage]
     assistant_parts: list[str] = field(default_factory=list)
     # Output of the model response in progress, which only an interruption can leave open.
     pending_text: list[str] = field(default_factory=list)
@@ -139,9 +139,9 @@ class RunOutput:
     def text(self) -> str:
         return "".join(self.assistant_parts)
 
-    def interrupted_entries(self, stop_reason: Literal["aborted", "error"]) -> list[SessionEntry]:
+    def interrupted_entries(self, stop_reason: Literal["aborted", "error"]) -> list[AgentMessage]:
         """End the run with Pi's interrupted assistant message, holding any partial response."""
-        interrupted = AssistantEntry("".join(self.pending_text), stop_reason, "".join(self.pending_reasoning))
+        interrupted = AssistantMessage("".join(self.pending_text), stop_reason, "".join(self.pending_reasoning))
         return [*self.entries, interrupted]
 
     def consume(self, event: AgentEvent | AgentScheduleChange) -> tuple[str, dict[str, object]] | None:
@@ -162,7 +162,7 @@ class RunOutput:
         elif isinstance(event, ToolExecutionStart):
             return "tool_start", {"tool_call_id": event.tool_call_id, "name": event.name, "arguments": event.arguments}
         elif isinstance(event, ToolExecutionEnd):
-            self.entries.append(ToolResultEntry(event.tool_call_id, event.name, event.result, event.ok))
+            self.entries.append(ToolResultMessage(event.tool_call_id, event.name, event.result, event.ok))
             return "tool", {
                 "tool_call_id": event.tool_call_id,
                 "name": event.name,
@@ -171,7 +171,7 @@ class RunOutput:
                 "ok": event.ok,
             }
         elif isinstance(event, AgentSteering):
-            self.entries.append(UserEntry(event.text))
+            self.entries.append(UserMessage(event.text))
             return "steering", {"message_id": event.message_id, "message": event.text}
         elif isinstance(event, AgentScheduleChange):
             return "schedule_change", {"schedule_yaml": event.schedule_yaml}
@@ -189,7 +189,7 @@ class AgentSession:
     expires_at: float
     schedule_yaml: str
     revision: str
-    transcript: list[SessionEntry] = field(default_factory=list)
+    transcript: list[AgentMessage] = field(default_factory=list)
     dropped_history_messages: int = 0
     version: int = 0
     snapshot: RunSnapshot | None = None
@@ -222,7 +222,7 @@ class AgentSession:
     def finish_run(
         self,
         snapshot: RunSnapshot,
-        entries: Sequence[SessionEntry],
+        entries: Sequence[AgentMessage],
         proposal: tuple[str, str] | None,
     ) -> RunCompletion:
         """Commit only the current reservation, releasing it even when its version is stale."""
@@ -354,7 +354,7 @@ class AgentSession:
         if attachments:
             filenames = json.dumps([attachment.filename for attachment in attachments], ensure_ascii=False)
             history_question += f"\n[Files were attached: {filenames}.]"
-        output = RunOutput([UserEntry(history_question)])
+        output = RunOutput([UserMessage(history_question)])
         completed = False
         logged = False
         outcome = "cancelled"

@@ -31,7 +31,7 @@ from e2b.sandbox.commands.command_handle import CommandExitException
 
 from nurse_scheduling.ai.agent_loop import agent_loop
 from nurse_scheduling.ai.agent_types import AgentTool, AgentToolResult, ToolExecutionEnd
-from nurse_scheduling.ai.provider import ChatMessage, TextDelta, ToolCall, ToolCallRequest
+from nurse_scheduling.ai.provider import ChatMessage, TextDelta, ToolCallRequest
 from nurse_scheduling.ai.sandbox import SandboxError, SandboxFileNotFoundError, managed_sandbox
 from nurse_scheduling.ai.sandbox import e2b as e2b_module
 from nurse_scheduling.ai.sandbox.e2b import (
@@ -40,6 +40,7 @@ from nurse_scheduling.ai.sandbox.e2b import (
     E2BSandboxFactory,
     E2BSandboxState,
 )
+from nurse_scheduling.ai.transcript import ToolCall
 
 
 class FakeE2BSandbox:

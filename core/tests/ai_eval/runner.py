@@ -63,7 +63,7 @@ from nurse_scheduling.ai.schema import (
     load_taiwan_holidays_reference,
     load_user_guide_references,
 )
-from nurse_scheduling.ai.transcript import AssistantEntry, ProposalDecisionEntry, SessionEntry, UserEntry
+from nurse_scheduling.ai.transcript import AgentMessage, AssistantMessage, ProposalDecisionEntry, UserMessage
 from nurse_scheduling.ai.workspace import SANDBOX_SYSTEM_PROMPT, SandboxRunMetrics, WorkspaceLimits
 from nurse_scheduling.ai.workspace_tools import run_workspace
 from nurse_scheduling.loader import _load_yaml
@@ -220,7 +220,7 @@ async def run_case(
     initial_text = text
     counting = _CountingProvider(provider)
 
-    history: list[SessionEntry] = []
+    history: list[AgentMessage] = []
     prompt_messages: list[list[ChatMessage]] = []
     answers: list[str] = []
     intermediate_proposals: list[bool] = []
@@ -304,7 +304,7 @@ async def run_case(
                 intermediate_proposals.append(turn_proposal is not None)
             if turn_index + 1 == case.proposal_turn:
                 proposal_event = turn_proposal
-            history.extend([UserEntry(question), AssistantEntry(answer_text)])
+            history.extend([UserMessage(question), AssistantMessage(answer_text)])
             action = turn_actions.get(turn_index + 1)
             if action is not None:
                 text, pending_proposal = _apply_turn_action(action, text, pending_proposal, history, events)
@@ -383,7 +383,7 @@ def _apply_turn_action(
     action: Any,
     text: str,
     pending: AgentProposal | None,
-    history: list[SessionEntry],
+    history: list[AgentMessage],
     events: list[dict[str, Any]],
 ) -> tuple[str, AgentProposal | None]:
     """Apply one trusted proposal lifecycle action between user turns."""

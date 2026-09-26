@@ -39,9 +39,9 @@ from nurse_scheduling.ai.provider import (
     ResponseEnd,
     TextDelta,
     TokenUsage,
-    ToolCall,
     ToolCallRequest,
 )
+from nurse_scheduling.ai.transcript import ToolCall
 
 
 async def _collect(stream: AsyncIterator) -> list:

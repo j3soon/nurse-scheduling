@@ -26,7 +26,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from .transcript import SessionEntry
+from .transcript import AgentMessage
 
 # Each run publishes exactly one of these, after its cleanup, whichever transport carries it.
 TERMINAL_EVENTS = frozenset({"done", "stopped", "stale", "error"})
@@ -36,7 +36,7 @@ TERMINAL_EVENTS = frozenset({"done", "stopped", "stale", "error"})
 class RunSnapshot:
     """A capability to commit one conversation version and accept its steering."""
 
-    transcript: list[SessionEntry]
+    transcript: list[AgentMessage]
     schedule_yaml: str
     version: int
     proposal_yaml: str

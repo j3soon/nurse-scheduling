@@ -44,11 +44,10 @@ from nurse_scheduling.ai.provider import (
     ReasoningDelta,
     ResponseEnd,
     TextDelta,
-    ToolCall,
     ToolCallRequest,
     ToolResultImage,
 )
-from nurse_scheduling.ai.transcript import AssistantEntry
+from nurse_scheduling.ai.transcript import AssistantMessage, ToolCall
 
 QUESTION: list[ChatMessage] = [{"role": "user", "content": "Who works on the first day?"}]
 TOOLS = [
@@ -120,7 +119,7 @@ def test_a_question_only_run_streams_text():
     assert _run(provider, message_ends=True) == [
         MessageTextDelta("P1 "),
         MessageTextDelta("works."),
-        MessageEnd(AssistantEntry("P1 works.")),
+        MessageEnd(AssistantMessage("P1 works.")),
     ]
     assert len(provider.requests) == 1
 
@@ -477,7 +476,7 @@ def test_closing_agent_stream_resets_state_before_another_prompt():
         assert not agent.state.is_streaming
         assert [event async for event in agent.prompt(FakeProvider(_text("new")), QUESTION, [])] == [
             MessageTextDelta("new"),
-            MessageEnd(AssistantEntry("new")),
+            MessageEnd(AssistantMessage("new")),
         ]
 
     asyncio.run(scenario())
@@ -499,7 +498,7 @@ def test_unknown_tool_returns_correlated_failure_without_executing_a_tool():
     assert "Unknown tool `missing`" in result.result
     assert provider.requests[1][0][-1]["tool_call_id"] == "unknown-call"
     assert provider.requests[1][0][-1]["content"] == result.result
-    assert events[-2:] == [MessageTextDelta("Recovered."), MessageEnd(AssistantEntry("Recovered."))]
+    assert events[-2:] == [MessageTextDelta("Recovered."), MessageEnd(AssistantMessage("Recovered."))]
 
 
 def test_tool_calls_cut_off_by_the_output_limit_are_refused_and_reported_to_the_model():
@@ -523,7 +522,7 @@ def test_tool_calls_cut_off_by_the_output_limit_are_refused_and_reported_to_the_
 
     assert executed == ['{"command":"rg people"}']
     assert ToolExecutionEnd(BASH_TOOL, '{"command":"rm -r"}', TRUNCATED_TOOL_CALL_RESULT, False, "call_0") in events
-    assert MessageEnd(AssistantEntry("Cleaning up.", "length", tool_calls=(truncated,))) in events
+    assert MessageEnd(AssistantMessage("Cleaning up.", "length", tool_calls=(truncated,))) in events
     replayed_call, refusal = provider.requests[1][0][-2:]
     assert replayed_call["tool_calls"][0]["function"]["arguments"] == "{}"
     assert refusal == {"role": "tool", "tool_call_id": "call_0", "content": TRUNCATED_TOOL_CALL_RESULT}
@@ -545,7 +544,7 @@ def test_an_answer_cut_off_by_the_output_limit_is_marked_truncated():
 
     assert _run(provider, message_ends=True) == [
         MessageTextDelta("The first half"),
-        MessageEnd(AssistantEntry("The first half", "length")),
+        MessageEnd(AssistantMessage("The first half", "length")),
     ]
 
 

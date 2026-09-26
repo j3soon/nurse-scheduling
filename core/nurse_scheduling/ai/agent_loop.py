@@ -47,14 +47,13 @@ from .provider import (
     ResponseEnd,
     TextDelta,
     TokenUsage,
-    ToolCall,
     ToolCallRequest,
     ToolCapableChatProvider,
     assistant_tool_call_message,
     tool_result_image_message,
     tool_result_message,
 )
-from .transcript import AssistantEntry
+from .transcript import AssistantMessage, ToolCall
 
 logger = logging.getLogger("nurse_scheduling.ai.agent")
 
@@ -116,7 +115,7 @@ async def agent_loop(
             elif isinstance(event, ResponseEnd):
                 finish_reason = event.finish_reason
         stop_reason = "length" if finish_reason == "length" else "tool_use" if calls else "stop"
-        yield MessageEnd(AssistantEntry("".join(answer), stop_reason, "".join(reasoning), calls))
+        yield MessageEnd(AssistantMessage("".join(answer), stop_reason, "".join(reasoning), calls))
         if finish_reason == "length" and calls and not final_answer_only:
             # Arguments cut off mid-stream can still parse as different, valid JSON, so
             # no call from this response runs. The model sees why and can reissue them.

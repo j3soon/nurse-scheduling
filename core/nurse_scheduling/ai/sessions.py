@@ -31,7 +31,7 @@ from .agent_session import AgentSession, RunCompletion, schedule_revision
 from .config import AiSettings
 from .context import projected_history, recent_history
 from .lifecycle import RunSnapshot
-from .transcript import ProposalDecision, SessionEntry, UserEntry, entry_text
+from .transcript import AgentMessage, ProposalDecision, UserMessage, entry_text
 
 __all__ = ["SessionStore", "schedule_revision"]
 
@@ -126,14 +126,14 @@ class SessionStore:
             self._charge(session, -sum(_text_bytes(entry_text(entry)) for entry in removed))
 
     @staticmethod
-    def _drop_oldest_exchange(session: AgentSession, keep_entries: int = 0) -> list[SessionEntry]:
+    def _drop_oldest_exchange(session: AgentSession, keep_entries: int = 0) -> list[AgentMessage]:
         """Drop the oldest prompt with everything that answers or decides on it.
 
         The newest exchange and the newest `keep_entries` entries always stay, and the
         transcript still starts at a prompt, so no answer or decision is left orphaned.
         """
         transcript = session.transcript
-        end = next((index for index in range(1, len(transcript)) if isinstance(transcript[index], UserEntry)), None)
+        end = next((index for index in range(1, len(transcript)) if isinstance(transcript[index], UserMessage)), None)
         if end is None or len(transcript) - end < keep_entries:
             return []
         removed = transcript[:end]
@@ -207,7 +207,7 @@ class SessionStore:
     def finish(
         self,
         session_id: str,
-        entries: Sequence[SessionEntry],
+        entries: Sequence[AgentMessage],
         proposal: tuple[str, str] | None = None,
         *,
         snapshot: RunSnapshot,

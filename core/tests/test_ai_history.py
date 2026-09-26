@@ -32,8 +32,8 @@ from psycopg import sql
 from nurse_scheduling.ai import history as ai_history
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.history import ChatHistory
-from nurse_scheduling.ai.provider import ProviderError, ReasoningDelta, TextDelta, TokenUsage, ToolCall
-from nurse_scheduling.ai.transcript import AssistantEntry, ToolResultEntry, UserEntry
+from nurse_scheduling.ai.provider import ProviderError, ReasoningDelta, TextDelta, TokenUsage
+from nurse_scheduling.ai.transcript import AssistantMessage, ToolCall, ToolResultMessage, UserMessage
 
 from . import test_ai_basic as basic
 
@@ -108,7 +108,7 @@ def test_records_text_usage_and_sanitized_failure(recorded_history, failed):
         "failed" if failed else "completed",
         "provider_error" if failed else None,
         TokenUsage(3, 4, 7),
-        [AssistantEntry("Partial answer", "error" if failed else "stop")],
+        [AssistantMessage("Partial answer", "error" if failed else "stop")],
     )
     if not failed:
         assert basic.parse_sse(response.text)[-1] == ("done", {"message_id": start[0], "history_saved": True})
@@ -172,9 +172,9 @@ def test_records_queued_steering_in_run_order(recorded_history):
     (finish,) = recorded_history["finishes"]
     assert start[3] == "Is Monday covered?"
     assert finish[4] == [
-        AssistantEntry("Monday is covered."),
-        UserEntry("And Tuesday?"),
-        AssistantEntry("Tuesday is covered."),
+        AssistantMessage("Monday is covered."),
+        UserMessage("And Tuesday?"),
+        AssistantMessage("Tuesday is covered."),
     ]
 
 
@@ -215,11 +215,11 @@ def test_history_keeps_the_full_run_while_the_session_keeps_only_later_context(r
     (finish,) = recorded_history["finishes"]
     (call,) = basic.rename_call()[0].calls
     tool_use, tool_result, answer = finish[4]
-    assert tool_use == AssistantEntry("Checking. ", "tool_use", "Find P1. ", (call,))
+    assert tool_use == AssistantMessage("Checking. ", "tool_use", "Find P1. ", (call,))
     assert (tool_result.tool_call_id, tool_result.tool_name, tool_result.ok) == (call.id, call.name, True)
     assert "passed trusted server-side validation" in tool_result.text
-    assert answer == AssistantEntry("Renamed P1.")
-    assert retained == [UserEntry("Rename P1."), AssistantEntry("Checking. ", "tool_use"), answer]
+    assert answer == AssistantMessage("Renamed P1.")
+    assert retained == [UserMessage("Rename P1."), AssistantMessage("Checking. ", "tool_use"), answer]
 
 
 @pytest.mark.parametrize("decision", ["approved", "rejected"])
@@ -302,13 +302,13 @@ def test_postgres_migrations_duplicates_and_reconnection(postgres_history):
     history.start_turn(turn, session, "team-a", "duplicate", "model", 3)
     call = ToolCall("call-1", "read", '{"path":"schedule.yaml"}')
     entries = [
-        AssistantEntry("Checking.", "tool_use", "Look first.", (call,)),
-        ToolResultEntry("call-1", "read", "people: []", True),
-        UserEntry("Only nights."),
-        AssistantEntry("Answer"),
+        AssistantMessage("Checking.", "tool_use", "Look first.", (call,)),
+        ToolResultMessage("call-1", "read", "people: []", True),
+        UserMessage("Only nights."),
+        AssistantMessage("Answer"),
     ]
     history.finish_turn(turn, "completed", None, TokenUsage(1, 2, 3), entries)
-    history.finish_turn(turn, "cancelled", None, None, [AssistantEntry("Overwrite", "aborted")])
+    history.finish_turn(turn, "cancelled", None, None, [AssistantMessage("Overwrite", "aborted")])
     history.record_decision(turn, "approved")
     restarted = ChatHistory("test")
     restarted.initialize()
@@ -375,7 +375,7 @@ def test_postgres_writes_survive_cancel_scope(postgres_history):
         with anyio.CancelScope() as scope:
             scope.cancel()
             assert await postgres_history.write(
-                "finish_turn", turn, "cancelled", None, None, [AssistantEntry("partial", "aborted")]
+                "finish_turn", turn, "cancelled", None, None, [AssistantMessage("partial", "aborted")]
             )
 
     asyncio.run(cancel_and_save())

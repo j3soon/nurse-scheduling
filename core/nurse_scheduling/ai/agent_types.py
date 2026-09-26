@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .provider import ChatMessage, TokenUsage, ToolResultImage
-from .transcript import AssistantEntry
+from .transcript import AssistantMessage
 
 
 @dataclass(frozen=True)
@@ -46,7 +46,7 @@ class MessageReasoningDelta:
 class MessageEnd:
     """One complete model response, as Pi's message_end, with its stop reason."""
 
-    message: AssistantEntry
+    message: AssistantMessage
 
 
 @dataclass(frozen=True)

@@ -1,4 +1,4 @@
-"""Typed session transcript entries, projected separately into model context."""
+"""Provider-neutral agent messages, shaped like Pi's, that record each run."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -23,22 +23,29 @@
 from dataclasses import dataclass
 from typing import Literal
 
-from .provider import ToolCall
-
 # Pi's stop reasons. `tool_use` ends a response that requested tools.
 StopReason = Literal["stop", "length", "tool_use", "aborted", "error"]
 ProposalDecision = Literal["approved", "rejected", "invalid"]
 
 
 @dataclass(frozen=True)
-class UserEntry:
+class ToolCall:
+    """One complete tool call a model requested, independent of the provider protocol."""
+
+    id: str
+    name: str
+    arguments: str
+
+
+@dataclass(frozen=True)
+class UserMessage:
     """A question, steering message, or background prompt, as Pi's user message."""
 
     text: str
 
 
 @dataclass(frozen=True)
-class AssistantEntry:
+class AssistantMessage:
     """One model response, as Pi's assistant message.
 
     An interrupted run ends with an `aborted` or `error` entry holding any partial output.
@@ -51,7 +58,7 @@ class AssistantEntry:
 
 
 @dataclass(frozen=True)
-class ToolResultEntry:
+class ToolResultMessage:
     """The result returned to the model for one tool call, as Pi's tool result message."""
 
     tool_call_id: str
@@ -67,13 +74,13 @@ class ProposalDecisionEntry:
     decision: ProposalDecision
 
 
-SessionEntry = UserEntry | AssistantEntry | ToolResultEntry | ProposalDecisionEntry
+AgentMessage = UserMessage | AssistantMessage | ToolResultMessage | ProposalDecisionEntry
 
 
-def entry_text(entry: SessionEntry) -> str:
+def entry_text(entry: AgentMessage) -> str:
     """Return the text an entry holds, which bounds its share of session memory."""
-    if isinstance(entry, UserEntry | ToolResultEntry):
+    if isinstance(entry, UserMessage | ToolResultMessage):
         return entry.text
-    if isinstance(entry, AssistantEntry):
+    if isinstance(entry, AssistantMessage):
         return entry.text + entry.reasoning + "".join(call.arguments for call in entry.tool_calls)
     return ""

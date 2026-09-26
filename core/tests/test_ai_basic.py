@@ -70,12 +70,11 @@ from nurse_scheduling.ai.provider import (
     ProviderError,
     ResponseEnd,
     TextDelta,
-    ToolCall,
     ToolCallRequest,
 )
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
-from nurse_scheduling.ai.transcript import AssistantEntry, ProposalDecisionEntry, SessionEntry, UserEntry
+from nurse_scheduling.ai.transcript import AgentMessage, AssistantMessage, ProposalDecisionEntry, ToolCall, UserMessage
 from nurse_scheduling.ai.workspace import (
     WORKSPACE_PENDING_DIFF,
     WORKSPACE_PENDING_PROPOSAL,
@@ -452,9 +451,9 @@ def test_insecure_local_ai_owner_cookie_stays_same_site() -> None:
     assert "Secure" not in cookie
 
 
-def exchange(question: str, answer: str) -> list[SessionEntry]:
+def exchange(question: str, answer: str) -> list[AgentMessage]:
     """Return the transcript entries one completed question and answer commit."""
-    return [UserEntry(question), AssistantEntry(answer)]
+    return [UserMessage(question), AssistantMessage(answer)]
 
 
 def parse_sse(response_text: str) -> list[tuple[str, dict[str, str]]]:
@@ -474,7 +473,7 @@ def test_client_disconnect_cancels_the_turn_and_closes_its_sandbox(wait_stage: s
     monkeypatch.setattr(ChatHistory, "start_turn", lambda *_args: None)
     monkeypatch.setattr(ChatHistory, "finish_turn", lambda _self, *args: saved.append(args))
 
-    async def exercise() -> tuple[FakeSandboxBackend | None, bool, bool, list[SessionEntry]]:
+    async def exercise() -> tuple[FakeSandboxBackend | None, bool, bool, list[AgentMessage]]:
         operation_started = asyncio.Event()
         operation_cancelled = asyncio.Event()
 
@@ -560,8 +559,8 @@ def test_client_disconnect_cancels_the_turn_and_closes_its_sandbox(wait_stage: s
         assert backend.close_calls == 1
     assert not session_active
     # The interrupted prompt stays for a follow-up. Its sandbox work does not.
-    responses = [AssistantEntry("", "tool_use")] if wait_stage == "command" else []
-    assert history == [UserEntry("Wait for me"), *responses, AssistantEntry("", "aborted")]
+    responses = [AssistantMessage("", "tool_use")] if wait_stage == "command" else []
+    assert history == [UserMessage("Wait for me"), *responses, AssistantMessage("", "aborted")]
     assert len(saved) == 1
     assert saved[0][1] == "cancelled"
 
@@ -613,7 +612,7 @@ def test_stop_endpoint_cancels_an_active_assistant_turn() -> None:
 
 
 def test_a_stopped_prompt_stays_in_context_for_the_next_run() -> None:
-    async def exercise() -> tuple[list[SessionEntry], list[ChatMessage]]:
+    async def exercise() -> tuple[list[AgentMessage], list[ChatMessage]]:
         started = asyncio.Event()
 
         class StoppableProvider:
@@ -650,7 +649,7 @@ def test_a_stopped_prompt_stays_in_context_for_the_next_run() -> None:
 
     transcript, follow_up_prompt = asyncio.run(exercise())
 
-    assert transcript == [UserEntry("Rename P1."), AssistantEntry("I renamed P1 to", "aborted")]
+    assert transcript == [UserMessage("Rename P1."), AssistantMessage("I renamed P1 to", "aborted")]
     assert follow_up_prompt[1:] == [
         ChatMessage(role="user", content="Rename P1."),
         ChatMessage(role="assistant", content=ABORTED_RESPONSE_HISTORY),
@@ -672,8 +671,8 @@ def test_an_answer_cut_off_by_the_output_limit_is_saved_with_its_stop_reason() -
 
     assert [name for name, _ in events] == ["delta", "truncated", "done"]
     assert app.state.session_store._sessions[session_id].transcript == [
-        UserEntry("Explain."),
-        AssistantEntry("The first half", "length"),
+        UserMessage("Explain."),
+        AssistantMessage("The first half", "length"),
     ]
 
 
@@ -1178,7 +1177,7 @@ def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming(monke
     ]
     assert len(saved) == 1
     assert saved[0][1] == "stale"
-    assert saved[0][4] == [AssistantEntry("Obsolete answer.")]
+    assert saved[0][4] == [AssistantMessage("Obsolete answer.")]
 
 
 def test_sandbox_timeout_does_not_expose_exception_details() -> None:
@@ -1489,7 +1488,7 @@ def test_history_prompt_budget_default(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_a_long_history_is_trimmed_to_the_newest_messages_that_fit_the_prompt() -> None:
-    history = [UserEntry(f"{index:03d} {'x' * 200}") for index in range(50)]
+    history = [UserMessage(f"{index:03d} {'x' * 200}") for index in range(50)]
 
     messages = build_provider_messages(history, "description: schedule\n", "Latest question.", max_history_chars=1000)
 
@@ -1516,12 +1515,12 @@ def test_a_short_history_reaches_the_prompt_unchanged() -> None:
 
 def test_context_merges_one_exchange_into_the_answer_the_user_saw() -> None:
     history = [
-        UserEntry("Rename P1."),
-        AssistantEntry("Checking. ", "tool_use"),
-        AssistantEntry("Renamed P1."),
-        UserEntry("Now P2."),
-        AssistantEntry("Checking. ", "tool_use"),
-        AssistantEntry("", "aborted"),
+        UserMessage("Rename P1."),
+        AssistantMessage("Checking. ", "tool_use"),
+        AssistantMessage("Renamed P1."),
+        UserMessage("Now P2."),
+        AssistantMessage("Checking. ", "tool_use"),
+        AssistantMessage("", "aborted"),
     ]
 
     messages = build_provider_messages(history, "description: schedule\n", "Try again.")
@@ -1536,8 +1535,8 @@ def test_context_merges_one_exchange_into_the_answer_the_user_saw() -> None:
 
 def test_context_projects_typed_entries_without_replaying_aborted_output() -> None:
     history = [
-        UserEntry("Rename P1."),
-        AssistantEntry("I renamed P1 to", "aborted"),
+        UserMessage("Rename P1."),
+        AssistantMessage("I renamed P1 to", "aborted"),
         ProposalDecisionEntry("rejected"),
     ]
 
@@ -2261,8 +2260,8 @@ def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved()
 
     assert not completion.run_saved
     assert session.transcript == [
-        UserEntry("First edit"),
-        AssistantEntry("First proposal"),
+        UserMessage("First edit"),
+        AssistantMessage("First proposal"),
         ProposalDecisionEntry("approved"),
     ]
     with pytest.raises(HTTPException) as exc_info:
@@ -2281,10 +2280,10 @@ def test_session_store_queues_steering_once_and_retains_it_with_the_turn() -> No
 
     assert store.take_steering(session.id, False) == [("queued-1", "Focus on P2 instead.")]
     entries = [
-        UserEntry("Inspect P1."),
-        AssistantEntry("P1 needs review."),
-        UserEntry("Focus on P2 instead."),
-        AssistantEntry("P2 is the better target."),
+        UserMessage("Inspect P1."),
+        AssistantMessage("P1 needs review."),
+        UserMessage("Focus on P2 instead."),
+        AssistantMessage("P2 is the better target."),
     ]
     assert store.finish(session.id, entries, snapshot=revision).run_saved
     assert session.transcript == entries
@@ -2373,11 +2372,11 @@ def test_budget_trimming_drops_a_decision_with_the_exchange_it_decided() -> None
 
 def test_prompt_budget_projection_starts_at_a_prompt() -> None:
     history = [
-        UserEntry("q" * 400),
-        AssistantEntry("Proposed a change."),
+        UserMessage("q" * 400),
+        AssistantMessage("Proposed a change."),
         ProposalDecisionEntry("approved"),
-        UserEntry("Next question."),
-        AssistantEntry("Next answer."),
+        UserMessage("Next question."),
+        AssistantMessage("Next answer."),
     ]
 
     messages = build_provider_messages(history, "description: schedule\n", "Latest.", max_history_chars=300)
