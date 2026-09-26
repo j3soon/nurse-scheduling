@@ -330,6 +330,41 @@ def test_optimizer_job_controls_do_not_start_a_sandbox(action: str) -> None:
     assert any(isinstance(event, ToolExecutionEnd) and event.name == OPTIMIZER_TOOL and event.ok for event in events)
 
 
+@pytest.mark.parametrize("timeout", [0, -1, True, "30", 30.5], ids=["zero", "negative", "boolean", "string", "float"])
+def test_invalid_optimizer_start_timeout_does_not_start_a_sandbox(timeout: object) -> None:
+    arguments = json.dumps({"action": "start", "timeout_seconds": timeout})
+    provider = ScriptedProvider(
+        [ToolCallRequest((ToolCall("invalid-start", OPTIMIZER_TOOL, arguments),))],
+        [TextDelta("The timeout was invalid.")],
+    )
+    factory = FakeSandboxFactory(create_error=SandboxError("E2B is unavailable"))
+    received: list[tuple[str, str]] = []
+
+    async def execute_optimizer(current_schedule: str, received_arguments: str) -> AgentToolResult:
+        received.append((current_schedule, received_arguments))
+        return AgentToolResult("timeout_seconds must be a positive integer.", False)
+
+    async def collect() -> list[AgentEvent | AgentScheduleChange]:
+        return [
+            event
+            async for event in run_workspace(
+                provider,
+                factory,
+                schedule_yaml(),
+                MESSAGES,
+                _limits(),
+                execute_optimizer=execute_optimizer,
+            )
+        ]
+
+    events = asyncio.run(collect())
+    assert received == [("", arguments)]
+    assert factory.created == []
+    assert any(
+        isinstance(event, ToolExecutionEnd) and event.name == OPTIMIZER_TOOL and not event.ok for event in events
+    )
+
+
 def test_pending_proposal_is_hydrated_as_trusted_read_only_context():
     factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id))
 

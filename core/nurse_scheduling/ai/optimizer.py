@@ -44,6 +44,11 @@ MAX_REJECTION_DETAIL_CHARS = 300
 logger = logging.getLogger("nurse_scheduling.ai.optimizer")
 
 
+def valid_optimizer_timeout(value: object) -> bool:
+    """Whether a start timeout can reach the optimizer service."""
+    return value is None or (isinstance(value, int) and not isinstance(value, bool) and value > 0)
+
+
 class OptimizerError(Exception):
     """The configured optimizer transport or response failed."""
 
@@ -309,7 +314,7 @@ class SessionOptimizer:
         action = raw.get("action", "start")
         if action == "start":
             timeout = raw.get("timeout_seconds")
-            if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, int) or timeout <= 0):
+            if not valid_optimizer_timeout(timeout):
                 return AgentToolResult("timeout_seconds must be a positive integer.", False)
             return await self._start(session_id, schedule_yaml, timeout)
         if action == "status":

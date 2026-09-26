@@ -30,7 +30,7 @@ from .agent import Agent
 from .agent_types import AgentEvent, AgentProposal, AgentTool, AgentToolBatchMetrics, AgentToolResult, ToolExecutionEnd
 from .candidate import review_schedule_candidate
 from .context import prepare_provider_request
-from .optimizer import OPTIMIZER_TOOL, optimizer_tool_definition
+from .optimizer import OPTIMIZER_TOOL, optimizer_tool_definition, valid_optimizer_timeout
 from .pi.read import READ_TOOL
 from .provider import ChatMessage, ToolCapableChatProvider
 from .sandbox import SandboxFactory, SandboxFileNotFoundError
@@ -91,7 +91,11 @@ class WorkspaceTools:
             parsed = json.loads(arguments or "{}")
         except json.JSONDecodeError:
             return False
-        return isinstance(parsed, dict) and parsed.get("action", "start") == "start"
+        return (
+            isinstance(parsed, dict)
+            and parsed.get("action", "start") == "start"
+            and valid_optimizer_timeout(parsed.get("timeout_seconds"))
+        )
 
     async def _execute(self, name: str, arguments: str) -> AgentToolResult:
         if name == OPTIMIZER_TOOL and self.execute_optimizer is not None:

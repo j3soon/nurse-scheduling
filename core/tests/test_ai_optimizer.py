@@ -386,6 +386,26 @@ def test_a_rejected_submission_reports_the_reason_to_the_model() -> None:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("timeout", [0, -1, True, "30", 30.5], ids=["zero", "negative", "boolean", "string", "float"])
+def test_invalid_start_timeout_is_rejected_before_submission(timeout: object) -> None:
+    async def scenario() -> None:
+        backend = FakeOptimizerBackend()
+
+        async def on_completion(_session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+            return None
+
+        optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
+        rejected = await optimizer.execute(
+            "session-1", TEST_SCHEDULE, json.dumps({"action": "start", "timeout_seconds": timeout})
+        )
+        assert not rejected.ok
+        assert rejected.text == "timeout_seconds must be a positive integer."
+        assert backend.submissions == []
+        await optimizer.close()
+
+    asyncio.run(scenario())
+
+
 def test_start_returns_immediately_and_completion_wakes_the_agent() -> None:
     async def scenario() -> None:
         backend = FakeOptimizerBackend()
