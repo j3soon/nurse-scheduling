@@ -1054,21 +1054,22 @@ export default function ExperimentalAiPage() {
         setSessionEventsAttempt(attempt => attempt + 1);
       }, delay);
     };
-    const beginBackgroundMessage = (assistantId: string) => {
-      lifecycle.begin('background', assistantId);
-      // The server renews the session when it starts this turn.
+    // One background run occupies one UI answer, keyed by its run ID.
+    const beginBackgroundMessage = (runId: string) => {
+      lifecycle.begin('background', runId);
+      // The server renews the session when it starts this run.
       setSessionExpiresAt(Date.now() + sessionRetentionSeconds * 1000);
       sandboxScheduleRef.current = scheduleYamlRef.current;
-      setMessages(previous => previous.some(message => message.id === assistantId)
-        // A restored or reconnected turn resumes its own message, so clear the
+      setMessages(previous => previous.some(message => message.id === runId)
+        // A restored or reconnected run resumes its own message, so clear the
         // interrupted state rather than stacking a second response beside it.
-        ? previous.map(message => message.id === assistantId
+        ? previous.map(message => message.id === runId
           ? { ...message, status: 'pending' as const, responseCompletedAt: undefined }
           : message)
         : [
           ...previous,
           {
-            id: assistantId,
+            id: runId,
             role: 'assistant',
             content: '',
             status: 'pending',
@@ -1076,7 +1077,7 @@ export default function ExperimentalAiPage() {
           },
         ]);
     };
-    // A reconnect replays only retained events, so a long turn can lose its own
+    // A reconnect replays only retained events, so a long run can lose its own
     // run_start. Adopt the remaining output instead of discarding the answer.
     const resumeBackgroundMessage = () => {
       if (lifecycle.getSnapshot().background?.phase !== 'interrupted' && lifecycle.current('background')) return;
@@ -1161,16 +1162,16 @@ export default function ExperimentalAiPage() {
             };
           });
         },
-        onDone: messageId => {
+        onDone: runId => {
           updateBackgroundMessage(message => ({
             ...message,
             status: undefined,
             responseCompletedAt: Date.now(),
-          }), messageId);
+          }), runId);
           lifecycle.finish(lifecycle.current('background'));
         },
-        onStopped: messageId => {
-          updateBackgroundMessage(stopResponse, messageId);
+        onStopped: runId => {
+          updateBackgroundMessage(stopResponse, runId);
           lifecycle.finish(lifecycle.current('background'));
         },
         onStale: message => {

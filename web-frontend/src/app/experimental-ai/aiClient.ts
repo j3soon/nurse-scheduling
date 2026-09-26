@@ -51,8 +51,8 @@ export interface OptimizationProgressActivity {
 export interface StreamCallbacks {
   lastEventId?: number;
   onEventId?: (id: number) => void;
-  onRunStart?: (messageId: string, trigger: string) => void;
-  onRunContext?: (messageId: string) => void;
+  onRunStart?: (runId: string, trigger: string) => void;
+  onRunContext?: (runId: string) => void;
   onDelta: (text: string) => void;
   onReasoning?: (text: string) => void;
   onTruncated?: () => void;
@@ -63,8 +63,8 @@ export interface StreamCallbacks {
   onProposal?: (diff: string) => void;
   onOptimization?: (activity: OptimizationActivity) => void;
   onOptimizationProgress?: (activity: OptimizationProgressActivity) => void;
-  onDone?: (messageId?: string) => void;
-  onStopped?: (messageId?: string) => void;
+  onDone?: (runId?: string) => void;
+  onStopped?: (runId?: string) => void;
   onStale?: (message: string) => void;
   onHistoryTrimmed?: (dropped: number) => void;
   onError?: (message: string) => void;
@@ -273,9 +273,9 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
   }
   if (typeof payload.run_id === 'string') callbacks.onRunContext?.(payload.run_id);
 
-  if (eventType === 'run_start' && typeof payload.message_id === 'string') {
+  if (eventType === 'run_start' && typeof payload.run_id === 'string') {
     callbacks.onRunStart?.(
-      payload.message_id,
+      payload.run_id,
       typeof payload.trigger === 'string' ? payload.trigger : 'background work',
     );
   } else if (eventType === 'delta' && typeof payload.text === 'string') {
@@ -344,9 +344,9 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
       });
     }
   } else if (eventType === 'done') {
-    callbacks.onDone?.(typeof payload.message_id === 'string' ? payload.message_id : undefined);
+    callbacks.onDone?.(typeof payload.run_id === 'string' ? payload.run_id : undefined);
   } else if (eventType === 'stopped') {
-    callbacks.onStopped?.(typeof payload.message_id === 'string' ? payload.message_id : undefined);
+    callbacks.onStopped?.(typeof payload.run_id === 'string' ? payload.run_id : undefined);
   } else if (eventType === 'stale') {
     const message = typeof payload.message === 'string' ? payload.message : 'The AI response became stale.';
     if (callbacks.onStale) callbacks.onStale(message);

@@ -117,7 +117,7 @@ def test_records_text_usage_and_sanitized_failure(recorded_history, failed):
         [AssistantMessage("Partial answer", "error" if failed else "stop")],
     )
     if not failed:
-        assert basic.parse_sse(response.text)[-1] == ("done", {"message_id": start[0], "history_saved": True})
+        assert basic.parse_sse(response.text)[-1] == ("done", {"run_id": start[0], "history_saved": True})
     assert "private provider credential" not in repr(recorded_history)
 
 

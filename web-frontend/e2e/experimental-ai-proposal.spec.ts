@@ -110,7 +110,7 @@ async function mockProposingBackend(page: Page): Promise<{ approvals: number; re
         `event: schedule_change\ndata: ${JSON.stringify({ schedule_yaml: PROPOSED_YAML })}\n\n`,
         'event: delta\ndata: {"text":"I propose adding one nurse."}\n\n',
         'event: proposal\ndata: {"diff":"- people.items[0]: added {\\"id\\": \\"Proposed Nurse\\"}"}\n\n',
-        'event: done\ndata: {"message_id":"answer-id"}\n\n',
+        'event: done\ndata: {"run_id":"answer-id"}\n\n',
       ].join(''),
     });
   });

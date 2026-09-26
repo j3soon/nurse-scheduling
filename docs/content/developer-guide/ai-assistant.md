@@ -548,9 +548,12 @@ download it through the session-owned route.
 Foreground answers use the message request's SSE stream. Optimizer progress
 and result-review runs use replayable session SSE with `Last-Event-ID`. The
 broker retains up to 1,000 run events and 100 progress events per session.
-Events carry `run_id` so the browser can attach replayed fragments to the
-right answer. Browser operation tokens prevent an older stream callback from
-replacing newer state.
+All run-associated events on either stream carry `run_id`, including
+`run_start`, `done`, `stopped`, `stale`, and `error`. Steering events also
+carry the queued user input's `message_id`, and tool events use `tool_call_id`.
+The browser keys a background answer by `run_id`. Foreground UI messages
+have their own local IDs. Browser operation tokens prevent an older stream
+callback from replacing newer state.
 
 | Event | Meaning |
 | --- | --- |

@@ -277,10 +277,10 @@ def test_http_backend_replays_an_optimizer_event_cut_off_before_its_delimiter() 
 
 def test_optimizer_progress_replay_does_not_displace_background_turn_events() -> None:
     broker = SessionEventBroker(max_events_per_session=2, max_progress_events_per_session=2)
-    broker.publish("session-1", "run_start", {"message_id": "turn-1"})
+    broker.publish("session-1", "run_start", {"run_id": "turn-1"})
     for score in (1, 2, 3):
         broker.publish("session-1", "optimization_progress", {"score": score})
-    broker.publish("session-1", "done", {"message_id": "turn-1"})
+    broker.publish("session-1", "done", {"run_id": "turn-1"})
 
     events = broker.events_after("session-1")
     assert [(event.id, event.type) for event in events] == [
@@ -316,7 +316,7 @@ def test_retiring_a_session_ends_its_open_event_stream() -> None:
                 received.append(event.type if event is not None else None)
 
         reader = asyncio.create_task(consume())
-        broker.publish("session-1", "run_start", {"message_id": "turn-1"})
+        broker.publish("session-1", "run_start", {"run_id": "turn-1"})
         await asyncio.sleep(0)
         broker.forget_session("session-1")
         await asyncio.wait_for(reader, timeout=1)

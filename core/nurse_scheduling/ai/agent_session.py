@@ -363,7 +363,7 @@ class AgentSession:
         async def emit(event_type: str, data: dict[str, object]) -> None:
             nonlocal terminal_event
             # Every replayable fragment identifies its run, even after run_start expires.
-            data = {**data, "run_id": run.id} if background else data
+            data = {**data, "run_id": run.id}
             if event_type in TERMINAL_EVENTS:
                 terminal_event = event_type, data
             else:
@@ -380,7 +380,7 @@ class AgentSession:
 
         try:
             if background:
-                await emit("run_start", {"message_id": run.id, "trigger": "optimizer"})
+                await emit("run_start", {"trigger": "optimizer"})
             if history_log is not None:
                 logged = True
                 logged = await write_history(
@@ -460,7 +460,7 @@ class AgentSession:
                 await emit("history_trimmed", {"dropped": completion.history_trimmed_count})
             if completion.proposal_saved and output.proposal is not None:
                 await emit("proposal", {"diff": output.proposal.diff})
-            done = {"message_id": run.id}
+            done = {"run_id": run.id}
             if history_saved is not None and not background:
                 done["history_saved"] = history_saved
             await emit("done", done)
@@ -471,7 +471,7 @@ class AgentSession:
                 run_entries = output.interrupted_entries([run_entries[0], *self.agent.state.messages], "aborted")
                 store.finish(session_id, retained_entries(run_entries), snapshot=snapshot)
                 completed = True
-            await emit("stopped", {"message_id": run.id})
+            await emit("stopped", {})
             raise
         except HTTPException:
             if not background:

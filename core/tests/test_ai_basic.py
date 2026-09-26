@@ -606,7 +606,7 @@ def test_stop_endpoint_cancels_an_active_assistant_turn() -> None:
     assert status_code == 202
     assert not session_active
     # Stop is a typed terminal outcome, not synthetic answer text.
-    assert events[0] == ("delta", {"text": "Partial answer."})
+    assert events[0] == ("delta", {"text": "Partial answer.", "run_id": events[-1][1]["run_id"]})
     assert events[-1][0] == "stopped"
     assert [name for name, _ in events].count("stopped") == 1
 
@@ -841,10 +841,13 @@ def test_health_and_streamed_schedule_question() -> None:
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
-    assert parse_sse(response.text) == [
-        ("delta", {"text": "Hello"}),
-        ("delta", {"text": " from AI"}),
-        ("done", {"message_id": ANY}),
+    events = parse_sse(response.text)
+    run_id = events[-1][1]["run_id"]
+    assert isinstance(run_id, str) and run_id
+    assert events == [
+        ("delta", {"text": "Hello", "run_id": run_id}),
+        ("delta", {"text": " from AI", "run_id": run_id}),
+        ("done", {"run_id": run_id}),
     ]
     prompt = provider.calls[0]
     assert prompt[-1] == {"role": "user", "content": "Who works Monday?"}
@@ -1135,8 +1138,8 @@ def test_provider_failure_is_streamed_without_recording_a_turn() -> None:
     )
 
     assert parse_sse(failed.text) == [
-        ("delta", {"text": "Provisional answer."}),
-        ("error", {"message": PROVIDER_ERROR}),
+        ("delta", {"text": "Provisional answer.", "run_id": ANY}),
+        ("error", {"message": PROVIDER_ERROR, "run_id": ANY}),
     ]
     assert private_error not in failed.text
     assert recovered.status_code == 200
@@ -1172,8 +1175,8 @@ def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming(monke
     response = client.post(f"/sessions/{session_id}/messages", json={"message": "Edit it"})
 
     assert parse_sse(response.text) == [
-        ("delta", {"text": "Obsolete answer."}),
-        ("stale", {"message": STALE_RUN_ERROR}),
+        ("delta", {"text": "Obsolete answer.", "run_id": ANY}),
+        ("stale", {"message": STALE_RUN_ERROR, "run_id": ANY}),
     ]
     assert len(saved) == 1
     assert saved[0][1] == "stale"
@@ -1188,7 +1191,7 @@ def test_sandbox_timeout_does_not_expose_exception_details() -> None:
 
     response = client.post(f"/sessions/{session_id}/messages", json={"message": "Wait"})
 
-    assert parse_sse(response.text) == [("error", {"message": SANDBOX_RUN_TIMEOUT_ERROR})]
+    assert parse_sse(response.text) == [("error", {"message": SANDBOX_RUN_TIMEOUT_ERROR, "run_id": ANY})]
     assert private_error not in response.text
 
 
@@ -1832,7 +1835,11 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         assert events[1].data["progress"] == {"currentBestScore": 23, "elapsedSeconds": 2}
         assert events[2].data["state"] == "completed"
         assert events[2].data["downloadable"] is True
-        assert events[6].data == {"text": "The optimizer returned score 23.", "run_id": events[3].data["message_id"]}
+        run_id = events[3].data["run_id"]
+        assert events[3].data == {"trigger": "optimizer", "run_id": run_id}
+        assert all(event.data["run_id"] == run_id for event in events[3:])
+        assert all("message_id" not in event.data for event in events[3:])
+        assert events[6].data == {"text": "The optimizer returned score 23.", "run_id": events[3].data["run_id"]}
         if history_enabled:
             assert len(history_starts) == 3
             assert history_starts[-1][1] == session_id
@@ -2009,7 +2016,7 @@ def test_sandbox_cleanup_failure_does_not_commit_provisional_turn_or_proposal() 
 
     recovered = client.post(f"/sessions/{session_id}/messages", json={"message": "Retry"})
 
-    assert ("delta", {"text": "Recovered."}) in parse_sse(recovered.text)
+    assert ("delta", {"text": "Recovered.", "run_id": ANY}) in parse_sse(recovered.text)
     recovered_prompt = json.dumps(provider.calls[2])
     assert "Failed edit" not in recovered_prompt
     assert "Provisional answer." not in recovered_prompt
@@ -2036,6 +2043,7 @@ def test_sandbox_command_failure_still_streams_the_requested_command() -> None:
     events = parse_sse(failed.text)
     assert [name for name, _ in events] == ["tool_start", "error"]
     assert events[0][1] == {
+        "run_id": events[-1][1]["run_id"],
         "tool_call_id": "call_0",
         "name": BASH_TOOL,
         "arguments": json.dumps({"command": "python3 -c 'set P1 description to Head'"}),
@@ -2073,7 +2081,7 @@ def test_final_validation_failure_discards_the_turn_without_a_history_note() -> 
 
     recovered = client.post(f"/sessions/{session_id}/messages", json={"message": "Retry"})
 
-    assert ("delta", {"text": "Recovered."}) in parse_sse(recovered.text)
+    assert ("delta", {"text": "Recovered.", "run_id": ANY}) in parse_sse(recovered.text)
     recovered_prompt = json.dumps(provider.calls[2])
     assert "Invalid edit" not in recovered_prompt
     assert "Provisional invalid answer." not in recovered_prompt

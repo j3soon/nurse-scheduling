@@ -201,7 +201,7 @@ async function mockAiBackend(
         ].join('')
         : [
           ...answerDeltas.map(text => `event: delta\ndata: ${JSON.stringify({ text })}\n\n`),
-          'event: done\ndata: {"message_id":"answer-id"}\n\n',
+          'event: done\ndata: {"run_id":"answer-id"}\n\n',
         ].join(''),
     });
   });

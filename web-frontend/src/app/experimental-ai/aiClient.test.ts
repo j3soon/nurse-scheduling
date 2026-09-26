@@ -143,7 +143,7 @@ describe('AI client', () => {
     const fetchMock = vi.fn().mockResolvedValue(streamedResponse([
       'event: delta\ndata: {"text":"Hel',
       'lo"}\n\nevent: delta\ndata: {"text":" world"}\n\n',
-      'event: done\ndata: {"message_id":"message-id"}\n\n',
+      'event: done\ndata: {"run_id":"message-id"}\n\n',
     ]));
     vi.stubGlobal('fetch', fetchMock);
     const deltas: string[] = [];
@@ -160,6 +160,7 @@ describe('AI client', () => {
 
     expect(deltas).toEqual(['Hello', ' world']);
     expect(onDone).toHaveBeenCalledOnce();
+    expect(onDone).toHaveBeenCalledWith('message-id');
     expect(fetchMock).toHaveBeenCalledWith(
       'https://api.nursescheduling.org/ai/sessions/session%2Fid/messages',
       expect.objectContaining({
@@ -194,7 +195,7 @@ describe('AI client', () => {
     await vi.waitFor(() => expect(deltas).toEqual(['First']));
     expect(onDone).not.toHaveBeenCalled();
 
-    streamController?.enqueue(encoder.encode('event: done\ndata: {"message_id":"message-id"}\n\n'));
+    streamController?.enqueue(encoder.encode('event: done\ndata: {"run_id":"message-id"}\n\n'));
     streamController?.close();
     await streaming;
     expect(onDone).toHaveBeenCalledOnce();
@@ -232,7 +233,7 @@ describe('AI client', () => {
 
   it('sends arbitrary files as multipart form data', async () => {
     const fetchMock = vi.fn().mockResolvedValue(streamedResponse([
-      'event: done\ndata: {"message_id":"message-id"}\n\n',
+      'event: done\ndata: {"run_id":"message-id"}\n\n',
     ]));
     vi.stubGlobal('fetch', fetchMock);
     const image = new File(['image bytes'], 'ward.png', { type: 'image/png' });
@@ -264,7 +265,7 @@ describe('AI client', () => {
       'event: delta\ndata: {"text":"Renamed P1."}\n\n',
       'event: truncated\ndata: {}\n\n',
       'event: proposal\ndata: {"diff":"- people.items[0].id"}\n\n',
-      'event: done\ndata: {"message_id":"1"}\n\n',
+      'event: done\ndata: {"run_id":"1"}\n\n',
     ])));
     const toolStarts: string[] = [];
     const tools: string[] = [];
@@ -302,12 +303,36 @@ describe('AI client', () => {
     expect(diffs).toEqual(['- people.items[0].id']);
   });
 
+  it('keeps run lifecycle identity separate from queued user message identity', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      'id: 1\nevent: run_start\ndata: {"run_id":"run-1","trigger":"optimizer"}\n\n',
+      'id: 2\nevent: steering\ndata: {"run_id":"run-1","message_id":"queued-1","message":"Focus on P2."}\n\n',
+      'id: 3\nevent: stopped\ndata: {"run_id":"run-1"}\n\n',
+    ])));
+    const start = vi.fn();
+    const context = vi.fn();
+    const steering = vi.fn();
+    const stopped = vi.fn();
+
+    await streamSessionEvents(
+      'session/id',
+      { onDelta: () => {}, onRunStart: start, onRunContext: context, onSteering: steering, onStopped: stopped },
+      new AbortController().signal,
+      null,
+    );
+
+    expect(start).toHaveBeenCalledWith('run-1', 'optimizer');
+    expect(context.mock.calls).toEqual([['run-1'], ['run-1'], ['run-1']]);
+    expect(steering).toHaveBeenCalledWith('queued-1', 'Focus on P2.');
+    expect(stopped).toHaveBeenCalledWith('run-1');
+  });
+
   it('reports a trimmed prompt history and ignores a meaningless count', async () => {
     const fetchMock = vi.fn().mockResolvedValue(streamedResponse([
       'id: 1\nevent: history_trimmed\ndata: {"dropped":0}\n\n',
       'id: 2\nevent: history_trimmed\ndata: {"dropped":"many"}\n\n',
       'id: 3\nevent: history_trimmed\ndata: {"dropped":6}\n\n',
-      'id: 4\nevent: done\ndata: {"message_id":"background-1"}\n\n',
+      'id: 4\nevent: done\ndata: {"run_id":"background-1"}\n\n',
     ]));
     vi.stubGlobal('fetch', fetchMock);
     const trimmed = vi.fn();
@@ -323,13 +348,13 @@ describe('AI client', () => {
     expect(trimmed).toHaveBeenCalledWith(6);
   });
 
-  it('streams optimizer-triggered turns with authentication', async () => {
+  it('streams optimizer-triggered runs with authentication', async () => {
     const fetchMock = vi.fn().mockResolvedValue(streamedResponse([
       'id: 1\nevent: optimization\ndata: {"job_id":"opt-1","state":"running","terminal":false,"downloadable":false}\n\n',
       'id: 2\nevent: optimization_progress\ndata: {"job_id":"opt-1","progress":{"currentBestScore":23,"elapsedSeconds":2,"source":"solver"}}\n\n',
-      'id: 3\nevent: run_start\ndata: {"message_id":"background-1","trigger":"optimizer"}\n\n',
+      'id: 3\nevent: run_start\ndata: {"run_id":"background-1","trigger":"optimizer"}\n\n',
       'id: 4\nevent: delta\ndata: {"text":"Score 23."}\n\n',
-      'id: 5\nevent: done\ndata: {"message_id":"background-1"}\n\n',
+      'id: 5\nevent: done\ndata: {"run_id":"background-1"}\n\n',
     ]));
     vi.stubGlobal('fetch', fetchMock);
     const starts: string[] = [];
@@ -342,7 +367,7 @@ describe('AI client', () => {
     await streamSessionEvents(
       'session/id',
       {
-        onRunStart: (messageId, trigger) => starts.push(`${messageId}:${trigger}`),
+        onRunStart: (runId, trigger) => starts.push(`${runId}:${trigger}`),
         onDelta: text => texts.push(text),
         onOptimization: optimizations,
         onOptimizationProgress: progress,
@@ -557,7 +582,7 @@ describe('AI client', () => {
   it('treats a tool event without detail as a successful call', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
       'event: tool\ndata: {"name":"bash"}\n\n',
-      'event: done\ndata: {"message_id":"1"}\n\n',
+      'event: done\ndata: {"run_id":"1"}\n\n',
     ])));
     const tools: { name: string; ok: boolean; result: string }[] = [];
 

@@ -354,14 +354,14 @@ def test_terminal_foreground_event_never_blocks_cleanup_on_a_full_reader_queue()
         async def run(_turn):
             for _ in range(64):
                 await events.emit("delta", {"text": "output"})
-            await events.emit("done", {"message_id": "turn"})
+            await events.emit("done", {"run_id": "turn"})
 
         turn = turns.start("session", run)
         await asyncio.wait_for(turn.wait(), timeout=1)
         assert not turns.busy("session")
         received = [event async for event in events.stream(turn)]
         assert len(received) == 65
-        assert received[-1] == ("done", {"message_id": "turn"})
+        assert received[-1] == ("done", {"run_id": "turn"})
         await turns.close()
 
     asyncio.run(exercise())
