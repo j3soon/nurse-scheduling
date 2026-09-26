@@ -46,9 +46,8 @@ from nurse_scheduling.ai.provider import (
     ResponseEnd,
     TextDelta,
     ToolCallRequest,
-    ToolResultImage,
 )
-from nurse_scheduling.ai.transcript import AssistantMessage, ToolCall, ToolResultMessage, UserMessage
+from nurse_scheduling.ai.transcript import AssistantMessage, ToolCall, ToolResultImage, ToolResultMessage, UserMessage
 
 QUESTION: list[ChatMessage] = [{"role": "user", "content": "Who works on the first day?"}]
 TOOLS = [

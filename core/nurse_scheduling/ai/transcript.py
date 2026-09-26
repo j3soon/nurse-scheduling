@@ -21,10 +21,7 @@
 # This file is mostly AI generated.
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
-
-if TYPE_CHECKING:
-    from .provider import ToolResultImage
+from typing import Literal
 
 # Pi's stop reasons. `tool_use` ends a response that requested tools.
 StopReason = Literal["stop", "length", "tool_use", "aborted", "error"]
@@ -61,6 +58,14 @@ class AssistantMessage:
 
 
 @dataclass(frozen=True)
+class ToolResultImage:
+    """One bounded image returned by a model-facing tool."""
+
+    media_type: str
+    data: bytes
+
+
+@dataclass(frozen=True)
 class ToolResultMessage:
     """The result returned to the model for one tool call, as Pi's tool result message."""
 
@@ -68,7 +73,7 @@ class ToolResultMessage:
     tool_name: str
     text: str
     ok: bool
-    image: "ToolResultImage | None" = None
+    image: ToolResultImage | None = None
 
 
 @dataclass(frozen=True)

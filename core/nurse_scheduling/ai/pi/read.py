@@ -26,7 +26,7 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
-from ..provider import ToolResultImage
+from ..transcript import ToolResultImage
 from .bash import DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, UPSTREAM_COMMIT, format_size
 from .image_process import ImageProcessFailure, process_image
 from .mime import detect_supported_image_mime_type

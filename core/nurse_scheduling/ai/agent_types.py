@@ -24,8 +24,8 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import Any
 
-from .provider import ChatMessage, TokenUsage, ToolResultImage
-from .transcript import AgentMessage, AssistantMessage, ToolCall
+from .provider import ChatMessage, TokenUsage
+from .transcript import AgentMessage, AssistantMessage, ToolCall, ToolResultImage
 
 
 @dataclass(frozen=True)

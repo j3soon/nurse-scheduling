@@ -32,11 +32,12 @@ from psycopg import sql
 
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.history import ChatHistory, _insert_entries
-from nurse_scheduling.ai.provider import ProviderError, ReasoningDelta, TextDelta, TokenUsage, ToolResultImage
+from nurse_scheduling.ai.provider import ProviderError, ReasoningDelta, TextDelta, TokenUsage
 from nurse_scheduling.ai.transcript import (
     AssistantMessage,
     ProposalDecisionEntry,
     ToolCall,
+    ToolResultImage,
     ToolResultMessage,
     UserMessage,
 )
