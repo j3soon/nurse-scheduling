@@ -20,6 +20,7 @@
 # This file is mostly AI generated.
 
 import asyncio
+import hashlib
 import json
 import logging
 from collections.abc import Awaitable, Callable, Sequence
@@ -65,12 +66,32 @@ STALE_TURN_ERROR = "The schedule changed while this response was generated, so t
 logger = logging.getLogger("nurse_scheduling.ai")
 
 
-class RunCompletion(Protocol):
-    """Result fields used by run finalization."""
+PROPOSAL_APPROVED_HISTORY = (
+    "The user approved the previous schedule proposal. Its changes are now part of the current canonical schedule."
+)
+PROPOSAL_REJECTED_HISTORY = (
+    "The user rejected the previous schedule proposal. All schedule changes made during that agent turn were "
+    "discarded. This turn starts with a fresh workspace containing the current canonical schedule."
+)
+PROPOSAL_INVALID_HISTORY = (
+    "The previous schedule proposal failed trusted validation when the user approved it, so it was discarded. All "
+    "schedule changes made during that agent turn were dropped. This turn starts with a fresh workspace containing "
+    "the current canonical schedule."
+)
+
+
+def schedule_revision(schedule_yaml: str) -> str:
+    """Identify one exact schedule snapshot, so a stale proposal cannot be applied."""
+    return hashlib.sha256(schedule_yaml.encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class RunCompletion:
+    """Whether a completed run and its optional proposal were retained."""
 
     run_saved: bool
     proposal_saved: bool
-    history_trimmed_count: int
+    history_trimmed_count: int = 0
 
 
 class SessionPersistence(Protocol):
@@ -172,6 +193,89 @@ class AgentSession:
     @property
     def active(self) -> bool:
         return self.snapshot is not None
+
+    def begin_run(self, *, accepting_steering: bool) -> RunSnapshot:
+        """Reserve this conversation version and open its steering queue."""
+        if self.active:
+            raise HTTPException(status_code=409, detail="This chat session already has an active response.")
+        self.agent.open_steering(accepting_steering)
+        self.snapshot = RunSnapshot(
+            list(self.history),
+            self.schedule_yaml,
+            self.version,
+            self.proposal_yaml,
+            self.proposal_diff,
+            previously_dropped=self.dropped_history_messages,
+        )
+        return self.snapshot
+
+    def finish_run(
+        self,
+        snapshot: RunSnapshot,
+        messages: Sequence[ChatMessage],
+        proposal: tuple[str, str] | None,
+    ) -> RunCompletion:
+        """Commit only the current reservation, releasing it even when its version is stale."""
+        if not self.abort_run(snapshot):
+            return RunCompletion(False, False)
+        if self.version != snapshot.version:
+            return RunCompletion(False, False)
+        self.history.extend(messages)
+        if proposal is not None:
+            self.proposal_yaml, self.proposal_diff = proposal
+        return RunCompletion(True, proposal is not None)
+
+    def abort_run(self, snapshot: RunSnapshot) -> bool:
+        """Only the owner of a reservation may release it."""
+        if self.snapshot is not snapshot:
+            return False
+        self.snapshot = None
+        self.agent.close_steering()
+        return True
+
+    def update_schedule(self, schedule_yaml: str) -> None:
+        """Replace canonical YAML and invalidate proposals and in-flight results."""
+        if self.schedule_yaml == schedule_yaml:
+            return
+        self.version += 1
+        self.schedule_yaml = schedule_yaml
+        self.revision = schedule_revision(schedule_yaml)
+        self.proposal_yaml = ""
+        self.proposal_diff = ""
+
+    def require_proposal(self, base_sha256: str) -> None:
+        """Reject a missing or stale proposal before it can be applied."""
+        if not self.proposal_yaml:
+            raise HTTPException(status_code=404, detail="No proposal is waiting for approval.")
+        if self.revision != base_sha256:
+            self.version += 1
+            self.proposal_yaml = ""
+            self.proposal_diff = ""
+            raise HTTPException(
+                status_code=409,
+                detail="The schedule changed after this proposal was created, so it was discarded.",
+            )
+
+    def adopt_proposal(self, base_sha256: str) -> str:
+        """Adopt a revalidated proposal and record the user's decision."""
+        self.require_proposal(base_sha256)
+        approved = self.proposal_yaml
+        self.proposal_yaml = ""
+        self.proposal_diff = ""
+        self.version += 1
+        self.schedule_yaml = approved
+        self.revision = schedule_revision(approved)
+        self.history.append(ChatMessage(role="user", content=PROPOSAL_APPROVED_HISTORY))
+        return approved
+
+    def discard_proposal(self, history_event: str = PROPOSAL_REJECTED_HISTORY) -> None:
+        """Record a proposal decision once and invalidate results based on it."""
+        had_proposal = bool(self.proposal_yaml)
+        self.proposal_yaml = ""
+        self.proposal_diff = ""
+        if had_proposal:
+            self.version += 1
+            self.history.append(ChatMessage(role="user", content=history_event))
 
     async def run(
         self,

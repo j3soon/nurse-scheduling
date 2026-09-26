@@ -19,39 +19,34 @@
 
 # This file is mostly AI generated.
 
-import hashlib
 import math
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import replace
 from uuid import uuid4
 
 from fastapi import HTTPException
 
-from .agent_session import AgentSession
+from .agent_session import (
+    PROPOSAL_APPROVED_HISTORY,
+    PROPOSAL_INVALID_HISTORY,
+    PROPOSAL_REJECTED_HISTORY,
+    AgentSession,
+    RunCompletion,
+    schedule_revision,
+)
 from .config import AiSettings
 from .context import recent_history
 from .lifecycle import RunSnapshot
 from .provider import ChatMessage
 
-PROPOSAL_APPROVED_HISTORY = (
-    "The user approved the previous schedule proposal. Its changes are now part of the current canonical schedule."
-)
-PROPOSAL_REJECTED_HISTORY = (
-    "The user rejected the previous schedule proposal. All schedule changes made during that agent turn were "
-    "discarded. This turn starts with a fresh workspace containing the current canonical schedule."
-)
-PROPOSAL_INVALID_HISTORY = (
-    "The previous schedule proposal failed trusted validation when the user approved it, so it was discarded. All "
-    "schedule changes made during that agent turn were dropped. This turn starts with a fresh workspace containing "
-    "the current canonical schedule."
-)
-
-
-def schedule_revision(schedule_yaml: str) -> str:
-    """Identify one exact schedule snapshot, so a stale proposal cannot be applied."""
-    return hashlib.sha256(schedule_yaml.encode("utf-8")).hexdigest()
-
+__all__ = [
+    "PROPOSAL_APPROVED_HISTORY",
+    "PROPOSAL_INVALID_HISTORY",
+    "PROPOSAL_REJECTED_HISTORY",
+    "SessionStore",
+    "schedule_revision",
+]
 
 SESSION_MEMORY_LIMIT_MESSAGE = "The AI service has reached its memory limit."
 
@@ -72,15 +67,6 @@ def _session_bytes(session: "AgentSession") -> int:
     if session.snapshot is not None:
         total += sum(_text_bytes(text) for _message_id, text in session.agent.steering_queue)
     return total
-
-
-@dataclass(frozen=True)
-class RunCompletion:
-    """Whether a completed run and its optional proposal were retained."""
-
-    run_saved: bool
-    proposal_saved: bool
-    history_trimmed_count: int = 0
 
 
 class SessionStore:
@@ -208,17 +194,9 @@ class SessionStore:
         return self._reserve(session, accepting_steering=False)
 
     def _reserve(self, session: AgentSession, *, accepting_steering: bool) -> RunSnapshot:
-        session.agent.open_steering(accepting_steering)
-        session.snapshot = RunSnapshot(
-            list(session.history),
-            session.schedule_yaml,
-            session.version,
-            session.proposal_yaml,
-            session.proposal_diff,
-            previously_dropped=session.dropped_history_messages,
-        )
+        snapshot = session.begin_run(accepting_steering=accepting_steering)
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
-        return session.snapshot
+        return snapshot
 
     def require_owned(self, session_id: str, owner_token: str | None) -> AgentSession:
         """Resolve a session after validating browser ownership."""
@@ -239,32 +217,23 @@ class SessionStore:
         snapshot: RunSnapshot,
         run_messages: Sequence[ChatMessage] = (),
     ) -> RunCompletion:
-        """Save a completed run when its schedule revision is still current."""
+        """Commit through the live session, then apply service retention limits."""
         self._prune_expired()
         session = self._sessions.get(session_id)
-        if session is None or session.snapshot is not snapshot:
-            return RunCompletion(run_saved=False, proposal_saved=False)
-        session.snapshot = None
-        session.agent.close_steering()
-        if session.version != snapshot.version:
-            self._recount(session)
-            return RunCompletion(run_saved=False, proposal_saved=False)
-        completed_run = run_messages or (
+        if session is None:
+            return RunCompletion(False, False)
+        messages = run_messages or (
             ChatMessage(role="user", content=user_message),
             ChatMessage(role="assistant", content=assistant_message),
         )
-        session.history.extend(completed_run)
-        self._cap_history(session)
-        proposal_saved = proposal is not None
-        if proposal_saved:
-            session.proposal_yaml, session.proposal_diff = proposal
+        completion = session.finish_run(snapshot, messages, proposal)
+        if completion.run_saved:
+            self._cap_history(session)
         self._recount(session)
-        self._trim_history_to_budget(session, min(len(completed_run), len(session.history)))
-        return RunCompletion(
-            run_saved=True,
-            proposal_saved=proposal_saved,
-            history_trimmed_count=self._effective_trimmed_count(session),
-        )
+        if not completion.run_saved:
+            return completion
+        self._trim_history_to_budget(session, min(len(messages), len(session.history)))
+        return replace(completion, history_trimmed_count=self._effective_trimmed_count(session))
 
     def queue_steering(
         self,
@@ -313,11 +282,7 @@ class SessionStore:
         )
         if additional_bytes > 0:
             self._require_capacity(additional_bytes)
-        session.version += 1
-        session.schedule_yaml = schedule_yaml
-        session.revision = schedule_revision(schedule_yaml)
-        session.proposal_yaml = ""
-        session.proposal_diff = ""
+        session.update_schedule(schedule_yaml)
         self._recount(session)
 
     def peek_proposal(self, session_id: str, owner_token: str | None, base_sha256: str) -> tuple[str, str]:
@@ -326,33 +291,21 @@ class SessionStore:
         return session.proposal_yaml, session.schedule_yaml
 
     def adopt_proposal(self, session_id: str, owner_token: str | None, base_sha256: str) -> str:
-        """Adopt a revalidated proposal as the session schedule and record the approval."""
+        """Adopt a revalidated proposal through its owner and apply retention limits."""
         session = self._require_approvable(session_id, owner_token, base_sha256)
-        approved = session.proposal_yaml
-        session.proposal_yaml = ""
-        session.proposal_diff = ""
-        session.version += 1
-        session.schedule_yaml = approved
-        session.revision = schedule_revision(approved)
-        self._append_history_event(session, PROPOSAL_APPROVED_HISTORY)
+        approved = session.adopt_proposal(base_sha256)
+        self._cap_history(session)
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
         self._recount(session)
         return approved
 
     def _require_approvable(self, session_id: str, owner_token: str | None, base_sha256: str) -> AgentSession:
-        """Resolve a session whose pending proposal may still be approved by its browser."""
+        """Resolve an owned proposal and account for invalidation on a stale revision."""
         session = self._get_owned(session_id, owner_token)
-        if not session.proposal_yaml:
-            raise HTTPException(status_code=404, detail="No proposal is waiting for approval.")
-        if session.revision != base_sha256:
-            session.version += 1
-            session.proposal_yaml = ""
-            session.proposal_diff = ""
+        try:
+            session.require_proposal(base_sha256)
+        finally:
             self._recount(session)
-            raise HTTPException(
-                status_code=409,
-                detail="The schedule changed after this proposal was created, so it was discarded.",
-            )
         return session
 
     def discard_proposal(
@@ -361,29 +314,18 @@ class SessionStore:
         owner_token: str | None,
         history_event: str = PROPOSAL_REJECTED_HISTORY,
     ) -> None:
-        """Drop a pending proposal and record why it was dropped once."""
+        """Record a proposal decision and apply service retention limits."""
         session = self._get_owned(session_id, owner_token)
-        had_proposal = bool(session.proposal_yaml)
-        session.proposal_yaml = ""
-        session.proposal_diff = ""
-        if had_proposal:
-            session.version += 1
-            self._append_history_event(session, history_event)
+        session.discard_proposal(history_event)
+        self._cap_history(session)
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
         self._recount(session)
 
     def abort(self, session_id: str, snapshot: RunSnapshot) -> None:
-        """Only the owner of a reservation may release it."""
+        """Release an owned reservation and its accounted steering messages."""
         session = self._sessions.get(session_id)
-        if session is not None and session.snapshot is snapshot:
-            session.snapshot = None
-            session.agent.close_steering()
+        if session is not None and session.abort_run(snapshot):
             self._recount(session)
-
-    def _append_history_event(self, session: AgentSession, content: str) -> None:
-        """Append one trusted application event within the retention bound."""
-        session.history.append(ChatMessage(role="user", content=content))
-        self._cap_history(session)
 
     def _get_owned(self, session_id: str, owner_token: str | None) -> AgentSession:
         self._prune_expired()

@@ -75,7 +75,9 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   admission. Commit conversation changes only with the matching `RunSnapshot`.
   Follow Pi terminology: a run spans multiple model/tool turns. Keep model-loop
   state and steering in `Agent`, application finalization in `AgentSession`,
-  and sandbox lifetime and hydration in `SandboxWorkspace`.
+  and sandbox lifetime and hydration in `SandboxWorkspace`. Session mutations
+  belong to `AgentSession`. Keep ownership, expiry, and global retention accounting
+  in `SessionStore`, with checks and mutations in the same synchronous operation.
 - Optimizer submissions and jobs belong to the optimizer service, not to the
   requesting turn. Revoke the submission owner on cancellation and dispose of
   late remote responses. Keep progress readers inside the job lifecycle scope.
