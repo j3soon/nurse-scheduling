@@ -238,6 +238,28 @@ class AgentSession:
         self.agent.close_steering()
         return True
 
+    def admit_steering(self, message_id: str, max_messages: int) -> bool:
+        """Check a queued message against the active run. False means a retried duplicate."""
+        if not self.active or not self.agent.accepting_steering:
+            raise HTTPException(status_code=409, detail="The active response is no longer accepting messages.")
+        if self.agent.has_steered(message_id):
+            return False
+        # Counted over the whole run, not the drained queue, so retries stay idempotent.
+        if self.agent.steered_count >= max_messages:
+            raise HTTPException(status_code=429, detail="Too many messages are already queued.")
+        return True
+
+    def steer(self, message_id: str, text: str) -> None:
+        self.agent.steer(message_id, text)
+
+    def take_steering(self, close_if_empty: bool) -> list[tuple[str, str]]:
+        """Drain queued messages, closing the queue if the answer is ending without any."""
+        return self.agent.take_steering(close_if_empty) if self.active else []
+
+    @property
+    def queued_steering(self) -> tuple[str, ...]:
+        return self.agent.queued_steering if self.active else ()
+
     def update_schedule(self, schedule_yaml: str) -> None:
         """Replace canonical YAML and invalidate proposals and in-flight results."""
         if self.schedule_yaml == schedule_yaml:

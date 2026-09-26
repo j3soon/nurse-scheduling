@@ -55,32 +55,50 @@ class Agent:
 
     def __init__(self) -> None:
         self.state = AgentState()
-        self.accepting_steering = False
-        self.steering_queue: list[tuple[str, str]] = []
-        self.steering_ids: set[str] = set()
+        self._accepting_steering = False
+        self._steering_queue: list[tuple[str, str]] = []
+        # Every ID steered this run, kept after draining so a retried POST stays idempotent.
+        self._steering_ids: set[str] = set()
+
+    @property
+    def accepting_steering(self) -> bool:
+        return self._accepting_steering
+
+    @property
+    def steered_count(self) -> int:
+        """Messages admitted during this run, including those already delivered."""
+        return len(self._steering_ids)
+
+    @property
+    def queued_steering(self) -> tuple[str, ...]:
+        """Texts waiting for the next model boundary."""
+        return tuple(text for _message_id, text in self._steering_queue)
+
+    def has_steered(self, message_id: str) -> bool:
+        return message_id in self._steering_ids
 
     def open_steering(self, accepting: bool) -> None:
         self.close_steering()
-        self.accepting_steering = accepting
+        self._accepting_steering = accepting
 
     def close_steering(self) -> None:
-        self.accepting_steering = False
-        self.steering_queue.clear()
-        self.steering_ids.clear()
+        self._accepting_steering = False
+        self._steering_queue.clear()
+        self._steering_ids.clear()
 
     def steer(self, message_id: str, text: str) -> None:
         """Queue already admitted input. The session enforces ownership and limits."""
-        if not self.accepting_steering:
+        if not self._accepting_steering:
             raise RuntimeError("The active run is no longer accepting messages.")
-        if message_id not in self.steering_ids:
-            self.steering_queue.append((message_id, text))
-            self.steering_ids.add(message_id)
+        if message_id not in self._steering_ids:
+            self._steering_queue.append((message_id, text))
+            self._steering_ids.add(message_id)
 
     def take_steering(self, close_if_empty: bool) -> list[tuple[str, str]]:
-        queued = list(self.steering_queue)
-        self.steering_queue.clear()
+        queued = list(self._steering_queue)
+        self._steering_queue.clear()
         if close_if_empty and not queued:
-            self.accepting_steering = False
+            self._accepting_steering = False
         return queued
 
     async def prompt(

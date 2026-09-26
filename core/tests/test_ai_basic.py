@@ -2285,7 +2285,7 @@ def test_session_store_bounds_steering_across_a_whole_turn_not_the_drained_queue
         store.queue_steering(session.id, "browser-owner", "one-too-many", "Keep going.")
 
     assert exc_info.value.status_code == 429
-    assert len(session.agent.steering_ids) == settings.max_history_messages
+    assert session.agent.steered_count == settings.max_history_messages
 
     # A fresh turn starts the budget over.
     store.abort(session.id, session.snapshot)

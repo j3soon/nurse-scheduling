@@ -78,6 +78,8 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   and sandbox lifetime and hydration in `SandboxWorkspace`. Session mutations
   belong to `AgentSession`. Keep ownership, expiry, and global retention accounting
   in `SessionStore`, with checks and mutations in the same synchronous operation.
+  `SessionStore` reaches steering and other `Agent` state only through
+  `AgentSession` methods.
 - Keep the session transcript as typed entries. Put their model-facing
   projection and wording in `context.py`, so retention, model context, and
   audit remain separate decisions.

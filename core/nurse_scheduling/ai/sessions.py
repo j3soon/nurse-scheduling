@@ -51,8 +51,7 @@ def _session_bytes(session: "AgentSession") -> int:
     """Return the chat text one session retains."""
     total = _text_bytes(session.schedule_yaml) + _text_bytes(session.proposal_yaml) + _text_bytes(session.proposal_diff)
     total += sum(_text_bytes(entry_text(entry)) for entry in session.transcript)
-    if session.snapshot is not None:
-        total += sum(_text_bytes(text) for _message_id, text in session.agent.steering_queue)
+    total += sum(_text_bytes(text) for text in session.queued_steering)
     return total
 
 
@@ -238,27 +237,20 @@ class SessionStore:
     ) -> None:
         """Queue a message for the next model boundary of an active response."""
         session = self._get_owned(session_id, owner_token)
-        agent = session.agent
-        if not session.active or not agent.accepting_steering:
-            raise HTTPException(status_code=409, detail="The active response is no longer accepting messages.")
-        if message_id in agent.steering_ids:
+        if not session.admit_steering(message_id, self._settings.max_history_messages):
             return
-        # Counted over the whole run, not the drained queue, because the seen-ID set
-        # that makes a retried POST idempotent is never emptied mid-run.
-        if len(agent.steering_ids) >= self._settings.max_history_messages:
-            raise HTTPException(status_code=429, detail="Too many messages are already queued.")
         message_bytes = _text_bytes(message)
         self._require_capacity(message_bytes)
-        agent.steer(message_id, message)
+        session.steer(message_id, message)
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
         self._charge(session, message_bytes)
 
     def take_steering(self, session_id: str, close_if_empty: bool) -> list[tuple[str, str]]:
         """Drain queued messages and close the final race when a response is done."""
         session = self._sessions.get(session_id)
-        if session is None or not session.active:
+        if session is None:
             return []
-        queued = session.agent.take_steering(close_if_empty)
+        queued = session.take_steering(close_if_empty)
         self._charge(session, -sum(_text_bytes(text) for _message_id, text in queued))
         return queued
 
