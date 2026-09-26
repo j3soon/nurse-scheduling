@@ -142,6 +142,7 @@ venv.bak/
 /site
 /docker/diagnostic-reports/
 /artifacts/
+/backups/
 
 # mypy
 .mypy_cache/

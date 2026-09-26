@@ -165,6 +165,97 @@ service and disables response buffering for its streaming endpoints. Keep the
 Cloudflare Tunnel hostname pointed at `http://nginx:8080`, not directly at
 either application container.
 
+## AI Chat History Backup and Restore
+
+Run these commands from the repository root.
+
+### Backup
+
+```sh
+mkdir -p backups
+
+docker compose -f docker/compose.backend.yml exec -T postgres \
+  pg_dump \
+  --username=ai_history \
+  --dbname=ai_history \
+  --format=custom \
+  --no-owner \
+  --no-acl \
+  > "backups/ai-history-$(date +%Y%m%d-%H%M%S).dump"
+```
+
+The dump is stored on the host at
+`<repo-root>/backups/ai-history-YYYYMMDD-HHMMSS.dump`. Check existing backups
+with:
+
+```sh
+ls -lh backups/
+```
+
+Optionally verify that a dump is readable:
+
+```sh
+pg_restore --list backups/ai-history-YYYYMMDD-HHMMSS.dump | head
+```
+
+### Restore
+
+Stop the AI service first:
+
+```sh
+docker compose -f docker/compose.backend.yml stop ai
+```
+
+Recreate the database:
+
+```sh
+docker compose -f docker/compose.backend.yml exec -T postgres \
+  dropdb --username=ai_history --if-exists ai_history
+
+docker compose -f docker/compose.backend.yml exec -T postgres \
+  createdb --username=ai_history ai_history
+```
+
+Restore the selected backup:
+
+```sh
+cat backups/ai-history-YYYYMMDD-HHMMSS.dump | \
+  docker compose -f docker/compose.backend.yml exec -T postgres \
+  pg_restore \
+    --username=ai_history \
+    --dbname=ai_history \
+    --no-owner \
+    --no-acl \
+    --exit-on-error
+```
+
+Restart the AI service:
+
+```sh
+docker compose -f docker/compose.backend.yml start ai
+```
+
+Verify the restored database:
+
+```sh
+docker compose -f docker/compose.backend.yml exec postgres \
+  psql -U ai_history -d ai_history \
+  -c '\dt'
+```
+
+### Backup Retention
+
+For example, delete backups older than 30 days:
+
+```sh
+find backups -name 'ai-history-*.dump' -mtime +30 -delete
+```
+
+These backups may contain the full stored AI conversation history, including
+reasoning, tool calls and results, attachment filenames, and schedule or
+attachment text exposed through tools. Treat backup files as sensitive data
+and protect or encrypt off-host copies appropriately.
+
 ## Sentry
 
 The Docker deployment configures only the Python backend. Keep all backend
