@@ -25,6 +25,9 @@ may repeat within one run. Arrow style does not encode synchronous versus
 background work.
 
 <style>
+.ai-pi-mapping table {
+  min-width: 680px;
+}
 .ai-diagram--wide {
   overflow-x: auto;
 }
@@ -141,6 +144,36 @@ enabled.
 | Background event replay | `ai/session_events.py` |
 | SessionOptimizer | `ai/optimizer.py` |
 | Browser operation lifecycle | `web-frontend/src/app/experimental-ai/chatLifecycle.ts` |
+
+### Mapping to Pi
+
+This comparison follows Pi's public agent loop and coding-agent session at
+revision `d6af72e`. Links are pinned to that revision. These are architectural
+counterparts, not identical APIs or a mapping of Pi's separate harness runtime.
+
+<div class="ai-pi-mapping" markdown="1">
+
+| Our component | Pi counterpart | Similarity and differences |
+| --- | --- | --- |
+| `Agent` / `AgentState` | [Agent][pi-agent], [AgentState][pi-state] | Both own streaming state, pending tool IDs, steering, and cancellation. Our model context is passed per run and successful history is committed by the session. Pi also keeps model, tools, transcript, and partial messages in agent state. |
+| `agent_loop` | [agentLoop][pi-loop] | Both repeat model responses and tool execution, consuming steering at boundaries. We parallelize only all-read batches and enforce tool budgets. Pi supports configurable execution modes and a separate follow-up queue. |
+| `AgentTool` / `ToolResult` | [AgentTool / AgentToolResult][pi-tools] | Both bind tool definitions to execution and return model content plus UI details. Ours accepts raw JSON arguments and returns text, an optional image, and explicit success status. Pi passes parsed parameters, call ID, cancellation signal, and a partial-update callback. |
+| `AgentSession` / `RunOutput` | [AgentSession][pi-session] | Both layer application behavior over `Agent`. Ours accumulates provisional output, validates snapshot ownership, and saves history and proposals after cleanup. Pi's coding session adds persistence, compaction, retries, and extension handling. |
+| `SessionRuns` / `AgentRun` / `RunSnapshot` | [ActiveRun and run lifecycle][pi-agent] | Both track active execution and cancellation. Our service adds per-session FIFO admission, queued background runs, and a versioned commit capability. These three types have no direct counterpart in this Pi path. |
+| Steering queue | [steer / followUp][pi-agent] | Both deliver queued input at execution boundaries. Our steering drains all admitted messages, deduplicates IDs, and closes atomically when the answer ends. Optimizer follow-ups enter `SessionRuns` as fresh runs. Pi's follow-up queue continues the current run when it would otherwise finish. |
+| `WorkspaceTools` / `SandboxWorkspace` | [AgentTool execution boundary][pi-tools] | Both provide executable tools to the loop. Our integration additionally owns a disposable E2B VM, hydration, pause/resume, YAML validation, and teardown. Pi's generic tool interface does not prescribe a workspace lifetime. |
+| `SessionEventBroker` / SSE projection | [AgentEvent][pi-events], [Agent.subscribe][pi-agent] | Both expose execution events. We translate typed events to the existing SSE contract and retain background events for cursor replay. Pi's agent uses subscribers and includes agent, turn, message, and tool lifecycle events. |
+| `SessionOptimizer` | [Tool execution][pi-tools] and [followUp][pi-agent] are the nearest boundaries | Our optimizer owns independent remote jobs, progress, late-submission cleanup, and fresh review runs. This service has no direct counterpart in the compared Pi agent/session path. |
+| API routes / `SessionStore` / browser lifecycle | [AgentSession][pi-session] is the nearest application boundary | Our browser service adds HTTP authentication, cookie ownership, session expiry, memory limits, SSE reconnection, and schedule approval. These have no one-to-one mapping to Pi's coding-agent session. |
+
+</div>
+
+[pi-agent]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/agent/src/agent.ts#L188
+[pi-state]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/agent/src/types.ts#L378
+[pi-loop]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/agent/src/agent-loop.ts#L37
+[pi-tools]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/agent/src/types.ts#L420
+[pi-session]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/coding-agent/src/core/agent-session.ts#L331
+[pi-events]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/agent/src/types.ts#L485
 
 ## One Run at a Glance {#one-turn-at-a-glance}
 
