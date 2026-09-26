@@ -166,22 +166,22 @@ class SessionStore:
         self._recount(session)
         return session
 
-    def begin(self, session_id: str, owner_token: str | None) -> RunSnapshot:
+    def begin(self, session_id: str, owner_token: str | None, *, run_id: str | None = None) -> RunSnapshot:
         """Reserve the current conversation version for one foreground run."""
         session = self._get_owned(session_id, owner_token)
         if session.active:
             raise HTTPException(status_code=409, detail="This chat session already has an active response.")
-        return self._reserve(session, accepting_steering=True)
+        return self._reserve(session, accepting_steering=True, run_id=run_id)
 
-    def begin_background(self, session_id: str) -> RunSnapshot | None:
+    def begin_background(self, session_id: str, *, run_id: str | None = None) -> RunSnapshot | None:
         self._prune_expired()
         session = self._sessions.get(session_id)
         if session is None or session.active:
             return None
-        return self._reserve(session, accepting_steering=False)
+        return self._reserve(session, accepting_steering=False, run_id=run_id)
 
-    def _reserve(self, session: AgentSession, *, accepting_steering: bool) -> RunSnapshot:
-        snapshot = session.begin_run(accepting_steering=accepting_steering)
+    def _reserve(self, session: AgentSession, *, accepting_steering: bool, run_id: str | None) -> RunSnapshot:
+        snapshot = session.begin_run(accepting_steering=accepting_steering, run_id=run_id)
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
         return snapshot
 
@@ -275,8 +275,11 @@ class SessionStore:
         session = self._require_approvable(session_id, owner_token, base_sha256)
         return session.proposal_yaml, session.schedule_yaml
 
-    def adopt_proposal(self, session_id: str, owner_token: str | None, base_sha256: str) -> str:
-        """Adopt a revalidated proposal through its owner and apply retention limits."""
+    def adopt_proposal(self, session_id: str, owner_token: str | None, base_sha256: str) -> tuple[str, str | None]:
+        """Adopt a revalidated proposal through its owner and apply retention limits.
+
+        Returns the approved YAML and the run that proposed it.
+        """
         session = self._require_approvable(session_id, owner_token, base_sha256)
         approved = session.adopt_proposal(base_sha256)
         self._cap_history(session)
@@ -298,13 +301,17 @@ class SessionStore:
         session_id: str,
         owner_token: str | None,
         decision: ProposalDecision = "rejected",
-    ) -> None:
-        """Record a proposal decision and apply service retention limits."""
+    ) -> str | None:
+        """Record a proposal decision and apply service retention limits.
+
+        Returns the run that proposed the discarded proposal, if one was pending.
+        """
         session = self._get_owned(session_id, owner_token)
-        session.discard_proposal(decision)
+        run_id = session.discard_proposal(decision)
         self._cap_history(session)
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
         self._recount(session)
+        return run_id
 
     def abort(self, session_id: str, snapshot: RunSnapshot) -> None:
         """Release an owned reservation and its accounted steering messages."""

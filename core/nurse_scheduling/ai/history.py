@@ -32,7 +32,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from .provider import TokenUsage
-from .transcript import SessionEntry, entry_record
+from .transcript import AssistantEntry, ProposalDecision, ProposalDecisionEntry, SessionEntry, UserEntry
 
 logger = logging.getLogger("nurse_scheduling.ai.history")
 TurnStatus = Literal["completed", "failed", "cancelled", "stale"]
@@ -85,48 +85,56 @@ class ChatHistory:
         turn_id: str,
         session_id: str,
         credential_id: str | None,
-        question: str,
+        prompt: str,
         model: str,
         attachment_count: int,
     ) -> None:
-        """Atomically create a session and a uniquely identified turn."""
+        """Atomically create a session, a uniquely identified turn, and its prompt entry.
+
+        The prompt is written before model work, so it survives a process that dies mid-run.
+        """
         with self._connect() as connection:
             connection.execute(
                 "INSERT INTO chat_sessions (id, auth_credential_id) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
                 (session_id, credential_id),
             )
-            connection.execute(
-                "INSERT INTO chat_turns (id, session_id, user_message, model, attachment_count) "
-                "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
-                (turn_id, session_id, question, model, attachment_count),
-            )
+            inserted = connection.execute(
+                "INSERT INTO chat_turns (id, session_id, model, attachment_count) "
+                "VALUES (%s, %s, %s, %s) ON CONFLICT (id) DO NOTHING RETURNING id",
+                (turn_id, session_id, model, attachment_count),
+            ).fetchone()
+            if inserted is not None:
+                _insert_entries(connection, turn_id, 0, [UserEntry(prompt)])
 
     def finish_turn(
         self,
         turn_id: str,
-        answer: str,
         status: TurnStatus,
         error_code: str | None,
         usage: TokenUsage | None,
-        transcript: Sequence[SessionEntry] = (),
+        entries: Sequence[SessionEntry] = (),
     ) -> None:
         """Keep the first terminal result when cleanup or writes are repeated.
 
-        The transcript orders the run's prompt, queued steering, and answer segments.
+        `entries` continue the prompt written by `start_turn`: queued steering and
+        answer segments in run order.
         """
         with self._connect() as connection:
-            connection.execute(
-                "UPDATE chat_turns SET assistant_message = %s, status = %s, error_code = %s, "
-                "usage = %s, transcript = %s, finished_at = now() WHERE id = %s AND status = 'running'",
-                (
-                    answer,
-                    status,
-                    error_code,
-                    Jsonb(asdict(usage)) if usage else None,
-                    Jsonb([entry_record(entry) for entry in transcript]) if transcript else None,
-                    turn_id,
-                ),
-            )
+            finished = connection.execute(
+                "UPDATE chat_turns SET status = %s, error_code = %s, usage = %s, finished_at = now() "
+                "WHERE id = %s AND status = 'running' RETURNING id",
+                (status, error_code, Jsonb(asdict(usage)) if usage else None, turn_id),
+            ).fetchone()
+            if finished is not None:
+                _insert_entries(connection, turn_id, 1, entries)
+
+    def record_decision(self, turn_id: str, decision: ProposalDecision) -> None:
+        """Append a proposal decision to the turn whose proposal it decides."""
+        with self._connect() as connection:
+            (next_seq,) = connection.execute(
+                "SELECT COALESCE(max(seq) + 1, 0) FROM chat_turn_entries WHERE turn_id = %s", (turn_id,)
+            ).fetchone()
+            _insert_entries(connection, turn_id, next_seq, [ProposalDecisionEntry(decision)])
 
     async def write(self, operation: str, *args) -> bool:
         """Report failures without leaking connection strings or chat text to logs."""
@@ -143,6 +151,25 @@ class ChatHistory:
         while True:
             await asyncio.sleep(3600)
             await self.write("prune")
+
+
+def _insert_entries(connection, turn_id: str, first_seq: int, entries: Sequence[SessionEntry]) -> None:
+    rows = []
+    for seq, entry in enumerate(entries, first_seq):
+        if isinstance(entry, UserEntry):
+            rows.append((turn_id, seq, "user", entry.text, None, None))
+        elif isinstance(entry, AssistantEntry):
+            rows.append((turn_id, seq, "assistant", entry.text, entry.stop_reason, None))
+        else:
+            rows.append((turn_id, seq, "proposal_decision", None, None, entry.decision))
+    if not rows:
+        return
+    with connection.cursor() as cursor:
+        cursor.executemany(
+            "INSERT INTO chat_turn_entries (turn_id, seq, type, text, stop_reason, decision) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            rows,
+        )
 
 
 async def stop_maintenance(task: asyncio.Task) -> None:

@@ -277,7 +277,7 @@ def test_stop_during_history_start_waits_for_history_then_releases_the_session(m
             assert not app.state.session_store._sessions[session_id].active
             assert provider.calls == []
             assert [operation for operation, _ in records] == ["start_turn", "finish_turn"]
-            assert records[-1][1][2] == "cancelled"
+            assert records[-1][1][1] == "cancelled"
 
     asyncio.run(exercise())
 

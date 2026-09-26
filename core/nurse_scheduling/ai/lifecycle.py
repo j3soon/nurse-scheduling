@@ -42,6 +42,7 @@ class RunSnapshot:
     proposal_yaml: str
     proposal_diff: str
     previously_dropped: int = 0
+    run_id: str | None = None
 
 
 @dataclass(eq=False)

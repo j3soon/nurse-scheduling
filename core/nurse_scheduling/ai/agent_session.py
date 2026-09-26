@@ -84,11 +84,11 @@ class RunCompletion:
 class SessionPersistence(Protocol):
     """Session operations needed by a foreground or background run."""
 
-    def begin(self, session_id: str, owner_token: str | None) -> RunSnapshot: ...
+    def begin(self, session_id: str, owner_token: str | None, *, run_id: str | None = None) -> RunSnapshot: ...
 
     def take_steering(self, session_id: str, close_if_empty: bool) -> list[tuple[str, str]]: ...
 
-    def begin_background(self, session_id: str) -> RunSnapshot | None: ...
+    def begin_background(self, session_id: str, *, run_id: str | None = None) -> RunSnapshot | None: ...
 
     def finish(
         self,
@@ -181,12 +181,14 @@ class AgentSession:
     agent: Agent = field(default_factory=Agent)
     proposal_yaml: str = ""
     proposal_diff: str = ""
+    # The run that produced the pending proposal, so its decision joins that run's history.
+    proposal_run_id: str | None = None
 
     @property
     def active(self) -> bool:
         return self.snapshot is not None
 
-    def begin_run(self, *, accepting_steering: bool) -> RunSnapshot:
+    def begin_run(self, *, accepting_steering: bool, run_id: str | None = None) -> RunSnapshot:
         """Reserve this conversation version and open its steering queue."""
         if self.active:
             raise HTTPException(status_code=409, detail="This chat session already has an active response.")
@@ -198,6 +200,7 @@ class AgentSession:
             self.proposal_yaml,
             self.proposal_diff,
             previously_dropped=self.dropped_history_messages,
+            run_id=run_id,
         )
         return self.snapshot
 
@@ -215,6 +218,7 @@ class AgentSession:
         self.transcript.extend(entries)
         if proposal is not None:
             self.proposal_yaml, self.proposal_diff = proposal
+            self.proposal_run_id = snapshot.run_id
         return RunCompletion(True, proposal is not None)
 
     def abort_run(self, snapshot: RunSnapshot) -> bool:
@@ -232,8 +236,15 @@ class AgentSession:
         self.version += 1
         self.schedule_yaml = schedule_yaml
         self.revision = schedule_revision(schedule_yaml)
+        self._clear_proposal()
+
+    def _clear_proposal(self) -> str | None:
+        """Drop the pending proposal and return the run that produced it."""
+        run_id = self.proposal_run_id
         self.proposal_yaml = ""
         self.proposal_diff = ""
+        self.proposal_run_id = None
+        return run_id
 
     def require_proposal(self, base_sha256: str) -> None:
         """Reject a missing or stale proposal before it can be applied."""
@@ -241,33 +252,38 @@ class AgentSession:
             raise HTTPException(status_code=404, detail="No proposal is waiting for approval.")
         if self.revision != base_sha256:
             self.version += 1
-            self.proposal_yaml = ""
-            self.proposal_diff = ""
+            self._clear_proposal()
             raise HTTPException(
                 status_code=409,
                 detail="The schedule changed after this proposal was created, so it was discarded.",
             )
 
-    def adopt_proposal(self, base_sha256: str) -> str:
-        """Adopt a revalidated proposal and record the user's decision."""
+    def adopt_proposal(self, base_sha256: str) -> tuple[str, str | None]:
+        """Adopt a revalidated proposal and record the user's decision.
+
+        Returns the approved YAML and the run that proposed it.
+        """
         self.require_proposal(base_sha256)
         approved = self.proposal_yaml
-        self.proposal_yaml = ""
-        self.proposal_diff = ""
+        run_id = self._clear_proposal()
         self.version += 1
         self.schedule_yaml = approved
         self.revision = schedule_revision(approved)
         self.transcript.append(ProposalDecisionEntry("approved"))
-        return approved
+        return approved, run_id
 
-    def discard_proposal(self, decision: ProposalDecision = "rejected") -> None:
-        """Record a proposal decision once and invalidate results based on it."""
+    def discard_proposal(self, decision: ProposalDecision = "rejected") -> str | None:
+        """Record a proposal decision once and invalidate results based on it.
+
+        Returns the run that proposed the discarded proposal, if one was pending.
+        """
         had_proposal = bool(self.proposal_yaml)
-        self.proposal_yaml = ""
-        self.proposal_diff = ""
-        if had_proposal:
-            self.version += 1
-            self.transcript.append(ProposalDecisionEntry(decision))
+        run_id = self._clear_proposal()
+        if not had_proposal:
+            return None
+        self.version += 1
+        self.transcript.append(ProposalDecisionEntry(decision))
+        return run_id
 
     async def run(
         self,
@@ -288,7 +304,11 @@ class AgentSession:
         concurrency_limit, history_log = runtime.concurrency_limit, runtime.history_log
         provider, sandbox_factory = runtime.provider, runtime.sandbox_factory
         session_optimizer = runtime.session_optimizer
-        snapshot = store.begin_background(session_id) if background else store.begin(session_id, owner)
+        snapshot = (
+            store.begin_background(session_id, run_id=run.id)
+            if background
+            else store.begin(session_id, owner, run_id=run.id)
+        )
         if snapshot is None:
             return
         transcript, schedule_yaml = snapshot.transcript, snapshot.schedule_yaml
@@ -391,9 +411,8 @@ class AgentSession:
             if logged:
                 # The history result is part of foreground done. Do not write it again in finally.
                 logged = False
-                history_saved = await write_history(
-                    "finish_turn", run.id, output.text, outcome, None, output.usage, run_entries
-                )
+                # The prompt was written at start, without the attachment filenames in its session copy.
+                history_saved = await write_history("finish_turn", run.id, outcome, None, output.usage, run_entries[1:])
             if not completion.run_saved:
                 await emit("stale", {"message": STALE_TURN_ERROR})
                 return
@@ -443,13 +462,7 @@ class AgentSession:
             if logged:
                 stop_reason = "aborted" if outcome == "cancelled" else "error"
                 await write_history(
-                    "finish_turn",
-                    run.id,
-                    output.text,
-                    outcome,
-                    error_code,
-                    output.usage,
-                    output.finish_entries(stop_reason),
+                    "finish_turn", run.id, outcome, error_code, output.usage, output.finish_entries(stop_reason)[1:]
                 )
             if terminal_event is not None:
                 await publish(*terminal_event)

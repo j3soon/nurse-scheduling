@@ -555,7 +555,7 @@ def test_client_disconnect_cancels_the_turn_and_closes_its_sandbox(wait_stage: s
     # The interrupted prompt stays for a follow-up. Its sandbox work does not.
     assert history == [UserEntry("Wait for me"), AssistantEntry("", "aborted")]
     assert len(saved) == 1
-    assert saved[0][2] == "cancelled"
+    assert saved[0][1] == "cancelled"
 
 
 def test_stop_endpoint_cancels_an_active_assistant_turn() -> None:
@@ -796,7 +796,7 @@ def test_disconnect_before_stream_iteration_releases_the_session(monkeypatch) ->
 
     assert not asyncio.run(exercise())
     assert len(saved) == 1
-    assert saved[0][2] == "cancelled"
+    assert saved[0][1] == "cancelled"
 
 
 def test_health_and_streamed_schedule_question() -> None:
@@ -1150,7 +1150,8 @@ def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming(monke
         ("stale", {"message": STALE_TURN_ERROR}),
     ]
     assert len(saved) == 1
-    assert saved[0][1:3] == ("Obsolete answer.", "stale")
+    assert saved[0][1] == "stale"
+    assert saved[0][4] == [AssistantEntry("Obsolete answer.")]
 
 
 def test_sandbox_timeout_does_not_expose_exception_details() -> None:

@@ -174,16 +174,20 @@ Each row lists shared behavior first, then what only one side has.
 ### Retention and Context
 
 Each destination keeps its own subset of a run. The session transcript holds
-only what later model context may need.
+only what later model context may need. The chat history log stores the same
+entry types, `user`, `assistant` with its stop reason, and
+`proposal_decision`, as ordered rows under each run.
 
 | Content | Later model context | Session transcript | Browser and export | Chat history log |
 | --- | --- | --- | --- | --- |
 | Answer text | Yes, within the history budget | Yes | Yes | Yes |
 | Reasoning | No | No | Yes | No |
 | Tool calls and results | Only within their run | No | Yes, by `tool_call_id` | No |
-| Queued steering | Yes | Yes | Yes | Yes, in the run transcript |
-| Stopped answer | Prompt and an interruption note | Prompt and aborted partial answer | Partial output, stopped status | Yes, as `cancelled` |
-| Failed or stale answer | No | No | Failed output with retry, or a stale notice | Yes, with status |
+| Queued steering | Yes | Yes | Yes | Yes, in run order |
+| Stopped answer | Prompt and an interruption note | Prompt and aborted partial answer | Partial output, stopped status | Yes, `aborted` in a `cancelled` run |
+| Failed or stale answer | No | No | Failed output with retry, or a stale notice | Yes, with run status |
+| Attachment filenames | Yes, in the prompt note | Yes | Yes | No, only a count |
+| Proposal decision | Yes | Yes | Yes | Yes, under the proposing run |
 
 The investigated alternatives below were not adopted:
 
@@ -605,12 +609,14 @@ defaults and validation rules.
 ## Storage and Deployment
 
 PostgreSQL chat logging is optional for native runs and included in both
-backend Compose variants. It stores run text, status, timestamps, usage when
-available, attachment counts, and the administrative credential ID. Each run's
-`transcript` column orders its prompt, queued steering, and answer segments
-with their stop reasons. It does
-not store schedule snapshots, raw attachments, tool arguments or results, or
-reasoning. User and assistant text can still contain staff information, so
+backend Compose variants. `chat_turns` keeps run metadata: status, error code,
+model, timestamps, usage when available, and attachment count.
+`chat_turn_entries` is the canonical ordered record of each run, keyed by
+`(turn_id, seq)`. The prompt is written when the run starts, then queued
+steering and answer segments with their stop reasons when it ends. A later
+approval or rejection is appended to the run that proposed it. Sessions keep
+the administrative credential ID. The log does not store attachment filenames,
+schedule snapshots, raw attachments, tool arguments or results, or reasoning. User and assistant text can still contain staff information, so
 database access is for operators. History records do not restore an active chat
 after a restart.
 

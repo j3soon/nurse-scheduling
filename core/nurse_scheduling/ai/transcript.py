@@ -23,7 +23,7 @@
 from dataclasses import dataclass
 from typing import Literal
 
-StopReason = Literal["stop", "aborted", "error"]
+StopReason = Literal["stop", "length", "aborted", "error"]
 ProposalDecision = Literal["approved", "rejected", "invalid"]
 
 
@@ -55,12 +55,3 @@ SessionEntry = UserEntry | AssistantEntry | ProposalDecisionEntry
 def entry_text(entry: SessionEntry) -> str:
     """Return the text an entry retains, which bounds its share of session memory."""
     return "" if isinstance(entry, ProposalDecisionEntry) else entry.text
-
-
-def entry_record(entry: SessionEntry) -> dict[str, str]:
-    """Serialize one entry for the chat history log."""
-    if isinstance(entry, UserEntry):
-        return {"role": "user", "text": entry.text}
-    if isinstance(entry, AssistantEntry):
-        return {"role": "assistant", "text": entry.text, "stop_reason": entry.stop_reason}
-    return {"role": "proposal_decision", "decision": entry.decision}

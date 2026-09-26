@@ -55,6 +55,7 @@ from .sandbox import SandboxFactory, managed_sandbox_factory
 from .sandbox.factory import create_sandbox_factory
 from .session_events import SessionEventBroker
 from .sessions import SessionStore, schedule_revision
+from .transcript import ProposalDecision
 from .validation import new_schedule_issues, validate_frontend_schedule_yaml
 from .workspace import SandboxAttachment
 
@@ -402,6 +403,11 @@ def create_app(
 
     store.on_retire(retire_session)
 
+    async def record_decision(run_id: str | None, decision: ProposalDecision) -> None:
+        """Log a decision on the run that proposed it. It already took effect, so a failed write only logs."""
+        if history_log is not None and run_id is not None:
+            await history_log.write("record_decision", run_id, decision)
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         prepare_sandbox = getattr(sandbox_factory, "prepare", None)
@@ -686,9 +692,10 @@ def create_app(
             replaced_validation = validate_frontend_schedule_yaml(replaced, settings.max_schedule_bytes)
             if new_schedule_issues(replaced_validation, validation):
                 logger.error("Approved proposal failed revalidation session_id=%s", session_id)
-                store.discard_proposal(session_id, owner, "invalid")
+                await record_decision(store.discard_proposal(session_id, owner, "invalid"), "invalid")
                 raise HTTPException(status_code=409, detail="The proposed schedule is no longer valid.")
-        schedule_yaml = store.adopt_proposal(session_id, owner, request.base_sha256)
+        schedule_yaml, run_id = store.adopt_proposal(session_id, owner, request.base_sha256)
+        await record_decision(run_id, "approved")
         refresh_owner_cookie(response, owner)
         return ProposalResponse(schedule_yaml=schedule_yaml)
 
@@ -702,7 +709,7 @@ def create_app(
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> Response:
         """Drop the pending proposal at the user's request."""
-        store.discard_proposal(session_id, owner)
+        await record_decision(store.discard_proposal(session_id, owner), "rejected")
         response = Response(status_code=status.HTTP_204_NO_CONTENT)
         refresh_owner_cookie(response, owner)
         return response
