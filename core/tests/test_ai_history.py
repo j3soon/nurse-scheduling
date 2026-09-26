@@ -32,8 +32,8 @@ from psycopg import sql
 from nurse_scheduling.ai import history as ai_history
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.history import ChatHistory
-from nurse_scheduling.ai.provider import ProviderError, TextDelta, TokenUsage
-from nurse_scheduling.ai.transcript import AssistantEntry, UserEntry
+from nurse_scheduling.ai.provider import ProviderError, ReasoningDelta, TextDelta, TokenUsage, ToolCall
+from nurse_scheduling.ai.transcript import AssistantEntry, ToolResultEntry, UserEntry
 
 from . import test_ai_basic as basic
 
@@ -178,7 +178,7 @@ def test_records_queued_steering_in_run_order(recorded_history):
     ]
 
 
-def test_history_keeps_attachment_counts_but_not_filenames(recorded_history):
+def test_history_records_the_prompt_the_model_saw_with_attachment_names(recorded_history):
     app = basic.create_test_app(
         settings=basic.make_settings(history_postgres_url="test"),
         provider=basic.FakeProvider([["Seen."]]),
@@ -188,14 +188,38 @@ def test_history_keeps_attachment_counts_but_not_filenames(recorded_history):
         client.post(
             f"/sessions/{session_id}/messages",
             data={"message": "Read this."},
-            files={"files": ("Alice-night-shifts.xlsx", b"bytes", "application/octet-stream")},
+            files={"files": ("ward.xlsx", b"bytes", "application/octet-stream")},
         )
-        # The session copy names the file so later model turns can refer to it.
-        assert "Alice-night-shifts.xlsx" in app.state.session_store._sessions[session_id].transcript[0].text
+        prompt = app.state.session_store._sessions[session_id].transcript[0]
 
     (start,) = recorded_history["starts"]
-    assert start[3:] == ("Read this.", "test-model", 1)
-    assert "Alice-night-shifts" not in repr(recorded_history)
+    assert start[3:] == (prompt.text, "test-model", 1)
+    assert "ward.xlsx" in prompt.text
+
+
+def test_history_keeps_the_full_run_while_the_session_keeps_only_later_context(recorded_history):
+    provider = basic.ScriptedToolProvider(
+        [ReasoningDelta("Find P1. "), basic.TextDelta("Checking. "), *basic.rename_call()],
+        [basic.TextDelta("Renamed P1.")],
+    )
+    app = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test", max_schedule_bytes=basic.SCHEDULE_BYTE_LIMIT),
+        provider=provider,
+        sandbox_factory=basic.rename_factory(),
+    )
+    with basic.AuthenticatedTestClient(app) as client:
+        session_id = basic.create_session(client, basic.schedule_yaml())
+        client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P1."})
+        retained = app.state.session_store._sessions[session_id].transcript
+
+    (finish,) = recorded_history["finishes"]
+    (call,) = basic.rename_call()[0].calls
+    tool_use, tool_result, answer = finish[4]
+    assert tool_use == AssistantEntry("Checking. ", "tool_use", "Find P1. ", (call,))
+    assert (tool_result.tool_call_id, tool_result.tool_name, tool_result.ok) == (call.id, call.name, True)
+    assert "passed trusted server-side validation" in tool_result.text
+    assert answer == AssistantEntry("Renamed P1.")
+    assert retained == [UserEntry("Rename P1."), AssistantEntry("Checking. ", "tool_use"), answer]
 
 
 @pytest.mark.parametrize("decision", ["approved", "rejected"])
@@ -276,7 +300,13 @@ def test_postgres_migrations_duplicates_and_reconnection(postgres_history):
     turn, session = str(uuid4()), str(uuid4())
     history.start_turn(turn, session, "team-a", "What's next?", "model", 3)
     history.start_turn(turn, session, "team-a", "duplicate", "model", 3)
-    entries = [AssistantEntry("Checking."), UserEntry("Only nights."), AssistantEntry("Answer")]
+    call = ToolCall("call-1", "read", '{"path":"schedule.yaml"}')
+    entries = [
+        AssistantEntry("Checking.", "tool_use", "Look first.", (call,)),
+        ToolResultEntry("call-1", "read", "people: []", True),
+        UserEntry("Only nights."),
+        AssistantEntry("Answer"),
+    ]
     history.finish_turn(turn, "completed", None, TokenUsage(1, 2, 3), entries)
     history.finish_turn(turn, "cancelled", None, None, [AssistantEntry("Overwrite", "aborted")])
     history.record_decision(turn, "approved")
@@ -298,11 +328,18 @@ def test_postgres_migrations_duplicates_and_reconnection(postgres_history):
         assert row[3] == 3
         assert turn_entries(connection) == [
             ("user", "What's next?", None, None),
-            ("assistant", "Checking.", "stop", None),
+            ("assistant", "Checking.", "tool_use", None),
+            ("tool_result", "people: []", None, None),
             ("user", "Only nights.", None, None),
             ("assistant", "Answer", "stop", None),
             ("proposal_decision", None, None, "approved"),
         ]
+        assert connection.execute(
+            "SELECT reasoning, tool_calls FROM chat_turn_entries WHERE type = 'assistant' ORDER BY seq LIMIT 1"
+        ).fetchone() == ("Look first.", [{"id": "call-1", "name": "read", "arguments": '{"path":"schedule.yaml"}'}])
+        assert connection.execute(
+            "SELECT tool_call_id, tool_name, ok FROM chat_turn_entries WHERE type = 'tool_result'"
+        ).fetchone() == ("call-1", "read", True)
         credential_id = connection.execute("SELECT auth_credential_id FROM chat_sessions").fetchone()
         assert credential_id == ("team-a",)
         assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (3,)

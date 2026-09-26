@@ -32,7 +32,14 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from .provider import TokenUsage
-from .transcript import AssistantEntry, ProposalDecision, ProposalDecisionEntry, SessionEntry, UserEntry
+from .transcript import (
+    AssistantEntry,
+    ProposalDecision,
+    ProposalDecisionEntry,
+    SessionEntry,
+    ToolResultEntry,
+    UserEntry,
+)
 
 logger = logging.getLogger("nurse_scheduling.ai.history")
 TurnStatus = Literal["completed", "failed", "cancelled", "stale"]
@@ -156,20 +163,49 @@ class ChatHistory:
 def _insert_entries(connection, turn_id: str, first_seq: int, entries: Sequence[SessionEntry]) -> None:
     rows = []
     for seq, entry in enumerate(entries, first_seq):
+        row = dict.fromkeys(_ENTRY_COLUMNS)
         if isinstance(entry, UserEntry):
-            rows.append((turn_id, seq, "user", entry.text, None, None))
+            row.update(type="user", text=entry.text)
         elif isinstance(entry, AssistantEntry):
-            rows.append((turn_id, seq, "assistant", entry.text, entry.stop_reason, None))
+            row.update(
+                type="assistant",
+                text=entry.text,
+                reasoning=entry.reasoning or None,
+                stop_reason=entry.stop_reason,
+                tool_calls=Jsonb([asdict(call) for call in entry.tool_calls]) if entry.tool_calls else None,
+            )
+        elif isinstance(entry, ToolResultEntry):
+            row.update(
+                type="tool_result",
+                text=entry.text,
+                tool_call_id=entry.tool_call_id,
+                tool_name=entry.tool_name,
+                ok=entry.ok,
+            )
         else:
-            rows.append((turn_id, seq, "proposal_decision", None, None, entry.decision))
+            row.update(type="proposal_decision", decision=entry.decision)
+        rows.append((turn_id, seq, *row.values()))
     if not rows:
         return
     with connection.cursor() as cursor:
         cursor.executemany(
-            "INSERT INTO chat_turn_entries (turn_id, seq, type, text, stop_reason, decision) "
-            "VALUES (%s, %s, %s, %s, %s, %s)",
+            f"INSERT INTO chat_turn_entries (turn_id, seq, {', '.join(_ENTRY_COLUMNS)}) "
+            f"VALUES (%s, %s, {', '.join(['%s'] * len(_ENTRY_COLUMNS))})",
             rows,
         )
+
+
+_ENTRY_COLUMNS = (
+    "type",
+    "text",
+    "reasoning",
+    "stop_reason",
+    "tool_calls",
+    "tool_call_id",
+    "tool_name",
+    "ok",
+    "decision",
+)
 
 
 async def stop_maintenance(task: asyncio.Task) -> None:

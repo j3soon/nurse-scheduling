@@ -31,9 +31,9 @@ from .agent_types import (
     AgentTool,
     AgentToolBatchMetrics,
     AgentToolResult,
+    MessageEnd,
     MessageReasoningDelta,
     MessageTextDelta,
-    MessageTruncated,
     RequestPreparer,
     SteeringSource,
     ToolBatchObserver,
@@ -54,6 +54,7 @@ from .provider import (
     tool_result_image_message,
     tool_result_message,
 )
+from .transcript import AssistantEntry
 
 logger = logging.getLogger("nurse_scheduling.ai.agent")
 
@@ -99,13 +100,14 @@ async def agent_loop(
     tool_calls = 0
     final_answer_only = False
     while True:
-        answer, calls, finish_reason = [], (), None
+        answer, reasoning, calls, finish_reason = [], [], (), None
         request = prepare_request(conversation)
         async for event in provider.stream_events(request, [] if final_answer_only else definitions):
             if isinstance(event, TextDelta):
                 answer.append(event.text)
                 yield MessageTextDelta(event.text)
             elif isinstance(event, ReasoningDelta):
+                reasoning.append(event.text)
                 yield MessageReasoningDelta(event.text)
             elif isinstance(event, TokenUsage):
                 yield event
@@ -113,6 +115,8 @@ async def agent_loop(
                 calls = event.calls
             elif isinstance(event, ResponseEnd):
                 finish_reason = event.finish_reason
+        stop_reason = "length" if finish_reason == "length" else "tool_use" if calls else "stop"
+        yield MessageEnd(AssistantEntry("".join(answer), stop_reason, "".join(reasoning), calls))
         if finish_reason == "length" and calls and not final_answer_only:
             # Arguments cut off mid-stream can still parse as different, valid JSON, so
             # no call from this response runs. The model sees why and can reissue them.
@@ -129,8 +133,6 @@ async def agent_loop(
             # A refused batch still spends a round, so repeated truncation ends in an answer.
             final_answer_only = max_tool_rounds is not None and tool_rounds >= max_tool_rounds
             continue
-        if finish_reason == "length":
-            yield MessageTruncated()
         if not calls:
             steering = tuple(take_steering(True)) if take_steering is not None else ()
             if not steering:

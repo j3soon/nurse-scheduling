@@ -80,9 +80,10 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   in `SessionStore`, with checks and mutations in the same synchronous operation.
   `SessionStore` reaches steering and other `Agent` state only through
   `AgentSession` methods.
-- Keep the session transcript as typed entries. Put their model-facing
-  projection and wording in `context.py`, so retention, model context, and
-  audit remain separate decisions.
+- Record each run as canonical entries shaped like Pi's messages in
+  `transcript.py`. Chat history stores them all. Put the session retention
+  projection and the model-facing projection and wording in `context.py`, so
+  retention, model context, and audit remain separate decisions.
 - Optimizer submissions and jobs belong to the optimizer service, not to the
   requesting turn. Revoke the submission owner on cancellation and dispose of
   late remote responses. Keep progress readers inside the job lifecycle scope.

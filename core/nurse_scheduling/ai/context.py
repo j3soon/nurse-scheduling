@@ -26,7 +26,14 @@ from .config import DEFAULT_MAX_HISTORY_CHARS
 from .optimizer import WORKSPACE_OPTIMIZER_RESULT
 from .provider import ChatMessage
 from .schedule_context import describe_schedule
-from .transcript import AssistantEntry, ProposalDecision, SessionEntry, UserEntry
+from .transcript import (
+    AssistantEntry,
+    ProposalDecision,
+    ProposalDecisionEntry,
+    SessionEntry,
+    ToolResultEntry,
+    UserEntry,
+)
 from .workspace import SANDBOX_SYSTEM_PROMPT, SandboxAttachment
 
 PROPOSAL_APPROVED_HISTORY = (
@@ -49,41 +56,77 @@ PROPOSAL_DECISION_HISTORY: dict[ProposalDecision, str] = {
 ABORTED_RESPONSE_HISTORY = "[This response was interrupted before completion. Its workspace changes were discarded.]"
 
 
-def context_message(entry: SessionEntry) -> ChatMessage:
-    """Project one transcript entry into the provider conversation."""
-    if isinstance(entry, UserEntry):
-        return ChatMessage(role="user", content=entry.text)
-    if isinstance(entry, AssistantEntry):
-        # Pi's provider adapters also skip aborted and errored assistant messages. We
-        # keep a note in their place because the interrupted run's sandbox is gone, so
-        # its partial text may claim schedule changes that no longer exist. A
-        # length-truncated answer finished its run and is replayed as written.
-        if entry.stop_reason in ("stop", "length"):
-            return ChatMessage(role="assistant", content=entry.text)
-        return ChatMessage(role="assistant", content=ABORTED_RESPONSE_HISTORY)
-    return ChatMessage(role="user", content=PROPOSAL_DECISION_HISTORY[entry.decision])
+def retained_entries(entries: Sequence[SessionEntry]) -> list[SessionEntry]:
+    """Keep what later model context may use from a run's canonical entries.
+
+    Tool calls, tool results, and reasoning describe a sandbox that no longer
+    exists, so later runs never see them. The chat history log keeps the full run.
+    """
+    return [
+        AssistantEntry(entry.text, entry.stop_reason) if isinstance(entry, AssistantEntry) else entry
+        for entry in entries
+        if not isinstance(entry, ToolResultEntry)
+    ]
+
+
+def _projected_messages(transcript: Sequence[SessionEntry]) -> list[tuple[bool, ChatMessage]]:
+    """Project entries into prior-run context, marking which messages are prompts."""
+    projected: list[tuple[bool, ChatMessage]] = []
+    answer: list[str] = []
+    interrupted = False
+    answering = False
+
+    def close_answer() -> None:
+        nonlocal answer, interrupted, answering
+        if answering:
+            # Pi's provider adapters also skip aborted and errored assistant messages.
+            # We keep a note in their place because the interrupted run's sandbox is
+            # gone, so its partial text may claim schedule changes that no longer
+            # exist. A length-truncated answer finished its run and is replayed.
+            content = ABORTED_RESPONSE_HISTORY if interrupted else "".join(answer)
+            projected.append((False, ChatMessage(role="assistant", content=content)))
+        answer, interrupted, answering = [], False, False
+
+    for entry in transcript:
+        if isinstance(entry, AssistantEntry):
+            # The responses between two prompts form one answer, as the user saw it.
+            answering = True
+            answer.append(entry.text)
+            interrupted = interrupted or entry.stop_reason in ("aborted", "error")
+        elif isinstance(entry, UserEntry):
+            close_answer()
+            projected.append((True, ChatMessage(role="user", content=entry.text)))
+        elif isinstance(entry, ProposalDecisionEntry):
+            close_answer()
+            projected.append((False, ChatMessage(role="user", content=PROPOSAL_DECISION_HISTORY[entry.decision])))
+    close_answer()
+    return projected
+
+
+def projected_history(transcript: Sequence[SessionEntry]) -> list[ChatMessage]:
+    """Project the whole transcript into prior-run messages."""
+    return [message for _prompt, message in _projected_messages(transcript)]
 
 
 def recent_history(transcript: Sequence[SessionEntry], max_chars: int) -> list[ChatMessage]:
-    """Project the newest transcript entries that fit the prompt budget, oldest first.
+    """Project the newest transcript messages that fit the prompt budget, oldest first.
 
     Retention bounds how much of a conversation the session holds, not how much a
     provider can accept. A long session would otherwise grow every later prompt past
     the model context window and fail the request outright.
     """
-    kept: list[tuple[SessionEntry, ChatMessage]] = []
+    kept: list[tuple[bool, ChatMessage]] = []
     remaining = max_chars
-    for entry in reversed(transcript):
-        message = context_message(entry)
+    for prompt, message in reversed(_projected_messages(transcript)):
         remaining -= len(json.dumps(message, ensure_ascii=False))
         if remaining < 0:
             break
-        kept.append((entry, message))
+        kept.append((prompt, message))
     # Start at a prompt. An answer or proposal decision whose prompt did not fit
     # refers to an exchange the model can no longer see.
-    while kept and not isinstance(kept[-1][0], UserEntry):
+    while kept and not kept[-1][0]:
         kept.pop()
-    return [message for _entry, message in reversed(kept)]
+    return [message for _prompt, message in reversed(kept)]
 
 
 def prepare_provider_request(conversation: Sequence[ChatMessage]) -> list[ChatMessage]:

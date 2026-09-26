@@ -23,35 +23,57 @@
 from dataclasses import dataclass
 from typing import Literal
 
-StopReason = Literal["stop", "length", "aborted", "error"]
+from .provider import ToolCall
+
+# Pi's stop reasons. `tool_use` ends a response that requested tools.
+StopReason = Literal["stop", "length", "tool_use", "aborted", "error"]
 ProposalDecision = Literal["approved", "rejected", "invalid"]
 
 
 @dataclass(frozen=True)
 class UserEntry:
-    """A question, steering message, or background prompt that started model work."""
+    """A question, steering message, or background prompt, as Pi's user message."""
 
     text: str
 
 
 @dataclass(frozen=True)
 class AssistantEntry:
-    """One answer segment. Only a `stop` segment is replayed as written in model context."""
+    """One model response, as Pi's assistant message.
+
+    An interrupted run ends with an `aborted` or `error` entry holding any partial output.
+    """
 
     text: str
     stop_reason: StopReason = "stop"
+    reasoning: str = ""
+    tool_calls: tuple[ToolCall, ...] = ()
+
+
+@dataclass(frozen=True)
+class ToolResultEntry:
+    """The result returned to the model for one tool call, as Pi's tool result message."""
+
+    tool_call_id: str
+    tool_name: str
+    text: str
+    ok: bool
 
 
 @dataclass(frozen=True)
 class ProposalDecisionEntry:
-    """The user's decision on a pending schedule proposal."""
+    """The user's decision on a pending schedule proposal, specific to this service."""
 
     decision: ProposalDecision
 
 
-SessionEntry = UserEntry | AssistantEntry | ProposalDecisionEntry
+SessionEntry = UserEntry | AssistantEntry | ToolResultEntry | ProposalDecisionEntry
 
 
 def entry_text(entry: SessionEntry) -> str:
-    """Return the text an entry retains, which bounds its share of session memory."""
-    return "" if isinstance(entry, ProposalDecisionEntry) else entry.text
+    """Return the text an entry holds, which bounds its share of session memory."""
+    if isinstance(entry, UserEntry | ToolResultEntry):
+        return entry.text
+    if isinstance(entry, AssistantEntry):
+        return entry.text + entry.reasoning + "".join(call.arguments for call in entry.tool_calls)
+    return ""

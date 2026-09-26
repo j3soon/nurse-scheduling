@@ -155,10 +155,10 @@ def test_one_turn_hydrates_runs_reads_validates_proposes_and_closes():
         EDIT_TOOL,
         WRITE_TOOL,
     ]
-    assert isinstance(events[0], ToolExecutionStart)
-    assert events[0].tool_call_id
+    started = next(event for event in events if isinstance(event, ToolExecutionStart))
+    assert started.tool_call_id
     preview_result = next(event for event in events if isinstance(event, ToolExecutionEnd))
-    assert preview_result.tool_call_id == events[0].tool_call_id
+    assert preview_result.tool_call_id == started.tool_call_id
     assert preview_result.details["schedule_yaml"] == next(
         event.schedule_yaml for event in events if isinstance(event, AgentScheduleChange)
     )

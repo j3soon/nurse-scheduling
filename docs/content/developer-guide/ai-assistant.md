@@ -161,11 +161,11 @@ Each row lists shared behavior first, then what only one side has.
 | `Agent` / `AgentState`<br/>Pi: [Agent][pi-agent], [AgentState][pi-state] | Streaming flag, pending tool call IDs, the steering queue, and refusal of a second concurrent prompt. | Context arrives per run, and the session commits the transcript after cleanup. `AgentRun`, not `Agent`, owns cancellation, so Stop also reaches queued runs and cannot interrupt cleanup. | State also holds the model, thinking level, tools, transcript, and partial streaming message. Awaited subscribers settle each run. |
 | `agent_loop`<br/>Pi: [agentLoop][pi-loop] | Repeats model responses and tool batches. Steering enters after a tool batch, or continues the run when it arrives as the answer ends. Tool calls from a response cut off by the output limit fail without running. | A batch runs concurrently only when every call is read-only. Round and call budgets end with an answer-only request, and a refused truncated batch spends a round. Each request passes through one context projection. | Parallel execution by default with per-tool sequential overrides, before and after tool-call hooks, context transform hooks, and early termination requested by tool results. |
 | `AgentTool` / `AgentToolResult`<br/>Pi: [AgentTool / AgentToolResult][pi-tools] | A model-facing definition bound to execution. Results carry model content and UI details, and start and end events correlate by `tool_call_id`. | Tools receive raw JSON arguments, return text, an optional image, and an explicit success flag, and declare whether they are read-only. | Schema-validated parameters, the call ID, an abort signal, and partial-update callbacks. Tools throw on failure instead of encoding it. |
-| `AgentSession` / `RunOutput` / transcript<br/>Pi: [AgentSession][pi-session], [SessionEntry][pi-entries] | An application layer over `Agent` that owns typed transcript entries, persisted as ordered records with stop reasons. Context projection keeps aborted answers out of replayed model input. | Snapshot-versioned commits after sandbox cleanup, schedule revisions, and proposal decision entries. A stopped prompt stays with an interruption note. The persisted log is an audit record keyed by run, not a resumable session. | A persistent, branchable JSONL session with model and label entries, automatic compaction into summary entries, automatic retry of retryable errors, and extensions. |
+| `AgentSession` / `RunOutput` / transcript<br/>Pi: [AgentSession][pi-session], [SessionEntry][pi-entries] | An application layer over `Agent`. Runs produce user, assistant, and tool result entries shaped like Pi's messages, with Pi's stop reasons, persisted in order. Context projection keeps aborted answers out of replayed model input. | Snapshot-versioned commits after sandbox cleanup, schedule revisions, and proposal decision entries. The in-memory session keeps only prompts, answer text, and decisions, and a stopped prompt stays with an interruption note. The persisted log is an audit record keyed by run, not a resumable session. | A persistent, branchable JSONL session with model and label entries, automatic compaction into summary entries, automatic retry of retryable errors, and extensions. |
 | `SessionRuns` / `AgentRun` / `RunSnapshot`<br/>Pi: [ActiveRun and run lifecycle][pi-agent] | One active run with a cancellation handle, settled before the next run starts. | Per-session FIFO admission, queued background runs, Stop that also cancels queued runs, and a versioned commit capability. | The agent's own `AbortController`, passed to tools, with a single-run guard instead of a queue. |
 | Steering queue<br/>Pi: [steer / followUp][pi-agent] | Queued input reaches the model at a boundary without starting a new run. | One queue serves both roles. It drains every message, deduplicates retried POSTs by ID, and closes atomically with the answer. Optimizer wake-ups enter `SessionRuns` as fresh runs. | Separate steering and follow-up queues, each draining one message at a time or all at once. |
 | `WorkspaceTools` / `SandboxWorkspace`<br/>Pi: [read, bash, edit, write][pi-coding-tools] | Pi's default `read`, `bash`, `edit`, and `write` contracts and model-facing wording, ported under `ai/pi`. | A lazy, disposable E2B VM per run with hydration, pause and resume, trusted YAML validation after each change, and teardown before commit. | Tools act on the user's local working directory, which persists across runs. Optional `find`, `grep`, and `ls` tools extend the default four. |
-| SSE projection / `RunEvents` / `SessionEventBroker`<br/>Pi: [AgentEvent][pi-events], [Agent.subscribe][pi-agent] | Typed text, reasoning, and tool events with call IDs, and exactly one terminal outcome per run. | Events map onto a stable SSE contract. Foreground output is a bounded stream that disconnect cancels. Background output is a journal replayed with `Last-Event-ID`. | In-process subscribers receive agent, turn, message, and tool lifecycle events, including partial tool updates. |
+| SSE projection / `RunEvents` / `SessionEventBroker`<br/>Pi: [AgentEvent][pi-events], [Agent.subscribe][pi-agent] | Typed text, reasoning, and tool events with call IDs, a message end for each model response, and exactly one terminal outcome per run. | Events map onto a stable SSE contract. Foreground output is a bounded stream that disconnect cancels. Background output is a journal replayed with `Last-Event-ID`. | In-process subscribers receive agent, turn, message, and tool lifecycle events, including partial tool updates. |
 | `SessionOptimizer`<br/>Pi: no counterpart | Exposed to the model as one `AgentTool`. | Independent remote jobs, progress, anonymization, late-submission cleanup, and fresh review runs. | None. |
 | API routes / `SessionStore` / browser lifecycle<br/>Pi: nearest is [AgentSession][pi-session] | A session boundary that owns conversation lifetime. | HTTP authentication, cookie ownership, expiry, global memory limits, SSE reconnection, a browser-owned canonical schedule, and proposal approval. | Local single-user sessions stored on disk that can be resumed and branched. |
 
@@ -173,22 +173,26 @@ Each row lists shared behavior first, then what only one side has.
 
 ### Retention and Context
 
-Each destination keeps its own subset of a run. The session transcript holds
-only what later model context may need. The chat history log stores the same
-entry types, `user`, `assistant` with its stop reason, and
-`proposal_decision`, as ordered rows under each run. Trimming for memory, the
-message cap, or the prompt budget always leaves a user prompt first, so an
-answer or proposal decision is dropped together with the exchange it belongs to.
+Each run produces canonical entries shaped like Pi's messages: `user`,
+`assistant` for each model response with its text, reasoning, tool calls, and
+stop reason, `tool_result`, and this service's `proposal_decision`. Every
+destination is a projection of them. The chat history log stores them all as
+ordered rows under the run. The session transcript keeps prompts, answer text,
+stop reasons, and decisions, because later model context never replays a
+disposable sandbox's tools. Model context merges the responses between two
+prompts into the answer the user saw. Trimming for memory, the message cap, or
+the prompt budget removes whole exchanges, so an answer or proposal decision is
+never left without its prompt.
 
 | Content | Later model context | Session transcript | Browser and export | Chat history log |
 | --- | --- | --- | --- | --- |
 | Answer text | Yes, within the history budget | Yes | Yes | Yes |
-| Reasoning | No | No | Yes | No |
-| Tool calls and results | Only within their run | No | Yes, by `tool_call_id` | No |
+| Reasoning | No | No | Yes | Yes |
+| Tool calls and results | Only within their run | No | Yes, by `tool_call_id` | Yes |
 | Queued steering | Yes | Yes | Yes | Yes, in run order |
 | Stopped answer | Prompt and an interruption note | Prompt and aborted partial answer | Partial output, stopped status | Yes, `aborted` in a `cancelled` run |
 | Failed or stale answer | No | No | Failed output with retry, or a stale notice | Yes, with run status |
-| Attachment filenames | Yes, in the prompt note | Yes | Yes | No, only a count |
+| Attachment filenames | Yes, in the prompt note | Yes | Yes | Yes, in the prompt |
 | Proposal decision | Yes | Yes | Yes | Yes, under the proposing run |
 
 The investigated alternatives below were not adopted:
@@ -619,14 +623,14 @@ defaults and validation rules.
 PostgreSQL chat logging is optional for native runs and included in both
 backend Compose variants. `chat_turns` keeps run metadata: status, error code,
 model, timestamps, usage when available, and attachment count.
-`chat_turn_entries` is the canonical ordered record of each run, keyed by
-`(turn_id, seq)`. The prompt is written when the run starts, then queued
-steering and answer segments with their stop reasons when it ends. A later
+`chat_turn_entries` stores each run's canonical entries in order, keyed by
+`(turn_id, seq)`. The prompt is written when the run starts, then every model
+response, tool result, and queued steering message when it ends. A later
 approval or rejection is appended to the run that proposed it. Sessions keep
-the administrative credential ID. The log does not store attachment filenames,
-schedule snapshots, raw attachments, tool arguments or results, or reasoning. User and assistant text can still contain staff information, so
-database access is for operators. History records do not restore an active chat
-after a restart.
+the administrative credential ID. Raw attachment files and images are not
+stored, but tool results can contain schedule and attachment text. Entries can
+contain staff information, so database access is for operators. History records
+do not restore an active chat after a restart.
 
 An unavailable configured database prevents startup. If its initial write
 fails, the request returns HTTP `503` before contacting the provider. If the

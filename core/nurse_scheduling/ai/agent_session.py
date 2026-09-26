@@ -26,7 +26,7 @@ import logging
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Literal, Protocol
 
 from fastapi import HTTPException
 
@@ -35,20 +35,27 @@ from .agent_types import (
     AgentEvent,
     AgentProposal,
     AgentSteering,
+    MessageEnd,
     MessageReasoningDelta,
     MessageTextDelta,
-    MessageTruncated,
     ToolExecutionEnd,
     ToolExecutionStart,
 )
 from .config import AiSettings
-from .context import build_provider_messages, recent_history
+from .context import build_provider_messages, projected_history, recent_history, retained_entries
 from .history import ChatHistory
 from .lifecycle import TERMINAL_EVENTS, AgentRun, RunSnapshot
 from .optimizer import OptimizerArtifact, SessionOptimizer
 from .provider import ProviderError, TokenUsage, ToolCapableChatProvider
 from .sandbox import SandboxError, SandboxFactory
-from .transcript import AssistantEntry, ProposalDecision, ProposalDecisionEntry, SessionEntry, StopReason, UserEntry
+from .transcript import (
+    AssistantEntry,
+    ProposalDecision,
+    ProposalDecisionEntry,
+    SessionEntry,
+    ToolResultEntry,
+    UserEntry,
+)
 from .workspace import (
     AgentScheduleChange,
     SandboxAttachment,
@@ -118,12 +125,13 @@ class SessionRuntime:
 
 @dataclass
 class RunOutput:
-    """Collect provisional transcript entries and project agent events onto the SSE contract."""
+    """Build the run's canonical entries and project agent events onto the SSE contract."""
 
     entries: list[SessionEntry]
     assistant_parts: list[str] = field(default_factory=list)
-    assistant_segment: list[str] = field(default_factory=list)
-    segment_truncated: bool = False
+    # Output of the model response in progress, which only an interruption can leave open.
+    pending_text: list[str] = field(default_factory=list)
+    pending_reasoning: list[str] = field(default_factory=list)
     proposal: AgentProposal | None = None
     usage: TokenUsage | None = None
 
@@ -131,27 +139,30 @@ class RunOutput:
     def text(self) -> str:
         return "".join(self.assistant_parts)
 
-    def finish_entries(self, stop_reason: StopReason) -> list[SessionEntry]:
-        """Close the open answer segment. Only that segment can be aborted or fail."""
-        if stop_reason == "stop" and self.segment_truncated:
-            stop_reason = "length"
-        return [*self.entries, AssistantEntry("".join(self.assistant_segment), stop_reason)]
+    def interrupted_entries(self, stop_reason: Literal["aborted", "error"]) -> list[SessionEntry]:
+        """End the run with Pi's interrupted assistant message, holding any partial response."""
+        interrupted = AssistantEntry("".join(self.pending_text), stop_reason, "".join(self.pending_reasoning))
+        return [*self.entries, interrupted]
 
     def consume(self, event: AgentEvent | AgentScheduleChange) -> tuple[str, dict[str, object]] | None:
         if isinstance(event, MessageTextDelta):
             self.assistant_parts.append(event.text)
-            self.assistant_segment.append(event.text)
+            self.pending_text.append(event.text)
             return "delta", {"text": event.text}
         if isinstance(event, MessageReasoningDelta):
+            self.pending_reasoning.append(event.text)
             return "reasoning", {"text": event.text}
-        if isinstance(event, MessageTruncated):
-            self.segment_truncated = True
-            return "truncated", {}
+        if isinstance(event, MessageEnd):
+            self.entries.append(event.message)
+            self.pending_text.clear()
+            self.pending_reasoning.clear()
+            return ("truncated", {}) if event.message.stop_reason == "length" else None
         if isinstance(event, TokenUsage):
             self.usage = event if self.usage is None else self.usage + event
         elif isinstance(event, ToolExecutionStart):
             return "tool_start", {"tool_call_id": event.tool_call_id, "name": event.name, "arguments": event.arguments}
         elif isinstance(event, ToolExecutionEnd):
+            self.entries.append(ToolResultEntry(event.tool_call_id, event.name, event.result, event.ok))
             return "tool", {
                 "tool_call_id": event.tool_call_id,
                 "name": event.name,
@@ -160,12 +171,7 @@ class RunOutput:
                 "ok": event.ok,
             }
         elif isinstance(event, AgentSteering):
-            if self.assistant_segment:
-                stop_reason = "length" if self.segment_truncated else "stop"
-                self.entries.append(AssistantEntry("".join(self.assistant_segment), stop_reason))
             self.entries.append(UserEntry(event.text))
-            self.assistant_segment.clear()
-            self.segment_truncated = False
             return "steering", {"message_id": event.message_id, "message": event.text}
         elif isinstance(event, AgentScheduleChange):
             return "schedule_change", {"schedule_yaml": event.schedule_yaml}
@@ -384,7 +390,7 @@ class AgentSession:
                     run.id,
                     session_id,
                     credential_id,
-                    question,
+                    history_question,
                     settings.provider_model,
                     len(attachments),
                 )
@@ -395,7 +401,7 @@ class AgentSession:
                 artifact = await session_optimizer.latest_result_artifact(session_id)
                 await run.streaming.wait()
             retained_history = recent_history(transcript, settings.max_history_chars)
-            dropped_history = snapshot.previously_dropped + len(transcript) - len(retained_history)
+            dropped_history = snapshot.previously_dropped + len(projected_history(transcript)) - len(retained_history)
             if dropped_history:
                 await emit("history_trimmed", {"dropped": dropped_history})
             messages = build_provider_messages(
@@ -429,10 +435,9 @@ class AgentSession:
                         wire_event = output.consume(event)
                         if wire_event is not None:
                             await emit(*wire_event)
-            run_entries = output.finish_entries("stop")
             completion = store.finish(
                 session_id,
-                run_entries,
+                retained_entries(output.entries),
                 (output.proposal.text, output.proposal.diff) if output.proposal is not None else None,
                 snapshot=snapshot,
             )
@@ -443,7 +448,10 @@ class AgentSession:
                 # The history result is part of foreground done. Do not write it again in finally.
                 logged = False
                 # The prompt was written at start, without the attachment filenames in its session copy.
-                history_saved = await write_history("finish_turn", run.id, outcome, None, output.usage, run_entries[1:])
+                # The prompt entry was written when the run started.
+                history_saved = await write_history(
+                    "finish_turn", run.id, outcome, None, output.usage, output.entries[1:]
+                )
             if not completion.run_saved:
                 await emit("stale", {"message": STALE_TURN_ERROR})
                 return
@@ -459,7 +467,7 @@ class AgentSession:
             if not completed:
                 # Keep the prompt so a follow-up can refer to it. Workspace changes and any
                 # proposal were discarded with the sandbox, which context.py accounts for.
-                store.finish(session_id, output.finish_entries("aborted"), snapshot=snapshot)
+                store.finish(session_id, retained_entries(output.interrupted_entries("aborted")), snapshot=snapshot)
                 completed = True
             await emit("stopped", {"message_id": run.id})
             raise
@@ -493,7 +501,12 @@ class AgentSession:
             if logged:
                 stop_reason = "aborted" if outcome == "cancelled" else "error"
                 await write_history(
-                    "finish_turn", run.id, outcome, error_code, output.usage, output.finish_entries(stop_reason)[1:]
+                    "finish_turn",
+                    run.id,
+                    outcome,
+                    error_code,
+                    output.usage,
+                    output.interrupted_entries(stop_reason)[1:],
                 )
             if terminal_event is not None:
                 await publish(*terminal_event)

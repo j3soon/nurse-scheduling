@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .provider import ChatMessage, TokenUsage, ToolResultImage
+from .transcript import AssistantEntry
 
 
 @dataclass(frozen=True)
@@ -42,8 +43,10 @@ class MessageReasoningDelta:
 
 
 @dataclass(frozen=True)
-class MessageTruncated:
-    """The answer text just streamed stopped at the provider's output token limit."""
+class MessageEnd:
+    """One complete model response, as Pi's message_end, with its stop reason."""
+
+    message: AssistantEntry
 
 
 @dataclass(frozen=True)
@@ -86,7 +89,7 @@ class AgentProposal:
 AgentEvent = (
     MessageTextDelta
     | MessageReasoningDelta
-    | MessageTruncated
+    | MessageEnd
     | ToolExecutionStart
     | ToolExecutionEnd
     | AgentSteering

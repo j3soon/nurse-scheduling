@@ -31,9 +31,9 @@ from nurse_scheduling.ai.agent_types import (
     AgentSteering,
     AgentTool,
     AgentToolResult,
+    MessageEnd,
     MessageReasoningDelta,
     MessageTextDelta,
-    MessageTruncated,
     ToolExecutionEnd,
     ToolExecutionStart,
 )
@@ -48,6 +48,7 @@ from nurse_scheduling.ai.provider import (
     ToolCallRequest,
     ToolResultImage,
 )
+from nurse_scheduling.ai.transcript import AssistantEntry
 
 QUESTION: list[ChatMessage] = [{"role": "user", "content": "Who works on the first day?"}]
 TOOLS = [
@@ -97,12 +98,18 @@ def _calls(count: int = 1) -> list:
     return [ToolCallRequest(calls)]
 
 
-def _run(provider: FakeProvider, *, tool_ok: bool = True, **limits: int) -> list:
+def _run(provider: FakeProvider, *, tool_ok: bool = True, message_ends: bool = False, **limits: int) -> list:
+    """Collect loop events, leaving out per-response MessageEnd records unless requested."""
+
     async def execute(_name: str, _arguments: str) -> AgentToolResult:
         return AgentToolResult("command result", tool_ok)
 
     async def collect() -> list:
-        return [event async for event in agent_loop(provider, QUESTION, _tools(execute), **limits)]
+        return [
+            event
+            async for event in agent_loop(provider, QUESTION, _tools(execute), **limits)
+            if message_ends or not isinstance(event, MessageEnd)
+        ]
 
     return asyncio.run(collect())
 
@@ -110,7 +117,11 @@ def _run(provider: FakeProvider, *, tool_ok: bool = True, **limits: int) -> list
 def test_a_question_only_run_streams_text():
     provider = FakeProvider(_text("P1 ", "works."))
 
-    assert _run(provider) == [MessageTextDelta("P1 "), MessageTextDelta("works.")]
+    assert _run(provider, message_ends=True) == [
+        MessageTextDelta("P1 "),
+        MessageTextDelta("works."),
+        MessageEnd(AssistantEntry("P1 works.")),
+    ]
     assert len(provider.requests) == 1
 
 
@@ -254,7 +265,8 @@ def test_allowed_tool_batch_executes_concurrently_and_reports_in_call_order():
 
     assert max_active == 2
     assert [event.result for event in uses] == ['{"command":"first"}', '{"command":"second"}']
-    assert all(isinstance(event, ToolExecutionStart) for event in events[:2])
+    assert isinstance(events[0], MessageEnd)
+    assert all(isinstance(event, ToolExecutionStart) for event in events[1:3])
 
 
 def test_parallel_tool_failure_cancels_siblings_without_wrapping_the_error():
@@ -464,7 +476,8 @@ def test_closing_agent_stream_resets_state_before_another_prompt():
         await events.aclose()
         assert not agent.state.is_streaming
         assert [event async for event in agent.prompt(FakeProvider(_text("new")), QUESTION, [])] == [
-            MessageTextDelta("new")
+            MessageTextDelta("new"),
+            MessageEnd(AssistantEntry("new")),
         ]
 
     asyncio.run(scenario())
@@ -486,7 +499,7 @@ def test_unknown_tool_returns_correlated_failure_without_executing_a_tool():
     assert "Unknown tool `missing`" in result.result
     assert provider.requests[1][0][-1]["tool_call_id"] == "unknown-call"
     assert provider.requests[1][0][-1]["content"] == result.result
-    assert events[-1] == MessageTextDelta("Recovered.")
+    assert events[-2:] == [MessageTextDelta("Recovered."), MessageEnd(AssistantEntry("Recovered."))]
 
 
 def test_tool_calls_cut_off_by_the_output_limit_are_refused_and_reported_to_the_model():
@@ -510,7 +523,7 @@ def test_tool_calls_cut_off_by_the_output_limit_are_refused_and_reported_to_the_
 
     assert executed == ['{"command":"rg people"}']
     assert ToolExecutionEnd(BASH_TOOL, '{"command":"rm -r"}', TRUNCATED_TOOL_CALL_RESULT, False, "call_0") in events
-    assert not any(isinstance(event, MessageTruncated) for event in events)
+    assert MessageEnd(AssistantEntry("Cleaning up.", "length", tool_calls=(truncated,))) in events
     replayed_call, refusal = provider.requests[1][0][-2:]
     assert replayed_call["tool_calls"][0]["function"]["arguments"] == "{}"
     assert refusal == {"role": "tool", "tool_call_id": "call_0", "content": TRUNCATED_TOOL_CALL_RESULT}
@@ -530,7 +543,10 @@ def test_repeated_tool_call_truncation_spends_the_round_budget():
 def test_an_answer_cut_off_by_the_output_limit_is_marked_truncated():
     provider = FakeProvider([*_text("The first half"), ResponseEnd("length")])
 
-    assert _run(provider) == [MessageTextDelta("The first half"), MessageTruncated()]
+    assert _run(provider, message_ends=True) == [
+        MessageTextDelta("The first half"),
+        MessageEnd(AssistantEntry("The first half", "length")),
+    ]
 
 
 def test_each_request_is_prepared_from_the_unchanged_run_conversation():

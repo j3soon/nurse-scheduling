@@ -560,7 +560,8 @@ def test_client_disconnect_cancels_the_turn_and_closes_its_sandbox(wait_stage: s
         assert backend.close_calls == 1
     assert not session_active
     # The interrupted prompt stays for a follow-up. Its sandbox work does not.
-    assert history == [UserEntry("Wait for me"), AssistantEntry("", "aborted")]
+    responses = [AssistantEntry("", "tool_use")] if wait_stage == "command" else []
+    assert history == [UserEntry("Wait for me"), *responses, AssistantEntry("", "aborted")]
     assert len(saved) == 1
     assert saved[0][1] == "cancelled"
 
@@ -1513,6 +1514,26 @@ def test_a_short_history_reaches_the_prompt_unchanged() -> None:
     ]
 
 
+def test_context_merges_one_exchange_into_the_answer_the_user_saw() -> None:
+    history = [
+        UserEntry("Rename P1."),
+        AssistantEntry("Checking. ", "tool_use"),
+        AssistantEntry("Renamed P1."),
+        UserEntry("Now P2."),
+        AssistantEntry("Checking. ", "tool_use"),
+        AssistantEntry("", "aborted"),
+    ]
+
+    messages = build_provider_messages(history, "description: schedule\n", "Try again.")
+
+    assert messages[1:-1] == [
+        ChatMessage(role="user", content="Rename P1."),
+        ChatMessage(role="assistant", content="Checking. Renamed P1."),
+        ChatMessage(role="user", content="Now P2."),
+        ChatMessage(role="assistant", content=ABORTED_RESPONSE_HISTORY),
+    ]
+
+
 def test_context_projects_typed_entries_without_replaying_aborted_output() -> None:
     history = [
         UserEntry("Rename P1."),
@@ -2326,9 +2347,12 @@ def test_proposal_history_event_counts_the_exchange_removed_by_the_cap() -> None
 
     store.discard_proposal(session.id, "browser-owner")
 
-    # The decision refers to the dropped exchange, so it is dropped and counted with it.
-    assert store._sessions[session.id].transcript == []
-    assert store.begin(session.id, "browser-owner").previously_dropped == 3
+    # The newest exchange stays whole with its decision, even above the cap.
+    assert store._sessions[session.id].transcript == [
+        *exchange("question", "answer"),
+        ProposalDecisionEntry("rejected"),
+    ]
+    assert store.begin(session.id, "browser-owner").previously_dropped == 0
 
 
 def test_budget_trimming_drops_a_decision_with_the_exchange_it_decided() -> None:

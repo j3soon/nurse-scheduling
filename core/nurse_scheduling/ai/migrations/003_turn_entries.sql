@@ -3,16 +3,22 @@ CREATE TABLE chat_turn_entries (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     turn_id uuid NOT NULL REFERENCES chat_turns(id) ON DELETE CASCADE,
     seq integer NOT NULL,
-    type text NOT NULL CHECK (type IN ('user', 'assistant', 'proposal_decision')),
+    type text NOT NULL CHECK (type IN ('user', 'assistant', 'tool_result', 'proposal_decision')),
     text text,
-    stop_reason text CHECK (stop_reason IN ('stop', 'length', 'aborted', 'error')),
+    reasoning text,
+    stop_reason text CHECK (stop_reason IN ('stop', 'length', 'tool_use', 'aborted', 'error')),
+    tool_calls jsonb,
+    tool_call_id text,
+    tool_name text,
+    ok boolean,
     decision text CHECK (decision IN ('approved', 'rejected', 'invalid')),
     created_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE (turn_id, seq),
     CHECK (
-        (type = 'user' AND text IS NOT NULL AND stop_reason IS NULL AND decision IS NULL)
-        OR (type = 'assistant' AND text IS NOT NULL AND stop_reason IS NOT NULL AND decision IS NULL)
-        OR (type = 'proposal_decision' AND text IS NULL AND stop_reason IS NULL AND decision IS NOT NULL)
+        (type = 'user' AND text IS NOT NULL)
+        OR (type = 'assistant' AND text IS NOT NULL AND stop_reason IS NOT NULL)
+        OR (type = 'tool_result' AND text IS NOT NULL AND tool_call_id IS NOT NULL AND ok IS NOT NULL)
+        OR (type = 'proposal_decision' AND decision IS NOT NULL)
     )
 );
 
