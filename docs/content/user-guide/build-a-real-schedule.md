@@ -7,8 +7,9 @@ Download** produces a YAML file that matches the bundled example
 (`large-ward-with-87-people-2025-11.yaml`), except for the `appVersion` stamp
 (see [Validate the result](#validate-the-result)).
 
-People are anonymized as `P1` through `P87`. Group descriptions keep the
-original ward's mix of English and Chinese labels.
+People are anonymized as `P1` through `P87`. Most group descriptions keep the
+original ward's mix of English and Chinese labels. The imported calendar groups
+use the app's descriptions.
 
 In practice, a ward often starts with an Excel grid: people in rows, dates in
 columns, and staffing levels, requests, roles, and previous-month shifts in or
@@ -92,17 +93,18 @@ imported from a file.
 2. Open **Dates** and select **Set Date Range**.
 3. Set the start date to `2025-11-01` and the end date to `2025-11-30` (30 days
    selected).
-4. Leave **Import Taiwan holidays into date groups** unchecked; the ward defines
-   its own `WORKDAY` and `FREEDAY` groups in step 5.
+4. Keep **Import Taiwan holidays into date groups** checked. This creates
+   `WORKDAY` and `FREEDAY` with the descriptions in `reference.yaml`.
 5. Select **Update**.
 
-The app creates one date item per day (`01`–`30`) and the automatic groups
-`ALL`, `WEEKDAY`, `WEEKEND`, and the weekday names.
+The app creates one date item per day (`01`–`30`), the automatic groups
+`ALL`, `WEEKDAY`, `WEEKEND`, and the weekday names, plus the imported Taiwan
+`WORKDAY` and `FREEDAY` groups.
 For another ward or month, the Taiwan calendar import can be a starting point.
 Confirm the resulting workday and freeday groups against the ward's actual
 calendar before using them in staffing or fairness rules.
 
-![November 1–30 range with the automatic date groups](../assets/images/user-guide/build-a-real-schedule/build-real-dates-range.png)
+![November 1–30 range with Taiwan holiday import checked](../assets/images/user-guide/build-a-real-schedule/build-real-dates-range.png)
 
 ## 2. Create the shift types
 
@@ -158,8 +160,9 @@ may need abbreviation and repetition cleanup before it matches this format.
 
 ## 5. Create the date groups
 
-The November 1–30 range is already set. Create the five ward date groups listed
-under `dateGroups` in `reference.yaml`:
+The November 1–30 range is already set. The Taiwan calendar import creates
+`WORKDAY` and `FREEDAY`. Create the other three groups listed under
+`dateGroups` in `reference.yaml`:
 
 | ID | Members |
 | --- | --- |
@@ -171,7 +174,7 @@ under `dateGroups` in `reference.yaml`:
 
 Open **Dates**, select **Add Group**, enter the ID and description, and select
 the member dates (the **List view** checkbox list is easiest for many members).
-Keep the creation order from `reference.yaml`.
+Create `Freeday shift right`, `Before 4`, and `After 4` in that order.
 
 `FREEDAY` contains the ten weekends in this month. `Freeday shift right`
 contains the following dates for nine of them because November 30 falls at

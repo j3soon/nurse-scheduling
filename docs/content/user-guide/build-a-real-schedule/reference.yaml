@@ -416,7 +416,7 @@ peopleGroups:
       - P87
 dateGroups:
   - id: WORKDAY
-    description: 11 月沒有放假
+    description: Taiwan workdays imported from the current holiday calendar
     members:
       - 03
       - 04
@@ -439,7 +439,7 @@ dateGroups:
       - 27
       - 28
   - id: FREEDAY
-    description: 11 月沒有放假
+    description: Taiwan freedays imported from the current holiday calendar
     members:
       - 01
       - 02
