@@ -99,6 +99,20 @@ describe('chat export', () => {
     expect(output).toContain('<time datetime="2026-09-18T01:00:01.250Z">');
   });
 
+  it('exports failed output with its future-context status', () => {
+    const failed: ChatExportMessage = {
+      role: 'assistant',
+      content: 'Provisional response.',
+      status: 'failed',
+    };
+
+    for (const output of [buildMarkdownChatExport([failed], metadata), buildHtmlChatExport([failed], metadata)]) {
+      expect(output).toContain('Provisional response.');
+      expect(output).toContain('This response failed and will not be used as context for future messages.');
+      expect(output).not.toContain('not saved to AI history');
+    }
+  });
+
   it('exports a stopped response as a status with its partial output', () => {
     const stopped: ChatExportMessage = {
       role: 'assistant',
@@ -117,6 +131,7 @@ describe('chat export', () => {
     expect(markdown).not.toContain('[No message text]');
     expect(html).toContain('<p class="message-status" role="status">Stopped before completion.</p>');
     expect(html).toContain('<summary>bash · interrupted</summary>');
+    expect(html).toContain('The command did not return before the run ended.');
     expect(html).not.toContain('[No message text]');
   });
 

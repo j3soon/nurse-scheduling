@@ -286,7 +286,7 @@ test('retries a failed text turn without hiding its provisional activity', async
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   await expect(page.getByText('Provisional response.')).toBeVisible();
-  await expect(page.getByText('This turn failed and was not saved to AI history.')).toBeVisible();
+  await expect(page.getByText('This response failed and will not be used as context for future messages.')).toBeVisible();
   await page.getByText('bash · interrupted').click();
   await expect(page.getByText('{"command":"sleep 30"}', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Retry' }).click();

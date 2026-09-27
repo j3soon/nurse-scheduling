@@ -1439,7 +1439,7 @@ export default function ExperimentalAiPage() {
 
   const retryMessage = (failedId: string, question: string) => {
     if (!question || isStreaming || (authRequired && authToken === null)) return;
-    // The retried turn replaces the failed pair, so the question is not repeated.
+    // The retried run replaces the failed pair, so the question is not repeated.
     setMessages(previous => {
       const failedIndex = previous.findIndex(message => message.id === failedId);
       if (failedIndex < 0) return previous;
@@ -1464,7 +1464,7 @@ export default function ExperimentalAiPage() {
     if (sessionId === null) {
       return;
     }
-    // The request only asks the server to stop. The turn keeps running until a terminal
+    // The request only asks the server to stop. The run stays active until a terminal
     // event reports it ended, so every one of those clears the pending state instead.
     void stopSession(sessionId, authToken, sessionEndpointRef.current ?? aiEndpoint)
       .catch(stopError => {
@@ -1912,7 +1912,7 @@ export default function ExperimentalAiPage() {
             )}
             {message.role === 'assistant' && message.status === 'failed' && message.retry && (
               <div className="mt-3 border-t border-red-200 pt-3 text-sm text-red-700">
-                <p>This turn failed and was not saved to AI history.</p>
+                <p>This response failed and will not be used as context for future messages.</p>
                 {message.retry.requiresAttachments ? (
                   <>
                     <p className="mt-1 text-xs">Prepare the question, then reattach its files before sending.</p>

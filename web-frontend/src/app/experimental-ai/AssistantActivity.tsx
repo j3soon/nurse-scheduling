@@ -87,7 +87,7 @@ function ToolBody({ entry }: { entry: ToolEntry }) {
       {entry.arguments && entry.arguments !== '{}' && <ChunkedText text={entry.arguments} label="arguments" />}
       {entry.result && <ChunkedText text={entry.result} label="output" />}
       {entry.state === 'interrupted' && !entry.result && (
-        <p className="text-xs text-red-700">The command did not return before the turn ended.</p>
+        <p className="text-xs text-red-700">The command did not return before the run ended.</p>
       )}
     </div>
   );

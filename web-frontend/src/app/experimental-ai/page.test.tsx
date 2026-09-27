@@ -900,7 +900,7 @@ describe('ExperimentalAiPage', () => {
 
       await user.click(screen.getByRole('button', { name: 'Stop' }));
       expect(mockStopSession).toHaveBeenCalledWith('session-id', null, '/ai');
-      // The request is accepted well before the turn ends, so the control stays pending.
+      // The request is accepted well before the run ends, so the control stays pending.
       await act(async () => {});
       expect(screen.getByRole('button', { name: 'Stop' })).toBeDisabled();
 
@@ -912,7 +912,7 @@ describe('ExperimentalAiPage', () => {
 
       expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
 
-      // A turn that ended any other way must not leave the next one unable to stop.
+      // A run that ended any other way must not leave the next one unable to stop.
       act(() => backgroundCallbacks?.onRunStart?.('optimizer-turn-2', 'optimizer'));
       expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled();
     },
@@ -942,7 +942,7 @@ describe('ExperimentalAiPage', () => {
     await user.click(screen.getByRole('button', { name: 'Stop' }));
     await act(async () => {});
 
-    // The turn is still running, so the user has to be able to ask again.
+    // The run is still active, so the user has to be able to ask again.
     expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled();
   });
 
@@ -1514,7 +1514,7 @@ describe('ExperimentalAiPage', () => {
     expect(screen.getByText('Partial answer.')).toBeInTheDocument();
     expect(screen.getByText('bash · interrupted')).toBeInTheDocument();
     expect(screen.queryByText('Stopped.')).not.toBeInTheDocument();
-    expect(screen.queryByText('This turn failed and was not saved to AI history.')).not.toBeInTheDocument();
+    expect(screen.queryByText('This response failed and will not be used as context for future messages.')).not.toBeInTheDocument();
   });
 
   it('queues a drafted question while a response is streaming', async () => {
@@ -1824,7 +1824,7 @@ describe('ExperimentalAiPage', () => {
     expect(alert).toHaveTextContent(providerError);
     expect(screen.getByText('Can you help?')).toBeInTheDocument();
     expect(screen.getByText('Provisional response.')).toBeInTheDocument();
-    expect(screen.getByText('This turn failed and was not saved to AI history.')).toBeInTheDocument();
+    expect(screen.getByText('This response failed and will not be used as context for future messages.')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Retry' }));
 
@@ -1833,7 +1833,7 @@ describe('ExperimentalAiPage', () => {
     expect(mockStreamMessage.mock.calls[1][1]).toBe('Can you help?');
     expect(screen.getAllByText('Can you help?')).toHaveLength(1);
     expect(screen.queryByText('Provisional response.')).not.toBeInTheDocument();
-    expect(screen.queryByText('This turn failed and was not saved to AI history.')).not.toBeInTheDocument();
+    expect(screen.queryByText('This response failed and will not be used as context for future messages.')).not.toBeInTheDocument();
   });
 
   it('removes provisional output when the backend discards a stale turn', async () => {
@@ -1855,7 +1855,7 @@ describe('ExperimentalAiPage', () => {
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Change it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
-    expect(await screen.findByText('This turn failed and was not saved to AI history.')).toBeInTheDocument();
+    expect(await screen.findByText('This response failed and will not be used as context for future messages.')).toBeInTheDocument();
     expect(screen.getByText('The schedule changed.')).toBeInTheDocument();
     expect(screen.queryByText('Obsolete response.')).not.toBeInTheDocument();
     expect(screen.queryByText('schedule edit')).not.toBeInTheDocument();

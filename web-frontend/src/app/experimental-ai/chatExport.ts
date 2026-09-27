@@ -163,7 +163,7 @@ function renderActivityDetailsHtml(entry: Exclude<ActivityEntry, { kind: 'respon
       ? `<pre class="activity-output">${escapeHtml(entry.result)}</pre>`
       : '';
     const interrupted = entry.state === 'interrupted' && !entry.result
-      ? '<p class="interrupted">The command did not return before the turn ended.</p>'
+      ? '<p class="interrupted">The command did not return before the run ended.</p>'
       : '';
     body = `<div class="tool-body">${callId}${argumentsOutput}${resultOutput}${interrupted}</div>`;
   }
@@ -177,6 +177,9 @@ function messageDetails(message: ChatExportMessage): string[] {
   const details: string[] = [];
   if (message.attachmentNames?.length) details.push(`Attachments: ${message.attachmentNames.join(', ')}`);
   if (message.status) details.push(`Status: ${message.status}`);
+  if (message.status === 'failed') {
+    details.push('This response failed and will not be used as context for future messages.');
+  }
   if (message.truncated) details.push('Truncated at the output limit');
   if (message.responseCompletedAt !== undefined) {
     details.push(`Completed: ${new Date(message.responseCompletedAt).toISOString()}`);
@@ -227,7 +230,7 @@ function renderHtmlMessageDetails(message: ChatExportMessage): string {
   const status = message.status === 'pending' && !message.content
     ? '<p class="message-status" role="status">Thinking</p>'
     : message.status === 'failed'
-      ? '<p class="failure">This turn failed and was not saved to AI history.</p>'
+      ? '<p class="failure">This response failed and will not be used as context for future messages.</p>'
       : message.status === 'stopped'
         ? '<p class="message-status" role="status">Stopped before completion.</p>'
         : '';

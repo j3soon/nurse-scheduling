@@ -75,7 +75,7 @@ describe('AssistantActivity', () => {
     rerender(<AssistantActivity entries={[{ ...bashEntry, state: 'interrupted', result: '' }]} />);
     await user.click(screen.getByText('bash · interrupted'));
 
-    expect(screen.getByText('The command did not return before the turn ended.')).toBeVisible();
+    expect(screen.getByText('The command did not return before the run ended.')).toBeVisible();
   });
 
   it('shows Bash arguments and output', async () => {

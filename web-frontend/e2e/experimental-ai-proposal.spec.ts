@@ -80,7 +80,7 @@ async function mockProposingBackend(page: Page): Promise<{ approvals: number; re
       return;
     }
     if (request.url().endsWith('/events')) {
-      // The real session event stream carries background turns only, never the
+      // The real session event stream carries background runs only, never the
       // foreground answer below.
       await route.fulfill({ status: 200, contentType: 'text/event-stream', headers: corsHeaders, body: '' });
       return;
