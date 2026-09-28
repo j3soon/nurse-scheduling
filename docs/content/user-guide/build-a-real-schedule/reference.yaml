@@ -9,9 +9,9 @@
 #
 # The date range (November 1-30, 2025) is set on the Dates page and the 87
 # people are imported from people.txt. Everything below is created through
-# the UI, in the order listed, so the app's normalized YAML matches the
-# bundled example. Weights of -inf / inf are entered with the -inf / inf
-# controls (or +/- infinity buttons).
+# the UI in guide tab order, keeping the listed order within each collection,
+# so the app's normalized YAML matches the bundled example. Weights of
+# -inf / inf are entered with the infinity controls.
 shiftTypes:
   # Eleven shift types, created on the Shift Types page before the groups.
   items:

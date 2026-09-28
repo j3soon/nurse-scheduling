@@ -33,6 +33,9 @@
   subsets, parameters, and decision variables.
 - Describe mathematically accurate semantics without exposing unnecessary
   solver linearization details.
+- When explaining a real schedule's rationale, use the supplied ward reasoning
+  to explain the need behind each group or rule. Naming a later use alone is
+  not a rationale. Distinguish confirmed intent from unused optional concepts.
 - Keep tightly coupled schema and behavior on one page unless each topic has a
   clear independent purpose.
 - Keep `docs/PRIVACY.md` as a symlink to the canonical root `PRIVACY.md`.
