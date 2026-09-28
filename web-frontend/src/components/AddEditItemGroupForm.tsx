@@ -96,9 +96,11 @@ export function AddEditItemGroupForm<T extends Item, G extends Group>({
     : operation === 'add'
       ? [...new Set([...selectedIds, ...sourceIds])]
       : selectedIds.filter(id => !sourceIdSet.has(id));
+  const visibleSelectedCount = selectedIds.filter(id => availableIds.has(id)).length;
+  const visibleAppliedCount = appliedIds.filter(id => availableIds.has(id)).length;
   const sourceLabel = isItem ? itemLabel.toLowerCase() : 'group';
   const applyFrom = sources.length > 0 && (
-    <details open className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+    <details open data-membership-apply className="rounded-lg border border-gray-200 bg-gray-50 p-3">
       <summary className="cursor-pointer text-sm font-medium text-blue-700">
         Apply selection from another {sourceLabel}
       </summary>
@@ -137,7 +139,7 @@ export function AddEditItemGroupForm<T extends Item, G extends Group>({
       </div>
       {validSourceId && (
         <p className="mt-2 text-xs text-gray-600">
-          {selectedIds.length} selected → {appliedIds.length} after applying. Save to keep the change.
+          {visibleSelectedCount} selected → {visibleAppliedCount} after applying. Save to keep the change.
         </p>
       )}
     </details>

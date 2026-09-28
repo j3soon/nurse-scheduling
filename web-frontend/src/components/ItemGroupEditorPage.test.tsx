@@ -617,6 +617,38 @@ describe('ItemGroupEditorPage', () => {
     expect(screen.queryByPlaceholderText('Enter person ID')).not.toBeInTheDocument();
   });
 
+  it('uses Enter in membership controls without saving the unapplied draft', async () => {
+    const user = userEvent.setup();
+    render(
+      <ItemGroupEditorHarness
+        initialData={{
+          items: [{ id: 'Person 1', description: '' }, { id: 'Person 2', description: '' }],
+          groups: [
+            { id: 'Target', members: ['Person 1'], description: '' },
+            { id: 'Source', members: ['Person 2'], description: '' },
+          ],
+          history: [],
+        }}
+      />,
+    );
+
+    const targetRow = screen.getByTitle('Target').closest('tr') as HTMLTableRowElement;
+    await user.click(within(targetRow).getByRole('button', { name: /edit/i }));
+    const source = screen.getByRole('combobox', { name: 'Source group' });
+    const operation = screen.getByRole('combobox', { name: 'Operation' });
+    await user.selectOptions(source, 'Source');
+    fireEvent.keyDown(source, { key: 'Enter' });
+    fireEvent.keyDown(operation, { key: 'Enter' });
+    expect(screen.getByRole('checkbox', { name: /Person 1/ })).toBeChecked();
+    expect(screen.getByRole('button', { name: 'Update' })).toBeInTheDocument();
+
+    screen.getByRole('button', { name: 'Apply to draft' }).focus();
+    await user.keyboard('{Enter}');
+    expect(screen.getByRole('checkbox', { name: /Person 1/ })).not.toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /Person 2/ })).toBeChecked();
+    expect(screen.getByRole('button', { name: 'Update' })).toBeInTheDocument();
+  });
+
   it('toggles add form off when clicking the same add button twice', async () => {
     const user = userEvent.setup();
 

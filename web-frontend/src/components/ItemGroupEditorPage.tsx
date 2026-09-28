@@ -361,6 +361,7 @@ export default function ItemGroupEditorPage({
 
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Enter' && !isImeCompositionKeyEvent(e)) {
+        if (e.target instanceof Element && e.target.closest('[data-membership-apply]')) return;
         e.preventDefault();
         handleSave();
       } else if (e.key === 'Escape') {

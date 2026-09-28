@@ -259,7 +259,7 @@ describe('AddEditItemGroupForm', () => {
     render(
       <AddEditItemGroupForm
         mode={Mode.EDITING}
-        draft={{ id: 'P2', description: '', groups: ['Team B'], members: [], isItem: true, editingId: 'P2' }}
+        draft={{ id: 'P2', description: '', groups: ['Team B', 'Auto'], members: [], isItem: true, editingId: 'P2' }}
         items={[
           { id: 'P1', description: '' },
           { id: 'P2', description: '' },
@@ -286,6 +286,7 @@ describe('AddEditItemGroupForm', () => {
     expect(screen.queryByRole('option', { name: 'P2' })).not.toBeInTheDocument();
     expect(screen.queryByRole('option', { name: 'Generated' })).not.toBeInTheDocument();
     await user.selectOptions(screen.getByRole('combobox', { name: 'Source person' }), 'P1');
+    expect(screen.getByText('1 selected → 1 after applying. Save to keep the change.')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Apply to draft' }));
 
     expect(onApplySelection).toHaveBeenCalledWith(['Team A']);
