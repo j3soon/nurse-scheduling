@@ -405,6 +405,12 @@ export default function ItemGroupEditorPage({
     }
   };
 
+  const handleApplySelection = (ids: string[]) => {
+    setDraft(prev => prev.isItem
+      ? { ...prev, groups: ids }
+      : { ...prev, members: ids });
+  };
+
   const handleStartInlineEditing = (id: string, isItem: boolean, field: 'id' | 'description' = 'id') => {
     if (isItem && itemsReadOnly) {
       console.error(`Cannot edit ${itemLabel.toLowerCase()} ${id} - items are read-only. ${ERROR_SHOULD_NOT_HAPPEN}`);
@@ -584,6 +590,7 @@ export default function ItemGroupEditorPage({
 
       {(mode === Mode.ADDING || mode === Mode.EDITING) && (
         <AddEditItemGroupForm
+          key={`${draft.isItem ? 'item' : 'group'}-${draft.editingId ?? 'new'}`}
           mode={mode}
           draft={draft}
           items={items}
@@ -596,6 +603,7 @@ export default function ItemGroupEditorPage({
           onIdChange={handleDraftIdChange}
           onDescriptionChange={handleDraftDescriptionChange}
           onMemberToggle={handleMemberToggle}
+          onApplySelection={handleApplySelection}
           onSave={handleSave}
           onCancel={handleCancel}
         />
