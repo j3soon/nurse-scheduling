@@ -271,6 +271,46 @@ describe('ItemGroupEditorPage', () => {
     expect(screen.queryByText('Team C')).not.toBeInTheDocument();
   }, 15000);
 
+  it('applies another group membership to the draft and saves only after Update', async () => {
+    const user = userEvent.setup();
+    render(
+      <ItemGroupEditorHarness
+        initialData={{
+          items: [
+            { id: 'Person 1', description: '' },
+            { id: 'Person 2', description: '' },
+          ],
+          groups: [
+            { id: 'Target', members: ['Person 1'], description: 'Keep this description' },
+            { id: 'Source', members: ['Person 2'], description: '' },
+          ],
+          history: [],
+        }}
+      />,
+    );
+
+    const targetRow = screen.getByTitle('Target').closest('tr') as HTMLTableRowElement;
+    await user.click(within(targetRow).getByRole('button', { name: /edit/i }));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Source group' }), 'Source');
+    await user.click(screen.getByRole('button', { name: 'Apply to draft' }));
+    expect(screen.getByRole('checkbox', { name: /Person 1/ })).not.toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /Person 2/ })).toBeChecked();
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    await user.click(within(targetRow).getByRole('button', { name: /edit/i }));
+    expect(screen.getByRole('checkbox', { name: /Person 1/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /Person 2/ })).not.toBeChecked();
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Source group' }), 'Source');
+    await user.click(screen.getByRole('button', { name: 'Apply to draft' }));
+    await user.click(screen.getByRole('button', { name: 'Update' }));
+
+    await user.click(within(targetRow).getByRole('button', { name: /edit/i }));
+    expect(screen.getByDisplayValue('Target')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Keep this description')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /Person 1/ })).not.toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /Person 2/ })).toBeChecked();
+  });
+
   it('duplicates an item under the original with a unique copied ID without opening the form', async () => {
     const user = userEvent.setup();
 
@@ -575,6 +615,38 @@ describe('ItemGroupEditorPage', () => {
     expect(screen.getByPlaceholderText('Enter person ID')).toBeInTheDocument();
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByPlaceholderText('Enter person ID')).not.toBeInTheDocument();
+  });
+
+  it('uses Enter in membership controls without saving the unapplied draft', async () => {
+    const user = userEvent.setup();
+    render(
+      <ItemGroupEditorHarness
+        initialData={{
+          items: [{ id: 'Person 1', description: '' }, { id: 'Person 2', description: '' }],
+          groups: [
+            { id: 'Target', members: ['Person 1'], description: '' },
+            { id: 'Source', members: ['Person 2'], description: '' },
+          ],
+          history: [],
+        }}
+      />,
+    );
+
+    const targetRow = screen.getByTitle('Target').closest('tr') as HTMLTableRowElement;
+    await user.click(within(targetRow).getByRole('button', { name: /edit/i }));
+    const source = screen.getByRole('combobox', { name: 'Source group' });
+    const operation = screen.getByRole('combobox', { name: 'Operation' });
+    await user.selectOptions(source, 'Source');
+    fireEvent.keyDown(source, { key: 'Enter' });
+    fireEvent.keyDown(operation, { key: 'Enter' });
+    expect(screen.getByRole('checkbox', { name: /Person 1/ })).toBeChecked();
+    expect(screen.getByRole('button', { name: 'Update' })).toBeInTheDocument();
+
+    screen.getByRole('button', { name: 'Apply to draft' }).focus();
+    await user.keyboard('{Enter}');
+    expect(screen.getByRole('checkbox', { name: /Person 1/ })).not.toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /Person 2/ })).toBeChecked();
+    expect(screen.getByRole('button', { name: 'Update' })).toBeInTheDocument();
   });
 
   it('toggles add form off when clicking the same add button twice', async () => {
