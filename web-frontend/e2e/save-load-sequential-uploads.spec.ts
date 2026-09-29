@@ -41,13 +41,15 @@ test('sequential YAML uploads replace state cleanly rather than merging leftover
   await page.goto('/save-and-load');
   const uploadInput = page.locator('input[type="file"]');
   await uploadInput.setInputFiles({ name: 'first.yaml', mimeType: 'application/x-yaml', buffer: Buffer.from(yamlA, 'utf8') });
-  await expect.poll(() => dialogs.length).toBe(2);
   await expect(page.locator('pre')).toContainText('first state');
+  expect(dialogs).toHaveLength(1);
+  expect(dialogs.at(-1)).toContain('does not contain app version information');
   await expect(page.locator('pre')).toContainText('P1');
 
   await uploadInput.setInputFiles({ name: 'second.yaml', mimeType: 'application/x-yaml', buffer: Buffer.from(yamlB, 'utf8') });
-  await expect.poll(() => dialogs.length).toBe(4);
   await expect(page.locator('pre')).toContainText('second state');
+  expect(dialogs).toHaveLength(2);
+  expect(dialogs.at(-1)).toContain('does not contain app version information');
   await expect(page.locator('pre')).toContainText('P2');
   await expect(page.locator('pre')).toContainText('id: N');
   await expect(page.locator('pre')).not.toContainText('P1');

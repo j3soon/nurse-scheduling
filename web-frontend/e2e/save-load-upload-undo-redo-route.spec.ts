@@ -52,7 +52,9 @@ test('uploaded state can be undone and redone across route changes', async ({ pa
     mimeType: 'application/x-yaml',
     buffer: Buffer.from(uploadYaml, 'utf8'),
   });
-  await expect.poll(() => dialogs.length).toBe(2);
+  await expect(page.locator('pre')).toContainText('P9');
+  expect(dialogs).toHaveLength(1);
+  expect(dialogs[0]).toContain('does not contain app version information');
 
   await page.goto('/people');
   await expect(page.getByText('1. P9', { exact: true })).toBeVisible();

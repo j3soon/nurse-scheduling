@@ -66,7 +66,7 @@ test('uploading backend-shaped YAML renders entity and shift-request pages', asy
     mimeType: 'application/x-yaml',
     buffer: Buffer.from(BACKEND_SHAPED_YAML, 'utf8'),
   });
-  await expect.poll(() => dialogs.some(message => message.includes('YAML file loaded successfully!'))).toBe(true);
+  await expect(page.getByRole('status', { name: 'YAML import summary' })).toBeVisible();
 
   await page.goto('/people');
   await expect(page.getByRole('row', { name: /1\. n1/ })).toBeVisible();

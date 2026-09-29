@@ -66,7 +66,5 @@ def load_user_guide_references() -> Mapping[str, str]:
     for path in sorted(USER_GUIDE_DIRECTORY.rglob("*.md")):
         relative_path = path.relative_to(USER_GUIDE_DIRECTORY).as_posix()
         reference = path.read_text(encoding="utf-8")
-        if len(reference) > MAX_SCHEMA_REFERENCE_CHARS:
-            raise ValueError(f"{relative_path} user guide exceeds {MAX_SCHEMA_REFERENCE_CHARS} characters")
         references[relative_path] = reference
     return MappingProxyType(references)

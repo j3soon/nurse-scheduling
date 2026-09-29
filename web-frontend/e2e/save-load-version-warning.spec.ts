@@ -22,13 +22,12 @@
 import { expect, test } from './test';
 import { seedSchedulingState } from './helpers';
 
-test('version warning upload respects cancel and continue branches', async ({ page }) => {
+test('version warning allows cancelling replacement and accepted uploads can be undone', async ({ page }) => {
   /*
    * Steps:
-   * 1. Confirm the original save/load YAML and people page still show the old group ID.
-   * 2. Upload a mismatched-version YAML and cancel the warning; confirm state stays unchanged.
-   * 3. Upload the same YAML again and accept the warning.
-   * 4. Confirm the renamed group is then applied.
+   * 1. Seed the original group and upload a file with a mismatched app version.
+   * 2. Cancel the warning and confirm the original group survives a reload.
+   * 3. Accept the warning, then undo the upload and confirm the original group returns.
    */
   await seedSchedulingState(page, {
     apiVersion: 'test',
@@ -74,37 +73,42 @@ test('version warning upload respects cancel and continue branches', async ({ pa
   const yamlWithoutAppVersion = (currentYaml ?? '').replace(/^appVersion: .*$/m, '').trimStart();
   const mismatchedYaml = `appVersion: mismatch-version\n${yamlWithoutAppVersion}`.replace('Team Alpha', 'Team Omega');
 
-  const cancelDialogPromise = page.waitForEvent('dialog');
-  await page.locator('input[type="file"]').setInputFiles({
+  const dialogs: string[] = [];
+  let acceptReplacement = false;
+  page.on('dialog', async dialog => {
+    dialogs.push(dialog.message());
+    if (acceptReplacement) await dialog.accept();
+    else await dialog.dismiss();
+  });
+  const upload = {
     name: 'mismatch.yaml',
     mimeType: 'application/x-yaml',
     buffer: Buffer.from(mismatchedYaml, 'utf8'),
-  });
-  const cancelDialog = await cancelDialogPromise;
-  expect(cancelDialog.message()).toContain('App version mismatch detected');
-  await cancelDialog.dismiss();
+  };
+  const cancelledDialog = page.waitForEvent('dialog');
+  await page.locator('input[type="file"]').setInputFiles(upload);
+  await cancelledDialog;
+  await expect(page.locator('pre')).toContainText('Team Alpha');
+  await expect(page.locator('pre')).not.toContainText('Team Omega');
+  await expect(page.getByRole('status', { name: 'YAML import summary' })).toHaveCount(0);
+  await page.reload();
+  await expect(page.locator('pre')).toContainText('Team Alpha');
+  await expect(page.locator('pre')).not.toContainText('Team Omega');
 
+  acceptReplacement = true;
+  await page.locator('input[type="file"]').setInputFiles(upload);
+  const summary = page.getByRole('status', { name: 'YAML import summary' });
+  await expect(summary).toContainText('Schedule uploaded: mismatch.yaml');
+  await expect(summary).toContainText('App version mismatch detected');
+  await expect(page.locator('pre')).toContainText('Team Omega');
+  expect(dialogs).toHaveLength(2);
+  expect(dialogs.every(message => message.includes('App version mismatch detected'))).toBe(true);
+
+  await page.getByRole('heading', { name: 'Save and Load' }).click();
+  await page.keyboard.press('Control+z');
+  await expect(page.locator('pre')).toContainText('Team Alpha');
+  await expect(page.locator('pre')).not.toContainText('Team Omega');
   await page.goto('/people');
   await expect(page.getByTitle('Team Alpha', { exact: true })).toBeVisible();
   await expect(page.getByTitle('Team Omega', { exact: true })).toHaveCount(0);
-
-  await page.goto('/save-and-load');
-  const proceedDialogPromise = page.waitForEvent('dialog');
-  await page.locator('input[type="file"]').setInputFiles({
-    name: 'mismatch-confirmed.yaml',
-    mimeType: 'application/x-yaml',
-    buffer: Buffer.from(mismatchedYaml, 'utf8'),
-  });
-  const proceedDialog = await proceedDialogPromise;
-  expect(proceedDialog.message()).toContain('App version mismatch detected');
-  const successDialogPromise = page.waitForEvent('dialog');
-  await proceedDialog.accept();
-  const successDialog = await successDialogPromise;
-  expect(successDialog.message()).toContain('YAML file loaded successfully');
-  await successDialog.accept();
-  await expect(page.locator('pre')).toContainText('Team Omega');
-
-  await page.goto('/people');
-  await expect(page.getByTitle('Team Omega', { exact: true })).toBeVisible();
-  await expect(page.getByTitle('Team Alpha', { exact: true })).toHaveCount(0);
 });

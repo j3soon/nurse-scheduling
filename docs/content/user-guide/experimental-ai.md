@@ -16,6 +16,29 @@ its temporary workspace. The assistant can propose changes to the schedule,
 which apply only after you approve them. The assistant can also run the
 optimizer and review its result.
 
+## Build from ward requirements
+
+Use [Build a Real Schedule](build-a-real-schedule.md) for the app workflow and
+the 87-person example. If file attachment is available and the source contains
+no sensitive data, ask the assistant to inspect the workbook. Have it list the
+people, dates, staffing levels, requests, history, and any unclear
+notation before proposing a schedule change. A `1`, a color, or a short shift
+code can mean different things in different wards. Confirm those meanings and
+group memberships with the person preparing the schedule.
+
+Work in stages. First establish staffing, qualifications, required assignments,
+and rest rules. Then add nurse requests, monthly shift-team preferences, and
+fairness targets. After each proposed change, review the diff before approving
+it. Run the optimizer, inspect coverage and the distribution of days off, and
+ask for empirical adjustments. Values such as 11 `OFF` days or a particular
+weight are examples to tune, not defaults for every ward.
+
+The assistant can inspect an attached workbook and propose schedule changes,
+but it cannot click through the app or run its upload controls for you. Use the
+[People](people.md) and [Shift Requests](shift-requests.md) pages for bulk
+imports. Follow the [data and limitations](#data-and-limitations) guidance
+before attaching any ward records.
+
 ## Ask the assistant to optimize
 
 Ask the assistant to optimize the current schedule and describe the result or

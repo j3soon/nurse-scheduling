@@ -63,6 +63,23 @@ describe('weight helpers', () => {
     expect(getWeightDisplayLabel(1200)).toBe('+1.2k');
   });
 
+  it.each([
+    [100, '+100'],
+    [-100, '-100'],
+    [100_000, '+100k'],
+    [-100_000, '-100k'],
+    [100_000_000, '+100m'],
+    [-100_000_000, '-100m'],
+    [100_000_000_000, '+100b'],
+    [-100_000_000_000, '-100b'],
+    [1_000_000_000, '+1b'],
+    [-1_000_000_000, '-1b'],
+    [1_200_000_000, '+1.2b'],
+    [-1_200_000_000, '-1.2b'],
+  ])('formats %s as %s without a sub-unit abbreviation', (weight, label) => {
+    expect(getWeightDisplayLabel(weight)).toBe(label);
+  });
+
   it('maps colors by sign and validity', () => {
     expect(getWeightColor(1)).toContain('text-green-600');
     expect(getWeightColor(-1)).toContain('text-red-600');

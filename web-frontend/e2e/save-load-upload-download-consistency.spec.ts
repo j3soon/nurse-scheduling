@@ -21,24 +21,28 @@
 
 import { expect, test } from './test';
 
-test('uploading YAML and immediately downloading yields the uploaded state', async ({ page }) => {
+test('downloading immediately after upload yields the uploaded state', async ({ page }) => {
   /*
    * Steps:
    * 1. Capture a valid YAML payload from the real page and confirm the original preview content.
    * 2. Upload that same valid YAML back through the real control.
    * 3. Download immediately through the real control.
    * 4. Confirm the downloaded content reflects the uploaded state.
-   */
+  */
+  page.on('dialog', dialog => dialog.accept());
   await page.goto('/save-and-load');
   const yamlText = await page.locator('pre').textContent();
   expect(yamlText).toContain('apiVersion:');
+  const uploadedYaml = (yamlText ?? '').replace(/^description:.*$/m, 'description: imported review example');
   await page.locator('input[type="file"]').setInputFiles({
     name: 'uploaded.yaml',
     mimeType: 'application/x-yaml',
-    buffer: Buffer.from(yamlText ?? '', 'utf8'),
+    buffer: Buffer.from(uploadedYaml, 'utf8'),
   });
-
-  await expect(page.locator('pre')).toContainText((yamlText ?? '').split('\n')[0]);
+  const summary = page.getByRole('status', { name: 'YAML import summary' });
+  await expect(summary).toContainText('Schedule uploaded: uploaded.yaml');
+  await expect(summary).toContainText('1 preference');
+  await expect(page.locator('pre')).toContainText('imported review example');
 
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Download' }).click();
@@ -51,6 +55,10 @@ test('uploading YAML and immediately downloading yields the uploaded state', asy
     }
   }
 
-  expect(downloadedYaml).toContain((yamlText ?? '').split('\n')[0]);
+  expect(downloadedYaml).toContain('imported review example');
   expect(downloadedYaml).toContain('apiVersion:');
+  await expect(summary).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Star the project on GitHub' })).toBeVisible();
+  await page.getByRole('button', { name: 'Edit YAML' }).click();
+  await expect(page.getByRole('link', { name: 'Star the project on GitHub' })).toHaveCount(0);
 });
