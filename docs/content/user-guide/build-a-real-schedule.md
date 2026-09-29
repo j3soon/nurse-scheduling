@@ -7,9 +7,11 @@ rationale behind each step, including the ward's
 workload, staff qualifications, rest policies, and preference priorities. These
 explanations help users and AI assistants adapt the configuration to another
 ward. The steps start from an empty schedule.
-**Save and Load → Download** produces YAML matching the bundled example
-(`large-ward-with-87-people-2025-11.yaml`), except for the `appVersion` stamp
-(see [Validate the result](#validate-the-result)).
+**Save and Load → Download** produces the same scheduling data as the bundled
+example (`large-ward-with-87-people-2025-11.yaml`). The exported YAML is not
+byte-for-byte identical: the running app stamps `appVersion` and can write
+requests or fields in a different order. See
+[Validate the result](#12-validate-the-result).
 
 People are anonymized as `P1` through `P87`. Most group descriptions keep the
 original ward's mix of English and Chinese labels. The imported calendar groups
@@ -132,10 +134,12 @@ of cell edits:
   concrete person-date requests at weight `11b` (408 cells).
 - [`shift-requests-moderate.csv`](build-a-real-schedule/shift-requests-moderate.csv):
   concrete person-date requests at weight `11m` (90 cells).
-- [`reference.yaml`](build-a-real-schedule/reference.yaml): the exact values for the
-  shift types, groups, and rules that the app does not bulk-import. Follow the
-  guide's tab order and keep the listed order within each collection so the
-  normalized YAML matches the bundled example.
+- [`reference.yaml`](build-a-real-schedule/reference.yaml): the exact values,
+  including descriptions, for the shift types, groups, and rules that the app
+  does not bulk-import. Follow the guide's tab order and the listed order for
+  shift types, groups, staffing requirements, successions, and counts. The app
+  sorts shift requests and may write fields in a different order when it
+  exports YAML.
 
 The November 1–30 date range is entered on the Dates page in step 1; it is not
 imported from a file.
@@ -212,8 +216,9 @@ first few days of November.
   - **Purpose:** From November 4, nurses are expected to work their current monthly primary shift. After the transition buffer, higher penalties are applied to shift types outside the nurse's monthly primary shift to discourage further changes in sleeping hours.
   - **Creation:** Create manually with **Add Group**.
 
-Open **Dates**, select **Add Group**, enter the ID and description, and select
-the member dates (the **List view** checkbox list is easiest for many members).
+Open **Dates**, select **Add Group**, enter the ID and description from
+`reference.yaml`, switch the **Members** selector to **List view**, and check
+the listed dates. This is easier for many members than the calendar view.
 Hold the mouse button down and drag across adjacent checkboxes to select a run
 of dates quickly. Check the selected members before saving.
 Create `Freeday shift right`, `Before 4`, and `After 4` in that order.
@@ -227,7 +232,8 @@ ward's actual free days before using it elsewhere.
 ## 3. Add the 87 people
 
 1. Open **People** and select **Upload People**.
-2. Choose `people.txt`.
+2. Choose `people.txt`. It has one person ID per line and no heading. Wait for
+   the upload confirmation before leaving the page.
 
 The upload adds all 87 people (`P1`–`P87`). Each appears under the automatic
 `ALL` group.
@@ -403,14 +409,29 @@ adjusted after reviewing optimization results. The
 [Shift Type Successions](shift-type-successions.md) pages explain how each rule
 is scored.
 
-Create the 8 shift-type requirements listed under `requirements` in
-`reference.yaml`. Open **Shift Type Requirements** and select **Add
-Requirement** for each:
+Open **Shift Type Requirements** and select **Add Requirement** for each row
+below, in this order. Select one **Shift Types** option, enter **Required Number
+of People**, select one **Qualified People** group and one **Dates** group,
+then select **Add**. Set **Preferred Number of People** and **Weight** for the
+four rows that show them. The Weight input appears only when preferred and
+required counts differ. Leave **Description** blank. The senior and admin
+rows use the app's default weight of `-1`. Leave **Shift Type Coefficients**
+blank for all eight rows.
 
-- Required and, where present, preferred counts, for example *`N` requires 12,
-  prefers 13, qualified `All Nurses w/o Students`, dates `ALL`, weight
-  `-1t`*.
-- Leave the weight at `-1` for the senior and admin minimums.
+| Shift type | Required | Preferred | Qualified people | Dates | Weight |
+| --- | ---: | ---: | --- | --- | ---: |
+| `N+` | 3 | — | `Senior Nurses` | `ALL` | default `-1` |
+| `N` | 12 | 13 | `All Nurses w/o Students` | `ALL` | `-1t` |
+| `E+` | 3 | — | `Senior Nurses` | `ALL` | default `-1` |
+| `E` | 12 | 13 | `All Nurses w/o Students` | `ALL` | `-1t` |
+| `D+` | 3 | — | `Senior Nurses` | `ALL` | default `-1` |
+| `D` | 12 | 13 | `All Nurses w/o Students` | `FREEDAY` | `-1t` |
+| `D` | 13 | 14 | `All Nurses w/o Students` | `WORKDAY` | `-1t` |
+| `A` | 1 | — | `Admin People` | `FREEDAY` | default `-1` |
+
+The same values appear under `requirements` in `reference.yaml`.
+
+![Requirement form with N selected, required 12, preferred 13, qualified nurses and ALL dates selected, and a trillion-point shortfall penalty](../assets/images/user-guide/build-a-real-schedule/build-real-requirement-form.png)
 
 Take these counts from the ward's workbook or head nurse. Each requirement
 answers two questions: how many people are needed, and who can provide that
@@ -445,6 +466,8 @@ Add staffing requirements if the ward needs a daily count.
 
 1. Open **Shift Requests** and select **Quick Add Preference**.
 2. Select **Upload People History (shorthand)** and choose `people-history.csv`.
+   Wait for the confirmation that 87 history entries were processed before
+   continuing. Keep **Quick Add Preference** open for the next step.
 
 Each row is `person,shift,repetition`. The history fills the `H-1`–`H-6`
 columns with shifts before November 1. Succession rules use these entries
@@ -459,11 +482,15 @@ The two CSVs hold every request for a specific person on a specific date.
 A CSV upload gives every non-empty cell the selected weight, so import
 each strength tier separately. Blank cells have no effect.
 
-1. Open **Shift Requests** and select **Quick Add Preference**.
+1. Open **Shift Requests** and select **Quick Add Preference** if the quick-add
+   panel is closed. Selecting the button again closes it.
 2. Set **Weight** to `11b`, select **Upload Shift Requests**, and choose
-   `shift-requests-strong.csv` (408 cells).
+   `shift-requests-strong.csv`. Wait for the confirmation that 408 shift
+   preferences were processed.
 3. Set **Weight** to `11m`, then select **Upload Shift Requests** and choose
-   `shift-requests-moderate.csv` (90 cells).
+   `shift-requests-moderate.csv`. Wait for the confirmation that 90 shift
+   preferences were processed. For a quick visual check, `P5` on date `22`
+   should show `OFF (+11m)`.
 
 Each row is one person; the columns line up with the displayed dates. Blank
 cells are ignored, so the two uploads do not conflict.
@@ -527,12 +554,15 @@ second and fourth quadrants:
   ward, clear this quadrant and import the new requests. The CSV imports
   in step 8 populate it.
 
-For each entry, choose the shift type, set the weight (use the `-inf` / `inf`
-controls for infinite weights), and click the group-row × date-column cell.
+Keep **Quick Add Preference** open. For each entry under `shiftRequests` in
+`reference.yaml`, select only its one shift type, enter its weight, and click
+the cell where its people row meets its date column. The shift-type selection
+and weight stay set after each click, so change them before the next entry.
+For example, select `A`, set `-inf`, then click the `Day People w/o A` row in
+the `ALL` column. Use the `-∞` or `+∞` buttons for infinite weights.
 Red cells show discouraged or forbidden work. If you click a cell by mistake,
 set the weight to `0`, choose that shift, and click the cell again to clear the
 request.
-
 
 Each set of entries serves a different purpose. The notation
 `(dates, people, shift types)` lists the selectors in that order. Each
@@ -599,16 +629,24 @@ assignments. These requests discourage working outside the monthly primary shift
 allowing other shifts when needed for staffing. The penalty differences between
 shift types were selected through scheduling experience. Review the
 combined effect of all groups containing a person before changing a weight.
+The app sorts exported shift requests by people and shift-type order, then by
+weight. Their order in downloaded YAML can differ from `reference.yaml` or the
+bundled example even when every selector and weight matches.
 
 ![Group rows filled with requests across the date-group columns](../assets/images/user-guide/build-a-real-schedule/build-real-requests.png)
 
 ## 10. Add the succession rules
 
 Create the 14 shift-type successions listed under `successions` in
-`reference.yaml`. Open **Shift Type Successions** and add each pattern for
-people `ALL` on dates `ALL`. Here `ALL` in a shift pattern means any working
-shift. Previous-shift history from step 7 lets a pattern crossing November 1
-be checked.
+`reference.yaml`, in that order. For each one, open **Shift Type Successions**
+and select **Add Succession**. Enter its **Description**, check `ALL` under
+**People**, and click the buttons under **Shift Type Pattern** in the listed
+order. Repeated pattern members require repeated clicks. Check `ALL` under
+**Dates**, enter the **Weight**, and select **Add**. Here `ALL` in a shift
+pattern means any working shift. Previous-shift history from step 7 lets a
+pattern crossing November 1 be checked.
+
+![Succession form forbidding Evening followed by Day for everyone on all dates](../assets/images/user-guide/build-a-real-schedule/build-real-succession-form.png)
 
 In the following patterns, `ALL` means any working shift, not the
 `WORKDAY` date group. An arrow separates consecutive dates.
@@ -654,15 +692,20 @@ weights are empirical and may vary across wards.
 
 ## 11. Add the workload counts
 
-Create the 3 shift counts listed under `shiftCounts` in `reference.yaml`. Open
-**Shift Counts** and add each, counting `OFF` with the expression `|x - T|^2`
-at weight `-1k`:
+Create the 3 shift counts listed under `shiftCounts` in `reference.yaml`, in
+that order. Open **Shift Counts** and select **Add Shift Count** for each.
+Enter its **Description**, check its groups under **People**, select its
+**Count Dates** group, and check `OFF` under **Count Shift Types**. Keep
+**Expression** at `|x - T|^2`, enter its **Target Value**, set **Weight** to
+`-1k`, and select **Add**. Leave **Count Shift Type Coefficients** blank:
 
 - `All Nurses w/o Students` on `ALL`, target `11`.
 - `Day People` and `Evening People` on `FREEDAY`, target `4`.
 - `Night People` on `FREEDAY`, target `4`. This rule remains
   separate because an advanced version could count `Freeday shift right`
-  instead. This example uses `FREEDAY` for all three groups.
+  instead. This example uses `FREEDAY` for all three groups. Its retained
+  description mentions shifting Night freedays, but that refinement is not
+  active in this rule.
 
 Without fairness rules, staffing and request scores can concentrate work or
 desirable days off on particular people. Two nurses can have the same monthly
@@ -691,36 +734,45 @@ schedule meets the ward's policy.
 
 ![Three workload-balancing count rules](../assets/images/user-guide/build-a-real-schedule/build-real-counts.png)
 
-## Validate the result
+## 12. Validate the result
 
 1. Open **Save and Load** and select **Download**.
-2. Compare the downloaded YAML to the bundled example. The `apiVersion`,
-   `description`, `dates`, `people`, `shiftTypes`, and `preferences` sections
-   match, including separate requests for `Before 4` and `After 4`.
-
-The remaining expected difference is `appVersion`, which is stamped with the
-running app version.
+2. Check that it has 87 people, 5 ward date groups, 13 ward people groups,
+   11 added shift types, 5 shift-type groups, and 183 preferences: the default
+   one-shift-per-day rule, 8 staffing requirements, 157 shift requests, 14
+   successions, and 3 shift counts. In the requests, check both `Before 4`
+   and `After 4`, plus the `11b` and `11m` CSV tiers. The downloaded YAML
+   stores these weights as `11,000,000,000` and `11,000,000`.
+3. Compare the values in the downloaded YAML with the bundled example. The
+   `apiVersion`, `description`, `dates`, `people`, and `shiftTypes` sections
+   should match. All 183 preferences should have the same values, although
+   requests and fields can appear in a different order. `appVersion` records
+   the running app version and can also differ.
 
 ![Downloaded YAML for the completed schedule](../assets/images/user-guide/build-a-real-schedule/build-real-final-yaml.png)
 
-## 12. Optimize and review the schedule
+## 13. Optimize and review the schedule
 
 Before optimizing, have the scheduler review the roster and group memberships,
 the dates in `WORKDAY` and `FREEDAY`, previous-shift history, staffing levels,
 and every `-inf` rule. Also confirm which finite preferences may be traded off
 when the schedule is crowded. Review every staffing coverage warning.
 
-1. Open **Optimize and Export** and select an online compatible backend.
-2. Select **Optimize and Download**. For this example, a backend showing
-   claimed performance around `40` can usually produce a quick feasibility
-   check in 3–5 minutes. Allow 10–15 minutes for a more reliable schedule
-   that usually satisfies all near-hard shift requests. See
+1. Open **Optimize and Export**. Leave **Backend** at `Auto` or choose an
+   online compatible server, then select **Check all** and wait for
+   **Server: Online**. Check the available solver and its timeout range.
+2. For a quick feasibility check, enter `300` in **Solver Timeout** and select
+   **Optimize and Download**. For this example, a backend showing claimed
+   performance around `40` can usually find a feasible schedule within that
+   run. For a more reliable schedule that usually satisfies all near-hard
+   shift requests, set the timeout to `900` seconds and run again. See
    [Optimize and Export](optimize-and-export.md) for server credentials,
    timeout settings, and download options.
 3. Review the downloaded workbook with the scheduler. Check daily ordinary
    and senior staffing, unmet requests, and each person's total and freeday
    `OFF` counts. In the default output, a blank assignment cell means `OFF`,
-   and `[X]` marks an unmet individual person-date request.
+   and `[X]` marks an unmet individual person-date request. Open the **Notes**
+   worksheet to see each marked cell and the unmet request's weight.
 4. A feasible schedule should normally be found for this example. If none is
    found, check hard staffing counts, qualifications, mandatory requests,
    and forbidden successions for conflicts. A common beginner error is to

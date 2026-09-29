@@ -9,9 +9,10 @@
 #
 # The date range (November 1-30, 2025) is set on the Dates page and the 87
 # people are imported from people.txt. Everything below is created through
-# the UI in guide tab order, keeping the listed order within each collection,
-# so the app's normalized YAML matches the bundled example. Weights of
-# -inf / inf are entered with the infinity controls.
+# the UI in guide tab order. The app sorts shift requests by person, shift
+# type, and weight when exporting and may write fields in a different order,
+# so the YAML text can differ from the bundled example. Weights of -inf / inf
+# use the infinity controls.
 shiftTypes:
   # Eleven shift types, created on the Shift Types page before the groups.
   items:
@@ -815,7 +816,8 @@ requirements:
       - FREEDAY
     weight: -1
 successions:
-  - person:
+  - description: Forbid
+    person:
       - ALL
     pattern:
       - Day
@@ -823,7 +825,8 @@ successions:
     date:
       - ALL
     weight: "-inf"
-  - person:
+  - description: Forbid
+    person:
       - ALL
     pattern:
       - Evening
@@ -831,7 +834,8 @@ successions:
     date:
       - ALL
     weight: "-inf"
-  - person:
+  - description: Forbid
+    person:
       - ALL
     pattern:
       - Evening
@@ -839,7 +843,8 @@ successions:
     date:
       - ALL
     weight: "-inf"
-  - person:
+  - description: 所有人不能連六
+    person:
       - ALL
     pattern:
       - ALL
@@ -851,7 +856,8 @@ successions:
     date:
       - ALL
     weight: "-inf"
-  - person:
+  - description: 不要放一天上一天放一天
+    person:
       - ALL
     pattern:
       - OFF
@@ -860,7 +866,8 @@ successions:
     date:
       - ALL
     weight: -100
-  - person:
+  - description: 不要班別跳來跳去
+    person:
       - ALL
     pattern:
       - Day
@@ -868,7 +875,8 @@ successions:
     date:
       - ALL
     weight: 1
-  - person:
+  - description: 不要班別跳來跳去
+    person:
       - ALL
     pattern:
       - Evening
@@ -876,7 +884,8 @@ successions:
     date:
       - ALL
     weight: 1
-  - person:
+  - description: 不要班別跳來跳去
+    person:
       - ALL
     pattern:
       - Night
@@ -884,7 +893,8 @@ successions:
     date:
       - ALL
     weight: 1
-  - person:
+  - description: 不要班別跳來跳去
+    person:
       - ALL
     pattern:
       - OFF
@@ -892,7 +902,8 @@ successions:
     date:
       - ALL
     weight: 1
-  - person:
+  - description: 盡量不要 N -> D
+    person:
       - ALL
     pattern:
       - Night
@@ -900,7 +911,8 @@ successions:
     date:
       - ALL
     weight: -1000000000
-  - person:
+  - description: 盡量不要 N -> E
+    person:
       - ALL
     pattern:
       - Night
@@ -908,7 +920,8 @@ successions:
     date:
       - ALL
     weight: -1000000000
-  - person:
+  - description: 盡量不要 D -> E
+    person:
       - ALL
     pattern:
       - Day
@@ -916,7 +929,8 @@ successions:
     date:
       - ALL
     weight: -1000000000
-  - person:
+  - description: 所有人盡量不要連五
+    person:
       - ALL
     pattern:
       - ALL
@@ -927,7 +941,8 @@ successions:
     date:
       - ALL
     weight: -1000
-  - person:
+  - description: 所有人盡量不要連放五天
+    person:
       - ALL
     pattern:
       - OFF
@@ -939,7 +954,8 @@ successions:
       - ALL
     weight: -10
 shiftCounts:
-  - person:
+  - description: 假盡量平均
+    person:
       - All Nurses w/o Students
     countDates:
       - ALL
@@ -948,7 +964,8 @@ shiftCounts:
     expression: "|x - T|^2"
     target: 11
     weight: -1000
-  - person:
+  - description: 假日的假盡量平均 (D, E)
+    person:
       - Day People
       - Evening People
     countDates:
@@ -958,7 +975,8 @@ shiftCounts:
     expression: "|x - T|^2"
     target: 4
     weight: -1000
-  - person:
+  - description: 假日的假盡量平均 (N) (大夜班的假日要晚一天)
+    person:
       - Night People
     countDates:
       - FREEDAY
