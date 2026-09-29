@@ -112,6 +112,7 @@ export function getWeightDisplayLabel(weight: number | string): string {
     ];
 
     for (const { value, symbol } of units) {
+      if (Math.abs(weight) < value) continue;
       if (weight % value === 0) return ret.slice(0, -String(value).length + 1) + symbol;
       if (weight % (value / 10) === 0)
         return ret.slice(0, -String(value).length + 1) + '.' + ret.slice(-String(value).length + 1, -String(value).length + 2) + symbol;
