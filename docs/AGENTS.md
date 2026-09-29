@@ -57,7 +57,8 @@
 - For walkthroughs that claim a GUI can reproduce a bundled schedule, start
   the frontend with `cd web-frontend && bun run dev`, follow the steps in a
   Playwright browser, and download the resulting YAML from Save and Load.
-  Compare its scheduling values with the canonical fixture.
+  Compare its scheduling values with the canonical fixture using
+  `cd web-frontend && bun scripts/compare-schedule-yaml.mjs ../core/tests/testcases/real/large-ward-with-87-people-2025-11.yaml ../artifacts/exported-schedule.yaml`.
   Keep browser downloads and review captures under the ignored `artifacts/`.
 - Do not load JavaScript from `polyfill.io`. Prefer a checked-in asset or the
   established CDN already used by the project.

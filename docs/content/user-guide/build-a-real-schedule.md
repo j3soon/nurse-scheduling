@@ -749,6 +749,13 @@ schedule meets the ward's policy.
    requests and fields can appear in a different order. `appVersion` records
    the running app version and can also differ.
 
+   Contributors can run the semantic comparison from `web-frontend/` after
+   saving the download as `artifacts/exported-schedule.yaml`:
+
+   ```sh
+   bun scripts/compare-schedule-yaml.mjs ../core/tests/testcases/real/large-ward-with-87-people-2025-11.yaml ../artifacts/exported-schedule.yaml
+   ```
+
 ![Downloaded YAML for the completed schedule](../assets/images/user-guide/build-a-real-schedule/build-real-final-yaml.png)
 
 ## 13. Optimize and review the schedule
