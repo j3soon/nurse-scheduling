@@ -67,6 +67,8 @@
   nav, and the README headings in step so anchors keep resolving.
 - Symlinked READMEs must not use relative Markdown links or images. Zensical
   resolves them from the symlink location, so use absolute URLs there.
+- Commands targeting deployed services must select the Compose file and
+  `--env-file` explicitly and preserve the deployment's project name.
 - Windows checkouts may materialize the symlinks as plain text files, which
   breaks local Zensical serving on that machine. Netlify builds are
   unaffected.

@@ -274,7 +274,7 @@ test('authenticates AI session requests with an explicitly remembered token', as
   );
 });
 
-test('retries a failed text turn without hiding its provisional activity', async ({ page }) => {
+test('retries a failed text run without hiding its provisional activity', async ({ page }) => {
   const captured = await mockAiBackend(
     page,
     ['Recovered response.'],

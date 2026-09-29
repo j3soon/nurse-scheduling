@@ -154,8 +154,13 @@ For local inspection, start the loopback-only pgAdmin UI and open
 `http://127.0.0.1:5050`:
 
 ```sh
-docker compose -f compose.backend.yml --profile inspection run --rm --service-ports pgadmin
+docker compose --env-file .env -f compose.backend.yml \
+  --profile inspection run --rm --service-ports pgadmin
 ```
+
+For staging, use `--env-file .env.staging`. If the deployed instance uses
+`compose.backend.memory.yml`, substitute that file while keeping its
+environment file and project name.
 
 See [inspect chat history with pgAdmin](https://dev.nursescheduling.org/docs/developer-guide/ai-assistant/#inspect-chat-history-with-pgadmin)
 for login, remote SSH forwarding, connection, and query instructions.
