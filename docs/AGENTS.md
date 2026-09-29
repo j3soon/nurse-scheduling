@@ -54,6 +54,11 @@
 
 ## Validation
 
+- For walkthroughs that claim a GUI can reproduce a bundled schedule, start
+  the frontend with `cd web-frontend && bun run dev`, follow the steps in a
+  Playwright browser, and download the resulting YAML from Save and Load.
+  Compare its scheduling values with the canonical fixture.
+  Keep browser downloads and review captures under the ignored `artifacts/`.
 - Do not load JavaScript from `polyfill.io`. Prefer a checked-in asset or the
   established CDN already used by the project.
 - Run `zensical serve` from the repository root to preview documentation
