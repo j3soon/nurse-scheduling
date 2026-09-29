@@ -64,8 +64,8 @@ test('save-load upload can retry the same filename after failure and then recove
     mimeType: 'application/x-yaml',
     buffer: Buffer.from(validYaml, 'utf8'),
   });
-  await expect.poll(() => dialogs.length).toBe(4);
-  expect(dialogs[3]).toContain('YAML file loaded successfully!');
+  await expect(page.getByRole('status', { name: 'YAML import summary' })).toContainText('Schedule uploaded: schedule.yaml');
+  expect(dialogs).toHaveLength(2);
   await expect(page.locator('pre')).toContainText('recovered same filename');
   await expect(page.locator('pre')).toContainText('P9');
 });

@@ -96,7 +96,7 @@ test('save and load roundtrip restores seeded state after reset', async ({ page 
     buffer: Buffer.from(yamlText ?? '', 'utf8'),
   });
 
-  await expect.poll(() => dialogs.some(message => message.includes('YAML file loaded successfully!'))).toBe(true);
+  await expect(page.getByRole('status', { name: 'YAML import summary' })).toBeVisible();
   await expect(page.locator('pre')).toContainText('Team Alpha');
   await waitForStoredCurrentSchedulingData(page, 'Team Alpha');
 

@@ -53,7 +53,7 @@ test('save-load can ingest a moderately larger schedule and downstream pages sta
     buffer: Buffer.from(largeYaml, 'utf8'),
   });
 
-  await expect.poll(() => dialogs.length).toBe(2);
+  expect(dialogs).toHaveLength(0);
   await expect(page.locator('pre')).toContainText('large state smoke');
   await expect(page.locator('pre')).toContainText('P15');
 

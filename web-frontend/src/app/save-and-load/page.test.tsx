@@ -170,6 +170,7 @@ describe('SaveAndLoadPage', () => {
 
     fireEvent.change(input, { target: { files: [file] } });
 
+
     await waitFor(() => {
       expect(loadFromYaml).toHaveBeenCalledWith(
         expect.objectContaining({ description: 'from-upload' }),
@@ -177,7 +178,43 @@ describe('SaveAndLoadPage', () => {
     });
 
     expect(readAsTextCalls).toEqual([{ fileName: 'upload.yaml', encoding: 'utf-8' }]);
-    expect(alert).toHaveBeenCalledWith('YAML file loaded successfully!');
+    expect(screen.getByRole('status')).toHaveTextContent('Schedule uploaded: upload.yaml');
+  });
+
+  it('shows imported counts after immediately replacing the schedule', () => {
+    renderSaveAndLoadPage();
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['ignored'], 'ward.yaml', { type: 'application/x-yaml' });
+    fileContentsByName.set('ward.yaml', [
+      'appVersion: unknown',
+      'dates: {range: {startDate: "2025-11-01", endDate: "2025-11-30"}, items: []}',
+      'people: {items: [{id: P1}]}',
+      'shiftTypes: {items: [{id: D}]}',
+      'preferences: [{type: shift request}, {type: shift count}]',
+    ].join('\n'));
+
+    fireEvent.change(input, { target: { files: [file] } });
+
+    const summary = screen.getByRole('status', { name: 'YAML import summary' });
+    expect(summary).toHaveTextContent('30 dates, 1 person, 1 shift type, 2 preferences');
+    expect(summary).toHaveTextContent('Schedule uploaded: ward.yaml');
+    expect(summary).toHaveTextContent('Ctrl+Z or Cmd+Z to undo');
+    expect(loadFromYaml).toHaveBeenCalledOnce();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(alert).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid section shape before offering to replace the schedule', () => {
+    renderSaveAndLoadPage();
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['ignored'], 'invalid-shape.yaml', { type: 'application/x-yaml' });
+    fileContentsByName.set('invalid-shape.yaml', 'people: invalid\n');
+
+    fireEvent.change(input, { target: { files: [file] } });
+
+    expect(alert).toHaveBeenCalledWith('Error loading YAML file: The people section must be an object.');
+    expect(screen.queryByRole('status', { name: 'YAML import summary' })).not.toBeInTheDocument();
+    expect(loadFromYaml).not.toHaveBeenCalled();
   });
 
   it('loads uploaded YAML with a real UTF-8 BOM without a corruption prompt', async () => {
@@ -188,6 +225,7 @@ describe('SaveAndLoadPage', () => {
     fileContentsByName.set('bom.yaml', '\ufeffapiVersion: alpha\ndescription: utf8-bom\nappVersion: unknown\n');
 
     fireEvent.change(input, { target: { files: [file] } });
+
 
     await waitFor(() => {
       expect(loadFromYaml).toHaveBeenCalledWith(
@@ -207,6 +245,7 @@ describe('SaveAndLoadPage', () => {
     fileContentsByName.set('mojibake.yaml', '嚜瘸piVersion: alpha\ndescription: mojibake\nappVersion: unknown\n');
 
     fireEvent.change(input, { target: { files: [file] } });
+
 
     await waitFor(() => {
       expect(loadFromYaml).toHaveBeenCalledWith(
@@ -236,7 +275,7 @@ describe('SaveAndLoadPage', () => {
     expect(alert).not.toHaveBeenCalledWith('YAML file loaded successfully!');
   });
 
-  it('asks about corrupted headers before app version mismatches', async () => {
+  it('recovers a corrupted header and shows the app version warning after loading', async () => {
     (confirm as unknown as ReturnType<typeof vi.fn>).mockReturnValue(true);
 
     renderSaveAndLoadPage();
@@ -247,13 +286,15 @@ describe('SaveAndLoadPage', () => {
 
     fireEvent.change(input, { target: { files: [file] } });
 
+
     await waitFor(() => {
       expect(loadFromYaml).toHaveBeenCalledWith(
         expect.objectContaining({ apiVersion: 'alpha', description: 'mojibake' }),
       );
     });
     expect(confirm).toHaveBeenNthCalledWith(1, expect.stringContaining('Corrupted YAML header detected.'));
-    expect(confirm).toHaveBeenNthCalledWith(2, expect.stringContaining('App version mismatch detected.'));
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('status', { name: 'YAML import summary' })).toHaveTextContent('App version mismatch detected');
   });
 
   it('does not apply edited YAML when version mismatch confirmation is cancelled', async () => {
@@ -342,89 +383,46 @@ describe('SaveAndLoadPage', () => {
     expect(await blob.text()).toBe('apiVersion: alpha\ndescription: baseline\n');
   });
 
-  it('does not load uploaded YAML when version mismatch confirmation is cancelled', async () => {
-    (confirm as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
-
+  it('loads a mismatched version immediately and shows the warning in the summary', () => {
     renderSaveAndLoadPage();
-
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     const file = new File(['ignored'], 'upload.yaml', { type: 'application/x-yaml' });
     fileContentsByName.set('upload.yaml', 'apiVersion: alpha\ndescription: from-upload\nappVersion: v0.0.1\n');
+
     fireEvent.change(input, { target: { files: [file] } });
 
-    await waitFor(() => {
-      expect(confirm).toHaveBeenCalled();
-    });
-    expect(loadFromYaml).not.toHaveBeenCalled();
-    expect(alert).not.toHaveBeenCalledWith('YAML file loaded successfully!');
+    expect(loadFromYaml).toHaveBeenCalledWith(expect.objectContaining({ description: 'from-upload' }));
+    expect(screen.getByRole('status', { name: 'YAML import summary' })).toHaveTextContent('App version mismatch detected');
+    expect(confirm).not.toHaveBeenCalled();
+    expect(alert).not.toHaveBeenCalled();
   });
 
-  it('warns when uploaded YAML app version ends with dirty even if the base version matches', async () => {
-    (confirm as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
-
+  it('shows the dirty version warning after loading without a confirmation', () => {
     renderSaveAndLoadPage();
-
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     const file = new File(['ignored'], 'dirty.yaml', { type: 'application/x-yaml' });
     fileContentsByName.set('dirty.yaml', 'apiVersion: alpha\ndescription: dirty-upload\nappVersion: unknown-dirty\n');
+
     fireEvent.change(input, { target: { files: [file] } });
 
-    await waitFor(() => {
-      expect(confirm).toHaveBeenCalledWith(expect.stringContaining('Dirty app version detected.'));
-    });
-    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('development build with uncommitted changes'));
-    expect(loadFromYaml).not.toHaveBeenCalled();
-    expect(alert).not.toHaveBeenCalledWith('YAML file loaded successfully!');
+    expect(loadFromYaml).toHaveBeenCalledWith(expect.objectContaining({ description: 'dirty-upload' }));
+    expect(screen.getByRole('status', { name: 'YAML import summary' })).toHaveTextContent('Dirty app version detected');
+    expect(confirm).not.toHaveBeenCalled();
   });
 
-  it('uses the normal mismatch warning when dirty is not the app version suffix', async () => {
-    (confirm as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
-
+  it('uses the normal mismatch warning when dirty is not the app version suffix', () => {
     renderSaveAndLoadPage();
-
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     const file = new File(['ignored'], 'dirty-middle.yaml', { type: 'application/x-yaml' });
     fileContentsByName.set('dirty-middle.yaml', 'apiVersion: alpha\ndescription: dirty-middle\nappVersion: v0.0.1-dirty-extra\n');
+
     fireEvent.change(input, { target: { files: [file] } });
 
-    await waitFor(() => {
-      expect(confirm).toHaveBeenCalledWith(expect.stringContaining('App version mismatch detected.'));
-    });
-    expect(confirm).not.toHaveBeenCalledWith(expect.stringContaining('Dirty app version detected.'));
-    expect(loadFromYaml).not.toHaveBeenCalled();
-  });
-
-  it('keeps the current preview, copy, and download state after upload confirmation is cancelled', async () => {
-    const user = userEvent.setup();
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    const createSpy = vi.spyOn(URL, 'createObjectURL').mockImplementation((blob: Blob | MediaSource) => {
-      expect(blob).toBeInstanceOf(Blob);
-      return 'blob:upload-cancelled';
-    });
-    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
-    Object.defineProperty(navigator, 'clipboard', {
-      value: { writeText },
-      configurable: true,
-    });
-    (confirm as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
-
-    renderSaveAndLoadPage();
-
-    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
-    const file = new File(['ignored'], 'upload.yaml', { type: 'application/x-yaml' });
-    fileContentsByName.set('upload.yaml', 'apiVersion: alpha\ndescription: from-upload\nappVersion: v0.0.1\n');
-    fireEvent.change(input, { target: { files: [file] } });
-
-    expect(screen.getByText('Current State YAML')).toBeInTheDocument();
-
-    await user.click(screen.getByRole('button', { name: /copy/i }));
-    await waitFor(() => {
-      expect(writeText).toHaveBeenCalledWith('apiVersion: alpha\ndescription: baseline\n');
-    });
-
-    await user.click(screen.getByRole('button', { name: /^download$/i }));
-    const blob = createSpy.mock.calls.at(-1)?.[0] as Blob;
-    expect(await blob.text()).toBe('apiVersion: alpha\ndescription: baseline\n');
+    expect(loadFromYaml).toHaveBeenCalledWith(expect.objectContaining({ description: 'dirty-middle' }));
+    const summary = screen.getByRole('status', { name: 'YAML import summary' });
+    expect(summary).toHaveTextContent('App version mismatch detected');
+    expect(summary).not.toHaveTextContent('Dirty app version detected');
+    expect(confirm).not.toHaveBeenCalled();
   });
 
   it('keeps preview, copy, and download output consistent after loading replacement YAML', async () => {
@@ -448,6 +446,7 @@ describe('SaveAndLoadPage', () => {
     const file = new File(['ignored'], 'upload.yaml', { type: 'application/x-yaml' });
     fileContentsByName.set('upload.yaml', 'apiVersion: alpha\ndescription: uploaded state\n');
     fireEvent.change(input, { target: { files: [file] } });
+
 
     await waitFor(() => {
       expect(loadFromYaml).toHaveBeenCalledWith(expect.objectContaining({ description: 'uploaded state' }));
@@ -528,6 +527,46 @@ describe('SaveAndLoadPage', () => {
     expect(createSpy).toHaveBeenCalled();
     expect(revokeSpy).toHaveBeenCalledWith('blob:mock-url');
     expect(screen.getByRole('link', { name: 'Star the project on GitHub' })).toBeInTheDocument();
+  });
+
+  it('replaces download and upload notices and dismisses them on other actions', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:notice');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    renderSaveAndLoadPage();
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['ignored'], 'notice.yaml', { type: 'application/x-yaml' });
+    fileContentsByName.set('notice.yaml', 'description: notice\nappVersion: unknown\n');
+
+    await user.click(screen.getByRole('button', { name: /^download$/i }));
+    expect(screen.getByRole('link', { name: 'Star the project on GitHub' })).toBeInTheDocument();
+    fireEvent.change(input, { target: { files: [file] } });
+    expect(screen.getByRole('status', { name: 'YAML import summary' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Star the project on GitHub' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /^download$/i }));
+    expect(screen.queryByRole('status', { name: 'YAML import summary' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Star the project on GitHub' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /^copy$/i }));
+    expect(screen.queryByRole('link', { name: 'Star the project on GitHub' })).not.toBeInTheDocument();
+
+    fireEvent.change(input, { target: { files: [file] } });
+    await user.click(screen.getByRole('button', { name: /edit yaml/i }));
+    expect(screen.queryByRole('status', { name: 'YAML import summary' })).not.toBeInTheDocument();
+  });
+
+  it('dismisses the notice when opening the upload picker before choosing a file', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:notice');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    renderSaveAndLoadPage();
+
+    await user.click(screen.getByRole('button', { name: /^download$/i }));
+    await user.click(screen.getByRole('button', { name: /^upload$/i }));
+
+    expect(screen.queryByRole('link', { name: 'Star the project on GitHub' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: 'YAML import summary' })).not.toBeInTheDocument();
+    expect(loadFromYaml).not.toHaveBeenCalled();
   });
 
   it('uses a stable date-based filename for downloads', async () => {
@@ -696,7 +735,7 @@ describe('SaveAndLoadPage', () => {
     expect(loadFromYaml).not.toHaveBeenCalled();
   });
 
-  it('loads partial YAML payloads after version warning confirmation', () => {
+  it('loads partial YAML payloads and shows warnings after upload', () => {
     renderSaveAndLoadPage();
 
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
@@ -705,9 +744,12 @@ describe('SaveAndLoadPage', () => {
 
     fireEvent.change(input, { target: { files: [file] } });
 
-    expect(confirm).toHaveBeenCalled();
+    expect(screen.getByRole('status')).toHaveTextContent('0 dates, 0 people, 0 shift types, 0 preferences');
+    expect(screen.getByRole('status')).toHaveTextContent('Warning: App version missing');
+    expect(screen.getByRole('status')).toHaveTextContent('Missing sections: dates, people, shift types, preferences.');
+    expect(confirm).not.toHaveBeenCalled();
     expect(loadFromYaml).toHaveBeenCalledWith(expect.objectContaining({ description: 'partial' }));
-    expect(alert).toHaveBeenCalledWith('YAML file loaded successfully!');
+    expect(screen.getByRole('status')).toHaveTextContent('Schedule uploaded: partial.yaml');
   });
 
   it('passes through unknown top-level keys when loading uploaded YAML', () => {
@@ -718,6 +760,7 @@ describe('SaveAndLoadPage', () => {
     fileContentsByName.set('unknown-keys.yaml', 'description: partial\ncustomFlag: true\n');
 
     fireEvent.change(input, { target: { files: [file] } });
+
 
     expect(loadFromYaml).toHaveBeenCalledWith(
       expect.objectContaining({ description: 'partial', customFlag: true }),

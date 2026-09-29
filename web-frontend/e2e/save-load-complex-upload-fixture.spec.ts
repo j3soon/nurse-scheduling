@@ -47,7 +47,7 @@ test('complex YAML upload restores mixed renamed references across multiple down
     buffer: Buffer.from(complexYaml, 'utf8'),
   });
 
-  await expect.poll(() => dialogs.length).toBe(2);
+  expect(dialogs).toHaveLength(0);
   await expect(page.locator('pre')).toContainText('complex uploaded state');
   await expect(page.locator('pre')).toContainText('Team Alpha');
   await expect(page.locator('pre')).toContainText('Day Group');

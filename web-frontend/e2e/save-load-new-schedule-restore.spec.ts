@@ -66,7 +66,7 @@ test('new schedule reset can be followed by restoring the just-created state fro
     buffer: Buffer.from(yamlText ?? '', 'utf8'),
   });
 
-  await expect.poll(() => dialogs.some(message => message.includes('YAML file loaded successfully!'))).toBe(true);
+  await expect(page.getByRole('status', { name: 'YAML import summary' })).toBeVisible();
 
   await page.goto('/people');
   await expect(page.getByText('Restore Person', { exact: true })).toBeVisible();

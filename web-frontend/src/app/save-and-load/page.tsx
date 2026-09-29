@@ -42,6 +42,65 @@ const BOM_MOJIBAKE_API_VERSION_PREFIXES = [
   '锘縜piVersion',
 ];
 
+interface YamlImportSummary {
+  filename: string;
+  versionWarning: string | null;
+  counts: { dates: number; people: number; shiftTypes: number; preferences: number };
+  warnings: string[];
+}
+
+function formatCount(count: number, singular: string, plural = `${singular}s`): string {
+  return `${count.toLocaleString()} ${count === 1 ? singular : plural}`;
+}
+
+function summarizeYamlImport(data: unknown, filename: string, versionWarning: string | null): YamlImportSummary {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('The YAML must contain a schedule object.');
+  }
+  const schedule = data as Record<string, unknown>;
+  for (const key of ['dates', 'people', 'shiftTypes']) {
+    const section = schedule[key];
+    if (section !== undefined && (!section || typeof section !== 'object' || Array.isArray(section))) {
+      throw new Error(`The ${key} section must be an object.`);
+    }
+  }
+  if (schedule.preferences !== undefined && !Array.isArray(schedule.preferences)) {
+    throw new Error('The preferences section must be a list.');
+  }
+  const itemCount = (section: unknown): number => {
+    if (!section || typeof section !== 'object' || Array.isArray(section)) return 0;
+    const items = (section as Record<string, unknown>).items;
+    return Array.isArray(items) ? items.length : 0;
+  };
+  const dateCount = (): number => {
+    const explicitCount = itemCount(schedule.dates);
+    if (explicitCount > 0) return explicitCount;
+    if (!schedule.dates || typeof schedule.dates !== 'object' || Array.isArray(schedule.dates)) return 0;
+    const range = (schedule.dates as Record<string, unknown>).range;
+    if (!range || typeof range !== 'object' || Array.isArray(range)) return 0;
+    const { startDate, endDate } = range as Record<string, unknown>;
+    if (typeof startDate !== 'string' || typeof endDate !== 'string') return 0;
+    const start = Date.parse(startDate);
+    const end = Date.parse(endDate);
+    return Number.isFinite(start) && Number.isFinite(end) && end >= start
+      ? Math.floor((end - start) / 86_400_000) + 1
+      : 0;
+  };
+  const counts = {
+    dates: dateCount(),
+    people: itemCount(schedule.people),
+    shiftTypes: itemCount(schedule.shiftTypes),
+    preferences: Array.isArray(schedule.preferences) ? schedule.preferences.length : 0,
+  };
+  const missingSections = (['dates', 'people', 'shiftTypes', 'preferences'] as const)
+    .filter(key => !schedule[key])
+    .map(key => key === 'shiftTypes' ? 'shift types' : key);
+  const warnings = missingSections.length > 0
+    ? [`Missing sections: ${missingSections.join(', ')}.`]
+    : [];
+  return { filename, versionWarning, counts, warnings };
+}
+
 function recoverYamlTextPrefixWithConfirmation(content: string): string | null {
   // Mojibake prefixes mean the original UTF-8 BOM bytes were decoded using
   // another encoding before this app received the YAML text. Real UTF-8 BOM
@@ -81,10 +140,11 @@ export default function SaveAndLoadPage() {
   const [editedYaml, setEditedYaml] = useState('');
   const [yamlError, setYamlError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [downloaded, setDownloaded] = useState(false);
   const [anonymizePeopleItems, setAnonymizePeopleItems] = useState(true);
   const [anonymizePeopleGroups, setAnonymizePeopleGroups] = useState(false);
   const [scatterShiftRequests, setScatterShiftRequests] = useState(false);
+  const [notice, setNotice] = useState<YamlImportSummary | 'download' | null>(null);
+  const importSummary = notice === 'download' ? null : notice;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const copiedResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -122,7 +182,7 @@ export default function SaveAndLoadPage() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    setDownloaded(true);
+    setNotice('download');
   };
 
   const handleDownload = () => {
@@ -173,19 +233,22 @@ export default function SaveAndLoadPage() {
   };
 
   // Helper function to check app version mismatch and get warning message
-  const getVersionWarning = (parsedData: unknown): string | null => {
+  const getVersionWarning = (parsedData: unknown, compact = false): string | null => {
     const data = parsedData as { appVersion?: string };
     const fileVersion = data?.appVersion;
 
     if (!fileVersion) {
+      if (compact) return `App version missing (current ${CURRENT_APP_VERSION}).`;
       return `The loaded file does not contain app version information. It may have been created with an older version of the application. Current app version: ${CURRENT_APP_VERSION}`;
     }
 
     if (fileVersion.endsWith('-dirty')) {
+      if (compact) return `Dirty app version detected (${fileVersion}).`;
       return `Dirty app version detected.\n\nFile app version: ${fileVersion}\nCurrent app version: ${CURRENT_APP_VERSION}\n\nThis YAML was created by a development build with uncommitted changes. It may not match a reproducible application version. If nothing breaks, you can continue.`;
     }
 
     if (fileVersion !== CURRENT_APP_VERSION) {
+      if (compact) return `App version mismatch detected (file ${fileVersion}, current ${CURRENT_APP_VERSION}).`;
       return `App version mismatch detected.\n\nFile app version: ${fileVersion}\nCurrent app version: ${CURRENT_APP_VERSION}\n\nOlder YAML may not work after breaking changes, though we try to preserve compatibility. If nothing breaks, you can continue.`;
     }
 
@@ -213,6 +276,7 @@ export default function SaveAndLoadPage() {
 
       // Load the parsed data directly without validation, this willl create a new history state
       loadFromYaml(parsedData);
+      setNotice(null);
 
       // Close the editor
       setIsEditing(false);
@@ -224,6 +288,7 @@ export default function SaveAndLoadPage() {
   };
 
   const processYamlFile = (file: File) => {
+    setNotice(null);
     const reader = new FileReader();
     reader.onload = (e) => {
       const content = e.target?.result as string;
@@ -241,19 +306,9 @@ export default function SaveAndLoadPage() {
         // Validate YAML by parsing it
         const parsedData = yaml.load(recoveredYaml);
 
-        // Check for version mismatch and warn user
-        const versionWarning = getVersionWarning(parsedData);
-        if (versionWarning) {
-          const proceed = confirm(`${versionWarning}\n\nDo you want to continue loading the file?`);
-          if (!proceed) {
-            return;
-          }
-        }
-
-        // Load the parsed data directly without validation, this will create a new history state
+        const summary = summarizeYamlImport(parsedData, file.name, getVersionWarning(parsedData, true));
         loadFromYaml(parsedData);
-
-        alert('YAML file loaded successfully!');
+        setNotice(summary);
       } catch (error) {
         alert(`Error loading YAML file: ${error instanceof Error ? error.message : 'Invalid YAML format'}`);
         console.error('Error processing YAML file:', error);
@@ -264,7 +319,14 @@ export default function SaveAndLoadPage() {
   };
 
   return (
-    <div className="container mx-auto px-4 py-8">
+    <div
+      className="container mx-auto px-4 py-8"
+      onClickCapture={(event) => {
+        if (event.target instanceof Element && event.target.closest('button')) {
+          setNotice(null);
+        }
+      }}
+    >
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <div className="flex items-center gap-3">
           <h1 className="text-3xl font-bold text-gray-800">Save and Load</h1>
@@ -311,7 +373,25 @@ export default function SaveAndLoadPage() {
         </div>
       </div>
 
-      {downloaded && <div className="mb-6"><StarRepoNudge /></div>}
+      {notice === 'download' && <div className="mb-6"><StarRepoNudge /></div>}
+
+      {importSummary && (
+        <section role="status" aria-label="YAML import summary" className="mb-6 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm">
+          <p className="text-green-900">
+            <strong>Schedule uploaded:</strong> {importSummary.filename}.{' '}
+            {formatCount(importSummary.counts.dates, 'date')},{' '}
+            {formatCount(importSummary.counts.people, 'person', 'people')},{' '}
+            {formatCount(importSummary.counts.shiftTypes, 'shift type')},{' '}
+            {formatCount(importSummary.counts.preferences, 'preference')}.{' '}
+            Ctrl+Z or Cmd+Z to undo.
+          </p>
+          {(importSummary.versionWarning || importSummary.warnings.length > 0) && (
+            <p className="mt-1 text-amber-800">
+              <strong>Warning:</strong> {[importSummary.versionWarning, ...importSummary.warnings].filter(Boolean).join(' ')}
+            </p>
+          )}
+        </section>
+      )}
 
       {/* Warning Section */}
       <div className="mb-6 bg-amber-50 border border-amber-200 rounded-lg p-4">
