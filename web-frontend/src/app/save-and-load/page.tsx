@@ -79,9 +79,11 @@ function summarizeYamlImport(data: unknown, filename: string, versionWarning: st
     const range = (schedule.dates as Record<string, unknown>).range;
     if (!range || typeof range !== 'object' || Array.isArray(range)) return 0;
     const { startDate, endDate } = range as Record<string, unknown>;
-    if (typeof startDate !== 'string' || typeof endDate !== 'string') return 0;
-    const start = Date.parse(startDate);
-    const end = Date.parse(endDate);
+    const timestamp = (value: unknown): number => value instanceof Date
+      ? value.getTime()
+      : typeof value === 'string' ? Date.parse(value) : NaN;
+    const start = timestamp(startDate);
+    const end = timestamp(endDate);
     return Number.isFinite(start) && Number.isFinite(end) && end >= start
       ? Math.floor((end - start) / 86_400_000) + 1
       : 0;
@@ -307,6 +309,10 @@ export default function SaveAndLoadPage() {
         const parsedData = yaml.load(recoveredYaml);
 
         const summary = summarizeYamlImport(parsedData, file.name, getVersionWarning(parsedData, true));
+        const versionWarning = getVersionWarning(parsedData);
+        if (versionWarning && !confirm(`${versionWarning}\n\nDo you want to continue replacing the current schedule?`)) {
+          return;
+        }
         loadFromYaml(parsedData);
         setNotice(summary);
       } catch (error) {

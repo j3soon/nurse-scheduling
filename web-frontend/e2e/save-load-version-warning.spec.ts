@@ -22,12 +22,12 @@
 import { expect, test } from './test';
 import { seedSchedulingState } from './helpers';
 
-test('version warning appears after immediate upload and the upload can be undone', async ({ page }) => {
+test('version warning allows cancelling replacement and accepted uploads can be undone', async ({ page }) => {
   /*
    * Steps:
    * 1. Seed the original group and upload a file with a mismatched app version.
-   * 2. Confirm the new group applies immediately and the warning appears inline.
-   * 3. Undo the upload and confirm the original group returns.
+   * 2. Cancel the warning and confirm the original group survives a reload.
+   * 3. Accept the warning, then undo the upload and confirm the original group returns.
    */
   await seedSchedulingState(page, {
     apiVersion: 'test',
@@ -74,20 +74,35 @@ test('version warning appears after immediate upload and the upload can be undon
   const mismatchedYaml = `appVersion: mismatch-version\n${yamlWithoutAppVersion}`.replace('Team Alpha', 'Team Omega');
 
   const dialogs: string[] = [];
+  let acceptReplacement = false;
   page.on('dialog', async dialog => {
     dialogs.push(dialog.message());
-    await dialog.dismiss();
+    if (acceptReplacement) await dialog.accept();
+    else await dialog.dismiss();
   });
-  await page.locator('input[type="file"]').setInputFiles({
+  const upload = {
     name: 'mismatch.yaml',
     mimeType: 'application/x-yaml',
     buffer: Buffer.from(mismatchedYaml, 'utf8'),
-  });
+  };
+  const cancelledDialog = page.waitForEvent('dialog');
+  await page.locator('input[type="file"]').setInputFiles(upload);
+  await cancelledDialog;
+  await expect(page.locator('pre')).toContainText('Team Alpha');
+  await expect(page.locator('pre')).not.toContainText('Team Omega');
+  await expect(page.getByRole('status', { name: 'YAML import summary' })).toHaveCount(0);
+  await page.reload();
+  await expect(page.locator('pre')).toContainText('Team Alpha');
+  await expect(page.locator('pre')).not.toContainText('Team Omega');
+
+  acceptReplacement = true;
+  await page.locator('input[type="file"]').setInputFiles(upload);
   const summary = page.getByRole('status', { name: 'YAML import summary' });
   await expect(summary).toContainText('Schedule uploaded: mismatch.yaml');
   await expect(summary).toContainText('App version mismatch detected');
   await expect(page.locator('pre')).toContainText('Team Omega');
-  expect(dialogs).toHaveLength(0);
+  expect(dialogs).toHaveLength(2);
+  expect(dialogs.every(message => message.includes('App version mismatch detected'))).toBe(true);
 
   await page.getByRole('heading', { name: 'Save and Load' }).click();
   await page.keyboard.press('Control+z');

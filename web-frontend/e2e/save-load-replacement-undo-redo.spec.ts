@@ -66,8 +66,9 @@ test('uploading replacement YAML is one undoable state boundary over the prior s
     mimeType: 'application/x-yaml',
     buffer: Buffer.from(replacementYaml, 'utf8'),
   });
-  expect(dialogs).toHaveLength(0);
   await expect(page.locator('pre')).toContainText('replacement upload state');
+  expect(dialogs).toHaveLength(1);
+  expect(dialogs.at(-1)).toContain('does not contain app version information');
   await waitForStoredCurrentSchedulingData(page, 'P9');
 
   await page.goto('/people');

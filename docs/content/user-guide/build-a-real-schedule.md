@@ -35,7 +35,8 @@ example's inputs and outputs relate to those tasks.
 - **Dates, roles, and staffing:** Read the scheduling period, staff qualifications,
   monthly primary shifts, and required daily counts from the workbook and any
   accompanying instructions. If a cell color identifies a staff role, ask the
-  scheduler which role that color denotes before assigning qualifications.
+  person preparing the schedule which role that color denotes before assigning
+  qualifications.
   If a heading says “Day,” ask whether it identifies nurses whose monthly
   primary shift is Day or a staffing count for daily Day assignments.
   Enter the confirmed values and the ward's rules through the GUI.
@@ -55,8 +56,8 @@ example's inputs and outputs relate to those tasks.
   by strength. Excel text search, formatting search, or filters may help.
   For example, if red and black `1` cells both request `OFF` but carry
   different strengths, search by font color to separate them. Confirm what
-  each mark and color means with the scheduler. Save each strength in a
-  separate CSV, preserving person rows and date columns and leaving other
+  each mark and color means with the person preparing the schedule. Save each
+  strength in a separate CSV, preserving person rows and date columns and leaving other
   cells blank, so each GUI upload can apply its own weight. The supplied
   strong and moderate request CSVs emulate this extraction. The app does
   not interpret Excel colors or ward shorthand.
@@ -68,8 +69,8 @@ example's inputs and outputs relate to those tasks.
   `D~` to `D`. The solver distinguishes these shift types to enforce
   qualifications and staffing counts. This final conversion is outside the
   tutorial's scope and is skipped here. The tutorial ends when the optimized
-  schedule satisfies the hard constraints and the scheduler considers its
-  staffing, requests, and distribution of work and rest acceptable.
+  schedule satisfies the hard constraints and the person preparing the schedule
+  considers its staffing, requests, and distribution of work and rest acceptable.
 
 ## Terminology
 
@@ -195,9 +196,10 @@ The November 1–30 range is already set. The Taiwan calendar import creates
   With `N Saturday → OFF Sunday → OFF Monday → N Tuesday`, the nurse can use
   Saturday after work, enjoy Sunday, and prepare or sleep on Monday before the
   Tuesday midnight shift. `Freeday shift right` contains each calendar freeday
-  shifted one date later. November 30 is omitted because December 1 is outside
-  this schedule. Optimizing Night nurses' rest with this shifted group is an advanced
-  quality-of-life addition outside the scope of this example. It may be useful
+  shifted one date later. November 30 is included as the shifted date for
+  November 29. December 1, the shifted date for November 30, is outside this
+  schedule and is omitted. Optimizing Night nurses' rest with this shifted group
+  is an advanced quality-of-life addition outside the scope of this example. It may be useful
   when the ward requests this rest policy, after the basic requirements produce
   a usable schedule.
 
@@ -760,8 +762,8 @@ schedule meets the ward's policy.
 
 ## 13. Optimize and review the schedule
 
-Before optimizing, have the scheduler review the roster and group memberships,
-the dates in `WORKDAY` and `FREEDAY`, previous-shift history, staffing levels,
+Before optimizing, have the person preparing the schedule review the roster and
+group memberships, the dates in `WORKDAY` and `FREEDAY`, previous-shift history, staffing levels,
 and every `-inf` rule. Also confirm which finite preferences may be traded off
 when the schedule is crowded. Review every staffing coverage warning.
 
@@ -775,8 +777,8 @@ when the schedule is crowded. Review every staffing coverage warning.
    shift requests, set the timeout to `900` seconds and run again. See
    [Optimize and Export](optimize-and-export.md) for server credentials,
    timeout settings, and download options.
-3. Review the downloaded workbook with the scheduler. Check daily ordinary
-   and senior staffing, unmet requests, and each person's total and freeday
+3. Review the downloaded workbook with the person preparing the schedule. Check
+   daily ordinary and senior staffing, unmet requests, and each person's total and freeday
    `OFF` counts. In the default output, a blank assignment cell means `OFF`,
    and `[X]` marks an unmet individual person-date request. Open the **Notes**
    worksheet to see each marked cell and the unmet request's weight.
@@ -814,8 +816,9 @@ Build a new ward's schedule in stages: first confirm staffing, qualifications,
 mandatory assignments, and rest constraints. Then add requests, team
 preferences, and basic fairness. Run [Optimize and
 Export](optimize-and-export.md), inspect assignments and `OFF` counts with the
-scheduler, and tune the finite weights or targets. Add advanced rules, such as
-night-team shifted freedays, only after the basic schedule works well.
+person preparing the schedule, and tune the finite weights or targets. Add
+advanced rules, such as night-team shifted freedays, only after the basic
+schedule works well.
 
 For a recurring ward, update the dates, roster, history, and imports for the
 new period, then review every group and rule again.

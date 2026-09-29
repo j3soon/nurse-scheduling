@@ -65,7 +65,8 @@ test('save-load upload can retry the same filename after failure and then recove
     buffer: Buffer.from(validYaml, 'utf8'),
   });
   await expect(page.getByRole('status', { name: 'YAML import summary' })).toContainText('Schedule uploaded: schedule.yaml');
-  expect(dialogs).toHaveLength(2);
+  expect(dialogs).toHaveLength(3);
+  expect(dialogs[2]).toContain('does not contain app version information');
   await expect(page.locator('pre')).toContainText('recovered same filename');
   await expect(page.locator('pre')).toContainText('P9');
 });

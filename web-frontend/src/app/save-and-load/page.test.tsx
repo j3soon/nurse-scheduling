@@ -181,13 +181,13 @@ describe('SaveAndLoadPage', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Schedule uploaded: upload.yaml');
   });
 
-  it('shows imported counts after immediately replacing the schedule', () => {
+  it.each(['"2025-11-01"', '2025-11-01'])('counts date ranges with YAML endpoint %s', (startDate) => {
     renderSaveAndLoadPage();
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     const file = new File(['ignored'], 'ward.yaml', { type: 'application/x-yaml' });
     fileContentsByName.set('ward.yaml', [
       'appVersion: unknown',
-      'dates: {range: {startDate: "2025-11-01", endDate: "2025-11-30"}, items: []}',
+      `dates: {range: {startDate: ${startDate}, endDate: ${startDate.includes('"') ? '"2025-11-30"' : '2025-11-30'}}, items: []}`,
       'people: {items: [{id: P1}]}',
       'shiftTypes: {items: [{id: D}]}',
       'preferences: [{type: shift request}, {type: shift count}]',
@@ -275,7 +275,7 @@ describe('SaveAndLoadPage', () => {
     expect(alert).not.toHaveBeenCalledWith('YAML file loaded successfully!');
   });
 
-  it('recovers a corrupted header and shows the app version warning after loading', async () => {
+  it('confirms header recovery and version compatibility before loading', async () => {
     (confirm as unknown as ReturnType<typeof vi.fn>).mockReturnValue(true);
 
     renderSaveAndLoadPage();
@@ -293,7 +293,8 @@ describe('SaveAndLoadPage', () => {
       );
     });
     expect(confirm).toHaveBeenNthCalledWith(1, expect.stringContaining('Corrupted YAML header detected.'));
-    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(confirm).toHaveBeenNthCalledWith(2, expect.stringContaining('App version mismatch detected'));
+    expect(confirm).toHaveBeenCalledTimes(2);
     expect(screen.getByRole('status', { name: 'YAML import summary' })).toHaveTextContent('App version mismatch detected');
   });
 
@@ -383,7 +384,11 @@ describe('SaveAndLoadPage', () => {
     expect(await blob.text()).toBe('apiVersion: alpha\ndescription: baseline\n');
   });
 
-  it('loads a mismatched version immediately and shows the warning in the summary', () => {
+  it('confirms a mismatched version before loading and retains the summary warning', () => {
+    (confirm as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      expect(loadFromYaml).not.toHaveBeenCalled();
+      return true;
+    });
     renderSaveAndLoadPage();
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     const file = new File(['ignored'], 'upload.yaml', { type: 'application/x-yaml' });
@@ -393,11 +398,27 @@ describe('SaveAndLoadPage', () => {
 
     expect(loadFromYaml).toHaveBeenCalledWith(expect.objectContaining({ description: 'from-upload' }));
     expect(screen.getByRole('status', { name: 'YAML import summary' })).toHaveTextContent('App version mismatch detected');
-    expect(confirm).not.toHaveBeenCalled();
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('continue replacing the current schedule'));
     expect(alert).not.toHaveBeenCalled();
   });
 
-  it('shows the dirty version warning after loading without a confirmation', () => {
+  it.each(['appVersion: v0.0.1\n', 'appVersion: unknown-dirty\n', ''])('keeps the current schedule when upload compatibility is cancelled (%s)', (version) => {
+    (confirm as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    renderSaveAndLoadPage();
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['ignored'], 'cancelled.yaml', { type: 'application/x-yaml' });
+    fileContentsByName.set(file.name, `${version}description: replacement\n`);
+
+    fireEvent.change(input, { target: { files: [file] } });
+
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(loadFromYaml).not.toHaveBeenCalled();
+    expect(document.querySelector('pre')).toHaveTextContent('description: baseline');
+    expect(screen.queryByRole('status', { name: 'YAML import summary' })).not.toBeInTheDocument();
+    expect(alert).not.toHaveBeenCalled();
+  });
+
+  it('confirms a dirty version before loading and retains the summary warning', () => {
     renderSaveAndLoadPage();
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     const file = new File(['ignored'], 'dirty.yaml', { type: 'application/x-yaml' });
@@ -407,7 +428,7 @@ describe('SaveAndLoadPage', () => {
 
     expect(loadFromYaml).toHaveBeenCalledWith(expect.objectContaining({ description: 'dirty-upload' }));
     expect(screen.getByRole('status', { name: 'YAML import summary' })).toHaveTextContent('Dirty app version detected');
-    expect(confirm).not.toHaveBeenCalled();
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('continue replacing the current schedule'));
   });
 
   it('uses the normal mismatch warning when dirty is not the app version suffix', () => {
@@ -422,7 +443,7 @@ describe('SaveAndLoadPage', () => {
     const summary = screen.getByRole('status', { name: 'YAML import summary' });
     expect(summary).toHaveTextContent('App version mismatch detected');
     expect(summary).not.toHaveTextContent('Dirty app version detected');
-    expect(confirm).not.toHaveBeenCalled();
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('continue replacing the current schedule'));
   });
 
   it('keeps preview, copy, and download output consistent after loading replacement YAML', async () => {
@@ -747,7 +768,7 @@ describe('SaveAndLoadPage', () => {
     expect(screen.getByRole('status')).toHaveTextContent('0 dates, 0 people, 0 shift types, 0 preferences');
     expect(screen.getByRole('status')).toHaveTextContent('Warning: App version missing');
     expect(screen.getByRole('status')).toHaveTextContent('Missing sections: dates, people, shift types, preferences.');
-    expect(confirm).not.toHaveBeenCalled();
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('continue replacing the current schedule'));
     expect(loadFromYaml).toHaveBeenCalledWith(expect.objectContaining({ description: 'partial' }));
     expect(screen.getByRole('status')).toHaveTextContent('Schedule uploaded: partial.yaml');
   });

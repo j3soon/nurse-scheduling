@@ -53,9 +53,11 @@ test('save-load can ingest a moderately larger schedule and downstream pages sta
     buffer: Buffer.from(largeYaml, 'utf8'),
   });
 
-  expect(dialogs).toHaveLength(0);
   await expect(page.locator('pre')).toContainText('large state smoke');
+  expect(dialogs).toHaveLength(1);
+  expect(dialogs.at(-1)).toContain('does not contain app version information');
   await expect(page.locator('pre')).toContainText('P15');
+  await expect(page.getByRole('status', { name: 'YAML import summary' })).toContainText('10 dates, 15 people, 8 shift types, 1 preference');
 
   await page.goto('/people');
   await expect(page.getByText('1. P01', { exact: true })).toBeVisible();

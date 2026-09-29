@@ -24,7 +24,7 @@ no sensitive data, ask the assistant to inspect the workbook. Have it list the
 people, dates, staffing levels, requests, history, and any unclear
 notation before proposing a schedule change. A `1`, a color, or a short shift
 code can mean different things in different wards. Confirm those meanings and
-group memberships with the scheduler.
+group memberships with the person preparing the schedule.
 
 Work in stages. First establish staffing, qualifications, required assignments,
 and rest rules. Then add nurse requests, monthly shift-team preferences, and

@@ -51,8 +51,8 @@ Use it only when these groups match the workplace calendar. It supports ranges
 within `2023-01-01` through `2026-12-31`. Follow the in-app warning for Labor
 Day in 2023 and 2024, then adjust May 1 when needed.
 
-The 87-person November example enters its own groups instead of importing
-holidays. In a real ward, the Taiwan calendar is a useful starting point, but
-confirm the resulting days against the ward's actual staffing calendar.
+The 87-person November example imports `WORKDAY` and `FREEDAY` from the
+Taiwan calendar and creates its other editable date groups manually. Confirm
+the resulting days against the ward's actual staffing calendar.
 
 Continue with [People](people.md).
