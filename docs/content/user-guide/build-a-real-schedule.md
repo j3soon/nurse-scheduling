@@ -48,7 +48,7 @@ example's inputs and outputs relate to those tasks.
   `person,shift,repetition` rows, as in `people-history.csv`. Depending on the
   source notation, regular-expression replacement may handle this conversion
   without custom code. For example, if `4N` means four consecutive Night
-  shifts for `P8`, convert it to `P8,N,4`; if `O` means `OFF`, convert `4O`
+  shifts for `P8`, convert it to `P8,N,4`. If `O` means `OFF`, convert `4O`
   to `P8,OFF,4`. Editors such as Notepad++ and VS Code support these
   replacements. The suitable method depends on the workbook's notation and
   the user's tools.
@@ -100,7 +100,7 @@ These terms follow the order of the GUI tabs:
   working together or separately. This example uses no affinity rules.
 - **Preference rule:** The app's general term for scheduling constraints and
   weighted objectives, including staffing requirements, requests, successions,
-  counts, and affinities. Some are mandatory; others can be traded off during optimization.
+  counts, and affinities. Some are mandatory. Others can be traded off during optimization.
 
 ## Ward conventions
 
@@ -110,7 +110,7 @@ rather than items created on a GUI tab.
 - **Unfilled monthly schedule:** The ward's source workbook before daily
   assignments are completed. It contains dates, people, staffing requirements,
   and shift requests, and may include staff roles and previous-month shifts.
-  Its layout and notation vary by ward; written instructions may supplement it.
+  Its layout and notation vary by ward. Written instructions may supplement it.
 - **Monthly primary shift:** Day, Evening, or Night designated as a nurse's
   primary shift category for the month. Daily assignments may differ to meet
   staffing needs or individual requests. For example, a nurse whose monthly
@@ -142,7 +142,7 @@ of cell edits:
   sorts shift requests and may write fields in a different order when it
   exports YAML.
 
-The November 1–30 date range is entered on the Dates page in step 1; it is not
+The November 1–30 date range is entered on the Dates page in step 1. It is not
 imported from a file.
 
 ## 1. Start from empty and set the dates
@@ -255,7 +255,7 @@ groups, such as `Night People`. A staffing requirement's qualified-people
 list can likewise select people or people groups.
 
 Open **People**, select **Add Group**, enter the ID and description, and select
-the member people from `reference.yaml`. Groups may overlap; the automatic
+the member people from `reference.yaml`. Groups may overlap. The automatic
 `ALL` group always holds everyone. In the checkbox list, hold the mouse button
 down and drag across adjacent people to select a run quickly. Review the
 result before saving, especially where groups overlap.
@@ -282,7 +282,7 @@ result before saving, especially where groups overlap.
   - **Purpose:** Some wards distinguish newly hired nurses (`新人`) from other junior nurses and students when setting qualifications or workloads. Rules for this additional category are outside the scope of this example.
 
 - **`Admin People`**
-  - **Purpose:** Administrative shift `A` is usually assigned to head nurses and the most senior staff among the senior nurses. This group identifies people qualified for `A`. The example sets an explicit `A` staffing requirement on freedays; workday `A` assignments are governed by shift requests rather than a daily staffing count. Shift requests also forbid Evening and Night assignments for this group.
+  - **Purpose:** Administrative shift `A` is usually assigned to head nurses and the most senior staff among the senior nurses. This group identifies people qualified for `A`. The example sets an explicit `A` staffing requirement on freedays. Workday `A` assignments are governed by shift requests rather than a daily staffing count. Shift requests also forbid Evening and Night assignments for this group.
 
 - **`Students`**
   - **Purpose:** Students learn alongside nurses and do not count toward the nurse workforce needed for daily staffing. This group applies workday learning-shift preferences and freeday `OFF` preferences to all students.
@@ -494,7 +494,7 @@ each strength tier separately. Blank cells have no effect.
    preferences were processed. For a quick visual check, `P5` on date `22`
    should show `OFF (+11m)`.
 
-Each row is one person; the columns line up with the displayed dates. Blank
+Each row is one person. The columns line up with the displayed dates. Blank
 cells are ignored, so the two uploads do not conflict.
 
 The Weight input accepts these shorthands. The downloaded YAML stores their
