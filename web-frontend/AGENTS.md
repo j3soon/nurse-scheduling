@@ -24,6 +24,11 @@ Use `bun run test:affected` for routine changes. Run the full unit/component
 and browser suites when checking the full app or broad shared behavior.
 Frontend unit/component tests use Vitest; browser integration tests use
 Playwright.
+
+Use Playwright locator actions for form controls. Before interacting with
+statically rendered controls, wait for an observable result of client
+initialization, such as loaded backend options enabling Optimize.
+
 Both affected commands accept `--base REF` to include committed branch changes
 since the merge base with `REF`, `--list` to inspect selection, and `--full` to
 run their whole suite. `test:e2e:affected` cannot infer browser coverage from
