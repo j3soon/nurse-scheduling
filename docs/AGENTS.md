@@ -2,14 +2,16 @@
 
 ## Writing
 
-- Write pages under `user-guide/` for schedule planners. Use task-based steps,
-  plain language, and only the detail needed to complete the task.
+- Write pages under `user-guide/` for people who prepare schedules. Use
+  task-based steps, plain language, and only the detail needed to complete the
+  task.
 - Keep one user-guide page for every frontend app page. Page-title help links
   must resolve to the matching page under the deployed `/docs` path.
 - Write developer-guide pages for contributors and operators. Keep content
   minimal, precise, and self-contained.
 - Keep screenshots focused on a decision or result. Add concise alt text and
-  describe any warning that appears in the image.
+  describe any warning that appears in the image. Add screenshots where a
+  beginner would otherwise struggle to follow a step.
 - Keep Quick Start on a minimal working schedule. On each app-page guide, put
   an anonymized real-scenario example and matching screenshot after the
   introduction.
@@ -33,12 +35,72 @@
   subsets, parameters, and decision variables.
 - Describe mathematically accurate semantics without exposing unnecessary
   solver linearization details.
-- When explaining a real schedule's rationale, use the supplied ward reasoning
-  to explain the need behind each group or rule. Naming a later use alone is
-  not a rationale. Distinguish confirmed intent from unused optional concepts.
 - Keep tightly coupled schema and behavior on one page unless each topic has a
   clear independent purpose.
 - Keep `docs/PRIVACY.md` as a symlink to the canonical root `PRIVACY.md`.
+
+### Wording and terminology
+
+- Use concise, precise, human language. Every sentence should convey a concrete
+  action, definition, or explanation that a first-time reader can understand.
+  Rewrite or remove vague statements and redundant caveats.
+- Identify who or what acts. Use "the ward" or "the person preparing the
+  schedule" for human requirements and decisions, "the app" for GUI behavior,
+  and "the optimizer" for generating assignments. Avoid "scheduler" and
+  "planner" when readers could interpret them as either a person or software.
+- Use established terms consistently. Prefer "shift types" to an undefined
+  phrase such as "shift families." Distinguish a nurse's monthly primary shift
+  from actual daily assignments. Define new concepts, such as near-hard
+  constraints, before using them in explanations.
+- Keep introductory terminology short, with one bullet per concept in GUI tab
+  order explaining its meaning and purpose. Put ward conventions in a separate
+  section and detailed examples beside the steps that use them.
+- Be specific about ambiguity. Give a concrete example of what needs
+  clarification, such as whether "Day" denotes a monthly primary shift or a
+  daily staffing count. Ask about unclear source labels or colors instead of
+  assuming their meaning.
+- Define compact notation before using it. Name the selectors in a request
+  tuple and use explicit group or shift-type names. Avoid shorthand such as
+  "Day-to-Evening" when it could mean a daily succession or a rule about
+  assignments outside a person's monthly primary shift.
+- Explain the need and intended effect behind a group or rule, using the
+  supplied rationale. A statement that a later rule uses it is insufficient.
+  Distinguish confirmed intent from unused optional concepts. State unused
+  advanced options briefly with their purpose and scope.
+- Present tools and extraction methods as possible approaches with concrete
+  examples. A method that worked for one workbook is not a requirement for
+  every ward or user.
+
+### Walkthrough flow
+
+- Write instructions a first-time user can follow without guessing. Use the
+  GUI's labels, give actions in click order, and supply the values and expected
+  result needed to complete each step. Fix under-explained steps after trying
+  them in the GUI.
+- Number all sections that belong to the task sequence, including validation.
+  Keep that numbering consistent in headings and links.
+- Keep wording brief while preserving the information needed to act. Prefer
+  concise bullets for summaries and add detail where it resolves a concrete
+  question. Avoid repeating the same explanation in several places. When
+  simplifying or moving content, preserve its information in the relevant
+  section.
+- Follow GUI tab order where possible. Keep instructions and rationale beside
+  the entries they explain. Group similar rules when one explanation covers
+  them, and prefer descriptive bullets over tables for groups and rationale.
+  Use tables where readers need to compare structured values.
+- Explain the input, output, and tutorial scope early. Distinguish source
+  workbooks, extracted inputs, scheduling configuration, optimized assignments,
+  and any conversion back to the ward's layout that the tutorial skips.
+- Keep paragraphs short and focused. Put case-specific run times or results
+  in their own paragraph when they interrupt a general explanation. Use the
+  same heading for recurring tasks, such as reusing a configuration next month.
+- Make large numbers easy to read. Use thousands separators in explanatory
+  prose or clear abbreviations accepted by the app, such as `11b`, `11m`, and
+  `-100m`. Avoid fractional abbreviations such as `-.1b`, which can be mistaken
+  for `-1b`. Preserve literal syntax in code and downloadable files.
+- State outcomes explicitly, for example, "Schedule uploaded," followed by
+  only the necessary summary. Readers should immediately know whether an
+  action succeeded and what still needs attention.
 
 ## Figures
 
