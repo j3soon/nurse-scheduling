@@ -22,6 +22,7 @@
 import asyncio
 import json
 from collections.abc import AsyncIterator, Sequence
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -43,6 +44,7 @@ from nurse_scheduling.ai.provider import (
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
 from nurse_scheduling.ai.sandbox_agent import (
+    SANDBOX_SYSTEM_PROMPT,
     WORKSPACE_ATTACHMENT_MANIFEST,
     WORKSPACE_SCHEDULE,
     SandboxTurnMetrics,
@@ -54,15 +56,18 @@ from nurse_scheduling.ai.schema import (
 )
 
 from .ai_eval.grading import EvalCase, ExpectedDiff, ToolUsageExpectation, TurnAction, load_cases
+from .ai_eval.prompt_ladder import STEPS_PATH, load_prompt_steps, prompt_at_step
 from .ai_eval.runner import (
     CASES,
     DEFAULT_CASE_JOBS,
     CaseRun,
+    _evaluation_metadata,
     _parse_args,
     _reference_digests,
     _selected_cases,
     default_output_dir,
     main,
+    prompt_comparison_markdown,
     run_all,
     run_case,
     select,
@@ -75,6 +80,56 @@ CASE_BY_ID = {case.id: case for case in load_cases(CASES)}
 
 def test_ai_eval_defaults_to_four_concurrent_cases():
     assert DEFAULT_CASE_JOBS == 4
+
+
+def test_prompt_steps_reconstruct_production_and_link_real_cases():
+    steps = load_prompt_steps()
+    assert len(steps) == 13
+    assert prompt_at_step(len(steps)) == SANDBOX_SYSTEM_PROMPT
+    assert not prompt_at_step(0)
+    assert all(case_id in CASE_BY_ID for step in steps for case_id in step.cases)
+    assert steps[5].evidence[0]["before"] == "0/3"
+    assert steps[5].evidence[0]["after"] == "3/3"
+    for index in range(1, len(steps) + 1):
+        assert prompt_at_step(index).startswith(prompt_at_step(index - 1))
+        assert steps[index - 1].starts_with not in prompt_at_step(index, omit=index)
+
+
+def test_prompt_ledger_rejects_stale_paragraph_hash(tmp_path: Path):
+    steps = json.loads(STEPS_PATH.read_text(encoding="utf-8"))
+    steps[5]["sha256"] = "0" * 64
+    ledger = tmp_path / "prompt_steps.json"
+    ledger.write_text(json.dumps(steps), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="changed. Update its hypothesis and evidence"):
+        load_prompt_steps(ledger)
+
+
+def test_prompt_comparison_defaults_to_three_repeats_and_step_cases():
+    arguments, cases = _selected_cases(["--prompt-compare-step", "5"])
+    assert arguments.repeat == 3
+    assert [case.id for case in cases] == sorted(load_prompt_steps()[4].cases)
+
+
+def test_optimizer_step_selects_its_direct_tool_case():
+    _, cases = _selected_cases(["--prompt-compare-step", "10"])
+    assert [case.id for case in cases] == ["tool-optimizer-start"]
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--prompt-compare-step", "0"],
+        ["--prompt-ablate-step", "14"],
+        ["--prompt-compare-step", "5", "--repeat", "2"],
+        ["--prompt-compare-step", "5", "--repeat", "6"],
+        ["--prompt-compare-step", "5", "--cost-ratio", "0.6"],
+    ],
+)
+def test_prompt_comparison_rejects_invalid_requests(argv):
+    with pytest.raises(SystemExit) as error:
+        _parse_args(argv)
+    assert error.value.code == 2
 
 
 @pytest.mark.parametrize("argv", [[], ["--repeat", "3"], ["--jobs", "4"]])
@@ -159,9 +214,11 @@ class ScriptedProvider:
     def __init__(self, *turns) -> None:
         self._turns = list(turns)
         self.messages: list[Sequence[ChatMessage]] = []
+        self.tool_definitions: list[Sequence[dict]] = []
 
     async def stream_events(self, messages: Sequence[ChatMessage], tools=None) -> AsyncIterator:
         self.messages.append(messages)
+        self.tool_definitions.append(tools or ())
         turn = self._turns.pop(0) if self._turns else [TextDelta("Done.")]
         if isinstance(turn, Exception):
             raise turn
@@ -238,6 +295,21 @@ def test_attachment_case_hydrates_generated_file_and_manifest():
     attachment = manifest["attachments"][0]
     assert attachment["original_filename"] == "ward-notes.xlsx"
     assert backend.files[attachment["path"]].startswith(b"PK")
+
+
+def test_optimizer_case_uses_controlled_production_tool_contract():
+    provider = ScriptedProvider(
+        [ToolCallRequest((ToolCall("call-1", "optimizer", '{"action":"start"}'),))],
+        [TextDelta("Started in the background. You can keep chatting while it runs.")],
+    )
+    run = _run("tool-optimizer-start", provider)
+
+    assert run.passed
+    assert run.tools == ["optimizer"]
+    assert any(tool["function"]["name"] == "optimizer" for tool in provider.tool_definitions[0])
+    assert "Started optimizer job eval-job" in next(
+        event["result"] for event in run.trajectory["events"] if event["kind"] == "tool"
+    )
 
 
 def test_provider_wait_time_is_recorded_per_inference_turn():
@@ -687,6 +759,7 @@ def test_the_report_records_enough_to_explain_a_run():
     assert set(record) == {
         "case_id",
         "repetition",
+        "prompt_variant",
         "category",
         "passed",
         "seconds",
@@ -771,6 +844,77 @@ def test_report_compares_reliability_and_cost_with_a_baseline(tmp_path: Path):
     assert "| a | 0% | 100% | +100% | -2.0 |" in summary.read_text(encoding="utf-8")
 
 
+def test_prompt_comparison_requires_after_passes_and_a_measured_gain():
+    before = [CaseRun("a", "test", False, 2.0, 2, [], prompt_variant="before") for _ in range(3)]
+    after = [CaseRun("a", "test", True, 2.0, 2, [], prompt_variant="after") for _ in range(3)]
+    report, improved = prompt_comparison_markdown([*before, *after])
+    assert improved
+    assert "| a | 0/3 | 3/3 | 0 | n/a |" in report
+
+    after[0].passed = False
+    assert not prompt_comparison_markdown([*before, *after])[1]
+    after[0].passed = True
+    after[0].error = "sandbox failed"
+    assert not prompt_comparison_markdown([*before, *after])[1]
+
+
+def test_prompt_comparison_cost_gain_requires_explicit_ratio():
+    before = [CaseRun("a", "test", True, 2.0, 3, [READ_TOOL] * 5, prompt_variant="before") for _ in range(3)]
+    after = [CaseRun("a", "test", True, 2.0, 3, [READ_TOOL] * 2, prompt_variant="after") for _ in range(3)]
+    runs = [*before, *after]
+    assert not prompt_comparison_markdown(runs)[1]
+    report, improved = prompt_comparison_markdown(runs, "tool-calls", 0.6)
+    assert improved
+    assert "| a | 3/3 | 3/3 | 0 | 0.40 |" in report
+
+    other_before = [CaseRun("b", "test", True, 2.0, 3, [READ_TOOL] * 2, prompt_variant="before") for _ in range(3)]
+    other_after = [CaseRun("b", "test", True, 2.0, 3, [READ_TOOL] * 4, prompt_variant="after") for _ in range(3)]
+    assert not prompt_comparison_markdown([*runs, *other_before, *other_after], "tool-calls", 0.6)[1]
+
+
+def test_prompt_comparison_rejects_cost_regression_in_another_case():
+    improved_before = [CaseRun("a", "test", False, 2.0, 2, [], prompt_variant="before") for _ in range(3)]
+    improved_after = [CaseRun("a", "test", True, 2.0, 2, [], prompt_variant="after") for _ in range(3)]
+    costly_before = [CaseRun("b", "test", True, 2.0, 2, [READ_TOOL], prompt_variant="before") for _ in range(3)]
+    costly_after = [CaseRun("b", "test", True, 2.0, 2, [READ_TOOL] * 2, prompt_variant="after") for _ in range(3)]
+
+    report, improved = prompt_comparison_markdown(
+        [*improved_before, *improved_after, *costly_before, *costly_after], "tool-calls", 0.8
+    )
+
+    assert not improved
+    assert "Decision: cost regression observed." in report
+
+
+def test_run_all_injects_each_prompt_variant_into_every_repetition():
+    provider = ScriptedProvider(*[[TextDelta("There are 87 people.")] for _ in range(6)])
+    variants = (("before", prompt_at_step(0)), ("after", prompt_at_step(1)))
+    runs = asyncio.run(
+        run_all(
+            [CASE_BY_ID["ask-people-count"]],
+            settings(),
+            provider,
+            1,
+            _factory(),
+            3,
+            prompt_variants=variants,
+        )
+    )
+    assert all(run.passed for run in runs)
+    assert [(run.repetition, run.prompt_variant) for run in runs] == [
+        (1, "before"),
+        (1, "after"),
+        (2, "after"),
+        (2, "before"),
+        (3, "before"),
+        (3, "after"),
+    ]
+    for run in runs:
+        actual = run.trajectory["prompt"][0]["content"]
+        assert actual.startswith(dict(variants)[run.prompt_variant])
+        assert "Current schedule summary:" in actual
+
+
 def test_reference_digests_cover_every_file_hydrated_into_the_sandbox():
     digests = _reference_digests()
 
@@ -789,6 +933,19 @@ def test_report_writes_reproducibility_metadata(tmp_path: Path):
     write_report([CaseRun("a", "00-summary", True, 2.0, 1, [])], tmp_path / "run", metadata=metadata)
 
     assert json.loads((tmp_path / "run/metadata.json").read_text(encoding="utf-8")) == metadata
+
+
+def test_metadata_hashes_selected_prompt_and_case_criteria():
+    case = CASE_BY_ID["ask-people-count"]
+    before = _evaluation_metadata(settings(), [case], 3, prompt_at_step(0))
+    after = _evaluation_metadata(settings(), [case], 3, prompt_at_step(1))
+    changed_case = _evaluation_metadata(
+        settings(), [replace(case, question="A different question")], 3, prompt_at_step(0)
+    )
+
+    assert before["prompt_sha256"] != after["prompt_sha256"]
+    assert before["cases_sha256"][case.id] == after["cases_sha256"][case.id]
+    assert before["cases_sha256"][case.id] != changed_case["cases_sha256"][case.id]
 
 
 def test_summary_markdown_reports_every_sandbox_metric_per_case(tmp_path: Path):

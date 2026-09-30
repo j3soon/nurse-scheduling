@@ -31,8 +31,8 @@ from typing import Any
 # Most cases grade only the produced schedule or answer. Focused capability cases
 # may also assert a small, intentional tool trajectory.
 _STEP = re.compile(r"\.?([A-Za-z_][A-Za-z0-9_]*)|\[(\d+)\]|\[\?([^=\]]+)=([^\]]*)\]|(\[\])")
-_ASSERTION_KINDS = ("equals", "contains", "count", "delta", "added", "removed", "absent", "present")
-_TOOL_USAGE_KEYS = {"required", "forbidden", "max_total", "max_per_tool"}
+_ASSERTION_KINDS = ("equals", "contains", "count", "delta", "added", "removed", "absent", "present", "unchanged")
+_TOOL_USAGE_KEYS = {"required", "forbidden", "max_total", "max_per_tool", "required_calls"}
 
 
 class EvalCaseError(ValueError):
@@ -48,7 +48,7 @@ class Assertion:
     value: Any = None
 
     def describe(self) -> str:
-        if self.kind in {"absent", "present"}:
+        if self.kind in {"absent", "present", "unchanged"}:
             return f"{self.path} {self.kind}"
         return f"{self.path} {self.kind} {self.value!r}"
 
@@ -76,6 +76,7 @@ class ToolUsageExpectation:
     forbidden: tuple[str, ...] = ()
     max_total: int | None = None
     max_per_tool: tuple[tuple[str, int], ...] = ()
+    required_calls: tuple[tuple[str, dict[str, Any]], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -291,7 +292,23 @@ def _build_tool_usage(raw: object, source: str) -> ToolUsageExpectation | None:
         for name, limit in raw_per_tool.items()
     ):
         raise EvalCaseError(f"{source} `tool_usage.max_per_tool` must map tool names to non-negative integers.")
-    return ToolUsageExpectation(required, forbidden, max_total, tuple(sorted(raw_per_tool.items())))
+    raw_calls = raw.get("required_calls", [])
+    if not isinstance(raw_calls, list) or not all(
+        isinstance(call, dict)
+        and set(call) == {"name", "arguments"}
+        and isinstance(call["name"], str)
+        and call["name"]
+        and isinstance(call["arguments"], dict)
+        for call in raw_calls
+    ):
+        raise EvalCaseError(f"{source} `tool_usage.required_calls` must list tool names and JSON argument objects.")
+    return ToolUsageExpectation(
+        required,
+        forbidden,
+        max_total,
+        tuple(sorted(raw_per_tool.items())),
+        tuple((call["name"], call["arguments"]) for call in raw_calls),
+    )
 
 
 def _proposal_turns(entry: dict[str, Any], turn_count: int, source: str) -> tuple[int | None, tuple[int, ...]]:
@@ -356,6 +373,8 @@ def _build_assertion(raw: dict[str, Any], source: str) -> Assertion:
         raise EvalCaseError(
             f"{source} assertion on {raw['path']} must use exactly one of: {', '.join(_ASSERTION_KINDS)}."
         )
+    if kinds[0] == "unchanged" and raw["unchanged"] is not True:
+        raise EvalCaseError(f"{source} `unchanged` must be true.")
     return Assertion(path=str(raw["path"]), kind=kinds[0], value=raw[kinds[0]])
 
 
@@ -496,6 +515,21 @@ def _check_tool_usage(
                 "" if within_limit else f"used {counts[name]}",
             )
         )
+    for name, arguments in expected.required_calls:
+        found = False
+        for event in tool_events:
+            if event["name"] != name or event.get("ok") is not True:
+                continue
+            try:
+                actual = json.loads(event.get("arguments", ""))
+            except (TypeError, ValueError):
+                continue
+            if isinstance(actual, dict) and all(
+                key in actual and _matches(actual[key], value) for key, value in arguments.items()
+            ):
+                found = True
+                break
+        checks.append(CheckResult(f"uses successful {name} with {arguments}", found))
     return checks
 
 
@@ -505,6 +539,10 @@ def _check_assertion(outcome: RunOutcome, assertion: Assertion) -> CheckResult:
         found = resolve(outcome.proposed, assertion.path)
         if assertion.kind in {"delta", "added", "removed"}:
             return _check_against_initial(outcome, assertion, found)
+        if assertion.kind == "unchanged":
+            before = resolve(outcome.initial, assertion.path)
+            passed = bool(found) and found == before
+            return CheckResult(assertion.describe(), passed, "" if passed else f"was {before!r}, now {found!r}")
     except EvalCaseError as error:
         return CheckResult(assertion.describe(), False, str(error))
 

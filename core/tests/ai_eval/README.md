@@ -39,7 +39,8 @@ Use `null` for a missing path, such as an export section created from scratch.
 
 Keep `assert` for outcomes that intentionally allow multiple valid objects or need invariants across a large cascade.
 Examples include optional descriptions, case-insensitive natural-language values, and deleting one ID from many
-history entries while preserving similarly named IDs. Use `answer_contains` for read-only and refusal cases,
+history entries while preserving similarly named IDs. Use `{"path": "...", "unchanged": true}` when a value must
+match the input fixture, so fixture copy edits do not stale a literal expectation. Use `answer_contains` for read-only and refusal cases,
 `intermediate_answer_contains` for clarification turns, and `tool_usage` only when the trajectory itself is under test.
 
 Every proposal case must also declare `changes`. It guards all schedule paths outside the listed scope. Diff checks
@@ -49,7 +50,8 @@ Use `--repeat 3` for reliability checks on a tuning subset. Repetitions share th
 show per-case pass rates plus median and p95 cost. Use `--baseline-report <report-dir>` to compare reliability, model
 turns, and tokens with an earlier run. Reports record the model, Git revision, dirty diff hash, prompt, and fixture
 hashes so comparisons do not silently mix configurations. Reference hashes cover every file hydrated into the sandbox,
-including the user guide pages the app-UI cases are graded on.
+including the user guide pages the app-UI cases are graded on. Case hashes cover each case's parsed criteria, including
+untracked case files during local development.
 
 Cases tagged `holdout` use schedules that differ from the primary tuning fixtures. Run them to check generalization,
 but do not rewrite prompts to match one held-out trajectory. Promote a recurring failure pattern into a separate
@@ -58,3 +60,35 @@ tuning case before changing agent guidance.
 The runner reports the full relative category, for example `basics/03-structure`. `--category` accepts that full name
 or its trailing category name, so existing commands such as `--category 03-structure` remain valid. Use tags for
 cross-cutting evaluation properties such as `holdout`, `tuning`, or `clarification`, not for dataset provenance.
+
+## Prompt steps
+
+`prompt_steps.json` assigns one stable ID, hypothesis, and targeted case set to each blank-line paragraph in the
+production system prompt. Its anchors and paragraph hashes make the evaluation fail fast if prompt text changes
+without updating the ledger. Linked cases are candidates for evidence, not proof that a paragraph helps. A step's
+`evidence` records a successful adjacent comparison only after inspecting its before and after reports. Empty evidence
+means that paragraph has not yet shown a measured marginal benefit. A `gaps` entry records untested claims or
+comparisons without a measured gain. A comparison with no targeted case requires an explicit case selection.
+
+The runner offers a controlled `optimizer` tool with the production tool definition. It acknowledges starts and
+reports a running job without submitting to the real optimizer, so cases can grade whether the agent used the tool
+and explained its background behavior. This does not validate solver output or completion callbacks.
+
+From the repository root, run `./scripts/run_ai_eval.sh --prompt-compare-step 5` to compare the first four paragraphs
+against the first five using step 5's cases. `--case ID` overrides that default case set. A comparison defaults to
+three repeats per case and accepts `--repeat 3` through `--repeat 5`. It uses four concurrent case jobs by default and
+alternates the before/after queue order across repetitions. Both variants receive the same tools, fixtures, and
+references. `--prompt-step 0 --case ID` runs without optional prompt text, while `--prompt-step N --case ID` runs a
+single prefix. The application-generated schedule summary still appears in both variants.
+
+The comparison writes separate `before/` and `after/` reports, including full trajectories and selected prompt-variant
+hashes, plus `comparison.md`. It reports a benefit only when there are no infrastructure errors, every after attempt
+passes, and either at least one before attempt fails or an explicit relative cost target is met with all attempts
+passing. For example, append `--cost-metric tool-calls --cost-ratio 0.6` to require at most 60% of the baseline tool
+calls. Available metrics are `tool-calls`, `turns`, `uncached-tokens`, and `seconds`. Cost ratios compare successful
+attempts only. Treat three to five repetitions as directional evidence, not a precise reliability or latency estimate.
+
+Run `--prompt-ablate-step N` only for a requested full-prompt removal check. It compares the complete prompt without
+paragraph N against the complete prompt. Ordinary step comparisons run only the cases named for that step, unless
+additional `--case`, `--category`, `--tag`, `--tuning`, or `--full` scope is explicitly selected. Add a contrasting
+exact-target or holdout case when a new paragraph might cause over-clarification or another nearby regression.

@@ -27,7 +27,7 @@ import os
 import subprocess
 import time
 from collections.abc import AsyncIterator, Sequence
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from io import StringIO
 from pathlib import Path
@@ -40,6 +40,7 @@ from nurse_scheduling.ai.agent import (
     AgentReasoning,
     AgentText,
     AgentToolBatchMetrics,
+    AgentToolOutcome,
     AgentToolStart,
     AgentToolUse,
 )
@@ -73,6 +74,7 @@ from nurse_scheduling.loader import _load_yaml
 
 from .attachment_fixtures import load_attachment_fixtures
 from .grading import EvalCase, RunOutcome, computed_values, grade, load_cases
+from .prompt_ladder import load_prompt_steps, prompt_at_step
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 CASES = Path(__file__).resolve().parent / "cases"
@@ -113,12 +115,14 @@ class CaseRun:
     tool_calls_per_turn: list[int] = field(default_factory=list)
     tool_batch_metrics: list[AgentToolBatchMetrics] = field(default_factory=list)
     repetition: int = 1
+    prompt_variant: str = "production"
 
     def as_record(self) -> dict[str, Any]:
         """Render one result as a line of the report."""
         return {
             "case_id": self.case_id,
             "repetition": self.repetition,
+            "prompt_variant": self.prompt_variant,
             "category": self.category,
             "passed": self.passed,
             "seconds": round(self.seconds, 1),
@@ -217,6 +221,8 @@ async def run_case(
     settings: AiSettings,
     case: EvalCase,
     sandbox_factory: SandboxFactory | None = None,
+    *,
+    system_prompt: str = SANDBOX_SYSTEM_PROMPT,
 ) -> CaseRun:
     """Answer one case the way the service would, then grade what it produced."""
     text = fixture_text(case.fixture)
@@ -238,6 +244,36 @@ async def run_case(
     reasoning = 0
     started = time.perf_counter()
     case_attachments = load_attachment_fixtures(case.attachments)
+    optimizer_started = False
+
+    async def execute_optimizer(_schedule_yaml: str, arguments: str) -> AgentToolOutcome:
+        """Expose the production tool contract without submitting an actual job."""
+        nonlocal optimizer_started
+        try:
+            request = json.loads(arguments or "{}")
+        except json.JSONDecodeError:
+            return AgentToolOutcome("Optimizer arguments must be valid JSON.", False)
+        if not isinstance(request, dict):
+            return AgentToolOutcome("Optimizer arguments must be an object.", False)
+        action = request.get("action", "start")
+        if action == "start":
+            timeout = request.get("timeout_seconds")
+            if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, int) or timeout <= 0):
+                return AgentToolOutcome("timeout_seconds must be a positive integer.", False)
+            if optimizer_started:
+                return AgentToolOutcome("An optimizer run is already running for this chat session.", False)
+            optimizer_started = True
+            return AgentToolOutcome(
+                "Started optimizer job eval-job in the background. The user can keep chatting.", True
+            )
+        if action == "status" and optimizer_started:
+            return AgentToolOutcome("Optimizer job eval-job is running.", True)
+        if action == "finish_now" and optimizer_started:
+            return AgentToolOutcome("Asked optimizer job eval-job to finish now.", True)
+        if action not in {"start", "status", "finish_now"}:
+            return AgentToolOutcome("action must be one of: start, status, finish_now.", False)
+        return AgentToolOutcome("No optimizer job has been started in this chat session.", False)
+
     try:
         if sandbox_factory is None:
             raise ValueError("sandbox_factory is required for AI evaluation")
@@ -248,7 +284,7 @@ async def run_case(
                 text,
                 question,
                 attachments,
-                system_prompt=SANDBOX_SYSTEM_PROMPT,
+                system_prompt=system_prompt,
                 pending_proposal=pending_proposal is not None,
             )
             prompt_messages.append(messages)
@@ -265,6 +301,7 @@ async def run_case(
                 tool_batch_metrics.append,
                 pending_proposal_yaml=pending_proposal.text if pending_proposal else "",
                 pending_proposal_diff=pending_proposal.diff if pending_proposal else "",
+                execute_optimizer=execute_optimizer,
                 attachments=attachments,
             )
             async for event in agent_events:
@@ -773,6 +810,102 @@ def comparison_markdown(baseline: Sequence[dict[str, Any]], current: Sequence[Ca
     return "\n".join(lines)
 
 
+def _prompt_cost(run: CaseRun, metric: str) -> float | None:
+    """Count cost only for a completed, correct case run."""
+    if not run.passed or run.error:
+        return None
+    if metric == "tool-calls":
+        return float(len(run.tools))
+    if metric == "turns":
+        return float(run.turns)
+    if metric == "seconds":
+        return run.seconds
+    if metric == "uncached-tokens" and run.token_usage is not None and run.token_usage_turns == run.turns:
+        return float(run.token_usage.prompt_tokens - run.token_usage.cached_prompt_tokens)
+    return None
+
+
+def prompt_comparison_markdown(
+    runs: Sequence[CaseRun], metric: str | None = None, max_ratio: float | None = None
+) -> tuple[str, bool]:
+    """Require a clean correctness gain or an explicit relative cost gain."""
+    case_ids = sorted({run.case_id for run in runs})
+    lines = [
+        "# Prompt comparison",
+        "",
+        "Infrastructure errors make the comparison inconclusive. Cost is compared only when every attempt passes.",
+        "A passing result is directional evidence from three to five runs, not a statistical guarantee.",
+        "",
+        "| Case | Before pass | After pass | Infrastructure | Cost ratio |",
+        "| --- | ---: | ---: | ---: | ---: |",
+    ]
+    all_after_pass = True
+    any_correctness_gain = False
+    any_cost_gain = False
+    cost_regression = False
+    cost_missing = False
+    any_correctness_regression = False
+    clean = True
+    for case_id in case_ids:
+        before = [run for run in runs if run.case_id == case_id and run.prompt_variant == "before"]
+        after = [run for run in runs if run.case_id == case_id and run.prompt_variant == "after"]
+        if not before or len(before) != len(after):
+            raise ValueError(f"Unpaired prompt comparison for {case_id}")
+        infra = sum(bool(run.error) for run in (*before, *after))
+        clean &= infra == 0
+        before_pass = sum(run.passed for run in before)
+        after_pass = sum(run.passed for run in after)
+        all_after_pass &= after_pass == len(after)
+        any_correctness_gain |= after_pass > before_pass
+        any_correctness_regression |= after_pass < before_pass
+        ratio: float | None = None
+        if metric and before_pass == len(before) and after_pass == len(after):
+            before_costs = [_prompt_cost(run, metric) for run in before]
+            after_costs = [_prompt_cost(run, metric) for run in after]
+            if all(value is not None for value in (*before_costs, *after_costs)):
+                before_total = sum(value for value in before_costs if value is not None)
+                after_total = sum(value for value in after_costs if value is not None)
+                ratio = after_total / before_total if before_total else None
+                any_cost_gain |= ratio is not None and max_ratio is not None and ratio <= max_ratio
+            cost_missing |= ratio is None
+            cost_regression |= ratio is not None and ratio > 1
+        lines.append(
+            f"| {case_id} | {before_pass}/{len(before)} | {after_pass}/{len(after)} | {infra} | {ratio:.2f} |"
+            if ratio is not None
+            else f"| {case_id} | {before_pass}/{len(before)} | {after_pass}/{len(after)} | {infra} | n/a |"
+        )
+    improved = (
+        clean
+        and all_after_pass
+        and not cost_regression
+        and not cost_missing
+        and (any_correctness_gain or any_cost_gain)
+    )
+    if not clean:
+        decision = "inconclusive due to infrastructure errors"
+    elif any_correctness_regression:
+        decision = "regression observed"
+    elif cost_regression:
+        decision = "cost regression observed"
+    elif cost_missing:
+        decision = "inconclusive due to missing cost data"
+    elif improved:
+        decision = "benefit observed"
+    else:
+        decision = "no measured benefit"
+    lines.extend(
+        [
+            "",
+            f"Decision: {decision}.",
+            f"Cost target: {metric} after/before <= {max_ratio:.2f}."
+            if metric and max_ratio is not None
+            else "Cost target: none specified.",
+            "Full trajectories and selected prompt-variant hashes are in the before/ and after/ reports.",
+        ]
+    )
+    return "\n".join(lines), improved
+
+
 def select(
     cases: Sequence[EvalCase],
     ids: Sequence[str],
@@ -820,6 +953,8 @@ async def run_all(
     jobs: int = 1,
     sandbox_factory: SandboxFactory | None = None,
     repetitions: int = 1,
+    *,
+    prompt_variants: Sequence[tuple[str, str]] | None = None,
 ) -> list[CaseRun]:
     """Run selected cases with bounded parallelism and preserve dataset order."""
     if jobs <= 0 or repetitions <= 0:
@@ -828,25 +963,41 @@ async def run_all(
     concurrency_limit = asyncio.Semaphore(jobs)
     completed = 0
 
-    scheduled = [(case, repetition) for case in cases for repetition in range(1, repetitions + 1)]
+    variants = tuple(prompt_variants or (("production", SANDBOX_SYSTEM_PROMPT),))
+    if len({label for label, _ in variants}) != len(variants):
+        raise ValueError("Prompt variant labels must be unique")
+    if len(variants) == 1:
+        scheduled = [
+            (case, repetition, variants[0][0], variants[0][1])
+            for case in cases
+            for repetition in range(1, repetitions + 1)
+        ]
+    else:
+        scheduled = [
+            (case, repetition, label, prompt)
+            for repetition in range(1, repetitions + 1)
+            for case in cases
+            for label, prompt in (variants if repetition % 2 else reversed(variants))
+        ]
 
-    async def run_bounded(index: int, case: EvalCase, repetition: int) -> tuple[int, CaseRun]:
+    async def run_bounded(index: int, case: EvalCase, repetition: int, label: str, prompt: str) -> tuple[int, CaseRun]:
         nonlocal completed
         async with concurrency_limit:
-            run = await run_case(provider, settings, case, sandbox_factory)
+            run = await run_case(provider, settings, case, sandbox_factory, system_prompt=prompt)
             run.repetition = repetition
+            run.prompt_variant = label
         completed += 1
         mark = "pass" if run.passed else "FAIL"
-        label = f"{run.case_id}#{repetition}" if repetitions > 1 else run.case_id
-        print(f"[{completed}/{len(scheduled)}] {mark} {label} {run.seconds:.0f}s", flush=True)
+        run_label = f"{run.case_id}#{repetition}" if repetitions > 1 else run.case_id
+        if len(variants) > 1:
+            run_label += f" ({label})"
+        print(f"[{completed}/{len(scheduled)}] {mark} {run_label} {run.seconds:.0f}s", flush=True)
         return index, run
 
     if sandbox_factory is None:
         raise ValueError("sandbox_factory is required for AI evaluation")
     async with managed_sandbox_factory(sandbox_factory):
-        indexed_runs = await asyncio.gather(
-            *(run_bounded(index, case, repetition) for index, (case, repetition) in enumerate(scheduled))
-        )
+        indexed_runs = await asyncio.gather(*(run_bounded(index, *item) for index, item in enumerate(scheduled)))
     return [run for _, run in sorted(indexed_runs)]
 
 
@@ -859,7 +1010,15 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     broad_scope = parser.add_mutually_exclusive_group()
     broad_scope.add_argument("--tuning", action="store_true", help="run the default tuning set")
     broad_scope.add_argument("--full", action="store_true", help="run every case")
-    parser.add_argument("--repeat", type=int, default=1, help="run every selected case this many times")
+    prompt_scope = parser.add_mutually_exclusive_group()
+    prompt_scope.add_argument("--prompt-step", type=int, help="run with the first N prompt paragraphs (0 is empty)")
+    prompt_scope.add_argument("--prompt-compare-step", type=int, help="compare prompt steps N-1 and N")
+    prompt_scope.add_argument(
+        "--prompt-ablate-step", type=int, help="compare the full prompt without N to the full prompt"
+    )
+    parser.add_argument("--repeat", type=int, default=None, help="run every selected case this many times")
+    parser.add_argument("--cost-metric", choices=("tool-calls", "turns", "uncached-tokens", "seconds"))
+    parser.add_argument("--cost-ratio", type=float, help="maximum after/before cost ratio for a cost benefit")
     parser.add_argument("--baseline-report", type=Path, help="compare with a prior report directory or results.jsonl")
     parser.add_argument("--cases-dir", type=Path, default=CASES, help="directory holding the cases")
     parser.add_argument("--output-dir", type=Path, default=None, help="new directory for the report")
@@ -870,14 +1029,42 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help=f"number of cases to run concurrently (default: {DEFAULT_CASE_JOBS})",
     )
     arguments = parser.parse_args(argv)
+    comparing = arguments.prompt_compare_step is not None or arguments.prompt_ablate_step is not None
+    arguments.repeat = arguments.repeat if arguments.repeat is not None else (3 if comparing else 1)
     if arguments.jobs <= 0 or arguments.repeat <= 0:
         parser.error("--jobs and --repeat must be positive")
+    if comparing and not 3 <= arguments.repeat <= 5:
+        parser.error("prompt comparisons require --repeat between 3 and 5")
+    if (arguments.cost_metric is None) != (arguments.cost_ratio is None):
+        parser.error("--cost-metric and --cost-ratio must be supplied together")
+    if arguments.cost_ratio is not None and not 0 < arguments.cost_ratio < 1:
+        parser.error("--cost-ratio must be between 0 and 1")
+    if arguments.cost_ratio is not None and not comparing:
+        parser.error("cost targets require a prompt comparison")
+    if arguments.baseline_report is not None and comparing:
+        parser.error("--baseline-report cannot be combined with a prompt comparison")
+    steps = (
+        load_prompt_steps()
+        if any(
+            value is not None
+            for value in (arguments.prompt_step, arguments.prompt_compare_step, arguments.prompt_ablate_step)
+        )
+        else ()
+    )
+    if arguments.prompt_step is not None and not 0 <= arguments.prompt_step <= len(steps):
+        parser.error(f"--prompt-step must be between 0 and {len(steps)}")
+    for flag, value in (
+        ("--prompt-compare-step", arguments.prompt_compare_step),
+        ("--prompt-ablate-step", arguments.prompt_ablate_step),
+    ):
+        if value is not None and not 1 <= value <= len(steps):
+            parser.error(f"{flag} must be between 1 and {len(steps)}")
     if any(not value.strip() for value in arguments.case + arguments.category + arguments.tag):
         parser.error("case, category, and tag selectors must not be empty")
     selected = bool(arguments.case or arguments.category or arguments.tag)
     if selected and (arguments.tuning or arguments.full):
         parser.error("--tuning and --full cannot be combined with case, category, or tag selectors")
-    if not selected and not (arguments.tuning or arguments.full):
+    if not selected and not (arguments.tuning or arguments.full or comparing):
         parser.error("choose --case, --category, or --tag, or explicitly pass --tuning or --full")
     return arguments
 
@@ -885,9 +1072,25 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 def _selected_cases(argv: Sequence[str] | None) -> tuple[argparse.Namespace, list[EvalCase]]:
     """Validate the CLI scope and resolve its cases without provider work."""
     arguments = _parse_args(argv)
+    step = arguments.prompt_compare_step or arguments.prompt_ablate_step
+    default_ids = (
+        load_prompt_steps()[step - 1].cases
+        if step and not (arguments.case or arguments.category or arguments.tag or arguments.tuning or arguments.full)
+        else ()
+    )
+    if (
+        step
+        and not default_ids
+        and not (arguments.case or arguments.category or arguments.tag or arguments.tuning or arguments.full)
+    ):
+        raise SystemExit(f"Prompt step {step} has no targeted cases. Add one or select an explicit evaluation scope.")
     # --tuning opts into select's default tagged set when no filters are given.
     cases = select(
-        load_cases(arguments.cases_dir), arguments.case, arguments.category, arguments.tag, full=arguments.full
+        load_cases(arguments.cases_dir),
+        [*arguments.case, *default_ids],
+        arguments.category,
+        arguments.tag,
+        full=arguments.full,
     )
     return arguments, cases
 
@@ -897,6 +1100,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments, cases = _selected_cases(argv)
     settings = AiSettings.from_env()
     sandbox_factory = create_sandbox_factory(settings)
+    variants = _prompt_variants(arguments)
     started = time.perf_counter()
     runs = asyncio.run(
         run_all(
@@ -906,27 +1110,67 @@ def main(argv: Sequence[str] | None = None) -> int:
             arguments.jobs,
             sandbox_factory,
             arguments.repeat,
+            prompt_variants=variants,
         )
     )
     wall_seconds = time.perf_counter() - started
 
-    summary = write_report(
-        runs,
-        (arguments.output_dir or default_output_dir()).resolve(),
-        jobs=arguments.jobs,
-        wall_seconds=wall_seconds,
-        metadata=_evaluation_metadata(settings, cases, arguments.repeat),
-        baseline_report=arguments.baseline_report,
-    )
+    output_dir = (arguments.output_dir or default_output_dir()).resolve()
+    if len(variants) == 2:
+        output_dir.mkdir(parents=True, exist_ok=False)
+        for label, prompt in variants:
+            write_report(
+                [run for run in runs if run.prompt_variant == label],
+                output_dir / label,
+                jobs=arguments.jobs,
+                wall_seconds=wall_seconds,
+                metadata=_evaluation_metadata(settings, cases, arguments.repeat, prompt),
+            )
+        comparison, improved = prompt_comparison_markdown(runs, arguments.cost_metric, arguments.cost_ratio)
+        step_number = arguments.prompt_compare_step or arguments.prompt_ablate_step
+        step = load_prompt_steps()[step_number - 1]
+        mode = "adjacent steps" if arguments.prompt_compare_step is not None else "full-prompt ablation"
+        comparison = f"# Step {step_number}: {step.id}\n\nMode: {mode}. Hypothesis: {step.hypothesis}\n\n" + comparison
+        summary = output_dir / "comparison.md"
+        summary.write_text(comparison + "\n", encoding="utf-8")
+    else:
+        summary = write_report(
+            runs,
+            output_dir,
+            jobs=arguments.jobs,
+            wall_seconds=wall_seconds,
+            metadata=_evaluation_metadata(settings, cases, arguments.repeat, variants[0][1]),
+            baseline_report=arguments.baseline_report,
+        )
+        improved = all(run.passed for run in runs)
     print()
     print(summarize(runs))
     print(f"Wall time: {wall_seconds:.1f} seconds with {arguments.jobs} case job(s)")
     print()
     print(f"Evaluation report: {summary}")
-    return 0 if all(run.passed for run in runs) else 1
+    return 0 if improved else 1
 
 
-def _evaluation_metadata(settings: AiSettings, cases: Sequence[EvalCase], repetitions: int) -> dict[str, Any]:
+def _prompt_variants(arguments: argparse.Namespace) -> tuple[tuple[str, str], ...]:
+    """Build only the explicitly requested prompt variants."""
+    if arguments.prompt_compare_step is not None:
+        step = arguments.prompt_compare_step
+        return (("before", prompt_at_step(step - 1)), ("after", prompt_at_step(step)))
+    if arguments.prompt_ablate_step is not None:
+        step = arguments.prompt_ablate_step
+        count = len(load_prompt_steps())
+        return (("before", prompt_at_step(count, omit=step)), ("after", prompt_at_step(count)))
+    if arguments.prompt_step is not None:
+        return ((f"step-{arguments.prompt_step}", prompt_at_step(arguments.prompt_step)),)
+    return (("production", SANDBOX_SYSTEM_PROMPT),)
+
+
+def _evaluation_metadata(
+    settings: AiSettings,
+    cases: Sequence[EvalCase],
+    repetitions: int,
+    prompt: str = SANDBOX_SYSTEM_PROMPT,
+) -> dict[str, Any]:
     """Record enough immutable context to reproduce or compare a run."""
     revision = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=REPOSITORY_ROOT, check=True, capture_output=True, text=True
@@ -940,7 +1184,11 @@ def _evaluation_metadata(settings: AiSettings, cases: Sequence[EvalCase], repeti
         "provider_model": settings.provider_model,
         "repetitions": repetitions,
         "case_ids": [case.id for case in cases],
-        "prompt_sha256": hashlib.sha256(SANDBOX_SYSTEM_PROMPT.encode()).hexdigest(),
+        "cases_sha256": {
+            case.id: hashlib.sha256(json.dumps(asdict(case), sort_keys=True, default=str).encode()).hexdigest()
+            for case in cases
+        },
+        "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
         "references_sha256": _reference_digests(),
         "fixtures_sha256": {
             fixture: hashlib.sha256(fixture_text(fixture).encode()).hexdigest()

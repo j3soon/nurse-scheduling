@@ -301,6 +301,24 @@ def test_a_change_inside_the_allowed_paths_passes(tmp_path: Path):
     assert grade(load_cases(_write(tmp_path, case))[0], RunOutcome(proposed=changed, initial=SCHEDULE)).passed
 
 
+def test_unchanged_assertion_uses_the_input_fixture(tmp_path: Path):
+    case = load_cases(
+        _write(
+            tmp_path,
+            _case(
+                **{
+                    "assert": [{"path": "people.items[?id=P1].description", "unchanged": True}],
+                    "changes": ["people.items"],
+                },
+            ),
+        )
+    )[0]
+    assert grade(case, RunOutcome(proposed=SCHEDULE, initial=SCHEDULE)).passed
+    changed = copy.deepcopy(SCHEDULE)
+    changed["people"]["items"][0]["description"] = "Changed"
+    assert not grade(case, RunOutcome(proposed=changed, initial=SCHEDULE)).passed
+
+
 def test_a_sibling_of_an_allowed_path_is_still_guarded(tmp_path: Path):
     changed = copy.deepcopy(SCHEDULE)
     changed["people"]["items"][1]["description"] = "Night nurse"
@@ -417,6 +435,24 @@ def test_a_failed_required_tool_does_not_count_as_successful_use(tmp_path: Path)
 def test_invalid_tool_usage_is_rejected(tmp_path: Path, tool_usage: object, message: str):
     with pytest.raises(EvalCaseError, match=message):
         load_cases(_write(tmp_path, _case(expect_proposal=False, tool_usage=tool_usage)))
+
+
+def test_required_tool_call_checks_successful_json_arguments(tmp_path: Path):
+    case = load_cases(
+        _write(
+            tmp_path,
+            _case(
+                expect_proposal=False,
+                tool_usage={"required_calls": [{"name": "optimizer", "arguments": {"action": "start"}}]},
+            ),
+        )
+    )[0]
+    activity = [{"kind": "tool", "name": "optimizer", "ok": True, "arguments": '{"action":"status"}'}]
+    assert not grade(case, RunOutcome(activity=activity)).passed
+    activity[0]["arguments"] = '{"action":"start","timeout_seconds":300}'
+    assert grade(case, RunOutcome(activity=activity)).passed
+    activity[0]["ok"] = False
+    assert not grade(case, RunOutcome(activity=activity)).passed
 
 
 @pytest.mark.parametrize(

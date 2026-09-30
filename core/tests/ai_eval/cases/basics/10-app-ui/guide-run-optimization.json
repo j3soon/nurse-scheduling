@@ -9,5 +9,5 @@
     ["Auto", "backend", "server"],
     "Optimize and Download"
   ],
-  "note": "The assistant should guide the user to the optimization UI while remaining clear that it cannot run optimization itself."
+  "note": "The user asks how to use the UI, so the assistant should describe the optimization controls using the canonical app guide."
 }
