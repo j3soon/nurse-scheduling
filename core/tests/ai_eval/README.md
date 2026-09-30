@@ -63,18 +63,20 @@ cross-cutting evaluation properties such as `holdout`, `tuning`, or `clarificati
 
 ## Prompt steps
 
-`prompt_steps.json` assigns one stable ID, hypothesis, and targeted case set to each blank-line paragraph in the
-production system prompt. Its anchors and paragraph hashes make the evaluation fail fast if prompt text changes
-without updating the ledger. Linked cases are candidates for evidence, not proof that a paragraph helps. A step's
-`evidence` records a successful adjacent comparison only after inspecting its before and after reports. Empty evidence
-means that paragraph has not yet shown a measured marginal benefit. A `gaps` entry records untested claims or
-comparisons without a measured gain. A comparison with no targeted case requires an explicit case selection.
+`nurse_scheduling/ai/prompts/system-steps.json` orders the Markdown sections used by production and assigns each
+one a stable ID, hypothesis, and targeted case set. The production and evaluation loaders use the same assembler.
+Anchors and section hashes make the evaluation fail fast if prompt text changes without updating the manifest.
+Keep section filenames stable and change their order in the manifest. Linked cases are candidates for evidence, not
+proof that a section helps. A step's `evidence` records a successful adjacent comparison only after inspecting its
+before and after reports. Empty evidence means that section has not yet shown a measured marginal benefit. A `gaps`
+entry records untested claims or comparisons without a measured gain. A comparison with no targeted case requires an
+explicit case selection.
 
 The runner offers a controlled `optimizer` tool with the production tool definition. It acknowledges starts and
 reports a running job without submitting to the real optimizer, so cases can grade whether the agent used the tool
 and explained its background behavior. This does not validate solver output or completion callbacks.
 
-From the repository root, run `./scripts/run_ai_eval.sh --prompt-compare-step 5` to compare the first four paragraphs
+From the repository root, run `./scripts/run_ai_eval.sh --prompt-compare-step 5` to compare the first four sections
 against the first five using step 5's cases. `--case ID` overrides that default case set. A comparison defaults to
 three repeats per case and accepts `--repeat 3` through `--repeat 5`. It uses four concurrent case jobs by default and
 alternates the before/after queue order across repetitions. Both variants receive the same tools, fixtures, and
@@ -89,6 +91,6 @@ calls. Available metrics are `tool-calls`, `turns`, `uncached-tokens`, and `seco
 attempts only. Treat three to five repetitions as directional evidence, not a precise reliability or latency estimate.
 
 Run `--prompt-ablate-step N` only for a requested full-prompt removal check. It compares the complete prompt without
-paragraph N against the complete prompt. Ordinary step comparisons run only the cases named for that step, unless
+section N against the complete prompt. Ordinary step comparisons run only the cases named for that step, unless
 additional `--case`, `--category`, `--tag`, `--tuning`, or `--full` scope is explicitly selected. Add a contrasting
-exact-target or holdout case when a new paragraph might cause over-clarification or another nearby regression.
+exact-target or holdout case when a new section might cause over-clarification or another nearby regression.

@@ -130,9 +130,9 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   guidance does not teach the agent to ask when the user already supplied a
   unique ID. Keep structurally different fixtures under a `holdout` tag. Do not
   tune prompts directly against one held-out trajectory.
-- Keep `tests/ai_eval/prompt_steps.json` aligned with the production system
-  prompt's paragraphs. Compare a changed step against its immediately previous
-  prefix on its targeted cases, repeating three to five times. Treat linked
+- Keep `nurse_scheduling/ai/prompts/system-steps.json` aligned with the ordered
+  production prompt sections. Compare a changed step against its immediately
+  previous prefix on its targeted cases, repeating three to five times. Treat linked
   cases as hypotheses until a clean comparison shows better outcomes or an
   explicit relative cost gain. Run full-prompt ablation only when requested or
   when a suspected interaction needs investigation.

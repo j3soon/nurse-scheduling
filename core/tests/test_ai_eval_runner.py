@@ -54,6 +54,7 @@ from nurse_scheduling.ai.schema import (
     TAIWAN_HOLIDAYS_SOURCE,
     load_user_guide_references,
 )
+from nurse_scheduling.ai.system_prompt import PROMPT_DIRECTORY
 
 from .ai_eval.grading import EvalCase, ExpectedDiff, ToolUsageExpectation, TurnAction, load_cases
 from .ai_eval.prompt_ladder import STEPS_PATH, load_prompt_steps, prompt_at_step
@@ -84,35 +85,40 @@ def test_ai_eval_defaults_to_four_concurrent_cases():
 
 def test_prompt_steps_reconstruct_production_and_link_real_cases():
     steps = load_prompt_steps()
-    assert len(steps) == 13
+    assert steps
+    assert {step.file for step in steps} == {f"steps/{path.name}" for path in (PROMPT_DIRECTORY / "steps").glob("*.md")}
     assert prompt_at_step(len(steps)) == SANDBOX_SYSTEM_PROMPT
     assert not prompt_at_step(0)
     assert all(case_id in CASE_BY_ID for step in steps for case_id in step.cases)
-    assert steps[5].evidence[0]["before"] == "0/3"
-    assert steps[5].evidence[0]["after"] == "3/3"
+    known_id = next(step for step in steps if step.id == "known-id-clarifications")
+    assert known_id.evidence[0]["before"] == "0/3"
+    assert known_id.evidence[0]["after"] == "3/3"
     for index in range(1, len(steps) + 1):
         assert prompt_at_step(index).startswith(prompt_at_step(index - 1))
         assert steps[index - 1].starts_with not in prompt_at_step(index, omit=index)
 
 
-def test_prompt_ledger_rejects_stale_paragraph_hash(tmp_path: Path):
+def test_prompt_manifest_rejects_stale_section_hash(tmp_path: Path):
     steps = json.loads(STEPS_PATH.read_text(encoding="utf-8"))
     steps[5]["sha256"] = "0" * 64
-    ledger = tmp_path / "prompt_steps.json"
-    ledger.write_text(json.dumps(steps), encoding="utf-8")
+    manifest = tmp_path / "system-steps.json"
+    manifest.write_text(json.dumps(steps), encoding="utf-8")
 
     with pytest.raises(ValueError, match="changed. Update its hypothesis and evidence"):
-        load_prompt_steps(ledger)
+        load_prompt_steps(manifest)
 
 
 def test_prompt_comparison_defaults_to_three_repeats_and_step_cases():
-    arguments, cases = _selected_cases(["--prompt-compare-step", "5"])
+    steps = load_prompt_steps()
+    step_number = next(index for index, step in enumerate(steps, 1) if step.id == "resolve-ambiguous-targets")
+    arguments, cases = _selected_cases(["--prompt-compare-step", str(step_number)])
     assert arguments.repeat == 3
-    assert [case.id for case in cases] == sorted(load_prompt_steps()[4].cases)
+    assert [case.id for case in cases] == sorted(steps[step_number - 1].cases)
 
 
 def test_optimizer_step_selects_its_direct_tool_case():
-    _, cases = _selected_cases(["--prompt-compare-step", "10"])
+    step_number = next(index for index, step in enumerate(load_prompt_steps(), 1) if step.id == "optimizer-lifecycle")
+    _, cases = _selected_cases(["--prompt-compare-step", str(step_number)])
     assert [case.id for case in cases] == ["tool-optimizer-start"]
 
 
@@ -120,7 +126,7 @@ def test_optimizer_step_selects_its_direct_tool_case():
     "argv",
     [
         ["--prompt-compare-step", "0"],
-        ["--prompt-ablate-step", "14"],
+        ["--prompt-ablate-step", str(len(load_prompt_steps()) + 1)],
         ["--prompt-compare-step", "5", "--repeat", "2"],
         ["--prompt-compare-step", "5", "--repeat", "6"],
         ["--prompt-compare-step", "5", "--cost-ratio", "0.6"],

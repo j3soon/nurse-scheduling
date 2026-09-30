@@ -51,6 +51,7 @@ from .schema import (
     load_taiwan_holidays_reference,
     load_user_guide_references,
 )
+from .system_prompt import compose_system_prompt
 
 logger = logging.getLogger("nurse_scheduling.ai.sandbox_agent")
 WORKSPACE_SCHEDULE = f"/workspace/{SCHEDULE_FILENAME}"
@@ -66,8 +67,7 @@ REFERENCE_ATTACHMENT_TOOLS = {
     f"/reference/tools/{name}": ATTACHMENT_TOOL_DIRECTORY / name for name in ("inspect_xlsx.py", "inspect_pdf.py")
 }
 
-SYSTEM_PROMPT_PATH = Path(__file__).with_name("prompts") / "sandbox-system.md"
-SANDBOX_SYSTEM_PROMPT = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").rstrip("\n")
+SANDBOX_SYSTEM_PROMPT = compose_system_prompt()
 
 
 class SandboxCandidateError(SandboxError):

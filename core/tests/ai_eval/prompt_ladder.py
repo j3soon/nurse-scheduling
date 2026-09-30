@@ -20,21 +20,25 @@
 # This test is mostly AI generated.
 
 import hashlib
-import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
-from nurse_scheduling.ai.sandbox_agent import SANDBOX_SYSTEM_PROMPT
+from nurse_scheduling.ai.system_prompt import (
+    PROMPT_STEPS_PATH,
+    compose_system_prompt,
+    load_system_prompt_entries,
+    load_system_prompt_sections,
+)
 
-STEPS_PATH = Path(__file__).with_name("prompt_steps.json")
+STEPS_PATH = PROMPT_STEPS_PATH
 
 
 @dataclass(frozen=True)
 class PromptStep:
-    """One paragraph and the cases intended to show its marginal benefit."""
+    """One prompt section and the cases intended to show its marginal benefit."""
 
     id: str
+    file: str
     starts_with: str
     cases: tuple[str, ...]
     hypothesis: str
@@ -43,16 +47,9 @@ class PromptStep:
     gaps: tuple[str, ...] = ()
 
 
-def prompt_paragraphs(prompt: str = SANDBOX_SYSTEM_PROMPT) -> tuple[str, ...]:
-    """Preserve the production paragraph boundaries exactly."""
-    return tuple(prompt.split("\n\n")) if prompt else ()
-
-
 def load_prompt_steps(path: Path = STEPS_PATH) -> tuple[PromptStep, ...]:
     """Fail if the evidence ledger no longer matches the production prompt."""
-    raw: Any = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(raw, list):
-        raise TypeError("Prompt steps must be a JSON list")
+    raw = load_system_prompt_entries(path)
     steps = tuple(
         PromptStep(
             **{
@@ -64,17 +61,13 @@ def load_prompt_steps(path: Path = STEPS_PATH) -> tuple[PromptStep, ...]:
         )
         for item in raw
     )
-    paragraphs = prompt_paragraphs()
-    if len(steps) != len(paragraphs):
-        raise ValueError(f"Prompt has {len(paragraphs)} paragraphs but ledger has {len(steps)} steps")
-    if len({step.id for step in steps}) != len(steps):
-        raise ValueError("Prompt step IDs must be unique")
-    for index, (step, paragraph) in enumerate(zip(steps, paragraphs, strict=True), 1):
+    sections = load_system_prompt_sections(raw)
+    for index, (step, section) in enumerate(zip(steps, sections, strict=True), 1):
         if not step.id or not step.starts_with or not step.hypothesis or not (step.cases or step.gaps):
             raise ValueError(f"Prompt step {index} needs an ID, anchor, hypothesis, and cases or gaps")
-        if not paragraph.startswith(step.starts_with):
-            raise ValueError(f"Prompt step {index} ({step.id}) no longer matches its paragraph")
-        if hashlib.sha256(paragraph.encode()).hexdigest() != step.sha256:
+        if not section.startswith(step.starts_with):
+            raise ValueError(f"Prompt step {index} ({step.id}) no longer matches its section")
+        if hashlib.sha256(section.encode()).hexdigest() != step.sha256:
             raise ValueError(f"Prompt step {index} ({step.id}) changed. Update its hypothesis and evidence")
         if any(record.get("case") not in step.cases for record in step.evidence):
             raise ValueError(f"Prompt step {index} evidence must name one of its targeted cases")
@@ -82,10 +75,5 @@ def load_prompt_steps(path: Path = STEPS_PATH) -> tuple[PromptStep, ...]:
 
 
 def prompt_at_step(step: int, *, omit: int | None = None) -> str:
-    """Return the first ``step`` paragraphs, optionally leaving one out."""
-    paragraphs = prompt_paragraphs()
-    if step < 0 or step > len(paragraphs):
-        raise ValueError(f"Prompt step must be between 0 and {len(paragraphs)}")
-    if omit is not None and (omit < 1 or omit > step):
-        raise ValueError("Omitted paragraph must be included in the selected prompt step")
-    return "\n\n".join(paragraph for index, paragraph in enumerate(paragraphs[:step], 1) if index != omit)
+    """Return the first ``step`` sections, optionally leaving one out."""
+    return compose_system_prompt(step, omit=omit)

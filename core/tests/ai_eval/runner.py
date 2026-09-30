@@ -1011,7 +1011,7 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     broad_scope.add_argument("--tuning", action="store_true", help="run the default tuning set")
     broad_scope.add_argument("--full", action="store_true", help="run every case")
     prompt_scope = parser.add_mutually_exclusive_group()
-    prompt_scope.add_argument("--prompt-step", type=int, help="run with the first N prompt paragraphs (0 is empty)")
+    prompt_scope.add_argument("--prompt-step", type=int, help="run with the first N prompt sections (0 is empty)")
     prompt_scope.add_argument("--prompt-compare-step", type=int, help="compare prompt steps N-1 and N")
     prompt_scope.add_argument(
         "--prompt-ablate-step", type=int, help="compare the full prompt without N to the full prompt"
