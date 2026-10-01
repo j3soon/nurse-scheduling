@@ -413,6 +413,10 @@ test('downloads a completed background optimization from chat', async ({ page })
         const chatRatio = await page.locator('article').first().evaluate(widthRatio);
         const exportRatio = await exportPage.locator('article').first().evaluate(widthRatio);
         expect(exportRatio).toBeCloseTo(chatRatio, 2);
+        for (const renderedPage of [page, exportPage]) {
+          const details = renderedPage.locator('article dl');
+          expect(await details.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+        }
         expect(await exportPage.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
       }
       for (const timestamp of await exportPage.locator('article time').all()) {

@@ -2102,7 +2102,7 @@ export default function ExperimentalAiPage() {
                   {optimizer.details.length > 0 && (
                     <dl className="mt-3 grid gap-1.5 text-sm">
                       {optimizer.details.map(({ label, value }, index) => (
-                        <div key={`${label}-${index}`} className="break-words">
+                        <div key={`${label}-${index}`} className="min-w-0 [overflow-wrap:anywhere]">
                           <dt className="inline font-semibold">{label}:</dt>{' '}
                           <dd className="inline whitespace-pre-wrap">{value}</dd>
                         </div>
