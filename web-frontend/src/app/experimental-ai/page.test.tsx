@@ -197,6 +197,23 @@ describe('ExperimentalAiPage', () => {
     expect(mockGetBackendVersion).toHaveBeenCalledWith(expect.any(AbortSignal), '/ai');
   });
 
+  it('keeps chat export downloads available and releases replaced files on cleanup', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(URL, 'createObjectURL').mockReturnValueOnce('blob:html-export').mockReturnValueOnce('blob:markdown-export');
+    const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const download = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    const view = render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await user.click(screen.getByRole('button', { name: 'HTML', exact: true }));
+    expect(download).toHaveBeenCalledOnce();
+    expect(revoke).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Markdown', exact: true }));
+    expect(revoke).toHaveBeenCalledExactlyOnceWith('blob:html-export');
+    view.unmount();
+    expect(revoke.mock.calls).toEqual([['blob:html-export'], ['blob:markdown-export']]);
+  });
+
   it('explains when the server does not report context usage', async () => {
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);

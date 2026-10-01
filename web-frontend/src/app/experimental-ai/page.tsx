@@ -42,7 +42,7 @@ import { CURRENT_APP_VERSION } from '@/utils/version';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
 import yaml from 'js-yaml';
 import { ActivityEntry, AssistantActivity } from './AssistantActivity';
-import { ChatExportMessage, downloadChatExport } from './chatExport';
+import { ChatExportMessage, downloadChatExport, type ChatExportFormat } from './chatExport';
 import { parseOptimizerMessage } from './optimizerMessage';
 import {
   AiCapabilities,
@@ -572,6 +572,7 @@ export default function ExperimentalAiPage() {
   const speechRecognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const queuedMessagesRef = useRef<QueuedChatMessage[]>([]);
   const optimizationDownloadUrlRef = useRef<string | null>(null);
+  const chatExportUrlRef = useRef<string | null>(null);
   const conversationStorageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const persistConversationRef = useRef<(() => void) | null>(null);
   const checkedSessionRef = useRef<string | null>(null);
@@ -849,6 +850,7 @@ export default function ExperimentalAiPage() {
         if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
       });
       if (optimizationDownloadUrlRef.current) URL.revokeObjectURL(optimizationDownloadUrlRef.current);
+      if (chatExportUrlRef.current) URL.revokeObjectURL(chatExportUrlRef.current);
   }, []);
 
   useEffect(() => {
@@ -1052,6 +1054,8 @@ export default function ExperimentalAiPage() {
     });
     if (optimizationDownloadUrlRef.current) URL.revokeObjectURL(optimizationDownloadUrlRef.current);
     optimizationDownloadUrlRef.current = null;
+    if (chatExportUrlRef.current) URL.revokeObjectURL(chatExportUrlRef.current);
+    chatExportUrlRef.current = null;
     sessionEventsControllerRef.current?.abort();
     sessionEventsControllerRef.current = null;
     lastSessionEventIdRef.current = 0;
@@ -1684,6 +1688,14 @@ export default function ExperimentalAiPage() {
       });
   };
 
+  const exportChat = (format: ChatExportFormat) => {
+    const previousUrl = chatExportUrlRef.current;
+    chatExportUrlRef.current = downloadChatExport(
+      format, messages, sessionEndpointRef.current ?? aiEndpoint, new Date(), backendVersion,
+    );
+    if (previousUrl) URL.revokeObjectURL(previousUrl);
+  };
+
   const downloadOptimizationResult = async (jobId: string) => {
     const sessionId = sessionIdRef.current;
     if (sessionId === null || downloadingOptimizationId !== null) return;
@@ -2002,14 +2014,14 @@ export default function ExperimentalAiPage() {
               <span>Export chat:</span>
               <button
                 type="button"
-                onClick={() => downloadChatExport('html', messages, sessionEndpointRef.current ?? aiEndpoint, new Date(), backendVersion)}
+                onClick={() => exportChat('html')}
                 className="font-medium text-gray-700 underline underline-offset-2 hover:text-gray-900"
               >
                 HTML
               </button>
               <button
                 type="button"
-                onClick={() => downloadChatExport('markdown', messages, sessionEndpointRef.current ?? aiEndpoint, new Date(), backendVersion)}
+                onClick={() => exportChat('markdown')}
                 className="font-medium text-gray-700 underline underline-offset-2 hover:text-gray-900"
               >
                 Markdown

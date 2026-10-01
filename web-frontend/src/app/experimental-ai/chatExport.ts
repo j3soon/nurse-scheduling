@@ -374,7 +374,7 @@ export function downloadChatExport(
   endpoint: string,
   exportedAt = new Date(),
   backendVersion?: string,
-): void {
+): string {
   const metadata = { endpoint, exportedAt, frontendVersion: CURRENT_APP_VERSION, backendVersion };
   const content = format === 'html'
     ? buildHtmlChatExport(messages, metadata)
@@ -386,5 +386,5 @@ export function downloadChatExport(
   link.href = url;
   link.download = `schedule-ai-chat-${exportedAt.toISOString().slice(0, 10)}.${extension}`;
   link.click();
-  URL.revokeObjectURL(url);
+  return url;
 }
