@@ -298,6 +298,19 @@ describe('AI client', () => {
     expect(diffs).toEqual(['- people.items[0].id']);
   });
 
+  it('receives context usage and ignores invalid budgets', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      'event: context_usage\ndata: {"used_chars":250,"max_chars":1000}\n\n',
+      'event: context_usage\ndata: {"used_chars":10,"max_chars":0}\n\n',
+      'event: context_usage\ndata: {"used_chars":-1,"max_chars":100}\n\n',
+      'event: context_usage\ndata: {"used_chars":101,"max_chars":100}\n\n',
+      'event: context_usage\ndata: {"used_chars":"25","max_chars":100}\n\n',
+    ])));
+    const onContextUsage = vi.fn();
+    await streamSessionEvents('session', { onDelta: vi.fn(), onContextUsage }, new AbortController().signal, null);
+    expect(onContextUsage).toHaveBeenCalledExactlyOnceWith({ usedChars: 250, maxChars: 1000 });
+  });
+
   it('reports a trimmed prompt history and ignores a meaningless count', async () => {
     const fetchMock = vi.fn().mockResolvedValue(streamedResponse([
       'id: 1\nevent: history_trimmed\ndata: {"dropped":0}\n\n',

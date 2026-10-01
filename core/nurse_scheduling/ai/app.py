@@ -52,6 +52,7 @@ from .background import (
     STALE_TURN_ERROR,
     SessionEventBroker,
     build_provider_messages,
+    history_context_chars,
     recent_history,
     run_background_turn,
 )
@@ -270,6 +271,7 @@ class TurnCompletion:
     turn_saved: bool
     proposal_saved: bool
     history_trimmed_count: int = 0
+    context_used_chars: int = 0
 
 
 class SessionStore:
@@ -481,6 +483,7 @@ class SessionStore:
                 turn_saved=True,
                 proposal_saved=proposal_saved,
                 history_trimmed_count=self._effective_trimmed_count(session),
+                context_used_chars=history_context_chars(session.history, self._settings.max_history_chars),
             )
 
     def queue_steering(
@@ -1132,6 +1135,13 @@ def create_app(
             turn_messages = [ChatMessage(role="user", content=history_question)]
             assistant_segment: list[str] = []
             try:
+                yield _sse_event(
+                    "context_usage",
+                    {
+                        "used_chars": history_context_chars(history, settings.max_history_chars),
+                        "max_chars": settings.max_history_chars,
+                    },
+                )
                 if dropped_history:
                     yield _sse_event("history_trimmed", {"dropped": dropped_history})
                 if stopped_before_stream:
@@ -1234,6 +1244,13 @@ def create_app(
                 done = {"message_id": turn_id}
                 if history_saved is not None:
                     done["history_saved"] = history_saved
+                yield _sse_event(
+                    "context_usage",
+                    {
+                        "used_chars": completion.context_used_chars,
+                        "max_chars": settings.max_history_chars,
+                    },
+                )
                 yield _sse_event("done", done)
             except asyncio.CancelledError:
                 raise

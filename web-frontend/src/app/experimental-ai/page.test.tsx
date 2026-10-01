@@ -186,6 +186,24 @@ describe('ExperimentalAiPage', () => {
     expect(mockUseTabSwitchWarning).toHaveBeenLastCalledWith(false);
   });
 
+  it('shows the server history budget below the composer and clears it for a new chat', async () => {
+    const user = userEvent.setup();
+    mockStreamMessage.mockImplementationOnce(async (_id, _message, callbacks) => {
+      callbacks.onContextUsage({ usedChars: 500, maxChars: 2000 });
+      callbacks.onDelta('Done.');
+    });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<ExperimentalAiPage />);
+    expect(screen.queryByText(/Chat history context:/)).not.toBeInTheDocument();
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    const usage = await screen.findByText('Chat history context: 25.0%');
+    expect(usage).toHaveAttribute('title', expect.stringContaining('500 of 2,000 characters'));
+    expect(usage.closest('form')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Start new chat' }));
+    expect(screen.queryByText(/Chat history context:/)).not.toBeInTheDocument();
+  });
+
   it('restores the transcript and live session after navigating away', async () => {
     const user = userEvent.setup();
     const firstRender = render(<ExperimentalAiPage />);

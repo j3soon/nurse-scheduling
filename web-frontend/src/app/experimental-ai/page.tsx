@@ -50,6 +50,7 @@ import {
   DEFAULT_SESSION_RETENTION_SECONDS,
   LOCAL_AI_API_URL,
   OptimizationActivity,
+  type ContextUsage,
   PRODUCTION_AI_API_URL,
   ToolActivity,
   approveProposal,
@@ -214,6 +215,7 @@ interface StoredChatConversation {
   sessionEventId?: number;
   activeOptimization?: ActiveOptimization | null;
   backendVersion?: string;
+  contextUsage?: ContextUsage | null;
   backgroundAssistantId?: string | null;
   trimmedHistoryCount?: number;
 }
@@ -293,6 +295,9 @@ function readStoredConversation(): StoredChatConversation | null {
       || !Array.isArray(value.messages)
       || !value.messages.every(isChatMessage)
       || (value.backendVersion !== undefined && typeof value.backendVersion !== 'string')
+      || (value.contextUsage != null && (!Number.isSafeInteger(value.contextUsage.usedChars)
+        || value.contextUsage.usedChars < 0 || !Number.isSafeInteger(value.contextUsage.maxChars)
+        || value.contextUsage.maxChars <= 0 || value.contextUsage.usedChars > value.contextUsage.maxChars))
       || (value.sessionEventId !== undefined
         && (!Number.isSafeInteger(value.sessionEventId) || value.sessionEventId < 0))
       || (value.trimmedHistoryCount !== undefined
@@ -468,6 +473,7 @@ export default function ExperimentalAiPage() {
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [backendVersion, setBackendVersion] = useState<string | undefined>();
+  const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sessionExpiresAt, setSessionExpiresAt] = useState<number | null>(null);
   const [sessionRetentionSeconds, setSessionRetentionSeconds] = useState(DEFAULT_SESSION_RETENTION_SECONDS);
@@ -582,6 +588,7 @@ export default function ExperimentalAiPage() {
       setSessionRetentionSeconds(storedConversation.retentionSeconds);
       lastSessionEventIdRef.current = storedConversation.sessionEventId ?? 0;
       setBackendVersion(storedConversation.backendVersion);
+      setContextUsage(storedConversation.contextUsage ?? null);
       setActiveOptimization(storedConversation.activeOptimization
         ? { ...storedConversation.activeOptimization, points: storedConversation.activeOptimization.points ?? [] }
         : null);
@@ -686,6 +693,7 @@ export default function ExperimentalAiPage() {
           sessionEventId: lastSessionEventIdRef.current,
           activeOptimization,
           backendVersion,
+          contextUsage,
           backgroundAssistantId: backgroundAssistantIdRef.current,
           trimmedHistoryCount,
         };
@@ -707,6 +715,7 @@ export default function ExperimentalAiPage() {
     activeSessionId,
     activeOptimization,
     backendVersion,
+    contextUsage,
     aiEndpoint,
     isClientReady,
     messages,
@@ -1019,6 +1028,7 @@ export default function ExperimentalAiPage() {
     setActiveSessionId(null);
     setSessionExpiresAt(null);
     setMessages([]);
+    setContextUsage(null);
     setDraft('');
     setSelectedAttachments([]);
     setQueuedMessages([]);
@@ -1294,6 +1304,7 @@ export default function ExperimentalAiPage() {
           setIsStopping(false);
           setError(message);
         },
+        onContextUsage: setContextUsage,
         onHistoryTrimmed: setTrimmedHistoryCount,
         onError: failBackgroundTurn,
       },
@@ -1506,6 +1517,7 @@ export default function ExperimentalAiPage() {
             )));
           },
           onProposal: diff => setProposalDiff(diff),
+          onContextUsage: setContextUsage,
           onHistoryTrimmed: setTrimmedHistoryCount,
         },
         controller.signal,
@@ -2381,6 +2393,14 @@ export default function ExperimentalAiPage() {
             )}
           </div>
         </div>
+        {contextUsage !== null && (
+          <p
+            className="mt-2 text-center text-[0.6875rem] text-gray-400"
+            title={`${contextUsage.usedChars.toLocaleString()} of ${contextUsage.maxChars.toLocaleString()} characters in retained chat history. Excludes instructions, schedule, tools, and attachments. This is not the model token window.`}
+          >
+            Chat history context: {(100 * contextUsage.usedChars / contextUsage.maxChars).toFixed(1)}%
+          </p>
+        )}
       </form>
     </main>
   );

@@ -755,8 +755,10 @@ def test_health_and_streamed_schedule_question() -> None:
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
     assert parse_sse(response.text) == [
+        ("context_usage", {"used_chars": 0, "max_chars": 200_000}),
         ("delta", {"text": "Hello"}),
         ("delta", {"text": " from AI"}),
+        ("context_usage", {"used_chars": 97, "max_chars": 200_000}),
         ("done", {"message_id": ANY}),
     ]
     prompt = provider.calls[0]
@@ -1050,6 +1052,7 @@ def test_provider_failure_is_streamed_without_recording_a_turn() -> None:
     )
 
     assert parse_sse(failed.text) == [
+        ("context_usage", {"used_chars": 0, "max_chars": 200_000}),
         ("delta", {"text": "Provisional answer."}),
         ("error", {"message": PROVIDER_ERROR}),
     ]
@@ -1087,6 +1090,7 @@ def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming(monke
     response = client.post(f"/sessions/{session_id}/messages", json={"message": "Edit it"})
 
     assert parse_sse(response.text) == [
+        ("context_usage", {"used_chars": 0, "max_chars": 200_000}),
         ("delta", {"text": "Obsolete answer."}),
         ("stale", {"message": STALE_TURN_ERROR}),
     ]
@@ -1102,7 +1106,10 @@ def test_sandbox_timeout_does_not_expose_exception_details() -> None:
 
     response = client.post(f"/sessions/{session_id}/messages", json={"message": "Wait"})
 
-    assert parse_sse(response.text) == [("error", {"message": SANDBOX_TURN_TIMEOUT_ERROR})]
+    assert parse_sse(response.text) == [
+        ("context_usage", {"used_chars": 0, "max_chars": 200_000}),
+        ("error", {"message": SANDBOX_TURN_TIMEOUT_ERROR}),
+    ]
     assert private_error not in response.text
 
 
@@ -1368,6 +1375,28 @@ def test_a_trimmed_prompt_history_is_reported_to_the_client() -> None:
     assert "A" * 50 not in latest_prompt
     assert "C" * 50 in latest_prompt
     assert second.status_code == 200
+
+
+def test_context_usage_reports_selected_history_before_and_after_each_turn() -> None:
+    provider = FakeProvider([["First answer."], ["Second answer."]])
+    app = create_test_app(settings=make_settings(max_history_chars=140), provider=provider)
+    client = AuthenticatedTestClient(app)
+    session_id = create_session(client)
+
+    first = client.post(f"/sessions/{session_id}/messages", json={"message": "A" * 50})
+    second = client.post(f"/sessions/{session_id}/messages", json={"message": "B" * 50})
+    first_usage = [payload for event, payload in parse_sse(first.text) if event == "context_usage"]
+    second_usage = [payload for event, payload in parse_sse(second.text) if event == "context_usage"]
+
+    # Only the newest exchange fits after the second turn.
+    first_chars = len(json.dumps(ChatMessage(role="user", content="A" * 50), ensure_ascii=False)) + len(
+        json.dumps(ChatMessage(role="assistant", content="First answer."), ensure_ascii=False)
+    )
+    second_chars = len(json.dumps(ChatMessage(role="user", content="B" * 50), ensure_ascii=False)) + len(
+        json.dumps(ChatMessage(role="assistant", content="Second answer."), ensure_ascii=False)
+    )
+    assert first_usage == [{"used_chars": 0, "max_chars": 140}, {"used_chars": first_chars, "max_chars": 140}]
+    assert second_usage == [first_usage[-1], {"used_chars": second_chars, "max_chars": 140}]
 
 
 def test_session_budget_keeps_the_latest_exchange_and_reports_all_dropped_messages() -> None:
@@ -1701,9 +1730,11 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
             "optimization_progress",
             "optimization",
             "turn_start",
+            "context_usage",
             "tool_start",
             "tool",
             "delta",
+            "context_usage",
             "done",
         ]
         assert events[0].data["state"] == "running"
@@ -1711,7 +1742,9 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         assert events[1].data["progress"] == {"currentBestScore": 23, "elapsedSeconds": 2}
         assert events[2].data["state"] == "completed"
         assert events[2].data["downloadable"] is True
-        assert events[6].data == {"text": "The optimizer returned score 23."}
+        assert events[7].data == {"text": "The optimizer returned score 23."}
+        assert events[4].data["max_chars"] == 200_000
+        assert events[8].data["used_chars"] > events[4].data["used_chars"]
         if history_enabled:
             assert len(history_starts) == 3
             assert history_starts[-1][1] == session_id
@@ -1878,7 +1911,7 @@ def test_sandbox_cleanup_failure_does_not_commit_provisional_turn_or_proposal() 
     failed = client.post(f"/sessions/{session_id}/messages", json={"message": "Failed edit"})
 
     events = parse_sse(failed.text)
-    assert [name for name, _ in events] == ["tool_start", "tool", "schedule_change", "delta", "error"]
+    assert [name for name, _ in events] == ["context_usage", "tool_start", "tool", "schedule_change", "delta", "error"]
     assert events[-1][1]["message"] == "The temporary AI sandbox failed. Please try again."
     revision = hashlib.sha256(schedule.encode("utf-8")).hexdigest()
     approval = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
@@ -1911,8 +1944,8 @@ def test_sandbox_command_failure_still_streams_the_requested_command() -> None:
     failed = client.post(f"/sessions/{session_id}/messages", json={"message": "Run an edit"})
 
     events = parse_sse(failed.text)
-    assert [name for name, _ in events] == ["tool_start", "error"]
-    assert events[0][1] == {
+    assert [name for name, _ in events] == ["context_usage", "tool_start", "error"]
+    assert events[1][1] == {
         "name": BASH_TOOL,
         "arguments": json.dumps({"command": "python3 -c 'set P1 description to Head'"}),
     }
@@ -1943,8 +1976,8 @@ def test_final_validation_failure_discards_the_turn_without_a_history_note() -> 
     failed = client.post(f"/sessions/{session_id}/messages", json={"message": "Invalid edit"})
 
     events = parse_sse(failed.text)
-    assert [name for name, _ in events] == ["tool_start", "tool", "delta", "error"]
-    assert events[1][1]["ok"] is False
+    assert [name for name, _ in events] == ["context_usage", "tool_start", "tool", "delta", "error"]
+    assert events[2][1]["ok"] is False
     assert events[-1][1]["message"] == CANDIDATE_VALIDATION_ERROR
 
     recovered = client.post(f"/sessions/{session_id}/messages", json={"message": "Retry"})

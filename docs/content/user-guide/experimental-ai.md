@@ -86,6 +86,10 @@ assistant proposes one instead of changing the schedule itself.
 
 ## See what the assistant did
 
+**Chat history context** below the message box shows the portion of the server's
+conversation history budget selected for the next turn. It excludes instructions,
+schedule data, tools, and attachments, and does not measure the model token window.
+
 Small grey rows under an answer record how it was produced. They stay collapsed
 until you select one.
 

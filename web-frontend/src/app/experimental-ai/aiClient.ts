@@ -47,6 +47,11 @@ export interface OptimizationProgressActivity {
   point: OptimizationProgressPoint;
 }
 
+export interface ContextUsage {
+  usedChars: number;
+  maxChars: number;
+}
+
 export interface StreamCallbacks {
   lastEventId?: number;
   onEventId?: (id: number) => void;
@@ -63,6 +68,7 @@ export interface StreamCallbacks {
   onDone?: (messageId?: string) => void;
   onStopped?: (messageId?: string) => void;
   onStale?: (message: string) => void;
+  onContextUsage?: (usage: ContextUsage) => void;
   onHistoryTrimmed?: (dropped: number) => void;
   onError?: (message: string) => void;
 }
@@ -106,6 +112,8 @@ interface SsePayload {
   terminal?: unknown;
   downloadable?: unknown;
   progress?: unknown;
+  used_chars?: unknown;
+  max_chars?: unknown;
   dropped?: unknown;
 }
 
@@ -336,6 +344,12 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
     const message = typeof payload.message === 'string' ? payload.message : 'The AI response became stale.';
     if (callbacks.onStale) callbacks.onStale(message);
     else throw new AiStaleTurnError(message);
+  } else if (eventType === 'context_usage') {
+    if (Number.isSafeInteger(payload.used_chars) && (payload.used_chars as number) >= 0
+      && Number.isSafeInteger(payload.max_chars) && (payload.max_chars as number) > 0
+      && (payload.used_chars as number) <= (payload.max_chars as number)) {
+      callbacks.onContextUsage?.({ usedChars: payload.used_chars as number, maxChars: payload.max_chars as number });
+    }
   } else if (eventType === 'history_trimmed') {
     const dropped = payload.dropped;
     if (typeof dropped === 'number' && Number.isInteger(dropped) && dropped > 0) {
