@@ -1935,7 +1935,7 @@ export default function ExperimentalAiPage() {
             </button>
           </div>
           {serverLocked && (
-            <p className="mt-1 text-xs text-gray-500">This server is locked for the current conversation.</p>
+            <p className="mt-1 text-xs text-gray-500">This server is locked for the current conversation. Start a new chat to change servers.</p>
           )}
           {!isOfficialAiEndpoint(aiEndpoint) && (
             <p className="mt-1 text-xs text-amber-700">

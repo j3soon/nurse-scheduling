@@ -973,7 +973,7 @@ describe('ExperimentalAiPage', () => {
       'http://localhost:8001',
     );
     expect(screen.getByRole('button', { name: 'Change' })).toBeDisabled();
-    expect(screen.getByText('This server is locked for the current conversation.')).toBeInTheDocument();
+    expect(screen.getByText('This server is locked for the current conversation. Start a new chat to change servers.')).toBeInTheDocument();
   });
 
   it('normalizes a custom AI server URL', async () => {
