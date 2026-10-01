@@ -117,3 +117,51 @@ def test_structured_oracle_uses_the_final_answer_after_streamed_commentary():
     answer = 'Initial check: {"count": 3}. Corrected the parser.\n{"count": 0}'
     assert grade(case, RunOutcome(answer=answer)).passed
     assert not grade(case, RunOutcome(answer=answer.replace('{"count": 0}', '{"count": 2}'))).passed
+
+
+@pytest.mark.parametrize(
+    ("actual", "passed"),
+    [
+        ({"Alex": {"01": "OFF", "02": "K"}}, True),
+        ({"Alex": {"01": "OFF", "02": "K", "03": "OFF"}}, True),
+        ({"Alex": {"01": "OFF"}}, False),
+        ({"Alex": {"01": "OFF", "02": "OFF"}}, False),
+    ],
+)
+def test_structured_oracle_checks_required_nested_fields_without_rejecting_extra_valid_assignments(actual, passed):
+    case = EvalCase(
+        "witness", "new-schedule", "Witness", False, answer_json={"witness": {"Alex": {"01": "OFF", "02": "K"}}}
+    )
+    assert grade(case, RunOutcome(answer=json.dumps({"witness": actual}))).passed == passed
+
+
+def test_structured_oracle_keeps_lists_exact():
+    case = EvalCase("names", "new-schedule", "Names", False, answer_json={"names": ["Alex"]})
+    assert not grade(case, RunOutcome(answer='{"names": ["Alex", "Mira"]}')).passed
+
+
+def test_independent_analysis_case_accepts_a_valid_extra_date_and_rejects_starting_a_job():
+    case = CASE_BY_ID["optimizer-independent-request-check"]
+    answer = {
+        "jointlyPossible": True,
+        "witness": {"Alex": {"01": "OFF", "02": "K", "03": "OFF"}, "Mira": {"02": "OFF", "03": "OFF"}},
+    }
+    outcome = RunOutcome(answer=json.dumps(answer))
+    assert grade(case, outcome).passed
+    outcome.activity = [{"kind": "tool", "name": "optimizer", "ok": True, "arguments": '{"action":"start"}'}]
+    assert not grade(case, outcome).passed
+
+
+def test_nested_json_evidence_fingerprint_tracks_its_oracle_without_staling_scalar_cases(monkeypatch):
+    from .ai_eval import grading
+
+    nested = EvalCase("nested", "new-schedule", "Witness", False, answer_json={"witness": {"day": "OFF"}})
+    scalar = EvalCase("scalar", "new-schedule", "Count", False, answer_json={"count": 1})
+    before = case_digest(nested), case_digest(scalar)
+
+    def different_oracle(actual, expected):
+        return True
+
+    monkeypatch.setattr(grading, "_answer_json_matches", different_oracle)
+    assert case_digest(nested) != before[0]
+    assert case_digest(scalar) == before[1]

@@ -542,8 +542,11 @@ def grade(case: EvalCase, outcome: RunOutcome, computed: dict[str, Any] | None =
                     actual = value
                     position = start + length
         for key, value in case.answer_json.items():
-            passed = isinstance(actual, dict) and key in actual and _key(actual[key]) == _key(value)
-            checks.append(CheckResult(f"answer JSON {key} equals {value!r}", passed, "" if passed else repr(actual)))
+            passed = isinstance(actual, dict) and key in actual and _answer_json_matches(actual[key], value)
+            relation = "contains required fields" if isinstance(value, dict) else "equals"
+            checks.append(
+                CheckResult(f"answer JSON {key} {relation} {value!r}", passed, "" if passed else repr(actual))
+            )
     for patterns, required in ((case.answer_matches, True), (case.answer_not_matches, False)):
         for pattern in patterns:
             matched = re.search(pattern, outcome.answer, re.IGNORECASE | re.DOTALL) is not None
@@ -648,6 +651,15 @@ def tool_limit_failures(activity: Sequence[dict[str, Any]], expected: ToolUsageE
     """Return only failures that future tool calls cannot repair."""
     limits = replace(expected, required=(), required_calls=(), required_errors=())
     return tuple(check for check in _check_tool_usage(activity, limits) if not check.passed)
+
+
+def _answer_json_matches(actual: Any, expected: Any) -> bool:
+    """Check required mapping fields, preserving exact scalar and list semantics."""
+    if isinstance(expected, dict):
+        return isinstance(actual, dict) and all(
+            key in actual and _answer_json_matches(actual[key], value) for key, value in expected.items()
+        )
+    return _key(actual) == _key(expected)
 
 
 def _check_tool_usage(

@@ -20,6 +20,7 @@
 # This test is mostly AI generated.
 
 import hashlib
+import inspect
 import json
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
@@ -86,6 +87,12 @@ def case_digest(case: EvalCase) -> str:
     for optional in ("optimizer_completion", "answer_json"):
         if not fields[optional]:
             fields.pop(optional)
+    if any(isinstance(value, dict) for value in case.answer_json.values()):
+        from .grading import _answer_json_matches
+
+        fields["nested_json_oracle_sha256"] = hashlib.sha256(
+            inspect.getsource(_answer_json_matches).encode()
+        ).hexdigest()
     if case.optimizer_completion:
         from nurse_scheduling.ai.result_context import build_result_context
         from nurse_scheduling.ai.sandbox_agent import REFERENCE_ATTACHMENT_TOOLS, inspection_helper_catalog

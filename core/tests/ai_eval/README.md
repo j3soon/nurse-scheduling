@@ -46,6 +46,8 @@ Examples include optional descriptions, case-insensitive natural-language values
 history entries while preserving similarly named IDs. Use `{"path": "...", "unchanged": true}` when a value must
 match the input fixture, so fixture copy edits do not stale a literal expectation. Use `answer_contains` for read-only and refusal cases,
 `intermediate_answer_contains` for clarification turns, and `tool_usage` only when the trajectory itself is under test.
+Use `answer_json` to check required fields in the final JSON object, including nested objects. Additional object
+fields are allowed. Scalar values and lists remain exact.
 Use `turn_tool_usage` as an ordered list of tool criteria to grade individual user turns. A `null` entry skips a turn.
 This distinguishes a forbidden premature edit from the edit required after clarification. `answer_matches` and
 `answer_not_matches` accept case-insensitive regular expressions for focused answer contracts. Validate them against
