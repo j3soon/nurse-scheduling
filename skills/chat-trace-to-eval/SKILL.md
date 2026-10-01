@@ -103,6 +103,9 @@ calls, tokens, or latency among passing runs with matched inputs. A relative
 cost target can be useful when justified by the baseline. Do not choose a
 threshold after observing results. Avoid claiming time savings solely from
 fewer calls when backend latency or token volume differs materially.
+Tool counts do not measure generated script length. When a helper reduces custom
+code generation, declare a latency or token target and confirm it in a fresh
+comparison rather than selecting the metric after inspecting that run.
 
 At a normal step, run its targeted cases and contrasting controls. Expand to
 earlier cases only for a plausible interaction or suspected regression. Reserve

@@ -365,5 +365,34 @@
         ]
       }
     ]
+  },
+  {
+    "id": "inspection-helpers",
+    "file": "steps/inspection-helpers.md",
+    "cases": [
+      "result-grouped-cross-month",
+      "result-zero-target-misses"
+    ],
+    "hypothesis": "Uses maintained inspection helpers for supported optimizer result audits to avoid assignment and signed-request miscounts from custom parsing.",
+    "sha256": "20a9c5f17999dc133daa1f772d29ddd63d3adefb08c91f49ba6fc5bbd6bb26f3",
+    "evidence": [
+      {
+        "case": "result-grouped-cross-month",
+        "input_sha256": "34bbfb628c474ec8eb5bd122e88f3947e4215ecdba07542839bed5e9f1853105",
+        "before": "2/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "note": "Correctness witness on native bracketed exports. Latency observations are exploratory. The unchanged zero-miss control comes from the companion comparison.",
+        "controls": [
+          {
+            "case": "result-zero-target-misses",
+            "input_sha256": "b9fab83b5ad6781fc509241e2316cf22e79bf0dd8b2f8ad9c99f03e290c3170c",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ]
+      }
+    ]
   }
 ]
