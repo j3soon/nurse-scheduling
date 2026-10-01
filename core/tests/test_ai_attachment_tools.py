@@ -59,6 +59,26 @@ def test_evaluation_workbooks_preserve_stale_caches_colors_and_reproducible_byte
     workbook.close()
 
 
+def test_inspection_pdf_fixtures_are_stable_and_visual_page_requires_layout(tmp_path: Path):
+    for name in ("text-inspection-pdf", "visual-inspection-pdf"):
+        attachment = load_attachment_fixtures((name,))[0]
+        assert attachment.data == load_attachment_fixtures((name,))[0].data
+        path = tmp_path / attachment.filename
+        path.write_bytes(attachment.data)
+        result = inspect_pdf(path, page_number=3, render=True, output_directory=tmp_path / name)
+        assert result["page_count"] == 4
+        page = result["pages"][0]
+        if name == "text-inspection-pdf":
+            assert "TEXT CHECK 5703" in page["text"]
+        else:
+            assert "BETA CHECK 6428" in page["text"]
+            assert "ALPHA CHECK 9137" in page["text"]
+            with Image.open(page["rendered_image"]["path"]) as image:
+                rgb = image.convert("RGB")
+                assert rgb.getpixel((100, 150)) == (51, 128, 255)
+                assert rgb.getpixel((100, 450)) == (255, 217, 26)
+
+
 def test_workbook_inspector_reads_every_sheet_including_hidden_sheets(tmp_path: Path):
     path = tmp_path / "multi-sheet.xlsx"
     workbook = Workbook()

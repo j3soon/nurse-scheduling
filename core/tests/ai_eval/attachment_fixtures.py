@@ -29,6 +29,8 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill
 from PIL import Image, ImageDraw, ImageFont
+from pypdf import PdfWriter
+from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from nurse_scheduling.ai.sandbox_agent import SandboxAttachment
 
@@ -126,6 +128,43 @@ def _pdf() -> bytes:
     return output.getvalue()
 
 
+def _inspection_pdf(*, visual: bool = False) -> bytes:
+    """Generate stable text pages and a visual layout that text cannot disambiguate."""
+    writer = PdfWriter()
+    font = writer._add_object(
+        DictionaryObject(
+            {
+                NameObject("/Type"): NameObject("/Font"),
+                NameObject("/Subtype"): NameObject("/Type1"),
+                NameObject("/BaseFont"): NameObject("/Helvetica"),
+            }
+        )
+    )
+    for number in range(1, 5):
+        page = writer.add_blank_page(width=600, height=300)
+        page[NameObject("/Resources")] = DictionaryObject(
+            {
+                NameObject("/Font"): DictionaryObject({NameObject("/F1"): font}),
+            }
+        )
+        if number == 3 and visual:
+            content = (
+                "0.2 0.5 1 rg 30 160 530 90 re f "
+                "1 0.85 0.1 rg 30 40 530 90 re f "
+                "0 0 0 rg BT /F1 28 Tf 50 195 Td (ALPHA CHECK 9137) Tj ET "
+                "BT /F1 28 Tf 50 75 Td (BETA CHECK 6428) Tj ET"
+            )
+        else:
+            label = "Handoff code: TEXT CHECK 5703" if number == 3 else f"Page {number}: routine ward notes"
+            content = f"BT /F1 24 Tf 40 150 Td ({label}) Tj ET"
+        stream = DecodedStreamObject()
+        stream.set_data(content.encode())
+        page[NameObject("/Contents")] = writer._add_object(stream)
+    output = BytesIO()
+    writer.write(output)
+    return output.getvalue()
+
+
 def _zip_package(files: dict[str, str | bytes]) -> bytes:
     output = BytesIO()
     with ZipFile(output, "w", ZIP_DEFLATED) as archive:
@@ -190,6 +229,8 @@ def _pptx() -> bytes:
 
 
 _FIXTURES: dict[str, tuple[str, str, Callable[[], bytes]]] = {
+    "text-inspection-pdf": ("ward-pages.pdf", "application/pdf", _inspection_pdf),
+    "visual-inspection-pdf": ("color-boxes.pdf", "application/pdf", lambda: _inspection_pdf(visual=True)),
     "formula-xlsx": (
         "capacity-checks.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

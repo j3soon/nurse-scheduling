@@ -67,6 +67,17 @@ def test_pdf_fixture_renders_a_page_read_can_return_to_the_model(tmp_path: Path)
     assert result.image is not None
 
 
+@pytest.mark.parametrize("label", ["BETA CHECK 6428", "ALPHA CHECK 9137", "6428"])
+def test_pdf_visual_oracle_accepts_equivalent_parsing_and_requires_the_complete_label(label: str):
+    case = next(case for case in load_cases(CASES) if case.id == "pdf-visual-layout")
+    outcome = RunOutcome(
+        initial={},
+        answer=json.dumps({"yellowCode": label}),
+        activity=[{"kind": "tool", "name": "bash", "ok": True, "arguments": "{}", "result": "PDF parsed"}],
+    )
+    assert grade(case, outcome).passed == (label == "BETA CHECK 6428")
+
+
 @pytest.mark.parametrize(
     ("fixture_name", "media_path"),
     [

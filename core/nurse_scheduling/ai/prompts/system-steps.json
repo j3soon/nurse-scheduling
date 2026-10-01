@@ -428,5 +428,39 @@
         "cost_target": 0.75
       }
     ]
+  },
+  {
+    "id": "pdf-inspection",
+    "file": "steps/pdf-inspection.md",
+    "cases": [
+      "pdf-specified-text-page",
+      "pdf-visual-layout"
+    ],
+    "hypothesis": "Uses the maintained PDF reader for selected pages and renders visual evidence only when needed, reducing generated parsing and latency.",
+    "sha256": "99885e399e003d2c82671c453ad5b05706962b59649fc69d133cdfe26ba9385a",
+    "evidence": [
+      {
+        "case": "pdf-specified-text-page",
+        "input_sha256": "f36473547596bd1430e57f0281d4b3f8b9d0c78f9ce27efbaef02fc79d5c6c39",
+        "before": "3/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "cost_metric": "completion-tokens",
+        "cost_ratio": 0.371575,
+        "cost_target": 0.75
+      },
+      {
+        "case": "pdf-visual-layout",
+        "input_sha256": "cbf09724c1efe0ec5d22018f99d6f7b45a61245ab4ac123999a63026a603952a",
+        "before": "3/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "cost_metric": "completion-tokens",
+        "cost_ratio": 0.328619,
+        "cost_target": 0.75
+      }
+    ]
   }
 ]
