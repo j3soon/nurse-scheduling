@@ -32,6 +32,32 @@ from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 from nurse_scheduling.ai.attachment_tools.inspect_pdf import inspect_pdf
 from nurse_scheduling.ai.attachment_tools.inspect_xlsx import inspect_workbook
 
+from .ai_eval.attachment_fixtures import load_attachment_fixtures
+
+
+def test_evaluation_workbooks_preserve_stale_caches_colors_and_reproducible_bytes(tmp_path: Path):
+    names = ("formula-xlsx", "colored-xlsx")
+    attachments = load_attachment_fixtures(names)
+    assert [attachment.data for attachment in attachments] == [
+        attachment.data for attachment in load_attachment_fixtures(names)
+    ]
+    for attachment in attachments:
+        with ZipFile(BytesIO(attachment.data)) as archive:
+            assert all(entry.date_time == (2020, 1, 1, 0, 0, 0) for entry in archive.infolist())
+    path = tmp_path / "formulas.xlsx"
+    path.write_bytes(attachments[0].data)
+    checks = inspect_workbook(path, sheet_name="Staffing checks")["sheets"][0]["rows"]
+    assert checks[2]["values"][2] == {"cell": "C3", "formula": "=B3*2", "cached_value": 11}
+    assert checks[3]["values"][2] == {"cell": "C4", "formula": "=SUM(B3:B4)", "cached_value": 10}
+    assert checks[4]["values"][2] == {"cell": "C5", "formula": "=B5+1", "cached_value": None}
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(BytesIO(attachments[1].data))
+    assert workbook.active["A2"].fill.fgColor.rgb == "00FFF2CC"
+    assert workbook.active["A3"].fill.patternType is None
+    assert workbook.active["A4"].fill.fgColor.rgb == "00FFF2CC"
+    workbook.close()
+
 
 def test_workbook_inspector_reads_every_sheet_including_hidden_sheets(tmp_path: Path):
     path = tmp_path / "multi-sheet.xlsx"

@@ -394,5 +394,39 @@
         ]
       }
     ]
+  },
+  {
+    "id": "xlsx-inspection",
+    "file": "steps/xlsx-inspection.md",
+    "cases": [
+      "xlsx-formulas-and-caches",
+      "xlsx-color-fallback"
+    ],
+    "hypothesis": "Reduces generated parsing and inspection time for supported XLSX data without losing color-dependent information.",
+    "sha256": "6c303ecc4920a6ec8421b4a6e440d309a7a1d7a644dab298aed53ee75ca3c04f",
+    "evidence": [
+      {
+        "case": "xlsx-formulas-and-caches",
+        "input_sha256": "a64d47a79b6309718c4f2ef71316202c352f2b63d7ff3990c63828d8bd449440",
+        "before": "3/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "cost_metric": "completion-tokens",
+        "cost_ratio": 0.436876,
+        "cost_target": 0.75
+      },
+      {
+        "case": "xlsx-color-fallback",
+        "input_sha256": "a5eae562410064194258ac86f7e951d2ee693e4a730252eec3770c628b1ad50f",
+        "before": "3/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "cost_metric": "completion-tokens",
+        "cost_ratio": 0.581794,
+        "cost_target": 0.75
+      }
+    ]
   }
 ]

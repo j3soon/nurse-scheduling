@@ -119,7 +119,7 @@ The comparison writes separate `before/` and `after/` reports, including full tr
 hashes, plus `comparison.md`. It reports a benefit only when there are no infrastructure errors, every after attempt
 passes, and either at least one before attempt fails or an explicit relative cost target is met with all attempts
 passing. For example, append `--cost-metric tool-calls --cost-ratio 0.6` to require at most 60% of the baseline tool
-calls. Available metrics are `tool-calls`, `turns`, `uncached-tokens`, and `seconds`. Cost ratios compare successful
+calls. Available metrics are `tool-calls`, `turns`, `uncached-tokens`, `completion-tokens`, `total-tokens`, and `seconds`. Cost ratios compare successful
 attempts only. Treat these small repeated samples as directional evidence, not a precise reliability or latency estimate.
 
 Every comparison also reports all token categories, tool calls, reads, bash calls, turns, and elapsed seconds,
@@ -134,6 +134,11 @@ included in generated tokens. Total tokens must not count them twice.
 metrics in `summary.md` and `baseline-comparison.json`, marking unmatched repetitions explicitly. All attempts remain
 in success and infrastructure counts. These descriptive metrics do not change the declared benefit gate. Keep all
 metrics in artifacts, while user-facing summaries may show only meaningful changes.
+
+For helper discovery, keep the same helper scripts in both arms and use `--cost-metric completion-tokens` to test
+reduced generated parsing and reasoning. Use `--cost-metric total-tokens` for scoped inspection. Declare the ratio
+before confirmation. Attachment receipts bind deterministic binary bytes and hydrated helpers, alongside the
+case and clause. Correct equivalent custom readers remain valid, including readers needed for color-only data.
 
 Run `--prompt-ablate-step N` only for a requested full-prompt removal check. It compares the complete prompt without
 section N against the complete prompt. Ordinary step comparisons run only the cases named for that step, unless

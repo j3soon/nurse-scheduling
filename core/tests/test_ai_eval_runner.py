@@ -62,7 +62,7 @@ from nurse_scheduling.ai.system_prompt import PROMPT_DIRECTORY, compose_system_p
 
 from .ai_eval.comparison import comparison_metrics_markdown, comparison_statistics
 from .ai_eval.grading import EvalCase, ExpectedDiff, ToolUsageExpectation, TurnAction, load_cases
-from .ai_eval.prompt_ladder import STEPS_PATH, load_prompt_steps, prompt_at_step, validate_prompt_evidence
+from .ai_eval.prompt_ladder import STEPS_PATH, case_digest, load_prompt_steps, prompt_at_step, validate_prompt_evidence
 from .ai_eval.runner import (
     CASES,
     DEFAULT_CASE_JOBS,
@@ -151,6 +151,21 @@ def test_prompt_evidence_requires_a_witness():
         validate_prompt_evidence((replace(load_prompt_steps()[0], evidence=()),), CASE_BY_ID, FIXTURE_DIGESTS)
 
 
+def test_attachment_evidence_binds_reproducible_binary_inputs(monkeypatch):
+    from .ai_eval import prompt_ladder
+
+    case = CASE_BY_ID["xlsx-formulas-and-caches"]
+    digest = case_digest(case)
+    assert digest == case_digest(case)
+    original = prompt_ladder.load_attachment_fixtures
+    monkeypatch.setattr(
+        prompt_ladder,
+        "load_attachment_fixtures",
+        lambda names: tuple(replace(attachment, data=attachment.data + b"changed") for attachment in original(names)),
+    )
+    assert case_digest(case) != digest
+
+
 @pytest.mark.parametrize("changed_input", ["clause", "case", "fixture"])
 def test_prompt_evidence_rejects_changed_inputs(changed_input):
     step = load_prompt_steps()[0]
@@ -166,14 +181,15 @@ def test_prompt_evidence_rejects_changed_inputs(changed_input):
         validate_prompt_evidence((step,), cases, fixtures)
 
 
+@pytest.mark.parametrize("metric", ["tool-calls", "completion-tokens", "total-tokens"])
 @pytest.mark.parametrize("ratio, passes", [(0.55, True), (0.70, False)])
-def test_prompt_evidence_accepts_only_cost_gains_meeting_the_declared_target(ratio, passes):
+def test_prompt_evidence_accepts_only_cost_gains_meeting_the_declared_target(ratio, passes, metric):
     step = load_prompt_steps()[0]
     record = {
         **step.evidence[0],
         "before": "3/3",
         "after": "3/3",
-        "cost_metric": "tool-calls",
+        "cost_metric": metric,
         "cost_ratio": ratio,
         "cost_target": 0.60,
     }
@@ -1258,6 +1274,18 @@ def test_comparison_rejects_duplicate_and_mismatched_repetitions():
     runs[-1].repetition = 4
     with pytest.raises(ValueError, match="Unpaired prompt repetitions"):
         prompt_comparison_markdown(runs)
+
+
+@pytest.mark.parametrize("metric", ["completion-tokens", "total-tokens"])
+def test_prompt_comparison_token_targets_require_complete_usage(metric):
+    runs = _token_comparison_runs()
+    target = 0.7 if metric == "completion-tokens" else 0.95
+    _parse_args(["--prompt-compare-step", "1", "--cost-metric", metric, "--cost-ratio", str(target)])
+    assert prompt_comparison_markdown(runs, metric, target)[1]
+    runs[-1].token_usage_turns = 1
+    report, improved = prompt_comparison_markdown(runs, metric, target)
+    assert not improved
+    assert "missing cost data" in report
 
 
 def test_prompt_comparison_cli_writes_first_class_metrics_without_a_cost_target(tmp_path: Path, monkeypatch):

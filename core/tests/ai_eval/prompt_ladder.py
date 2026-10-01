@@ -107,6 +107,16 @@ def case_digest(case: EvalCase) -> str:
         fields["generator_sha256"] = [
             hashlib.sha256(attachment.data).hexdigest() for attachment in load_attachment_fixtures(case.attachments)
         ]
+    elif case.attachments:
+        from nurse_scheduling.ai.sandbox_agent import REFERENCE_ATTACHMENT_TOOLS, inspection_helper_catalog
+
+        fields["attachments_sha256"] = [
+            hashlib.sha256(attachment.data).hexdigest() for attachment in load_attachment_fixtures(case.attachments)
+        ]
+        fields["inspection_helpers_sha256"] = {
+            path: hashlib.sha256(source.read_bytes()).hexdigest() for path, source in REFERENCE_ATTACHMENT_TOOLS.items()
+        }
+        fields["helper_catalog_sha256"] = hashlib.sha256(inspection_helper_catalog().encode()).hexdigest()
     return hashlib.sha256(json.dumps(fields, sort_keys=True, default=str).encode()).hexdigest()
 
 
@@ -141,7 +151,8 @@ def validate_prompt_evidence(
                     isinstance(ratio, (int, float))
                     and isinstance(target, (int, float))
                     and 0 < ratio <= target < 1
-                    and record.get("cost_metric") in {"tool-calls", "turns", "uncached-tokens", "seconds"}
+                    and record.get("cost_metric")
+                    in {"tool-calls", "turns", "uncached-tokens", "completion-tokens", "total-tokens", "seconds"}
                 ):
                     raise ValueError(f"{label} shows no measured benefit")
             for observation in (record, *record.get("controls", [])):

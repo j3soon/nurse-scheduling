@@ -941,6 +941,7 @@ def test_every_case_sits_in_a_category_directory():
         "basics/11-attachments",
         "basics/12-optimizer-results",
         "basics/13-weight-notation",
+        "basics/14-attachment-inspection",
     }
     assert all(
         not case.expect_proposal for case in cases if case.category.endswith(("00-summary", "01-reading", "06-refusal"))

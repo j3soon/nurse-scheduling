@@ -20,11 +20,14 @@
 # This test fixture generator is mostly AI generated.
 
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
-from zipfile import ZIP_DEFLATED, ZipFile
+from xml.etree import ElementTree
+from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from openpyxl import Workbook
+from openpyxl.styles import PatternFill
 from PIL import Image, ImageDraw, ImageFont
 
 from nurse_scheduling.ai.sandbox_agent import SandboxAttachment
@@ -61,6 +64,59 @@ def _xlsx() -> bytes:
     workbook.save(output)
     workbook.close()
     return output.getvalue()
+
+
+def _stable_workbook(workbook: Workbook, caches: dict[str, dict[str, int]] | None = None) -> bytes:
+    """Fix ZIP and document timestamps so receipts bind reproducible attachment bytes."""
+    source, output = BytesIO(), BytesIO()
+    workbook.properties.created = datetime(2020, 1, 1, tzinfo=UTC)
+    workbook.save(source)
+    workbook.close()
+    namespace = {"s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+    with ZipFile(source) as archive, ZipFile(output, "w", ZIP_DEFLATED) as stable:
+        for name in sorted(archive.namelist()):
+            content = archive.read(name)
+            if name == "docProps/core.xml":
+                document = ElementTree.fromstring(content)
+                for node in document:
+                    if node.tag.endswith(("}created", "}modified")):
+                        node.text = "2020-01-01T00:00:00Z"
+                content = ElementTree.tostring(document)
+            if caches and name in caches:
+                document = ElementTree.fromstring(content)
+                for cell in document.findall(".//s:c", namespace):
+                    if cell.attrib["r"] in caches[name]:
+                        cell.find("s:v", namespace).text = str(caches[name][cell.attrib["r"]])
+                content = ElementTree.tostring(document)
+            entry = ZipInfo(name, date_time=(2020, 1, 1, 0, 0, 0))
+            entry.compress_type = ZIP_DEFLATED
+            stable.writestr(entry, content)
+    return output.getvalue()
+
+
+def _formula_workbook() -> bytes:
+    workbook = Workbook()
+    workbook.active.title = "Overview"
+    workbook.active.append(["Workbook", "Last-saved capacity checks"])
+    checks = workbook.create_sheet("Staffing checks")
+    checks.append(["Formula results are last saved, not recalculated"])
+    checks.append(["Shift", "Input", "Computed"])
+    checks.append(["Day", 6, "=B3*2"])
+    checks.append(["Evening", 3, "=SUM(B3:B4)"])
+    checks.append(["Night", 4, "=B5+1"])
+    return _stable_workbook(workbook, {"xl/worksheets/sheet2.xml": {"C3": 11, "C4": 10}})
+
+
+def _colored_workbook() -> bytes:
+    workbook = Workbook()
+    roster = workbook.active
+    roster.title = "Staff"
+    roster.append(["Name", "Role"])
+    for name in ("Mira", "Tomas", "Lena", "Omar"):
+        roster.append([name, "N"])
+    for row in (2, 4):
+        roster.cell(row, 1).fill = PatternFill("solid", fgColor="FFF2CC")
+    return _stable_workbook(workbook)
 
 
 def _pdf() -> bytes:
@@ -134,6 +190,16 @@ def _pptx() -> bytes:
 
 
 _FIXTURES: dict[str, tuple[str, str, Callable[[], bytes]]] = {
+    "formula-xlsx": (
+        "capacity-checks.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        _formula_workbook,
+    ),
+    "colored-xlsx": (
+        "staff-colors.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        _colored_workbook,
+    ),
     "pyyaml-generator": (
         "generate_schedule.txt",
         "text/plain",

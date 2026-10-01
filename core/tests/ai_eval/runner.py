@@ -892,8 +892,13 @@ def _prompt_cost(run: CaseRun, metric: str) -> float | None:
         return float(run.turns)
     if metric == "seconds":
         return run.seconds
-    if metric == "uncached-tokens" and run.token_usage is not None and run.token_usage_turns == run.turns:
-        return float(run.token_usage.prompt_tokens - run.token_usage.cached_prompt_tokens)
+    if run.token_usage is not None and run.token_usage_turns == run.turns:
+        if metric == "uncached-tokens":
+            return float(run.token_usage.prompt_tokens - run.token_usage.cached_prompt_tokens)
+        if metric == "completion-tokens":
+            return float(run.token_usage.completion_tokens)
+        if metric == "total-tokens":
+            return float(run.token_usage.total_tokens)
     return None
 
 
@@ -1102,7 +1107,10 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--prompt-ablate-step", type=int, help="compare the full prompt without N to the full prompt"
     )
     parser.add_argument("--repeat", type=int, default=None, help="run every selected case this many times")
-    parser.add_argument("--cost-metric", choices=("tool-calls", "turns", "uncached-tokens", "seconds"))
+    parser.add_argument(
+        "--cost-metric",
+        choices=("tool-calls", "turns", "uncached-tokens", "completion-tokens", "total-tokens", "seconds"),
+    )
     parser.add_argument("--cost-ratio", type=float, help="maximum after/before cost ratio for a cost benefit")
     parser.add_argument("--baseline-report", type=Path, help="compare with a prior report directory or results.jsonl")
     parser.add_argument("--cases-dir", type=Path, default=CASES, help="directory holding the cases")
