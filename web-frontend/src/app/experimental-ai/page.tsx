@@ -2442,12 +2442,16 @@ export default function ExperimentalAiPage() {
             )}
           </div>
         </div>
-        {contextUsage !== null && (
+        {(contextUsage !== null || messages.length > 0) && (
           <p
-            className="mt-2 text-center text-[0.6875rem] text-gray-400"
-            title={`${contextUsage.usedChars.toLocaleString()} of ${contextUsage.maxChars.toLocaleString()} characters in retained chat history. Excludes instructions, schedule, tools, and attachments. This is not the model token window.`}
+            className="mt-2 text-center text-[0.6875rem] text-gray-500"
+            title={contextUsage !== null
+              ? `${contextUsage.usedChars.toLocaleString()} of ${contextUsage.maxChars.toLocaleString()} characters in retained chat history. Excludes instructions, schedule, tools, and attachments. This is not the model token window.`
+              : 'The AI server has not reported context usage. Update the AI server to a version that reports its chat history budget.'}
           >
-            Chat history context: {(100 * contextUsage.usedChars / contextUsage.maxChars).toFixed(1)}%
+            Chat history context: {contextUsage !== null
+              ? `${(100 * contextUsage.usedChars / contextUsage.maxChars).toFixed(1)}%`
+              : 'unavailable'}
           </p>
         )}
       </form>

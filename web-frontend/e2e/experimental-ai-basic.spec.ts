@@ -256,6 +256,20 @@ test('asks about the current schedule and renders a streamed answer', async ({ p
   await expect(page).toHaveURL(/\/dates$/);
 });
 
+test('explains unavailable context usage for older AI servers', async ({ page }) => {
+  await mockAiBackend(page);
+  await page.route('**/ai/sessions/browser-session/messages', route => route.fulfill({
+    status: 200, contentType: 'text/event-stream',
+    body: 'event: delta\ndata: {"text":"Done."}\n\nevent: done\ndata: {"message_id":"legacy-answer"}\n\n',
+  }));
+  await page.goto('/experimental-ai');
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Question');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  const usage = page.getByText('Chat history context: unavailable');
+  await expect(usage).toBeVisible();
+  await expect(usage).toHaveAttribute('title', /The AI server has not reported context usage/);
+});
+
 test('authenticates AI session requests with an explicitly remembered token', async ({ page }) => {
   const authToken = 'browser-ai-auth-token';
   const captured = await mockAiBackend(

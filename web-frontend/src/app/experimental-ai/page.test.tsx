@@ -197,6 +197,16 @@ describe('ExperimentalAiPage', () => {
     expect(mockGetBackendVersion).toHaveBeenCalledWith(expect.any(AbortSignal), '/ai');
   });
 
+  it('explains when the server does not report context usage', async () => {
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    const usage = await screen.findByText('Chat history context: unavailable');
+    expect(usage).toHaveAttribute('title', expect.stringContaining('The AI server has not reported context usage.'));
+    expect(usage.closest('form')).toBeInTheDocument();
+  });
+
   it('shows the server history budget below the composer and clears it for a new chat', async () => {
     const user = userEvent.setup();
     mockStreamMessage.mockImplementationOnce(async (_id, _message, callbacks) => {
