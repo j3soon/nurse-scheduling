@@ -526,6 +526,16 @@ def grade(case: EvalCase, outcome: RunOutcome, computed: dict[str, Any] | None =
             actual = json.loads(answer)
         except json.JSONDecodeError:
             actual = None
+            decoder = json.JSONDecoder()
+            position = 0
+            while (start := answer.find("{", position)) >= 0:
+                try:
+                    value, length = decoder.raw_decode(answer[start:])
+                except json.JSONDecodeError:
+                    position = start + 1
+                else:
+                    actual = value
+                    position = start + length
         for key, value in case.answer_json.items():
             passed = isinstance(actual, dict) and key in actual and _key(actual[key]) == _key(value)
             checks.append(CheckResult(f"answer JSON {key} equals {value!r}", passed, "" if passed else repr(actual)))

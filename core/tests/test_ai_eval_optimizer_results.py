@@ -110,3 +110,10 @@ def test_existing_evidence_survives_optional_case_fields():
 def test_structured_oracle_rejects_false_success(answer):
     case = EvalCase("count", "new-schedule", "Count", False, answer_json={"count": 0})
     assert grade(case, RunOutcome(answer=answer)).passed == (answer == '{"count": 0}')
+
+
+def test_structured_oracle_uses_the_final_answer_after_streamed_commentary():
+    case = EvalCase("count", "new-schedule", "Count", False, answer_json={"count": 0})
+    answer = 'Initial check: {"count": 3}. Corrected the parser.\n{"count": 0}'
+    assert grade(case, RunOutcome(answer=answer)).passed
+    assert not grade(case, RunOutcome(answer=answer.replace('{"count": 0}', '{"count": 2}'))).passed
