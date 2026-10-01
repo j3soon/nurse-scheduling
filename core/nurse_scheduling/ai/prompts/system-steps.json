@@ -290,12 +290,12 @@
       "clarify-similar-people-groups",
       "heldout-exact-people-group"
     ],
-    "hypothesis": "Clarifies an informal group name without questioning an explicit group ID.",
-    "sha256": "9e311bdf558ffdfa42b7c35bc491b7db5ff21d3716d20ebc4d2dcd0d674e4cde",
+    "hypothesis": "Checks all matching people groups, clarifies multiple candidates instead of choosing the closest name, and respects explicit complete IDs.",
+    "sha256": "1db2f1859ec03d96929a704310f07462d2ed9d1830b0d211e0618ff641ac9b62",
     "evidence": [
       {
         "case": "clarify-similar-people-groups",
-        "input_sha256": "17b146b831438f6c0cff0be962cf06397ff4639fa566e4b222f93b468d02fc85",
+        "input_sha256": "0f16bc52430813070be98145c4571cb4f91b2298f367ddcbd96efdca6754dcf6",
         "before": "0/5",
         "after": "5/5",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
@@ -303,7 +303,7 @@
         "controls": [
           {
             "case": "heldout-exact-people-group",
-            "input_sha256": "f72346f46e870b75bd9cab768d2e18a80fb99cd5e96da246e1a6672298750b36",
+            "input_sha256": "18f006ace31938656b0050d4a07bbbcfcbaafdcc367f96e9cbb5f4719c2366f9",
             "before": "5/5",
             "after": "5/5"
           }

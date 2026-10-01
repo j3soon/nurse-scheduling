@@ -5,5 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <!-- This file is mostly AI generated. -->
 
-If an informal people-group name fits both a base group ID and a qualified variant, ask which exact group ID
-before changing membership.
+Before changing people-group membership, check whether the user's description matches multiple existing group IDs,
+including IDs with additional words. If it does, list the matching groups and ask which one they mean before editing.
+A shorter or closer name match alone does not establish the intended group. Skip clarification when the user has
+explicitly selected a complete group ID.
