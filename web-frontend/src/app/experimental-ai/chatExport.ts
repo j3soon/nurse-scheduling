@@ -29,6 +29,7 @@ import type { ActivityEntry } from './AssistantActivity';
 export interface ChatExportMessage {
   role: 'user' | 'assistant' | 'optimizer';
   content: string;
+  createdAt?: number;
   attachmentNames?: string[];
   activity?: ActivityEntry[];
   status?: 'pending' | 'failed';
@@ -170,6 +171,7 @@ function renderActivityDetailsHtml(entry: Exclude<ActivityEntry, { kind: 'respon
 
 function messageDetails(message: ChatExportMessage): string[] {
   const details: string[] = [];
+  if (message.createdAt !== undefined) details.push(`Sent: ${new Date(message.createdAt).toISOString()}`);
   if (message.attachmentNames?.length) details.push(`Attachments: ${message.attachmentNames.join(', ')}`);
   if (message.status === 'failed') details.push('Status: failed');
   if (message.status === 'pending') details.push('Status: pending');
@@ -223,8 +225,12 @@ function renderHtmlMessageDetails(message: ChatExportMessage): string {
     : message.status === 'failed'
       ? '<p class="failure">This turn failed and was not saved to AI history.</p>'
       : '';
-  const timing = message.responseStartedAt !== undefined && message.responseCompletedAt !== undefined
-    ? `<time datetime="${new Date(message.responseCompletedAt).toISOString()}">${escapeHtml(new Date(message.responseCompletedAt).toLocaleString())} · ${formatResponseDuration(message.responseStartedAt, message.responseCompletedAt)}</time>`
+  const timestamp = message.responseCompletedAt ?? message.createdAt;
+  const duration = message.responseStartedAt !== undefined && message.responseCompletedAt !== undefined
+    ? ` · ${formatResponseDuration(message.responseStartedAt, message.responseCompletedAt)}`
+    : '';
+  const timing = timestamp !== undefined
+    ? `<time datetime="${new Date(timestamp).toISOString()}" title="${escapeHtml(new Date(timestamp).toLocaleString())}">${escapeHtml(new Date(timestamp).toLocaleString())}${duration}</time>`
     : '';
   return `${attachments}${status}${timing}`;
 }

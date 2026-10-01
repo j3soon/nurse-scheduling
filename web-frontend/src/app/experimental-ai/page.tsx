@@ -198,6 +198,7 @@ interface SelectedAttachment {
 }
 
 interface QueuedChatMessage {
+  createdAt: number;
   id: string;
   content: string;
 }
@@ -261,6 +262,7 @@ function isChatMessage(value: unknown): value is ChatMessage {
     && (message.activity === undefined
       || (Array.isArray(message.activity) && message.activity.every(isActivityEntry)))
     && (message.status === undefined || message.status === 'pending' || message.status === 'failed')
+    && (message.createdAt === undefined || Number.isFinite(message.createdAt))
     && (message.responseStartedAt === undefined || Number.isFinite(message.responseStartedAt))
     && (message.responseCompletedAt === undefined || Number.isFinite(message.responseCompletedAt))
     && (message.retry === undefined || (
@@ -1336,12 +1338,14 @@ export default function ExperimentalAiPage() {
     question: string,
     attachmentsForMessage: SelectedAttachment[],
     clearComposer: boolean,
+    createdAt = Date.now(),
   ) => {
     if (!question || isStreaming || conversationUnavailable || (authRequired && authToken === null)) return;
 
     const userMessage: ChatMessage = {
       id: messageId(),
       role: 'user',
+      createdAt,
       content: question,
       attachmentNames: attachmentsForMessage.map(attachment => attachment.file.name),
     };
@@ -1445,6 +1449,7 @@ export default function ExperimentalAiPage() {
             return { ...message, activity: finishToolActivity(message.activity ?? [], activity) };
           })),
           onSteering: (queuedId, queuedMessage) => {
+            const createdAt = queuedMessagesRef.current.find(message => message.id === queuedId)?.createdAt ?? Date.now();
             queuedMessagesRef.current = queuedMessagesRef.current.filter(message => message.id !== queuedId);
             setQueuedMessages(queuedMessagesRef.current);
             const steeringStartedAt = Date.now();
@@ -1457,7 +1462,7 @@ export default function ExperimentalAiPage() {
                     ? { ...message, status: undefined, responseCompletedAt: steeringStartedAt }
                     : message
                 )),
-                { id: queuedId, role: 'user', content: queuedMessage },
+                { id: queuedId, role: 'user', content: queuedMessage, createdAt },
                 {
                   id: nextAssistantId,
                   role: 'assistant',
@@ -1473,10 +1478,10 @@ export default function ExperimentalAiPage() {
               const pendingAssistantId = activeAssistantId;
               setMessages(previous => {
                 const pendingIndex = previous.findIndex(message => message.id === pendingAssistantId);
-                if (pendingIndex < 0) return [...previous, { id: queuedId, role: 'user', content: queuedMessage }];
+                if (pendingIndex < 0) return [...previous, { id: queuedId, role: 'user', content: queuedMessage, createdAt }];
                 return [
                   ...previous.slice(0, pendingIndex),
-                  { id: queuedId, role: 'user', content: queuedMessage },
+                  { id: queuedId, role: 'user', content: queuedMessage, createdAt },
                   ...previous.slice(pendingIndex),
                 ];
               });
@@ -1558,7 +1563,7 @@ export default function ExperimentalAiPage() {
       if (nextMessage) {
         queuedMessagesRef.current = queuedMessagesRef.current.slice(1);
         setQueuedMessages(queuedMessagesRef.current);
-        window.setTimeout(() => void sendRequest(nextMessage.content, [], false), 0);
+        window.setTimeout(() => void sendRequest(nextMessage.content, [], false, nextMessage.createdAt), 0);
       }
     }
   };
@@ -1568,7 +1573,7 @@ export default function ExperimentalAiPage() {
     const question = draft.trim();
     if (!question || (authRequired && authToken === null)) return;
     if (isStreaming) {
-      const queuedMessage = { id: messageId(), content: question };
+      const queuedMessage = { id: messageId(), content: question, createdAt: Date.now() };
       queuedMessagesRef.current = [...queuedMessagesRef.current, queuedMessage];
       setQueuedMessages(queuedMessagesRef.current);
       setDraft('');
@@ -2005,88 +2010,92 @@ export default function ExperimentalAiPage() {
             <p>Try asking “Who is available on the first date?”</p>
           </div>
         )}
-        {messages.map(message => (
-          <article
-            key={message.id}
-            className={`max-w-[85%] rounded-xl px-4 py-3 ${
-              message.role === 'user'
-                ? 'ml-auto bg-blue-600 text-white'
-                : message.role === 'optimizer'
-                  ? 'mr-auto border border-emerald-200 bg-emerald-50 text-emerald-950'
-                  : 'mr-auto border border-gray-200 bg-white text-gray-900'
-            }`}
-          >
-            <p className="mb-1 text-xs font-semibold uppercase tracking-wide opacity-70">
-              {message.role === 'user' ? 'You' : message.role === 'optimizer' ? 'Optimizer' : 'Assistant'}
-            </p>
-            {message.activity && (
-              <AssistantActivity
-                entries={message.activity.filter(entry => (
-                  entry.kind === 'response' || (entry.kind === 'reasoning' ? showReasoning : showTools)
-                ))}
-              />
-            )}
-            {message.role === 'assistant' && !message.content && message.status === 'pending' ? (
-              steeringAssistantId === message.id ? <p className="text-xs text-gray-500">Steering…</p> : <ThinkingIndicator />
-            ) : message.role !== 'assistant' ? (
-              <p className="whitespace-pre-wrap break-words">{message.content}</p>
-            ) : null}
-            {message.role === 'optimizer' && message.optimizerJob?.downloadable && (
-              <button
-                type="button"
-                onClick={() => void downloadOptimizationResult(message.optimizerJob?.jobId ?? '')}
-                disabled={downloadingOptimizationId !== null}
-                className="mt-3 inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-gray-400"
-              >
-                <FiDownload aria-hidden="true" className="h-4 w-4" />
-                {downloadingOptimizationId === message.optimizerJob.jobId ? 'Downloading...' : 'Download result'}
-              </button>
-            )}
-            {message.attachmentNames && message.attachmentNames.length > 0 && (
-              <p className="mt-2 text-xs opacity-80">
-                Attached: {message.attachmentNames.join(', ')}
+        {messages.map(message => {
+          const timestamp = message.responseCompletedAt ?? message.createdAt;
+          return (
+            <article
+              key={message.id}
+              className={`max-w-[85%] rounded-xl px-4 py-3 ${
+                message.role === 'user'
+                  ? 'ml-auto bg-blue-600 text-white'
+                  : message.role === 'optimizer'
+                    ? 'mr-auto border border-emerald-200 bg-emerald-50 text-emerald-950'
+                    : 'mr-auto border border-gray-200 bg-white text-gray-900'
+              }`}
+            >
+              <p className="mb-1 text-xs font-semibold uppercase tracking-wide opacity-70">
+                {message.role === 'user' ? 'You' : message.role === 'optimizer' ? 'Optimizer' : 'Assistant'}
               </p>
-            )}
-            {message.role === 'assistant'
-              && message.responseStartedAt !== undefined
-              && message.responseCompletedAt !== undefined && (
-              <time
-                dateTime={new Date(message.responseCompletedAt).toISOString()}
-                className="mt-2 block text-[0.6875rem] text-gray-400"
-              >
-                {formatResponseTime(message.responseCompletedAt)} ·{' '}
-                {formatResponseDuration(message.responseStartedAt, message.responseCompletedAt)}
-              </time>
-            )}
-            {message.role === 'assistant' && message.status === 'failed' && message.retry && (
-              <div className="mt-3 border-t border-red-200 pt-3 text-sm text-red-700">
-                <p>This turn failed and was not saved to AI history.</p>
-                {message.retry.requiresAttachments ? (
-                  <>
-                    <p className="mt-1 text-xs">Prepare the question, then reattach its files before sending.</p>
+              {message.activity && (
+                <AssistantActivity
+                  entries={message.activity.filter(entry => (
+                    entry.kind === 'response' || (entry.kind === 'reasoning' ? showReasoning : showTools)
+                  ))}
+                />
+              )}
+              {message.role === 'assistant' && !message.content && message.status === 'pending' ? (
+                steeringAssistantId === message.id ? <p className="text-xs text-gray-500">Steering…</p> : <ThinkingIndicator />
+              ) : message.role !== 'assistant' ? (
+                <p className="whitespace-pre-wrap break-words">{message.content}</p>
+              ) : null}
+              {message.role === 'optimizer' && message.optimizerJob?.downloadable && (
+                <button
+                  type="button"
+                  onClick={() => void downloadOptimizationResult(message.optimizerJob?.jobId ?? '')}
+                  disabled={downloadingOptimizationId !== null}
+                  className="mt-3 inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-gray-400"
+                >
+                  <FiDownload aria-hidden="true" className="h-4 w-4" />
+                  {downloadingOptimizationId === message.optimizerJob.jobId ? 'Downloading...' : 'Download result'}
+                </button>
+              )}
+              {message.attachmentNames && message.attachmentNames.length > 0 && (
+                <p className="mt-2 text-xs opacity-80">
+                  Attached: {message.attachmentNames.join(', ')}
+                </p>
+              )}
+              {timestamp !== undefined && (
+                <time
+                  dateTime={new Date(timestamp).toISOString()}
+                  title={new Date(timestamp).toLocaleString()}
+                  className={`mt-2 block text-[0.6875rem] ${message.role === 'user' ? 'text-blue-100' : 'text-gray-400'}`}
+                >
+                  {formatResponseTime(timestamp)}
+                  {message.responseStartedAt !== undefined && message.responseCompletedAt !== undefined && (
+                    <> · {formatResponseDuration(message.responseStartedAt, message.responseCompletedAt)}</>
+                  )}
+                </time>
+              )}
+              {message.role === 'assistant' && message.status === 'failed' && message.retry && (
+                <div className="mt-3 border-t border-red-200 pt-3 text-sm text-red-700">
+                  <p>This turn failed and was not saved to AI history.</p>
+                  {message.retry.requiresAttachments ? (
+                    <>
+                      <p className="mt-1 text-xs">Prepare the question, then reattach its files before sending.</p>
+                      <button
+                        type="button"
+                        onClick={() => prepareAttachmentRetry(message.retry?.question ?? '')}
+                        disabled={isStreaming}
+                        className="mt-2 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Prepare retry
+                      </button>
+                    </>
+                  ) : (
                     <button
                       type="button"
-                      onClick={() => prepareAttachmentRetry(message.retry?.question ?? '')}
+                      onClick={() => retryMessage(message.id, message.retry?.question ?? '')}
                       disabled={isStreaming}
                       className="mt-2 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      Prepare retry
+                      Retry
                     </button>
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => retryMessage(message.id, message.retry?.question ?? '')}
-                    disabled={isStreaming}
-                    className="mt-2 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Retry
-                  </button>
-                )}
-              </div>
-            )}
-          </article>
-        ))}
+                  )}
+                </div>
+              )}
+            </article>
+          );
+        })}
         {activeSessionId !== null && sessionExpiresAt !== null && (
           <p className="pt-1 text-center text-[0.6875rem] text-gray-400">
             Chat expires at{' '}

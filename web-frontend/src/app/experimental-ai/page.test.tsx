@@ -169,6 +169,9 @@ describe('ExperimentalAiPage', () => {
     const responseTime = screen.getByText(/· (?:<1s|\d+(?:\.\d)?s|\d+m \d+s)$/);
     expect(responseTime.tagName).toBe('TIME');
     expect(responseTime).toHaveAttribute('dateTime');
+    expect(responseTime).toHaveAttribute('title', new Date(responseTime.getAttribute('dateTime')!).toLocaleString());
+    const userTime = screen.getByText('Who works Monday?').closest('article')?.querySelector('time');
+    expect(userTime).toHaveAttribute('title', new Date(userTime!.dateTime).toLocaleString());
     expect(mockCreateSession).toHaveBeenCalledWith('description: current schedule\n', null, '/ai');
     expect(mockStreamMessage).toHaveBeenCalledWith(
       'session-id',

@@ -26,6 +26,7 @@ const messages: ChatExportMessage[] = [
   {
     role: 'user',
     content: 'Show <script>alert(1)</script> coverage.',
+    createdAt: Date.parse('2026-09-18T01:00:00Z'),
     attachmentNames: ['ward.xlsx'],
   },
   {
@@ -65,6 +66,7 @@ describe('chat export', () => {
     expect(output).toContain('Show <script>alert(1)</script> coverage.');
     expect(output).toContain('Attachments: ward.xlsx');
     expect(output).toContain('Response time: 1.25s');
+    expect(output).toContain('Sent: 2026-09-18T01:00:00.000Z');
     expect(output).toContain('### Reasoning');
     expect(output).toContain('### read');
     expect(output).toContain('### Schedule change');
@@ -96,7 +98,8 @@ describe('chat export', () => {
     expect(output).toContain('<span class="added">+ description: new</span>');
     expect(output).not.toContain('Before:');
     expect(output).toContain('<p class="attachments">Attached: ward.xlsx</p>');
-    expect(output).toContain('<time datetime="2026-09-18T01:00:01.250Z">');
+    expect(output).toContain('<time datetime="2026-09-18T01:00:01.250Z" title="');
+    expect(output).toContain('<time datetime="2026-09-18T01:00:00.000Z" title="');
   });
 
   it('exports optimizer messages as their own labeled and styled block', () => {
