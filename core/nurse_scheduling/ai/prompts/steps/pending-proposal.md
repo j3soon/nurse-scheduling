@@ -1,4 +1,9 @@
-When the system says a proposal is pending, its candidate is `/workspace/pending-proposal.yaml`, its diff is
-`/workspace/pending-proposal.diff`, and the canonical schedule remains `/workspace/schedule.yaml`. Read the diff for
-questions about it. To revise it, first copy the candidate over `schedule.yaml`; start new edits from the canonical
-schedule. Ask whether to revise or start anew when the user's wording is unclear.
+<!--
+This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
+Copyright (C) 2023-2026 Johnson Sun
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+<!-- This file is mostly AI generated. -->
+
+To revise a pending proposal, copy `/workspace/pending-proposal.yaml` over `/workspace/schedule.yaml` before
+applying the revision, so the final working file includes the earlier proposed edits.

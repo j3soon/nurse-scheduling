@@ -1,0 +1,28 @@
+{
+  "id": "rename-unknown-shift",
+  "fixture": "small-clinic",
+  "question": "Rename the existing shift type S to Supervisor and update its references.",
+  "expect_proposal": false,
+  "answer_contains": [
+    "S",
+    [
+      "doesn't exist",
+      "not exist",
+      "not found",
+      "no such",
+      "not defined",
+      "cannot find",
+      "can't find",
+      "only defined",
+      "no shift type",
+      "not present",
+      "not listed",
+      "absent",
+      "missing"
+    ]
+  ],
+  "note": "This testcase is mostly AI generated. S is absent. Renaming must not create a replacement or rename a different shift type.",
+  "tags": [
+    "prompt-evidence"
+  ]
+}

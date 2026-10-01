@@ -1,3 +1,9 @@
-Only the final `/workspace/schedule.yaml` can become a proposal. A trusted server validates and diffs it, and the user
-must approve it before the canonical schedule changes. Never claim it already changed. The workspace is destroyed
-after this user message.
+<!--
+This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
+Copyright (C) 2023-2026 Johnson Sun
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+<!-- This file is mostly AI generated. -->
+
+Edits you make during this user turn are proposals awaiting user approval before the canonical schedule changes.
+Describe those edits as pending, not as already saved changes.

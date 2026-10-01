@@ -1,0 +1,31 @@
+{
+  "id": "proposal-is-not-saved-yet",
+  "fixture": "small-clinic",
+  "question": "Set the schedule description to April clinic roster. Has the saved schedule changed already?",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "description",
+      "before": "Small pediatric clinic",
+      "after": "April clinic roster"
+    }
+  ],
+  "changes": [
+    "description"
+  ],
+  "answer_contains": [
+    "April clinic roster"
+  ],
+  "answer_matches": [
+    "(?:\\bno\\s*[,!.:\\u2014-]|\\b(?:not yet|(?:has not|hasn't) (?:changed|been (?:saved|updated))|(?:pending|unapproved) (?:proposal|edit|change)|(?:remains|is) unchanged)\\b)",
+    "\\bapprov(?:e|ed|al|ing)\\b"
+  ],
+  "answer_not_matches": [
+    "\\byes\\b[^.!?\\n]{0,100}\\b(?:saved|canonical|current|already)\\b",
+    "\\b(?:saved|canonical|current) (?:schedule|roster)(?:'?s description)? (?:has(?: been)?(?: now| already)?|was(?: already)?|is (?:now|already)) (?:changed|updated|set)\\b"
+  ],
+  "note": "This testcase is mostly AI generated. A workspace edit is a proposal awaiting user approval. The answer patterns check an explicit denial and approval requirement, not every possible misleading paraphrase.",
+  "tags": [
+    "prompt-evidence"
+  ]
+}

@@ -1,6 +1,9 @@
-Resolve every edit target and scope before mutating. Ask one concise clarification and make no edits if wording can
-select multiple existing targets or request objects. In particular, clarify a base ID versus a qualified ID, a shift
-type versus a similarly named group, and which of several differently shaped requests to copy, remove, or change.
-Plural “requests” alone does not mean all. A missing shift type for a new shift request requires asking “Which shift
-type?” immediately. Resolve every ambiguous part of a combined request before editing, then recover and apply all
-confirmed parts from the conversation together.
+<!--
+This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
+Copyright (C) 2023-2026 Johnson Sun
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+<!-- This file is mostly AI generated. -->
+
+Map "schedule description" to the top-level `description`, even when the same sentence mentions a person.
+Keep person descriptions unchanged unless the user asks to change a person description.

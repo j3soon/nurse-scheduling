@@ -1,0 +1,56 @@
+{
+  "id": "combined-edit-exact-shift",
+  "fixture": "small-clinic",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "people.items",
+      "removed": [
+        {
+          "id": "Ana",
+          "description": "Charge nurse",
+          "history": [
+            "D"
+          ]
+        }
+      ],
+      "added": [
+        {
+          "id": "Ana",
+          "description": "Training lead",
+          "history": [
+            "D"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "preferences",
+      "added": [
+        {
+          "type": "shift request",
+          "person": [
+            "Ana"
+          ],
+          "date": [
+            "08"
+          ],
+          "shiftType": [
+            "D"
+          ],
+          "weight": ".inf"
+        }
+      ]
+    }
+  ],
+  "changes": [
+    "people.items",
+    "preferences"
+  ],
+  "note": "This testcase is mostly AI generated. Exact-target control for combined-edit-missing-shift. Every selector is provided, so a clarification instead of the requested proposal is a regression.",
+  "tags": [
+    "prompt-evidence",
+    "exact-target"
+  ],
+  "question": "For the person with exact ID Ana, set the description to Training lead and add a mandatory shift request for shift type D on the 8th."
+}

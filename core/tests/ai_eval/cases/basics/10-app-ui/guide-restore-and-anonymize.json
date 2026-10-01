@@ -1,0 +1,42 @@
+{
+  "id": "guide-restore-and-anonymize",
+  "fixture": "small-clinic",
+  "question": "Before I risk my current roster: does Upload merge an older YAML or replace it? It gives a version warning. How can I cancel or undo an accidental upload using a keyboard shortcut? If I use Anonymize YAML, will that change my current roster and scrub personal names from free-text descriptions? Explain the app's behavior and where to make a backup. Don't import or change anything.",
+  "expect_proposal": false,
+  "tags": [
+    "prompt-evidence",
+    "app-ui"
+  ],
+  "answer_contains": [
+    "Save and Load",
+    "Download",
+    "Upload",
+    "cancel",
+    [
+      "Ctrl+Z",
+      "Ctrl + Z",
+      "Control+Z"
+    ],
+    [
+      "Cmd+Z",
+      "Cmd + Z",
+      "Command+Z",
+      "Command + Z"
+    ],
+    [
+      "confirm",
+      "confirmation"
+    ],
+    "Anonymize"
+  ],
+  "answer_matches": [
+    "\\b(?:replac\\w*|overwrit\\w*)\\b[^.!?\\n]{0,100}\\b(?:current|existing|roster|schedule)\\b",
+    "\\b(?:description\\w*|free[ -]text)\\b[^.!?]{0,180}\\b(?:unchanged|unmodified|intact|preserved|not (?:scrubbed|anonymized|removed|changed)|as[ -]is)\\b|\\b(?:does not|doesn.t|won.t|not)\\b[^.!?]{0,80}\\b(?:scrub|anonymize|remove|change)\\w*[^.!?]{0,80}\\b(?:description\\w*|free[ -]text)\\b",
+    "\\b(?:browser|current|existing|local)\\b[^.!?]{0,100}\\b(?:unchanged|unmodified|intact|untouched|not changed|unaffected|stays the same|as[ -]is)\\b|\\b(?:does[\\s*`_]+not|doesn.t|won.t)\\b[^.!?]{0,60}\\b(?:change|modify|affect|alter)\\w*[^.!?]{0,80}\\b(?:browser|current|existing|local)\\b"
+  ],
+  "answer_not_matches": [
+    "\\b(?:upload(?:ing)?|import(?:ing)?)\\s+(?:merges|combines|appends)\\b(?![^.!?\\n]*\\?)",
+    "\\b(?:will|does)\\s+(?:automatically\\s+)?merge\\b(?![^.!?\\n]*\\?)"
+  ],
+  "note": "This testcase is mostly AI generated. Facts come from save-and-load.md: replacement and confirmation, cancellation and keyboard undo, backup, and separate anonymized download that leaves browser data and descriptions unchanged. No guide-read tool requirement. Freeze criteria before the paired run."
+}

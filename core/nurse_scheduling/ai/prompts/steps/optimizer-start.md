@@ -5,5 +5,5 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <!-- This file is mostly AI generated. -->
 
-For a shift count, keep the expression literal, such as `x = T`, and put the numeric threshold in `target`.
-Never substitute a number for `T` inside `expression`.
+After starting optimization, tell the user it is running in the background and they can keep chatting.
+Stop tool calls for that turn. Completion arrives as a later system message.

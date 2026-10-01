@@ -1,0 +1,50 @@
+{
+  "id": "pref-count-coefficients-first-valid",
+  "fixture": "small-clinic",
+  "question": "Ana must work exactly 3 workload points over the roster, counting each D as 1 and each N as 2.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "added": [
+        {
+          "type": "shift count",
+          "person": [
+            "Ana"
+          ],
+          "countDates": [
+            "ALL"
+          ],
+          "countShiftTypes": [
+            "D",
+            "N"
+          ],
+          "countShiftTypeCoefficients": [
+            [
+              "D",
+              1
+            ],
+            [
+              "N",
+              2
+            ]
+          ],
+          "expression": "x = T",
+          "target": 3,
+          "weight": "-.inf"
+        }
+      ],
+      "allow_added_description": true
+    }
+  ],
+  "changes": [
+    "preferences"
+  ],
+  "note": "This testcase is mostly AI generated. Same workload request as pref-count-coefficients-small, with the additional predeclared requirement that the agent never writes an invalid intermediate schedule. A repaired x = 3 is a trajectory failure even when the final x = T proposal is correct.",
+  "tags": [
+    "prompt-evidence"
+  ],
+  "tool_usage": {
+    "max_validation_errors": 0
+  }
+}

@@ -33,6 +33,10 @@ multiset delta, so an unlisted addition or removal at that path fails:
 
 Object key order and list position within the selected collection do not matter. Nested list order remains semantic,
 which is required for values such as succession patterns. Include complete objects rather than partial patterns.
+For a pure addition, `allow_added_description: true` accepts an optional label when the user did not request one.
+This cannot hide changes to existing objects or a requested description. Exact staffing requirements without a
+preferred target ignore their ineffective weight. Requirements, qualifications, and preferred-staffing penalties
+remain semantic.
 
 For a scalar, mapping, or whole-section replacement, use `before` and `after` instead of `removed` and `added`.
 Use `null` for a missing path, such as an export section created from scratch.
@@ -42,9 +46,25 @@ Examples include optional descriptions, case-insensitive natural-language values
 history entries while preserving similarly named IDs. Use `{"path": "...", "unchanged": true}` when a value must
 match the input fixture, so fixture copy edits do not stale a literal expectation. Use `answer_contains` for read-only and refusal cases,
 `intermediate_answer_contains` for clarification turns, and `tool_usage` only when the trajectory itself is under test.
+Use `turn_tool_usage` as an ordered list of tool criteria to grade individual user turns. A `null` entry skips a turn.
+This distinguishes a forbidden premature edit from the edit required after clarification. `answer_matches` and
+`answer_not_matches` accept case-insensitive regular expressions for focused answer contracts. Validate them against
+correct paraphrases and known incorrect answers. They do not replace semantic schedule checks or prove every possible
+answer wording is correct.
+Use `optimizer_error` to simulate an optimizer API outage, and `tool_usage.required_errors` to require an observed
+tool failure. This exercises the agent's response to a tool error without treating a controlled outage as a provider
+or sandbox infrastructure failure.
+Use `tool_usage.max_validation_errors` to bound failed trusted schedule checks. A valid final proposal does not erase
+an invalid intermediate mutation. Unrelated tool errors are not schedule-validation repairs.
 
 Every proposal case must also declare `changes`. It guards all schedule paths outside the listed scope. Diff checks
 guard every addition and removal inside their selected collection.
+
+An unexpected proposal or exceeded tool limit is an irreversible failure for that case. By default the runner records
+it and stops, avoiding work that cannot restore a passing verdict. Missing required tools are not an early failure
+because later calls may satisfy them. Use `--continue-after-failure` when the later trajectory is useful for diagnosis.
+Successful cases always execute every user turn. Metadata records this setting and sandbox timeouts so differing
+evaluation configurations remain visible.
 
 Use `--repeat 3` for reliability checks on a tuning subset. Repetitions share the global `--jobs` limit and reports
 show per-case pass rates plus median and p95 cost. Use `--baseline-report <report-dir>` to compare reliability, model
@@ -65,12 +85,20 @@ cross-cutting evaluation properties such as `holdout`, `tuning`, or `clarificati
 
 `nurse_scheduling/ai/prompts/system-steps.json` orders the Markdown sections used by production and assigns each
 one a stable ID, hypothesis, and targeted case set. The production and evaluation loaders use the same assembler.
-Anchors and section hashes make the evaluation fail fast if prompt text changes without updating the manifest.
+Leading SPDX license blocks and AI provenance comments are excluded from model-facing text.
+Run `python3 scripts/print_ai_system_prompt.py` from the repository root to print the assembled prompt to stdout.
+The script uses the production assembler and needs only Python's standard library. The app appends request-specific
+context, such as the schedule pointer, attachment manifest, and pending-proposal state, when building a request.
+Section hashes make the evaluation fail fast if prompt text changes without updating the manifest.
 Keep section filenames stable and change their order in the manifest. Linked cases are candidates for evidence, not
-proof that a section helps. A step's `evidence` records a successful adjacent comparison only after inspecting its
-before and after reports. Empty evidence means that section has not yet shown a measured marginal benefit. A `gaps`
-entry records untested claims or comparisons without a measured gain. A comparison with no targeted case requires an
-explicit case selection.
+proof that a section helps. A step's `evidence` records a clean repeated comparison only after inspecting its
+before and after reports. CI requires at least one benefit witness for every shipped clause. It rejects stale clause
+or testcase/fixture inputs, ties without a declared cost benefit, infrastructure errors, and failing controls.
+Candidate comparisons remain runnable before evidence is available. Keep aggregate counts, the model, and an
+input fingerprint tracked. Preserve full prompt contexts, run metadata, diagnostics, and old receipts in ignored
+`artifacts/`. Use selected integration checks when an earlier clause could affect later policies.
+
+The [evidence workflow](prompt-evidence.md) documents the repository/artifact boundary and reproducible commands. A passing linked case alone does not establish a section's benefit.
 
 The runner offers a controlled `optimizer` tool with the production tool definition. It acknowledges starts and
 reports a running job without submitting to the real optimizer, so cases can grade whether the agent used the tool
@@ -78,7 +106,7 @@ and explained its background behavior. This does not validate solver output or c
 
 From the repository root, run `./scripts/run_ai_eval.sh --prompt-compare-step 5` to compare the first four sections
 against the first five using step 5's cases. `--case ID` overrides that default case set. A comparison defaults to
-three repeats per case and accepts `--repeat 3` through `--repeat 5`. It uses four concurrent case jobs by default and
+three repeats per case and accepts up to `--repeat 10` for deeper investigations. It uses four concurrent case jobs by default and
 alternates the before/after queue order across repetitions. Both variants receive the same tools, fixtures, and
 references. `--prompt-step 0 --case ID` runs without optional prompt text, while `--prompt-step N --case ID` runs a
 single prefix. The application-generated schedule summary still appears in both variants.
@@ -88,7 +116,7 @@ hashes, plus `comparison.md`. It reports a benefit only when there are no infras
 passes, and either at least one before attempt fails or an explicit relative cost target is met with all attempts
 passing. For example, append `--cost-metric tool-calls --cost-ratio 0.6` to require at most 60% of the baseline tool
 calls. Available metrics are `tool-calls`, `turns`, `uncached-tokens`, and `seconds`. Cost ratios compare successful
-attempts only. Treat three to five repetitions as directional evidence, not a precise reliability or latency estimate.
+attempts only. Treat these small repeated samples as directional evidence, not a precise reliability or latency estimate.
 
 Run `--prompt-ablate-step N` only for a requested full-prompt removal check. It compares the complete prompt without
 section N against the complete prompt. Ordinary step comparisons run only the cases named for that step, unless

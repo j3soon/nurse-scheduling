@@ -1,15 +1,314 @@
 [
-  {"id": "role-and-truthfulness", "starts_with": "You are the experimental Nurse Scheduling assistant", "cases": ["ask-people-count", "ask-shift-types"], "hypothesis": "Answers schedule questions accurately and concisely.", "gaps": ["The ask-people-count comparison passed 3/3 with an empty optional prompt and 3/3 with paragraph 1, with no cost gain. It does not justify this paragraph.", "Concision is not graded separately from factual correctness."], "sha256": "bc62516762e8b09b919f4e305ec59a85b4047bdb339bd2527e0f77734d1c7b81", "file": "steps/role-and-truthfulness.md"},
-  {"id": "schedule-and-ui-context", "starts_with": "The current schedule is `/workspace/schedule.yaml`", "cases": ["ask-person-history", "guide-load-yaml"], "hypothesis": "Reads the right source for schedule or app-usage questions.", "evidence": [{"case": "guide-load-yaml", "comparison": "step 1 versus step 2", "before": "4/5", "after": "5/5", "model": "unsloth/Qwen3.8-27B-NVFP4", "revision": "a78573910f93", "limit": "One baseline answer lacked the UI instructions. The predeclared tool-call target was not graded because a baseline attempt failed."}], "gaps": ["The UI case does not yet grade avoiding unnecessary schedule reads or offering experimental chat."], "sha256": "36f631e3546b3c4f6f05c44f5f1328d064668ed632736c8d308d2df4bc060224", "file": "steps/schedule-and-ui-context.md"},
-  {"id": "tools-and-schema", "starts_with": "Your tools are `read`, `bash`, `edit`, `write`", "cases": ["tool-edit-two-descriptions", "pref-requirement-qualified"], "hypothesis": "Uses the provided tools and schema references to make valid edits with fewer failed calls.", "gaps": ["Tool choice, reference-read cost, and ruamel.yaml advice are not isolated by current graders."], "sha256": "69c69d54756192158571f4c36a859b40c741b3694083155bdbb602829819e563", "file": "steps/tools-and-schema.md"},
-  {"id": "attachments-optimizer-and-trust", "starts_with": "User attachments are listed in", "cases": ["read-second-xlsx-sheet", "heldout-ignore-schedule-injection"], "hypothesis": "Inspects attachments and ignores instructions embedded in untrusted schedule data.", "gaps": ["The server-side optimizer instruction has no direct live case."], "sha256": "6aff0598557740f857b9b864b5eb05196235b8ca5e4dba8bec70a0adaf466009", "file": "steps/attachments-optimizer-and-trust.md"},
-  {"id": "resolve-ambiguous-targets", "starts_with": "Resolve every edit target and scope before mutating", "cases": ["remember-edit-after-clarification", "reject-underspecified"], "hypothesis": "Clarifies ambiguous requests before changing the schedule.", "gaps": ["The remember-edit-after-clarification comparison passed 3/3 before and after step 5, with no tool-call or turn reduction. It does not show a marginal benefit.", "One-question efficiency and combined-request recovery need separate grading."], "sha256": "9fe235e5a46a839e751c677c21dc14032cb41d87b0794781d559bd5e0cbda04b", "file": "steps/resolve-ambiguous-targets.md"},
-  {"id": "known-id-clarifications", "starts_with": "These clarifications are mandatory before using tools", "cases": ["clarify-night-request-scope", "clarify-similar-people-groups"], "hypothesis": "Clarifies the N shift versus Night group before editing.", "evidence": [{"case": "clarify-night-request-scope", "comparison": "step 5 versus step 6", "before": "0/3", "after": "3/3", "model": "unsloth/Qwen3.8-27B-NVFP4", "revision": "a78573910f93", "limit": "Two after runs used a tool before asking. This proves clarification before editing but does not prove fewer reads."}], "gaps": ["The no-tools-before-clarification and cancellation clauses are not proven by this comparison."], "sha256": "fe6dcc8944016315a5a2981a2f6dbe104713ae2ed8355903da8a1e9be3ed7aae", "file": "steps/known-id-clarifications.md"},
-  {"id": "exact-selectors-and-conflicts", "starts_with": "Quoted or backticked IDs", "cases": ["heldout-exact-people-group", "reject-conflicting-shift-request"], "hypothesis": "Honors explicit selectors and rejects incompatible hard preferences.", "gaps": ["Explicit all, subset, and exclusion selectors need separate controls."], "sha256": "41cf54baf30ef10f926b4bc29caaccafcaba2a60b4f2a7598f6543ad65bc26ec", "file": "steps/exact-selectors-and-conflicts.md"},
-  {"id": "taiwan-holiday-renewal", "starts_with": "Before expanding either end of a date range", "cases": ["dates-range-expand-taiwan-no", "dates-range-expand-taiwan-yes"], "hypothesis": "Asks whether to renew holidays, then preserves or reproduces groups correctly.", "gaps": ["On dates-range-expand-taiwan-no, all five completed step 7/8 attempts passed after correcting a stale fixture-description assertion. One step-7 attempt had a sandbox error. This case has not shown a marginal benefit."], "sha256": "f8f5eca27288f209029152abbb2f9a8633ac8f03c26513f9b39f227989396cb3", "file": "steps/taiwan-holiday-renewal.md"},
-  {"id": "literal-edits-and-validation", "starts_with": "Treat verbs literally", "cases": ["people-remove-with-preferences", "reject-unknown-person"], "hypothesis": "Preserves unrelated data and refuses to invent missing entities.", "gaps": ["The one-verification and repair-validation-error clauses need trajectory tests."], "sha256": "a8dc045fff7288d8489bef91deb4145fbe41bf2be491eb769d92419f62042cac", "file": "steps/literal-edits-and-validation.md"},
-  {"id": "optimizer-lifecycle", "starts_with": "Use `optimizer` to start optimization", "cases": ["tool-optimizer-start"], "hypothesis": "Starts the server-side optimizer and handles its background lifecycle without repeated polling.", "evidence": [{"case": "tool-optimizer-start", "comparison": "step 9 versus step 10", "before": "2/3", "after": "3/3", "model": "unsloth/Qwen3.8-27B-NVFP4", "revision": "a78573910f93", "limit": "One baseline run made a redundant status call. Three repetitions provide only directional evidence."}], "gaps": ["A completed-run wakeup and stale workbook handling still need separate cases."], "sha256": "fcc2764a9f087ff6b3f9a8738f0ce9b51818b90250df7972be62be4d53101a5c", "file": "steps/optimizer-lifecycle.md"},
-  {"id": "pending-proposal", "starts_with": "When the system says a proposal is pending", "cases": ["question-then-approve-pending", "revise-unapproved-proposal-twice"], "hypothesis": "Reads or revises the pending candidate rather than the canonical schedule.", "gaps": ["The adjacent step comparison has not been run."], "sha256": "1320ff9b24da60a98470456f63e8f2186f949be20ccefece0ca7b194ab2b64f9", "file": "steps/pending-proposal.md"},
-  {"id": "proposal-state-transitions", "starts_with": "Conversation state can say a pending proposal", "cases": ["approve-then-follow-up-edit", "external-update-invalidates-pending"], "hypothesis": "Honors approval and invalidation between turns.", "gaps": ["The adjacent step comparison has not been run."], "sha256": "f9f728e83ed997940d4a9b98a1104d09496a0099e2155acbc7e64a528cbd8899", "file": "steps/proposal-state-transitions.md"},
-  {"id": "proposal-approval-boundary", "starts_with": "Only the final `/workspace/schedule.yaml`", "cases": ["description-set", "question-then-approve-pending"], "hypothesis": "Describes edits as proposals until the user approves them.", "gaps": ["Current grading checks proposal state but does not separately reject claims that the canonical schedule already changed."], "sha256": "6068a3381792b67f0e0c78e469d065b09278fdc084d241199ec91944f8b0bd74", "file": "steps/proposal-approval-boundary.md"}
+  {
+    "id": "tools-and-schema",
+    "file": "steps/tools-and-schema.md",
+    "cases": [
+      "pref-count-coefficients-small"
+    ],
+    "hypothesis": "Consults the relevant schema to construct a valid schedule edit.",
+    "sha256": "dbe538986f6d8df64e8cbeb95b09f370d45e0953d0bf85ccaf241861a338c388",
+    "evidence": [
+      {
+        "case": "pref-count-coefficients-small",
+        "input_sha256": "8bc3a045d60be46ae360325e1284659a58fd6fe6ab3b4409f39875a518fe99f1",
+        "before": "2/5",
+        "after": "5/5",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0
+      }
+    ]
+  },
+  {
+    "id": "literal-edits-and-validation",
+    "file": "steps/literal-edits-and-validation.md",
+    "cases": [
+      "pref-count-batch-first-valid"
+    ],
+    "hypothesis": "Keeps count expressions literal across operators and targets without validation repairs.",
+    "sha256": "6ac0b8a895661478b28c6f6bcb659bb11dd12b379d4563476f5a7b94ebf2d1c1",
+    "evidence": [
+      {
+        "case": "pref-count-batch-first-valid",
+        "input_sha256": "ca51042423c9b2bf5ad351745102949d5574f0d25c1d85c3b21774e69b73562d",
+        "before": "1/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "note": "Full-prompt ablation. Measures first-valid-write trajectory, not eventual YAML correctness."
+      }
+    ]
+  },
+  {
+    "id": "exact-selectors-and-conflicts",
+    "file": "steps/exact-selectors-and-conflicts.md",
+    "cases": [
+      "combined-edit-missing-shift-before-edit",
+      "combined-edit-exact-shift"
+    ],
+    "hypothesis": "Clarifies a missing shift type before proposing any part of a combined edit.",
+    "sha256": "576f58cbf71578f7d5e5927350209fcd4802f142c1b57ad51587d91d461fba49",
+    "evidence": [
+      {
+        "case": "combined-edit-missing-shift-before-edit",
+        "input_sha256": "4e220978bc1358caabe9c215dc1b807e5c29053906885a16fd8057b478f0412b",
+        "before": "1/5",
+        "after": "5/5",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "combined-edit-exact-shift",
+            "input_sha256": "c9b4fb6a6b14ee5600538bed894161d9b7985fb068a18244db19c6d32873be9d",
+            "before": "5/5",
+            "after": "5/5"
+          }
+        ],
+        "note": "Allows inspection before clarification."
+      }
+    ]
+  },
+  {
+    "id": "known-id-clarifications",
+    "file": "steps/known-id-clarifications.md",
+    "cases": [
+      "clarify-night-request-scope",
+      "clarify-night-keep-only-existing-request",
+      "remove-night-request-exact-id"
+    ],
+    "hypothesis": "Clarifies N versus Night rather than deleting a guessed selector.",
+    "sha256": "4b11e50c4011871c3f8e21eaed580a7710bfc11ab883f7cb6073fc3ff00e6fb9",
+    "evidence": [
+      {
+        "case": "clarify-night-keep-only-existing-request",
+        "input_sha256": "fbf0d7bc83e04c35fd2158927d8d9c116498beaabad412e824e8f828da7f83dc",
+        "before": "0/5",
+        "after": "5/5",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "clarify-night-request-scope",
+            "input_sha256": "6851c12a22c4a554a34ed592c91f8f0cf869a295588f7767fda0f9807aa6cc78",
+            "before": "0/5",
+            "after": "5/5"
+          },
+          {
+            "case": "remove-night-request-exact-id",
+            "input_sha256": "7a00111445c76afa15955e648561d01ffb58dd7fed47acf7ae57d2e49bd29280",
+            "before": "5/5",
+            "after": "5/5"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "resolve-ambiguous-targets",
+    "file": "steps/resolve-ambiguous-targets.md",
+    "cases": [
+      "combined-edit-exact-requests",
+      "people-description-small"
+    ],
+    "hypothesis": "Applies schedule descriptions to the global field and preserves person descriptions.",
+    "sha256": "ac5e78f35a66eb0217d37fa02443c9c27b11b99c881779e87026f9e2554d92fa",
+    "evidence": [
+      {
+        "case": "combined-edit-exact-requests",
+        "input_sha256": "f9c48e4f19b24c8d87d2fd92aac104e2be0546f3805833b18ec85abd742a1e65",
+        "before": "2/5",
+        "after": "5/5",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "people-description-small",
+            "input_sha256": "8460474d4a997ebaf2a53b2a91cd754bf0d9e19cfd1c280ef5ab6574ea3af172",
+            "before": "5/5",
+            "after": "5/5"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "request-scope",
+    "file": "steps/request-scope.md",
+    "cases": [
+      "combined-edit-ambiguous-requests",
+      "copy-all-requests-exact-small"
+    ],
+    "hypothesis": "Clarifies an unspecified request subset and then preserves every confirmed edit.",
+    "sha256": "6f88f3b6f4c2a6478e9d9185da5cfeb6a35d3e4d2cccfe1b8b0feb01d8644b8b",
+    "evidence": [
+      {
+        "case": "combined-edit-ambiguous-requests",
+        "input_sha256": "fd3bb6d833bc8567899733be2664bfe9f67af34ad2850e20d7b1a73c989dc77d",
+        "before": "0/5",
+        "after": "5/5",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "copy-all-requests-exact-small",
+            "input_sha256": "09502eec80863a097180f91e43a0dd7ce9272e476afd67e186fc6e026365871a",
+            "before": "5/5",
+            "after": "5/5"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "taiwan-holiday-renewal",
+    "file": "steps/taiwan-holiday-renewal.md",
+    "cases": [
+      "holiday-expansion-question-without-reads",
+      "dates-range-renew-small"
+    ],
+    "hypothesis": "Asks the Taiwan holiday renewal question immediately and applies the confirmed range.",
+    "sha256": "77607fee45bbee51803c928778c4b09c947392724daccde1fe1fd5bdfc96d752",
+    "evidence": [
+      {
+        "case": "holiday-expansion-question-without-reads",
+        "input_sha256": "578f9fc55902aad38f6ca649aa42642d50b490ab9d6bd0def06c81e337a3516c",
+        "before": "0/5",
+        "after": "5/5",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "dates-range-renew-small",
+            "input_sha256": "13d2aa18a2e89794eb2ce1e0a23554386b9bbce7449af4685975b2f60f3a7d56",
+            "before": "5/5",
+            "after": "5/5"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "optimizer-start",
+    "file": "steps/optimizer-start.md",
+    "cases": [
+      "tool-optimizer-start-without-chat-hint"
+    ],
+    "hypothesis": "Reports a background start without unnecessary follow-up tool calls.",
+    "sha256": "8bf39c5c2668fbd019ec4924bac9a664cb2050ead612e2a98f7c3826eb415558",
+    "evidence": [
+      {
+        "case": "tool-optimizer-start-without-chat-hint",
+        "input_sha256": "c70e1caccfc1175af4e399fa1d3edee1cb3f5c034370e4476f4c54f73ac9207e",
+        "before": "0/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "note": "Full-prompt ablation. Controlled startup, not solver output or completion callbacks."
+      }
+    ]
+  },
+  {
+    "id": "optimizer-lifecycle",
+    "file": "steps/optimizer-lifecycle.md",
+    "cases": [
+      "tool-optimizer-api-unavailable",
+      "tool-optimizer-start"
+    ],
+    "hypothesis": "Reports an optimizer API error without retrying or polling it.",
+    "sha256": "b45399ffaaf009d2d4e6264751c19aa4c071a6d7badc6dc87f722216c4ed6549",
+    "evidence": [
+      {
+        "case": "tool-optimizer-api-unavailable",
+        "input_sha256": "0d84142bc73c524f5b2640d08a04422ed3eb2bc537387fc57a5f0301465164a9",
+        "before": "1/5",
+        "after": "5/5",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "tool-optimizer-start",
+            "input_sha256": "cbfbca834beca2dc793785b4db3d35dadd0229708162bdbcf36cf5891f93f60a",
+            "before": "5/5",
+            "after": "5/5"
+          }
+        ],
+        "note": "Controlled API outage. Solver quality and completion callbacks are not graded."
+      }
+    ]
+  },
+  {
+    "id": "pending-proposal",
+    "file": "steps/pending-proposal.md",
+    "cases": [
+      "revise-pending-preserve-person"
+    ],
+    "hypothesis": "Produces a cumulative revision preserving prior proposed edits.",
+    "sha256": "fe9aae482be29db50f552293fdedf3c855345e4a0667da4ebfb750a5ad2c97fc",
+    "evidence": [
+      {
+        "case": "revise-pending-preserve-person",
+        "input_sha256": "ff108f6e6ad8ac68770e0775ca35e20ad505e588fe64505c2820a23b52a6ef65",
+        "before": "0/5",
+        "after": "5/5",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "note": "Covers cumulative revision, not cancellation."
+      }
+    ]
+  },
+  {
+    "id": "proposal-approval-boundary",
+    "file": "steps/proposal-approval-boundary.md",
+    "cases": [
+      "proposal-is-not-saved-yet",
+      "approved-description-is-current"
+    ],
+    "hypothesis": "Describes current-turn changes as awaiting approval.",
+    "sha256": "d18dfbf5eec7be545e4d6f8b793948c78dd68e9e6b6fed33d4d886f17b78223d",
+    "evidence": [
+      {
+        "case": "proposal-is-not-saved-yet",
+        "input_sha256": "3a48e4502120bda805ae6501ad6a23172463f857ccef516749e2568905771986",
+        "before": "0/5",
+        "after": "5/5",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "approved-description-is-current",
+            "input_sha256": "894dddde0f1281828d63041a2fb42b9a1665d845dfc7f4cbdda15a5872a8f47e",
+            "before": "5/5",
+            "after": "5/5"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "ambiguous-people-group",
+    "file": "steps/ambiguous-people-group.md",
+    "cases": [
+      "clarify-similar-people-groups",
+      "heldout-exact-people-group"
+    ],
+    "hypothesis": "Clarifies an informal group name without questioning an explicit group ID.",
+    "sha256": "9e311bdf558ffdfa42b7c35bc491b7db5ff21d3716d20ebc4d2dcd0d674e4cde",
+    "evidence": [
+      {
+        "case": "clarify-similar-people-groups",
+        "input_sha256": "17b146b831438f6c0cff0be962cf06397ff4639fa566e4b222f93b468d02fc85",
+        "before": "0/5",
+        "after": "5/5",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "heldout-exact-people-group",
+            "input_sha256": "f72346f46e870b75bd9cab768d2e18a80fb99cd5e96da246e1a6672298750b36",
+            "before": "5/5",
+            "after": "5/5"
+          }
+        ]
+      }
+    ]
+  }
 ]

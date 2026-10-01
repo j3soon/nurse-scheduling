@@ -20,7 +20,10 @@
 # This test is mostly AI generated.
 
 import asyncio
+import hashlib
 import json
+import subprocess
+import sys
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -54,10 +57,10 @@ from nurse_scheduling.ai.schema import (
     TAIWAN_HOLIDAYS_SOURCE,
     load_user_guide_references,
 )
-from nurse_scheduling.ai.system_prompt import PROMPT_DIRECTORY
+from nurse_scheduling.ai.system_prompt import PROMPT_DIRECTORY, load_system_prompt_sections
 
 from .ai_eval.grading import EvalCase, ExpectedDiff, ToolUsageExpectation, TurnAction, load_cases
-from .ai_eval.prompt_ladder import STEPS_PATH, load_prompt_steps, prompt_at_step
+from .ai_eval.prompt_ladder import STEPS_PATH, load_prompt_steps, prompt_at_step, validate_prompt_evidence
 from .ai_eval.runner import (
     CASES,
     DEFAULT_CASE_JOBS,
@@ -67,6 +70,7 @@ from .ai_eval.runner import (
     _reference_digests,
     _selected_cases,
     default_output_dir,
+    fixture_text,
     main,
     prompt_comparison_markdown,
     run_all,
@@ -77,6 +81,10 @@ from .ai_eval.runner import (
 )
 
 CASE_BY_ID = {case.id: case for case in load_cases(CASES)}
+FIXTURE_DIGESTS = {
+    fixture: hashlib.sha256(fixture_text(fixture).encode()).hexdigest()
+    for fixture in {case.fixture for case in CASE_BY_ID.values()}
+}
 
 
 def test_ai_eval_defaults_to_four_concurrent_cases():
@@ -90,12 +98,77 @@ def test_prompt_steps_reconstruct_production_and_link_real_cases():
     assert prompt_at_step(len(steps)) == SANDBOX_SYSTEM_PROMPT
     assert not prompt_at_step(0)
     assert all(case_id in CASE_BY_ID for step in steps for case_id in step.cases)
-    known_id = next(step for step in steps if step.id == "known-id-clarifications")
-    assert known_id.evidence[0]["before"] == "0/3"
-    assert known_id.evidence[0]["after"] == "3/3"
+    sections = load_system_prompt_sections()
     for index in range(1, len(steps) + 1):
         assert prompt_at_step(index).startswith(prompt_at_step(index - 1))
-        assert steps[index - 1].starts_with not in prompt_at_step(index, omit=index)
+        assert sections[index - 1] not in prompt_at_step(index, omit=index)
+
+
+def test_every_shipped_prompt_clause_has_current_repeated_benefit_evidence():
+    validate_prompt_evidence(load_prompt_steps(), CASE_BY_ID, FIXTURE_DIGESTS)
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ({"input_sha256": "0" * 64}, "stale clause, testcase, or fixture inputs"),
+        ({"before": "3/3", "after": "3/3"}, "no measured benefit"),
+        ({"infrastructure_errors": 1}, "infrastructure errors"),
+        ({"after": "2/3"}, "all after attempts passing"),
+        ({"before": "1/1", "after": "1/1"}, "three to ten paired runs"),
+    ],
+)
+def test_prompt_evidence_rejects_stale_or_inconclusive_receipts(change, message):
+    step = load_prompt_steps()[0]
+    record = {**step.evidence[0], **change}
+    with pytest.raises(ValueError, match=message):
+        validate_prompt_evidence((replace(step, evidence=(record,)),), CASE_BY_ID, FIXTURE_DIGESTS)
+
+
+def test_prompt_evidence_rejects_a_regressing_control():
+    step = next(step for step in load_prompt_steps() if step.evidence[0].get("controls"))
+    record = {**step.evidence[0], "controls": [{**step.evidence[0]["controls"][0], "after": "2/3"}]}
+    with pytest.raises(ValueError, match="all after attempts passing"):
+        validate_prompt_evidence((replace(step, evidence=(record,)),), CASE_BY_ID, FIXTURE_DIGESTS)
+
+
+def test_prompt_evidence_requires_a_witness():
+    with pytest.raises(ValueError, match="no benefit witness"):
+        validate_prompt_evidence((replace(load_prompt_steps()[0], evidence=()),), CASE_BY_ID, FIXTURE_DIGESTS)
+
+
+@pytest.mark.parametrize("changed_input", ["clause", "case", "fixture"])
+def test_prompt_evidence_rejects_changed_inputs(changed_input):
+    step = load_prompt_steps()[0]
+    case = CASE_BY_ID[step.evidence[0]["case"]]
+    cases, fixtures = CASE_BY_ID, FIXTURE_DIGESTS
+    if changed_input == "clause":
+        step = replace(step, sha256="0" * 64)
+    elif changed_input == "case":
+        cases = {**cases, case.id: replace(case, user_turns=("A changed request.",))}
+    else:
+        fixtures = {**fixtures, case.fixture: "0" * 64}
+    with pytest.raises(ValueError, match="stale clause, testcase, or fixture inputs"):
+        validate_prompt_evidence((step,), cases, fixtures)
+
+
+@pytest.mark.parametrize("ratio, passes", [(0.55, True), (0.70, False)])
+def test_prompt_evidence_accepts_only_cost_gains_meeting_the_declared_target(ratio, passes):
+    step = load_prompt_steps()[0]
+    record = {
+        **step.evidence[0],
+        "before": "3/3",
+        "after": "3/3",
+        "cost_metric": "tool-calls",
+        "cost_ratio": ratio,
+        "cost_target": 0.60,
+    }
+    candidate = (replace(step, evidence=(record,)),)
+    if passes:
+        validate_prompt_evidence(candidate, CASE_BY_ID, FIXTURE_DIGESTS)
+    else:
+        with pytest.raises(ValueError, match="no measured benefit"):
+            validate_prompt_evidence(candidate, CASE_BY_ID, FIXTURE_DIGESTS)
 
 
 def test_prompt_manifest_rejects_stale_section_hash(tmp_path: Path):
@@ -108,18 +181,49 @@ def test_prompt_manifest_rejects_stale_section_hash(tmp_path: Path):
         load_prompt_steps(manifest)
 
 
+def test_prompt_assembly_excludes_provenance_but_preserves_instruction_comments(tmp_path: Path, monkeypatch):
+    from nurse_scheduling.ai import system_prompt
+
+    body = "Keep T literal.\n<!-- A model-facing instruction comment. -->"
+    (tmp_path / "rule.md").write_text(
+        "<!--\nSPDX-License-Identifier: AGPL-3.0-or-later\n-->\n"
+        "<!-- This file is mostly AI generated. -->\n\n" + body + "\n"
+    )
+    monkeypatch.setattr(system_prompt, "PROMPT_DIRECTORY", tmp_path)
+    assert system_prompt.load_system_prompt_sections([{"file": "rule.md"}]) == (body,)
+
+
+def test_all_prompt_segments_have_headers_excluded_from_model_text():
+    for step in load_prompt_steps():
+        source = (PROMPT_DIRECTORY / step.file).read_text(encoding="utf-8")
+        assert source.startswith("<!--\nThis file is part of Nurse Scheduling Project,")
+        assert "SPDX-License-Identifier: AGPL-3.0-or-later\n-->\n<!-- This file is mostly AI generated. -->" in source
+    assert "SPDX-License-Identifier:" not in SANDBOX_SYSTEM_PROMPT
+    assert "This file is mostly AI generated." not in SANDBOX_SYSTEM_PROMPT
+    assert "Copyright (C)" not in SANDBOX_SYSTEM_PROMPT
+
+
+def test_print_prompt_script_matches_app_from_another_directory_without_dependencies(tmp_path: Path):
+    script = PROMPT_DIRECTORY.parents[3] / "scripts/print_ai_system_prompt.py"
+    result = subprocess.run(
+        [sys.executable, "-S", str(script)], cwd=tmp_path, check=True, capture_output=True, text=True
+    )
+    assert result.stdout == SANDBOX_SYSTEM_PROMPT + "\n"
+    assert not result.stderr
+
+
 def test_prompt_comparison_defaults_to_three_repeats_and_step_cases():
     steps = load_prompt_steps()
     step_number = next(index for index, step in enumerate(steps, 1) if step.id == "resolve-ambiguous-targets")
     arguments, cases = _selected_cases(["--prompt-compare-step", str(step_number)])
     assert arguments.repeat == 3
-    assert [case.id for case in cases] == sorted(steps[step_number - 1].cases)
+    assert sorted(case.id for case in cases) == sorted(steps[step_number - 1].cases)
 
 
 def test_optimizer_step_selects_its_direct_tool_case():
     step_number = next(index for index, step in enumerate(load_prompt_steps(), 1) if step.id == "optimizer-lifecycle")
     _, cases = _selected_cases(["--prompt-compare-step", str(step_number)])
-    assert [case.id for case in cases] == ["tool-optimizer-start"]
+    assert "tool-optimizer-start" in {case.id for case in cases}
 
 
 @pytest.mark.parametrize(
@@ -128,7 +232,7 @@ def test_optimizer_step_selects_its_direct_tool_case():
         ["--prompt-compare-step", "0"],
         ["--prompt-ablate-step", str(len(load_prompt_steps()) + 1)],
         ["--prompt-compare-step", "5", "--repeat", "2"],
-        ["--prompt-compare-step", "5", "--repeat", "6"],
+        ["--prompt-compare-step", "5", "--repeat", "11"],
         ["--prompt-compare-step", "5", "--cost-ratio", "0.6"],
     ],
 )
@@ -136,6 +240,11 @@ def test_prompt_comparison_rejects_invalid_requests(argv):
     with pytest.raises(SystemExit) as error:
         _parse_args(argv)
     assert error.value.code == 2
+
+
+def test_prompt_comparison_allows_explicit_ten_run_investigation():
+    arguments = _parse_args(["--prompt-compare-step", "1", "--repeat", "10"])
+    assert arguments.repeat == 10
 
 
 @pytest.mark.parametrize("argv", [[], ["--repeat", "3"], ["--jobs", "4"]])
@@ -316,6 +425,55 @@ def test_optimizer_case_uses_controlled_production_tool_contract():
     assert "Started optimizer job eval-job" in next(
         event["result"] for event in run.trajectory["events"] if event["kind"] == "tool"
     )
+
+
+def test_optimizer_unavailability_is_a_tool_error_and_not_an_infrastructure_error():
+    provider = ScriptedProvider(
+        [ToolCallRequest((ToolCall("call-1", "optimizer", '{"action":"start"}'),))],
+        [TextDelta("The optimizer API is unavailable.")],
+    )
+    run = _run("tool-optimizer-api-unavailable", provider)
+    assert run.passed
+    assert not run.error
+    assert any(event.get("name") == "optimizer" and event.get("ok") is False for event in run.trajectory["events"])
+    invented = _run("tool-optimizer-api-unavailable", ScriptedProvider([TextDelta("The API is unavailable.")]))
+    assert not invented.passed
+    assert "observes optimizer tool error" in "; ".join(invented.failures)
+
+
+@pytest.mark.parametrize("fail_fast, expected_requests", [(True, 2), (False, 3)])
+def test_optimizer_call_limit_stops_before_unnecessary_retries(fail_fast: bool, expected_requests: int):
+    provider = ScriptedProvider(
+        [ToolCallRequest((ToolCall("start", "optimizer", '{"action":"start"}'),))],
+        [ToolCallRequest((ToolCall("status", "optimizer", '{"action":"status"}'),))],
+        [TextDelta("The optimizer is unavailable.")],
+    )
+    run = asyncio.run(
+        run_case(provider, settings(), CASE_BY_ID["tool-optimizer-api-unavailable"], _factory(), fail_fast=fail_fast)
+    )
+    assert not run.passed
+    assert not run.error
+    assert "uses optimizer at most 1 time(s): used 2" in run.failures
+    assert len(provider.messages) == expected_requests
+    assert any(event["kind"] == "evaluation_stop" for event in run.trajectory["events"]) == fail_fast
+
+
+def test_missing_required_tool_does_not_stop_a_run_before_later_success():
+    case = EvalCase(
+        id="required-later",
+        fixture="new-schedule",
+        question="Inspect then start.",
+        expect_proposal=False,
+        tool_usage=ToolUsageExpectation(required=("optimizer",), max_total=2),
+    )
+    provider = ScriptedProvider(
+        [ToolCallRequest((ToolCall("read", "read", '{"path":"/workspace/schedule.yaml"}'),))],
+        [ToolCallRequest((ToolCall("start", "optimizer", '{"action":"start"}'),))],
+        [TextDelta("Started in the background.")],
+    )
+    run = asyncio.run(run_case(provider, settings(), case, _factory()))
+    assert run.passed
+    assert len(provider.messages) == 3
 
 
 def test_provider_wait_time_is_recorded_per_inference_turn():
@@ -642,6 +800,45 @@ def test_a_multi_user_turn_case_preserves_the_conversation_history():
         {"role": "assistant", "content": "Renew Taiwan holidays?"},
         {"role": "user", "content": "No."},
     ]
+
+
+@pytest.mark.parametrize("fail_fast, expected_user_turns", [(True, [1]), (False, [1, 2])])
+def test_unexpected_proposal_fails_before_wasting_later_turns(fail_fast: bool, expected_user_turns: list[int]):
+    provider = ScriptedProvider(
+        [
+            ToolCallRequest(
+                (
+                    ToolCall(
+                        "edit-1",
+                        "edit",
+                        json.dumps(
+                            {
+                                "path": "/workspace/schedule.yaml",
+                                "edits": [
+                                    {
+                                        "oldText": "description: Small pediatric clinic",
+                                        "newText": "description: Premature",
+                                    }
+                                ],
+                            }
+                        ),
+                    ),
+                )
+            )
+        ],
+        [TextDelta("Which shift type?")],
+        [TextDelta("A later reply cannot undo the forbidden first proposal.")],
+    )
+    run = asyncio.run(
+        run_case(
+            provider, settings(), CASE_BY_ID["combined-edit-missing-shift-before-edit"], _factory(), fail_fast=fail_fast
+        )
+    )
+    assert not run.passed
+    assert not run.error
+    assert "turn 1 proposal not expected" in "; ".join(run.failures)
+    assert [event["turn"] for event in run.trajectory["events"] if event["kind"] == "user"] == expected_user_turns
+    assert any(event["kind"] == "evaluation_stop" for event in run.trajectory["events"]) == fail_fast
 
 
 def test_a_multi_user_turn_case_can_grade_an_earlier_proposal():

@@ -64,6 +64,7 @@ from nurse_scheduling.ai.provider import ChatMessage, ProviderError, TextDelta, 
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
 from nurse_scheduling.ai.sandbox_agent import (
+    SANDBOX_SYSTEM_PROMPT,
     WORKSPACE_PENDING_DIFF,
     WORKSPACE_PENDING_PROPOSAL,
     WORKSPACE_SCHEDULE,
@@ -763,7 +764,6 @@ def test_health_and_streamed_schedule_question() -> None:
     system_prompt = " ".join(prompt[0]["content"].split())
     assert "Alice" not in system_prompt
     assert "schedule.yaml is available at /workspace/schedule.yaml" in system_prompt
-    assert "/workspace/optimizer-results/optimized-schedule.xlsx" in system_prompt
 
 
 def test_valid_owner_cookie_lifetime_is_refreshed() -> None:
@@ -2387,29 +2387,12 @@ def test_the_prompt_points_to_the_schedule_without_disclosing_its_facts() -> Non
     client.post(f"/sessions/{session_id}/messages", json={"message": "How many people?"})
 
     system_prompt = provider.calls[0][0]["content"]
+    assert system_prompt.startswith(SANDBOX_SYSTEM_PROMPT)
     normalized_prompt = " ".join(system_prompt.split())
     assert "schedule.yaml is available at /workspace/schedule.yaml" in normalized_prompt
     assert "2 people" not in normalized_prompt
     assert "PEOPLE" not in normalized_prompt
     assert "2026-01-01" not in normalized_prompt
-    assert "Your tools are `read`, `bash`, `edit`, `write`, and the server-side `optimizer`" in normalized_prompt
-    assert "Prefer `read` for files and images" in normalized_prompt
-    assert "`edit` for unique exact-text replacements" in normalized_prompt
-    assert "`write` only for new files or complete rewrites" in normalized_prompt
-    assert "`/reference/schema-core.md`" in normalized_prompt
-    assert "`/reference/schema-preferences.md`" in normalized_prompt
-    assert "Read the relevant reference before changing" in normalized_prompt
-    assert "at most one focused verification" in normalized_prompt
-    assert "`/reference/schema-export.md`" in normalized_prompt
-    assert "Python has `ruamel.yaml`, not PyYAML" in normalized_prompt
-    assert "Preserve all unrequested fields, selectors, and objects" in normalized_prompt
-    assert "/workspace/optimizer-results/optimized-schedule.xlsx" in normalized_prompt
-    assert "Repair any validation error before answering" in normalized_prompt
-    assert "user must approve it before the canonical schedule changes" in normalized_prompt
-    assert "Update, rename, and remove only existing entities" in normalized_prompt
-    assert "Use the server-side `optimizer` tool for a finished roster" in normalized_prompt
-    assert "Use `optimizer` to start optimization" in normalized_prompt
-    assert "Do not poll repeatedly" in normalized_prompt
     summary = system_prompt.split("Current schedule summary:\n")[1]
     assert len(summary) < len(schedule) / 2
 

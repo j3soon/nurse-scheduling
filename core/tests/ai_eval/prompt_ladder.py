@@ -20,8 +20,11 @@
 # This test is mostly AI generated.
 
 import hashlib
-from dataclasses import dataclass
+import json
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 from nurse_scheduling.ai.system_prompt import (
     PROMPT_STEPS_PATH,
@@ -29,6 +32,8 @@ from nurse_scheduling.ai.system_prompt import (
     load_system_prompt_entries,
     load_system_prompt_sections,
 )
+
+from .grading import EvalCase
 
 STEPS_PATH = PROMPT_STEPS_PATH
 
@@ -39,12 +44,10 @@ class PromptStep:
 
     id: str
     file: str
-    starts_with: str
     cases: tuple[str, ...]
     hypothesis: str
     sha256: str
-    evidence: tuple[dict[str, str], ...] = ()
-    gaps: tuple[str, ...] = ()
+    evidence: tuple[dict[str, Any], ...] = ()
 
 
 def load_prompt_steps(path: Path = STEPS_PATH) -> tuple[PromptStep, ...]:
@@ -56,17 +59,14 @@ def load_prompt_steps(path: Path = STEPS_PATH) -> tuple[PromptStep, ...]:
                 **item,
                 "cases": tuple(item["cases"]),
                 "evidence": tuple(item.get("evidence", ())),
-                "gaps": tuple(item.get("gaps", ())),
             }
         )
         for item in raw
     )
     sections = load_system_prompt_sections(raw)
     for index, (step, section) in enumerate(zip(steps, sections, strict=True), 1):
-        if not step.id or not step.starts_with or not step.hypothesis or not (step.cases or step.gaps):
-            raise ValueError(f"Prompt step {index} needs an ID, anchor, hypothesis, and cases or gaps")
-        if not section.startswith(step.starts_with):
-            raise ValueError(f"Prompt step {index} ({step.id}) no longer matches its section")
+        if not step.id or not step.hypothesis:
+            raise ValueError(f"Prompt step {index} needs an ID and hypothesis")
         if hashlib.sha256(section.encode()).hexdigest() != step.sha256:
             raise ValueError(f"Prompt step {index} ({step.id}) changed. Update its hypothesis and evidence")
         if any(record.get("case") not in step.cases for record in step.evidence):
@@ -77,3 +77,73 @@ def load_prompt_steps(path: Path = STEPS_PATH) -> tuple[PromptStep, ...]:
 def prompt_at_step(step: int, *, omit: int | None = None) -> str:
     """Return the first ``step`` sections, optionally leaving one out."""
     return compose_system_prompt(step, omit=omit)
+
+
+def case_digest(case: EvalCase) -> str:
+    """Bind a receipt to the parsed input and grading contract, not JSON formatting."""
+    return hashlib.sha256(json.dumps(asdict(case), sort_keys=True, default=str).encode()).hexdigest()
+
+
+def evidence_input_digest(step: PromptStep, case: EvalCase, fixture_digest: str) -> str:
+    """Keep one portable fingerprint for the clause and its test inputs."""
+    inputs = {"clause": step.sha256, "case": case_digest(case), "fixture": fixture_digest}
+    return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
+
+
+def validate_prompt_evidence(
+    steps: tuple[PromptStep, ...], cases: Mapping[str, EvalCase], fixture_digests: Mapping[str, str]
+) -> None:
+    """Require a clean repeated witness for each shipped clause.
+
+    Enforce this in CI, not candidate loading. New prompt variants must remain runnable
+    before they have evidence. Bind each receipt to its own clause and case, while
+    keeping full prompt contexts and run metadata in ignored evaluation artifacts.
+    """
+    for step in steps:
+        if not step.evidence:
+            raise ValueError(f"Prompt step {step.id} has no benefit witness")
+        for record in step.evidence:
+            label = f"Prompt step {step.id} evidence"
+            if record.get("infrastructure_errors") != 0:
+                raise ValueError(f"{label} is inconclusive due to infrastructure errors")
+            if not isinstance(record.get("model"), str) or not record["model"]:
+                raise ValueError(f"{label} needs the evaluated model")
+            before, after, _ = _receipt_counts(record, label)
+            if before == after:
+                ratio, target = record.get("cost_ratio"), record.get("cost_target")
+                if not (
+                    isinstance(ratio, (int, float))
+                    and isinstance(target, (int, float))
+                    and 0 < ratio <= target < 1
+                    and record.get("cost_metric") in {"tool-calls", "turns", "uncached-tokens", "seconds"}
+                ):
+                    raise ValueError(f"{label} shows no measured benefit")
+            for observation in (record, *record.get("controls", [])):
+                if observation.get("case") not in step.cases or observation.get("case") not in cases:
+                    raise ValueError(f"{label} names an unlinked testcase")
+                case = cases[observation["case"]]
+                if case.fixture not in fixture_digests or observation.get("input_sha256") != evidence_input_digest(
+                    step, case, fixture_digests[case.fixture]
+                ):
+                    raise ValueError(f"{label} has stale clause, testcase, or fixture inputs")
+                # A targeted extension need not rerun controls already verified in
+                # a smaller paired batch. Each observation still needs 3–10 trials.
+                _receipt_counts(observation, label)
+
+
+def _receipt_counts(record: dict[str, Any], label: str) -> tuple[int, int, int]:
+    try:
+        before, before_total = (int(value) for value in record["before"].split("/"))
+        after, after_total = (int(value) for value in record["after"].split("/"))
+    except (KeyError, ValueError, TypeError, AttributeError) as exc:
+        raise ValueError(f"{label} needs paired pass counts") from exc
+    if (
+        not 3 <= before_total <= 10
+        or before_total != after_total
+        or not 0 <= before <= before_total
+        or after != after_total
+    ):
+        raise ValueError(f"{label} needs three to ten paired runs with all after attempts passing")
+    if record.get("infrastructure_errors", 0) != 0:
+        raise ValueError(f"{label} is inconclusive due to infrastructure errors")
+    return before, after, before_total

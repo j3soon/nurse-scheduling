@@ -135,7 +135,25 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   previous prefix on its targeted cases, repeating three to five times. Treat linked
   cases as hypotheses until a clean comparison shows better outcomes or an
   explicit relative cost gain. Run full-prompt ablation only when requested or
-  when a suspected interaction needs investigation.
+  when a suspected interaction needs investigation. Extend selected cases up
+  to ten paired trials only for an explicitly requested deeper investigation.
+- Ship a prompt clause only with a reviewed, clean repeated benefit witness.
+  Bind the receipt to the clause, parsed testcase, and fixture with one input
+  fingerprint. Keep tracked receipts to aggregate counts, model, and concise
+  scope notes. Preserve exact contexts, environment metadata, timing, old
+  receipts, and investigation history in ignored `artifacts/`. Do not force
+  every later step to rerun after an earlier edit. Include a counterfactual
+  clarification reply where guessing the
+  likely target would produce the wrong edit, alongside an exact-target control.
+- Include the SPDX license header and AI marker in generated Markdown prompt
+  fragments. Strip their leading provenance comments during assembly, preserving
+  instruction comments and the model-facing clause hashes.
+- Isolate prompt policies with the smallest fixture that exercises the claim.
+  Use the large ward only when scale or reference cascades matter. Grade
+  scheduling semantics rather than ineffective fields or equivalent formatting.
+  Preserve exact selectors and values when fidelity to the user's wording is
+  under test. Keep original traces when correcting a grader, apply the correction
+  to both variants, and rerun affected comparisons before claiming an improvement.
 - Expose Pi's default `read`, `bash`, `edit`, and `write` model tools over
   the disposable sandbox. Always offer the server-side `optimizer` lifecycle
   tool. Keep optimizer execution and credentials outside

@@ -5,5 +5,5 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <!-- This file is mostly AI generated. -->
 
-For a shift count, keep the expression literal, such as `x = T`, and put the numeric threshold in `target`.
-Never substitute a number for `T` inside `expression`.
+If an informal people-group name fits both a base group ID and a qualified variant, ask which exact group ID
+before changing membership.

@@ -92,6 +92,68 @@ def test_resolves_fields_indexes_and_selectors():
     assert resolve(SCHEDULE, "people.items[?id=P9]") == []
 
 
+def test_turn_tool_limits_do_not_penalize_edits_after_clarification(tmp_path: Path):
+    case = load_cases(
+        _write(
+            tmp_path,
+            _case(
+                expect_proposal=False,
+                user_turns=["Add a request.", "Use N."],
+                turn_tool_usage=[{"max_total": 0}, {"required": ["edit"]}],
+            ),
+        )
+    )[0]
+    tool = {"kind": "tool", "name": "edit", "ok": True}
+    events = [{"kind": "user", "turn": 1}, {"kind": "user", "turn": 2}, tool]
+    assert grade(case, RunOutcome(activity=events)).passed
+    premature = [{"kind": "user", "turn": 1}, tool, {"kind": "user", "turn": 2}, tool]
+    failures = grade(case, RunOutcome(activity=premature)).failures()
+    assert len(failures) == 1
+    assert failures[0].description == "turn 1: uses at most 0 tool call(s)"
+
+
+@pytest.mark.parametrize("raw", [{}, [{}, None], [{"max_total": -1}]])
+def test_invalid_turn_tool_limits_are_rejected(tmp_path: Path, raw):
+    with pytest.raises(EvalCaseError, match="turn_tool_usage|max_total"):
+        load_cases(_write(tmp_path, _case(expect_proposal=False, turn_tool_usage=raw)))
+
+
+@pytest.mark.parametrize(
+    ("answer", "passes"),
+    [
+        ("No, the proposal is pending. You must approve it.", True),
+        ("NOT YET. Your approval is required.", True),
+        ("It has not changed. Please approve the proposal first.", True),
+        ("No, the saved schedule is updated only after your approval.", True),
+        ("Now updated. Please approve it.", False),
+        ("Yes, the saved schedule changed. Approval is pending.", False),
+        ("No other fields changed. The saved schedule has now changed. Please approve it.", False),
+        ("No, it has not changed.", False),
+    ],
+)
+def test_proposal_answer_contract_accepts_denials_and_rejects_false_adoption(answer, passes):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "proposal-is-not-saved-yet")
+    proposed = copy.deepcopy(FIXTURE_SCHEDULES[case.fixture])
+    proposed["description"] = "April clinic roster"
+    outcome = RunOutcome(
+        answer=f"April clinic roster. {answer}", proposed=proposed, initial=FIXTURE_SCHEDULES[case.fixture]
+    )
+    assert grade(case, outcome).passed == passes
+
+
+@pytest.mark.parametrize("field_name", ["answer_matches", "answer_not_matches"])
+@pytest.mark.parametrize("raw", ["not a list", [""], [123], ["["]])
+def test_invalid_answer_patterns_are_rejected(tmp_path: Path, field_name, raw):
+    with pytest.raises(EvalCaseError, match=field_name):
+        load_cases(_write(tmp_path, _case(expect_proposal=False, **{field_name: raw})))
+
+
+@pytest.mark.parametrize("answer", ["There is no shift type S in the schedule.", "S is absent.", "S was not found."])
+def test_missing_shift_case_accepts_equivalent_correct_refusals(answer):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "rename-unknown-shift")
+    assert grade(case, RunOutcome(answer=answer)).passed
+
+
 def test_a_selector_matches_one_id_exactly():
     # `Day People` is a prefix of `Day People w/o A`, so a loose match would
     # silently grade against the wrong group.
@@ -202,6 +264,79 @@ def test_expected_diff_uses_json_strings_for_yaml_infinity(tmp_path: Path):
     )
 
     assert grade(load_cases(_write(tmp_path, case))[0], RunOutcome(proposed=changed, initial=SCHEDULE)).passed
+
+
+def test_hard_staffing_ignores_ineffective_weight_but_keeps_count_and_qualification(tmp_path: Path):
+    requirement = {
+        "type": "shift type requirement",
+        "shiftType": ["N"],
+        "date": ["ALL"],
+        "requiredNumPeople": 1,
+        "qualifiedPeople": ["P1"],
+    }
+    case = load_cases(
+        _write(
+            tmp_path, _case(expected_diff=[{"path": "preferences", "added": [requirement]}], changes=["preferences"])
+        )
+    )[0]
+    changed = copy.deepcopy(SCHEDULE)
+    changed["preferences"].append({**requirement, "weight": -1000})
+    assert grade(case, RunOutcome(proposed=changed, initial=SCHEDULE)).passed
+    for key, value in (("requiredNumPeople", 0), ("qualifiedPeople", ["P2"]), ("preferredNumPeople", 2)):
+        modified = copy.deepcopy(changed)
+        modified["preferences"][-1][key] = value
+        assert not grade(case, RunOutcome(proposed=modified, initial=SCHEDULE)).passed
+
+
+def test_preferred_staffing_weight_remains_semantic(tmp_path: Path):
+    requirement = {"type": "shift type requirement", "requiredNumPeople": 1, "preferredNumPeople": 2, "weight": -10}
+    case = load_cases(
+        _write(
+            tmp_path, _case(expected_diff=[{"path": "preferences", "added": [requirement]}], changes=["preferences"])
+        )
+    )[0]
+    changed = copy.deepcopy(SCHEDULE)
+    changed["preferences"].append({**requirement, "weight": -1})
+    assert not grade(case, RunOutcome(proposed=changed, initial=SCHEDULE)).passed
+
+
+def test_optional_new_descriptions_do_not_allow_changes_to_existing_rules(tmp_path: Path):
+    added = {"type": "shift request", "person": ["P2"], "date": ["ALL"], "shiftType": ["N"], "weight": 1}
+    case = load_cases(
+        _write(
+            tmp_path,
+            _case(
+                expected_diff=[{"path": "preferences", "added": [added], "allow_added_description": True}],
+                changes=["preferences"],
+            ),
+        )
+    )[0]
+    changed = copy.deepcopy(SCHEDULE)
+    changed["preferences"].append({**added, "description": "P2 night preference"})
+    assert grade(case, RunOutcome(proposed=changed, initial=SCHEDULE)).passed
+    changed["preferences"][0]["description"] = "Unexpected rewrite"
+    assert not grade(case, RunOutcome(proposed=changed, initial=SCHEDULE)).passed
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"added": [{"description": "Requested label"}]},
+        {"added": [{}], "removed": [{}]},
+        {"before": "old", "after": "new"},
+    ],
+)
+def test_optional_description_flag_cannot_hide_requested_or_existing_fields(tmp_path: Path, entry):
+    with pytest.raises(EvalCaseError, match="optional descriptions"):
+        load_cases(
+            _write(
+                tmp_path,
+                _case(
+                    expected_diff=[{"path": "preferences", **entry, "allow_added_description": True}],
+                    changes=["preferences"],
+                ),
+            )
+        )
 
 
 def test_expected_diff_normalizes_unordered_members_and_optional_defaults(tmp_path: Path):
@@ -420,6 +555,38 @@ def test_a_failed_required_tool_does_not_count_as_successful_use(tmp_path: Path)
     assert result.failures()[0].description == "uses successful read tool"
 
 
+def test_validation_error_limit_distinguishes_repair_from_other_tool_errors(tmp_path: Path):
+    case = load_cases(_write(tmp_path, _case(expect_proposal=False, tool_usage={"max_validation_errors": 0})))[0]
+    prefix = "Trusted schedule check after this command:"
+    unrelated = [
+        {"kind": "tool", "name": "optimizer", "ok": False, "result": "API unavailable"},
+        {"kind": "tool", "name": "read", "ok": False, "result": "File missing"},
+        {"kind": "tool", "name": "edit", "ok": True, "result": prefix + "\nCandidate passed."},
+        {
+            "kind": "tool",
+            "name": "bash",
+            "ok": False,
+            "result": "Command exited with code 1\n"
+            + prefix
+            + "\nThe candidate passed trusted server-side validation.",
+        },
+        {
+            "kind": "tool",
+            "name": "bash",
+            "ok": False,
+            "result": "Command exited with code 1\n" + prefix + "\nschedule.yaml is unchanged.",
+        },
+    ]
+    assert grade(case, RunOutcome(activity=unrelated)).passed
+    repaired = unrelated + [
+        {"kind": "tool", "name": "edit", "ok": False, "result": prefix + "\nUnsupported expression: x = 3"},
+        {"kind": "tool", "name": "edit", "ok": True, "result": prefix + "\nCandidate passed."},
+    ]
+    result = grade(case, RunOutcome(activity=repaired))
+    assert not result.passed
+    assert result.failures()[0].detail == "observed 1"
+
+
 @pytest.mark.parametrize(
     ("tool_usage", "message"),
     [
@@ -429,6 +596,8 @@ def test_a_failed_required_tool_does_not_count_as_successful_use(tmp_path: Path)
         ({"required": ["read", "read"]}, "repeats a tool name"),
         ({"required": ["read"], "forbidden": ["read"]}, "requires and forbids"),
         ({"max_total": -1}, "must be a non-negative integer"),
+        ({"max_validation_errors": True}, "must be a non-negative integer"),
+        ({"max_validation_errors": -1}, "must be a non-negative integer"),
         ({"max_per_tool": {"read": True}}, "must map tool names"),
     ],
 )
@@ -805,3 +974,88 @@ def test_every_removal_case_asserts_the_references_it_orphans():
                 assert any(assertion.path.startswith(container) for assertion in case.assertions), (
                     f"{case.id} removes {token} but says nothing about {container}"
                 )
+
+
+@pytest.mark.parametrize(
+    "privacy",
+    [
+        "Anonymize YAML is a separate download. Browser data remains unchanged. Free-text descriptions remain unchanged.",
+        "Anonymize YAML doesn't modify your current roster. It does not scrub personal names from free-text descriptions.",
+        "Anonymize YAML leaves local data intact. Descriptions are preserved as-is.",
+        "Anonymize YAML does **not** change the schedule data in your browser. Free-text descriptions remain unchanged.",
+    ],
+)
+def test_restore_anonymization_case_accepts_equivalent_explanations(privacy):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "guide-restore-and-anonymize")
+    answer = (
+        "Upload merges or replaces? In Save and Load, Download a YAML backup. Upload replaces the current schedule. "
+        "Review the version warning and confirm, or cancel to keep the roster. "
+        "Undo with Ctrl+Z or Cmd+Z. " + privacy
+    )
+    assert grade(case, RunOutcome(answer=answer)).passed
+
+
+@pytest.mark.parametrize(
+    "wrong_fact",
+    [
+        "Upload merges the older YAML into the current schedule.",
+        "Browser data is changed by anonymization.",
+        "Free-text descriptions are anonymized and personal names are removed.",
+        "You cannot undo an upload.",
+    ],
+)
+def test_restore_anonymization_case_rejects_wrong_or_missing_fact(wrong_fact):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "guide-restore-and-anonymize")
+    parts = [
+        "In Save and Load, Download a YAML backup.",
+        "Upload replaces the current schedule.",
+        "Review the version warning and confirm, or cancel to keep the roster.",
+        "Undo with Ctrl+Z or Cmd+Z.",
+        "Anonymize YAML is a separate download.",
+        "Browser data remains unchanged.",
+        "Free-text descriptions remain unchanged.",
+    ]
+    index = {"Upload": 1, "Browser": 5, "Free-text": 6, "You": 3}[wrong_fact.split()[0]]
+    parts[index] = wrong_fact
+    assert not grade(case, RunOutcome(answer=" ".join(parts))).passed
+
+
+def test_restore_case_question_heading_cannot_replace_an_actual_replacement_explanation():
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "guide-restore-and-anonymize")
+    answer = (
+        "Upload merges or replaces? The current schedule will be merged. "
+        "Use Save and Load, Download for backup, and confirm the version warning or cancel. "
+        "Undo with Ctrl+Z or Cmd+Z. Anonymize YAML leaves browser data unchanged. "
+        "Free-text descriptions remain unchanged."
+    )
+    assert not grade(case, RunOutcome(answer=answer)).passed
+
+
+@pytest.mark.parametrize("mutation", [None, "target", "operator", "existing-rule", "validation-repair"])
+def test_count_batch_case_checks_semantics_and_validation_trajectory(mutation):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "pref-count-batch-first-valid")
+    original = FIXTURE_SCHEDULES[case.fixture]
+    proposed = copy.deepcopy(original)
+    additions = copy.deepcopy(list(case.expected_diff[0].added))
+    for preference in additions:
+        preference["countShiftTypes"].reverse()
+        preference["countShiftTypeCoefficients"].reverse()
+    proposed["preferences"].extend(additions)
+    activity = []
+    if mutation == "target":
+        proposed["preferences"][-1]["target"] = 3
+    elif mutation == "operator":
+        proposed["preferences"][-1]["expression"] = "x <= T"
+    elif mutation == "existing-rule":
+        proposed["preferences"].pop(0)
+    elif mutation == "validation-repair":
+        activity = [
+            {
+                "kind": "tool",
+                "name": "edit",
+                "ok": False,
+                "result": "Trusted schedule check after this command:\nUnsupported expression: x = 3",
+            }
+        ]
+    result = grade(case, RunOutcome(initial=original, proposed=proposed, activity=activity))
+    assert result.passed == (mutation is None)

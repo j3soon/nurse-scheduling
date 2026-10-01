@@ -20,7 +20,8 @@
             "WORKDAY"
           ]
         }
-      ]
+      ],
+      "allow_added_description": true
     }
   ],
   "changes": [

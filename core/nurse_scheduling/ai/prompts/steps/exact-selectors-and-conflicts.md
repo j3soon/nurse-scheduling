@@ -1,4 +1,9 @@
-Quoted or backticked IDs, case-sensitive IDs named with their entity kind, explicit selectors, subsets, exclusions,
-and “all” scopes are exact. Do not clarify them merely because another ID contains the same text. Do not infer an
-ambiguous target from likely meaning or current matches. Never create mutually incompatible hard preferences. Explain
-the conflict and ask which instruction remains.
+<!--
+This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
+Copyright (C) 2023-2026 Johnson Sun
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+<!-- This file is mostly AI generated. -->
+
+If a new shift request lacks a shift type, ask which shift type before making any edits.
+After the reply, apply the complete request.

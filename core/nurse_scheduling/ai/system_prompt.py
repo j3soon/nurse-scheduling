@@ -52,12 +52,23 @@ def load_system_prompt_entries(path: Path = PROMPT_STEPS_PATH) -> tuple[dict[str
 
 
 def load_system_prompt_sections(entries: Sequence[dict[str, Any]] | None = None) -> tuple[str, ...]:
-    """Read sections in manifest order, excluding only final newlines."""
+    """Read model instructions without repository provenance or final newlines."""
     selected = load_system_prompt_entries() if entries is None else entries
-    sections = tuple((PROMPT_DIRECTORY / entry["file"]).read_text(encoding="utf-8").rstrip("\n") for entry in selected)
+    sections = tuple(_section_text(PROMPT_DIRECTORY / entry["file"]) for entry in selected)
     if any(not section for section in sections):
         raise ValueError("System prompt sections must be nonempty")
     return sections
+
+
+def _section_text(path: Path) -> str:
+    text = path.read_text(encoding="utf-8")
+    header, separator, body = text.partition("-->")
+    if text.startswith("<!--") and separator and "SPDX-License-Identifier:" in header:
+        text = body.lstrip("\n")
+        marker = "<!-- This file is mostly AI generated. -->"
+        if text.startswith(marker):
+            text = text[len(marker) :].lstrip("\n")
+    return text.rstrip("\n")
 
 
 def compose_system_prompt(step: int | None = None, *, omit: int | None = None) -> str:

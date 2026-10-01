@@ -1,0 +1,41 @@
+{
+  "id": "approved-description-is-current",
+  "fixture": "small-clinic",
+  "user_turns": [
+    "Set the schedule description to Approved training clinic.",
+    "What is the current schedule description now?"
+  ],
+  "expect_proposal": true,
+  "proposal_turn": 1,
+  "intermediate_answer_contains": [
+    [
+      "Approved training clinic"
+    ]
+  ],
+  "turn_actions": [
+    {
+      "after_turn": 1,
+      "action": "approve"
+    }
+  ],
+  "expected_diff": [
+    {
+      "path": "description",
+      "before": "Small pediatric clinic",
+      "after": "Approved training clinic"
+    }
+  ],
+  "changes": [
+    "description"
+  ],
+  "answer_contains": [
+    "Approved training clinic"
+  ],
+  "answer_matches": [
+    "\\b(?:current|canonical|now adopted)\\b"
+  ],
+  "note": "This testcase is mostly AI generated. The frontend approves between turns. The agent must identify the adopted value as current and must not make a new proposal.",
+  "tags": [
+    "prompt-evidence"
+  ]
+}

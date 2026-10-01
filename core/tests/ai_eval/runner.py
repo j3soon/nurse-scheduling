@@ -27,7 +27,8 @@ import os
 import subprocess
 import time
 from collections.abc import AsyncIterator, Sequence
-from dataclasses import asdict, dataclass, field
+from contextlib import aclosing
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from io import StringIO
 from pathlib import Path
@@ -73,8 +74,8 @@ from nurse_scheduling.ai.schema import (
 from nurse_scheduling.loader import _load_yaml
 
 from .attachment_fixtures import load_attachment_fixtures
-from .grading import EvalCase, RunOutcome, computed_values, grade, load_cases
-from .prompt_ladder import load_prompt_steps, prompt_at_step
+from .grading import EvalCase, RunOutcome, computed_values, grade, load_cases, tool_limit_failures
+from .prompt_ladder import case_digest, load_prompt_steps, prompt_at_step
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 CASES = Path(__file__).resolve().parent / "cases"
@@ -223,6 +224,7 @@ async def run_case(
     sandbox_factory: SandboxFactory | None = None,
     *,
     system_prompt: str = SANDBOX_SYSTEM_PROMPT,
+    fail_fast: bool = True,
 ) -> CaseRun:
     """Answer one case the way the service would, then grade what it produced."""
     text = fixture_text(case.fixture)
@@ -255,6 +257,8 @@ async def run_case(
             return AgentToolOutcome("Optimizer arguments must be valid JSON.", False)
         if not isinstance(request, dict):
             return AgentToolOutcome("Optimizer arguments must be an object.", False)
+        if case.optimizer_error:
+            return AgentToolOutcome(case.optimizer_error, False)
         action = request.get("action", "start")
         if action == "start":
             timeout = request.get("timeout_seconds")
@@ -290,6 +294,8 @@ async def run_case(
             prompt_messages.append(messages)
             turn_answer: list[str] = []
             turn_proposal: AgentProposal | None = None
+            stopped_on_limit = False
+            turn_event_offset = len(events)
             events.append({"kind": "user", "turn": turn_index + 1, "text": question})
             agent_events = run_sandbox_agent(
                 counting,
@@ -304,35 +310,51 @@ async def run_case(
                 execute_optimizer=execute_optimizer,
                 attachments=attachments,
             )
-            async for event in agent_events:
-                if isinstance(event, AgentText):
-                    turn_answer.append(event.text)
-                    _record_text(events, "text", event.text)
-                elif isinstance(event, AgentReasoning):
-                    reasoning += len(event.text)
-                    _record_text(events, "reasoning", event.text)
-                elif isinstance(event, AgentToolStart):
-                    events.append(
-                        {
-                            "kind": "tool_start",
-                            "name": event.name,
-                            "arguments": event.arguments,
-                        }
-                    )
-                elif isinstance(event, AgentToolUse):
-                    tools.append(event.name if event.ok else f"{event.name}(failed)")
-                    events.append(
-                        {
-                            "kind": "tool",
-                            "name": event.name,
-                            "ok": event.ok,
-                            "arguments": event.arguments,
-                            "result": event.result,
-                        }
-                    )
-                elif isinstance(event, AgentProposal):
-                    turn_proposal = event
-                    events.append({"kind": "proposal", "diff": event.diff})
+            async with aclosing(agent_events):
+                async for event in agent_events:
+                    if isinstance(event, AgentText):
+                        turn_answer.append(event.text)
+                        _record_text(events, "text", event.text)
+                    elif isinstance(event, AgentReasoning):
+                        reasoning += len(event.text)
+                        _record_text(events, "reasoning", event.text)
+                    elif isinstance(event, AgentToolStart):
+                        events.append({"kind": "tool_start", "name": event.name, "arguments": event.arguments})
+                    elif isinstance(event, AgentToolUse):
+                        tools.append(event.name if event.ok else f"{event.name}(failed)")
+                        events.append(
+                            {
+                                "kind": "tool",
+                                "name": event.name,
+                                "ok": event.ok,
+                                "arguments": event.arguments,
+                                "result": event.result,
+                            }
+                        )
+                        if fail_fast:
+                            turn_limit = (
+                                case.turn_tool_usage[turn_index] if turn_index < len(case.turn_tool_usage) else None
+                            )
+                            for expected, activity in (
+                                (case.tool_usage, events),
+                                (turn_limit, events[turn_event_offset:]),
+                            ):
+                                failures = tool_limit_failures(activity, expected) if expected is not None else ()
+                                if failures:
+                                    events.append(
+                                        {
+                                            "kind": "evaluation_stop",
+                                            "turn": turn_index + 1,
+                                            "reason": _describe(failures[0]),
+                                        }
+                                    )
+                                    stopped_on_limit = True
+                                    break
+                        if stopped_on_limit:
+                            break
+                    elif isinstance(event, AgentProposal):
+                        turn_proposal = event
+                        events.append({"kind": "proposal", "diff": event.diff})
             answer_text = "".join(turn_answer)
             answers.append(answer_text)
             proposal_turns.append(turn_proposal is not None)
@@ -345,6 +367,11 @@ async def run_case(
             history.extend(
                 [ChatMessage(role="user", content=question), ChatMessage(role="assistant", content=answer_text)]
             )
+            if stopped_on_limit:
+                break
+            if fail_fast and turn_proposal is not None and turn_index + 1 not in case.proposal_turns:
+                events.append({"kind": "evaluation_stop", "turn": turn_index + 1, "reason": "unexpected proposal"})
+                break
             action = turn_actions.get(turn_index + 1)
             if action is not None:
                 text, pending_proposal = _apply_turn_action(action, text, pending_proposal, history, events)
@@ -382,7 +409,7 @@ async def run_case(
         proposed=proposed,
         initial=initial,
         activity=events,
-        intermediate_answers=answers[:-1],
+        intermediate_answers=answers[: len(case.user_turns) - 1],
         intermediate_proposals=intermediate_proposals,
         proposal_turns=proposal_turns,
     )
@@ -834,7 +861,7 @@ def prompt_comparison_markdown(
         "# Prompt comparison",
         "",
         "Infrastructure errors make the comparison inconclusive. Cost is compared only when every attempt passes.",
-        "A passing result is directional evidence from three to five runs, not a statistical guarantee.",
+        "A passing result is directional evidence, not a statistical guarantee.",
         "",
         "| Case | Before pass | After pass | Infrastructure | Cost ratio |",
         "| --- | ---: | ---: | ---: | ---: |",
@@ -955,6 +982,7 @@ async def run_all(
     repetitions: int = 1,
     *,
     prompt_variants: Sequence[tuple[str, str]] | None = None,
+    fail_fast: bool = True,
 ) -> list[CaseRun]:
     """Run selected cases with bounded parallelism and preserve dataset order."""
     if jobs <= 0 or repetitions <= 0:
@@ -983,7 +1011,7 @@ async def run_all(
     async def run_bounded(index: int, case: EvalCase, repetition: int, label: str, prompt: str) -> tuple[int, CaseRun]:
         nonlocal completed
         async with concurrency_limit:
-            run = await run_case(provider, settings, case, sandbox_factory, system_prompt=prompt)
+            run = await run_case(provider, settings, case, sandbox_factory, system_prompt=prompt, fail_fast=fail_fast)
             run.repetition = repetition
             run.prompt_variant = label
         completed += 1
@@ -1007,6 +1035,11 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--case", action="append", default=[], help="run one case id, repeatable")
     parser.add_argument("--category", action="append", default=[], help="run one category directory, repeatable")
     parser.add_argument("--tag", action="append", default=[], help="run cases with one tag, repeatable")
+    parser.add_argument(
+        "--continue-after-failure",
+        action="store_true",
+        help="continue after irreversible proposal or tool-limit failures",
+    )
     broad_scope = parser.add_mutually_exclusive_group()
     broad_scope.add_argument("--tuning", action="store_true", help="run the default tuning set")
     broad_scope.add_argument("--full", action="store_true", help="run every case")
@@ -1033,8 +1066,8 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     arguments.repeat = arguments.repeat if arguments.repeat is not None else (3 if comparing else 1)
     if arguments.jobs <= 0 or arguments.repeat <= 0:
         parser.error("--jobs and --repeat must be positive")
-    if comparing and not 3 <= arguments.repeat <= 5:
-        parser.error("prompt comparisons require --repeat between 3 and 5")
+    if comparing and not 3 <= arguments.repeat <= 10:
+        parser.error("prompt comparisons require --repeat between 3 and 10")
     if (arguments.cost_metric is None) != (arguments.cost_ratio is None):
         parser.error("--cost-metric and --cost-ratio must be supplied together")
     if arguments.cost_ratio is not None and not 0 < arguments.cost_ratio < 1:
@@ -1111,6 +1144,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             sandbox_factory,
             arguments.repeat,
             prompt_variants=variants,
+            fail_fast=not arguments.continue_after_failure,
         )
     )
     wall_seconds = time.perf_counter() - started
@@ -1124,7 +1158,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 output_dir / label,
                 jobs=arguments.jobs,
                 wall_seconds=wall_seconds,
-                metadata=_evaluation_metadata(settings, cases, arguments.repeat, prompt),
+                metadata=_evaluation_metadata(
+                    settings, cases, arguments.repeat, prompt, fail_fast=not arguments.continue_after_failure
+                ),
             )
         comparison, improved = prompt_comparison_markdown(runs, arguments.cost_metric, arguments.cost_ratio)
         step_number = arguments.prompt_compare_step or arguments.prompt_ablate_step
@@ -1139,7 +1175,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             output_dir,
             jobs=arguments.jobs,
             wall_seconds=wall_seconds,
-            metadata=_evaluation_metadata(settings, cases, arguments.repeat, variants[0][1]),
+            metadata=_evaluation_metadata(
+                settings, cases, arguments.repeat, variants[0][1], fail_fast=not arguments.continue_after_failure
+            ),
             baseline_report=arguments.baseline_report,
         )
         improved = all(run.passed for run in runs)
@@ -1170,6 +1208,8 @@ def _evaluation_metadata(
     cases: Sequence[EvalCase],
     repetitions: int,
     prompt: str = SANDBOX_SYSTEM_PROMPT,
+    *,
+    fail_fast: bool = True,
 ) -> dict[str, Any]:
     """Record enough immutable context to reproduce or compare a run."""
     revision = subprocess.run(
@@ -1182,12 +1222,17 @@ def _evaluation_metadata(
         "git_revision": revision,
         "dirty_diff_sha256": hashlib.sha256(diff).hexdigest() if diff else None,
         "provider_model": settings.provider_model,
+        "fail_fast": fail_fast,
+        "sandbox_configuration": {
+            "backend": settings.sandbox_backend,
+            "command_timeout_seconds": settings.sandbox_command_timeout_seconds,
+            "control_request_timeout_seconds": settings.sandbox_control_request_timeout_seconds,
+            "pause_request_timeout_seconds": settings.sandbox_pause_request_timeout_seconds,
+            "max_attempts": settings.sandbox_max_attempts,
+        },
         "repetitions": repetitions,
         "case_ids": [case.id for case in cases],
-        "cases_sha256": {
-            case.id: hashlib.sha256(json.dumps(asdict(case), sort_keys=True, default=str).encode()).hexdigest()
-            for case in cases
-        },
+        "cases_sha256": {case.id: case_digest(case) for case in cases},
         "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
         "references_sha256": _reference_digests(),
         "fixtures_sha256": {
