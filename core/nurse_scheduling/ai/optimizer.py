@@ -44,6 +44,15 @@ MAX_REJECTION_DETAIL_CHARS = 300
 logger = logging.getLogger("nurse_scheduling.ai.optimizer")
 
 
+def optimizer_completion_message(result_data: dict[str, Any]) -> str:
+    """Render the completion turn shared by production and controlled evaluations."""
+    result_path = WORKSPACE_OPTIMIZER_RESULT if result_data["download_available"] else "unavailable"
+    return (
+        f"Optimizer job finished. Result workbook: {result_path}.\n"
+        f"Optimizer result JSON:\n{json.dumps(result_data, ensure_ascii=False)}"
+    )
+
+
 class OptimizerError(Exception):
     """The configured optimizer transport or response failed."""
 
@@ -562,11 +571,7 @@ class SessionOptimizer:
             "artifact_error": artifact_error,
         }
         await self._notify_update(job)
-        result_path = WORKSPACE_OPTIMIZER_RESULT if job.artifact is not None else "unavailable"
-        prompt = (
-            f"Optimizer job finished. Result workbook: {result_path}.\n"
-            f"Optimizer result JSON:\n{json.dumps(result_data, ensure_ascii=False)}"
-        )
+        prompt = optimizer_completion_message(result_data)
         if self._jobs.get(job.id) is not job:
             return
         await self._on_completion(job.session_id, prompt, job.artifact)

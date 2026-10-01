@@ -51,6 +51,7 @@ CROSS_YEAR_UNIT_PATH = Path(__file__).parent / "ai_eval" / "fixtures" / "cross-y
 WARD_PATH = Path(__file__).parent / "testcases" / "real" / "large-ward-with-87-people-2025-11.yaml"
 
 FIXTURE_SCHEDULES = {
+    "request-audit": _load_yaml((CASES_PATH.parent / "fixtures" / "request-audit.yaml").read_bytes()),
     "cross-year-unit": _load_yaml(CROSS_YEAR_UNIT_PATH.read_bytes()),
     "new-schedule": _load_yaml(NEW_SCHEDULE_PATH.read_bytes()),
     "small-clinic": _load_yaml(SMALL_CLINIC_PATH.read_bytes()),
@@ -785,7 +786,13 @@ def test_a_file_name_that_disagrees_with_its_case_id_is_rejected(tmp_path: Path)
 def test_the_dataset_only_uses_registered_fixtures():
     cases = load_cases(CASES_PATH)
 
-    assert {case.fixture for case in cases} == {"cross-year-unit", "new-schedule", "small-clinic", "ward87"}
+    assert {case.fixture for case in cases} == {
+        "cross-year-unit",
+        "new-schedule",
+        "request-audit",
+        "small-clinic",
+        "ward87",
+    }
     assert len(cases) == len({case.id for case in cases})
 
 
@@ -894,6 +901,7 @@ def test_every_case_sits_in_a_category_directory():
         "basics/09-holdout",
         "basics/10-app-ui",
         "basics/11-attachments",
+        "basics/12-optimizer-results",
     }
     assert all(
         not case.expect_proposal for case in cases if case.category.endswith(("00-summary", "01-reading", "06-refusal"))

@@ -115,6 +115,8 @@ class EvalCase:
     tags: tuple[str, ...] = ()
     attachments: tuple[str, ...] = ()
     optimizer_error: str = ""
+    optimizer_completion: str = ""
+    answer_json: dict[str, Any] = field(default_factory=dict)
     category: str = ""
     assertions: tuple[Assertion, ...] = ()
     expected_diff: tuple[ExpectedDiff, ...] = ()
@@ -262,6 +264,14 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     optimizer_error = entry.get("optimizer_error", "")
     if not isinstance(optimizer_error, str):
         raise EvalCaseError(f"{source} `optimizer_error` must be a string.")
+    optimizer_completion = entry.get("optimizer_completion", "")
+    if not isinstance(optimizer_completion, str) or optimizer_completion not in {"", "request-audit"}:
+        raise EvalCaseError(f"{source} has an unknown optimizer_completion fixture.")
+    if optimizer_completion and (len(raw_turns) != 1 or entry["expect_proposal"]):
+        raise EvalCaseError(f"{source} completion cases require one user turn and no proposal.")
+    answer_json = entry.get("answer_json", {})
+    if not isinstance(answer_json, dict):
+        raise EvalCaseError(f"{source} `answer_json` must be an object.")
     if entry["expect_proposal"] and not assertions and not expected_diff and not semantic_check:
         raise EvalCaseError(f"{source} expects a proposal but asserts nothing about it.")
     if entry["expect_proposal"] and not entry.get("changes"):
@@ -281,6 +291,8 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         tags=tuple(raw_tags),
         attachments=tuple(raw_attachments),
         optimizer_error=optimizer_error,
+        optimizer_completion=optimizer_completion,
+        answer_json=answer_json,
         category=category,
         assertions=assertions,
         expected_diff=expected_diff,
@@ -501,7 +513,22 @@ def grade(case: EvalCase, outcome: RunOutcome, computed: dict[str, Any] | None =
         checks.append(_check_nothing_else_changed(outcome, case.changes))
     if case.semantic_check == "yaml-generator":
         checks.extend(_check_yaml_generator(outcome.activity))
+    if case.optimizer_completion:
+        checks.append(
+            CheckResult("optimizer completion delivered", any(e.get("kind") == "optimizer" for e in outcome.activity))
+        )
     checks.extend(_check_answer(outcome.answer, expected, computed or {}) for expected in case.answer_contains)
+    if case.answer_json:
+        answer = outcome.answer.strip()
+        if answer.startswith("```"):
+            answer = re.sub(r"^```(?:json)?\s*|\s*```$", "", answer)
+        try:
+            actual = json.loads(answer)
+        except json.JSONDecodeError:
+            actual = None
+        for key, value in case.answer_json.items():
+            passed = isinstance(actual, dict) and key in actual and _key(actual[key]) == _key(value)
+            checks.append(CheckResult(f"answer JSON {key} equals {value!r}", passed, "" if passed else repr(actual)))
     for patterns, required in ((case.answer_matches, True), (case.answer_not_matches, False)):
         for pattern in patterns:
             matched = re.search(pattern, outcome.answer, re.IGNORECASE | re.DOTALL) is not None
@@ -516,7 +543,7 @@ def grade(case: EvalCase, outcome: RunOutcome, computed: dict[str, Any] | None =
         current_turn = 1
         activity = []
         for event in outcome.activity:
-            if event.get("kind") == "user":
+            if event.get("kind") in {"user", "optimizer"}:
                 current_turn = event["turn"]
             if current_turn == turn:
                 activity.append(event)

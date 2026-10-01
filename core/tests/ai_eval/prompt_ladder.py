@@ -83,6 +83,13 @@ def prompt_at_step(step: int, *, omit: int | None = None) -> str:
 def case_digest(case: EvalCase) -> str:
     """Bind a receipt to the parsed input and grading contract, not JSON formatting."""
     fields = asdict(case)
+    for optional in ("optimizer_completion", "answer_json"):
+        if not fields[optional]:
+            fields.pop(optional)
+    if case.optimizer_completion:
+        from .optimizer_fixtures import fixture_digest
+
+        fields["optimizer_fixture_sha256"] = fixture_digest(case.optimizer_completion)
     if not case.semantic_check:
         # An optional oracle must not invalidate receipts for unrelated cases.
         fields.pop("semantic_check")

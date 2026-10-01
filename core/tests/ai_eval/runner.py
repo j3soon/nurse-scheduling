@@ -47,6 +47,7 @@ from nurse_scheduling.ai.agent import (
 )
 from nurse_scheduling.ai.app import PROPOSAL_APPROVED_HISTORY, PROPOSAL_REJECTED_HISTORY, build_provider_messages
 from nurse_scheduling.ai.config import AiSettings
+from nurse_scheduling.ai.optimizer import optimizer_completion_message
 from nurse_scheduling.ai.provider import (
     ChatMessage,
     ChatStreamEvent,
@@ -83,11 +84,13 @@ from .grading import (
     semantic_trajectory_failures,
     tool_limit_failures,
 )
+from .optimizer_fixtures import completion_result
 from .prompt_ladder import case_digest, load_prompt_steps, prompt_at_step
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 CASES = Path(__file__).resolve().parent / "cases"
 FIXTURES = {
+    "request-audit": Path(__file__).resolve().parent / "fixtures" / "request-audit.yaml",
     "cross-year-unit": Path(__file__).resolve().parent / "fixtures" / "cross-year-unit.yaml",
     "new-schedule": Path(__file__).resolve().parent / "fixtures" / "new-schedule.yaml",
     "small-clinic": Path(__file__).resolve().parent / "fixtures" / "small-clinic.yaml",
@@ -255,10 +258,11 @@ async def run_case(
     started = time.perf_counter()
     case_attachments = load_attachment_fixtures(case.attachments)
     optimizer_started = False
+    optimizer_source = ""
 
     async def execute_optimizer(_schedule_yaml: str, arguments: str) -> AgentToolOutcome:
         """Expose the production tool contract without submitting an actual job."""
-        nonlocal optimizer_started
+        nonlocal optimizer_started, optimizer_source
         try:
             request = json.loads(arguments or "{}")
         except json.JSONDecodeError:
@@ -275,6 +279,7 @@ async def run_case(
             if optimizer_started:
                 return AgentToolOutcome("An optimizer run is already running for this chat session.", False)
             optimizer_started = True
+            optimizer_source = _schedule_yaml
             return AgentToolOutcome(
                 "Started optimizer job eval-job in the background. The user can keep chatting.", True
             )
@@ -289,7 +294,22 @@ async def run_case(
     try:
         if sandbox_factory is None:
             raise ValueError("sandbox_factory is required for AI evaluation")
-        for turn_index, question in enumerate(case.user_turns):
+        turns = [(question, False) for question in case.user_turns]
+        if case.optimizer_completion:
+            turns.append(("", True))
+        for turn_index, (question, completion) in enumerate(turns):
+            optimizer_result = None
+            if completion:
+                if not optimizer_started:
+                    events.append({"kind": "evaluation_stop", "reason": "optimizer was not started"})
+                    break
+                try:
+                    optimizer_result, result_data = completion_result(case.optimizer_completion, optimizer_source)
+                except ValueError as error:
+                    events.append({"kind": "evaluation_stop", "reason": str(error)})
+                    break
+                question = optimizer_completion_message(result_data)
+                optimizer_started = False
             attachments = case_attachments if turn_index == 0 else ()
             messages = build_provider_messages(
                 history,
@@ -298,13 +318,14 @@ async def run_case(
                 attachments,
                 system_prompt=system_prompt,
                 pending_proposal=pending_proposal is not None,
+                optimizer_result_available=optimizer_result is not None,
             )
             prompt_messages.append(messages)
             turn_answer: list[str] = []
             turn_proposal: AgentProposal | None = None
             stopped_on_limit = False
             turn_event_offset = len(events)
-            events.append({"kind": "user", "turn": turn_index + 1, "text": question})
+            events.append({"kind": "optimizer" if completion else "user", "turn": turn_index + 1, "text": question})
             agent_events = run_sandbox_agent(
                 counting,
                 sandbox_factory,
@@ -317,6 +338,7 @@ async def run_case(
                 pending_proposal_diff=pending_proposal.diff if pending_proposal else "",
                 execute_optimizer=execute_optimizer,
                 attachments=attachments,
+                optimizer_result=optimizer_result,
             )
             async with aclosing(agent_events):
                 async for event in agent_events:
@@ -378,7 +400,7 @@ async def run_case(
             proposal_turns.append(turn_proposal is not None)
             if turn_proposal is not None:
                 pending_proposal = turn_proposal
-            if turn_index < len(case.user_turns) - 1:
+            if turn_index < len(turns) - 1:
                 intermediate_proposals.append(turn_proposal is not None)
             if turn_index + 1 == case.proposal_turn:
                 proposal_event = turn_proposal
@@ -427,7 +449,7 @@ async def run_case(
         proposed=proposed,
         initial=initial,
         activity=events,
-        intermediate_answers=answers[: len(case.user_turns) - 1],
+        intermediate_answers=answers[:-1],
         intermediate_proposals=intermediate_proposals,
         proposal_turns=proposal_turns,
     )
