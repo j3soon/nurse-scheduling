@@ -144,8 +144,20 @@ def test_reader_bounds_detail_without_changing_counts(audit):
     assert len(filtered["summary"]) == 1 and filtered["summary"][0]["total"] == 4
 
 
-def test_standalone_hydrated_reader_runs_without_project_imports(audit, tmp_path):
-    path, context = audit
+@pytest.mark.parametrize(
+    "fixture,weight_args,expected",
+    [
+        ("request-audit", [], [(11_000_000_000, 4, 1), (11_000_000, 1, 1), ("-.inf", 3, 0)]),
+        ("request-audit", ["--weight", "-.inf"], [("-.inf", 3, 0)]),
+        ("request-audit", ["--weight=-.inf"], [("-.inf", 3, 0)]),
+        ("request-audit-groups", ["--weight", "-11e9"], [(-11_000_000_000, 6, 2)]),
+    ],
+)
+def test_standalone_hydrated_reader_runs_without_project_imports(tmp_path, fixture, weight_args, expected):
+    source = RESULT_SOURCES[fixture].read_text()
+    context = build_result_context(source)
+    path = tmp_path / "result.xlsx"
+    path.write_bytes(completion_result(fixture, source)[0])
     for source in REFERENCE_ATTACHMENT_TOOLS.values():
         (tmp_path / source.name).write_bytes(source.read_bytes())
     context_path = tmp_path / "context.json"
@@ -159,6 +171,7 @@ def test_standalone_hydrated_reader_runs_without_project_imports(audit, tmp_path
             str(context_path),
             "--source-sha256",
             context["source_sha256"],
+            *weight_args,
         ],
         cwd=tmp_path,
         capture_output=True,
@@ -166,7 +179,7 @@ def test_standalone_hydrated_reader_runs_without_project_imports(audit, tmp_path
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout)["summary"][0]["unmet"] == 1
+    assert [(row["weight"], row["total"], row["unmet"]) for row in json.loads(result.stdout)["summary"]] == expected
 
 
 def test_catalog_only_advertises_real_hydrated_scripts():

@@ -22,7 +22,8 @@
 import argparse
 import json
 import re
-from decimal import Decimal
+import sys
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -43,7 +44,10 @@ def _weight(value: Any) -> Decimal:
         return Decimal("Infinity")
     if value == "-.inf":
         return Decimal("-Infinity")
-    result = Decimal(str(value))
+    try:
+        result = Decimal(str(value))
+    except InvalidOperation as error:
+        raise ValueError(f"Invalid numeric request weight: {value}") from error
     if result.is_nan():
         raise ValueError("NaN is not a request weight")
     return result
@@ -169,6 +173,26 @@ def inspect_result(
     }
 
 
+def _weight_arguments(arguments: list[str]) -> list[str]:
+    """Keep negative numeric weights from being mistaken for option names."""
+    normalized = []
+    index = 0
+    while index < len(arguments):
+        if arguments[index] == "--weight" and index + 1 < len(arguments):
+            value = arguments[index + 1]
+            try:
+                _weight(value)
+            except ValueError:
+                pass
+            else:
+                normalized.append(f"--weight={value}")
+                index += 2
+                continue
+        normalized.append(arguments[index])
+        index += 1
+    return normalized
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Audit an optimizer workbook using canonical compiled request selectors."
@@ -180,7 +204,7 @@ def main() -> None:
         "--weight", action="append", help="numeric request weight, repeatable. Use --weight=-.inf for bans"
     )
     parser.add_argument("--max-unmet", type=int, default=20)
-    args = parser.parse_args()
+    args = parser.parse_args(_weight_arguments(sys.argv[1:]))
     try:
         result = inspect_result(
             args.workbook, json.loads(args.context.read_text()), args.source_sha256, args.weight, args.max_unmet
