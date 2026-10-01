@@ -57,7 +57,7 @@ from nurse_scheduling.ai.schema import (
     TAIWAN_HOLIDAYS_SOURCE,
     load_user_guide_references,
 )
-from nurse_scheduling.ai.system_prompt import PROMPT_DIRECTORY, load_system_prompt_sections
+from nurse_scheduling.ai.system_prompt import PROMPT_DIRECTORY, compose_system_prompt, load_system_prompt_sections
 
 from .ai_eval.grading import EvalCase, ExpectedDiff, ToolUsageExpectation, TurnAction, load_cases
 from .ai_eval.prompt_ladder import STEPS_PATH, load_prompt_steps, prompt_at_step, validate_prompt_evidence
@@ -89,6 +89,18 @@ FIXTURE_DIGESTS = {
 
 def test_ai_eval_defaults_to_four_concurrent_cases():
     assert DEFAULT_CASE_JOBS == 4
+
+
+def test_offline_yaml_clause_can_be_omitted_for_comparison():
+    steps = load_prompt_steps()
+    index = next(index for index, step in enumerate(steps, 1) if step.id == "offline-yaml")
+    before = compose_system_prompt(omit=index)
+    after = compose_system_prompt()
+    assert before == prompt_at_step(len(steps), omit=index)
+    assert after == SANDBOX_SYSTEM_PROMPT
+    clause = load_system_prompt_sections()[index - 1]
+    assert clause not in before
+    assert after.count(clause) == 1
 
 
 def test_prompt_steps_reconstruct_production_and_link_real_cases():

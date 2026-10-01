@@ -20,6 +20,8 @@
 # This test is mostly AI generated.
 
 import json
+import runpy
+import sys
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -28,11 +30,12 @@ import pytest
 from nurse_scheduling.ai.attachment_tools.inspect_pdf import inspect_pdf
 from nurse_scheduling.ai.attachment_tools.inspect_xlsx import inspect_workbook
 from nurse_scheduling.ai.pi.read import ReadInput, render_read_result
+from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
 
 from .ai_eval.attachment_fixtures import load_attachment_fixtures
-from .ai_eval.grading import _check_yaml_generator, load_cases
+from .ai_eval.grading import RunOutcome, _check_yaml_generator, grade, load_cases
 from .ai_eval.prompt_ladder import case_digest
-from .ai_eval.runner import CASES
+from .ai_eval.runner import CASES, fixture_text
 
 
 def _fixture(name: str, tmp_path: Path) -> Path:
@@ -81,6 +84,45 @@ def test_ooxml_fixture_contains_an_image_read_can_return_to_the_model(
 
     result = render_read_result(image, ReadInput(media_path))
     assert result.image is not None
+
+
+def test_yaml_generator_fixture_can_be_repaired_without_installation(tmp_path: Path, monkeypatch):
+    from ruamel.yaml import YAML
+
+    attachment = load_attachment_fixtures(["pyyaml-generator"])[0]
+    output = tmp_path / "schedule.yaml"
+    script = attachment.data.decode().replace("/workspace/schedule.yaml", str(output))
+    generator = tmp_path / "generate_schedule.py"
+    generator.write_text(script)
+    monkeypatch.setitem(sys.modules, "yaml", None)
+    with pytest.raises(ModuleNotFoundError):
+        runpy.run_path(str(generator))
+    repaired = script.replace("import yaml", "from ruamel.yaml import YAML").replace(
+        "yaml.safe_dump(schedule, output, sort_keys=False)", "YAML().dump(schedule, output)"
+    )
+    generator.write_text(repaired)
+    runpy.run_path(str(generator))
+    case = next(case for case in load_cases(CASES) if case.id == "tool-yaml-generator-repair")
+    activity = [
+        {
+            "kind": "tool",
+            "name": "bash",
+            "ok": True,
+            "arguments": json.dumps({"command": f"python3 {generator}"}),
+            "result": "Generated Minimal March schedule from attachment",
+        }
+    ]
+    result = grade(
+        case,
+        RunOutcome(
+            initial=YAML().load(fixture_text(case.fixture)),
+            proposed=YAML().load(output.read_text()),
+            activity=activity,
+        ),
+    )
+    assert result.passed, result
+    validation = validate_frontend_schedule_yaml(output.read_text(), 1_000_000)
+    assert validation.valid, validation.render()
 
 
 @pytest.mark.parametrize(
