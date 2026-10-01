@@ -51,6 +51,7 @@ CROSS_YEAR_UNIT_PATH = Path(__file__).parent / "ai_eval" / "fixtures" / "cross-y
 WARD_PATH = Path(__file__).parent / "testcases" / "real" / "large-ward-with-87-people-2025-11.yaml"
 
 FIXTURE_SCHEDULES = {
+    "weight-units": _load_yaml((CASES_PATH.parent / "fixtures" / "weight-units.yaml").read_bytes()),
     "request-audit": _load_yaml((CASES_PATH.parent / "fixtures" / "request-audit.yaml").read_bytes()),
     "cross-year-unit": _load_yaml(CROSS_YEAR_UNIT_PATH.read_bytes()),
     "new-schedule": _load_yaml(NEW_SCHEDULE_PATH.read_bytes()),
@@ -783,6 +784,19 @@ def test_a_file_name_that_disagrees_with_its_case_id_is_rejected(tmp_path: Path)
         load_cases(tmp_path)
 
 
+@pytest.mark.parametrize("target", ["weight", "selector"])
+def test_weight_notation_oracle_rejects_deleting_the_other_axis(target):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == f"weight-shorthand-exact-{target}")
+    initial = FIXTURE_SCHEDULES["weight-units"]
+    by_weight = copy.deepcopy(initial)
+    by_weight["preferences"] = [p for p in initial["preferences"] if p.get("weight") != 11_000_000_000]
+    by_selector = copy.deepcopy(initial)
+    by_selector["preferences"] = [p for p in initial["preferences"] if p.get("person") != ["11b"]]
+    correct, wrong = (by_weight, by_selector) if target == "weight" else (by_selector, by_weight)
+    assert grade(case, RunOutcome(proposed=correct, initial=initial)).passed
+    assert not grade(case, RunOutcome(proposed=wrong, initial=initial)).passed
+
+
 def test_the_dataset_only_uses_registered_fixtures():
     cases = load_cases(CASES_PATH)
 
@@ -792,6 +806,7 @@ def test_the_dataset_only_uses_registered_fixtures():
         "request-audit",
         "small-clinic",
         "ward87",
+        "weight-units",
     }
     assert len(cases) == len({case.id for case in cases})
 
@@ -902,6 +917,7 @@ def test_every_case_sits_in_a_category_directory():
         "basics/10-app-ui",
         "basics/11-attachments",
         "basics/12-optimizer-results",
+        "basics/13-weight-notation",
     }
     assert all(
         not case.expect_proposal for case in cases if case.category.endswith(("00-summary", "01-reading", "06-refusal"))
