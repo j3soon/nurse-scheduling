@@ -100,9 +100,13 @@ input fingerprint tracked. Preserve full prompt contexts, run metadata, diagnost
 
 The [evidence workflow](prompt-evidence.md) documents the repository/artifact boundary and reproducible commands. A passing linked case alone does not establish a section's benefit.
 
-The runner offers a controlled `optimizer` tool with the production tool definition. It acknowledges starts and
-reports a running job without submitting to the real optimizer, so cases can grade whether the agent used the tool
-and explained its background behavior. This does not validate solver output or completion callbacks.
+The runner offers a controlled `optimizer` tool with the production tool definition. Ordinary cases acknowledge
+starts without submitting real jobs. Cases with `optimizer_completion` also deliver the production-shaped completion
+message and an exporter-generated workbook with verified fixed assignments. These test result interpretation and
+completion delivery through the agent harness, rather than stochastic solve quality or the service job lifecycle.
+Result sandboxes include a canonical compiled request context and `/reference/tools/inspect_optimizer_result.py`.
+The same helpers are available in both arms of prompt comparisons. Their scripts, catalog, and context projector
+are fingerprinted so changes cannot silently reuse a result-reading receipt.
 
 From the repository root, run `./scripts/run_ai_eval.sh --prompt-compare-step 5` to compare the first four sections
 against the first five using step 5's cases. `--case ID` overrides that default case set. A comparison defaults to

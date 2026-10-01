@@ -30,7 +30,7 @@ from nurse_scheduling.ai.attachment_tools.inspect_optimizer_result import _assig
 from nurse_scheduling.ai.result_context import build_result_context
 from nurse_scheduling.ai.sandbox_agent import INSPECTION_HELPERS, REFERENCE_ATTACHMENT_TOOLS, inspection_helper_catalog
 
-from .ai_eval.optimizer_fixtures import FIXTURE, completion_result
+from .ai_eval.optimizer_fixtures import FIXTURE, RESULT_SOURCES, completion_result
 
 
 @pytest.fixture
@@ -94,6 +94,23 @@ def test_compiled_context_uses_canonical_groups_and_reserved_selectors():
     assert last["people"] == ["Kai"]
     assert last["dates"] == ["2026-05-01", "2026-05-02", "2026-05-03"]
     assert last["shift_types"] == ["K"]
+
+
+def test_reader_audits_nested_groups_cross_month_dates_and_negative_weights(tmp_path):
+    source = RESULT_SOURCES["request-audit-groups"].read_text()
+    context = build_result_context(source)
+    payload, _ = completion_result("request-audit-groups", source)
+    path = tmp_path / "groups.xlsx"
+    path.write_bytes(payload)
+    result = inspect_result(path, context, context["source_sha256"])
+    assert [(row["weight"], row["total"], row["unmet"]) for row in result["summary"]] == [
+        (11_000_000_000, 8, 3),
+        (11_000_000, 6, 2),
+        (-11_000_000_000, 6, 2),
+        ("-.inf", 24, 0),
+    ]
+    assert context["requests"][0]["people"] == ["Asha", "Ben", "Cleo"]
+    assert context["requests"][3]["shift_types"] == ["D", "N"]
 
 
 def test_reader_rejects_mismatched_source_and_unknown_decorations(audit):

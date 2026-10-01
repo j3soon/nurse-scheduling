@@ -1,0 +1,35 @@
+{
+  "id": "result-grouped-cross-month",
+  "fixture": "request-audit-groups",
+  "question": "Run optimization for 60 seconds. When it finishes, audit the shift requests. Reply only as JSON with strongTotal and strongUnmet for weight 11000000000, mediumTotal and mediumUnmet for weight 11000000, avoidTotal and avoidUnmet for weight -11000000000, and forbiddenUnmet for the hard K bans. Count expanded person/date cells, not preference entries.",
+  "expect_proposal": false,
+  "optimizer_completion": "request-audit-groups",
+  "answer_json": {
+    "strongTotal": 8,
+    "strongUnmet": 3,
+    "mediumTotal": 6,
+    "mediumUnmet": 2,
+    "avoidTotal": 6,
+    "avoidUnmet": 2,
+    "forbiddenUnmet": 0
+  },
+  "tool_usage": {
+    "required_calls": [
+      {
+        "name": "optimizer",
+        "arguments": {
+          "action": "start",
+          "timeout_seconds": 60
+        }
+      }
+    ],
+    "max_per_tool": {
+      "optimizer": 1
+    }
+  },
+  "tags": [
+    "optimizer-result",
+    "group-expansion"
+  ],
+  "note": "This testcase is mostly AI generated. Nested people groups, date groups across months, and shift groups resolve through the canonical compiler. Export markers cover only single-person single-date positive requests."
+}

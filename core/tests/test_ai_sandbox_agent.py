@@ -47,6 +47,7 @@ from nurse_scheduling.ai.sandbox_agent import (
     WORKSPACE_ATTACHMENT_MANIFEST,
     WORKSPACE_PENDING_DIFF,
     WORKSPACE_PENDING_PROPOSAL,
+    WORKSPACE_PENDING_RESULT_CONTEXT,
     WORKSPACE_RESULT_CONTEXT,
     WORKSPACE_SCHEDULE,
     AgentScheduleChange,
@@ -364,6 +365,21 @@ def test_hydration_keeps_optimizer_result_outside_user_attachments():
     assert context["schema_version"] == 1
     assert context["people"] == ["P1", "P2"]
     assert b"inspect_optimizer_result.py" in backend.files["/reference/tools/README.md"]
+
+
+def test_result_contexts_keep_pending_and_current_sources_distinct():
+    factory = FakeSandboxFactory()
+    provider = ScriptedProvider(
+        [ToolCallRequest((ToolCall("call-1", READ_TOOL, json.dumps({"path": WORKSPACE_RESULT_CONTEXT})),))],
+        [TextDelta("Inspected.")],
+    )
+    pending = schedule_yaml().replace("description: ''", "description: Pending", 1)
+    _collect(provider, factory, optimizer_result=b"workbook", pending_proposal_yaml=pending)
+    files = factory.created[0].files
+    current_context = json.loads(files[WORKSPACE_RESULT_CONTEXT])
+    pending_context = json.loads(files[WORKSPACE_PENDING_RESULT_CONTEXT])
+    assert pending_context["source_sha256"] != current_context["source_sha256"]
+    assert pending_context["people"] == current_context["people"]
 
 
 def test_reference_sources_are_read_from_disk_once_per_process():

@@ -93,6 +93,7 @@ from .prompt_ladder import case_digest, load_prompt_steps, prompt_at_step
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 CASES = Path(__file__).resolve().parent / "cases"
 FIXTURES = {
+    "request-audit-groups": Path(__file__).resolve().parent / "fixtures" / "request-audit-groups.yaml",
     "weight-units": Path(__file__).resolve().parent / "fixtures" / "weight-units.yaml",
     "request-audit": Path(__file__).resolve().parent / "fixtures" / "request-audit.yaml",
     "cross-year-unit": Path(__file__).resolve().parent / "fixtures" / "cross-year-unit.yaml",

@@ -52,5 +52,6 @@ clause-evidence manifest. Identify clauses by their stable IDs when reviewing re
 section changes the numeric step selectors used by historical commands.
 
 The literal-expression witness measures avoiding validation repairs, not eventual YAML correctness. The startup
-witness holds optimizer-error guidance fixed in both arms. Optimizer cases use a controlled tool and do not validate
-real solver output or completion callbacks. Those durable limits remain beside their receipts in the manifest.
+witness holds optimizer-error guidance fixed in both arms. Optimizer startup cases use a controlled tool. Completion
+cases replay verified assignments through the exporter and production message shape, without testing stochastic
+solve quality or the service job lifecycle. Those durable limits remain beside their receipts in the manifest.

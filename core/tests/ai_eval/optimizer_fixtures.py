@@ -34,6 +34,18 @@ ASSIGNMENTS = {"Alex": ["OFF", "K", "D"], "Mira": ["D", "N", "OFF"], "Kai": ["N"
 RESULT_ASSIGNMENTS = {
     "request-audit": ASSIGNMENTS,
     "request-audit-all-strong": {**ASSIGNMENTS, "Mira": ["D", "OFF", "OFF"]},
+    "request-audit-groups": {
+        "Asha": ["OFF", "D", "N", "OFF"],
+        "Ben": ["D", "OFF", "D", "N"],
+        "Cleo": ["OFF", "OFF", "OFF", "D"],
+        "Dara": ["D", "N", "D", "OFF"],
+        "Eli": ["OFF", "D", "OFF", "N"],
+        "Fran": ["N", "D", "N", "D"],
+    },
+}
+RESULT_SOURCES = {
+    name: FIXTURE.with_name("request-audit-groups.yaml") if name == "request-audit-groups" else FIXTURE
+    for name in RESULT_ASSIGNMENTS
 }
 
 
@@ -42,7 +54,7 @@ def fixture_digest(name: str) -> str:
     if name not in RESULT_ASSIGNMENTS:
         raise ValueError(f"Unknown optimizer result fixture: {name}")
     return hashlib.sha256(
-        FIXTURE.read_bytes() + json.dumps(RESULT_ASSIGNMENTS[name], sort_keys=True).encode()
+        RESULT_SOURCES[name].read_bytes() + json.dumps(RESULT_ASSIGNMENTS[name], sort_keys=True).encode()
     ).hexdigest()
 
 
@@ -51,13 +63,13 @@ def completion_result(name: str, source: str) -> tuple[bytes, dict]:
     """Replay a checked incumbent, export it, and simulate timeout completion metadata."""
     fixture_digest(name)
     data = _load_yaml(source.encode())
-    if data != _load_yaml(FIXTURE.read_bytes()):
+    if data != _load_yaml(RESULT_SOURCES[name].read_bytes()):
         raise ValueError("The optimizer source differs from the controlled result fixture")
     people = data["people"]["items"]
     shifts = data["shiftTypes"]["items"]
     forced = {
         (day, shift, person): int(RESULT_ASSIGNMENTS[name][p["id"]][day] == s["id"])
-        for day in range(3)
+        for day in range(len(next(iter(RESULT_ASSIGNMENTS[name].values()))))
         for shift, s in enumerate(shifts)
         for person, p in enumerate(people)
     }

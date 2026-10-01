@@ -269,6 +269,7 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         "",
         "request-audit",
         "request-audit-all-strong",
+        "request-audit-groups",
     }:
         raise EvalCaseError(f"{source} has an unknown optimizer_completion fixture.")
     if optimizer_completion and (len(raw_turns) != 1 or entry["expect_proposal"]):
