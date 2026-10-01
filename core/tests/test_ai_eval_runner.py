@@ -60,6 +60,7 @@ from nurse_scheduling.ai.schema import (
 )
 from nurse_scheduling.ai.system_prompt import PROMPT_DIRECTORY, compose_system_prompt, load_system_prompt_sections
 
+from .ai_eval.comparison import comparison_metrics_markdown, comparison_statistics
 from .ai_eval.grading import EvalCase, ExpectedDiff, ToolUsageExpectation, TurnAction, load_cases
 from .ai_eval.prompt_ladder import STEPS_PATH, load_prompt_steps, prompt_at_step, validate_prompt_evidence
 from .ai_eval.runner import (
@@ -1091,12 +1092,21 @@ def test_report_compares_reliability_and_cost_with_a_baseline(tmp_path: Path):
 
     summary = write_report([current], tmp_path / "current", baseline_report=baseline)
 
-    assert "| a | 0% | 100% | +100% | -2.0 |" in summary.read_text(encoding="utf-8")
+    assert "| a | 0% | 100% | +100% | 0 |" in summary.read_text(encoding="utf-8")
+    statistics = json.loads((tmp_path / "current/baseline-comparison.json").read_text())
+    assert statistics["cases"]["a"]["passing_pairs"] == 0
+    assert statistics["cases"]["a"]["metrics"]["total_tokens"]["delta"]["mean"] is None
 
 
 def test_prompt_comparison_requires_after_passes_and_a_measured_gain():
-    before = [CaseRun("a", "test", False, 2.0, 2, [], prompt_variant="before") for _ in range(3)]
-    after = [CaseRun("a", "test", True, 2.0, 2, [], prompt_variant="after") for _ in range(3)]
+    before = [
+        CaseRun("a", "test", False, 2.0, 2, [], repetition=repetition, prompt_variant="before")
+        for repetition in range(1, 4)
+    ]
+    after = [
+        CaseRun("a", "test", True, 2.0, 2, [], repetition=repetition, prompt_variant="after")
+        for repetition in range(1, 4)
+    ]
     report, improved = prompt_comparison_markdown([*before, *after])
     assert improved
     assert "| a | 0/3 | 3/3 | 0 | n/a |" in report
@@ -1109,24 +1119,48 @@ def test_prompt_comparison_requires_after_passes_and_a_measured_gain():
 
 
 def test_prompt_comparison_cost_gain_requires_explicit_ratio():
-    before = [CaseRun("a", "test", True, 2.0, 3, [READ_TOOL] * 5, prompt_variant="before") for _ in range(3)]
-    after = [CaseRun("a", "test", True, 2.0, 3, [READ_TOOL] * 2, prompt_variant="after") for _ in range(3)]
+    before = [
+        CaseRun("a", "test", True, 2.0, 3, [READ_TOOL] * 5, repetition=repetition, prompt_variant="before")
+        for repetition in range(1, 4)
+    ]
+    after = [
+        CaseRun("a", "test", True, 2.0, 3, [READ_TOOL] * 2, repetition=repetition, prompt_variant="after")
+        for repetition in range(1, 4)
+    ]
     runs = [*before, *after]
     assert not prompt_comparison_markdown(runs)[1]
     report, improved = prompt_comparison_markdown(runs, "tool-calls", 0.6)
     assert improved
     assert "| a | 3/3 | 3/3 | 0 | 0.40 |" in report
 
-    other_before = [CaseRun("b", "test", True, 2.0, 3, [READ_TOOL] * 2, prompt_variant="before") for _ in range(3)]
-    other_after = [CaseRun("b", "test", True, 2.0, 3, [READ_TOOL] * 4, prompt_variant="after") for _ in range(3)]
+    other_before = [
+        CaseRun("b", "test", True, 2.0, 3, [READ_TOOL] * 2, repetition=repetition, prompt_variant="before")
+        for repetition in range(1, 4)
+    ]
+    other_after = [
+        CaseRun("b", "test", True, 2.0, 3, [READ_TOOL] * 4, repetition=repetition, prompt_variant="after")
+        for repetition in range(1, 4)
+    ]
     assert not prompt_comparison_markdown([*runs, *other_before, *other_after], "tool-calls", 0.6)[1]
 
 
 def test_prompt_comparison_rejects_cost_regression_in_another_case():
-    improved_before = [CaseRun("a", "test", False, 2.0, 2, [], prompt_variant="before") for _ in range(3)]
-    improved_after = [CaseRun("a", "test", True, 2.0, 2, [], prompt_variant="after") for _ in range(3)]
-    costly_before = [CaseRun("b", "test", True, 2.0, 2, [READ_TOOL], prompt_variant="before") for _ in range(3)]
-    costly_after = [CaseRun("b", "test", True, 2.0, 2, [READ_TOOL] * 2, prompt_variant="after") for _ in range(3)]
+    improved_before = [
+        CaseRun("a", "test", False, 2.0, 2, [], repetition=repetition, prompt_variant="before")
+        for repetition in range(1, 4)
+    ]
+    improved_after = [
+        CaseRun("a", "test", True, 2.0, 2, [], repetition=repetition, prompt_variant="after")
+        for repetition in range(1, 4)
+    ]
+    costly_before = [
+        CaseRun("b", "test", True, 2.0, 2, [READ_TOOL], repetition=repetition, prompt_variant="before")
+        for repetition in range(1, 4)
+    ]
+    costly_after = [
+        CaseRun("b", "test", True, 2.0, 2, [READ_TOOL] * 2, repetition=repetition, prompt_variant="after")
+        for repetition in range(1, 4)
+    ]
 
     report, improved = prompt_comparison_markdown(
         [*improved_before, *improved_after, *costly_before, *costly_after], "tool-calls", 0.8
@@ -1134,6 +1168,117 @@ def test_prompt_comparison_rejects_cost_regression_in_another_case():
 
     assert not improved
     assert "Decision: cost regression observed." in report
+
+
+def _token_comparison_runs():
+    runs = []
+    for variant, completions in (("before", (100, 200, 300)), ("after", (90, 150, 120))):
+        for repetition, completion in enumerate(completions, 1):
+            runs.append(
+                CaseRun(
+                    "a",
+                    "test",
+                    True,
+                    2.0,
+                    2,
+                    [READ_TOOL, f"{BASH_TOOL}(failed)"],
+                    repetition=repetition,
+                    prompt_variant=variant,
+                    token_usage=TokenUsage(1000, completion, 1000 + completion, 200, completion // 2),
+                    token_usage_turns=2,
+                )
+            )
+    return runs
+
+
+def test_comparison_reports_paired_token_means_and_sample_standard_deviation():
+    runs = _token_comparison_runs()
+    # Arrival order differs from repetition order in concurrent evaluations.
+    statistics = comparison_statistics(
+        [run.as_record() for run in runs[:3]],
+        [run.as_record() for run in reversed(runs[3:])],
+    )
+    case = statistics["cases"]["a"]
+    completion = case["metrics"]["completion_tokens"]
+    assert completion["before"] == {"mean": 200.0, "std": 100.0}
+    assert completion["after"] == {"mean": 120.0, "std": 30.0}
+    assert completion["delta"]["mean"] == -80.0
+    assert completion["delta"]["std"] == pytest.approx(7900**0.5)
+    assert completion["relative_delta"] == pytest.approx(-0.4)
+    assert case["metrics"]["uncached_prompt_tokens"]["before"]["mean"] == 800
+    assert case["metrics"]["bash_calls"]["before"]["mean"] == 1
+    report, improved = prompt_comparison_markdown(runs)
+    assert not improved  # Descriptive gains do not silently select a benefit target.
+    assert "| a | completion_tokens | 3/3 | 200.0 ± 100.0 | 120.0 ± 30.0 | -80.0 ± 88.9 | -40.0% |" in report
+    assert "| a | total_tokens | 3/3 | 1200.0 ± 100.0 | 1120.0 ± 30.0 | -80.0 ± 88.9 |" in report
+
+
+@pytest.mark.parametrize("usage_problem", ["partial", "missing"])
+def test_comparison_excludes_failed_pairs_and_incomplete_usage_without_losing_reliability(usage_problem):
+    runs = _token_comparison_runs()
+    runs[0].passed = False
+    runs[4].passed = False
+    runs[4].error = "sandbox failed"
+    runs[5].token_usage_turns = 1
+    if usage_problem == "missing":
+        runs[5].token_usage = None
+    statistics = comparison_statistics([run.as_record() for run in runs[:3]], [run.as_record() for run in runs[3:]])
+    case = statistics["cases"]["a"]
+    assert case["before"]["passed"] == case["after"]["passed"] == 2
+    assert case["after"]["infrastructure_errors"] == 1
+    assert case["passing_pairs"] == 1
+    assert case["metrics"]["total_tokens"]["pairs"] == 0
+    assert case["metrics"]["total_tokens"]["missing_pairs"] == 1
+    assert case["metrics"]["total_tokens"]["delta"] == {"mean": None, "std": None}
+    assert case["metrics"]["reads"]["pairs"] == 1
+    assert "| a | total_tokens | 0/3 | n/a | n/a | n/a | n/a |" in comparison_metrics_markdown(statistics)
+
+
+def test_comparison_zero_tokens_single_pair_and_unmatched_runs_are_explicit():
+    run = CaseRun("a", "test", True, 2.0, 1, [], token_usage=TokenUsage(0, 0, 0), token_usage_turns=1)
+    before = [run.as_record(), replace(run, repetition=2).as_record()]
+    statistics = comparison_statistics(before, [run.as_record()])
+    case = statistics["cases"]["a"]
+    assert case["before"]["runs"] == 2
+    assert case["after"]["runs"] == 1
+    assert case["unmatched_before"] == 1
+    tokens = case["metrics"]["total_tokens"]
+    assert tokens["before"] == tokens["delta"] == {"mean": 0, "std": None}
+    assert tokens["relative_delta"] is None
+    report = comparison_metrics_markdown(statistics)
+    assert "| a | total_tokens | 1/1 | 0.0 (SD n/a) | 0.0 (SD n/a) | +0.0 (SD n/a) | n/a |" in report
+    assert "unmatched repetitions excluded: before 1, after 0" in report
+
+
+def test_comparison_rejects_duplicate_and_mismatched_repetitions():
+    runs = _token_comparison_runs()
+    record = runs[0].as_record()
+    with pytest.raises(ValueError, match="Duplicate case/repetition"):
+        comparison_statistics([record, record], [record])
+    runs[-1].repetition = 4
+    with pytest.raises(ValueError, match="Unpaired prompt repetitions"):
+        prompt_comparison_markdown(runs)
+
+
+def test_prompt_comparison_cli_writes_first_class_metrics_without_a_cost_target(tmp_path: Path, monkeypatch):
+    from .ai_eval import runner
+
+    async def recorded_runs(*args, **kwargs):
+        return [replace(run, case_id="ask-people-count") for run in _token_comparison_runs()]
+
+    monkeypatch.setattr(runner.AiSettings, "from_env", settings)
+    monkeypatch.setattr(runner, "create_sandbox_factory", lambda _: FakeSandboxFactory())
+    monkeypatch.setattr(runner, "run_all", recorded_runs)
+    output = tmp_path / "comparison"
+    exit_code = main(["--prompt-compare-step", "1", "--case", "ask-people-count", "--output-dir", str(output)])
+    assert exit_code == 1
+    statistics = json.loads((output / "comparison.json").read_text())
+    assert not statistics["improved"]
+    assert statistics["cost_metric"] is None
+    case = statistics["cases"]["ask-people-count"]
+    assert case["before"]["pass_rate"] == case["after"]["pass_rate"] == 1
+    assert case["metrics"]["completion_tokens"]["delta"]["mean"] == -80
+    assert "-80.0 ± 88.9" in (output / "comparison.md").read_text()
 
 
 def test_run_all_injects_each_prompt_variant_into_every_repetition():

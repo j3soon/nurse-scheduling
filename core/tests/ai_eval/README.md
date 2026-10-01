@@ -122,6 +122,19 @@ passing. For example, append `--cost-metric tool-calls --cost-ratio 0.6` to requ
 calls. Available metrics are `tool-calls`, `turns`, `uncached-tokens`, and `seconds`. Cost ratios compare successful
 attempts only. Treat these small repeated samples as directional evidence, not a precise reliability or latency estimate.
 
+Every comparison also reports all token categories, tool calls, reads, bash calls, turns, and elapsed seconds,
+even without `--cost-metric`. It shows before/after means, sample standard deviations, and mean paired deltas
+(after minus before) with their sample standard deviations. Pairs match by case ID and repetition, not arrival order.
+Cost statistics use only pairs where both attempts pass without infrastructure errors. Token statistics additionally
+require complete provider usage in both attempts. Reports show usable/matched pair counts and exclude missing data
+instead of treating it as zero. With fewer than two pairs, standard deviation is unavailable. Reasoning tokens are
+included in generated tokens. Total tokens must not count them twice.
+
+`comparison.json` stores these statistics and reliability counts for scripts. `--baseline-report` includes the same
+metrics in `summary.md` and `baseline-comparison.json`, marking unmatched repetitions explicitly. All attempts remain
+in success and infrastructure counts. These descriptive metrics do not change the declared benefit gate. Keep all
+metrics in artifacts, while user-facing summaries may show only meaningful changes.
+
 Run `--prompt-ablate-step N` only for a requested full-prompt removal check. It compares the complete prompt without
 section N against the complete prompt. Ordinary step comparisons run only the cases named for that step, unless
 additional `--case`, `--category`, `--tag`, `--tuning`, or `--full` scope is explicitly selected. Add a contrasting

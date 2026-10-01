@@ -78,6 +78,7 @@ from nurse_scheduling.ai.schema import (
 from nurse_scheduling.loader import _load_yaml
 
 from .attachment_fixtures import load_attachment_fixtures
+from .comparison import comparison_metrics_markdown, comparison_statistics
 from .grading import (
     EvalCase,
     RunOutcome,
@@ -819,7 +820,14 @@ def write_report(
     summary = output_dir / "summary.md"
     timing = f"\nWall time: {wall_seconds:.1f} seconds\n" if wall_seconds is not None else ""
     stability = stability_markdown(runs)
-    comparison = comparison_markdown(_load_report_records(baseline_report), runs) if baseline_report else ""
+    comparison = ""
+    if baseline_report:
+        baseline = _load_report_records(baseline_report)
+        comparison = comparison_markdown(baseline, runs)
+        (output_dir / "baseline-comparison.json").write_text(
+            json.dumps(comparison_statistics(baseline, [run.as_record() for run in runs]), indent=2) + "\n",
+            encoding="utf-8",
+        )
     stability_section = f"{stability}\n\n" if stability else ""
     comparison_section = f"{comparison}\n\n" if comparison else ""
     summary.write_text(
@@ -859,26 +867,18 @@ def comparison_markdown(baseline: Sequence[dict[str, Any]], current: Sequence[Ca
     lines = [
         "## Baseline comparison",
         "",
-        "| Case | Baseline pass | Current pass | Pass delta | Turn delta | Token delta |",
-        "| --- | ---: | ---: | ---: | ---: | ---: |",
+        "| Case | Baseline pass | Current pass | Pass delta | Infrastructure |",
+        "| --- | ---: | ---: | ---: | ---: |",
     ]
-    current_ids = {run.case_id for run in current}
-    baseline_ids = {str(record["case_id"]) for record in baseline}
-    for case_id in sorted(current_ids & baseline_ids):
-        before = [record for record in baseline if record["case_id"] == case_id]
-        after = [run for run in current if run.case_id == case_id]
-        before_rate = sum(bool(record["passed"]) for record in before) / len(before)
-        after_rate = sum(run.passed for run in after) / len(after)
-        before_turns = _median([float(record["turns"]) for record in before])
-        after_turns = _median([float(run.turns) for run in after])
-        before_tokens = _median(
-            [float(record["token_usage"]["total_tokens"]) for record in before if record["token_usage"]["total_tokens"]]
-        )
-        after_tokens = _median([float(run.token_usage.total_tokens) for run in after if run.token_usage is not None])
-        lines.append(
-            f"| {case_id} | {before_rate:.0%} | {after_rate:.0%} | {after_rate - before_rate:+.0%} "
-            f"| {after_turns - before_turns:+.1f} | {after_tokens - before_tokens:+.0f} |"
-        )
+    statistics = comparison_statistics(baseline, [run.as_record() for run in current])
+    for case_id, case in statistics["cases"].items():
+        before, after = case["before"], case["after"]
+        before_rate = f"{before['pass_rate']:.0%}" if before["runs"] else "n/a"
+        after_rate = f"{after['pass_rate']:.0%}" if after["runs"] else "n/a"
+        delta = f"{case['pass_rate_delta']:+.0%}" if case["pass_rate_delta"] is not None else "n/a"
+        infra = before["infrastructure_errors"] + after["infrastructure_errors"]
+        lines.append(f"| {case_id} | {before_rate} | {after_rate} | {delta} | {infra} |")
+    lines.extend(["", comparison_metrics_markdown(statistics)])
     return "\n".join(lines)
 
 
@@ -905,7 +905,7 @@ def prompt_comparison_markdown(
     lines = [
         "# Prompt comparison",
         "",
-        "Infrastructure errors make the comparison inconclusive. Cost is compared only when every attempt passes.",
+        "Infrastructure errors make the benefit decision inconclusive. Cost gains count toward it only when every attempt passes.",
         "A passing result is directional evidence, not a statistical guarantee.",
         "",
         "| Case | Before pass | After pass | Infrastructure | Cost ratio |",
@@ -923,6 +923,8 @@ def prompt_comparison_markdown(
         after = [run for run in runs if run.case_id == case_id and run.prompt_variant == "after"]
         if not before or len(before) != len(after):
             raise ValueError(f"Unpaired prompt comparison for {case_id}")
+        if {run.repetition for run in before} != {run.repetition for run in after}:
+            raise ValueError(f"Unpaired prompt repetitions for {case_id}")
         infra = sum(bool(run.error) for run in (*before, *after))
         clean &= infra == 0
         before_pass = sum(run.passed for run in before)
@@ -975,6 +977,11 @@ def prompt_comparison_markdown(
             "Full trajectories and selected prompt-variant hashes are in the before/ and after/ reports.",
         ]
     )
+    statistics = comparison_statistics(
+        [run.as_record() for run in runs if run.prompt_variant == "before"],
+        [run.as_record() for run in runs if run.prompt_variant == "after"],
+    )
+    lines.extend(["", comparison_metrics_markdown(statistics)])
     return "\n".join(lines), improved
 
 
@@ -1214,6 +1221,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         comparison = f"# Step {step_number}: {step.id}\n\nMode: {mode}. Hypothesis: {step.hypothesis}\n\n" + comparison
         summary = output_dir / "comparison.md"
         summary.write_text(comparison + "\n", encoding="utf-8")
+        statistics = comparison_statistics(
+            [run.as_record() for run in runs if run.prompt_variant == "before"],
+            [run.as_record() for run in runs if run.prompt_variant == "after"],
+        )
+        (output_dir / "comparison.json").write_text(
+            json.dumps(
+                {
+                    **statistics,
+                    "improved": improved,
+                    "cost_metric": arguments.cost_metric,
+                    "cost_ratio": arguments.cost_ratio,
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
     else:
         summary = write_report(
             runs,

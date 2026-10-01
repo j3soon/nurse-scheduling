@@ -98,6 +98,15 @@ and environment. Use the repository's repetition and concurrency policy. Here,
 start with three runs per arm and four concurrent case jobs. Keep infrastructure
 errors separate and preserve failed attempts when retrying them.
 
+Report success rate, infrastructure failures, tool calls and reads, turns,
+latency, and input, cached, generated, reasoning, and total tokens as first-class
+metrics. Include before/after means and mean token deltas with sample standard
+deviations and usable pair counts. Compute delta spread from matched repetition
+differences. Keep all metrics in full reports, even without a declared cost
+target. User-facing summaries may focus on meaningful changes. Missing or
+partial usage is unavailable, not zero. Reasoning tokens are included in
+generated tokens. Do not add them again when calculating totals.
+
 Require correct semantics before claiming cost improvements. Compare tool
 calls, tokens, or latency among passing runs with matched inputs. A relative
 cost target can be useful when justified by the baseline. Do not choose a

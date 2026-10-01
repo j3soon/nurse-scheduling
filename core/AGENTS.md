@@ -119,6 +119,12 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
 - Treat one provider pass as a smoke check. Before claiming a tuning improvement,
   repeat affected cases at least three times with four total jobs and compare
   pass rate, infrastructure failures, turns, and tokens with a recorded baseline.
+  Treat success rate, tool calls and reads, turns, latency, and provider token
+  categories as first-class comparison metrics. Report before/after means and
+  mean token deltas with sample standard deviations and usable pair counts.
+  Keep all metrics in full reports. User-facing summaries may show only material
+  changes. Compare costs on matched passing repetitions with complete telemetry,
+  retain every attempt in reliability counts, and never count missing usage as zero.
   Reserve `--tuning` for broad changes or final tuning confirmation.
   Use `--full` only when explicitly requested, for release-level confirmation,
   or when cross-cutting behavior could affect cases outside the tuning set.
