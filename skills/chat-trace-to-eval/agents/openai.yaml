@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Johnson Sun
+# This file is mostly AI generated.
+
+interface:
+  display_name: "Chat Trace to Evaluation"
+  short_description: "Turn agent chat failures into tested improvements"
+  default_prompt: "Use $chat-trace-to-eval to inspect these chat histories and turn the highest-impact issues into reproducible cases and tested prompt or helper improvements."
