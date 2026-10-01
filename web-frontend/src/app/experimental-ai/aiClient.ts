@@ -68,6 +68,7 @@ export interface StreamCallbacks {
 }
 
 export interface AiCapabilities {
+  app_version?: string;
   auth: AuthRequirement | null;
   session_retention_seconds: number;
   file_attachments: {
@@ -194,7 +195,12 @@ export async function getCapabilities(signal?: AbortSignal, endpoint = getAiBase
   ) {
     throw new Error('The AI backend returned invalid capabilities.');
   }
-  return { ...body, auth, session_retention_seconds: sessionRetention } as AiCapabilities;
+  return {
+    ...body,
+    app_version: typeof body.app_version === 'string' && body.app_version.trim() ? body.app_version : undefined,
+    auth,
+    session_retention_seconds: sessionRetention,
+  } as AiCapabilities;
 }
 
 export async function createSession(

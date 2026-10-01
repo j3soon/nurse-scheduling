@@ -186,6 +186,7 @@ def test_application_lifespan_runs_sandbox_cleanup_supervision():
 
 
 def test_e2b_template_is_built_before_ai_server_is_ready(monkeypatch):
+    monkeypatch.setattr("nurse_scheduling.ai.app.get_app_version", lambda: "v0.0.0-test")
     calls = []
     monkeypatch.setattr("nurse_scheduling.ai.sandbox.e2b.E2BSandboxFactory.start_cleanup", AsyncMock())
     monkeypatch.setattr("nurse_scheduling.ai.sandbox.e2b.E2BSandboxFactory.stop_cleanup", AsyncMock())
@@ -215,6 +216,7 @@ def test_e2b_template_build_failure_prevents_startup(monkeypatch):
     def fail_build(*_args, **_kwargs):
         raise subprocess.CalledProcessError(1, "build_template.py")
 
+    monkeypatch.setattr("nurse_scheduling.ai.app.get_app_version", lambda: "v0.0.0-test")
     monkeypatch.setattr("nurse_scheduling.ai.sandbox.e2b.subprocess.run", fail_build)
     settings = make_settings(sandbox_backend="e2b", e2b_api_key="test-e2b-key")
     with (
@@ -791,7 +793,8 @@ def test_invalid_owner_cookie_is_not_reflected() -> None:
     assert "Max-Age=172800" in set_cookie
 
 
-def test_capabilities_report_configured_attachment_limits() -> None:
+def test_capabilities_report_configured_attachment_limits(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("nurse_scheduling.ai.app.get_app_version", lambda: "v0.4.2-backend")
     client = AuthenticatedTestClient(
         create_test_app(
             settings=make_settings(
@@ -806,6 +809,7 @@ def test_capabilities_report_configured_attachment_limits() -> None:
 
     assert response.status_code == 200
     assert response.json() == {
+        "app_version": "v0.4.2-backend",
         "file_attachments": {
             "enabled": True,
             "max_files": 5,

@@ -40,6 +40,7 @@ interface ChatExportMetadata {
   endpoint: string;
   exportedAt: Date;
   frontendVersion: string;
+  backendVersion?: string;
 }
 
 export type ChatExportFormat = 'html' | 'markdown';
@@ -237,6 +238,7 @@ export function buildMarkdownChatExport(
     '',
     `- Exported: ${metadata.exportedAt.toISOString()}`,
     `- Frontend version: ${metadata.frontendVersion}`,
+    `- Backend version: ${metadata.backendVersion ?? 'unknown'}`,
     `- AI server: ${metadata.endpoint}`,
   ];
   messages.forEach(message => {
@@ -333,7 +335,7 @@ export function buildHtmlChatExport(
 <body>
   <main>
     <h1>Schedule AI Chat</h1>
-    <p class="metadata">Exported ${escapeHtml(metadata.exportedAt.toISOString())}<br>Frontend version: ${escapeHtml(metadata.frontendVersion)}<br>AI server: ${escapeHtml(metadata.endpoint)}</p>
+    <p class="metadata">Exported ${escapeHtml(metadata.exportedAt.toISOString())}<br>Frontend version: ${escapeHtml(metadata.frontendVersion)}<br>Backend version: ${escapeHtml(metadata.backendVersion ?? 'unknown')}<br>AI server: ${escapeHtml(metadata.endpoint)}</p>
     <section class="chat" aria-label="Chat transcript">${renderedMessages}
     </section>
   </main>
@@ -347,8 +349,9 @@ export function downloadChatExport(
   messages: ChatExportMessage[],
   endpoint: string,
   exportedAt = new Date(),
+  backendVersion?: string,
 ): void {
-  const metadata = { endpoint, exportedAt, frontendVersion: CURRENT_APP_VERSION };
+  const metadata = { endpoint, exportedAt, frontendVersion: CURRENT_APP_VERSION, backendVersion };
   const content = format === 'html'
     ? buildHtmlChatExport(messages, metadata)
     : buildMarkdownChatExport(messages, metadata);

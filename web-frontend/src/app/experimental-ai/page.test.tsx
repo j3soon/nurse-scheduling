@@ -97,6 +97,7 @@ vi.mock('@/utils/unsavedEditingState', () => ({
 }));
 
 const defaultCapabilities = {
+  app_version: 'v0.4.3',
   session_retention_seconds: 172800,
   file_attachments: {
     enabled: true,
@@ -144,6 +145,7 @@ describe('ExperimentalAiPage', () => {
 
     expect(screen.getByText('Current snapshot: 0 people, 0 dates. Captured when you send the first question.')).toBeInTheDocument();
     expect(screen.getByText(/^Frontend /)).toHaveTextContent('Frontend unknown');
+    expect(await screen.findByText(/^Backend /)).toHaveTextContent('Backend v0.4.3');
     expect(screen.getByRole('link', { name: 'Experimental AI documentation' })).toHaveAttribute(
       'href',
       '/docs/user-guide/experimental-ai/',

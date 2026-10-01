@@ -212,6 +212,7 @@ interface StoredChatConversation {
   proposalDiff: string | null;
   sessionEventId?: number;
   activeOptimization?: ActiveOptimization | null;
+  backendVersion?: string;
   backgroundAssistantId?: string | null;
   trimmedHistoryCount?: number;
 }
@@ -289,6 +290,7 @@ function readStoredConversation(): StoredChatConversation | null {
       || (value.retentionSeconds ?? 0) <= 0
       || !Array.isArray(value.messages)
       || !value.messages.every(isChatMessage)
+      || (value.backendVersion !== undefined && typeof value.backendVersion !== 'string')
       || (value.sessionEventId !== undefined
         && (!Number.isSafeInteger(value.sessionEventId) || value.sessionEventId < 0))
       || (value.trimmedHistoryCount !== undefined
@@ -463,6 +465,7 @@ export default function ExperimentalAiPage() {
   ]);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [backendVersion, setBackendVersion] = useState<string | undefined>();
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sessionExpiresAt, setSessionExpiresAt] = useState<number | null>(null);
   const [sessionRetentionSeconds, setSessionRetentionSeconds] = useState(DEFAULT_SESSION_RETENTION_SECONDS);
@@ -576,6 +579,7 @@ export default function ExperimentalAiPage() {
       setProposalDiff(storedConversation.proposalDiff);
       setSessionRetentionSeconds(storedConversation.retentionSeconds);
       lastSessionEventIdRef.current = storedConversation.sessionEventId ?? 0;
+      setBackendVersion(storedConversation.backendVersion);
       setActiveOptimization(storedConversation.activeOptimization
         ? { ...storedConversation.activeOptimization, points: storedConversation.activeOptimization.points ?? [] }
         : null);
@@ -632,6 +636,8 @@ export default function ExperimentalAiPage() {
     setCapabilitiesError(null);
     getCapabilities(capabilitiesController.signal, aiEndpoint)
       .then(capabilities => {
+        if (capabilitiesController.signal.aborted) return;
+        setBackendVersion(capabilities.app_version);
         setServerStatus('online');
         setAuthRequired(capabilities.auth?.required ?? false);
         setFileCapability(capabilities.file_attachments);
@@ -677,6 +683,7 @@ export default function ExperimentalAiPage() {
           proposalDiff,
           sessionEventId: lastSessionEventIdRef.current,
           activeOptimization,
+          backendVersion,
           backgroundAssistantId: backgroundAssistantIdRef.current,
           trimmedHistoryCount,
         };
@@ -697,6 +704,7 @@ export default function ExperimentalAiPage() {
   }, [
     activeSessionId,
     activeOptimization,
+    backendVersion,
     aiEndpoint,
     isClientReady,
     messages,
@@ -947,6 +955,7 @@ export default function ExperimentalAiPage() {
     setAuthRequired(false);
     setAuthRejected(false);
     setFileCapability(DISABLED_FILE_CAPABILITY);
+    setBackendVersion(undefined);
     setServerError(null);
     setCapabilitiesError(null);
     setIsEditingServer(false);
@@ -1770,7 +1779,7 @@ export default function ExperimentalAiPage() {
   return (
     <main className="mx-auto flex min-h-[calc(100dvh-3.5rem)] max-w-5xl flex-col px-4 pb-36 pt-8 sm:px-6">
       <div className="mb-6">
-        <div className="mb-2 flex items-center gap-3">
+        <div className="mb-2 flex flex-wrap items-center gap-3">
           <h1 className="text-3xl font-bold text-gray-900">Schedule AI Chat</h1>
           <PageDocumentationLink href={DOCUMENTATION_URLS.experimentalAi} label="Experimental AI" />
           <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800">
@@ -1780,6 +1789,15 @@ export default function ExperimentalAiPage() {
             Frontend{' '}
             <AppVersionText
               version={CURRENT_APP_VERSION}
+              versionHref={GITHUB_TAGS_URL}
+              versionClassName="hover:text-gray-600"
+              commitClassName="hover:text-gray-600"
+            />
+          </span>
+          <span className="text-xs text-gray-400">
+            Backend{' '}
+            <AppVersionText
+              version={backendVersion ?? 'unknown'}
               versionHref={GITHUB_TAGS_URL}
               versionClassName="hover:text-gray-600"
               commitClassName="hover:text-gray-600"
@@ -1933,14 +1951,14 @@ export default function ExperimentalAiPage() {
               <span>Export chat:</span>
               <button
                 type="button"
-                onClick={() => downloadChatExport('html', messages, sessionEndpointRef.current ?? aiEndpoint)}
+                onClick={() => downloadChatExport('html', messages, sessionEndpointRef.current ?? aiEndpoint, new Date(), backendVersion)}
                 className="font-medium text-gray-700 underline underline-offset-2 hover:text-gray-900"
               >
                 HTML
               </button>
               <button
                 type="button"
-                onClick={() => downloadChatExport('markdown', messages, sessionEndpointRef.current ?? aiEndpoint)}
+                onClick={() => downloadChatExport('markdown', messages, sessionEndpointRef.current ?? aiEndpoint, new Date(), backendVersion)}
                 className="font-medium text-gray-700 underline underline-offset-2 hover:text-gray-900"
               >
                 Markdown

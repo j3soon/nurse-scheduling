@@ -46,14 +46,22 @@ const metadata = {
   endpoint: 'https://ai.example.test/<unsafe>',
   exportedAt: new Date('2026-09-18T02:00:00Z'),
   frontendVersion: 'v0.4.2-3-gabc1234',
+  backendVersion: 'v0.4.3-2-gdef5678',
 };
 
 describe('chat export', () => {
+  it('marks an unavailable backend version as unknown', () => {
+    const legacyMetadata = { ...metadata, backendVersion: undefined };
+    expect(buildMarkdownChatExport([], legacyMetadata)).toContain('- Backend version: unknown');
+    expect(buildHtmlChatExport([], legacyMetadata)).toContain('Backend version: unknown');
+  });
+
   it('exports the complete conversation and activity as Markdown without duplicating response text', () => {
     const output = buildMarkdownChatExport(messages, metadata);
 
     expect(output).toContain('# Schedule AI Chat');
     expect(output).toContain('- Frontend version: v0.4.2-3-gabc1234');
+    expect(output).toContain('- Backend version: v0.4.3-2-gdef5678');
     expect(output).toContain('Show <script>alert(1)</script> coverage.');
     expect(output).toContain('Attachments: ward.xlsx');
     expect(output).toContain('Response time: 1.25s');
@@ -74,6 +82,7 @@ describe('chat export', () => {
     expect(output).toContain('Show &lt;script&gt;alert(1)&lt;/script&gt; coverage.');
     expect(output).toContain('https://ai.example.test/&lt;unsafe&gt;');
     expect(output).toContain('Frontend version: v0.4.2-3-gabc1234');
+    expect(output).toContain('Backend version: v0.4.3-2-gdef5678');
     expect(output).not.toContain('<script>');
     expect(output).toContain('Coverage is <strong>complete</strong>.');
     expect(output).not.toContain('Coverage is **complete**.');
