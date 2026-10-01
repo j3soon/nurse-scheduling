@@ -26,7 +26,7 @@ import json
 import logging
 import math
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 from urllib.parse import urljoin, urlsplit
 from uuid import uuid4
@@ -59,6 +59,8 @@ class OptimizerJobPayload(BaseModel):
     state: str
     terminal: bool = False
     queue_position: int | None = None
+    request: dict[str, Any] = Field(default_factory=dict)
+    backend: dict[str, Any] | None = None
     result: dict[str, Any] | None = None
     error: dict[str, Any] | None = None
     controls: dict[str, Any] = Field(default_factory=dict)
@@ -106,6 +108,7 @@ class HttpOptimizerBackend:
         self._base_url = f"{base_url.rstrip('/')}/"
         self._client = httpx.AsyncClient(headers=headers, timeout=request_timeout_seconds, transport=transport)
         self._max_result_bytes = max_result_bytes
+        self._request_timeout_seconds = request_timeout_seconds
 
     async def submit(self, schedule_yaml: str, timeout_seconds: int | None) -> OptimizerJobPayload:
         fields: dict[str, tuple[None, str]] = {
@@ -114,7 +117,40 @@ class HttpOptimizerBackend:
         }
         if timeout_seconds is not None:
             fields["timeout"] = (None, str(timeout_seconds))
-        return await self._request_job("POST", "optimize", files=fields)
+        payload = await self._request_job("POST", "optimize", files=fields)
+        payload.backend = self._backend_info(payload.backend)
+        return payload
+
+    def _backend_info(self, body: dict[str, Any] | None) -> dict[str, Any]:
+        """Use provenance from the accepting instance's submission response."""
+        endpoint = urlsplit(self._base_url)
+        host = endpoint.hostname or ""
+        if ":" in host:
+            host = f"[{host}]"
+        if endpoint.port is not None:
+            host = f"{host}:{endpoint.port}"
+        info: dict[str, Any] = {
+            "url": f"{endpoint.scheme}://{host}{endpoint.path.rstrip('/')}",
+            "request_timeout_seconds": self._request_timeout_seconds,
+        }
+        if body is None:
+            return info
+        for key in ("app_version", "api_version", "service_name", "deployment_id", "instance_id"):
+            if isinstance(body.get(key), str):
+                info[key] = body[key]
+        claimed = body.get("claimed_performance")
+        if isinstance(claimed, dict):
+            score = claimed.get("score")
+            if (
+                isinstance(score, (int, float))
+                and not isinstance(score, bool)
+                and math.isfinite(score)
+                and score > 0
+                and isinstance(claimed.get("app_version"), str)
+                and isinstance(claimed.get("measured_at"), str)
+            ):
+                info["claimed_performance"] = {key: claimed[key] for key in ("score", "app_version", "measured_at")}
+        return info
 
     async def get(self, job_id: str) -> OptimizerJobPayload:
         return await self._request_job("GET", f"optimize/{job_id}")
@@ -229,6 +265,8 @@ class SessionOptimization:
     payload: OptimizerJobPayload
     original_id_by_anonymized_id: dict[str, str]
     people_count: int
+    backend: dict[str, Any] = field(default_factory=dict)
+    request: dict[str, Any] = field(default_factory=dict)
     artifact: "OptimizerArtifact | None" = None
     progress_task: asyncio.Task[None] | None = None
 
@@ -404,6 +442,13 @@ class SessionOptimizer:
                 payload=payload,
                 original_id_by_anonymized_id=prepared.original_id_by_anonymized_id,
                 people_count=prepared.people_count,
+                backend=payload.backend or {},
+                request={
+                    **payload.request,
+                    "timeout_seconds": payload.request.get(
+                        "timeout_seconds", self._default_timeout_seconds if timeout_seconds is None else timeout_seconds
+                    ),
+                },
             )
             if not retired:
                 self._jobs[job.id] = job
@@ -597,6 +642,8 @@ class SessionOptimizer:
                 "job_id": job.id,
                 "state": job.payload.state,
                 "terminal": _is_terminal(job.payload),
+                "backend": job.backend,
+                "request": job.request,
                 "result": job.payload.result,
                 "error": job.payload.error,
                 "downloadable": job.artifact is not None,

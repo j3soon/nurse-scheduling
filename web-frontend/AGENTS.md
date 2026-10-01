@@ -77,13 +77,14 @@ every session request, including the fetch-based event stream. Store it only
 when the user explicitly opts in to unencrypted device storage.
 The AI page defaults to the hosted `/ai` path on the production API and calls
 the selected backend directly. Production NGINX must strip the `/ai`
-prefix and disable response buffering. Keep credentials scoped to their
-endpoint and lock the endpoint after a conversation creates a session. A
-self-hosted build may set another default with `NEXT_PUBLIC_AI_API_URL`. When a
+prefix and disable response buffering. Read the shared backend app version from
+the parent `/info` endpoint when AI is mounted at `/ai`. Older AI capabilities
+may omit `app_version`. Keep credentials scoped to their endpoint and lock the
+endpoint after a conversation creates a session. A self-hosted build may set another default with `NEXT_PUBLIC_AI_API_URL`. When a
 capability-gated control is missing, inspect the capabilities request from the
 exact browser origin. A loopback-only browser check can miss CORS failures.
 Replayable AI session events use `Last-Event-ID`, so include it in backend CORS
-preflight coverage. Keep object URLs for workbook downloads alive until the
+preflight coverage. Keep object URLs for chat and workbook downloads alive until the
 download is replaced or the page unmounts.
 For AI chat issues involving the deployed service, test the real browser UI
 against `https://api-staging.nursescheduling.org/ai`. Run the local frontend,

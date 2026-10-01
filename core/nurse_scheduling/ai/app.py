@@ -43,6 +43,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ..sentry import init_sentry
 from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry
+from ..version import get_app_version
 from .agent import AgentProposal, AgentReasoning, AgentSteering, AgentText, AgentToolStart, AgentToolUse
 from .background import (
     CANDIDATE_VALIDATION_ERROR,
@@ -51,6 +52,7 @@ from .background import (
     STALE_TURN_ERROR,
     SessionEventBroker,
     build_provider_messages,
+    history_context_chars,
     recent_history,
     run_background_turn,
 )
@@ -203,6 +205,7 @@ class FileAttachmentCapability(BaseModel):
 class CapabilitiesResponse(BaseModel):
     """Enabled experimental features and their public limits."""
 
+    app_version: str
     file_attachments: FileAttachmentCapability
     session_retention_seconds: int
     auth: dict[str, bool | str]
@@ -268,6 +271,7 @@ class TurnCompletion:
     turn_saved: bool
     proposal_saved: bool
     history_trimmed_count: int = 0
+    context_used_chars: int = 0
 
 
 class SessionStore:
@@ -479,6 +483,7 @@ class SessionStore:
                 turn_saved=True,
                 proposal_saved=proposal_saved,
                 history_trimmed_count=self._effective_trimmed_count(session),
+                context_used_chars=history_context_chars(session.history, self._settings.max_history_chars),
             )
 
     def queue_steering(
@@ -881,6 +886,7 @@ def create_app(
     app.state.turn_locks = turn_locks
     app.state.provider = provider
     app.state.sandbox_factory = sandbox_factory
+    app.state.app_version = get_app_version()
     app.state.session_optimizer = session_optimizer
     app.state.session_event_broker = event_broker
 
@@ -898,6 +904,7 @@ def create_app(
     async def capabilities() -> CapabilitiesResponse:
         """Report optional features without exposing provider configuration."""
         return CapabilitiesResponse(
+            app_version=app.state.app_version,
             file_attachments=FileAttachmentCapability(
                 enabled=True,
                 max_files=settings.max_attachment_files,
@@ -1128,6 +1135,13 @@ def create_app(
             turn_messages = [ChatMessage(role="user", content=history_question)]
             assistant_segment: list[str] = []
             try:
+                yield _sse_event(
+                    "context_usage",
+                    {
+                        "used_chars": history_context_chars(history, settings.max_history_chars),
+                        "max_chars": settings.max_history_chars,
+                    },
+                )
                 if dropped_history:
                     yield _sse_event("history_trimmed", {"dropped": dropped_history})
                 if stopped_before_stream:
@@ -1230,6 +1244,13 @@ def create_app(
                 done = {"message_id": turn_id}
                 if history_saved is not None:
                     done["history_saved"] = history_saved
+                yield _sse_event(
+                    "context_usage",
+                    {
+                        "used_chars": completion.context_used_chars,
+                        "max_chars": settings.max_history_chars,
+                    },
+                )
                 yield _sse_event("done", done)
             except asyncio.CancelledError:
                 raise

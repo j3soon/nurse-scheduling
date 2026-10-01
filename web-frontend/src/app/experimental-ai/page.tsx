@@ -42,7 +42,8 @@ import { CURRENT_APP_VERSION } from '@/utils/version';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
 import yaml from 'js-yaml';
 import { ActivityEntry, AssistantActivity } from './AssistantActivity';
-import { ChatExportMessage, downloadChatExport } from './chatExport';
+import { ChatExportMessage, downloadChatExport, type ChatExportFormat } from './chatExport';
+import { parseOptimizerMessage } from './optimizerMessage';
 import {
   AiCapabilities,
   AiHttpError,
@@ -50,6 +51,7 @@ import {
   DEFAULT_SESSION_RETENTION_SECONDS,
   LOCAL_AI_API_URL,
   OptimizationActivity,
+  type ContextUsage,
   PRODUCTION_AI_API_URL,
   ToolActivity,
   approveProposal,
@@ -57,6 +59,7 @@ import {
   downloadOptimization,
   getAiBaseUrl,
   getCapabilities,
+  getBackendVersion,
   getSessionStatus,
   isOfficialAiEndpoint,
   normalizeAiEndpoint,
@@ -198,6 +201,7 @@ interface SelectedAttachment {
 }
 
 interface QueuedChatMessage {
+  createdAt: number;
   id: string;
   content: string;
 }
@@ -212,6 +216,8 @@ interface StoredChatConversation {
   proposalDiff: string | null;
   sessionEventId?: number;
   activeOptimization?: ActiveOptimization | null;
+  backendVersion?: string;
+  contextUsage?: ContextUsage | null;
   backgroundAssistantId?: string | null;
   trimmedHistoryCount?: number;
 }
@@ -260,6 +266,7 @@ function isChatMessage(value: unknown): value is ChatMessage {
     && (message.activity === undefined
       || (Array.isArray(message.activity) && message.activity.every(isActivityEntry)))
     && (message.status === undefined || message.status === 'pending' || message.status === 'failed')
+    && (message.createdAt === undefined || Number.isFinite(message.createdAt))
     && (message.responseStartedAt === undefined || Number.isFinite(message.responseStartedAt))
     && (message.responseCompletedAt === undefined || Number.isFinite(message.responseCompletedAt))
     && (message.retry === undefined || (
@@ -289,6 +296,10 @@ function readStoredConversation(): StoredChatConversation | null {
       || (value.retentionSeconds ?? 0) <= 0
       || !Array.isArray(value.messages)
       || !value.messages.every(isChatMessage)
+      || (value.backendVersion !== undefined && typeof value.backendVersion !== 'string')
+      || (value.contextUsage != null && (!Number.isSafeInteger(value.contextUsage.usedChars)
+        || value.contextUsage.usedChars < 0 || !Number.isSafeInteger(value.contextUsage.maxChars)
+        || value.contextUsage.maxChars <= 0 || value.contextUsage.usedChars > value.contextUsage.maxChars))
       || (value.sessionEventId !== undefined
         && (!Number.isSafeInteger(value.sessionEventId) || value.sessionEventId < 0))
       || (value.trimmedHistoryCount !== undefined
@@ -357,6 +368,41 @@ function formatResponseTime(timestamp: number): string {
   return completed.toLocaleString([], sameDate
     ? { hour: 'numeric', minute: '2-digit' }
     : { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function optimizationMessage(activity: OptimizationActivity): string {
+  const summary = activity.state === 'completed'
+    ? activity.downloadable
+      ? 'Optimization finished. Download the optimized schedule to review it.'
+      : 'Optimization finished, but no result workbook is available to download.'
+    : `Optimization ended with status: ${activity.state}.`;
+  const details: string[] = [];
+  const add = (label: string, value: string | number | undefined) => {
+    // Indent continuation lines so field values cannot introduce another label.
+    if (value !== undefined) details.push(`${label}: ${String(value).replace(/\r\n?|\n/g, '\n ')}`);
+  };
+  add('Outcome', activity.result?.outcome);
+  add('Final score', activity.result?.score);
+  add('Solver', activity.request?.solver);
+  add('Solver status', activity.result?.solverStatus);
+  add('Termination reason', activity.result?.terminationReason);
+  if (activity.request?.timeoutSeconds !== undefined) add('Solver timeout', `${activity.request.timeoutSeconds}s`);
+  if (activity.backend) {
+    add('Backend URL', activity.backend.url ?? 'unknown');
+    add('Backend version', activity.backend.appVersion ?? 'unknown');
+    add('API version', activity.backend.apiVersion);
+    add('Service', activity.backend.serviceName);
+    add('Deployment', activity.backend.deploymentId);
+    add('Instance', activity.backend.instanceId);
+    if (activity.backend.requestTimeoutSeconds !== undefined) {
+      add('Backend request timeout', `${activity.backend.requestTimeoutSeconds}s`);
+    }
+    const claimed = activity.backend.claimedPerformance;
+    add('Claimed performance', claimed ? `${claimed.score} (version ${claimed.appVersion}, measured ${claimed.measuredAt})` : 'unavailable');
+  }
+  add('Error code', activity.error?.code);
+  add('Error', activity.error?.message);
+  return [summary, ...details].join('\n');
 }
 
 function isAuthenticationError(error: unknown): boolean {
@@ -463,6 +509,8 @@ export default function ExperimentalAiPage() {
   ]);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [backendVersion, setBackendVersion] = useState<string | undefined>();
+  const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sessionExpiresAt, setSessionExpiresAt] = useState<number | null>(null);
   const [sessionRetentionSeconds, setSessionRetentionSeconds] = useState(DEFAULT_SESSION_RETENTION_SECONDS);
@@ -525,6 +573,7 @@ export default function ExperimentalAiPage() {
   const speechRecognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const queuedMessagesRef = useRef<QueuedChatMessage[]>([]);
   const optimizationDownloadUrlRef = useRef<string | null>(null);
+  const chatExportUrlRef = useRef<string | null>(null);
   const conversationStorageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const persistConversationRef = useRef<(() => void) | null>(null);
   const checkedSessionRef = useRef<string | null>(null);
@@ -576,6 +625,8 @@ export default function ExperimentalAiPage() {
       setProposalDiff(storedConversation.proposalDiff);
       setSessionRetentionSeconds(storedConversation.retentionSeconds);
       lastSessionEventIdRef.current = storedConversation.sessionEventId ?? 0;
+      setBackendVersion(storedConversation.backendVersion);
+      setContextUsage(storedConversation.contextUsage ?? null);
       setActiveOptimization(storedConversation.activeOptimization
         ? { ...storedConversation.activeOptimization, points: storedConversation.activeOptimization.points ?? [] }
         : null);
@@ -631,13 +682,16 @@ export default function ExperimentalAiPage() {
     setServerStatus('checking');
     setCapabilitiesError(null);
     getCapabilities(capabilitiesController.signal, aiEndpoint)
-      .then(capabilities => {
+      .then(async capabilities => {
+        if (capabilitiesController.signal.aborted) return;
         setServerStatus('online');
         setAuthRequired(capabilities.auth?.required ?? false);
         setFileCapability(capabilities.file_attachments);
         setSessionRetentionSeconds(
           capabilities.session_retention_seconds ?? DEFAULT_SESSION_RETENTION_SECONDS,
         );
+        const version = await getBackendVersion(capabilitiesController.signal, aiEndpoint);
+        if (!capabilitiesController.signal.aborted) setBackendVersion(version ?? capabilities.app_version);
       })
       .catch((capabilityError: unknown) => {
         if (!capabilitiesController.signal.aborted) {
@@ -677,6 +731,8 @@ export default function ExperimentalAiPage() {
           proposalDiff,
           sessionEventId: lastSessionEventIdRef.current,
           activeOptimization,
+          backendVersion,
+          contextUsage,
           backgroundAssistantId: backgroundAssistantIdRef.current,
           trimmedHistoryCount,
         };
@@ -697,6 +753,8 @@ export default function ExperimentalAiPage() {
   }, [
     activeSessionId,
     activeOptimization,
+    backendVersion,
+    contextUsage,
     aiEndpoint,
     isClientReady,
     messages,
@@ -793,6 +851,7 @@ export default function ExperimentalAiPage() {
         if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
       });
       if (optimizationDownloadUrlRef.current) URL.revokeObjectURL(optimizationDownloadUrlRef.current);
+      if (chatExportUrlRef.current) URL.revokeObjectURL(chatExportUrlRef.current);
   }, []);
 
   useEffect(() => {
@@ -947,6 +1006,7 @@ export default function ExperimentalAiPage() {
     setAuthRequired(false);
     setAuthRejected(false);
     setFileCapability(DISABLED_FILE_CAPABILITY);
+    setBackendVersion(undefined);
     setServerError(null);
     setCapabilitiesError(null);
     setIsEditingServer(false);
@@ -995,6 +1055,8 @@ export default function ExperimentalAiPage() {
     });
     if (optimizationDownloadUrlRef.current) URL.revokeObjectURL(optimizationDownloadUrlRef.current);
     optimizationDownloadUrlRef.current = null;
+    if (chatExportUrlRef.current) URL.revokeObjectURL(chatExportUrlRef.current);
+    chatExportUrlRef.current = null;
     sessionEventsControllerRef.current?.abort();
     sessionEventsControllerRef.current = null;
     lastSessionEventIdRef.current = 0;
@@ -1008,6 +1070,7 @@ export default function ExperimentalAiPage() {
     setActiveSessionId(null);
     setSessionExpiresAt(null);
     setMessages([]);
+    setContextUsage(null);
     setDraft('');
     setSelectedAttachments([]);
     setQueuedMessages([]);
@@ -1206,11 +1269,7 @@ export default function ExperimentalAiPage() {
             return;
           }
           setActiveOptimization(current => current?.jobId === activity.jobId ? null : current);
-          const content = activity.state === 'completed'
-            ? activity.downloadable
-              ? 'Optimization finished. Download the optimized schedule to review it.'
-              : 'Optimization finished, but no result workbook is available to download.'
-            : `Optimization ended with status: ${activity.state}.`;
+          const content = optimizationMessage(activity);
           setMessages(previous => previous.some(message => message.id === `optimizer-${activity.jobId}`)
             ? previous
             : [
@@ -1218,6 +1277,7 @@ export default function ExperimentalAiPage() {
               {
                 id: `optimizer-${activity.jobId}`,
                 role: 'optimizer',
+                createdAt: Date.now(),
                 content,
                 optimizerJob: { jobId: activity.jobId, downloadable: activity.downloadable },
               },
@@ -1283,6 +1343,7 @@ export default function ExperimentalAiPage() {
           setIsStopping(false);
           setError(message);
         },
+        onContextUsage: setContextUsage,
         onHistoryTrimmed: setTrimmedHistoryCount,
         onError: failBackgroundTurn,
       },
@@ -1327,12 +1388,14 @@ export default function ExperimentalAiPage() {
     question: string,
     attachmentsForMessage: SelectedAttachment[],
     clearComposer: boolean,
+    createdAt = Date.now(),
   ) => {
     if (!question || isStreaming || conversationUnavailable || (authRequired && authToken === null)) return;
 
     const userMessage: ChatMessage = {
       id: messageId(),
       role: 'user',
+      createdAt,
       content: question,
       attachmentNames: attachmentsForMessage.map(attachment => attachment.file.name),
     };
@@ -1436,6 +1499,7 @@ export default function ExperimentalAiPage() {
             return { ...message, activity: finishToolActivity(message.activity ?? [], activity) };
           })),
           onSteering: (queuedId, queuedMessage) => {
+            const createdAt = queuedMessagesRef.current.find(message => message.id === queuedId)?.createdAt ?? Date.now();
             queuedMessagesRef.current = queuedMessagesRef.current.filter(message => message.id !== queuedId);
             setQueuedMessages(queuedMessagesRef.current);
             const steeringStartedAt = Date.now();
@@ -1448,7 +1512,7 @@ export default function ExperimentalAiPage() {
                     ? { ...message, status: undefined, responseCompletedAt: steeringStartedAt }
                     : message
                 )),
-                { id: queuedId, role: 'user', content: queuedMessage },
+                { id: queuedId, role: 'user', content: queuedMessage, createdAt },
                 {
                   id: nextAssistantId,
                   role: 'assistant',
@@ -1464,10 +1528,10 @@ export default function ExperimentalAiPage() {
               const pendingAssistantId = activeAssistantId;
               setMessages(previous => {
                 const pendingIndex = previous.findIndex(message => message.id === pendingAssistantId);
-                if (pendingIndex < 0) return [...previous, { id: queuedId, role: 'user', content: queuedMessage }];
+                if (pendingIndex < 0) return [...previous, { id: queuedId, role: 'user', content: queuedMessage, createdAt }];
                 return [
                   ...previous.slice(0, pendingIndex),
-                  { id: queuedId, role: 'user', content: queuedMessage },
+                  { id: queuedId, role: 'user', content: queuedMessage, createdAt },
                   ...previous.slice(pendingIndex),
                 ];
               });
@@ -1492,6 +1556,7 @@ export default function ExperimentalAiPage() {
             )));
           },
           onProposal: diff => setProposalDiff(diff),
+          onContextUsage: setContextUsage,
           onHistoryTrimmed: setTrimmedHistoryCount,
         },
         controller.signal,
@@ -1549,7 +1614,7 @@ export default function ExperimentalAiPage() {
       if (nextMessage) {
         queuedMessagesRef.current = queuedMessagesRef.current.slice(1);
         setQueuedMessages(queuedMessagesRef.current);
-        window.setTimeout(() => void sendRequest(nextMessage.content, [], false), 0);
+        window.setTimeout(() => void sendRequest(nextMessage.content, [], false, nextMessage.createdAt), 0);
       }
     }
   };
@@ -1559,7 +1624,7 @@ export default function ExperimentalAiPage() {
     const question = draft.trim();
     if (!question || (authRequired && authToken === null)) return;
     if (isStreaming) {
-      const queuedMessage = { id: messageId(), content: question };
+      const queuedMessage = { id: messageId(), content: question, createdAt: Date.now() };
       queuedMessagesRef.current = [...queuedMessagesRef.current, queuedMessage];
       setQueuedMessages(queuedMessagesRef.current);
       setDraft('');
@@ -1622,6 +1687,14 @@ export default function ExperimentalAiPage() {
         reportRequestError(stopError, 'The AI response could not be stopped.');
         setIsStopping(false);
       });
+  };
+
+  const exportChat = (format: ChatExportFormat) => {
+    const previousUrl = chatExportUrlRef.current;
+    chatExportUrlRef.current = downloadChatExport(
+      format, messages, sessionEndpointRef.current ?? aiEndpoint, new Date(), backendVersion,
+    );
+    if (previousUrl) URL.revokeObjectURL(previousUrl);
   };
 
   const downloadOptimizationResult = async (jobId: string) => {
@@ -1770,7 +1843,7 @@ export default function ExperimentalAiPage() {
   return (
     <main className="mx-auto flex min-h-[calc(100dvh-3.5rem)] max-w-5xl flex-col px-4 pb-36 pt-8 sm:px-6">
       <div className="mb-6">
-        <div className="mb-2 flex items-center gap-3">
+        <div className="mb-2 flex flex-wrap items-center gap-3">
           <h1 className="text-3xl font-bold text-gray-900">Schedule AI Chat</h1>
           <PageDocumentationLink href={DOCUMENTATION_URLS.experimentalAi} label="Experimental AI" />
           <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800">
@@ -1780,6 +1853,15 @@ export default function ExperimentalAiPage() {
             Frontend{' '}
             <AppVersionText
               version={CURRENT_APP_VERSION}
+              versionHref={GITHUB_TAGS_URL}
+              versionClassName="hover:text-gray-600"
+              commitClassName="hover:text-gray-600"
+            />
+          </span>
+          <span className="text-xs text-gray-400">
+            Backend{' '}
+            <AppVersionText
+              version={backendVersion ?? 'unknown'}
               versionHref={GITHUB_TAGS_URL}
               versionClassName="hover:text-gray-600"
               commitClassName="hover:text-gray-600"
@@ -1854,7 +1936,7 @@ export default function ExperimentalAiPage() {
             </button>
           </div>
           {serverLocked && (
-            <p className="mt-1 text-xs text-gray-500">This server is locked for the current conversation.</p>
+            <p className="mt-1 text-xs text-gray-500">This server is locked for the current conversation. Start a new chat to change servers.</p>
           )}
           {!isOfficialAiEndpoint(aiEndpoint) && (
             <p className="mt-1 text-xs text-amber-700">
@@ -1933,14 +2015,14 @@ export default function ExperimentalAiPage() {
               <span>Export chat:</span>
               <button
                 type="button"
-                onClick={() => downloadChatExport('html', messages, sessionEndpointRef.current ?? aiEndpoint)}
+                onClick={() => exportChat('html')}
                 className="font-medium text-gray-700 underline underline-offset-2 hover:text-gray-900"
               >
                 HTML
               </button>
               <button
                 type="button"
-                onClick={() => downloadChatExport('markdown', messages, sessionEndpointRef.current ?? aiEndpoint)}
+                onClick={() => exportChat('markdown')}
                 className="font-medium text-gray-700 underline underline-offset-2 hover:text-gray-900"
               >
                 Markdown
@@ -1987,88 +2069,107 @@ export default function ExperimentalAiPage() {
             <p>Try asking “Who is available on the first date?”</p>
           </div>
         )}
-        {messages.map(message => (
-          <article
-            key={message.id}
-            className={`max-w-[85%] rounded-xl px-4 py-3 ${
-              message.role === 'user'
-                ? 'ml-auto bg-blue-600 text-white'
-                : message.role === 'optimizer'
-                  ? 'mr-auto border border-emerald-200 bg-emerald-50 text-emerald-950'
-                  : 'mr-auto border border-gray-200 bg-white text-gray-900'
-            }`}
-          >
-            <p className="mb-1 text-xs font-semibold uppercase tracking-wide opacity-70">
-              {message.role === 'user' ? 'You' : message.role === 'optimizer' ? 'Optimizer' : 'Assistant'}
-            </p>
-            {message.activity && (
-              <AssistantActivity
-                entries={message.activity.filter(entry => (
-                  entry.kind === 'response' || (entry.kind === 'reasoning' ? showReasoning : showTools)
-                ))}
-              />
-            )}
-            {message.role === 'assistant' && !message.content && message.status === 'pending' ? (
-              steeringAssistantId === message.id ? <p className="text-xs text-gray-500">Steering…</p> : <ThinkingIndicator />
-            ) : message.role !== 'assistant' ? (
-              <p className="whitespace-pre-wrap break-words">{message.content}</p>
-            ) : null}
-            {message.role === 'optimizer' && message.optimizerJob?.downloadable && (
-              <button
-                type="button"
-                onClick={() => void downloadOptimizationResult(message.optimizerJob?.jobId ?? '')}
-                disabled={downloadingOptimizationId !== null}
-                className="mt-3 inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-gray-400"
-              >
-                <FiDownload aria-hidden="true" className="h-4 w-4" />
-                {downloadingOptimizationId === message.optimizerJob.jobId ? 'Downloading...' : 'Download result'}
-              </button>
-            )}
-            {message.attachmentNames && message.attachmentNames.length > 0 && (
-              <p className="mt-2 text-xs opacity-80">
-                Attached: {message.attachmentNames.join(', ')}
+        {messages.map(message => {
+          const timestamp = message.responseCompletedAt ?? message.createdAt;
+          const optimizer = message.role === 'optimizer' ? parseOptimizerMessage(message.content) : null;
+          return (
+            <article
+              key={message.id}
+              className={`max-w-[85%] rounded-xl px-4 py-3 ${
+                message.role === 'user'
+                  ? 'ml-auto bg-blue-600 text-white'
+                  : message.role === 'optimizer'
+                    ? 'mr-auto border border-emerald-200 bg-emerald-50 text-emerald-950'
+                    : 'mr-auto border border-gray-200 bg-white text-gray-900'
+              }`}
+            >
+              <p className="mb-1 text-xs font-semibold uppercase tracking-wide opacity-70">
+                {message.role === 'user' ? 'You' : message.role === 'optimizer' ? 'Optimizer' : 'Assistant'}
               </p>
-            )}
-            {message.role === 'assistant'
-              && message.responseStartedAt !== undefined
-              && message.responseCompletedAt !== undefined && (
-              <time
-                dateTime={new Date(message.responseCompletedAt).toISOString()}
-                className="mt-2 block text-[0.6875rem] text-gray-400"
-              >
-                {formatResponseTime(message.responseCompletedAt)} ·{' '}
-                {formatResponseDuration(message.responseStartedAt, message.responseCompletedAt)}
-              </time>
-            )}
-            {message.role === 'assistant' && message.status === 'failed' && message.retry && (
-              <div className="mt-3 border-t border-red-200 pt-3 text-sm text-red-700">
-                <p>This turn failed and was not saved to AI history.</p>
-                {message.retry.requiresAttachments ? (
-                  <>
-                    <p className="mt-1 text-xs">Prepare the question, then reattach its files before sending.</p>
+              {message.activity && (
+                <AssistantActivity
+                  entries={message.activity.filter(entry => (
+                    entry.kind === 'response' || (entry.kind === 'reasoning' ? showReasoning : showTools)
+                  ))}
+                />
+              )}
+              {message.role === 'assistant' && !message.content && message.status === 'pending' ? (
+                steeringAssistantId === message.id ? <p className="text-xs text-gray-500">Steering…</p> : <ThinkingIndicator />
+              ) : message.role === 'user' ? (
+                <p className="whitespace-pre-wrap break-words">{message.content}</p>
+              ) : optimizer ? (
+                <>
+                  <p className="whitespace-pre-wrap break-words">{optimizer.summary}</p>
+                  {optimizer.details.length > 0 && (
+                    <dl className="mt-3 grid gap-1.5 text-sm">
+                      {optimizer.details.map(({ label, value }, index) => (
+                        <div key={`${label}-${index}`} className="min-w-0 [overflow-wrap:anywhere]">
+                          <dt className="inline font-semibold">{label}:</dt>{' '}
+                          <dd className="inline whitespace-pre-wrap">{value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  )}
+                </>
+              ) : null}
+              {message.role === 'optimizer' && message.optimizerJob?.downloadable && (
+                <button
+                  type="button"
+                  onClick={() => void downloadOptimizationResult(message.optimizerJob?.jobId ?? '')}
+                  disabled={downloadingOptimizationId !== null}
+                  className="mt-3 inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-gray-400"
+                >
+                  <FiDownload aria-hidden="true" className="h-4 w-4" />
+                  {downloadingOptimizationId === message.optimizerJob.jobId ? 'Downloading...' : 'Download result'}
+                </button>
+              )}
+              {message.attachmentNames && message.attachmentNames.length > 0 && (
+                <p className="mt-2 text-xs opacity-80">
+                  Attached: {message.attachmentNames.join(', ')}
+                </p>
+              )}
+              {timestamp !== undefined && (
+                <time
+                  dateTime={new Date(timestamp).toISOString()}
+                  title={new Date(timestamp).toLocaleString()}
+                  className={`mt-2 block text-[0.6875rem] ${message.role === 'user' ? 'text-blue-100' : 'text-gray-400'}`}
+                >
+                  {formatResponseTime(timestamp)}
+                  {message.responseStartedAt !== undefined && message.responseCompletedAt !== undefined && (
+                    <> · {formatResponseDuration(message.responseStartedAt, message.responseCompletedAt)}</>
+                  )}
+                </time>
+              )}
+              {message.role === 'assistant' && message.status === 'failed' && message.retry && (
+                <div className="mt-3 border-t border-red-200 pt-3 text-sm text-red-700">
+                  <p>This turn failed and was not saved to AI history.</p>
+                  {message.retry.requiresAttachments ? (
+                    <>
+                      <p className="mt-1 text-xs">Prepare the question, then reattach its files before sending.</p>
+                      <button
+                        type="button"
+                        onClick={() => prepareAttachmentRetry(message.retry?.question ?? '')}
+                        disabled={isStreaming}
+                        className="mt-2 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Prepare retry
+                      </button>
+                    </>
+                  ) : (
                     <button
                       type="button"
-                      onClick={() => prepareAttachmentRetry(message.retry?.question ?? '')}
+                      onClick={() => retryMessage(message.id, message.retry?.question ?? '')}
                       disabled={isStreaming}
                       className="mt-2 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      Prepare retry
+                      Retry
                     </button>
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => retryMessage(message.id, message.retry?.question ?? '')}
-                    disabled={isStreaming}
-                    className="mt-2 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Retry
-                  </button>
-                )}
-              </div>
-            )}
-          </article>
-        ))}
+                  )}
+                </div>
+              )}
+            </article>
+          );
+        })}
         {activeSessionId !== null && sessionExpiresAt !== null && (
           <p className="pt-1 text-center text-[0.6875rem] text-gray-400">
             Chat expires at{' '}
@@ -2354,6 +2455,18 @@ export default function ExperimentalAiPage() {
             )}
           </div>
         </div>
+        {(contextUsage !== null || messages.length > 0) && (
+          <p
+            className="mt-2 text-center text-[0.6875rem] text-gray-500"
+            title={contextUsage !== null
+              ? `${contextUsage.usedChars.toLocaleString()} of ${contextUsage.maxChars.toLocaleString()} characters in retained chat history. Excludes instructions, schedule, tools, and attachments. This is not the model token window.`
+              : 'The AI server has not reported context usage. Update the AI server to a version that reports its chat history budget.'}
+          >
+            Chat history context: {contextUsage !== null
+              ? `${(100 * contextUsage.usedChars / contextUsage.maxChars).toFixed(1)}%`
+              : 'unavailable'}
+          </p>
+        )}
       </form>
     </main>
   );
