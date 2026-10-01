@@ -87,9 +87,19 @@ def case_digest(case: EvalCase) -> str:
         if not fields[optional]:
             fields.pop(optional)
     if case.optimizer_completion:
+        from nurse_scheduling.ai.result_context import build_result_context
+        from nurse_scheduling.ai.sandbox_agent import REFERENCE_ATTACHMENT_TOOLS, inspection_helper_catalog
+
         from .optimizer_fixtures import fixture_digest
 
         fields["optimizer_fixture_sha256"] = fixture_digest(case.optimizer_completion)
+        fields["result_reader_sha256"] = {
+            path: hashlib.sha256(source.read_bytes()).hexdigest() for path, source in REFERENCE_ATTACHMENT_TOOLS.items()
+        }
+        fields["result_context_sha256"] = hashlib.sha256(
+            Path(build_result_context.__code__.co_filename).read_bytes()
+        ).hexdigest()
+        fields["helper_catalog_sha256"] = hashlib.sha256(inspection_helper_catalog().encode()).hexdigest()
     if not case.semantic_check:
         # An optional oracle must not invalidate receipts for unrelated cases.
         fields.pop("semantic_check")

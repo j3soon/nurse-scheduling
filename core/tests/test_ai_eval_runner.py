@@ -47,6 +47,7 @@ from nurse_scheduling.ai.provider import (
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
 from nurse_scheduling.ai.sandbox_agent import (
+    REFERENCE_ATTACHMENT_TOOLS,
     SANDBOX_SYSTEM_PROMPT,
     WORKSPACE_ATTACHMENT_MANIFEST,
     WORKSPACE_SCHEDULE,
@@ -1171,6 +1172,8 @@ def test_reference_digests_cover_every_file_hydrated_into_the_sandbox():
     expected = {path.name for path in SCHEMA_REFERENCE_FILES.values()}
     expected.add(TAIWAN_HOLIDAYS_SOURCE.name)
     expected.update(f"user-guide/{relative}" for relative in load_user_guide_references())
+    expected.update(path.removeprefix("/reference/") for path in REFERENCE_ATTACHMENT_TOOLS)
+    expected.update({"tools/README.md", "result_context.py"})
     assert set(digests) == expected
     assert digests == dict(sorted(digests.items()))
     assert all(len(digest) == 64 for digest in digests.values())

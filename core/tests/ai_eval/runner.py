@@ -57,12 +57,15 @@ from nurse_scheduling.ai.provider import (
     TokenUsage,
     ToolCallRequest,
 )
+from nurse_scheduling.ai.result_context import build_result_context
 from nurse_scheduling.ai.sandbox import SandboxError, SandboxFactory, managed_sandbox_factory
 from nurse_scheduling.ai.sandbox.factory import create_sandbox_factory
 from nurse_scheduling.ai.sandbox_agent import (
+    REFERENCE_ATTACHMENT_TOOLS,
     SANDBOX_SYSTEM_PROMPT,
     SandboxAgentLimits,
     SandboxTurnMetrics,
+    inspection_helper_catalog,
     run_sandbox_agent,
 )
 from nurse_scheduling.ai.schema import (
@@ -1299,6 +1302,12 @@ def _reference_digests() -> dict[str, str]:
     digests[TAIWAN_HOLIDAYS_SOURCE.name] = hashlib.sha256(load_taiwan_holidays_reference().encode()).hexdigest()
     for relative_path, reference in load_user_guide_references().items():
         digests[f"user-guide/{relative_path}"] = hashlib.sha256(reference.encode()).hexdigest()
+    for destination, source in REFERENCE_ATTACHMENT_TOOLS.items():
+        digests[destination.removeprefix("/reference/")] = hashlib.sha256(source.read_bytes()).hexdigest()
+    digests["tools/README.md"] = hashlib.sha256(inspection_helper_catalog().encode()).hexdigest()
+    digests["result_context.py"] = hashlib.sha256(
+        Path(build_result_context.__code__.co_filename).read_bytes()
+    ).hexdigest()
     return dict(sorted(digests.items()))
 
 

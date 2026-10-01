@@ -35,6 +35,7 @@ from .config import AiSettings
 from .optimizer import OPTIMIZER_TOOL, WORKSPACE_OPTIMIZER_RESULT, optimizer_tool_definition
 from .pi.read import READ_TOOL
 from .provider import ChatMessage, ToolCapableChatProvider
+from .result_context import build_result_context
 from .sandbox import (
     SandboxBackend,
     SandboxError,
@@ -63,9 +64,29 @@ REFERENCE_SCHEMAS = {group: f"/reference/{path.name}" for group, path in SCHEMA_
 REFERENCE_SCHEMAS["taiwan-holidays"] = f"/reference/{TAIWAN_HOLIDAYS_SOURCE.name}"
 REFERENCE_USER_GUIDE = "/reference/user-guide"
 ATTACHMENT_TOOL_DIRECTORY = Path(__file__).with_name("attachment_tools")
-REFERENCE_ATTACHMENT_TOOLS = {
-    f"/reference/tools/{name}": ATTACHMENT_TOOL_DIRECTORY / name for name in ("inspect_xlsx.py", "inspect_pdf.py")
+INSPECTION_HELPERS = {
+    "inspect_xlsx.py": "Bounded worksheet cells, formulas, and cached values from XLSX files.",
+    "inspect_pdf.py": "PDF page text and rendered page images.",
+    "inspect_optimizer_result.py": "Optimizer assignments and signed request counts using a compiled schedule context.",
 }
+REFERENCE_ATTACHMENT_TOOLS = {
+    f"/reference/tools/{name}": ATTACHMENT_TOOL_DIRECTORY / name for name in INSPECTION_HELPERS
+}
+WORKSPACE_RESULT_CONTEXT = "/workspace/optimizer-results/schedule-context.json"
+WORKSPACE_PENDING_RESULT_CONTEXT = "/workspace/optimizer-results/pending-schedule-context.json"
+
+
+def inspection_helper_catalog() -> str:
+    """Advertise only the inspection scripts hydrated by this server."""
+    return (
+        "# Inspection helpers\n\n"
+        + "\n".join(
+            f"- `/reference/tools/{name}`: {description} Run with `--help` for usage."
+            for name, description in INSPECTION_HELPERS.items()
+        )
+        + "\n\nThe result reader supports exported roster cells with bracketed annotations. Other layouts or decorations need a custom parser.\n"
+    )
+
 
 SANDBOX_SYSTEM_PROMPT = compose_system_prompt()
 
@@ -444,6 +465,7 @@ async def hydrate_sandbox(
         files[f"{REFERENCE_USER_GUIDE}/{relative_path}"] = reference
     for destination, source in REFERENCE_ATTACHMENT_TOOLS.items():
         files[destination] = source.read_text(encoding="utf-8")
+    files["/reference/tools/README.md"] = inspection_helper_catalog()
     if attachments:
         manifest = []
         for index, attachment in enumerate(attachments, start=1):
@@ -466,6 +488,13 @@ async def hydrate_sandbox(
         )
     if optimizer_result is not None:
         files[WORKSPACE_OPTIMIZER_RESULT] = optimizer_result
+        files[WORKSPACE_RESULT_CONTEXT] = json.dumps(
+            build_result_context(schedule_yaml), ensure_ascii=False, allow_nan=False
+        )
+        if pending_proposal_yaml:
+            files[WORKSPACE_PENDING_RESULT_CONTEXT] = json.dumps(
+                build_result_context(pending_proposal_yaml), ensure_ascii=False, allow_nan=False
+            )
     # One request, because hydration now precedes the first tool result rather than the turn.
     await sandbox.write_files(files)
     logger.info(

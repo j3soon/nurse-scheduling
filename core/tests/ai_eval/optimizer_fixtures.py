@@ -31,13 +31,19 @@ from nurse_scheduling.loader import _load_yaml
 
 FIXTURE = Path(__file__).with_name("fixtures") / "request-audit.yaml"
 ASSIGNMENTS = {"Alex": ["OFF", "K", "D"], "Mira": ["D", "N", "OFF"], "Kai": ["N", "D", "N"]}
+RESULT_ASSIGNMENTS = {
+    "request-audit": ASSIGNMENTS,
+    "request-audit-all-strong": {**ASSIGNMENTS, "Mira": ["D", "OFF", "OFF"]},
+}
 
 
 def fixture_digest(name: str) -> str:
     """Bind completion cases to their schedule and fixed assignment."""
-    if name != "request-audit":
+    if name not in RESULT_ASSIGNMENTS:
         raise ValueError(f"Unknown optimizer result fixture: {name}")
-    return hashlib.sha256(FIXTURE.read_bytes() + json.dumps(ASSIGNMENTS, sort_keys=True).encode()).hexdigest()
+    return hashlib.sha256(
+        FIXTURE.read_bytes() + json.dumps(RESULT_ASSIGNMENTS[name], sort_keys=True).encode()
+    ).hexdigest()
 
 
 @lru_cache(maxsize=4)
@@ -50,7 +56,7 @@ def completion_result(name: str, source: str) -> tuple[bytes, dict]:
     people = data["people"]["items"]
     shifts = data["shiftTypes"]["items"]
     forced = {
-        (day, shift, person): int(ASSIGNMENTS[p["id"]][day] == s["id"])
+        (day, shift, person): int(RESULT_ASSIGNMENTS[name][p["id"]][day] == s["id"])
         for day in range(3)
         for shift, s in enumerate(shifts)
         for person, p in enumerate(people)

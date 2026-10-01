@@ -265,7 +265,11 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     if not isinstance(optimizer_error, str):
         raise EvalCaseError(f"{source} `optimizer_error` must be a string.")
     optimizer_completion = entry.get("optimizer_completion", "")
-    if not isinstance(optimizer_completion, str) or optimizer_completion not in {"", "request-audit"}:
+    if not isinstance(optimizer_completion, str) or optimizer_completion not in {
+        "",
+        "request-audit",
+        "request-audit-all-strong",
+    }:
         raise EvalCaseError(f"{source} has an unknown optimizer_completion fixture.")
     if optimizer_completion and (len(raw_turns) != 1 or entry["expect_proposal"]):
         raise EvalCaseError(f"{source} completion cases require one user turn and no proposal.")

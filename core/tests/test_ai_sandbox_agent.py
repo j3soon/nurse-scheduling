@@ -47,6 +47,7 @@ from nurse_scheduling.ai.sandbox_agent import (
     WORKSPACE_ATTACHMENT_MANIFEST,
     WORKSPACE_PENDING_DIFF,
     WORKSPACE_PENDING_PROPOSAL,
+    WORKSPACE_RESULT_CONTEXT,
     WORKSPACE_SCHEDULE,
     AgentScheduleChange,
     SandboxAgentLimits,
@@ -359,6 +360,10 @@ def test_hydration_keeps_optimizer_result_outside_user_attachments():
     backend = factory.created[0]
     assert backend.files[WORKSPACE_OPTIMIZER_RESULT] == b"workbook"
     assert WORKSPACE_ATTACHMENT_MANIFEST not in backend.files
+    context = json.loads(backend.files[WORKSPACE_RESULT_CONTEXT])
+    assert context["schema_version"] == 1
+    assert context["people"] == ["P1", "P2"]
+    assert b"inspect_optimizer_result.py" in backend.files["/reference/tools/README.md"]
 
 
 def test_reference_sources_are_read_from_disk_once_per_process():
