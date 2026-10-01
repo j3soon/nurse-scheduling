@@ -379,11 +379,45 @@ test('downloads a completed background optimization from chat', async ({ page })
     const exported = await readFile(await exportDownload.path(), 'utf8');
     expect(exported).toContain('Frontend version:');
     expect(exported).toContain('Backend version: v0.4.3-backend');
-    expect(exported).toContain('Outcome: optimal');
-    expect(exported).toContain('Final score: 0');
-    expect(exported).toContain('Backend URL: http://optimizer:8000');
-    expect(exported).toContain('Claimed performance: 125');
+    expect(exported).toContain(format === 'HTML' ? '<dt>Outcome:</dt> <dd>optimal</dd>' : '**Outcome:** optimal');
+    expect(exported).toContain(format === 'HTML' ? '<dt>Final score:</dt> <dd>0</dd>' : '**Final score:** 0');
+    expect(exported).toContain(format === 'HTML' ? '<dt>Backend URL:</dt> <dd>http://optimizer:8000</dd>' : '**Backend URL:** http://optimizer:8000');
+    expect(exported).toContain(format === 'HTML' ? '<dt>Claimed performance:</dt> <dd>125' : '**Claimed performance:** 125');
     expect(exported).toContain(format === 'HTML' ? '<time datetime=' : '- Sent:');
+    if (format === 'HTML') {
+      const exportPage = await page.context().newPage();
+      await exportPage.setContent(exported);
+      for (const width of [1280, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        await exportPage.setViewportSize({ width, height: 900 });
+        const widthRatio = (element: Element) => {
+          const parent = element.parentElement!;
+          const style = getComputedStyle(parent);
+          const available = parent.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+          return element.getBoundingClientRect().width / available;
+        };
+        const chatRatio = await page.locator('article').first().evaluate(widthRatio);
+        const exportRatio = await exportPage.locator('article').first().evaluate(widthRatio);
+        expect(exportRatio).toBeCloseTo(chatRatio, 2);
+        expect(await exportPage.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+      }
+      for (const timestamp of await exportPage.locator('article time').all()) {
+        const contrast = await timestamp.evaluate(element => {
+          const luminance = (color: string) => {
+            const rgb = color.match(/[\d.]+/g)!.slice(0, 3).map(Number).map(channel => channel / 255);
+            const linear = rgb.map(channel => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
+            return linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722;
+          };
+          const foreground = luminance(getComputedStyle(element).color);
+          const background = luminance(getComputedStyle(element.closest('article')!).backgroundColor);
+          return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
+        });
+        expect(contrast).toBeGreaterThanOrEqual(4.5);
+      }
+      await expect(exportPage.getByText('Final score:', { exact: true })).toHaveCSS('font-weight', '600');
+      await exportPage.close();
+      await page.setViewportSize({ width: 1280, height: 720 });
+    }
   }
   const downloadButton = page.getByRole('button', { name: 'Download result' });
   await expect(downloadButton).toBeVisible();

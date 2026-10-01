@@ -43,6 +43,7 @@ import { generateYamlFromState } from '@/utils/yamlGenerator';
 import yaml from 'js-yaml';
 import { ActivityEntry, AssistantActivity } from './AssistantActivity';
 import { ChatExportMessage, downloadChatExport } from './chatExport';
+import { parseOptimizerMessage } from './optimizerMessage';
 import {
   AiCapabilities,
   AiHttpError,
@@ -2057,6 +2058,7 @@ export default function ExperimentalAiPage() {
         )}
         {messages.map(message => {
           const timestamp = message.responseCompletedAt ?? message.createdAt;
+          const optimizer = message.role === 'optimizer' ? parseOptimizerMessage(message.content) : null;
           return (
             <article
               key={message.id}
@@ -2080,8 +2082,22 @@ export default function ExperimentalAiPage() {
               )}
               {message.role === 'assistant' && !message.content && message.status === 'pending' ? (
                 steeringAssistantId === message.id ? <p className="text-xs text-gray-500">Steering…</p> : <ThinkingIndicator />
-              ) : message.role !== 'assistant' ? (
+              ) : message.role === 'user' ? (
                 <p className="whitespace-pre-wrap break-words">{message.content}</p>
+              ) : optimizer ? (
+                <>
+                  <p className="whitespace-pre-wrap break-words">{optimizer.summary}</p>
+                  {optimizer.details.length > 0 && (
+                    <dl className="mt-3 grid gap-1.5 text-sm">
+                      {optimizer.details.map(({ label, value }, index) => (
+                        <div key={`${label}-${index}`} className="break-words">
+                          <dt className="inline font-semibold">{label}:</dt>{' '}
+                          <dd className="inline whitespace-pre-wrap">{value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  )}
+                </>
               ) : null}
               {message.role === 'optimizer' && message.optimizerJob?.downloadable && (
                 <button

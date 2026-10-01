@@ -105,7 +105,7 @@ describe('chat export', () => {
   it('exports optimizer messages as their own labeled and styled block', () => {
     const optimizerMessage: ChatExportMessage = {
       role: 'optimizer',
-      content: 'Optimization finished. Download the optimized schedule to review it.',
+      content: 'Optimization finished. Download the optimized schedule to review it.\nOutcome: optimal\nFinal score: 0\nBackend URL: https://optimizer.example.test:8443/path\nError: <script>unsafe</script>\nsecond line',
     };
 
     const markdown = buildMarkdownChatExport([optimizerMessage], metadata);
@@ -116,6 +116,12 @@ describe('chat export', () => {
     expect(html).toContain('class="message optimizer"');
     expect(html).toContain('<div class="label">Optimizer</div>');
     expect(html).toContain('.optimizer { align-self: flex-start;');
+    expect(html).toContain('<dt>Final score:</dt> <dd>0</dd>');
+    expect(html).toContain('<dd>https://optimizer.example.test:8443/path</dd>');
+    expect(html).toContain('<dd>&lt;script&gt;unsafe&lt;/script&gt;\nsecond line</dd>');
+    expect(html).not.toContain('<script>');
+    expect(markdown).toContain('- **Final score:** 0');
+    expect(markdown).toContain('- **Error:** <script>unsafe</script>\n  second line');
   });
 
   it('places activity separators only at response boundaries', () => {

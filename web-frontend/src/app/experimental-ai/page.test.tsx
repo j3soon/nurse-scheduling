@@ -482,7 +482,7 @@ describe('ExperimentalAiPage', () => {
     expect(screen.queryByText('Background tool running · bash')).not.toBeInTheDocument();
     expect(screen.queryByText(/Optimizer running in the background/)).not.toBeInTheDocument();
     expect(screen.queryByRole('img', { name: 'Optimization score trend' })).not.toBeInTheDocument();
-    const optimizerSummary = screen.getByText(/^Optimization finished\. Download/);
+    const optimizerSummary = screen.getByText(/^Optimization finished\. Download/).closest('article')!;
     expect(optimizerSummary).toHaveTextContent('Outcome: optimal');
     expect(optimizerSummary).toHaveTextContent('Final score: 0');
     expect(optimizerSummary).toHaveTextContent('Backend URL: http://optimizer:8000');
@@ -490,7 +490,9 @@ describe('ExperimentalAiPage', () => {
     expect(optimizerSummary).toHaveTextContent('Solver timeout: 300s');
     expect(optimizerSummary).toHaveTextContent('Backend request timeout: 30s');
     expect(optimizerSummary).toHaveTextContent('Claimed performance: 125');
-    expect(optimizerSummary.closest('article')?.querySelector('time')).toHaveAttribute('title');
+    expect(screen.getByText('Final score:').tagName).toBe('DT');
+    expect(screen.getByText('Final score:')).toHaveClass('font-semibold');
+    expect(optimizerSummary.querySelector('time')).toHaveAttribute('title');
     const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:optimizer-result');
     const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
     const clickDownload = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
