@@ -402,12 +402,7 @@ describe('ExperimentalAiPage', () => {
       onDelta: (text: string) => void;
       onToolStart?: (activity: { name: string; arguments: string }) => void;
       onTool?: (activity: { name: string; arguments: string; result: string; ok: boolean }) => void;
-      onOptimization?: (activity: {
-        jobId: string;
-        state: string;
-        terminal: boolean;
-        downloadable: boolean;
-      }) => void;
+      onOptimization?: (activity: import('./aiClient').OptimizationActivity) => void;
       onOptimizationProgress?: (activity: {
         jobId: string;
         point: { currentBestScore: number; elapsedSeconds: number };
@@ -452,6 +447,10 @@ describe('ExperimentalAiPage', () => {
         state: 'completed',
         terminal: true,
         downloadable: true,
+        result: { outcome: 'optimal', score: 0, solverStatus: 'OPTIMAL', terminationReason: 'completed' },
+        request: { solver: 'ortools/cp-sat', timeoutSeconds: 300 },
+        backend: { url: 'http://optimizer:8000', appVersion: 'v0.4.3', requestTimeoutSeconds: 30,
+          claimedPerformance: { score: 125, appVersion: 'v0.4.2', measuredAt: '2026-09-18T01:00:00Z' } },
       });
       backgroundCallbacks?.onTurnStart?.('optimizer-turn', 'optimizer');
       backgroundCallbacks?.onToolStart?.({ name: 'bash', arguments: '{"command":"echo ready"}' });
@@ -472,7 +471,15 @@ describe('ExperimentalAiPage', () => {
     expect(screen.queryByText('Background tool running · bash')).not.toBeInTheDocument();
     expect(screen.queryByText(/Optimizer running in the background/)).not.toBeInTheDocument();
     expect(screen.queryByRole('img', { name: 'Optimization score trend' })).not.toBeInTheDocument();
-    expect(screen.getByText('Optimization finished. Download the optimized schedule to review it.')).toBeInTheDocument();
+    const optimizerSummary = screen.getByText(/^Optimization finished\. Download/);
+    expect(optimizerSummary).toHaveTextContent('Outcome: optimal');
+    expect(optimizerSummary).toHaveTextContent('Final score: 0');
+    expect(optimizerSummary).toHaveTextContent('Backend URL: http://optimizer:8000');
+    expect(optimizerSummary).toHaveTextContent('Backend version: v0.4.3');
+    expect(optimizerSummary).toHaveTextContent('Solver timeout: 300s');
+    expect(optimizerSummary).toHaveTextContent('Backend request timeout: 30s');
+    expect(optimizerSummary).toHaveTextContent('Claimed performance: 125');
+    expect(optimizerSummary.closest('article')?.querySelector('time')).toHaveAttribute('title');
     const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:optimizer-result');
     const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
     const clickDownload = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);

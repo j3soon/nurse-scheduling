@@ -368,6 +368,40 @@ function formatResponseTime(timestamp: number): string {
     : { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
+function optimizationMessage(activity: OptimizationActivity): string {
+  const summary = activity.state === 'completed'
+    ? activity.downloadable
+      ? 'Optimization finished. Download the optimized schedule to review it.'
+      : 'Optimization finished, but no result workbook is available to download.'
+    : `Optimization ended with status: ${activity.state}.`;
+  const details: string[] = [];
+  const add = (label: string, value: string | number | undefined) => {
+    if (value !== undefined) details.push(`${label}: ${value}`);
+  };
+  add('Outcome', activity.result?.outcome);
+  add('Final score', activity.result?.score);
+  add('Solver', activity.request?.solver);
+  add('Solver status', activity.result?.solverStatus);
+  add('Termination reason', activity.result?.terminationReason);
+  if (activity.request?.timeoutSeconds !== undefined) add('Solver timeout', `${activity.request.timeoutSeconds}s`);
+  if (activity.backend) {
+    add('Backend URL', activity.backend.url ?? 'unknown');
+    add('Backend version', activity.backend.appVersion ?? 'unknown');
+    add('API version', activity.backend.apiVersion);
+    add('Service', activity.backend.serviceName);
+    add('Deployment', activity.backend.deploymentId);
+    add('Instance', activity.backend.instanceId);
+    if (activity.backend.requestTimeoutSeconds !== undefined) {
+      add('Backend request timeout', `${activity.backend.requestTimeoutSeconds}s`);
+    }
+    const claimed = activity.backend.claimedPerformance;
+    add('Claimed performance', claimed ? `${claimed.score} (version ${claimed.appVersion}, measured ${claimed.measuredAt})` : 'unavailable');
+  }
+  add('Error code', activity.error?.code);
+  add('Error', activity.error?.message);
+  return [summary, ...details].join('\n');
+}
+
 function isAuthenticationError(error: unknown): boolean {
   return typeof error === 'object'
     && error !== null
@@ -1227,11 +1261,7 @@ export default function ExperimentalAiPage() {
             return;
           }
           setActiveOptimization(current => current?.jobId === activity.jobId ? null : current);
-          const content = activity.state === 'completed'
-            ? activity.downloadable
-              ? 'Optimization finished. Download the optimized schedule to review it.'
-              : 'Optimization finished, but no result workbook is available to download.'
-            : `Optimization ended with status: ${activity.state}.`;
+          const content = optimizationMessage(activity);
           setMessages(previous => previous.some(message => message.id === `optimizer-${activity.jobId}`)
             ? previous
             : [
@@ -1239,6 +1269,7 @@ export default function ExperimentalAiPage() {
               {
                 id: `optimizer-${activity.jobId}`,
                 role: 'optimizer',
+                createdAt: Date.now(),
                 content,
                 optimizerJob: { jobId: activity.jobId, downloadable: activity.downloadable },
               },

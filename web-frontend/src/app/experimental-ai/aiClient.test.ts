@@ -332,6 +332,27 @@ describe('AI client', () => {
     expect(trimmed).toHaveBeenCalledWith(6);
   });
 
+  it('decodes optimizer provenance and preserves a zero final score', async () => {
+    const payload = {
+      job_id: 'opt-1', state: 'completed', terminal: true, downloadable: true,
+      result: { outcome: 'optimal', score: 0, solver_status: 'OPTIMAL', termination_reason: 'completed' },
+      request: { solver: 'ortools/cp-sat', timeout_seconds: 300 },
+      backend: { url: 'http://optimizer:8000', app_version: 'v0.4.3', request_timeout_seconds: 30,
+        claimed_performance: { score: 125, app_version: 'v0.4.2', measured_at: '2026-09-18T01:00:00Z' } },
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      `event: optimization\ndata: ${JSON.stringify(payload)}\n\n`,
+    ])));
+    const onOptimization = vi.fn();
+    await streamSessionEvents('session', { onDelta: vi.fn(), onOptimization }, new AbortController().signal, null);
+    expect(onOptimization).toHaveBeenCalledWith(expect.objectContaining({
+      result: { outcome: 'optimal', score: 0, solverStatus: 'OPTIMAL', terminationReason: 'completed' },
+      request: { solver: 'ortools/cp-sat', timeoutSeconds: 300 },
+      backend: expect.objectContaining({ url: 'http://optimizer:8000', appVersion: 'v0.4.3', requestTimeoutSeconds: 30,
+        claimedPerformance: { score: 125, appVersion: 'v0.4.2', measuredAt: '2026-09-18T01:00:00Z' } }),
+    }));
+  });
+
   it('streams optimizer-triggered turns with authentication', async () => {
     const fetchMock = vi.fn().mockResolvedValue(streamedResponse([
       'id: 1\nevent: optimization\ndata: {"job_id":"opt-1","state":"running","terminal":false,"downloadable":false}\n\n',

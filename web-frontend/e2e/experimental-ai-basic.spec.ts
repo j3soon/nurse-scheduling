@@ -140,6 +140,7 @@ async function mockAiBackend(
         contentType: 'application/json',
         headers: corsHeaders,
         body: JSON.stringify({
+          app_version: 'v0.4.3-backend',
           ...(requiredAuthToken ? { auth: { required: true, scheme: 'bearer' } } : {}),
           file_attachments: {
             enabled: true,
@@ -200,6 +201,7 @@ async function mockAiBackend(
           'event: error\ndata: {"message":"The temporary AI sandbox failed."}\n\n',
         ].join('')
         : [
+          'event: context_usage\ndata: {"used_chars":500,"max_chars":2000}\n\n',
           ...answerDeltas.map(text => `event: delta\ndata: ${JSON.stringify({ text })}\n\n`),
           'event: done\ndata: {"message_id":"answer-id"}\n\n',
         ].join(''),
@@ -217,6 +219,13 @@ test('asks about the current schedule and renders a streamed answer', async ({ p
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   await expect(page.getByText('The image and schedule were received.')).toBeVisible();
+  await expect(page.getByText('Backend v0.4.3-backend')).toBeVisible();
+  await expect(page.getByText('Chat history context: 25.0%')).toBeVisible();
+  const userTime = page.locator('article').filter({ hasText: 'Who works first?' }).locator('time');
+  await expect(userTime).toHaveAttribute('datetime', /T/);
+  await expect(userTime).toHaveAttribute('title', /\d{4}/);
+  await expect(page.locator('article').filter({ hasText: 'The image and schedule were received.' }).locator('time'))
+    .toHaveAttribute('title', /\d{4}/);
   const composerBox = await page.locator('main form').boundingBox();
   const viewport = page.viewportSize();
   expect(composerBox).not.toBeNull();
@@ -329,12 +338,19 @@ test('Stop aborts the active AI stream', async ({ page }) => {
 test('downloads a completed background optimization from chat', async ({ page }) => {
   await mockAiBackend(page, ['Optimization started.']);
   const workbookBytes = Buffer.from('browser-result-workbook');
+  const completedRun = {
+    job_id: 'opt-browser', state: 'completed', terminal: true, downloadable: true,
+    result: { outcome: 'optimal', score: 0, solver_status: 'OPTIMAL', termination_reason: 'completed' },
+    request: { solver: 'ortools/cp-sat', timeout_seconds: 300 },
+    backend: { url: 'http://optimizer:8000', app_version: 'v0.4.3', api_version: '0.2.0', request_timeout_seconds: 30,
+      claimed_performance: { score: 125, app_version: 'v0.4.2', measured_at: '2026-09-18T01:00:00Z' } },
+  };
   await page.route('**/ai/sessions/browser-session/events', route => route.fulfill({
     status: 200,
     contentType: 'text/event-stream',
     body: [
       'id: 1\nevent: optimization\ndata: {"job_id":"opt-browser","state":"running","terminal":false,"downloadable":false}\n\n',
-      'id: 2\nevent: optimization\ndata: {"job_id":"opt-browser","state":"completed","terminal":true,"downloadable":true}\n\n',
+      `id: 2\nevent: optimization\ndata: ${JSON.stringify(completedRun)}\n\n`,
     ].join(''),
   }));
   await page.route('**/ai/sessions/browser-session/optimizations/opt-browser/xlsx', route => route.fulfill({
@@ -346,6 +362,27 @@ test('downloads a completed background optimization from chat', async ({ page })
   await page.goto('/experimental-ai');
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Optimize it.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
+  const summary = page.locator('article').filter({ hasText: 'Optimization finished.' });
+  await expect(summary).toContainText('Outcome: optimal');
+  await expect(summary).toContainText('Final score: 0');
+  await expect(summary).toContainText('Backend URL: http://optimizer:8000');
+  await expect(summary).toContainText('Backend version: v0.4.3');
+  await expect(summary).toContainText('Solver timeout: 300s');
+  await expect(summary).toContainText('Backend request timeout: 30s');
+  await expect(summary).toContainText('Claimed performance: 125');
+  for (const format of ['HTML', 'Markdown']) {
+    const exportedFile = page.waitForEvent('download');
+    await page.getByRole('button', { name: format, exact: true }).click();
+    const exportDownload = await exportedFile;
+    const exported = await readFile(await exportDownload.path(), 'utf8');
+    expect(exported).toContain('Frontend version:');
+    expect(exported).toContain('Backend version: v0.4.3-backend');
+    expect(exported).toContain('Outcome: optimal');
+    expect(exported).toContain('Final score: 0');
+    expect(exported).toContain('Backend URL: http://optimizer:8000');
+    expect(exported).toContain('Claimed performance: 125');
+    expect(exported).toContain(format === 'HTML' ? '<time datetime=' : '- Sent:');
+  }
   const downloadButton = page.getByRole('button', { name: 'Download result' });
   await expect(downloadButton).toBeVisible();
   const downloadEvent = page.waitForEvent('download');

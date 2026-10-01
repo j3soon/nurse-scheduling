@@ -40,6 +40,19 @@ export interface OptimizationActivity {
   state: string;
   terminal: boolean;
   downloadable: boolean;
+  result?: { outcome?: string; score?: number; solverStatus?: string; terminationReason?: string };
+  error?: { code?: string; message?: string };
+  request?: { solver?: string; timeoutSeconds?: number };
+  backend?: {
+    url?: string;
+    appVersion?: string;
+    apiVersion?: string;
+    serviceName?: string;
+    deploymentId?: string;
+    instanceId?: string;
+    requestTimeoutSeconds?: number;
+    claimedPerformance?: { score: number; appVersion: string; measuredAt: string };
+  };
 }
 
 export interface OptimizationProgressActivity {
@@ -111,6 +124,9 @@ interface SsePayload {
   state?: unknown;
   terminal?: unknown;
   downloadable?: unknown;
+  error?: unknown;
+  request?: unknown;
+  backend?: unknown;
   progress?: unknown;
   used_chars?: unknown;
   max_chars?: unknown;
@@ -249,6 +265,51 @@ export async function getSessionStatus(
   return body.expires_in_seconds as number;
 }
 
+function record(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null ? value as Record<string, unknown> : {};
+}
+
+function textField(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function numberField(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function optimizationDetails(payload: SsePayload): Partial<OptimizationActivity> {
+  const result = record(payload.result);
+  const error = record(payload.error);
+  const request = record(payload.request);
+  const backend = record(payload.backend);
+  const claimed = record(backend.claimed_performance);
+  const score = numberField(claimed.score);
+  return {
+    ...(payload.result ? { result: {
+      outcome: textField(result.outcome),
+      score: numberField(result.score),
+      solverStatus: textField(result.solver_status),
+      terminationReason: textField(result.termination_reason),
+    } } : {}),
+    ...(payload.error ? { error: { code: textField(error.code), message: textField(error.message) } } : {}),
+    ...(payload.request ? { request: {
+      solver: textField(request.solver), timeoutSeconds: numberField(request.timeout_seconds),
+    } } : {}),
+    ...(payload.backend ? { backend: {
+      url: textField(backend.url),
+      appVersion: textField(backend.app_version),
+      apiVersion: textField(backend.api_version),
+      serviceName: textField(backend.service_name),
+      deploymentId: textField(backend.deployment_id),
+      instanceId: textField(backend.instance_id),
+      requestTimeoutSeconds: numberField(backend.request_timeout_seconds),
+      ...(score !== undefined && score > 0 && typeof claimed.app_version === 'string'
+        && typeof claimed.measured_at === 'string' && Number.isFinite(Date.parse(claimed.measured_at))
+        ? { claimedPerformance: { score, appVersion: claimed.app_version, measuredAt: claimed.measured_at } } : {}),
+    } } : {}),
+  };
+}
+
 function consumeEvent(block: string, callbacks: StreamCallbacks): void {
   const lines = block.split('\n');
   const eventId = Number(lines.find(line => line.startsWith('id:'))?.slice('id:'.length).trim());
@@ -316,6 +377,7 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
       state: payload.state,
       terminal: payload.terminal,
       downloadable: payload.downloadable,
+      ...optimizationDetails(payload),
     });
   } else if (eventType === 'optimization_progress' && typeof payload.job_id === 'string') {
     const point = payload.progress as Record<string, unknown> | null | undefined;

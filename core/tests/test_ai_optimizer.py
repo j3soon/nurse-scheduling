@@ -147,11 +147,34 @@ def test_http_backend_uses_the_existing_optimizer_routes_and_server_side_token()
 
         def handle(request: httpx.Request) -> httpx.Response:
             requests.append(request)
+            if request.url.path == "/info":
+                return httpx.Response(
+                    200,
+                    json={
+                        "app_version": "v0.4.3",
+                        "api_version": "0.2.0",
+                        "service_name": "optimizer",
+                        "claimed_performance": {
+                            "score": 125,
+                            "app_version": "v0.4.2",
+                            "measured_at": "2026-09-18T01:00:00Z",
+                        },
+                        "auth": {"required": True},
+                        "private_config": "must-not-relay",
+                    },
+                )
             if request.method == "DELETE":
                 return httpx.Response(204)
             if request.url.path.endswith("/xlsx"):
                 return httpx.Response(200, content=b"workbook")
-            return httpx.Response(202, json={"id": "remote-1", "state": "running"})
+            return httpx.Response(
+                202,
+                json={
+                    "id": "remote-1",
+                    "state": "running",
+                    "request": {"solver": "ortools/cp-sat", "timeout_seconds": 30},
+                },
+            )
 
         backend = HttpOptimizerBackend(
             "http://api:8000",
@@ -179,6 +202,7 @@ def test_http_backend_uses_the_existing_optimizer_routes_and_server_side_token()
         assert cancelled.state == "running"
         assert artifact.content == b"workbook"
         assert [request.url.path for request in requests] == [
+            "/info",
             "/optimize",
             "/optimize/remote-1/finish-now",
             "/optimize/remote-1/cancel",
@@ -186,10 +210,42 @@ def test_http_backend_uses_the_existing_optimizer_routes_and_server_side_token()
             "/optimize/remote-1",
         ]
         assert all(request.headers["authorization"] == "Bearer optimizer-token" for request in requests)
-        assert "multipart/form-data" in requests[0].headers["content-type"]
-        assert b"description: accepted\n" in requests[0].content
-        assert b'name="prettify"\r\n\r\ntrue' in requests[0].content
-        assert b'name="timeout"' in requests[0].content
+        assert submitted.backend == {
+            "url": "http://api:8000",
+            "request_timeout_seconds": 5,
+            "app_version": "v0.4.3",
+            "api_version": "0.2.0",
+            "service_name": "optimizer",
+            "claimed_performance": {"score": 125, "app_version": "v0.4.2", "measured_at": "2026-09-18T01:00:00Z"},
+        }
+        assert submitted.request == {"solver": "ortools/cp-sat", "timeout_seconds": 30}
+        assert "multipart/form-data" in requests[1].headers["content-type"]
+        assert b"description: accepted\n" in requests[1].content
+        assert b'name="prettify"\r\n\r\ntrue' in requests[1].content
+        assert b'name="timeout"' in requests[1].content
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "info_response",
+    [httpx.Response(503), httpx.Response(200, json=["invalid"]), httpx.Response(200, text="not JSON")],
+    ids=["offline", "invalid-shape", "invalid-json"],
+)
+def test_server_discovery_failure_does_not_prevent_optimization(info_response: httpx.Response) -> None:
+    async def scenario() -> None:
+        def handle(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/info":
+                return info_response
+            return httpx.Response(202, json={"id": "remote-1", "state": "running"})
+
+        backend = HttpOptimizerBackend(
+            "http://api:8000", "optimizer-token", 5, 1_000_000, transport=httpx.MockTransport(handle)
+        )
+        payload = await backend.submit(TEST_SCHEDULE, 30)
+        assert payload.id == "remote-1"
+        assert payload.backend == {"url": "http://api:8000", "request_timeout_seconds": 5}
+        await backend.close()
 
     asyncio.run(scenario())
 
@@ -387,7 +443,14 @@ def test_a_rejected_submission_reports_the_reason_to_the_model() -> None:
 
 def test_start_returns_immediately_and_completion_wakes_the_agent() -> None:
     async def scenario() -> None:
-        backend = FakeOptimizerBackend()
+        class ProvenanceBackend(FakeOptimizerBackend):
+            async def submit(self, schedule_yaml: str, timeout_seconds: int | None) -> OptimizerJobPayload:
+                payload = await super().submit(schedule_yaml, timeout_seconds)
+                payload.backend = {"url": "http://optimizer:8000", "app_version": "v0.4.3"}
+                payload.request = {"solver": "ortools/cp-sat", "timeout_seconds": timeout_seconds}
+                return payload
+
+        backend = ProvenanceBackend()
         completions: list[tuple[str, str, OptimizerArtifact | None]] = []
         updates: list[tuple[str, dict[str, object]]] = []
         completed = asyncio.Event()
@@ -430,6 +493,9 @@ def test_start_returns_immediately_and_completion_wakes_the_agent() -> None:
         assert completions[0][2] is not None
         assert completions[0][2].content == WORKBOOK_BYTES
         assert [update[1]["state"] for update in updates] == ["running", "completed"]
+        assert updates[-1][1]["request"] == {"solver": "ortools/cp-sat", "timeout_seconds": 30}
+        assert updates[-1][1]["backend"] == {"url": "http://optimizer:8000", "app_version": "v0.4.3"}
+        assert updates[-1][1]["result"] == {"outcome": "feasible", "score": 17}
         local_job_id = str(updates[-1][1]["job_id"])
         artifact = await optimizer.result_artifact("session-1", local_job_id)
         assert artifact.content == WORKBOOK_BYTES
