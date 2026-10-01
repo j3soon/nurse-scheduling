@@ -227,6 +227,23 @@ export async function getCapabilities(signal?: AbortSignal, endpoint = getAiBase
   } as AiCapabilities;
 }
 
+export async function getBackendVersion(signal?: AbortSignal, endpoint = getAiBaseUrl()): Promise<string | undefined> {
+  // Shared deployments mount AI at /ai and expose optimizer identity at its parent.
+  const baseUrl = endpoint.replace(/\/+$/, '');
+  if (!baseUrl.endsWith('/ai')) return undefined;
+  try {
+    const response = await fetch(`${baseUrl.slice(0, -3)}/info`, {
+      credentials: 'omit',
+      signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(5000)]),
+    });
+    if (!response.ok) return undefined;
+    const body = await response.json() as { app_version?: unknown };
+    return typeof body?.app_version === 'string' && body.app_version.trim() ? body.app_version.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function createSession(
   scheduleYaml: string,
   authToken: string | null,

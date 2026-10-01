@@ -27,6 +27,7 @@ import {
   downloadOptimization,
   getAiBaseUrl,
   getCapabilities,
+  getBackendVersion,
   getSessionStatus,
   isOfficialAiEndpoint,
   queueMessage,
@@ -93,6 +94,31 @@ describe('AI client', () => {
         max_bytes_per_file: 5000000,
       },
     });
+  });
+
+  it.each([
+    ['https://api.nursescheduling.org/ai', 'https://api.nursescheduling.org/info'],
+    ['https://api.example.test/prefix/ai/', 'https://api.example.test/prefix/info'],
+    ['/ai', '/info'],
+  ])('reads the shared backend version for %s', async (endpoint, infoUrl) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ app_version: 'v0.2.0-production' })));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(getBackendVersion(undefined, endpoint)).resolves.toBe('v0.2.0-production');
+    expect(fetchMock).toHaveBeenCalledWith(infoUrl, { credentials: 'omit', signal: expect.any(AbortSignal) });
+  });
+
+  it.each([new Response('offline', { status: 503 }), new Response('{}'), new Response('invalid JSON')])(
+    'tolerates unavailable optimizer identity', async response => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response));
+      await expect(getBackendVersion(undefined, '/ai')).resolves.toBeUndefined();
+    },
+  );
+
+  it('keeps standalone AI endpoints independent of an assumed optimizer address', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(getBackendVersion(undefined, 'http://localhost:8001')).resolves.toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('checks a stored session without sending a keepalive request', async () => {

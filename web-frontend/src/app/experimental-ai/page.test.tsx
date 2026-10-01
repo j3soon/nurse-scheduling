@@ -25,6 +25,7 @@ import ExperimentalAiPage from './page';
 
 const mockCreateSession = vi.hoisted(() => vi.fn());
 const mockDownloadOptimization = vi.hoisted(() => vi.fn());
+const mockGetBackendVersion = vi.hoisted(() => vi.fn());
 const mockGetCapabilities = vi.hoisted(() => vi.fn());
 const mockGetSessionStatus = vi.hoisted(() => vi.fn());
 const mockStreamMessage = vi.hoisted(() => vi.fn());
@@ -59,6 +60,7 @@ vi.mock('./aiClient', () => ({
   downloadOptimization: mockDownloadOptimization,
   getAiBaseUrl: () => '/ai',
   getCapabilities: mockGetCapabilities,
+  getBackendVersion: mockGetBackendVersion,
   getSessionStatus: mockGetSessionStatus,
   normalizeAiEndpoint: mockNormalizeAiEndpoint,
   isOfficialAiEndpoint: (endpoint: string) => (
@@ -113,6 +115,7 @@ describe('ExperimentalAiPage', () => {
     mockCreateSession.mockReset().mockResolvedValue('session-id');
     mockDownloadOptimization.mockReset().mockResolvedValue(new Blob(['workbook']));
     mockGetCapabilities.mockReset().mockResolvedValue(defaultCapabilities);
+    mockGetBackendVersion.mockReset().mockResolvedValue('v0.4.3');
     mockGetSessionStatus.mockReset().mockResolvedValue(172800);
     mockStreamMessage.mockReset().mockImplementation(async (
       _sessionId: string,
@@ -145,7 +148,7 @@ describe('ExperimentalAiPage', () => {
 
     expect(screen.getByText('Current snapshot: 0 people, 0 dates. Captured when you send the first question.')).toBeInTheDocument();
     expect(screen.getByText(/^Frontend /)).toHaveTextContent('Frontend unknown');
-    expect(await screen.findByText(/^Backend /)).toHaveTextContent('Backend v0.4.3');
+    await waitFor(() => expect(screen.getByText(/^Backend(?:\s|$)/)).toHaveTextContent('Backend v0.4.3'));
     expect(screen.getByRole('link', { name: 'Experimental AI documentation' })).toHaveAttribute(
       'href',
       '/docs/user-guide/experimental-ai/',
@@ -184,6 +187,14 @@ describe('ExperimentalAiPage', () => {
     );
     expect(mockUseTabSwitchWarning).toHaveBeenCalledWith(true);
     expect(mockUseTabSwitchWarning).toHaveBeenLastCalledWith(false);
+  });
+
+  it('uses optimizer identity when the deployed AI capabilities omit the app version', async () => {
+    mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, app_version: undefined });
+    mockGetBackendVersion.mockResolvedValue('v0.2.0-production');
+    render(<ExperimentalAiPage />);
+    await waitFor(() => expect(screen.getByText(/^Backend(?:\s|$)/)).toHaveTextContent('Backend v0.2.0-production'));
+    expect(mockGetBackendVersion).toHaveBeenCalledWith(expect.any(AbortSignal), '/ai');
   });
 
   it('shows the server history budget below the composer and clears it for a new chat', async () => {

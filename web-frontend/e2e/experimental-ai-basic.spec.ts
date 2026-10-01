@@ -122,6 +122,9 @@ async function mockAiBackend(
   };
   const allowedOrigin = frontendOrigin();
 
+  await page.route('**/info', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ app_version: 'v0.4.3-backend' }),
+  }));
   await page.route('**/ai/**', async route => {
     const request = route.request();
     const corsHeaders = {
@@ -140,7 +143,6 @@ async function mockAiBackend(
         contentType: 'application/json',
         headers: corsHeaders,
         body: JSON.stringify({
-          app_version: 'v0.4.3-backend',
           ...(requiredAuthToken ? { auth: { required: true, scheme: 'bearer' } } : {}),
           file_attachments: {
             enabled: true,

@@ -58,6 +58,7 @@ import {
   downloadOptimization,
   getAiBaseUrl,
   getCapabilities,
+  getBackendVersion,
   getSessionStatus,
   isOfficialAiEndpoint,
   normalizeAiEndpoint,
@@ -678,15 +679,16 @@ export default function ExperimentalAiPage() {
     setServerStatus('checking');
     setCapabilitiesError(null);
     getCapabilities(capabilitiesController.signal, aiEndpoint)
-      .then(capabilities => {
+      .then(async capabilities => {
         if (capabilitiesController.signal.aborted) return;
-        setBackendVersion(capabilities.app_version);
         setServerStatus('online');
         setAuthRequired(capabilities.auth?.required ?? false);
         setFileCapability(capabilities.file_attachments);
         setSessionRetentionSeconds(
           capabilities.session_retention_seconds ?? DEFAULT_SESSION_RETENTION_SECONDS,
         );
+        const version = await getBackendVersion(capabilitiesController.signal, aiEndpoint);
+        if (!capabilitiesController.signal.aborted) setBackendVersion(version ?? capabilities.app_version);
       })
       .catch((capabilityError: unknown) => {
         if (!capabilitiesController.signal.aborted) {
