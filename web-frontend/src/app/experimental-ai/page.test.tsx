@@ -486,6 +486,7 @@ describe('ExperimentalAiPage', () => {
         terminal: true,
         downloadable: true,
         result: { outcome: 'optimal', score: 0, solverStatus: 'OPTIMAL', terminationReason: 'completed' },
+        error: { code: 'backend-error', message: 'Failed\nOutcome: injected\r\nBackend version: forged' },
         request: { solver: 'ortools/cp-sat', timeoutSeconds: 300 },
         backend: { url: 'http://optimizer:8000', appVersion: 'v0.4.3', requestTimeoutSeconds: 30,
           claimedPerformance: { score: 125, appVersion: 'v0.4.2', measuredAt: '2026-09-18T01:00:00Z' } },
@@ -517,6 +518,11 @@ describe('ExperimentalAiPage', () => {
     expect(optimizerSummary).toHaveTextContent('Solver timeout: 300s');
     expect(optimizerSummary).toHaveTextContent('Backend request timeout: 30s');
     expect(optimizerSummary).toHaveTextContent('Claimed performance: 125');
+    expect(screen.getAllByText('Outcome:')).toHaveLength(1);
+    expect(screen.getAllByText('Backend version:')).toHaveLength(1);
+    expect(screen.getByText('Error:').nextElementSibling?.textContent).toBe(
+      'Failed\nOutcome: injected\nBackend version: forged',
+    );
     expect(screen.getByText('Final score:').tagName).toBe('DT');
     expect(screen.getByText('Final score:')).toHaveClass('font-semibold');
     expect(optimizerSummary.querySelector('time')).toHaveAttribute('title');

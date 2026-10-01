@@ -35,7 +35,7 @@ from ..jobs.controller import JobController
 from ..jobs.models import JobState
 from ..solver_capabilities import solver_supports_finish_now
 from ..solver_options import normalize_solver_option
-from .schemas import JobResponse, OptimizationOptionsResponse
+from .schemas import JobResponse, OptimizationBackendResponse, OptimizationOptionsResponse
 from .sse import format_sse_event
 
 router = APIRouter()
@@ -199,7 +199,12 @@ async def create_job(
         await run_in_threadpool(report_suspicious_request, request, "yaml_aliases_used", "warning")
     response.headers["Location"] = f"/optimize/{job.id}"
     response.headers["Retry-After"] = "1"
-    return JobResponse.from_job(job, _events_token(request, job.id))
+    payload = JobResponse.from_job(job, _events_token(request, job.id))
+    payload.backend = OptimizationBackendResponse(
+        **request.app.state.runtime_identity,
+        claimed_performance=request.app.state.claimed_performance,
+    )
+    return payload
 
 
 @router.get("/optimize/options", response_model=OptimizationOptionsResponse)

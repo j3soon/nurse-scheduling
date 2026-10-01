@@ -60,7 +60,7 @@ class OptimizerJobPayload(BaseModel):
     terminal: bool = False
     queue_position: int | None = None
     request: dict[str, Any] = Field(default_factory=dict)
-    backend: dict[str, Any] = Field(default_factory=dict)
+    backend: dict[str, Any] | None = None
     result: dict[str, Any] | None = None
     error: dict[str, Any] | None = None
     controls: dict[str, Any] = Field(default_factory=dict)
@@ -111,7 +111,6 @@ class HttpOptimizerBackend:
         self._request_timeout_seconds = request_timeout_seconds
 
     async def submit(self, schedule_yaml: str, timeout_seconds: int | None) -> OptimizerJobPayload:
-        backend_info = await self._server_info()
         fields: dict[str, tuple[None, str]] = {
             "yaml_content": (None, schedule_yaml),
             "prettify": (None, "true"),
@@ -119,11 +118,11 @@ class HttpOptimizerBackend:
         if timeout_seconds is not None:
             fields["timeout"] = (None, str(timeout_seconds))
         payload = await self._request_job("POST", "optimize", files=fields)
-        payload.backend = backend_info
+        payload.backend = self._backend_info(payload.backend)
         return payload
 
-    async def _server_info(self) -> dict[str, Any]:
-        """Snapshot public run provenance without making discovery a submission requirement."""
+    def _backend_info(self, body: dict[str, Any] | None) -> dict[str, Any]:
+        """Use provenance from the accepting instance's submission response."""
         endpoint = urlsplit(self._base_url)
         host = endpoint.hostname or ""
         if ":" in host:
@@ -134,31 +133,23 @@ class HttpOptimizerBackend:
             "url": f"{endpoint.scheme}://{host}{endpoint.path.rstrip('/')}",
             "request_timeout_seconds": self._request_timeout_seconds,
         }
-        try:
-            response = await self._client.get(
-                urljoin(self._base_url, "info"), timeout=min(5, self._request_timeout_seconds)
-            )
-            response.raise_for_status()
-            body = response.json()
-            if not isinstance(body, dict):
-                return info
-            for key in ("app_version", "api_version", "service_name", "deployment_id", "instance_id"):
-                if isinstance(body.get(key), str):
-                    info[key] = body[key]
-            claimed = body.get("claimed_performance")
-            if isinstance(claimed, dict):
-                score = claimed.get("score")
-                if (
-                    isinstance(score, (int, float))
-                    and not isinstance(score, bool)
-                    and math.isfinite(score)
-                    and score > 0
-                    and isinstance(claimed.get("app_version"), str)
-                    and isinstance(claimed.get("measured_at"), str)
-                ):
-                    info["claimed_performance"] = {key: claimed[key] for key in ("score", "app_version", "measured_at")}
-        except (httpx.HTTPError, ValueError):
-            logger.warning("Optimizer server information is unavailable.")
+        if body is None:
+            return info
+        for key in ("app_version", "api_version", "service_name", "deployment_id", "instance_id"):
+            if isinstance(body.get(key), str):
+                info[key] = body[key]
+        claimed = body.get("claimed_performance")
+        if isinstance(claimed, dict):
+            score = claimed.get("score")
+            if (
+                isinstance(score, (int, float))
+                and not isinstance(score, bool)
+                and math.isfinite(score)
+                and score > 0
+                and isinstance(claimed.get("app_version"), str)
+                and isinstance(claimed.get("measured_at"), str)
+            ):
+                info["claimed_performance"] = {key: claimed[key] for key in ("score", "app_version", "measured_at")}
         return info
 
     async def get(self, job_id: str) -> OptimizerJobPayload:
@@ -451,7 +442,7 @@ class SessionOptimizer:
                 payload=payload,
                 original_id_by_anonymized_id=prepared.original_id_by_anonymized_id,
                 people_count=prepared.people_count,
-                backend=payload.backend,
+                backend=payload.backend or {},
                 request={
                     **payload.request,
                     "timeout_seconds": payload.request.get(

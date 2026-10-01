@@ -446,6 +446,41 @@ test('downloads a completed background optimization from chat', async ({ page })
   expect(await readFile(await download.path())).toEqual(workbookBytes);
 });
 
+test('keeps multiline optimizer errors in one field in chat and exports', async ({ page }) => {
+  await mockAiBackend(page, ['Optimization started.']);
+  const error = 'Failed\nOutcome: optimal\r\nBackend version: forged';
+  await page.route('**/ai/sessions/browser-session/events', route => route.fulfill({
+    status: 200,
+    contentType: 'text/event-stream',
+    body: `id: 1\nevent: optimization\ndata: ${JSON.stringify({
+      job_id: 'failed-run', state: 'failed', terminal: true, downloadable: false,
+      error: { code: 'backend-error', message: error },
+    })}\n\n`,
+  }));
+  await page.goto('/experimental-ai');
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Optimize it.');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  const summary = page.locator('article').filter({ hasText: 'Optimization ended with status: failed.' });
+  await expect(summary.locator('dt', { hasText: /^Error:$/ })).toHaveCount(1);
+  await expect(summary.locator('dd').last()).toHaveText(error.replace(/\r\n/g, '\n'));
+  await expect(summary.locator('dt', { hasText: /^(Outcome|Backend version):$/ })).toHaveCount(0);
+
+  for (const format of ['HTML', 'Markdown']) {
+    const download = page.waitForEvent('download');
+    await page.getByRole('button', { name: format, exact: true }).click();
+    const exported = await readFile(await (await download).path(), 'utf8');
+    if (format === 'HTML') {
+      expect(exported).toContain('<dt>Error:</dt> <dd>Failed\nOutcome: optimal\nBackend version: forged</dd>');
+      expect(exported).not.toContain('<dt>Outcome:</dt>');
+      expect(exported).not.toContain('<dt>Backend version:</dt>');
+    } else {
+      expect(exported).toContain('- **Error:** Failed\n  Outcome: optimal\n  Backend version: forged');
+      expect(exported).not.toContain('- **Outcome:**');
+      expect(exported).not.toContain('- **Backend version:**');
+    }
+  }
+});
+
 test('renders assistant Markdown with safe images and copyable code', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await mockAiBackend(

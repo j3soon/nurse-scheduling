@@ -163,6 +163,25 @@ class JobLinksResponse(BaseModel):
     """Download endpoint, available only after an artifact is produced."""
 
 
+class ClaimedPerformanceResponse(BaseModel):
+    """Self-claimed benchmark and its public measurement provenance."""
+
+    score: float
+    app_version: str
+    measured_at: str
+
+
+class OptimizationBackendResponse(BaseModel):
+    """Public identity of the API instance that accepted a submission."""
+
+    service_name: str
+    api_version: str
+    app_version: str
+    deployment_id: str
+    instance_id: str
+    claimed_performance: ClaimedPerformanceResponse | None
+
+
 class JobResponse(BaseModel):
     """Complete public representation of one optimization job."""
 
@@ -182,6 +201,8 @@ class JobResponse(BaseModel):
     """Time the job entered a terminal state."""
     request: JobRequestResponse
     """Retained execution inputs."""
+    backend: OptimizationBackendResponse | None = None
+    """Accepting API instance, supplied only in the submission response."""
     result: OptimizationResultResponse | None
     """Normal optimization result, when completed."""
     error: JobErrorResponse | None

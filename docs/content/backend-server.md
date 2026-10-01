@@ -171,6 +171,13 @@ checkpointing it outside the child process.
 | `GET` | `/optimize/{job_id}/xlsx` | Download a completed schedule artifact. |
 | `DELETE` | `/optimize/{job_id}` | Delete a terminal job and its retained data. |
 
+The `POST /optimize` response includes `backend` with the accepting API
+instance's app and API versions, service name, deployment ID, instance ID, and
+claimed performance. Capture it from that response, since a separate `/info`
+request can reach another instance. Later job responses set `backend` to null.
+This identifies the accepting API instance. A shared-store worker may execute
+the job on another instance.
+
 ### Authentication
 
 A deployment that sets `API_AUTH_TOKEN` or `API_AUTH_TOKENS` requires a bearer

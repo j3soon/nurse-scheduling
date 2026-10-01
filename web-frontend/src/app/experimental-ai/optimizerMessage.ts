@@ -37,7 +37,7 @@ export function parseOptimizerMessage(content: string): {
     if (separator >= 0 && detailLabels.has(label)) {
       details.push({ label, value: line.slice(separator + 2) });
     } else if (details.length > 0) {
-      details[details.length - 1].value += `\n${line}`;
+      details[details.length - 1].value += `\n${line.startsWith(' ') ? line.slice(1) : line}`;
     } else {
       summary.push(line);
     }

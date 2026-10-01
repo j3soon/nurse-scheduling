@@ -147,22 +147,6 @@ def test_http_backend_uses_the_existing_optimizer_routes_and_server_side_token()
 
         def handle(request: httpx.Request) -> httpx.Response:
             requests.append(request)
-            if request.url.path == "/info":
-                return httpx.Response(
-                    200,
-                    json={
-                        "app_version": "v0.4.3",
-                        "api_version": "0.2.0",
-                        "service_name": "optimizer",
-                        "claimed_performance": {
-                            "score": 125,
-                            "app_version": "v0.4.2",
-                            "measured_at": "2026-09-18T01:00:00Z",
-                        },
-                        "auth": {"required": True},
-                        "private_config": "must-not-relay",
-                    },
-                )
             if request.method == "DELETE":
                 return httpx.Response(204)
             if request.url.path.endswith("/xlsx"):
@@ -173,6 +157,20 @@ def test_http_backend_uses_the_existing_optimizer_routes_and_server_side_token()
                     "id": "remote-1",
                     "state": "running",
                     "request": {"solver": "ortools/cp-sat", "timeout_seconds": 30},
+                    "backend": {
+                        "app_version": "v0.4.3",
+                        "api_version": "0.2.0",
+                        "service_name": "optimizer",
+                        "deployment_id": "accepting-deployment",
+                        "instance_id": "accepting-instance",
+                        "claimed_performance": {
+                            "score": 125,
+                            "app_version": "v0.4.2",
+                            "measured_at": "2026-09-18T01:00:00Z",
+                        },
+                        "auth": {"required": True},
+                        "private_config": "must-not-relay",
+                    },
                 },
             )
 
@@ -202,7 +200,6 @@ def test_http_backend_uses_the_existing_optimizer_routes_and_server_side_token()
         assert cancelled.state == "running"
         assert artifact.content == b"workbook"
         assert [request.url.path for request in requests] == [
-            "/info",
             "/optimize",
             "/optimize/remote-1/finish-now",
             "/optimize/remote-1/cancel",
@@ -216,28 +213,27 @@ def test_http_backend_uses_the_existing_optimizer_routes_and_server_side_token()
             "app_version": "v0.4.3",
             "api_version": "0.2.0",
             "service_name": "optimizer",
+            "deployment_id": "accepting-deployment",
+            "instance_id": "accepting-instance",
             "claimed_performance": {"score": 125, "app_version": "v0.4.2", "measured_at": "2026-09-18T01:00:00Z"},
         }
         assert submitted.request == {"solver": "ortools/cp-sat", "timeout_seconds": 30}
-        assert "multipart/form-data" in requests[1].headers["content-type"]
-        assert b"description: accepted\n" in requests[1].content
-        assert b'name="prettify"\r\n\r\ntrue' in requests[1].content
-        assert b'name="timeout"' in requests[1].content
+        assert "multipart/form-data" in requests[0].headers["content-type"]
+        assert b"description: accepted\n" in requests[0].content
+        assert b'name="prettify"\r\n\r\ntrue' in requests[0].content
+        assert b'name="timeout"' in requests[0].content
 
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize(
-    "info_response",
-    [httpx.Response(503), httpx.Response(200, json=["invalid"]), httpx.Response(200, text="not JSON")],
-    ids=["offline", "invalid-shape", "invalid-json"],
-)
-def test_server_discovery_failure_does_not_prevent_optimization(info_response: httpx.Response) -> None:
+@pytest.mark.parametrize("backend_info", [{}, {"backend": None}], ids=["legacy", "null"])
+def test_submission_without_provenance_does_not_probe_info(backend_info: dict[str, None]) -> None:
     async def scenario() -> None:
         def handle(request: httpx.Request) -> httpx.Response:
-            if request.url.path == "/info":
-                return info_response
-            return httpx.Response(202, json={"id": "remote-1", "state": "running"})
+            # A slow or differently routed /info endpoint must never affect submission.
+            assert request.method == "POST"
+            assert request.url.path == "/optimize"
+            return httpx.Response(202, json={"id": "remote-1", "state": "running", **backend_info})
 
         backend = HttpOptimizerBackend(
             "http://api:8000", "optimizer-token", 5, 1_000_000, transport=httpx.MockTransport(handle)

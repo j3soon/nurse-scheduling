@@ -397,6 +397,41 @@ def test_info_reports_cancelling_jobs_separately():
         assert info.json()["workers"] == {"online": 1}
 
 
+@pytest.mark.parametrize("has_claim", [False, True], ids=["no-benchmark", "benchmark"])
+def test_submission_reports_accepting_instance_in_shared_store(monkeypatch, has_claim):
+    store = MemoryJobStore()
+    claimed = (
+        ClaimedPerformance(
+            score=125,
+            app_version="v0.4.2",
+            measured_at=datetime(2026, 9, 18, 1, tzinfo=timezone.utc),
+        )
+        if has_claim
+        else None
+    )
+    monkeypatch.setattr("nurse_scheduling.server.app.get_app_version", lambda: "v0.4.2")
+    first = create_app(settings=_settings(), store=store, start_background=False)
+    monkeypatch.setattr("nurse_scheduling.server.app.get_app_version", lambda: "v0.4.3")
+    second = create_app(settings=_settings(claimed_performance=claimed), store=store, start_background=False)
+
+    with TestClient(first) as discovery_client, TestClient(second) as accepting_client:
+        discovered = discovery_client.get("/info").json()
+        response = _create(accepting_client)
+        assert response.status_code == 202
+        submitted = response.json()
+        assert submitted["backend"] == {
+            key: value
+            for key, value in accepting_client.get("/info").json().items()
+            if key
+            in {"service_name", "api_version", "app_version", "deployment_id", "instance_id", "claimed_performance"}
+        }
+        assert submitted["backend"]["app_version"] == "v0.4.3"
+        assert submitted["backend"]["instance_id"] != discovered["instance_id"]
+        # Later status requests must not substitute the polling instance's identity.
+        polled = discovery_client.get(f"/optimize/{submitted['id']}").json()
+        assert polled["backend"] is None
+
+
 def test_default_memory_store_uses_the_process_instance_identity():
     app = create_app(settings=_settings(), start_background=False)
 

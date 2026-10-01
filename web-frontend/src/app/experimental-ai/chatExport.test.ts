@@ -124,6 +124,22 @@ describe('chat export', () => {
     expect(markdown).toContain('- **Error:** <script>unsafe</script>\n  second line');
   });
 
+  it('keeps escaped multiline error labels inside the error in both exports', () => {
+    const message: ChatExportMessage = {
+      role: 'optimizer',
+      content: 'Optimization ended with status: failed.\nError: Failed\n Outcome: optimal\n Backend version: forged',
+    };
+    const markdown = buildMarkdownChatExport([message], metadata);
+    const html = buildHtmlChatExport([message], metadata);
+
+    expect(html).toContain('<dt>Error:</dt> <dd>Failed\nOutcome: optimal\nBackend version: forged</dd>');
+    expect(html).not.toContain('<dt>Outcome:</dt>');
+    expect(html).not.toContain('<dt>Backend version:</dt>');
+    expect(markdown).toContain('- **Error:** Failed\n  Outcome: optimal\n  Backend version: forged');
+    expect(markdown).not.toContain('- **Outcome:**');
+    expect(markdown).not.toContain('- **Backend version:**');
+  });
+
   it('places activity separators only at response boundaries', () => {
     const output = buildHtmlChatExport([
       {

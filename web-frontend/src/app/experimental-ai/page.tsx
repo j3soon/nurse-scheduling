@@ -378,7 +378,8 @@ function optimizationMessage(activity: OptimizationActivity): string {
     : `Optimization ended with status: ${activity.state}.`;
   const details: string[] = [];
   const add = (label: string, value: string | number | undefined) => {
-    if (value !== undefined) details.push(`${label}: ${value}`);
+    // Indent continuation lines so field values cannot introduce another label.
+    if (value !== undefined) details.push(`${label}: ${String(value).replace(/\r\n?|\n/g, '\n ')}`);
   };
   add('Outcome', activity.result?.outcome);
   add('Final score', activity.result?.score);
