@@ -64,6 +64,13 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 - Prefer reviewable feature slices over minimal implementation-step commits. Combine a new mechanism with its
   representative usage and tests when they form one coherent change. Keep a separate commit only when it can be
   understood, validated, and reverted independently.
+- Fold minor whitespace, wording, marker, or metadata corrections into the
+  related commit. Do not create standalone cleanup commits for them. Authorization
+  to commit an active unpublished series includes these minor local rewrites.
+  Require explicit rewrite authorization for published history or commits outside
+  that series.
+- When validation and committing share a shell command, stop on any failed check
+  so it cannot proceed to a commit.
 - Use Conventional Commits, module-scoped where applicable, e.g. `feat(core/serve): ...`, `fix(web-frontend): ...`, `docs: ...`.
 - Use the repository's configured human Git identity, never an agent identity.
   Read it from `git config user.name` and `git config user.email` and let Git
@@ -83,8 +90,10 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   Pi and Claude Code must use their own active harness and model names. If the
   active model is unclear, verify it before committing. Never substitute a
   shortened family name such as `GPT-5`.
-- Put a short validation paragraph naming checks and results before the final
-  attribution line.
+- Include validation details in a commit body only when they materially help a
+  reviewer assess the change, such as a regression reproduction, an unusual check,
+  or a known limitation. Omit routine successful-test and lint summaries. Keep
+  routine verification in review reports or the final response.
 - Build multi-paragraph messages with separate `git commit -m` arguments. Never embed escaped `\n` sequences, which Git stores literally.
 - Do not cite timestamp-named files or directories under the ignored `artifacts/` directory in commit messages. Record durable evaluation evidence with case names, pass rates, and configuration instead.
 - After creating or rewriting a commit, inspect its stored message with

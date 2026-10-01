@@ -32,6 +32,10 @@ Choose commit boundaries by behavior and revertability:
 - Do not force one commit per requested bullet when a smaller coherent grouping
   is easier to review.
 - Keep tests and directly related documentation with the behavior they verify.
+- Fold minor whitespace, wording, marker, or metadata corrections into their
+  related commit rather than making standalone cleanup commits.
+- Keep commit bodies focused on rationale and behavior. Include validation only
+  when it materially helps review, not as a routine successful-check summary.
 
 ## Implement one slice at a time
 
@@ -43,6 +47,7 @@ For each planned commit:
    selected the intended tests because a successful run with every relevant
    test deselected is not validation. Diagnose missing tools or dependencies
    directly instead of rerunning a broad suite for more output.
+   If checks and committing share a shell command, stop on a failed check.
 3. Review the diff and whitespace. Stage only files and entries belonging to
    that slice.
 4. Commit only after the slice is coherent and its affected checks pass. Follow
@@ -59,9 +64,11 @@ slice and reserve the broad wrapper for final combined validation.
 
 ## Incorporate corrections safely
 
-Apply feedback to uncommitted work directly. When feedback changes an existing
-commit, create a corrective commit by default. Rewrite, amend, squash, or fold
-history only when the user explicitly requests it.
+Apply feedback to uncommitted work directly. Fold minor corrections into their
+owning commit in an active, user-authorized unpublished series. Authorization to
+commit that series includes these minor local rewrites. Keep independent behavior
+changes as separate commits. Require explicit rewrite authorization for published
+history or commits outside the active series.
 
 For an authorized local history rewrite:
 
