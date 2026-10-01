@@ -458,6 +458,40 @@ def test_optimizer_call_limit_stops_before_unnecessary_retries(fail_fast: bool, 
     assert any(event["kind"] == "evaluation_stop" for event in run.trajectory["events"]) == fail_fast
 
 
+@pytest.mark.parametrize("fail_fast", [True, False])
+def test_yaml_installation_violation_stops_before_executing_the_command(fail_fast):
+    factory = _factory(lambda *_: CommandResult("", "Internet access is disabled.", 1))
+    provider = ScriptedProvider(
+        [ToolCallRequest((ToolCall("install", BASH_TOOL, '{"command":"pip install pyyaml"}'),))],
+        [TextDelta("The generator could not run.")],
+    )
+    run = asyncio.run(
+        run_case(
+            provider,
+            settings(),
+            CASE_BY_ID["tool-yaml-generator-repair"],
+            factory,
+            fail_fast=fail_fast,
+        )
+    )
+    assert not run.passed
+    assert not run.error
+    assert "avoids package installation" in " ".join(run.failures)
+    assert len(factory.created[0].commands) == (0 if fail_fast else 1)
+    assert factory.created[0].closed
+    assert any(event["kind"] == "evaluation_stop" for event in run.trajectory["events"]) == fail_fast
+
+
+def test_generator_installation_guard_does_not_change_other_case_trajectories():
+    factory = _factory()
+    _run(
+        "tool-bash-count-weight",
+        ScriptedProvider([ToolCallRequest((ToolCall("install", BASH_TOOL, '{"command":"pip install pyyaml"}'),))]),
+        factory,
+    )
+    assert [command for command, _ in factory.created[0].commands] == ["pip install pyyaml"]
+
+
 def test_missing_required_tool_does_not_stop_a_run_before_later_success():
     case = EvalCase(
         id="required-later",

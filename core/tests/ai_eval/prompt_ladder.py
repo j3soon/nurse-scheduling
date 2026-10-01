@@ -33,6 +33,7 @@ from nurse_scheduling.ai.system_prompt import (
     load_system_prompt_sections,
 )
 
+from .attachment_fixtures import load_attachment_fixtures
 from .grading import EvalCase
 
 STEPS_PATH = PROMPT_STEPS_PATH
@@ -81,7 +82,15 @@ def prompt_at_step(step: int, *, omit: int | None = None) -> str:
 
 def case_digest(case: EvalCase) -> str:
     """Bind a receipt to the parsed input and grading contract, not JSON formatting."""
-    return hashlib.sha256(json.dumps(asdict(case), sort_keys=True, default=str).encode()).hexdigest()
+    fields = asdict(case)
+    if not case.semantic_check:
+        # An optional oracle must not invalidate receipts for unrelated cases.
+        fields.pop("semantic_check")
+    if case.semantic_check == "yaml-generator":
+        fields["generator_sha256"] = [
+            hashlib.sha256(attachment.data).hexdigest() for attachment in load_attachment_fixtures(case.attachments)
+        ]
+    return hashlib.sha256(json.dumps(fields, sort_keys=True, default=str).encode()).hexdigest()
 
 
 def evidence_input_digest(step: PromptStep, case: EvalCase, fixture_digest: str) -> str:

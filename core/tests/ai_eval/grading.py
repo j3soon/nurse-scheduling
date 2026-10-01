@@ -125,6 +125,7 @@ class EvalCase:
     tool_usage: ToolUsageExpectation | None = None
     turn_tool_usage: tuple[ToolUsageExpectation | None, ...] = ()
     note: str = ""
+    semantic_check: str = ""
 
     def __post_init__(self) -> None:
         """Keep direct test construction compatible with single-turn cases."""
@@ -250,6 +251,9 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         raise EvalCaseError(f"{source} repeats an attachment fixture.")
     assertions = tuple(_build_assertion(raw, source) for raw in entry.get("assert", []))
     expected_diff = tuple(_build_expected_diff(raw, source) for raw in entry.get("expected_diff", []))
+    semantic_check = entry.get("semantic_check", "")
+    if not isinstance(semantic_check, str) or semantic_check not in {"", "yaml-generator"}:
+        raise EvalCaseError(f"{source} has an unknown semantic_check.")
     proposal_turn, proposal_turns = _proposal_turns(entry, len(raw_turns), source)
     turn_actions = _turn_actions(entry.get("turn_actions", []), len(raw_turns), source)
     raw_turn_tools = entry.get("turn_tool_usage", [])
@@ -258,11 +262,11 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     optimizer_error = entry.get("optimizer_error", "")
     if not isinstance(optimizer_error, str):
         raise EvalCaseError(f"{source} `optimizer_error` must be a string.")
-    if entry["expect_proposal"] and not assertions and not expected_diff:
+    if entry["expect_proposal"] and not assertions and not expected_diff and not semantic_check:
         raise EvalCaseError(f"{source} expects a proposal but asserts nothing about it.")
     if entry["expect_proposal"] and not entry.get("changes"):
         raise EvalCaseError(f"{source} expects a proposal but names no part it may change.")
-    if not entry["expect_proposal"] and (assertions or expected_diff):
+    if not entry["expect_proposal"] and (assertions or expected_diff or semantic_check):
         raise EvalCaseError(f"{source} expects no proposal, so its schedule criteria can never run.")
     return EvalCase(
         id=str(entry["id"]),
@@ -280,6 +284,7 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         category=category,
         assertions=assertions,
         expected_diff=expected_diff,
+        semantic_check=semantic_check,
         changes=tuple(entry.get("changes", ())),
         answer_contains=tuple(
             tuple(value) if isinstance(value, list) else value for value in entry.get("answer_contains", ())
@@ -494,6 +499,8 @@ def grade(case: EvalCase, outcome: RunOutcome, computed: dict[str, Any] | None =
         checks.extend(_check_assertion(outcome, assertion) for assertion in case.assertions)
         checks.extend(_check_expected_diff(outcome, expected) for expected in case.expected_diff)
         checks.append(_check_nothing_else_changed(outcome, case.changes))
+    if case.semantic_check == "yaml-generator":
+        checks.extend(_check_yaml_generator(outcome.activity))
     checks.extend(_check_answer(outcome.answer, expected, computed or {}) for expected in case.answer_contains)
     for patterns, required in ((case.answer_matches, True), (case.answer_not_matches, False)):
         for pattern in patterns:
@@ -559,6 +566,40 @@ def _check_expected_diff(outcome: RunOutcome, expected: ExpectedDiff) -> CheckRe
 def _counter_values(values: Counter[str]) -> list[Any]:
     """Decode semantic keys for readable failure output."""
     return [json.loads(value) for value in values.elements()]
+
+
+def _check_yaml_generator(activity: Sequence[dict[str, Any]]) -> list[CheckResult]:
+    executed, installations = False, []
+    for event in activity:
+        if event.get("kind") not in {"tool", "tool_start"} or event.get("name") != "bash":
+            continue
+        try:
+            command = json.loads(event.get("arguments", "{}"))["command"]
+        except (TypeError, ValueError, KeyError):
+            continue
+        if re.search(r"\bpip(?:3)?\s+(?:-\S+\s+)*install\b", command):
+            installations.append(command)
+        if (
+            event.get("kind") == "tool"
+            and event.get("ok") is True
+            and "python" in command
+            and "generate_schedule" in command
+            and "Generated Minimal March schedule from attachment" in event.get("result", "")
+        ):
+            executed = True
+    return [
+        CheckResult("executes the repaired generator successfully", executed),
+        CheckResult("avoids package installation in the offline sandbox", not installations, str(installations)),
+    ]
+
+
+def semantic_trajectory_failures(case: EvalCase, activity: Sequence[dict[str, Any]]) -> tuple[CheckResult, ...]:
+    """Stop once a semantic trajectory rule is already irreversibly violated."""
+    if case.semantic_check == "yaml-generator":
+        installation = _check_yaml_generator(activity)[1]
+        if not installation.passed:
+            return (installation,)
+    return ()
 
 
 def tool_limit_failures(activity: Sequence[dict[str, Any]], expected: ToolUsageExpectation) -> tuple[CheckResult, ...]:

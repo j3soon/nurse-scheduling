@@ -106,6 +106,9 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   evaluation run, not from one trajectory. A repeated recoverable failure costs
   more than the case that exposed it, and a bounded tool should clamp an
   over-large request rather than refuse it.
+- For irreversible evaluation trajectory violations, prefer stopping at
+  `tool_start` before execution. Retain the attempted call in the trace so a
+  known behavioral failure does not become an avoidable command timeout.
 - For AI behavior changes, run deterministic affected pytest checks first. Then
   smoke-test the smallest relevant live evaluation set with repeatable
   `./scripts/run_ai_eval.sh --case CASE_ID` selectors from the repository root.

@@ -310,5 +310,25 @@
         ]
       }
     ]
+  },
+  {
+    "id": "offline-yaml",
+    "file": "steps/offline-yaml.md",
+    "cases": [
+      "tool-yaml-generator-repair"
+    ],
+    "hypothesis": "Repairs YAML generators using installed libraries instead of attempting offline package installation.",
+    "sha256": "a35f72fbe2b599b1864026b08f30f3a7339f289ac8685f6c38a07e33c50be21d",
+    "evidence": [
+      {
+        "case": "tool-yaml-generator-repair",
+        "input_sha256": "bb5686b84062be425cbd2ecacfd19c2cd2918d5cb1764d4e5d26d1d518859b3c",
+        "before": "0/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "note": "Stops before forbidden install commands execute. All after proposals pass independent host solves."
+      }
+    ]
   }
 ]

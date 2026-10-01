@@ -74,7 +74,15 @@ from nurse_scheduling.ai.schema import (
 from nurse_scheduling.loader import _load_yaml
 
 from .attachment_fixtures import load_attachment_fixtures
-from .grading import EvalCase, RunOutcome, computed_values, grade, load_cases, tool_limit_failures
+from .grading import (
+    EvalCase,
+    RunOutcome,
+    computed_values,
+    grade,
+    load_cases,
+    semantic_trajectory_failures,
+    tool_limit_failures,
+)
 from .prompt_ladder import case_digest, load_prompt_steps, prompt_at_step
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -320,6 +328,16 @@ async def run_case(
                         _record_text(events, "reasoning", event.text)
                     elif isinstance(event, AgentToolStart):
                         events.append({"kind": "tool_start", "name": event.name, "arguments": event.arguments})
+                        if fail_fast and (failures := semantic_trajectory_failures(case, events)):
+                            events.append(
+                                {
+                                    "kind": "evaluation_stop",
+                                    "turn": turn_index + 1,
+                                    "reason": _describe(failures[0]),
+                                }
+                            )
+                            stopped_on_limit = True
+                            break
                     elif isinstance(event, AgentToolUse):
                         tools.append(event.name if event.ok else f"{event.name}(failed)")
                         events.append(

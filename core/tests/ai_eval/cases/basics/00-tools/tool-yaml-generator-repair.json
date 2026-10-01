@@ -1,0 +1,19 @@
+{
+  "id": "tool-yaml-generator-repair",
+  "fixture": "new-schedule",
+  "question": "Run the attached Python schedule generator, repair any issue you encounter, and propose its generated scheduling YAML. Preserve the schedule data in the generator.",
+  "attachments": ["pyyaml-generator"],
+  "expect_proposal": true,
+  "semantic_check": "yaml-generator",
+  "changes": ["description", "dates", "people", "shiftTypes", "preferences"],
+  "tool_usage": {"required": ["bash"]},
+  "expected_diff": [
+    {"path": "description", "before": "", "after": "Minimal March schedule"},
+    {"path": "dates", "before": {"range": {}, "items": [], "groups": []}, "after": {"range": {"startDate": "2026-03-01", "endDate": "2026-03-02"}, "items": [], "groups": []}},
+    {"path": "people", "before": {"items": [], "groups": []}, "after": {"items": [{"id": "Alex", "description": "Only nurse", "history": []}], "groups": []}},
+    {"path": "shiftTypes", "before": {"items": [], "groups": []}, "after": {"items": [{"id": "D", "description": "Day"}], "groups": []}},
+    {"path": "preferences", "added": [{"type": "at most one shift per day"}, {"type": "shift type requirement", "shiftType": ["D"], "date": ["ALL"], "qualifiedPeople": ["ALL"], "requiredNumPeople": 1}]}
+  ],
+  "tags": ["sandbox-yaml"],
+  "note": "This testcase is mostly AI generated. A common uploaded generator imports PyYAML, which is absent from the offline sandbox. Repair must execute the generator successfully without attempting a dependency installation, while preserving its scheduling semantics. The grader does not require a particular replacement library."
+}

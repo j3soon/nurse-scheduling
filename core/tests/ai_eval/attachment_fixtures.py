@@ -21,6 +21,7 @@
 
 from collections.abc import Callable, Sequence
 from io import BytesIO
+from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from openpyxl import Workbook
@@ -133,6 +134,11 @@ def _pptx() -> bytes:
 
 
 _FIXTURES: dict[str, tuple[str, str, Callable[[], bytes]]] = {
+    "pyyaml-generator": (
+        "generate_schedule.txt",
+        "text/plain",
+        lambda: (Path(__file__).with_name("fixtures") / "pyyaml-generator.txt").read_bytes(),
+    ),
     "instruction-note": (
         "handover-note.txt",
         "text/plain",

@@ -19,6 +19,7 @@
 
 # This test is mostly AI generated.
 
+import json
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -29,6 +30,9 @@ from nurse_scheduling.ai.attachment_tools.inspect_xlsx import inspect_workbook
 from nurse_scheduling.ai.pi.read import ReadInput, render_read_result
 
 from .ai_eval.attachment_fixtures import load_attachment_fixtures
+from .ai_eval.grading import _check_yaml_generator, load_cases
+from .ai_eval.prompt_ladder import case_digest
+from .ai_eval.runner import CASES
 
 
 def _fixture(name: str, tmp_path: Path) -> Path:
@@ -77,3 +81,39 @@ def test_ooxml_fixture_contains_an_image_read_can_return_to_the_model(
 
     result = render_read_result(image, ReadInput(media_path))
     assert result.image is not None
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["pip install pyyaml", "python3 -m pip install pyyaml", "uv pip install PyYAML", "pip3 -q install PyYAML"],
+)
+def test_yaml_generator_grader_rejects_installation_attempt_even_before_completion(command):
+    event = {"kind": "tool_start", "name": "bash", "arguments": json.dumps({"command": command})}
+    checks = _check_yaml_generator([event])
+    assert not next(check for check in checks if "installation" in check.description).passed
+
+
+@pytest.mark.parametrize("ok", [True, False])
+def test_yaml_generator_grader_requires_successful_execution(ok):
+    event = {
+        "kind": "tool",
+        "name": "bash",
+        "ok": ok,
+        "arguments": json.dumps({"command": "python3 /tmp/generate_schedule.py"}),
+        "result": "Generated Minimal March schedule from attachment",
+    }
+    assert all(check.passed for check in _check_yaml_generator([event])) == ok
+    assert not all(check.passed for check in _check_yaml_generator([]))
+
+
+def test_generator_bytes_are_bound_to_evidence_fingerprint(monkeypatch):
+    from .ai_eval import attachment_fixtures
+
+    case = next(case for case in load_cases(CASES) if case.id == "tool-yaml-generator-repair")
+    original = case_digest(case)
+    filename, media_type, build = attachment_fixtures._FIXTURES["pyyaml-generator"]
+    content = build()
+    monkeypatch.setitem(
+        attachment_fixtures._FIXTURES, "pyyaml-generator", (filename, media_type, lambda: content + b"# Changed\n")
+    )
+    assert case_digest(case) != original
