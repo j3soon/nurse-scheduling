@@ -798,6 +798,27 @@ def test_weight_notation_oracle_rejects_deleting_the_other_axis(target):
     assert not grade(case, RunOutcome(proposed=wrong, initial=initial)).passed
 
 
+def test_ambiguous_weight_case_rejects_guessing_and_wrong_clarified_target():
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "weight-shorthand-clarify-selector")
+    initial = FIXTURE_SCHEDULES["weight-units"]
+    correct = copy.deepcopy(initial)
+    correct["preferences"] = [p for p in initial["preferences"] if p.get("weight") != 11_000_000_000]
+    outcome = RunOutcome(
+        initial=initial,
+        proposed=correct,
+        proposal_turns=[False, True],
+        intermediate_answers=["Does 11b mean the numeric weight or the group selector?"],
+    )
+    assert grade(case, outcome).passed
+    outcome.proposal_turns = [True, True]
+    assert not grade(case, outcome).passed
+    outcome.proposal_turns = [False, True]
+    wrong = copy.deepcopy(initial)
+    wrong["preferences"] = [p for p in initial["preferences"] if p.get("person") != ["11b"]]
+    outcome.proposed = wrong
+    assert not grade(case, outcome).passed
+
+
 def test_the_dataset_only_uses_registered_fixtures():
     cases = load_cases(CASES_PATH)
 

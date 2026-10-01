@@ -330,5 +330,40 @@
         "note": "Stops before forbidden install commands execute. All after proposals pass independent host solves."
       }
     ]
+  },
+  {
+    "id": "weight-notation",
+    "file": "steps/weight-notation.md",
+    "cases": [
+      "weight-shorthand-clarify-selector",
+      "weight-shorthand-exact-weight",
+      "weight-shorthand-exact-selector"
+    ],
+    "hypothesis": "Distinguishes numeric weight shorthand from selector IDs, clarifies genuine ambiguity before editing, and applies explicit targets directly.",
+    "sha256": "15819ace6191e4131a5a76c4c1a5e5634d25a12392c05242f68efc8db6bf6d93",
+    "evidence": [
+      {
+        "case": "weight-shorthand-clarify-selector",
+        "input_sha256": "ec92877898966d70f1230a9305a8e6866f624d8b89d9c5925ce2a178224a5bc0",
+        "before": "0/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "weight-shorthand-exact-weight",
+            "input_sha256": "38f5b091d24200bcd67987e949282bef83c12da1962f176daf8f539c7bafebf2",
+            "before": "2/3",
+            "after": "3/3"
+          },
+          {
+            "case": "weight-shorthand-exact-selector",
+            "input_sha256": "c9dd10742975167ea5060326a52268764805bf2ea12dbaacf644c06dadf3aa94",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ]
+      }
+    ]
   }
 ]

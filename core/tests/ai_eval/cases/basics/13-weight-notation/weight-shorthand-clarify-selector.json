@@ -8,11 +8,11 @@
     "weight-notation",
     "clarification"
   ],
-  "note": "This testcase is mostly AI generated. The selector ID 11b is independent of the numeric weight 11000000000.",
+  "note": "This testcase is mostly AI generated. The selector ID 11b is independent of the numeric weight 11000000000. The clarification selects the numeric weight, opposite to the observed baseline group guess.",
   "id": "weight-shorthand-clarify-selector",
   "user_turns": [
     "Delete all 11b requests.",
-    "I mean requests whose person selector is exactly the people group ID `11b`, regardless of their weight."
+    "I mean all shift requests whose numeric weight is 11b, not requests targeting a people group."
   ],
   "intermediate_answer_contains": [
     [
@@ -35,7 +35,7 @@
         {
           "type": "shift request",
           "person": [
-            "11b"
+            "Alex"
           ],
           "date": [
             "01"
@@ -43,7 +43,34 @@
           "shiftType": [
             "OFF"
           ],
-          "weight": 11000000
+          "weight": 11000000000
+        },
+        {
+          "type": "shift request",
+          "person": [
+            "Alex"
+          ],
+          "date": [
+            "02"
+          ],
+          "shiftType": [
+            "K"
+          ],
+          "weight": 11000000000
+        },
+        {
+          "type": "shift request",
+          "person": [
+            "Mira"
+          ],
+          "date": [
+            "02",
+            "03"
+          ],
+          "shiftType": [
+            "OFF"
+          ],
+          "weight": 11000000000
         }
       ]
     }
