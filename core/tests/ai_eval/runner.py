@@ -287,6 +287,7 @@ async def run_case(
                 return AgentToolOutcome("An optimizer run is already running for this chat session.", False)
             optimizer_started = True
             optimizer_source = _schedule_yaml
+            events.append({"kind": "optimizer_input", "schedule_yaml": _schedule_yaml})
             return AgentToolOutcome(
                 optimizer_start_message("eval-job", hashlib.sha256(_schedule_yaml.encode()).hexdigest()), True
             )

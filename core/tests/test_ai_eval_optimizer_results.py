@@ -165,3 +165,56 @@ def test_nested_json_evidence_fingerprint_tracks_its_oracle_without_staling_scal
     monkeypatch.setattr(grading, "_answer_json_matches", different_oracle)
     assert case_digest(nested) != before[0]
     assert case_digest(scalar) == before[1]
+
+
+@pytest.mark.parametrize("edit_before_start", [False, True])
+def test_edit_then_optimize_grades_the_submitted_snapshot(edit_before_start):
+    from nurse_scheduling.loader import _load_yaml
+
+    case = CASE_BY_ID["optimizer-edit-before-start"]
+    initial = FIXTURE.read_text()
+    updated = initial.replace("weight: 11000000}", "weight: 11000000000}")
+    result = grade(
+        case,
+        RunOutcome(
+            initial=_load_yaml(initial.encode()),
+            proposed=_load_yaml(updated.encode()),
+            activity=[
+                {"kind": "optimizer_input", "schedule_yaml": updated if edit_before_start else initial},
+                {
+                    "kind": "tool",
+                    "name": "optimizer",
+                    "ok": True,
+                    "arguments": '{"action":"start","timeout_seconds":60}',
+                },
+            ],
+        ),
+    )
+    assert result.passed == edit_before_start
+    if not edit_before_start:
+        assert any(not check.passed and check.description.startswith("optimizer input:") for check in result.checks)
+
+
+@pytest.mark.parametrize("alter_source", [False, True])
+def test_optimizer_only_input_must_preserve_original_policy(alter_source):
+    from nurse_scheduling.loader import _load_yaml
+
+    case = CASE_BY_ID["optimizer-start-preserves-ward"]
+    source = FIXTURE.read_text()
+    submitted = source.replace("weight: 11000000000}", "weight: 11}") if alter_source else source
+    result = grade(
+        case,
+        RunOutcome(
+            initial=_load_yaml(source.encode()),
+            activity=[
+                {"kind": "optimizer_input", "schedule_yaml": submitted},
+                {
+                    "kind": "tool",
+                    "name": "optimizer",
+                    "ok": True,
+                    "arguments": '{"action":"start","timeout_seconds":60}',
+                },
+            ],
+        ),
+    )
+    assert result.passed == (not alter_source)

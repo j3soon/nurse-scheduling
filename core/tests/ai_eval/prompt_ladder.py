@@ -113,6 +113,12 @@ def case_digest(case: EvalCase) -> str:
     if not case.semantic_check:
         # An optional oracle must not invalidate receipts for unrelated cases.
         fields.pop("semantic_check")
+    if case.semantic_check == "optimizer-start-source":
+        from .grading import _check_optimizer_start_source
+
+        fields["optimizer_input_oracle_sha256"] = hashlib.sha256(
+            inspect.getsource(_check_optimizer_start_source).encode()
+        ).hexdigest()
     if case.semantic_check == "yaml-generator":
         fields["generator_sha256"] = [
             hashlib.sha256(attachment.data).hexdigest() for attachment in load_attachment_fixtures(case.attachments)

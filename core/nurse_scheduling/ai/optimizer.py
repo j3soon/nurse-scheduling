@@ -672,6 +672,7 @@ def optimizer_tool_definition(default_timeout_seconds: int = 300) -> dict[str, A
             "description": (
                 "Start the scheduling optimizer on the current working YAML, inspect its background status, or ask "
                 "a running optimizer to finish with its best available solution. Start returns immediately. "
+                "When asked only to optimize the current schedule, call start without preliminary schedule or reference reads. "
                 f"A completed workbook is available at {WORKSPACE_OPTIMIZER_RESULT} in the next assistant turn. "
                 "Omit timeout_seconds to use the configured default."
             ),

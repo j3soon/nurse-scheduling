@@ -255,7 +255,7 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     assertions = tuple(_build_assertion(raw, source) for raw in entry.get("assert", []))
     expected_diff = tuple(_build_expected_diff(raw, source) for raw in entry.get("expected_diff", []))
     semantic_check = entry.get("semantic_check", "")
-    if not isinstance(semantic_check, str) or semantic_check not in {"", "yaml-generator"}:
+    if not isinstance(semantic_check, str) or semantic_check not in {"", "yaml-generator", "optimizer-start-source"}:
         raise EvalCaseError(f"{source} has an unknown semantic_check.")
     proposal_turn, proposal_turns = _proposal_turns(entry, len(raw_turns), source)
     turn_actions = _turn_actions(entry.get("turn_actions", []), len(raw_turns), source)
@@ -286,7 +286,9 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         raise EvalCaseError(f"{source} expects a proposal but asserts nothing about it.")
     if entry["expect_proposal"] and not entry.get("changes"):
         raise EvalCaseError(f"{source} expects a proposal but names no part it may change.")
-    if not entry["expect_proposal"] and (assertions or expected_diff or semantic_check):
+    if not entry["expect_proposal"] and (
+        assertions or expected_diff or semantic_check not in {"", "optimizer-start-source"}
+    ):
         raise EvalCaseError(f"{source} expects no proposal, so its schedule criteria can never run.")
     return EvalCase(
         id=str(entry["id"]),
@@ -524,6 +526,8 @@ def grade(case: EvalCase, outcome: RunOutcome, computed: dict[str, Any] | None =
         checks.append(_check_nothing_else_changed(outcome, case.changes))
     if case.semantic_check == "yaml-generator":
         checks.extend(_check_yaml_generator(outcome.activity))
+    if case.semantic_check == "optimizer-start-source":
+        checks.extend(_check_optimizer_start_source(case, outcome))
     if case.optimizer_completion:
         checks.append(
             CheckResult("optimizer completion delivered", any(e.get("kind") == "optimizer" for e in outcome.activity))
@@ -576,6 +580,22 @@ def grade(case: EvalCase, outcome: RunOutcome, computed: dict[str, Any] | None =
             for check in _check_tool_usage(activity, expected)
         )
     return CaseResult(case_id=case.id, checks=tuple(checks))
+
+
+def _check_optimizer_start_source(case: EvalCase, outcome: RunOutcome) -> list[CheckResult]:
+    """Check the submitted source even when no final edit proposal is expected."""
+    from nurse_scheduling.loader import _load_yaml
+
+    inputs = [event["schedule_yaml"] for event in outcome.activity if event.get("kind") == "optimizer_input"]
+    checks = [CheckResult("one optimizer input captured", len(inputs) == 1)]
+    for source in inputs:
+        submitted = replace(outcome, proposed=_load_yaml(source.encode()))
+        for expected in case.expected_diff:
+            check = _check_expected_diff(submitted, expected)
+            checks.append(replace(check, description=f"optimizer input: {check.description}"))
+        check = _check_nothing_else_changed(submitted, case.changes)
+        checks.append(replace(check, description=f"optimizer input: {check.description}"))
+    return checks
 
 
 def _check_expected_diff(outcome: RunOutcome, expected: ExpectedDiff) -> CheckResult:

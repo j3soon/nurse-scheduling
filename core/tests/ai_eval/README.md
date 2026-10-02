@@ -166,6 +166,9 @@ starts without submitting real jobs. Startup acknowledgements use the production
 hash and automatic completion notification. Cases with `optimizer_completion` also deliver the production-shaped completion
 message and an exporter-generated workbook with verified fixed assignments. These test result interpretation and
 completion delivery through the agent harness, rather than stochastic solve quality or the service job lifecycle.
+`optimizer-start-preserves-ward` checks the submitted YAML retains every original
+constraint and weight. `optimizer-edit-before-start` checks requested changes
+reach that snapshot before startup, using the `optimizer-start-source` oracle.
 Result sandboxes include a canonical compiled request context and `/reference/tools/inspect_optimizer_result.py`.
 Use its repeatable `--person` and `--date` filters to query assigned shifts by
 exact person ID and ISO date. The reader separates export annotations from
