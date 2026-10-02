@@ -85,6 +85,7 @@ def inspection_helper_catalog() -> str:
             for name, description in INSPECTION_HELPERS.items()
         )
         + "\n\nThe result reader supports exported roster cells with bracketed annotations. Other layouts or decorations need a custom parser.\n"
+        + "\nAssignment query: `python /reference/tools/inspect_optimizer_result.py --source-sha256 <completion hash> --person <exact ID> --date <YYYY-MM-DD>`. Person and date filters are repeatable. Omitted filters select the full dimension, with bounded output.\n"
     )
 
 

@@ -24,6 +24,7 @@ import json
 import re
 import sys
 from decimal import Decimal, InvalidOperation
+from itertools import islice
 from pathlib import Path
 from typing import Any
 
@@ -128,7 +129,15 @@ def _read_assignments(path: Path, context: dict) -> tuple[dict, Any, Any]:
 
 
 def inspect_result(
-    path: Path, context: dict, source_sha256: str, weights: list[str] | None = None, max_unmet: int = 20
+    path: Path,
+    context: dict,
+    source_sha256: str,
+    weights: list[str] | None = None,
+    max_unmet: int = 20,
+    *,
+    people: list[str] | None = None,
+    dates: list[str] | None = None,
+    max_assignments: int = 100,
 ) -> dict:
     """Audit nonzero-weight person/date requests, independently of export markers."""
     if context.get("schema_version") != 1 or context.get("source_sha256") != source_sha256:
@@ -136,6 +145,28 @@ def inspect_result(
     if max_unmet < 0:
         raise ValueError("max_unmet must not be negative")
     assignments, score, status = _read_assignments(path, context)
+    if people is not None or dates is not None:
+        if not 1 <= max_assignments <= 1000:
+            raise ValueError("max_assignments must be between 1 and 1000")
+        person_ids = {str(person): person for person in context["people"]}
+        if len(person_ids) != len(context["people"]):
+            raise ValueError("Person IDs cannot be uniquely selected as text")
+        selected_people = list(dict.fromkeys(people)) if people else list(person_ids)
+        selected_dates = list(dict.fromkeys(dates)) if dates else context["dates"]
+        if set(selected_people) - person_ids.keys():
+            raise ValueError("Unknown person ID in assignment query")
+        if set(selected_dates) - set(context["dates"]):
+            raise ValueError("Unknown ISO date in assignment query")
+        rows = (
+            {"person": person_ids[person], "date": date, "shift_type": assignments[person_ids[person]][date]}
+            for person in selected_people
+            for date in selected_dates
+        )
+        return {
+            "source_sha256": source_sha256,
+            "assignments": list(islice(rows, max_assignments)),
+            "assignments_truncated": len(selected_people) * len(selected_dates) > max_assignments,
+        }
     selected = {_weight(w) for w in weights} if weights else None
     summary = {}
     unmet = []
@@ -204,10 +235,24 @@ def main() -> None:
         "--weight", action="append", help="numeric request weight, repeatable. Use --weight=-.inf for bans"
     )
     parser.add_argument("--max-unmet", type=int, default=20)
+    parser.add_argument(
+        "--person", action="append", help="Exact person ID, repeatable. Selects assignment-query output."
+    )
+    parser.add_argument(
+        "--date", action="append", help="ISO date YYYY-MM-DD, repeatable. Selects assignment-query output."
+    )
+    parser.add_argument("--max-assignments", type=int, default=100, help="Assignment-query row limit, at most 1000.")
     args = parser.parse_args(_weight_arguments(sys.argv[1:]))
     try:
         result = inspect_result(
-            args.workbook, json.loads(args.context.read_text()), args.source_sha256, args.weight, args.max_unmet
+            args.workbook,
+            json.loads(args.context.read_text()),
+            args.source_sha256,
+            args.weight,
+            args.max_unmet,
+            people=args.person,
+            dates=args.date,
+            max_assignments=args.max_assignments,
         )
     except (ValueError, KeyError) as error:
         parser.exit(1, f"{error}\n")

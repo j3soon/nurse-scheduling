@@ -167,6 +167,9 @@ hash and automatic completion notification. Cases with `optimizer_completion` al
 message and an exporter-generated workbook with verified fixed assignments. These test result interpretation and
 completion delivery through the agent harness, rather than stochastic solve quality or the service job lifecycle.
 Result sandboxes include a canonical compiled request context and `/reference/tools/inspect_optimizer_result.py`.
+Use its repeatable `--person` and `--date` filters to query assigned shifts by
+exact person ID and ISO date. The reader separates export annotations from
+assignments, verifies the completion source hash, and reports truncated output.
 The same helpers are available in both arms of prompt comparisons. Their scripts, catalog, and context projector
 are fingerprinted so changes cannot silently reuse a result-reading receipt.
 Completions include bounded `request_audit` counts computed by the production reader.

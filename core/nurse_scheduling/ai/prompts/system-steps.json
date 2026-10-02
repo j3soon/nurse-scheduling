@@ -399,24 +399,24 @@
     "evidence": [
       {
         "case": "result-stale-summary-control",
-        "input_sha256": "82ea0c3fe919f7bb1643fd915339a22cda4cb956141bea1c9ddaebf0447d1829",
-        "before": "0/5",
-        "after": "5/5",
+        "input_sha256": "49ca953835cfa62505e7bddc41a0af0ae8e1a29da51c0f2b561663d4cd67ab1d",
+        "before": "1/3",
+        "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
-        "note": "Completion-only full-prompt ablation. Both arms receive identical production summaries and seeded history. The stale summary comes from an earlier verified incumbent. Controls use matching summaries.",
+        "note": "Refreshed with the selected-assignment reader and catalog. Exact contexts and all cost distributions are preserved in ignored artifacts.",
         "controls": [
           {
             "case": "result-single-tier-summary",
-            "input_sha256": "36f93755acf92e19d9344f9f3e7105e6e6d768b9e18001a05a03bcba612712a1",
-            "before": "5/5",
-            "after": "5/5"
+            "input_sha256": "cad9a8223b1b64a022d7bdef8bd3ef9a01329d42b3ea6d149fb0178fa3d3e3d6",
+            "before": "3/3",
+            "after": "3/3"
           },
           {
             "case": "result-grouped-cross-month",
-            "input_sha256": "056427ec7960434f387df5abbee766c7c576422b8f06449d75e48c44f9423fc4",
-            "before": "5/5",
-            "after": "5/5"
+            "input_sha256": "0463963312f09683db5e2e4990fe26d1275a19baef20bdde35635df328d4aa33",
+            "before": "3/3",
+            "after": "3/3"
           }
         ]
       }
@@ -436,25 +436,25 @@
     "evidence": [
       {
         "case": "xlsx-styled-requests-and-caches",
-        "input_sha256": "6b26187f5ca21cb024b33619c4c0df8f46de11e01de8517ef49e6a4843c17c57",
-        "before": "5/6",
-        "after": "6/6",
+        "input_sha256": "b443fae13a3d54230ae16b1a80cff3700d76949d85bd558c917feedb6ba325a8",
+        "before": "1/3",
+        "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
         "cost_metric": "completion-tokens",
-        "cost_ratio": 0.727397,
-        "cost_target": 0.75,
-        "note": "Two independent batches. Costs use five matched passing pairs.",
+        "cost_ratio": 0.480546,
+        "cost_target": 0.8,
+        "note": "Refreshed with the selected-assignment reader and catalog. Exact contexts and all cost distributions are preserved in ignored artifacts.",
         "controls": [
           {
             "case": "xlsx-formulas-and-caches",
-            "input_sha256": "e5dff6fd7bde6f26c91f7abd6f4919e8621cdd5f25f0033330e61f11c356943f",
+            "input_sha256": "2eae8604f324a11251cb48ed8b344b59d96c0f97186836c3e1fc84420efdbef3",
             "before": "3/3",
             "after": "3/3"
           },
           {
             "case": "xlsx-color-fallback",
-            "input_sha256": "1488347c251fe231cefbd317983f27749a6c87d258e7aa334baed2928e0de394",
+            "input_sha256": "74dcdd50c3e729b82b5f5ccf1ac8213cd82b1d458f8ea569c34c1933226ba245",
             "before": "3/3",
             "after": "3/3"
           }
@@ -474,25 +474,27 @@
     "evidence": [
       {
         "case": "pdf-specified-text-page",
-        "input_sha256": "ddff338eaa56e0b78ab9167d7a6542acbc39a84a846278817b435a3baf933b18",
+        "input_sha256": "db8973979a137b9b375674676401e8372ccd0e6838165a3c15f014d198eebdcf",
         "before": "3/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
         "cost_metric": "completion-tokens",
-        "cost_ratio": 0.494463,
-        "cost_target": 0.75
+        "cost_ratio": 0.613406,
+        "cost_target": 0.8,
+        "note": "Refreshed with the selected-assignment reader and catalog. Exact contexts and all cost distributions are preserved in ignored artifacts."
       },
       {
         "case": "pdf-visual-layout",
-        "input_sha256": "77434b926a05e5c1f4a61970808d0cffc128a223e3d32182652d83063cc9531d",
+        "input_sha256": "1813a8044c74196631a74c086a6b8cbe77aeca4356b57cb47d221678b365906a",
         "before": "3/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
         "cost_metric": "completion-tokens",
-        "cost_ratio": 0.454158,
-        "cost_target": 0.75
+        "cost_ratio": 0.583051,
+        "cost_target": 0.8,
+        "note": "Refreshed with the selected-assignment reader and catalog. Exact contexts and all cost distributions are preserved in ignored artifacts."
       }
     ]
   }

@@ -188,16 +188,58 @@ def test_reader_bounds_detail_without_changing_counts(audit):
     assert len(filtered["summary"]) == 1 and filtered["summary"][0]["total"] == 4
 
 
+def test_assignment_query_uses_actual_shifts_and_reports_truncation(audit):
+    path, context = audit
+    result = inspect_result(
+        path,
+        context,
+        context["source_sha256"],
+        people=["Mira", "Alex"],
+        dates=["2026-05-02", "2026-05-03"],
+        max_assignments=3,
+    )
+    assert result["assignments"] == [
+        {"person": "Mira", "date": "2026-05-02", "shift_type": "N"},
+        {"person": "Mira", "date": "2026-05-03", "shift_type": "OFF"},
+        {"person": "Alex", "date": "2026-05-02", "shift_type": "K"},
+    ]
+    assert result["assignments_truncated"]
+    assert "summary" not in result
+
+
 @pytest.mark.parametrize(
-    "fixture,weight_args,expected",
+    "filters", [{"people": ["missing"]}, {"dates": ["02"]}, {"people": ["Alex"], "max_assignments": 0}]
+)
+def test_assignment_query_rejects_unknown_selectors_and_unbounded_limits(audit, filters):
+    path, context = audit
+    with pytest.raises(ValueError):
+        inspect_result(path, context, context["source_sha256"], **filters)
+
+
+@pytest.mark.parametrize(
+    "fixture,cli_args,expected",
     [
         ("request-audit", [], [(11_000_000_000, 4, 1), (11_000_000, 1, 1), ("-.inf", 3, 0)]),
         ("request-audit", ["--weight", "-.inf"], [("-.inf", 3, 0)]),
         ("request-audit", ["--weight=-.inf"], [("-.inf", 3, 0)]),
         ("request-audit-groups", ["--weight", "-11e9"], [(-11_000_000_000, 6, 2)]),
+        (
+            "request-audit",
+            ["--person", "Mira", "--date", "2026-05-02"],
+            [
+                {"person": "Mira", "date": "2026-05-02", "shift_type": "N"},
+            ],
+        ),
+        (
+            "request-audit-groups",
+            ["--person", "Asha", "--date", "2026-06-01"],
+            [
+                {"person": "Asha", "date": "2026-06-01", "shift_type": "N"},
+            ],
+        ),
     ],
 )
-def test_standalone_hydrated_reader_runs_without_project_imports(tmp_path, fixture, weight_args, expected):
+def test_standalone_hydrated_reader_runs_without_project_imports(tmp_path, fixture, cli_args, expected):
     source = RESULT_SOURCES[fixture].read_text()
     context = build_result_context(source)
     path = tmp_path / "result.xlsx"
@@ -215,7 +257,7 @@ def test_standalone_hydrated_reader_runs_without_project_imports(tmp_path, fixtu
             str(context_path),
             "--source-sha256",
             context["source_sha256"],
-            *weight_args,
+            *cli_args,
         ],
         cwd=tmp_path,
         capture_output=True,
@@ -223,7 +265,12 @@ def test_standalone_hydrated_reader_runs_without_project_imports(tmp_path, fixtu
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert [(row["weight"], row["total"], row["unmet"]) for row in json.loads(result.stdout)["summary"]] == expected
+    parsed = json.loads(result.stdout)
+    if "--person" in cli_args:
+        assert parsed["assignments"] == expected
+        assert not parsed["assignments_truncated"]
+    else:
+        assert [(row["weight"], row["total"], row["unmet"]) for row in parsed["summary"]] == expected
 
 
 def test_catalog_only_advertises_real_hydrated_scripts():
