@@ -390,31 +390,38 @@
     "file": "steps/inspection-helpers.md",
     "cases": [
       "result-grouped-cross-month",
-      "result-zero-target-misses"
+      "result-zero-target-misses",
+      "result-single-tier-summary",
+      "result-stale-summary-control"
     ],
-    "hypothesis": "Continues completed optimizer jobs without restarting and uses maintained audit helpers to reduce generated parsing code while preserving expanded signed-request counts.",
-    "sha256": "22d5184cd11c6161c7b85fb85b37e7256cbcc01c116d36e5117f48e5cb68ea7c",
+    "hypothesis": "Uses matching bounded request summaries for counts, preserves source verification and helper fallback, and continues completed optimizer jobs without restarting.",
+    "sha256": "8c0ddcbebb2eb81fafd315d0247992ab38d80ddacdb5f351633afa846083024f",
     "evidence": [
       {
-        "case": "result-grouped-cross-month",
-        "input_sha256": "044948b03158e46d0d92b9ade79d8916aeb14a6ecfb5aabca32f8533374a3212",
-        "before": "3/3",
-        "after": "3/3",
+        "case": "result-stale-summary-control",
+        "input_sha256": "82ea0c3fe919f7bb1643fd915339a22cda4cb956141bea1c9ddaebf0447d1829",
+        "before": "0/5",
+        "after": "5/5",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
-        "cost_metric": "completion-tokens",
-        "cost_ratio": 0.157061,
-        "cost_target": 0.75,
+        "note": "Completion-only full-prompt ablation. Both arms receive identical production summaries and seeded history. The stale summary comes from an earlier verified incumbent. Controls use matching summaries.",
         "controls": [
           {
-            "case": "result-zero-target-misses",
-            "input_sha256": "e091f6e11642a1df00c401b8c6ad23e3e52cbdecc8e3a8bc54bdea3b03d6672a",
-            "before": "2/3",
-            "after": "3/3"
+            "case": "result-single-tier-summary",
+            "input_sha256": "36f93755acf92e19d9344f9f3e7105e6e6d768b9e18001a05a03bcba612712a1",
+            "before": "5/5",
+            "after": "5/5"
+          },
+          {
+            "case": "result-grouped-cross-month",
+            "input_sha256": "056427ec7960434f387df5abbee766c7c576422b8f06449d75e48c44f9423fc4",
+            "before": "5/5",
+            "after": "5/5"
           }
         ]
       }
-    ]
+    ],
+    "comparison_mode": "ablation"
   },
   {
     "id": "xlsx-inspection",

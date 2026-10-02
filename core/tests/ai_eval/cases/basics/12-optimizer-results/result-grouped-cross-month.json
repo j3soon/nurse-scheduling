@@ -31,5 +31,6 @@
     "optimizer-result",
     "group-expansion"
   ],
-  "note": "This testcase is mostly AI generated. Nested people groups, date groups across months, and shift groups resolve through the canonical compiler. Export markers cover only single-person single-date positive requests."
+  "note": "This testcase is mostly AI generated. Nested people groups, date groups across months, and shift groups resolve through the canonical compiler. Export markers cover only single-person single-date positive requests.",
+  "optimizer_completion_only": true
 }

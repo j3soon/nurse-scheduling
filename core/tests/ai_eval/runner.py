@@ -305,6 +305,37 @@ async def run_case(
         if case.optimizer_completion:
             turns.append(("", True))
         for turn_index, (question, completion) in enumerate(turns):
+            if case.optimizer_completion_only and not completion:
+                arguments = json.dumps({"action": "start", "timeout_seconds": 60})
+                outcome = await execute_optimizer(text, arguments)
+                if not outcome.ok:
+                    raise ValueError("Fixed optimizer setup failed")
+                acknowledgement = (
+                    "Optimization is running in the background for 60 seconds. You can keep chatting. "
+                    "I will review the result when it completes."
+                )
+                events.extend(
+                    [
+                        {"kind": "user", "turn": turn_index + 1, "text": question},
+                        {"kind": "tool_start", "name": "optimizer", "arguments": arguments, "seeded": True},
+                        {
+                            "kind": "tool",
+                            "name": "optimizer",
+                            "arguments": arguments,
+                            "ok": True,
+                            "result": outcome.text,
+                            "seeded": True,
+                        },
+                        {"kind": "text", "text": acknowledgement, "seeded": True},
+                    ]
+                )
+                answers.append(acknowledgement)
+                proposal_turns.append(False)
+                intermediate_proposals.append(False)
+                history.extend(
+                    [ChatMessage(role="user", content=question), ChatMessage(role="assistant", content=acknowledgement)]
+                )
+                continue
             optimizer_result = None
             if completion:
                 if not optimizer_started:
@@ -1093,6 +1124,11 @@ async def run_all(
     """Run selected cases with bounded parallelism and preserve dataset order."""
     if jobs <= 0 or repetitions <= 0:
         raise ValueError("jobs and repetitions must be positive")
+
+    # Fixture solving and exporting are setup, outside timed model attempts.
+    for case in cases:
+        if case.optimizer_completion:
+            await asyncio.to_thread(completion_result, case.optimizer_completion, fixture_text(case.fixture))
 
     concurrency_limit = asyncio.Semaphore(jobs)
     completed = 0

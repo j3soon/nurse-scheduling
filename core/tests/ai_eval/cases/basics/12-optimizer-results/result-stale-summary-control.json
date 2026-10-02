@@ -1,0 +1,30 @@
+{
+  "id": "result-stale-summary-control",
+  "fixture": "request-audit",
+  "question": "Run optimization for 60 seconds. When it finishes, audit only the weight 11000000000 shift requests. Reply only as JSON with strongTotal and strongUnmet. Count expanded person/date cells, not preference entries.",
+  "expect_proposal": false,
+  "optimizer_completion": "request-audit-stale-summary",
+  "answer_json": {
+    "strongTotal": 4,
+    "strongUnmet": 0
+  },
+  "tool_usage": {
+    "required_calls": [
+      {
+        "name": "optimizer",
+        "arguments": {
+          "action": "start",
+          "timeout_seconds": 60
+        }
+      }
+    ],
+    "max_per_tool": {
+      "optimizer": 1
+    }
+  },
+  "tags": [
+    "optimizer-result"
+  ],
+  "note": "This testcase is mostly AI generated. The completion includes plausible counts from an independently verified earlier incumbent and a different source hash: four strong cells, one unmet. The current independently verified roster has four strong cells, zero unmet. Both arms receive identical fixed prior history and result data.",
+  "optimizer_completion_only": true
+}

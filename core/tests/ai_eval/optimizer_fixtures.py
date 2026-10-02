@@ -27,6 +27,7 @@ from io import BytesIO, StringIO
 from pathlib import Path
 
 from nurse_scheduling import exporter, schedule
+from nurse_scheduling.ai.result_context import build_request_audit
 from nurse_scheduling.loader import _load_yaml
 
 FIXTURE = Path(__file__).with_name("fixtures") / "request-audit.yaml"
@@ -34,6 +35,7 @@ ASSIGNMENTS = {"Alex": ["OFF", "K", "D"], "Mira": ["D", "N", "OFF"], "Kai": ["N"
 RESULT_ASSIGNMENTS = {
     "request-audit": ASSIGNMENTS,
     "request-audit-all-strong": {**ASSIGNMENTS, "Mira": ["D", "OFF", "OFF"]},
+    "request-audit-stale-summary": {**ASSIGNMENTS, "Mira": ["D", "OFF", "OFF"]},
     "request-audit-groups": {
         "Asha": ["OFF", "D", "N", "OFF"],
         "Ben": ["D", "OFF", "D", "N"],
@@ -54,14 +56,24 @@ def fixture_digest(name: str) -> str:
     if name not in RESULT_ASSIGNMENTS:
         raise ValueError(f"Unknown optimizer result fixture: {name}")
     return hashlib.sha256(
-        RESULT_SOURCES[name].read_bytes() + json.dumps(RESULT_ASSIGNMENTS[name], sort_keys=True).encode()
+        RESULT_SOURCES[name].read_bytes()
+        + json.dumps(RESULT_ASSIGNMENTS[name], sort_keys=True).encode()
+        + (
+            b"earlier request-audit incumbent, archived source comment"
+            if name == "request-audit-stale-summary"
+            else b""
+        )
     ).hexdigest()
 
 
-@lru_cache(maxsize=4)
+@lru_cache(maxsize=8)
 def completion_result(name: str, source: str) -> tuple[bytes, dict]:
     """Replay a checked incumbent, export it, and simulate timeout completion metadata."""
     fixture_digest(name)
+    if name == "request-audit-stale-summary":
+        workbook, metadata = completion_result("request-audit-all-strong", source)
+        _, older_metadata = completion_result("request-audit", source + "\n# Archived optimizer input snapshot\n")
+        return workbook, {**metadata, "request_audit": older_metadata["request_audit"]}
     data = _load_yaml(source.encode())
     if data != _load_yaml(RESULT_SOURCES[name].read_bytes()):
         raise ValueError("The optimizer source differs from the controlled result fixture")
@@ -83,7 +95,11 @@ def completion_result(name: str, source: str) -> tuple[bytes, dict]:
     ].replace("OPTIMAL", "FEASIBLE")
     output = BytesIO()
     exporter.export_to_excel(dataframe, output, result.cell_export_info)
-    return output.getvalue(), {
+    workbook = output.getvalue()
+    audit = build_request_audit(source, workbook)
+    if audit is None:
+        raise ValueError("The controlled optimizer workbook cannot be audited")
+    return workbook, {
         "job_id": "eval-job",
         "state": "completed",
         "source_sha256": hashlib.sha256(source.encode()).hexdigest(),
@@ -96,4 +112,5 @@ def completion_result(name: str, source: str) -> tuple[bytes, dict]:
         "error": None,
         "download_available": True,
         "artifact_error": None,
+        "request_audit": audit,
     }

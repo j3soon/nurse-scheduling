@@ -866,6 +866,21 @@ def test_a_multi_user_turn_case_preserves_the_conversation_history():
     ]
 
 
+def test_completion_only_case_seeds_history_without_counting_a_model_tool_call():
+    case = CASE_BY_ID["result-single-tier-summary"]
+    provider = ScriptedProvider([TextDelta('{"strongTotal":4,"strongUnmet":0}')])
+    factory = _factory()
+    run = asyncio.run(run_case(provider, settings(), case, factory))
+    assert run.passed
+    assert run.turns == 1
+    assert run.tools == []
+    assert len(provider.messages) == 1
+    assert provider.messages[0][-3]["content"] == case.question
+    assert "Optimization is running in the background" in provider.messages[0][-2]["content"]
+    assert '"request_audit"' in provider.messages[0][-1]["content"]
+    assert not factory.created
+
+
 @pytest.mark.parametrize("fail_fast, expected_user_turns", [(True, [1]), (False, [1, 2])])
 def test_unexpected_proposal_fails_before_wasting_later_turns(fail_fast: bool, expected_user_turns: list[int]):
     provider = ScriptedProvider(

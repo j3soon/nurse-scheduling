@@ -27,10 +27,11 @@ import pytest
 from openpyxl import load_workbook
 
 from nurse_scheduling.ai.attachment_tools.inspect_optimizer_result import _assigned, inspect_result
-from nurse_scheduling.ai.result_context import build_result_context
+from nurse_scheduling.ai.result_context import MAX_REQUEST_AUDIT_BYTES, build_request_audit, build_result_context
 from nurse_scheduling.ai.sandbox_agent import INSPECTION_HELPERS, REFERENCE_ATTACHMENT_TOOLS, inspection_helper_catalog
 
 from .ai_eval.optimizer_fixtures import FIXTURE, RESULT_SOURCES, completion_result
+from .ai_test_helper import parse_schedule, schedule_yaml
 
 
 @pytest.fixture
@@ -57,6 +58,49 @@ def test_reader_counts_actual_assignments_and_hard_avoids(audit):
     assert result["score"] == 33_000_000_000
     assert result["score_direction"] == "maximize"
     assert result["status"] == "FEASIBLE"
+
+
+def test_completion_summary_has_bounded_counts_and_explicit_scope(audit):
+    path, context = audit
+    result = build_request_audit(FIXTURE.read_text(), path.read_bytes())
+    assert result is not None
+    assert result["source_sha256"] == context["source_sha256"]
+    assert result["summary"] == [
+        {"weight": 11_000_000_000, "total": 4, "satisfied": 3, "unmet": 1},
+        {"weight": 11_000_000, "total": 1, "satisfied": 0, "unmet": 1},
+        {"weight": "-.inf", "total": 3, "satisfied": 3, "unmet": 0},
+    ]
+    assert "Staffing and rest are not audited" in result["scope"]
+    assert set(result) == {"scope", "source_sha256", "summary"}
+    assert len(json.dumps(result).encode()) <= MAX_REQUEST_AUDIT_BYTES
+
+
+def test_summary_omits_whole_audit_when_weight_tiers_exceed_limit(audit):
+    path, _ = audit
+    payload = parse_schedule(FIXTURE.read_text())
+    request = payload["preferences"][0]
+    payload["preferences"] = [{**request, "weight": weight} for weight in range(1, 101)]
+    assert build_request_audit(schedule_yaml(payload), path.read_bytes()) is None
+
+
+def test_summary_falls_back_for_invalid_and_unsupported_workbooks(audit):
+    path, _ = audit
+    assert build_request_audit(FIXTURE.read_text(), b"not a workbook") is None
+    workbook = load_workbook(path)
+    workbook.active.cell(1, 5).value = "unsupported date header"
+    workbook.save(path)
+    assert build_request_audit(FIXTURE.read_text(), path.read_bytes()) is None
+
+
+def test_stale_summary_control_disagrees_with_current_verified_incumbent():
+    source = FIXTURE.read_text()
+    workbook, metadata = completion_result("request-audit-stale-summary", source)
+    current = build_request_audit(source, workbook)
+    assert current is not None
+    assert metadata["request_audit"]["source_sha256"] != metadata["source_sha256"]
+    assert current["source_sha256"] == metadata["source_sha256"]
+    assert metadata["request_audit"]["summary"][0]["unmet"] == 1
+    assert current["summary"][0]["unmet"] == 0
 
 
 def test_reader_accepts_reordered_people_and_offset_headers(audit):

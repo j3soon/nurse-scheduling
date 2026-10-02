@@ -116,6 +116,7 @@ class EvalCase:
     attachments: tuple[str, ...] = ()
     optimizer_error: str = ""
     optimizer_completion: str = ""
+    optimizer_completion_only: bool = False
     answer_json: dict[str, Any] = field(default_factory=dict)
     category: str = ""
     assertions: tuple[Assertion, ...] = ()
@@ -270,10 +271,14 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         "request-audit",
         "request-audit-all-strong",
         "request-audit-groups",
+        "request-audit-stale-summary",
     }:
         raise EvalCaseError(f"{source} has an unknown optimizer_completion fixture.")
     if optimizer_completion and (len(raw_turns) != 1 or entry["expect_proposal"]):
         raise EvalCaseError(f"{source} completion cases require one user turn and no proposal.")
+    optimizer_completion_only = entry.get("optimizer_completion_only", False)
+    if not isinstance(optimizer_completion_only, bool) or (optimizer_completion_only and not optimizer_completion):
+        raise EvalCaseError(f"{source} optimizer_completion_only requires a completion fixture and a boolean.")
     answer_json = entry.get("answer_json", {})
     if not isinstance(answer_json, dict):
         raise EvalCaseError(f"{source} `answer_json` must be an object.")
@@ -297,6 +302,7 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         attachments=tuple(raw_attachments),
         optimizer_error=optimizer_error,
         optimizer_completion=optimizer_completion,
+        optimizer_completion_only=optimizer_completion_only,
         answer_json=answer_json,
         category=category,
         assertions=assertions,

@@ -87,7 +87,7 @@ def prompt_at_step(step: int, *, omit: int | None = None) -> str:
 def case_digest(case: EvalCase) -> str:
     """Bind a receipt to the parsed input and grading contract, not JSON formatting."""
     fields = asdict(case)
-    for optional in ("optimizer_completion", "answer_json"):
+    for optional in ("optimizer_completion", "optimizer_completion_only", "answer_json"):
         if not fields[optional]:
             fields.pop(optional)
     if any(isinstance(value, dict) for value in case.answer_json.values()):

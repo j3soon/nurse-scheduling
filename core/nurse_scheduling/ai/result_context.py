@@ -20,12 +20,21 @@
 # This file is mostly AI generated.
 
 import hashlib
+import json
+import logging
 import math
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 from nurse_scheduling.constants import OFF, OFF_sid
 from nurse_scheduling.loader import load_data
 from nurse_scheduling.models import CompiledShiftRequest
+
+from .attachment_tools.inspect_optimizer_result import inspect_result
+
+MAX_REQUEST_AUDIT_BYTES = 4096
+logger = logging.getLogger(__name__)
 
 
 def build_result_context(schedule_yaml: str) -> dict[str, Any]:
@@ -59,3 +68,24 @@ def build_result_context(schedule_yaml: str) -> dict[str, Any]:
         "shift_types": shifts,
         "requests": requests,
     }
+
+
+def build_request_audit(schedule_yaml: str, workbook: bytes) -> dict[str, Any] | None:
+    """Return bounded counts from the submitted snapshot, or leave inspection to the agent."""
+    try:
+        context = build_result_context(schedule_yaml)
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "result.xlsx"
+            path.write_bytes(workbook)
+            audit = inspect_result(path, context, context["source_sha256"], max_unmet=0)
+        summary = {
+            "scope": "Expanded shift-request person/date cells. Staffing and rest are not audited.",
+            "source_sha256": audit["source_sha256"],
+            "summary": audit["summary"],
+        }
+        if len(json.dumps(summary, ensure_ascii=False, allow_nan=False).encode()) <= MAX_REQUEST_AUDIT_BYTES:
+            return summary
+    except Exception:
+        # Optional reporting must not suppress an otherwise downloadable result.
+        logger.debug("Optimizer request summary unavailable", exc_info=True)
+    return None

@@ -20,11 +20,14 @@
 # This test is mostly AI generated.
 
 import asyncio
+import hashlib
 import json
 from collections.abc import AsyncIterator
+from io import BytesIO
 
 import httpx
 import pytest
+from openpyxl import load_workbook
 
 from nurse_scheduling.ai.background import SessionEventBroker
 from nurse_scheduling.ai.optimizer import (
@@ -37,10 +40,54 @@ from nurse_scheduling.ai.optimizer import (
     optimizer_tool_definition,
 )
 
+from .ai_eval.optimizer_fixtures import FIXTURE, completion_result
 from .ai_test_helper import base_schedule_payload, optimizer_workbook_bytes, parse_schedule, schedule_yaml
 
 TEST_SCHEDULE = schedule_yaml()
 WORKBOOK_BYTES = optimizer_workbook_bytes()
+
+
+def test_completion_audits_restored_workbook_against_submitted_snapshot() -> None:
+    async def scenario() -> None:
+        source = FIXTURE.read_text()
+        content, _ = completion_result("request-audit", source)
+        workbook = load_workbook(BytesIO(content))
+        for index in range(1, 4):
+            workbook.active.cell(index + 2, 1).value = f"P{index}"
+        output = BytesIO()
+        workbook.save(output)
+        workbook.close()
+        backend = FakeOptimizerBackend(output.getvalue())
+        completed = asyncio.Event()
+        result = {}
+
+        async def on_completion(_session_id, prompt, artifact):
+            result.update(json.loads(prompt.split("Optimizer result JSON:\n", 1)[1]))
+            assert artifact is not None
+            completed.set()
+
+        optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
+        try:
+            assert (await optimizer.execute("session", source, '{"action":"start"}')).ok
+            # The editor can change while optimization is running.
+            changed = source.replace("weight: 11000000000", "weight: 12000000000") + "\n# New editor snapshot\n"
+            assert (await optimizer.execute("session", changed, '{"action":"status"}')).ok
+            backend.release.set()
+            await asyncio.wait_for(completed.wait(), timeout=5)
+            assert result["source_sha256"] == hashlib.sha256(source.encode()).hexdigest()
+            assert result["request_audit"]["source_sha256"] == result["source_sha256"]
+            assert result["request_audit"]["summary"][0] == {
+                "weight": 11_000_000_000,
+                "total": 4,
+                "satisfied": 3,
+                "unmet": 1,
+            }
+            assert result["download_available"]
+            assert not optimizer._jobs[result["job_id"]].schedule_yaml
+        finally:
+            await optimizer.close()
+
+    asyncio.run(scenario())
 
 
 def test_tool_description_explains_the_default_timeout() -> None:
@@ -425,6 +472,9 @@ def test_start_returns_immediately_and_completion_wakes_the_agent() -> None:
 
         assert completions[0][0] == "session-1"
         assert '"score": 17' in completions[0][1]
+        result_data = json.loads(completions[0][1].split("Optimizer result JSON:\n", 1)[1])
+        assert "request_audit" not in result_data  # This mock workbook lacks the complete date range.
+        assert result_data["artifact_error"] is None
         assert "/workspace/optimizer-results/optimized-schedule.xlsx" in completions[0][1]
         assert repr(WORKBOOK_BYTES) not in completions[0][1]
         assert completions[0][2] is not None

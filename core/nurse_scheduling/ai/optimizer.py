@@ -36,6 +36,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from .agent import AgentToolOutcome
 from .optimizer_privacy import OptimizerResultError, prepare_optimizer_schedule, restore_people_ids
+from .result_context import build_request_audit
 
 OPTIMIZER_TOOL = "optimizer"
 WORKSPACE_OPTIMIZER_RESULT = "/workspace/optimizer-results/optimized-schedule.xlsx"
@@ -238,6 +239,7 @@ class SessionOptimization:
     payload: OptimizerJobPayload
     original_id_by_anonymized_id: dict[str, str]
     people_count: int
+    schedule_yaml: str
     artifact: "OptimizerArtifact | None" = None
     progress_task: asyncio.Task[None] | None = None
 
@@ -413,6 +415,7 @@ class SessionOptimizer:
                 payload=payload,
                 original_id_by_anonymized_id=prepared.original_id_by_anonymized_id,
                 people_count=prepared.people_count,
+                schedule_yaml=schedule_yaml,
             )
             if not retired:
                 self._jobs[job.id] = job
@@ -539,6 +542,7 @@ class SessionOptimizer:
 
     async def _complete(self, job: SessionOptimization) -> None:
         artifact_error: str | None = None
+        request_audit = None
         if self._jobs.get(job.id) is job and job.payload.state == "completed":
             try:
                 artifact = await self._backend.result_artifact(job.payload)
@@ -552,9 +556,12 @@ class SessionOptimizer:
                     raise OptimizerResultError("The restored workbook exceeded the assistant download limit.")
                 artifact = OptimizerArtifact(restored_content, artifact.filename, artifact.media_type)
                 await self._retain_artifact(job, artifact)
+                if job.artifact is not None:
+                    request_audit = await asyncio.to_thread(build_request_audit, job.schedule_yaml, restored_content)
             except (OptimizerError, OptimizerResultError) as exc:
                 logger.warning("Optimizer result read failed job_id=%s error=%s", job.id, exc)
                 artifact_error = str(exc)
+        job.schedule_yaml = ""
         try:
             await self._backend.delete(job.remote_id)
         except OptimizerError as exc:
@@ -570,6 +577,8 @@ class SessionOptimizer:
             "download_available": job.artifact is not None,
             "artifact_error": artifact_error,
         }
+        if job.artifact is not None and request_audit is not None:
+            result_data["request_audit"] = request_audit
         await self._notify_update(job)
         prompt = optimizer_completion_message(result_data)
         if self._jobs.get(job.id) is not job:
