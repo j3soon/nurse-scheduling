@@ -97,6 +97,8 @@ Record the exact prompt, parsed case and fixture hashes, provider/model, tools,
 and environment. Use the repository's repetition and concurrency policy. Here,
 start with three runs per arm and four concurrent case jobs. Keep infrastructure
 errors separate and preserve failed attempts when retrying them.
+Keep prompt, manifest, case, fixture, grader, and reference inputs unchanged while
+an evaluation is running. Wait for its reports before editing those inputs.
 
 Report success rate, infrastructure failures, tool calls and reads, turns,
 latency, and input, cached, generated, reasoning, and total tokens as first-class

@@ -1100,6 +1100,12 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     broad_scope = parser.add_mutually_exclusive_group()
     broad_scope.add_argument("--tuning", action="store_true", help="run the default tuning set")
     broad_scope.add_argument("--full", action="store_true", help="run every case")
+    broad_scope.add_argument(
+        "--ladder-audit",
+        action="store_true",
+        help="compare every prompt section, then run all ladder cases with the production prompt",
+    )
+    parser.add_argument("--plan-only", action="store_true", help="print the ladder audit plan without provider work")
     prompt_scope = parser.add_mutually_exclusive_group()
     prompt_scope.add_argument("--prompt-step", type=int, help="run with the first N prompt sections (0 is empty)")
     prompt_scope.add_argument("--prompt-compare-step", type=int, help="compare prompt steps N-1 and N")
@@ -1123,10 +1129,12 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     )
     arguments = parser.parse_args(argv)
     comparing = arguments.prompt_compare_step is not None or arguments.prompt_ablate_step is not None
-    arguments.repeat = arguments.repeat if arguments.repeat is not None else (3 if comparing else 1)
+    arguments.repeat = (
+        arguments.repeat if arguments.repeat is not None else (3 if comparing or arguments.ladder_audit else 1)
+    )
     if arguments.jobs <= 0 or arguments.repeat <= 0:
         parser.error("--jobs and --repeat must be positive")
-    if comparing and not 3 <= arguments.repeat <= 10:
+    if (comparing or arguments.ladder_audit) and not 3 <= arguments.repeat <= 10:
         parser.error("prompt comparisons require --repeat between 3 and 10")
     if (arguments.cost_metric is None) != (arguments.cost_ratio is None):
         parser.error("--cost-metric and --cost-ratio must be supplied together")
@@ -1138,7 +1146,8 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         parser.error("--baseline-report cannot be combined with a prompt comparison")
     steps = (
         load_prompt_steps()
-        if any(
+        if arguments.ladder_audit
+        or any(
             value is not None
             for value in (arguments.prompt_step, arguments.prompt_compare_step, arguments.prompt_ablate_step)
         )
@@ -1155,9 +1164,19 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     if any(not value.strip() for value in arguments.case + arguments.category + arguments.tag):
         parser.error("case, category, and tag selectors must not be empty")
     selected = bool(arguments.case or arguments.category or arguments.tag)
+    if arguments.plan_only and not arguments.ladder_audit:
+        parser.error("--plan-only requires --ladder-audit")
+    if arguments.ladder_audit and (
+        selected
+        or comparing
+        or arguments.prompt_step is not None
+        or arguments.baseline_report is not None
+        or arguments.continue_after_failure
+    ):
+        parser.error("--ladder-audit defines its own cases, prompts, and failure policy")
     if selected and (arguments.tuning or arguments.full):
         parser.error("--tuning and --full cannot be combined with case, category, or tag selectors")
-    if not selected and not (arguments.tuning or arguments.full or comparing):
+    if not selected and not (arguments.tuning or arguments.full or comparing or arguments.ladder_audit):
         parser.error("choose --case, --category, or --tag, or explicitly pass --tuning or --full")
     return arguments
 
@@ -1167,7 +1186,9 @@ def _selected_cases(argv: Sequence[str] | None) -> tuple[argparse.Namespace, lis
     arguments = _parse_args(argv)
     step = arguments.prompt_compare_step or arguments.prompt_ablate_step
     default_ids = (
-        load_prompt_steps()[step - 1].cases
+        tuple(dict.fromkeys(case for entry in load_prompt_steps() for case in entry.cases))
+        if arguments.ladder_audit
+        else load_prompt_steps()[step - 1].cases
         if step and not (arguments.case or arguments.category or arguments.tag or arguments.tuning or arguments.full)
         else ()
     )
@@ -1185,12 +1206,46 @@ def _selected_cases(argv: Sequence[str] | None) -> tuple[argparse.Namespace, lis
         arguments.tag,
         full=arguments.full,
     )
+    if arguments.ladder_audit:
+        from .ladder_audit import build_plan
+
+        build_plan(
+            load_prompt_steps(),
+            {case.id: case for case in cases},
+            arguments.output_dir or default_output_dir(),
+            repeat=arguments.repeat,
+            jobs=arguments.jobs,
+        )
     return arguments, cases
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the evaluation from the command line."""
     arguments, cases = _selected_cases(argv)
+    if arguments.ladder_audit:
+        from .ladder_audit import build_plan, run_audit
+
+        root = (arguments.output_dir or default_output_dir()).resolve()
+        plan = build_plan(
+            load_prompt_steps(), {case.id: case for case in cases}, root, repeat=arguments.repeat, jobs=arguments.jobs
+        )
+        if arguments.plan_only:
+            print(json.dumps(plan, indent=2))
+            return 0
+
+        def unchanged() -> bool:
+            try:
+                return plan == build_plan(
+                    load_prompt_steps(),
+                    {case.id: case for case in load_cases(arguments.cases_dir)},
+                    root,
+                    repeat=arguments.repeat,
+                    jobs=arguments.jobs,
+                )
+            except (OSError, ValueError, KeyError):
+                return False
+
+        return run_audit(plan, root, unchanged=unchanged)
     settings = AiSettings.from_env()
     sandbox_factory = create_sandbox_factory(settings)
     variants = _prompt_variants(arguments)

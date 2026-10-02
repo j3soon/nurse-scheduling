@@ -36,7 +36,8 @@
         "infrastructure_errors": 0,
         "note": "Full-prompt ablation. Measures first-valid-write trajectory, not eventual YAML correctness."
       }
-    ]
+    ],
+    "comparison_mode": "ablation"
   },
   {
     "id": "exact-selectors-and-conflicts",
@@ -204,7 +205,8 @@
         "infrastructure_errors": 0,
         "note": "Full-prompt ablation. Controlled startup, not solver output or completion callbacks."
       }
-    ]
+    ],
+    "comparison_mode": "ablation"
   },
   {
     "id": "optimizer-lifecycle",
@@ -309,7 +311,8 @@
           }
         ]
       }
-    ]
+    ],
+    "comparison_mode": "ablation"
   },
   {
     "id": "offline-yaml",

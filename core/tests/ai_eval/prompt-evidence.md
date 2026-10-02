@@ -38,6 +38,20 @@ Use three repeats routinely. Up to ten are available for an explicitly requested
 that clause's cases by default. Use full-prompt ablation when requested or when investigating an interaction.
 Exact historical contexts are preserved in the ignored reports.
 
+To audit every section and then all linked cases with the complete production prompt:
+
+```bash
+AI_ENV_FILE=docker/.env.staging ./scripts/run_ai_eval.sh --ladder-audit --plan-only
+AI_ENV_FILE=docker/.env.staging ./scripts/run_ai_eval.sh --ladder-audit
+```
+
+The audit defaults to three repetitions and four concurrent case jobs. Cohorts run sequentially.
+It uses each section's declared `comparison_mode` and predeclared cost target. The final pass includes
+only linked ladder cases, not the entire evaluation inventory. Plan, logs, metrics, and partial results
+stay in ignored `artifacts/`. Inputs are fingerprinted before execution and checked between cohorts.
+Changing an input or losing a report stops the audit. Behavioral failures, infrastructure failures,
+and missed benefit gates are reported separately. Retries are separate runs, never replacements.
+
 Inspect the raw trajectories before replacing a receipt. Require all after attempts to pass, no infrastructure
 errors, and either a correctness gain or a predeclared relative cost gain with both arms passing. Retain behavioral
 failures. Infrastructure-invalid pairs may be rerun only with the original failures preserved in artifacts.

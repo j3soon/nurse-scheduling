@@ -32,6 +32,11 @@ for arg in "$@"; do
   fi
 done
 python -c 'import sys; from tests.ai_eval.runner import _selected_cases; _selected_cases(sys.argv[1:])' "$@"
+for arg in "$@"; do
+  if [[ "$arg" == --plan-only ]]; then
+    exec python -m tests.ai_eval.runner "$@"
+  fi
+done
 
 for required in AI_PROVIDER_BASE_URL AI_PROVIDER_API_KEY; do
   if [[ -z "${!required:-}" ]]; then

@@ -50,6 +50,7 @@ class PromptStep:
     hypothesis: str
     sha256: str
     evidence: tuple[dict[str, Any], ...] = ()
+    comparison_mode: str = "adjacent"
 
 
 def load_prompt_steps(path: Path = STEPS_PATH) -> tuple[PromptStep, ...]:
@@ -69,6 +70,8 @@ def load_prompt_steps(path: Path = STEPS_PATH) -> tuple[PromptStep, ...]:
     for index, (step, section) in enumerate(zip(steps, sections, strict=True), 1):
         if not step.id or not step.hypothesis:
             raise ValueError(f"Prompt step {index} needs an ID and hypothesis")
+        if step.comparison_mode not in {"adjacent", "ablation"}:
+            raise ValueError(f"Prompt step {index} has an invalid comparison mode")
         if hashlib.sha256(section.encode()).hexdigest() != step.sha256:
             raise ValueError(f"Prompt step {index} ({step.id}) changed. Update its hypothesis and evidence")
         if any(record.get("case") not in step.cases for record in step.evidence):
