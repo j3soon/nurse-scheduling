@@ -1,5 +1,39 @@
 # AI evaluation case format
 
+Check prefix-cache reporting on demand, without provisioning a sandbox:
+
+```bash
+AI_ENV_FILE=docker/.env.staging ./scripts/check_ai_prompt_cache.sh --repeat 3 --output ../artifacts/prefix-cache-verification/results.json
+```
+
+The probe uses the app's assembled system prompt and tool definitions, requests
+one output token, and repeats the shared prefix alongside unique-prefix timing
+controls. Positive provider-reported `cached_tokens` confirms reuse. Exit 0 means
+confirmed hits, 1 means reported zero hits or a request error, and 2 means cache
+telemetry is missing. Timing alone does not prove caching. vLLM can expose usage
+details with `--enable-prompt-tokens-details`, independently of
+`--enable-prefix-caching`. Zero reported hits for a short prefix does not imply
+caching is disabled. Hybrid models can need longer prefixes to reuse cache.
+Append a reference for this diagnostic without changing the app prompt:
+
+```bash
+AI_ENV_FILE=docker/.env.staging ./scripts/check_ai_prompt_cache.sh --append-system-file ../docs/content/user-guide/build-a-real-schedule.md
+AI_ENV_FILE=docker/.env.staging ./scripts/check_ai_prompt_cache.sh --benchmark --repeat 10 --append-system-file ../docs/content/user-guide/build-a-real-schedule.md --output ../artifacts/prefix-cache-verification/benchmark-guide.json
+```
+
+The vLLM benchmark forces misses with fresh `cache_salt` values and reuses one
+warmed salt. Paired requests have identical prompt tokens and a 128-token output
+limit. It alternates arm order and runs sequentially to avoid local contention.
+Reports include request time, time to first token, token means and standard
+deviations, and paired deltas. Warmup is excluded from pair costs. Unequal output
+token counts are excluded and retained as unmatched pairs. This measures cache
+reuse on one running server, rather than restarting with caching off and on.
+Benchmark exit 0 means controls and pair token counts are verified, even if the
+tested prefix has no warm hits. Exit 2 means incomplete evidence.
+
+Missing cached-token details are recorded as `null` in evaluations, so uncached
+token comparisons remain unavailable rather than inventing cache misses.
+
 Store one JSON object per case under `cases/<dataset>/<category>/<id>.json`. Existing synthetic coverage lives under
 `cases/basics/`, mirroring the normal YAML testcase layout under `tests/testcases/basics/`. Reserve sibling dataset
 directories such as `cases/real/` for cases derived from real user scenarios. Every case names a fixture, one question or a

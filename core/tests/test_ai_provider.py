@@ -397,6 +397,23 @@ def test_skips_a_choiceless_chunk_that_carries_no_usage(monkeypatch: pytest.Monk
     assert events == [TextDelta("Answer")]
 
 
+@pytest.mark.parametrize("details", [None, {}, {"cached_tokens": None}, {"cached_tokens": 0}])
+def test_distinguishes_missing_cache_usage_from_zero(monkeypatch: pytest.MonkeyPatch, details) -> None:
+    usage = {"prompt_tokens": 120, "completion_tokens": 30, "total_tokens": 150, "prompt_tokens_details": details}
+    events = _events(_streaming_provider(monkeypatch, _sse_body({"choices": [], "usage": usage}), include_usage=True))
+
+    assert events == [TokenUsage(120, 30, 150, 0 if details == {"cached_tokens": 0} else None)]
+
+
+def test_missing_cache_usage_propagates_across_provider_turns() -> None:
+    reported = TokenUsage(120, 30, 150, 80)
+    missing = TokenUsage(120, 30, 150)
+
+    assert (reported + reported).cached_prompt_tokens == 160
+    assert (reported + missing).cached_prompt_tokens is None
+    assert (missing + reported).cached_prompt_tokens is None
+
+
 def test_does_not_request_token_usage_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     requests: list[httpx.Request] = []
 

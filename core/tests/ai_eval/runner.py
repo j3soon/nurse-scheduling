@@ -973,7 +973,8 @@ def _prompt_cost(run: CaseRun, metric: str) -> float | None:
         return run.seconds
     if run.token_usage is not None and run.token_usage_turns == run.turns:
         if metric == "uncached-tokens":
-            return float(run.token_usage.prompt_tokens - run.token_usage.cached_prompt_tokens)
+            cached = run.token_usage.cached_prompt_tokens
+            return float(run.token_usage.prompt_tokens - cached) if cached is not None else None
         if metric == "completion-tokens":
             return float(run.token_usage.completion_tokens)
         if metric == "total-tokens":

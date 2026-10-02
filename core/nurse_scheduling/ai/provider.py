@@ -134,7 +134,7 @@ class TokenUsage:
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
-    cached_prompt_tokens: int = 0
+    cached_prompt_tokens: int | None = None
     reasoning_tokens: int = 0
 
     def __add__(self, other: "TokenUsage") -> "TokenUsage":
@@ -143,7 +143,11 @@ class TokenUsage:
             prompt_tokens=self.prompt_tokens + other.prompt_tokens,
             completion_tokens=self.completion_tokens + other.completion_tokens,
             total_tokens=self.total_tokens + other.total_tokens,
-            cached_prompt_tokens=self.cached_prompt_tokens + other.cached_prompt_tokens,
+            cached_prompt_tokens=(
+                self.cached_prompt_tokens + other.cached_prompt_tokens
+                if self.cached_prompt_tokens is not None and other.cached_prompt_tokens is not None
+                else None
+            ),
             reasoning_tokens=self.reasoning_tokens + other.reasoning_tokens,
         )
 
@@ -390,7 +394,9 @@ def _parse_token_usage(raw_usage: object) -> TokenUsage:
         prompt_tokens=_usage_integer(raw_usage, "prompt_tokens"),
         completion_tokens=_usage_integer(raw_usage, "completion_tokens"),
         total_tokens=_usage_integer(raw_usage, "total_tokens"),
-        cached_prompt_tokens=_usage_integer(prompt_details, "cached_tokens", default=0),
+        cached_prompt_tokens=(
+            _usage_integer(prompt_details, "cached_tokens") if prompt_details.get("cached_tokens") is not None else None
+        ),
         reasoning_tokens=_usage_integer(completion_details, "reasoning_tokens", default=0),
     )
 

@@ -192,7 +192,7 @@ def test_postgres_migrations_duplicates_and_reconnection(postgres_history):
                 "prompt_tokens": 1,
                 "completion_tokens": 2,
                 "total_tokens": 3,
-                "cached_prompt_tokens": 0,
+                "cached_prompt_tokens": None,
                 "reasoning_tokens": 0,
             },
         )

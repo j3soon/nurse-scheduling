@@ -805,6 +805,21 @@ def test_missing_provider_usage_is_recorded_explicitly():
     }
 
 
+def test_missing_cache_details_do_not_count_as_uncached_tokens():
+    from tests.ai_eval.comparison import comparison_statistics
+    from tests.ai_eval.runner import _prompt_cost
+
+    run = _run("ask-people-count", ScriptedProvider([TextDelta("There are 87 people."), TokenUsage(100, 10, 110)]))
+
+    assert run.as_record()["token_usage"]["cached_prompt_tokens"] is None
+    assert _prompt_cost(run, "uncached-tokens") is None
+    assert _prompt_cost(run, "total-tokens") == 110
+    stats = comparison_statistics([run.as_record()], [run.as_record()])["cases"][run.case_id]["metrics"]
+    assert stats["cached_prompt_tokens"]["pairs"] == 0
+    assert stats["uncached_prompt_tokens"]["pairs"] == 0
+    assert stats["total_tokens"]["pairs"] == 1
+
+
 def test_cases_are_selected_by_id_and_by_category():
     cases = load_cases(CASES)
 
