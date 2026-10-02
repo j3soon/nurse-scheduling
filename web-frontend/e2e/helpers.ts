@@ -395,14 +395,10 @@ export async function mockOptimizeAndExport(
 }
 
 export async function disableOptimizeAnonymization(page: Page) {
+  // Backend readiness requires client initialization, unlike static checkbox markup.
+  await expect(page.getByRole('button', { name: 'Optimize and Download', exact: true })).toBeEnabled();
   const checkbox = page.getByRole('checkbox', { name: /anonymize schedule data/i });
-  await checkbox.waitFor({ state: 'visible' });
-  await checkbox.evaluate((element) => {
-    const input = element as HTMLInputElement;
-    if (input.checked) {
-      input.click();
-    }
-  });
+  await checkbox.uncheck();
   await expect(checkbox).not.toBeChecked();
 }
 

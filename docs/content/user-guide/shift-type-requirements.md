@@ -10,12 +10,19 @@ are optional refinements.
 
 The anonymized ward requires three senior nurses on `N+` every day. It also
 sets `N` to a minimum of 12 and a preferred level of 13 from `All Nurses w/o
-Students`. Similar rules cover day and evening shifts.
+Students`. Similar rules cover day and evening shifts. The preferred count is
+the ward's desired staffing. The minimum is one lower to leave a narrow escape
+when perfect coverage is impossible. A very large negative weight strongly
+discourages that shortfall. This is a near-hard preference, not an ordinary
+choice between 12 and 13. The three `N+` senior slots are separate from, and
+additional to, the 12–13 ordinary `N` slots.
 
 ![Senior and general staffing requirements from an anonymized ward](../assets/images/user-guide/13-real-requirements.png)
 
-The warning lists special shifts without fixed staffing totals. Review every
-warning. Leave a pair undefined only when other rules intentionally control it.
+The current example warns about 140 date/shift-type pairs without fixed
+staffing totals: `A` on workdays and `D~`, `E~`, `N~`, and `K` on all dates.
+Review every warning. An undefined pair can receive an unexpected number of
+assignments unless other rules control it.
 
 ## Add coverage requirements
 
@@ -38,6 +45,10 @@ warning. Leave a pair undefined only when other rules intentionally control it.
 
 Set **Preferred Number of People** and a negative weight when staffing may vary
 between a hard minimum and maximum. Leave it empty for an exact requirement.
+When the preferred level is effectively mandatory but a small shortfall must
+remain possible, set the minimum one below the preferred level and use a
+penalty that dominates ordinary preferences. Choose the actual headcount with
+the ward. The example's numbers are not universal targets.
 
 Shift-type coefficients change how assignments contribute to that aggregate.
 Leave them at `1` unless the workplace rule requires another contribution.

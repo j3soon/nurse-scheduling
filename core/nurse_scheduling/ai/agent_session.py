@@ -42,7 +42,7 @@ from .agent_types import (
     ToolExecutionStart,
 )
 from .config import AiSettings
-from .context import build_provider_messages, projected_history, recent_history, retained_entries
+from .context import build_provider_messages, history_context_chars, projected_history, recent_history, retained_entries
 from .history import ChatHistory
 from .lifecycle import TERMINAL_EVENTS, AgentRun, RunSnapshot
 from .optimizer import OptimizerArtifact, SessionOptimizer
@@ -86,6 +86,7 @@ class RunCompletion:
     run_saved: bool
     proposal_saved: bool
     history_trimmed_count: int = 0
+    context_used_chars: int = 0
 
 
 class SessionPersistence(Protocol):
@@ -399,6 +400,13 @@ class AgentSession:
                 artifact = await session_optimizer.latest_result_artifact(session_id)
                 await run.streaming.wait()
             retained_history = recent_history(transcript, settings.max_history_chars)
+            await emit(
+                "context_usage",
+                {
+                    "used_chars": history_context_chars(transcript, settings.max_history_chars),
+                    "max_chars": settings.max_history_chars,
+                },
+            )
             dropped_history = snapshot.previously_dropped + len(projected_history(transcript)) - len(retained_history)
             if dropped_history:
                 await emit("history_trimmed", {"dropped": dropped_history})
@@ -463,6 +471,10 @@ class AgentSession:
             done = {"run_id": run.id}
             if history_saved is not None and not background:
                 done["history_saved"] = history_saved
+            await emit(
+                "context_usage",
+                {"used_chars": completion.context_used_chars, "max_chars": settings.max_history_chars},
+            )
             await emit("done", done)
         except asyncio.CancelledError:
             if not completed:

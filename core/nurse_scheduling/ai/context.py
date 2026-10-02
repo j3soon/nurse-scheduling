@@ -114,6 +114,11 @@ def projected_history(transcript: Sequence[AgentMessage]) -> list[ChatMessage]:
     return [message for _prompt, message in _projected_messages(transcript)]
 
 
+def history_context_chars(transcript: Sequence[AgentMessage], max_chars: int) -> int:
+    """Measure the serialized history selected for the next run's context budget."""
+    return sum(len(json.dumps(message, ensure_ascii=False)) for message in recent_history(transcript, max_chars))
+
+
 def recent_history(transcript: Sequence[AgentMessage], max_chars: int) -> list[ChatMessage]:
     """Project the newest transcript messages that fit the prompt budget, oldest first.
 

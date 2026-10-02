@@ -41,11 +41,29 @@ export interface OptimizationActivity {
   state: string;
   terminal: boolean;
   downloadable: boolean;
+  result?: { outcome?: string; score?: number; solverStatus?: string; terminationReason?: string };
+  error?: { code?: string; message?: string };
+  request?: { solver?: string; timeoutSeconds?: number };
+  backend?: {
+    url?: string;
+    appVersion?: string;
+    apiVersion?: string;
+    serviceName?: string;
+    deploymentId?: string;
+    instanceId?: string;
+    requestTimeoutSeconds?: number;
+    claimedPerformance?: { score: number; appVersion: string; measuredAt: string };
+  };
 }
 
 export interface OptimizationProgressActivity {
   jobId: string;
   point: OptimizationProgressPoint;
+}
+
+export interface ContextUsage {
+  usedChars: number;
+  maxChars: number;
 }
 
 export interface StreamCallbacks {
@@ -66,11 +84,13 @@ export interface StreamCallbacks {
   onDone?: (runId?: string) => void;
   onStopped?: (runId?: string) => void;
   onStale?: (message: string) => void;
+  onContextUsage?: (usage: ContextUsage) => void;
   onHistoryTrimmed?: (dropped: number) => void;
   onError?: (message: string) => void;
 }
 
 export interface AiCapabilities {
+  app_version?: string;
   auth: AuthRequirement | null;
   session_retention_seconds: number;
   file_attachments: {
@@ -109,7 +129,12 @@ interface SsePayload {
   state?: unknown;
   terminal?: unknown;
   downloadable?: unknown;
+  error?: unknown;
+  request?: unknown;
+  backend?: unknown;
   progress?: unknown;
+  used_chars?: unknown;
+  max_chars?: unknown;
   dropped?: unknown;
 }
 
@@ -206,7 +231,29 @@ export async function getCapabilities(signal?: AbortSignal, endpoint = getAiBase
   ) {
     throw new Error('The AI backend returned invalid capabilities.');
   }
-  return { ...body, auth, session_retention_seconds: sessionRetention } as AiCapabilities;
+  return {
+    ...body,
+    app_version: typeof body.app_version === 'string' && body.app_version.trim() ? body.app_version : undefined,
+    auth,
+    session_retention_seconds: sessionRetention,
+  } as AiCapabilities;
+}
+
+export async function getBackendVersion(signal?: AbortSignal, endpoint = getAiBaseUrl()): Promise<string | undefined> {
+  // Shared deployments mount AI at /ai and expose optimizer identity at its parent.
+  const baseUrl = endpoint.replace(/\/+$/, '');
+  if (!baseUrl.endsWith('/ai')) return undefined;
+  try {
+    const response = await fetch(`${baseUrl.slice(0, -3)}/info`, {
+      credentials: 'omit',
+      signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(5000)]),
+    });
+    if (!response.ok) return undefined;
+    const body = await response.json() as { app_version?: unknown };
+    return typeof body?.app_version === 'string' && body.app_version.trim() ? body.app_version.trim() : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function createSession(
@@ -245,6 +292,51 @@ export async function getSessionStatus(
     throw new Error('The AI backend returned an invalid session status.');
   }
   return body.expires_in_seconds as number;
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null ? value as Record<string, unknown> : {};
+}
+
+function textField(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function numberField(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function optimizationDetails(payload: SsePayload): Partial<OptimizationActivity> {
+  const result = record(payload.result);
+  const error = record(payload.error);
+  const request = record(payload.request);
+  const backend = record(payload.backend);
+  const claimed = record(backend.claimed_performance);
+  const score = numberField(claimed.score);
+  return {
+    ...(payload.result ? { result: {
+      outcome: textField(result.outcome),
+      score: numberField(result.score),
+      solverStatus: textField(result.solver_status),
+      terminationReason: textField(result.termination_reason),
+    } } : {}),
+    ...(payload.error ? { error: { code: textField(error.code), message: textField(error.message) } } : {}),
+    ...(payload.request ? { request: {
+      solver: textField(request.solver), timeoutSeconds: numberField(request.timeout_seconds),
+    } } : {}),
+    ...(payload.backend ? { backend: {
+      url: textField(backend.url),
+      appVersion: textField(backend.app_version),
+      apiVersion: textField(backend.api_version),
+      serviceName: textField(backend.service_name),
+      deploymentId: textField(backend.deployment_id),
+      instanceId: textField(backend.instance_id),
+      requestTimeoutSeconds: numberField(backend.request_timeout_seconds),
+      ...(score !== undefined && score > 0 && typeof claimed.app_version === 'string'
+        && typeof claimed.measured_at === 'string' && Number.isFinite(Date.parse(claimed.measured_at))
+        ? { claimedPerformance: { score, appVersion: claimed.app_version, measuredAt: claimed.measured_at } } : {}),
+    } } : {}),
+  };
 }
 
 function consumeEvent(block: string, callbacks: StreamCallbacks): void {
@@ -323,6 +415,7 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
       state: payload.state,
       terminal: payload.terminal,
       downloadable: payload.downloadable,
+      ...optimizationDetails(payload),
     });
   } else if (eventType === 'optimization_progress' && typeof payload.job_id === 'string') {
     const point = payload.progress as Record<string, unknown> | null | undefined;
@@ -351,6 +444,12 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
     const message = typeof payload.message === 'string' ? payload.message : 'The AI response became stale.';
     if (callbacks.onStale) callbacks.onStale(message);
     else throw new AiStaleRunError(message);
+  } else if (eventType === 'context_usage') {
+    if (Number.isSafeInteger(payload.used_chars) && (payload.used_chars as number) >= 0
+      && Number.isSafeInteger(payload.max_chars) && (payload.max_chars as number) > 0
+      && (payload.used_chars as number) <= (payload.max_chars as number)) {
+      callbacks.onContextUsage?.({ usedChars: payload.used_chars as number, maxChars: payload.max_chars as number });
+    }
   } else if (eventType === 'history_trimmed') {
     const dropped = payload.dropped;
     if (typeof dropped === 'number' && Number.isInteger(dropped) && dropped > 0) {

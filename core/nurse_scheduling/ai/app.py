@@ -39,6 +39,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ..sentry import init_sentry
 from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry
+from ..version import get_app_version
 from .agent_session import SessionRuntime
 from .config import AiSettings, validate_ai_auth_credentials
 from .history import ChatHistory, stop_maintenance
@@ -168,6 +169,7 @@ class FileAttachmentCapability(BaseModel):
 class CapabilitiesResponse(BaseModel):
     """Enabled experimental features and their public limits."""
 
+    app_version: str
     file_attachments: FileAttachmentCapability
     session_retention_seconds: int
     auth: dict[str, bool | str]
@@ -450,6 +452,7 @@ def create_app(
     app.state.runs = runs
     app.state.provider = provider
     app.state.sandbox_factory = sandbox_factory
+    app.state.app_version = get_app_version()
     app.state.session_optimizer = session_optimizer
     app.state.session_event_broker = event_broker
 
@@ -467,6 +470,7 @@ def create_app(
     async def capabilities() -> CapabilitiesResponse:
         """Report optional features without exposing provider configuration."""
         return CapabilitiesResponse(
+            app_version=app.state.app_version,
             file_attachments=FileAttachmentCapability(
                 enabled=True,
                 max_files=settings.max_attachment_files,

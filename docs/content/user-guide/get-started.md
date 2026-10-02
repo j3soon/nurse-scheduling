@@ -17,13 +17,14 @@ locally.
 ## 1. Start a schedule
 
 1. Open the [Nurse Scheduling app](https://nursescheduling.org/).
-2. Select **New Schedule**, then **Reset Data**.
-3. Select **Continue**.
+2. Select **New Schedule**.
+3. In the confirmation dialog, select **Create empty schedule**.
 
-Resetting replaces the current browser data with starter people and shift
-types. Download a YAML backup first when replacing useful work.
+The new schedule has no people or working shifts. The dropdown next to
+**New Schedule** also offers the **87-person example**. Download a YAML backup
+first when replacing useful work.
 
-![Reset confirmation before creating a schedule](../assets/images/user-guide/01-start-new.png)
+![Confirmation before creating an empty schedule](../assets/images/user-guide/01-start-new.png)
 
 ## 2. Choose the dates
 
@@ -38,17 +39,18 @@ The app creates one date item per day and common groups such as `ALL`,
 
 ![A seven-day range selected in Date Management](../assets/images/user-guide/02-date-range.png)
 
-## 3. Check people and keep one shift
+## 3. Add one person and one shift
 
-1. On **People**, leave the starter people unchanged for this test.
-2. On **Shift Types**, delete every working shift except `D`.
+1. On **People**, select **Add Person** and add one person, `P1`.
+2. On **Shift Types**, select **Add Shift Type** and add one working shift,
+   `D`.
 3. For a real schedule, manage people and qualification groups on the
    [People](people.md) page. Keep workplace shifts and create groups such as
    `Day` or `Night` when several shifts share rules.
 
 The `ALL` groups and `OFF` shift type are maintained automatically.
 
-![Only the D and automatic OFF shift types remain](../assets/images/user-guide/03-shift-types.png)
+![Only the D and automatic OFF shift types](../assets/images/user-guide/03-shift-types.png)
 
 ## 4. Add minimum staffing
 

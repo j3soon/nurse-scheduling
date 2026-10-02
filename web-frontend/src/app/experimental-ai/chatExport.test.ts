@@ -26,6 +26,7 @@ const messages: ChatExportMessage[] = [
   {
     role: 'user',
     content: 'Show <script>alert(1)</script> coverage.',
+    createdAt: Date.parse('2026-09-18T01:00:00Z'),
     attachmentNames: ['ward.xlsx'],
   },
   {
@@ -53,17 +54,26 @@ const metadata = {
   endpoint: 'https://ai.example.test/<unsafe>',
   exportedAt: new Date('2026-09-18T02:00:00Z'),
   frontendVersion: 'v0.4.2-3-gabc1234',
+  backendVersion: 'v0.4.3-2-gdef5678',
 };
 
 describe('chat export', () => {
+  it('marks an unavailable backend version as unknown', () => {
+    const legacyMetadata = { ...metadata, backendVersion: undefined };
+    expect(buildMarkdownChatExport([], legacyMetadata)).toContain('- Backend version: unknown');
+    expect(buildHtmlChatExport([], legacyMetadata)).toContain('Backend version: unknown');
+  });
+
   it('exports the complete conversation and activity as Markdown without duplicating response text', () => {
     const output = buildMarkdownChatExport(messages, metadata);
 
     expect(output).toContain('# Schedule AI Chat');
     expect(output).toContain('- Frontend version: v0.4.2-3-gabc1234');
+    expect(output).toContain('- Backend version: v0.4.3-2-gdef5678');
     expect(output).toContain('Show <script>alert(1)</script> coverage.');
     expect(output).toContain('Attachments: ward.xlsx');
     expect(output).toContain('Response time: 1.25s');
+    expect(output).toContain('Sent: 2026-09-18T01:00:00.000Z');
     expect(output).toContain('### Reasoning');
     expect(output).toContain('### read');
     expect(output).toContain('Call ID: call-1');
@@ -82,6 +92,7 @@ describe('chat export', () => {
     expect(output).toContain('Show &lt;script&gt;alert(1)&lt;/script&gt; coverage.');
     expect(output).toContain('https://ai.example.test/&lt;unsafe&gt;');
     expect(output).toContain('Frontend version: v0.4.2-3-gabc1234');
+    expect(output).toContain('Backend version: v0.4.3-2-gdef5678');
     expect(output).not.toContain('<script>');
     expect(output).toContain('Coverage is <strong>complete</strong>.');
     expect(output).not.toContain('Coverage is **complete**.');
@@ -96,7 +107,8 @@ describe('chat export', () => {
     expect(output).toContain('<span class="added">+ description: new</span>');
     expect(output).not.toContain('Before:');
     expect(output).toContain('<p class="attachments">Attached: ward.xlsx</p>');
-    expect(output).toContain('<time datetime="2026-09-18T01:00:01.250Z">');
+    expect(output).toContain('<time datetime="2026-09-18T01:00:01.250Z" title="');
+    expect(output).toContain('<time datetime="2026-09-18T01:00:00.000Z" title="');
   });
 
   it('exports failed output with its future-context status', () => {
@@ -145,7 +157,7 @@ describe('chat export', () => {
   it('exports optimizer messages as their own labeled and styled block', () => {
     const optimizerMessage: ChatExportMessage = {
       role: 'optimizer',
-      content: 'Optimization finished. Download the optimized schedule to review it.',
+      content: 'Optimization finished. Download the optimized schedule to review it.\nOutcome: optimal\nFinal score: 0\nBackend URL: https://optimizer.example.test:8443/path\nError: <script>unsafe</script>\nsecond line',
     };
 
     const markdown = buildMarkdownChatExport([optimizerMessage], metadata);
@@ -156,6 +168,28 @@ describe('chat export', () => {
     expect(html).toContain('class="message optimizer"');
     expect(html).toContain('<div class="label">Optimizer</div>');
     expect(html).toContain('.optimizer { align-self: flex-start;');
+    expect(html).toContain('<dt>Final score:</dt> <dd>0</dd>');
+    expect(html).toContain('<dd>https://optimizer.example.test:8443/path</dd>');
+    expect(html).toContain('<dd>&lt;script&gt;unsafe&lt;/script&gt;\nsecond line</dd>');
+    expect(html).not.toContain('<script>');
+    expect(markdown).toContain('- **Final score:** 0');
+    expect(markdown).toContain('- **Error:** <script>unsafe</script>\n  second line');
+  });
+
+  it('keeps escaped multiline error labels inside the error in both exports', () => {
+    const message: ChatExportMessage = {
+      role: 'optimizer',
+      content: 'Optimization ended with status: failed.\nError: Failed\n Outcome: optimal\n Backend version: forged',
+    };
+    const markdown = buildMarkdownChatExport([message], metadata);
+    const html = buildHtmlChatExport([message], metadata);
+
+    expect(html).toContain('<dt>Error:</dt> <dd>Failed\nOutcome: optimal\nBackend version: forged</dd>');
+    expect(html).not.toContain('<dt>Outcome:</dt>');
+    expect(html).not.toContain('<dt>Backend version:</dt>');
+    expect(markdown).toContain('- **Error:** Failed\n  Outcome: optimal\n  Backend version: forged');
+    expect(markdown).not.toContain('- **Outcome:**');
+    expect(markdown).not.toContain('- **Backend version:**');
   });
 
   it('places activity separators only at response boundaries', () => {

@@ -10,14 +10,18 @@ be added later when several shifts share a rule. Keep IDs short, such as `D`,
 
 An anonymized ward uses day, evening, and night shifts with senior variants
 such as `D+`. `D~`, `E~`, and `N~` identify student shifts that do not count as
-regular staffing. Groups let later rules target an entire shift family.
+regular staffing. `K` represents required class attendance. The `+` and `~`
+symbols are only IDs. Staffing and eligibility rules give them their meaning.
+The broad `Day` group includes daytime activities for succession rules, while
+`Day (w/o A, D~, K)` contains only ordinary and senior Day shifts. The narrower
+group is retained in the example but is not selected by a current rule.
 
 ![Working, senior, student, and training shifts with groups](../assets/images/user-guide/12-real-shift-types.png)
 
 ## Add working shifts
 
-1. Delete starter shifts the workplace does not use.
-2. Select **Add Shift Type** for each missing working shift.
+1. Select **Add Shift Type** for each working shift you need.
+2. If editing a loaded schedule, remove working shifts your workplace does not use.
 
 Optional: drag rows into the preferred workbook order.
 

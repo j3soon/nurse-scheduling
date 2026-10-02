@@ -7,10 +7,10 @@ dates:
   groups:
     - id: WORKDAY
       members: ['03', '04', '05', '06', '07', '10', '11', '12', '13', '14', '17', '18', '19', '20', '21', '24', '25', '26', '27', '28']
-      description: 11 月沒有放假
+      description: Taiwan workdays imported from the current holiday calendar
     - id: FREEDAY
       members: ['01', '02', '08', '09', '15', '16', '22', '23', '29', '30']
-      description: 11 月沒有放假
+      description: Taiwan freedays imported from the current holiday calendar
     - id: Freeday shift right
       members: ['02', '03', '09', '10', '16', '17', '23', '24', '30']
       description: 大夜班的假日要晚一天
@@ -433,7 +433,12 @@ preferences:
     weight: -.inf
   - type: shift request
     person: [Day People]
-    date: [Before 4, After 4]
+    date: [Before 4]
+    shiftType: [Evening]
+    weight: -100000000
+  - type: shift request
+    person: [Day People]
+    date: [After 4]
     shiftType: [Evening]
     weight: -100000000
   - type: shift request
@@ -448,7 +453,12 @@ preferences:
     weight: -100000000
   - type: shift request
     person: [Evening People]
-    date: [Before 4, After 4]
+    date: [Before 4]
+    shiftType: [Day]
+    weight: -100000000
+  - type: shift request
+    person: [Evening People]
+    date: [After 4]
     shiftType: [Day]
     weight: -100000000
   - type: shift request

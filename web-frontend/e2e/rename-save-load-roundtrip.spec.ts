@@ -69,33 +69,12 @@ test('renamed people and groups survive a save-load roundtrip', async ({ page })
   await expect(page.locator('pre')).toContainText('Team Omega');
   const yamlText = await page.locator('pre').textContent();
 
-  const uploadCompleted = new Promise<void>((resolve, reject) => {
-    page.on('dialog', async dialog => {
-      try {
-        const message = dialog.message();
-        const isSuccessDialog = message.includes('YAML file loaded successfully!');
-        const isVersionWarningDialog = message.startsWith('Dirty app version detected.')
-          || message.startsWith('App version mismatch detected.')
-          || message.startsWith('The loaded file does not contain app version information.');
-        await dialog.accept();
-        if (isSuccessDialog) {
-          resolve();
-        } else if (message.startsWith('Error loading YAML file:')) {
-          reject(new Error(message));
-        } else if (!isVersionWarningDialog) {
-          reject(new Error(`Unhandled dialog appeared: ${message}`));
-        }
-      } catch (error) {
-        reject(error);
-      }
-    });
-  });
   await page.locator('input[type="file"]').setInputFiles({
     name: 'rename-roundtrip.yaml',
     mimeType: 'application/x-yaml',
     buffer: Buffer.from(yamlText ?? '', 'utf8'),
   });
-  await uploadCompleted;
+  await expect(page.getByRole('status', { name: 'YAML import summary' })).toContainText('Schedule uploaded: rename-roundtrip.yaml');
 
   await page.goto('/shift-requests');
   await expect(page.getByText('Person: P1X')).toBeVisible();

@@ -72,8 +72,7 @@ test('reset followed by upload restores downstream pages, not just the YAML prev
     buffer: Buffer.from(yamlText ?? '', 'utf8'),
   });
 
-  await expect.poll(() => dialogs.some(message => message.includes('YAML file loaded successfully!'))).toBe(true);
-  // The dialog can arrive before React commits and persists the import.
+  await expect(page.getByRole('status', { name: 'YAML import summary' })).toBeVisible();
   await waitForStoredCurrentSchedulingData(page, 'Restore Person');
 
   await page.goto('/people');

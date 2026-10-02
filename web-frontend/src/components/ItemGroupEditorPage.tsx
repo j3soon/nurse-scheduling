@@ -361,6 +361,7 @@ export default function ItemGroupEditorPage({
 
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Enter' && !isImeCompositionKeyEvent(e)) {
+        if (e.target instanceof Element && e.target.closest('[data-membership-apply]')) return;
         e.preventDefault();
         handleSave();
       } else if (e.key === 'Escape') {
@@ -403,6 +404,12 @@ export default function ItemGroupEditorPage({
           : [...prev.members, id]
       }));
     }
+  };
+
+  const handleApplySelection = (ids: string[]) => {
+    setDraft(prev => prev.isItem
+      ? { ...prev, groups: ids }
+      : { ...prev, members: ids });
   };
 
   const handleStartInlineEditing = (id: string, isItem: boolean, field: 'id' | 'description' = 'id') => {
@@ -584,6 +591,7 @@ export default function ItemGroupEditorPage({
 
       {(mode === Mode.ADDING || mode === Mode.EDITING) && (
         <AddEditItemGroupForm
+          key={`${draft.isItem ? 'item' : 'group'}-${draft.editingId ?? 'new'}`}
           mode={mode}
           draft={draft}
           items={items}
@@ -596,6 +604,7 @@ export default function ItemGroupEditorPage({
           onIdChange={handleDraftIdChange}
           onDescriptionChange={handleDraftDescriptionChange}
           onMemberToggle={handleMemberToggle}
+          onApplySelection={handleApplySelection}
           onSave={handleSave}
           onCancel={handleCancel}
         />

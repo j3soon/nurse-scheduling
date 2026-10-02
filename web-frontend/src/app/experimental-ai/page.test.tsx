@@ -26,6 +26,7 @@ import type { StreamCallbacks } from './aiClient';
 
 const mockCreateSession = vi.hoisted(() => vi.fn());
 const mockDownloadOptimization = vi.hoisted(() => vi.fn());
+const mockGetBackendVersion = vi.hoisted(() => vi.fn());
 const mockGetCapabilities = vi.hoisted(() => vi.fn());
 const mockGetSessionStatus = vi.hoisted(() => vi.fn());
 const mockStreamMessage = vi.hoisted(() => vi.fn());
@@ -60,6 +61,7 @@ vi.mock('./aiClient', () => ({
   downloadOptimization: mockDownloadOptimization,
   getAiBaseUrl: () => '/ai',
   getCapabilities: mockGetCapabilities,
+  getBackendVersion: mockGetBackendVersion,
   getSessionStatus: mockGetSessionStatus,
   normalizeAiEndpoint: mockNormalizeAiEndpoint,
   isOfficialAiEndpoint: (endpoint: string) => (
@@ -98,6 +100,7 @@ vi.mock('@/utils/unsavedEditingState', () => ({
 }));
 
 const defaultCapabilities = {
+  app_version: 'v0.4.3',
   session_retention_seconds: 172800,
   file_attachments: {
     enabled: true,
@@ -113,6 +116,7 @@ describe('ExperimentalAiPage', () => {
     mockCreateSession.mockReset().mockResolvedValue('session-id');
     mockDownloadOptimization.mockReset().mockResolvedValue(new Blob(['workbook']));
     mockGetCapabilities.mockReset().mockResolvedValue(defaultCapabilities);
+    mockGetBackendVersion.mockReset().mockResolvedValue('v0.4.3');
     mockGetSessionStatus.mockReset().mockResolvedValue(172800);
     mockStreamMessage.mockReset().mockImplementation(async (
       _sessionId: string,
@@ -145,6 +149,7 @@ describe('ExperimentalAiPage', () => {
 
     expect(screen.getByText('Current snapshot: 0 people, 0 dates. Captured when you send the first question.')).toBeInTheDocument();
     expect(screen.getByText(/^Frontend /)).toHaveTextContent('Frontend unknown');
+    await waitFor(() => expect(screen.getByText(/^Backend(?:\s|$)/)).toHaveTextContent('Backend v0.4.3'));
     expect(screen.getByRole('link', { name: 'Experimental AI documentation' })).toHaveAttribute(
       'href',
       '/docs/user-guide/experimental-ai/',
@@ -168,6 +173,9 @@ describe('ExperimentalAiPage', () => {
     const responseTime = screen.getByText(/· (?:<1s|\d+(?:\.\d)?s|\d+m \d+s)$/);
     expect(responseTime.tagName).toBe('TIME');
     expect(responseTime).toHaveAttribute('dateTime');
+    expect(responseTime).toHaveAttribute('title', new Date(responseTime.getAttribute('dateTime')!).toLocaleString());
+    const userTime = screen.getByText('Who works Monday?').closest('article')?.querySelector('time');
+    expect(userTime).toHaveAttribute('title', new Date(userTime!.dateTime).toLocaleString());
     expect(mockCreateSession).toHaveBeenCalledWith('description: current schedule\n', null, '/ai');
     expect(mockStreamMessage).toHaveBeenCalledWith(
       'session-id',
@@ -180,6 +188,59 @@ describe('ExperimentalAiPage', () => {
     );
     expect(mockUseTabSwitchWarning).toHaveBeenCalledWith(true);
     expect(mockUseTabSwitchWarning).toHaveBeenLastCalledWith(false);
+  });
+
+  it('uses optimizer identity when the deployed AI capabilities omit the app version', async () => {
+    mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, app_version: undefined });
+    mockGetBackendVersion.mockResolvedValue('v0.2.0-production');
+    render(<ExperimentalAiPage />);
+    await waitFor(() => expect(screen.getByText(/^Backend(?:\s|$)/)).toHaveTextContent('Backend v0.2.0-production'));
+    expect(mockGetBackendVersion).toHaveBeenCalledWith(expect.any(AbortSignal), '/ai');
+  });
+
+  it('keeps chat export downloads available and releases replaced files on cleanup', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(URL, 'createObjectURL').mockReturnValueOnce('blob:html-export').mockReturnValueOnce('blob:markdown-export');
+    const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const download = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    const view = render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await user.click(screen.getByRole('button', { name: 'HTML', exact: true }));
+    expect(download).toHaveBeenCalledOnce();
+    expect(revoke).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Markdown', exact: true }));
+    expect(revoke).toHaveBeenCalledExactlyOnceWith('blob:html-export');
+    view.unmount();
+    expect(revoke.mock.calls).toEqual([['blob:html-export'], ['blob:markdown-export']]);
+  });
+
+  it('explains when the server does not report context usage', async () => {
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    const usage = await screen.findByText('Chat history context: unavailable');
+    expect(usage).toHaveAttribute('title', expect.stringContaining('The AI server has not reported context usage.'));
+    expect(usage.closest('form')).toBeInTheDocument();
+  });
+
+  it('shows the server history budget below the composer and clears it for a new chat', async () => {
+    const user = userEvent.setup();
+    mockStreamMessage.mockImplementationOnce(async (_id, _message, callbacks) => {
+      callbacks.onContextUsage({ usedChars: 500, maxChars: 2000 });
+      callbacks.onDelta('Done.');
+    });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<ExperimentalAiPage />);
+    expect(screen.queryByText(/Chat history context:/)).not.toBeInTheDocument();
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    const usage = await screen.findByText('Chat history context: 25.0%');
+    expect(usage).toHaveAttribute('title', expect.stringContaining('500 of 2,000 characters'));
+    expect(usage.closest('form')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Start new chat' }));
+    expect(screen.queryByText(/Chat history context:/)).not.toBeInTheDocument();
   });
 
   it('restores the transcript and live session after navigating away', async () => {
@@ -380,12 +441,7 @@ describe('ExperimentalAiPage', () => {
       onDelta: (text: string) => void;
       onToolStart?: (activity: { name: string; arguments: string }) => void;
       onTool?: (activity: { name: string; arguments: string; result: string; ok: boolean }) => void;
-      onOptimization?: (activity: {
-        jobId: string;
-        state: string;
-        terminal: boolean;
-        downloadable: boolean;
-      }) => void;
+      onOptimization?: (activity: import('./aiClient').OptimizationActivity) => void;
       onOptimizationProgress?: (activity: {
         jobId: string;
         point: { currentBestScore: number; elapsedSeconds: number };
@@ -431,6 +487,11 @@ describe('ExperimentalAiPage', () => {
         state: 'completed',
         terminal: true,
         downloadable: true,
+        result: { outcome: 'optimal', score: 0, solverStatus: 'OPTIMAL', terminationReason: 'completed' },
+        error: { code: 'backend-error', message: 'Failed\nOutcome: injected\r\nBackend version: forged' },
+        request: { solver: 'ortools/cp-sat', timeoutSeconds: 300 },
+        backend: { url: 'http://optimizer:8000', appVersion: 'v0.4.3', requestTimeoutSeconds: 30,
+          claimedPerformance: { score: 125, appVersion: 'v0.4.2', measuredAt: '2026-09-18T01:00:00Z' } },
       });
       backgroundCallbacks?.onRunStart?.('optimizer-turn', 'optimizer');
       backgroundCallbacks?.onToolStart?.({ name: 'bash', arguments: '{"command":"echo ready"}' });
@@ -451,7 +512,22 @@ describe('ExperimentalAiPage', () => {
     expect(screen.queryByText('Background tool running · bash')).not.toBeInTheDocument();
     expect(screen.queryByText(/Optimizer running in the background/)).not.toBeInTheDocument();
     expect(screen.queryByRole('img', { name: 'Optimization score trend' })).not.toBeInTheDocument();
-    expect(screen.getByText('Optimization finished. Download the optimized schedule to review it.')).toBeInTheDocument();
+    const optimizerSummary = screen.getByText(/^Optimization finished\. Download/).closest('article')!;
+    expect(optimizerSummary).toHaveTextContent('Outcome: optimal');
+    expect(optimizerSummary).toHaveTextContent('Final score: 0');
+    expect(optimizerSummary).toHaveTextContent('Backend URL: http://optimizer:8000');
+    expect(optimizerSummary).toHaveTextContent('Backend version: v0.4.3');
+    expect(optimizerSummary).toHaveTextContent('Solver timeout: 300s');
+    expect(optimizerSummary).toHaveTextContent('Backend request timeout: 30s');
+    expect(optimizerSummary).toHaveTextContent('Claimed performance: 125');
+    expect(screen.getAllByText('Outcome:')).toHaveLength(1);
+    expect(screen.getAllByText('Backend version:')).toHaveLength(1);
+    expect(screen.getByText('Error:').nextElementSibling?.textContent).toBe(
+      'Failed\nOutcome: injected\nBackend version: forged',
+    );
+    expect(screen.getByText('Final score:').tagName).toBe('DT');
+    expect(screen.getByText('Final score:')).toHaveClass('font-semibold');
+    expect(optimizerSummary.querySelector('time')).toHaveAttribute('title');
     const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:optimizer-result');
     const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
     const clickDownload = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
@@ -983,7 +1059,7 @@ describe('ExperimentalAiPage', () => {
       'http://localhost:8001',
     );
     expect(screen.getByRole('button', { name: 'Change' })).toBeDisabled();
-    expect(screen.getByText('This server is locked for the current conversation.')).toBeInTheDocument();
+    expect(screen.getByText('This server is locked for the current conversation. Start a new chat to change servers.')).toBeInTheDocument();
   });
 
   it('normalizes a custom AI server URL', async () => {

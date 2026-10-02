@@ -9,7 +9,10 @@ optional. Skip it when staffing requirements alone describe the workload.
 
 The anonymized ward prefers 11 `OFF` days for each non-student nurse. Separate
 rules prefer four freedays for day, evening, and night teams. Each uses squared
-distance with weight `-1000`, so closer counts score better.
+distance with weight `-1000`, so closer counts score better. These targets are
+empirical starting points for distributing days off fairly, not labor-policy
+constants. Run an initial optimization, inspect the distribution and staffing,
+then adjust the targets for that month and ward.
 
 ![Workload-balancing count rules from an anonymized ward](../assets/images/user-guide/16-real-counts.png)
 

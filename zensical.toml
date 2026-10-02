@@ -17,6 +17,7 @@ nav = [
   {
     "User Guide" = [
       { "Quick Start" = "user-guide/get-started.md" },
+      { "Build a Real Schedule" = "user-guide/build-a-real-schedule.md" },
       {
         "App Pages" = [
           { "Dates" = "user-guide/dates.md" },

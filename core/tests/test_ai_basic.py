@@ -198,6 +198,7 @@ def test_application_lifespan_runs_sandbox_cleanup_supervision():
 
 
 def test_e2b_template_is_built_before_ai_server_is_ready(monkeypatch):
+    monkeypatch.setattr("nurse_scheduling.ai.app.get_app_version", lambda: "v0.0.0-test")
     calls = []
     monkeypatch.setattr("nurse_scheduling.ai.sandbox.e2b.E2BSandboxFactory.start_cleanup", AsyncMock())
     monkeypatch.setattr("nurse_scheduling.ai.sandbox.e2b.E2BSandboxFactory.stop_cleanup", AsyncMock())
@@ -227,6 +228,7 @@ def test_e2b_template_build_failure_prevents_startup(monkeypatch):
     def fail_build(*_args, **_kwargs):
         raise subprocess.CalledProcessError(1, "build_template.py")
 
+    monkeypatch.setattr("nurse_scheduling.ai.app.get_app_version", lambda: "v0.0.0-test")
     monkeypatch.setattr("nurse_scheduling.ai.sandbox.e2b.subprocess.run", fail_build)
     settings = make_settings(sandbox_backend="e2b", e2b_api_key="test-e2b-key")
     with (
@@ -606,7 +608,8 @@ def test_stop_endpoint_cancels_an_active_assistant_turn() -> None:
     assert status_code == 202
     assert not session_active
     # Stop is a typed terminal outcome, not synthetic answer text.
-    assert events[0] == ("delta", {"text": "Partial answer.", "run_id": events[-1][1]["run_id"]})
+    assert events[0][0] == "context_usage"
+    assert events[1] == ("delta", {"text": "Partial answer.", "run_id": events[-1][1]["run_id"]})
     assert events[-1][0] == "stopped"
     assert [name for name, _ in events].count("stopped") == 1
 
@@ -669,7 +672,7 @@ def test_an_answer_cut_off_by_the_output_limit_is_saved_with_its_stop_reason() -
 
     events = parse_sse(client.post(f"/sessions/{session_id}/messages", json={"message": "Explain."}).text)
 
-    assert [name for name, _ in events] == ["delta", "truncated", "done"]
+    assert [name for name, _ in events] == ["context_usage", "delta", "truncated", "context_usage", "done"]
     assert app.state.session_store._sessions[session_id].transcript == [
         UserMessage("Explain."),
         AssistantMessage("The first half", "length"),
@@ -845,8 +848,10 @@ def test_health_and_streamed_schedule_question() -> None:
     run_id = events[-1][1]["run_id"]
     assert isinstance(run_id, str) and run_id
     assert events == [
+        ("context_usage", {"used_chars": 0, "max_chars": 200_000, "run_id": run_id}),
         ("delta", {"text": "Hello", "run_id": run_id}),
         ("delta", {"text": " from AI", "run_id": run_id}),
+        ("context_usage", {"used_chars": 97, "max_chars": 200_000, "run_id": run_id}),
         ("done", {"run_id": run_id}),
     ]
     prompt = provider.calls[0]
@@ -883,7 +888,8 @@ def test_invalid_owner_cookie_is_not_reflected() -> None:
     assert "Max-Age=172800" in set_cookie
 
 
-def test_capabilities_report_configured_attachment_limits() -> None:
+def test_capabilities_report_configured_attachment_limits(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("nurse_scheduling.ai.app.get_app_version", lambda: "v0.4.2-backend")
     client = AuthenticatedTestClient(
         create_test_app(
             settings=make_settings(
@@ -898,6 +904,7 @@ def test_capabilities_report_configured_attachment_limits() -> None:
 
     assert response.status_code == 200
     assert response.json() == {
+        "app_version": "v0.4.2-backend",
         "file_attachments": {
             "enabled": True,
             "max_files": 5,
@@ -1138,6 +1145,7 @@ def test_provider_failure_is_streamed_without_recording_a_turn() -> None:
     )
 
     assert parse_sse(failed.text) == [
+        ("context_usage", {"used_chars": 0, "max_chars": 200_000, "run_id": ANY}),
         ("delta", {"text": "Provisional answer.", "run_id": ANY}),
         ("error", {"message": PROVIDER_ERROR, "run_id": ANY}),
     ]
@@ -1175,6 +1183,7 @@ def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming(monke
     response = client.post(f"/sessions/{session_id}/messages", json={"message": "Edit it"})
 
     assert parse_sse(response.text) == [
+        ("context_usage", {"used_chars": 0, "max_chars": 200_000, "run_id": ANY}),
         ("delta", {"text": "Obsolete answer.", "run_id": ANY}),
         ("stale", {"message": STALE_RUN_ERROR, "run_id": ANY}),
     ]
@@ -1191,7 +1200,10 @@ def test_sandbox_timeout_does_not_expose_exception_details() -> None:
 
     response = client.post(f"/sessions/{session_id}/messages", json={"message": "Wait"})
 
-    assert parse_sse(response.text) == [("error", {"message": SANDBOX_RUN_TIMEOUT_ERROR, "run_id": ANY})]
+    assert parse_sse(response.text) == [
+        ("context_usage", {"used_chars": 0, "max_chars": 200_000, "run_id": ANY}),
+        ("error", {"message": SANDBOX_RUN_TIMEOUT_ERROR, "run_id": ANY}),
+    ]
     assert private_error not in response.text
 
 
@@ -1457,6 +1469,36 @@ def test_a_trimmed_prompt_history_is_reported_to_the_client() -> None:
     assert "A" * 50 not in latest_prompt
     assert "C" * 50 in latest_prompt
     assert second.status_code == 200
+
+
+def test_context_usage_reports_selected_history_before_and_after_each_run() -> None:
+    provider = FakeProvider([["First answer."], ["Second answer."]])
+    app = create_test_app(settings=make_settings(max_history_chars=140), provider=provider)
+    client = AuthenticatedTestClient(app)
+    session_id = create_session(client)
+
+    first = client.post(f"/sessions/{session_id}/messages", json={"message": "A" * 50})
+    second = client.post(f"/sessions/{session_id}/messages", json={"message": "B" * 50})
+    first_usage = [
+        {key: value for key, value in payload.items() if key != "run_id"}
+        for event, payload in parse_sse(first.text)
+        if event == "context_usage"
+    ]
+    second_usage = [
+        {key: value for key, value in payload.items() if key != "run_id"}
+        for event, payload in parse_sse(second.text)
+        if event == "context_usage"
+    ]
+
+    # Only the newest exchange fits after the second turn.
+    first_chars = len(json.dumps(ChatMessage(role="user", content="A" * 50), ensure_ascii=False)) + len(
+        json.dumps(ChatMessage(role="assistant", content="First answer."), ensure_ascii=False)
+    )
+    second_chars = len(json.dumps(ChatMessage(role="user", content="B" * 50), ensure_ascii=False)) + len(
+        json.dumps(ChatMessage(role="assistant", content="Second answer."), ensure_ascii=False)
+    )
+    assert first_usage == [{"used_chars": 0, "max_chars": 140}, {"used_chars": first_chars, "max_chars": 140}]
+    assert second_usage == [first_usage[-1], {"used_chars": second_chars, "max_chars": 140}]
 
 
 def test_session_budget_keeps_the_latest_exchange_and_reports_all_dropped_messages() -> None:
@@ -1825,9 +1867,11 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
             "optimization_progress",
             "optimization",
             "run_start",
+            "context_usage",
             "tool_start",
             "tool",
             "delta",
+            "context_usage",
             "done",
         ]
         assert events[0].data["state"] == "running"
@@ -1839,7 +1883,9 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         assert events[3].data == {"trigger": "optimizer", "run_id": run_id}
         assert all(event.data["run_id"] == run_id for event in events[3:])
         assert all("message_id" not in event.data for event in events[3:])
-        assert events[6].data == {"text": "The optimizer returned score 23.", "run_id": events[3].data["run_id"]}
+        assert events[7].data == {"text": "The optimizer returned score 23.", "run_id": events[3].data["run_id"]}
+        assert events[4].data["max_chars"] == 200_000
+        assert events[8].data["used_chars"] > events[4].data["used_chars"]
         if history_enabled:
             assert len(history_starts) == 3
             assert history_starts[-1][1] == session_id
@@ -2008,7 +2054,7 @@ def test_sandbox_cleanup_failure_does_not_commit_provisional_turn_or_proposal() 
     failed = client.post(f"/sessions/{session_id}/messages", json={"message": "Failed edit"})
 
     events = parse_sse(failed.text)
-    assert [name for name, _ in events] == ["tool_start", "tool", "schedule_change", "delta", "error"]
+    assert [name for name, _ in events] == ["context_usage", "tool_start", "tool", "schedule_change", "delta", "error"]
     assert events[-1][1]["message"] == "The temporary AI sandbox failed. Please try again."
     revision = hashlib.sha256(schedule.encode("utf-8")).hexdigest()
     approval = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
@@ -2041,8 +2087,8 @@ def test_sandbox_command_failure_still_streams_the_requested_command() -> None:
     failed = client.post(f"/sessions/{session_id}/messages", json={"message": "Run an edit"})
 
     events = parse_sse(failed.text)
-    assert [name for name, _ in events] == ["tool_start", "error"]
-    assert events[0][1] == {
+    assert [name for name, _ in events] == ["context_usage", "tool_start", "error"]
+    assert events[1][1] == {
         "run_id": events[-1][1]["run_id"],
         "tool_call_id": "call_0",
         "name": BASH_TOOL,
@@ -2075,8 +2121,8 @@ def test_final_validation_failure_discards_the_turn_without_a_history_note() -> 
     failed = client.post(f"/sessions/{session_id}/messages", json={"message": "Invalid edit"})
 
     events = parse_sse(failed.text)
-    assert [name for name, _ in events] == ["tool_start", "tool", "delta", "error"]
-    assert events[1][1]["ok"] is False
+    assert [name for name, _ in events] == ["context_usage", "tool_start", "tool", "delta", "error"]
+    assert events[2][1]["ok"] is False
     assert events[-1][1]["message"] == CANDIDATE_VALIDATION_ERROR
 
     recovered = client.post(f"/sessions/{session_id}/messages", json={"message": "Retry"})

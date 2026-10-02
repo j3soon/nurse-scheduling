@@ -122,6 +122,9 @@ async function mockAiBackend(
   };
   const allowedOrigin = frontendOrigin();
 
+  await page.route('**/info', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ app_version: 'v0.4.3-backend' }),
+  }));
   await page.route('**/ai/**', async route => {
     const request = route.request();
     const corsHeaders = {
@@ -200,6 +203,7 @@ async function mockAiBackend(
           'event: error\ndata: {"message":"The temporary AI sandbox failed."}\n\n',
         ].join('')
         : [
+          'event: context_usage\ndata: {"used_chars":500,"max_chars":2000}\n\n',
           ...answerDeltas.map(text => `event: delta\ndata: ${JSON.stringify({ text })}\n\n`),
           'event: done\ndata: {"run_id":"answer-id"}\n\n',
         ].join(''),
@@ -217,6 +221,13 @@ test('asks about the current schedule and renders a streamed answer', async ({ p
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   await expect(page.getByText('The image and schedule were received.')).toBeVisible();
+  await expect(page.getByText('Backend v0.4.3-backend')).toBeVisible();
+  await expect(page.getByText('Chat history context: 25.0%')).toBeVisible();
+  const userTime = page.locator('article').filter({ hasText: 'Who works first?' }).locator('time');
+  await expect(userTime).toHaveAttribute('datetime', /T/);
+  await expect(userTime).toHaveAttribute('title', /\d{4}/);
+  await expect(page.locator('article').filter({ hasText: 'The image and schedule were received.' }).locator('time'))
+    .toHaveAttribute('title', /\d{4}/);
   const composerBox = await page.locator('main form').boundingBox();
   const viewport = page.viewportSize();
   expect(composerBox).not.toBeNull();
@@ -243,6 +254,20 @@ test('asks about the current schedule and renders a streamed answer', async ({ p
   page.once('dialog', dialog => dialog.accept());
   await page.getByRole('button', { name: '1. Dates' }).click();
   await expect(page).toHaveURL(/\/dates$/);
+});
+
+test('explains unavailable context usage for older AI servers', async ({ page }) => {
+  await mockAiBackend(page);
+  await page.route('**/ai/sessions/browser-session/messages', route => route.fulfill({
+    status: 200, contentType: 'text/event-stream',
+    body: 'event: delta\ndata: {"text":"Done."}\n\nevent: done\ndata: {"message_id":"legacy-answer"}\n\n',
+  }));
+  await page.goto('/experimental-ai');
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Question');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  const usage = page.getByText('Chat history context: unavailable');
+  await expect(usage).toBeVisible();
+  await expect(usage).toHaveAttribute('title', /The AI server has not reported context usage/);
 });
 
 test('authenticates AI session requests with an explicitly remembered token', async ({ page }) => {
@@ -329,12 +354,19 @@ test('Stop aborts the active AI stream', async ({ page }) => {
 test('downloads a completed background optimization from chat', async ({ page }) => {
   await mockAiBackend(page, ['Optimization started.']);
   const workbookBytes = Buffer.from('browser-result-workbook');
+  const completedRun = {
+    job_id: 'opt-browser', state: 'completed', terminal: true, downloadable: true,
+    result: { outcome: 'optimal', score: 0, solver_status: 'OPTIMAL', termination_reason: 'completed' },
+    request: { solver: 'ortools/cp-sat', timeout_seconds: 300 },
+    backend: { url: 'http://optimizer:8000', app_version: 'v0.4.3', api_version: '0.2.0', request_timeout_seconds: 30,
+      claimed_performance: { score: 125, app_version: 'v0.4.2', measured_at: '2026-09-18T01:00:00Z' } },
+  };
   await page.route('**/ai/sessions/browser-session/events', route => route.fulfill({
     status: 200,
     contentType: 'text/event-stream',
     body: [
       'id: 1\nevent: optimization\ndata: {"job_id":"opt-browser","state":"running","terminal":false,"downloadable":false}\n\n',
-      'id: 2\nevent: optimization\ndata: {"job_id":"opt-browser","state":"completed","terminal":true,"downloadable":true}\n\n',
+      `id: 2\nevent: optimization\ndata: ${JSON.stringify(completedRun)}\n\n`,
     ].join(''),
   }));
   await page.route('**/ai/sessions/browser-session/optimizations/opt-browser/xlsx', route => route.fulfill({
@@ -346,6 +378,65 @@ test('downloads a completed background optimization from chat', async ({ page })
   await page.goto('/experimental-ai');
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Optimize it.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
+  const summary = page.locator('article').filter({ hasText: 'Optimization finished.' });
+  await expect(summary).toContainText('Outcome: optimal');
+  await expect(summary).toContainText('Final score: 0');
+  await expect(summary).toContainText('Backend URL: http://optimizer:8000');
+  await expect(summary).toContainText('Backend version: v0.4.3');
+  await expect(summary).toContainText('Solver timeout: 300s');
+  await expect(summary).toContainText('Backend request timeout: 30s');
+  await expect(summary).toContainText('Claimed performance: 125');
+  for (const format of ['HTML', 'Markdown']) {
+    const exportedFile = page.waitForEvent('download');
+    await page.getByRole('button', { name: format, exact: true }).click();
+    const exportDownload = await exportedFile;
+    const exported = await readFile(await exportDownload.path(), 'utf8');
+    expect(exported).toContain('Frontend version:');
+    expect(exported).toContain('Backend version: v0.4.3-backend');
+    expect(exported).toContain(format === 'HTML' ? '<dt>Outcome:</dt> <dd>optimal</dd>' : '**Outcome:** optimal');
+    expect(exported).toContain(format === 'HTML' ? '<dt>Final score:</dt> <dd>0</dd>' : '**Final score:** 0');
+    expect(exported).toContain(format === 'HTML' ? '<dt>Backend URL:</dt> <dd>http://optimizer:8000</dd>' : '**Backend URL:** http://optimizer:8000');
+    expect(exported).toContain(format === 'HTML' ? '<dt>Claimed performance:</dt> <dd>125' : '**Claimed performance:** 125');
+    expect(exported).toContain(format === 'HTML' ? '<time datetime=' : '- Sent:');
+    if (format === 'HTML') {
+      const exportPage = await page.context().newPage();
+      await exportPage.setContent(exported);
+      for (const width of [1280, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        await exportPage.setViewportSize({ width, height: 900 });
+        const widthRatio = (element: Element) => {
+          const parent = element.parentElement!;
+          const style = getComputedStyle(parent);
+          const available = parent.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+          return element.getBoundingClientRect().width / available;
+        };
+        const chatRatio = await page.locator('article').first().evaluate(widthRatio);
+        const exportRatio = await exportPage.locator('article').first().evaluate(widthRatio);
+        expect(exportRatio).toBeCloseTo(chatRatio, 2);
+        for (const renderedPage of [page, exportPage]) {
+          const details = renderedPage.locator('article dl');
+          expect(await details.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+        }
+        expect(await exportPage.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+      }
+      for (const timestamp of await exportPage.locator('article time').all()) {
+        const contrast = await timestamp.evaluate(element => {
+          const luminance = (color: string) => {
+            const rgb = color.match(/[\d.]+/g)!.slice(0, 3).map(Number).map(channel => channel / 255);
+            const linear = rgb.map(channel => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
+            return linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722;
+          };
+          const foreground = luminance(getComputedStyle(element).color);
+          const background = luminance(getComputedStyle(element.closest('article')!).backgroundColor);
+          return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
+        });
+        expect(contrast).toBeGreaterThanOrEqual(4.5);
+      }
+      await expect(exportPage.getByText('Final score:', { exact: true })).toHaveCSS('font-weight', '600');
+      await exportPage.close();
+      await page.setViewportSize({ width: 1280, height: 720 });
+    }
+  }
   const downloadButton = page.getByRole('button', { name: 'Download result' });
   await expect(downloadButton).toBeVisible();
   const downloadEvent = page.waitForEvent('download');
@@ -353,6 +444,41 @@ test('downloads a completed background optimization from chat', async ({ page })
   const download = await downloadEvent;
   expect(download.suggestedFilename()).toBe('optimized-schedule--browser.xlsx');
   expect(await readFile(await download.path())).toEqual(workbookBytes);
+});
+
+test('keeps multiline optimizer errors in one field in chat and exports', async ({ page }) => {
+  await mockAiBackend(page, ['Optimization started.']);
+  const error = 'Failed\nOutcome: optimal\r\nBackend version: forged';
+  await page.route('**/ai/sessions/browser-session/events', route => route.fulfill({
+    status: 200,
+    contentType: 'text/event-stream',
+    body: `id: 1\nevent: optimization\ndata: ${JSON.stringify({
+      job_id: 'failed-run', state: 'failed', terminal: true, downloadable: false,
+      error: { code: 'backend-error', message: error },
+    })}\n\n`,
+  }));
+  await page.goto('/experimental-ai');
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Optimize it.');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  const summary = page.locator('article').filter({ hasText: 'Optimization ended with status: failed.' });
+  await expect(summary.locator('dt', { hasText: /^Error:$/ })).toHaveCount(1);
+  await expect(summary.locator('dd').last()).toHaveText(error.replace(/\r\n/g, '\n'));
+  await expect(summary.locator('dt', { hasText: /^(Outcome|Backend version):$/ })).toHaveCount(0);
+
+  for (const format of ['HTML', 'Markdown']) {
+    const download = page.waitForEvent('download');
+    await page.getByRole('button', { name: format, exact: true }).click();
+    const exported = await readFile(await (await download).path(), 'utf8');
+    if (format === 'HTML') {
+      expect(exported).toContain('<dt>Error:</dt> <dd>Failed\nOutcome: optimal\nBackend version: forged</dd>');
+      expect(exported).not.toContain('<dt>Outcome:</dt>');
+      expect(exported).not.toContain('<dt>Backend version:</dt>');
+    } else {
+      expect(exported).toContain('- **Error:** Failed\n  Outcome: optimal\n  Backend version: forged');
+      expect(exported).not.toContain('- **Outcome:**');
+      expect(exported).not.toContain('- **Backend version:**');
+    }
+  }
 });
 
 test('renders assistant Markdown with safe images and copyable code', async ({ page, context }) => {

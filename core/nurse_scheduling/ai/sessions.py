@@ -29,7 +29,7 @@ from fastapi import HTTPException
 
 from .agent_session import AgentSession, RunCompletion, schedule_revision
 from .config import AiSettings
-from .context import projected_history, recent_history
+from .context import history_context_chars, projected_history, recent_history
 from .lifecycle import RunSnapshot
 from .transcript import AgentMessage, ProposalDecision, UserMessage, entry_text
 
@@ -224,7 +224,11 @@ class SessionStore:
         if not completion.run_saved:
             return completion
         self._trim_history_to_budget(session, min(len(entries), len(session.transcript)))
-        return replace(completion, history_trimmed_count=self._effective_trimmed_count(session))
+        return replace(
+            completion,
+            history_trimmed_count=self._effective_trimmed_count(session),
+            context_used_chars=history_context_chars(session.transcript, self._settings.max_history_chars),
+        )
 
     def queue_steering(
         self,
