@@ -727,3 +727,26 @@ def test_terminal_command_timeout_is_reported_before_any_further_sandbox_operati
     assert outcomes[0].result == "Command timed out after 10 seconds"
     assert batches[0].call_count == 1
     assert not any(isinstance(event, AgentProposal) for event in events)
+
+
+def test_recovered_command_timeout_keeps_files_and_allows_the_agent_to_continue():
+    factory = FakeSandboxFactory(
+        lambda sandbox_id: FakeSandboxBackend(
+            sandbox_id,
+            command_handler=lambda *_: CommandResult("partial\n", "", 124, timed_out=True),
+        )
+    )
+    provider = ScriptedProvider(
+        _run_call("slow"),
+        [ToolCallRequest((ToolCall("read", READ_TOOL, '{"path":"/workspace/schedule.yaml"}'),))],
+        [TextDelta("The command timed out. I can still read the schedule.")],
+    )
+    events = _collect(provider, factory)
+    outcomes = [event for event in events if isinstance(event, AgentToolUse)]
+    assert [event.ok for event in outcomes] == [False, True]
+    assert "partial" in outcomes[0].result
+    assert "Command timed out" in outcomes[0].result
+    assert "P1" in outcomes[1].result
+    assert factory.created[0].files[WORKSPACE_SCHEDULE] == schedule_yaml().encode()
+    assert len(provider.requests) == 3
+    assert not any(isinstance(event, AgentProposal) for event in events)

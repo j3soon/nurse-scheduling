@@ -20,7 +20,9 @@
 # This test is mostly AI generated.
 
 import asyncio
+import json
 import os
+import shlex
 
 import pytest
 from e2b import AsyncSandbox
@@ -235,7 +237,8 @@ def test_reaper_finds_and_kills_an_owned_overdue_sandbox():
 
 
 @pytest.mark.parametrize("attempt", range(3))
-def test_command_timeout_terminates_without_replaying_or_masking_the_tool_result(attempt):
+@pytest.mark.parametrize("escaped", [False, True], ids=["recoverable", "detached-child-fallback"])
+def test_command_timeout_recovers_only_after_process_cleanup(attempt, escaped):
     async def exercise():
         factory = E2BSandboxFactory(
             api_key=E2B_API_KEY,
@@ -244,13 +247,36 @@ def test_command_timeout_terminates_without_replaying_or_masking_the_tool_result
             command_timeout_seconds=1,
         )
         async with managed_sandbox(factory, cleanup_timeout_seconds=10) as sandbox:
+            await sandbox.write_file("/workspace/kept.txt", b"working files survive")
             tools = SandboxPiTools(sandbox, 1)
-            outcome = await tools.execute(BASH_TOOL, '{"command":"sleep 5","timeout":10}')
+            child = (
+                "import os,time,pathlib; "
+                + ("os.setsid(); " if escaped else "")
+                + "time.sleep(3); pathlib.Path('/workspace/late.txt').write_text('late')"
+            )
+            command = (
+                "printf 'once\\n' >> /workspace/executions.txt; printf 'before-timeout\\n'; "
+                + "python3 -c "
+                + shlex.quote(child)
+                + " & wait"
+            )
+            outcome = await tools.execute(BASH_TOOL, json.dumps({"command": command, "timeout": 10}))
             assert not outcome.ok
-            assert outcome.terminal
-            assert outcome.text == "Command timed out after 1 seconds"
-            assert sandbox.lifecycle_state is E2BSandboxState.CLOSED
+            assert outcome.terminal == escaped
+            assert "before-timeout" in outcome.text
+            assert "Command timed out after 1 seconds" in outcome.text
             sandbox_id = sandbox.sandbox_id
+            if escaped:
+                assert sandbox.lifecycle_state is E2BSandboxState.CLOSED
+            else:
+                assert await sandbox.read_file("/workspace/kept.txt") == b"working files survive"
+                check = await sandbox.run(
+                    "sleep 3.2 && cat executions.txt && test ! -e late.txt && printf 'recovered\\n'",
+                    timeout_seconds=5,
+                )
+                assert check.exit_code == 0
+                assert check.stdout == "once\nrecovered\n"
+                assert sandbox.sandbox_id == sandbox_id
         with pytest.raises(SandboxNotFoundException):
             await AsyncSandbox.connect(sandbox_id, api_key=E2B_API_KEY)
 

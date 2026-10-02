@@ -85,6 +85,10 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
 - Keep bundled attachment helpers general and optional. Preserve meaningful
   source data such as spreadsheet formulas and cached values, report truncation,
   and let the agent write a focused sandbox parser when a helper is insufficient.
+- Separate command execution deadlines from provider connection timeouts. Reuse a
+  sandbox after a command timeout only when process cleanup is verified. Keep
+  shell commands single-attempt because a lost acknowledgement does not prove
+  they stopped or that replay is safe.
 - Sandbox allocation is lazy. Tests that verify attachment hydration must make
   the agent call a tool, since a text-only turn never creates a sandbox.
 - Keep canonical schedule invariants in `NurseSchedulingData`. Implement

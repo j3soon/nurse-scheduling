@@ -1539,3 +1539,23 @@ def test_command_timeout_keeps_original_tool_failure_and_is_not_an_infrastructur
     assert "Command timed out" in outcome["result"]
     assert any(event["kind"] == "evaluation_stop" for event in run.trajectory["events"])
     assert len(provider.messages) == 1
+
+
+def test_recoverable_command_timeout_remains_in_a_successful_evaluation_trajectory():
+    provider = ScriptedProvider(
+        [ToolCallRequest((ToolCall("wait", BASH_TOOL, '{"command":"sleep 30"}'),))],
+        [ToolCallRequest((ToolCall("start", "optimizer", '{"action":"start"}'),))],
+        [TextDelta("Started in the background. You can keep chatting while it runs.")],
+    )
+    run = asyncio.run(
+        run_case(
+            provider,
+            settings(),
+            CASE_BY_ID["tool-optimizer-start"],
+            _factory(lambda *_: CommandResult("partial\n", "", 124, timed_out=True)),
+        )
+    )
+    assert run.passed
+    assert not run.error
+    assert run.tools == [f"{BASH_TOOL}(failed)", "optimizer"]
+    assert "Command timed out" in next(event["result"] for event in run.trajectory["events"] if event["kind"] == "tool")

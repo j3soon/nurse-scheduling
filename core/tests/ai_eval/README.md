@@ -67,10 +67,11 @@ it and stops, avoiding work that cannot restore a passing verdict. Missing requi
 because later calls may satisfy them. Use `--continue-after-failure` when the later trajectory is useful for diagnosis.
 Successful cases always execute every user turn. Metadata records this setting and sandbox timeouts so differing
 evaluation configurations remain visible.
-A shell timeout that terminates its sandbox is a behavioral failure, with the original failed tool
-result retained. It ends the turn without candidate reads or command replay. E2B commands are not
-retried because a lost connection does not prove the command stopped. Provider and other sandbox
-failures remain infrastructure errors.
+A shell timeout returns a failed tool result after verified process-group cleanup. Working files remain
+available and the agent may recover. If cleanup cannot be confirmed, the sandbox is terminated and
+the evaluation ends as a behavioral failure with the original failed tool result retained. Execution
+deadlines are separate from E2B connection timeouts. Commands are never replayed automatically.
+Provider and other sandbox failures remain infrastructure errors.
 
 Use `--repeat 3` for reliability checks on a tuning subset. Repetitions share the global `--jobs` limit and reports
 show per-case pass rates plus median and p95 cost. Use `--baseline-report <report-dir>` to compare reliability, model

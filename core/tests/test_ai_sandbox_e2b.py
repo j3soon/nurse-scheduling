@@ -39,6 +39,7 @@ from nurse_scheduling.ai.sandbox.e2b import (
     E2BSandboxFactory,
     E2BSandboxState,
 )
+from nurse_scheduling.ai.sandbox.e2b_commands import isolated_command
 
 
 class FakeE2BSandbox:
@@ -50,9 +51,15 @@ class FakeE2BSandbox:
             read=AsyncMock(return_value=bytearray(b"schedule")),
             exists=AsyncMock(return_value=True),
         )
-        self.commands = SimpleNamespace(
-            run=AsyncMock(return_value=SimpleNamespace(stdout="ok\n", stderr="", exit_code=0))
+        self.handle = SimpleNamespace(
+            pid=42,
+            stdout="ok\n",
+            stderr="",
+            exit_code=0,
+            wait=AsyncMock(return_value=SimpleNamespace(stdout="ok\n", stderr="", exit_code=0)),
+            disconnect=AsyncMock(),
         )
+        self.commands = SimpleNamespace(run=AsyncMock(return_value=self.handle))
         self.pause = AsyncMock(return_value=True)
         self.connect = AsyncMock(return_value=self)
         self.kill = AsyncMock(return_value=True)
@@ -187,7 +194,14 @@ def test_backend_reads_writes_and_runs_in_the_workspace_as_user():
     sandbox, result = asyncio.run(exercise())
     sandbox.files.write.assert_awaited_once_with("/workspace/schedule.yaml", b"schedule", user="user")
     sandbox.files.read.assert_awaited_once_with("/workspace/schedule.yaml", format="bytes", user="user")
-    sandbox.commands.run.assert_awaited_once_with("rg P1 schedule.yaml", user="user", cwd="/workspace", timeout=3)
+    sandbox.commands.run.assert_awaited_once_with(
+        isolated_command("rg P1 schedule.yaml"),
+        background=True,
+        user="user",
+        cwd="/workspace",
+        timeout=0,
+        request_timeout=2,
+    )
     assert result.stdout == "ok\n"
     assert result.exit_code == 0
 
@@ -729,11 +743,12 @@ def test_next_operation_resumes_the_same_sandbox_once_before_running():
     assert metrics.resume_wait_seconds >= 0
 
 
-def test_nonzero_command_exit_is_returned_instead_of_raised():
+@pytest.mark.parametrize("exit_code", [2, 124, 137])
+def test_nonzero_command_exit_is_returned_instead_of_raised(exit_code):
     async def exercise():
         sandbox = FakeE2BSandbox()
-        sandbox.commands.run.side_effect = CommandExitException(
-            stderr="not found\n", stdout="", exit_code=2, error=None
+        sandbox.handle.wait.side_effect = CommandExitException(
+            stderr="not found\n", stdout="", exit_code=exit_code, error=None
         )
         e2b_backend = make_backend(sandbox)
         result = await e2b_backend.run("rg missing schedule.yaml")
@@ -741,27 +756,74 @@ def test_nonzero_command_exit_is_returned_instead_of_raised():
         return result
 
     result = asyncio.run(exercise())
-    assert result.exit_code == 2
+    assert result.exit_code == exit_code
     assert result.stderr == "not found\n"
     assert not result.timed_out
 
 
-def test_command_timeout_returns_a_failure_and_destroys_the_sandbox():
-    async def exercise() -> tuple[FakeE2BSandbox, object, E2BSandboxBackend]:
+@pytest.mark.parametrize("cleanup", ["ok", "rejected", "hung", "error"])
+def test_command_timeout_preserves_the_sandbox_only_after_confirmed_cleanup(cleanup):
+    async def exercise():
         sandbox = FakeE2BSandbox()
-        sandbox.commands.run.side_effect = TimeoutException("deadline exceeded")
-        e2b_backend = make_backend(sandbox)
-        result = await e2b_backend.run("sleep 99", timeout_seconds=2)
-        return sandbox, result, e2b_backend
+        stopped = asyncio.Event()
 
-    sandbox, result, backend = asyncio.run(exercise())
+        async def wait():
+            await stopped.wait()
+            raise CommandExitException(stdout="partial\n", stderr="note\n", exit_code=137, error=None)
+
+        sandbox.handle.stdout = "partial\n"
+        sandbox.handle.stderr = "note\n"
+        sandbox.handle.wait.side_effect = wait
+
+        async def run(_command, **kwargs):
+            if kwargs.get("background"):
+                return sandbox.handle
+            if cleanup == "hung":
+                await asyncio.Event().wait()
+            if cleanup == "error":
+                raise SandboxException("cleanup request failed")
+            stopped.set()
+            return SimpleNamespace(exit_code=0 if cleanup == "ok" else 1)
+
+        sandbox.commands.run.side_effect = run
+        backend = make_backend(sandbox, control_request_timeout_seconds=0.05)
+        result = await backend.run("sleep 99", timeout_seconds=0.01)
+        if cleanup == "ok":
+            assert await backend.read_file("/workspace/schedule.yaml") == b"schedule"
+            assert backend.lifecycle_state is not E2BSandboxState.CLOSED
+            sandbox.kill.assert_not_awaited()
+        else:
+            assert backend.lifecycle_state is E2BSandboxState.CLOSED
+            with pytest.raises(SandboxError, match="is closed"):
+                await backend.run("echo late")
+            sandbox.kill.assert_awaited_once_with(request_timeout=0.05)
+        sandbox.handle.disconnect.assert_awaited_once()
+        sandbox.handle.wait.assert_awaited_once()
+        assert sandbox.commands.run.await_count == 2  # Original launch plus cleanup, never replay.
+        await backend.close()
+        return result
+
+    result = asyncio.run(exercise())
     assert result.exit_code == COMMAND_TIMEOUT_EXIT_CODE
     assert result.timed_out
-    assert result.sandbox_terminated
-    assert result.stderr == ""
-    sandbox.kill.assert_awaited_once_with(request_timeout=2)
-    with pytest.raises(SandboxError, match="is closed"):
-        asyncio.run(backend.run("echo late"))
+    assert result.sandbox_terminated == (cleanup != "ok")
+    assert result.stdout == "partial\n"
+    assert result.stderr == "note\n"
+
+
+@pytest.mark.parametrize("exception", [TimeoutException, TimeoutError])
+def test_stream_timeout_is_an_infrastructure_failure_and_does_not_replay_the_command(exception):
+    async def exercise():
+        sandbox = FakeE2BSandbox()
+        sandbox.handle.wait.side_effect = exception("stream connection lost")
+        backend = make_backend(sandbox)
+        with pytest.raises(SandboxError, match="could not run"):
+            await backend.run("sleep 99")
+        sandbox.kill.assert_awaited_once()
+        sandbox.commands.run.assert_awaited_once()
+        sandbox.handle.disconnect.assert_awaited_once()
+
+    asyncio.run(exercise())
 
 
 def test_close_is_idempotent():
@@ -803,7 +865,7 @@ def test_close_waits_for_a_running_operation_before_destroying():
         async def run_command(*_args, **_kwargs):
             entered.set()
             await release.wait()
-            return SimpleNamespace(stdout="ok\n", stderr="", exit_code=0)
+            return sandbox.handle
 
         sandbox.commands.run.side_effect = run_command
         e2b_backend = make_backend(sandbox)
@@ -881,3 +943,31 @@ def test_close_waits_for_an_in_progress_auto_resume_then_destroys():
     sandbox.connect.assert_not_awaited()
     sandbox.kill.assert_awaited_once_with(request_timeout=2)
     assert e2b_backend.lifecycle_state is E2BSandboxState.CLOSED
+
+
+def test_cancelled_command_disconnects_its_stream_before_managed_teardown():
+    async def exercise():
+        sandbox = FakeE2BSandbox()
+        entered = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def wait():
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+        sandbox.handle.wait.side_effect = wait
+        backend = make_backend(sandbox)
+        async with managed_sandbox(SimpleNamespace(create=AsyncMock(return_value=backend))):
+            task = asyncio.create_task(backend.run("sleep 99"))
+            await entered.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert cancelled.is_set()
+            sandbox.handle.disconnect.assert_awaited_once()
+        sandbox.kill.assert_awaited_once()
+
+    asyncio.run(exercise())
