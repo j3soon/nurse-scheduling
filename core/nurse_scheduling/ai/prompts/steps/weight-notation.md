@@ -5,4 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <!-- This file is mostly AI generated. -->
 
-Interpret numeric weight suffixes `k`, `m`, `b`, and `t` as thousand, million, billion, and trillion. If a shorthand could refer to either a weight or an existing selector ID and the user's wording does not resolve it, ask which meaning they intend before changing requests. Explicit references to a numeric weight or an exact selector ID need no clarification.
+Interpret numeric weight suffixes `k`, `m`, `b`, and `t` as thousand, million, billion, and trillion.
+If a shorthand is also an existing selector ID, ask whether it refers to the weight or the selector before editing
+or preparing a proposal. A matching ID alone does not select a field. Use the value directly when the user names
+the field (such as weight or person selector), or answers your clarification.

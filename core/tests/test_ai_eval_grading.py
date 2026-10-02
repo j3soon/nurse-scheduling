@@ -244,6 +244,45 @@ def test_expected_diff_compares_the_complete_collection_delta(tmp_path: Path):
     assert "P4" in result.failures()[0].detail
 
 
+@pytest.mark.parametrize("extend_custom", [False, True], ids=["preserve-custom", "extend-custom"])
+def test_calendar_scope_cases_reject_the_opposite_custom_group_behavior(extend_custom):
+    initial = FIXTURE_SCHEDULES["small-clinic"]
+    changed = copy.deepcopy(initial)
+    changed["dates"]["range"]["endDate"] = "2026-01-18"
+    weekdays = ["05", "06", "07", "08", "09", "12", "13", "14", "15", "16"]
+    changed["dates"]["groups"].extend(
+        [
+            {
+                "id": "WORKDAY",
+                "description": "Taiwan workdays imported from the current holiday calendar",
+                "members": weekdays,
+            },
+            {
+                "id": "FREEDAY",
+                "description": "Taiwan freedays imported from the current holiday calendar",
+                "members": ["10", "11", "17", "18"],
+            },
+        ]
+    )
+    if extend_custom:
+        changed["dates"]["groups"][0]["members"] = weekdays
+    name = "dates-range-renew-custom-group-small" if extend_custom else "dates-range-renew-small"
+    path = CASES_PATH / "basics" / "03-structure"
+    case = load_cases(path / f"{name}.json")[0]
+    opposite = load_cases(
+        path / f"{'dates-range-renew-small' if extend_custom else 'dates-range-renew-custom-group-small'}.json"
+    )[0]
+    outcome = RunOutcome(
+        proposed=changed,
+        initial=initial,
+        intermediate_answers=["Should I renew Taiwan holiday date groups?"],
+        intermediate_proposals=[False],
+        proposal_turns=[False, True],
+    )
+    assert grade(case, outcome).passed
+    assert not grade(opposite, outcome).passed
+
+
 def test_expected_diff_supports_replacing_a_complete_object(tmp_path: Path):
     before = SCHEDULE["people"]["items"][0]
     after = {**before, "description": "Lead nurse"}

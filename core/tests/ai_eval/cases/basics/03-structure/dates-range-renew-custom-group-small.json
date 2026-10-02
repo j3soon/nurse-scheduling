@@ -1,9 +1,11 @@
 {
-  "id": "dates-range-renew-small",
+  "_license": "Copyright (C) 2023-2026 Johnson Sun. SPDX-License-Identifier: AGPL-3.0-or-later",
+  "_comment": "This test is mostly AI generated.",
+  "id": "dates-range-renew-custom-group-small",
   "fixture": "small-clinic",
   "user_turns": [
     "Extend the roster through January 18, 2026.",
-    "Yes, renew the Taiwan holiday date groups. Keep the custom Weekdays group unchanged."
+    "Yes, renew the Taiwan holiday date groups. Also extend the custom Weekdays group to cover all weekdays in the new range."
   ],
   "intermediate_answer_contains": [
     [
@@ -60,6 +62,35 @@
             "17",
             "18"
           ]
+        },
+        {
+          "id": "Weekdays",
+          "description": "Clinic weekdays",
+          "members": [
+            "05",
+            "06",
+            "07",
+            "08",
+            "09",
+            "12",
+            "13",
+            "14",
+            "15",
+            "16"
+          ]
+        }
+      ],
+      "removed": [
+        {
+          "id": "Weekdays",
+          "description": "Clinic weekdays",
+          "members": [
+            "05",
+            "06",
+            "07",
+            "08",
+            "09"
+          ]
         }
       ]
     }
@@ -70,7 +101,8 @@
   ],
   "tags": [
     "prompt-evidence",
-    "calendar"
+    "calendar",
+    "explicit-scope"
   ],
-  "note": "This testcase is mostly AI generated. Isolates the renewal question and exact calendar reproduction on four staff and a single month. The reply explicitly preserves the custom Weekdays group, so the expected diff does not rely on inferred scope."
+  "note": "This testcase is mostly AI generated. Contrasts with dates-range-renew-small: the user explicitly authorizes extending the custom Weekdays group alongside holiday renewal."
 }

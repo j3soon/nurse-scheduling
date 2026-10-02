@@ -164,26 +164,34 @@
     "file": "steps/taiwan-holiday-renewal.md",
     "cases": [
       "holiday-expansion-question-without-reads",
-      "dates-range-renew-small"
+      "dates-range-renew-small",
+      "dates-range-renew-custom-group-small"
     ],
     "hypothesis": "Asks the Taiwan holiday renewal question immediately and applies the confirmed range.",
-    "sha256": "77607fee45bbee51803c928778c4b09c947392724daccde1fe1fd5bdfc96d752",
+    "sha256": "ef1f009175af95a63ba305b272a051f1e19decfbdc99660392c07857d71d76a7",
     "evidence": [
       {
         "case": "holiday-expansion-question-without-reads",
-        "input_sha256": "578f9fc55902aad38f6ca649aa42642d50b490ab9d6bd0def06c81e337a3516c",
-        "before": "0/5",
-        "after": "5/5",
+        "input_sha256": "c6234d6b2c38bae175bb674b632a8723d878971f12d4e215df39225706215fac",
+        "before": "0/3",
+        "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
         "controls": [
           {
             "case": "dates-range-renew-small",
-            "input_sha256": "13d2aa18a2e89794eb2ce1e0a23554386b9bbce7449af4685975b2f60f3a7d56",
-            "before": "5/5",
-            "after": "5/5"
+            "input_sha256": "1635101c576eba0d9aed90e90fb93a4933798050d3cd37f388a791cb5b537cc6",
+            "before": "3/3",
+            "after": "3/3"
+          },
+          {
+            "case": "dates-range-renew-custom-group-small",
+            "input_sha256": "aee21cba8f5b5bc79723633f3b8442c5831e9f1ff97d4a42f108c7ca2a9c4b79",
+            "before": "3/3",
+            "after": "3/3"
           }
-        ]
+        ],
+        "note": "Controls explicitly distinguish custom-group preservation and extension."
       }
     ]
   },
@@ -290,26 +298,34 @@
     "file": "steps/ambiguous-people-group.md",
     "cases": [
       "clarify-similar-people-groups",
-      "heldout-exact-people-group"
+      "heldout-exact-people-group",
+      "heldout-clarify-similar-groups"
     ],
-    "hypothesis": "Checks all matching people groups, clarifies multiple candidates instead of choosing the closest name, and respects explicit complete IDs.",
-    "sha256": "1db2f1859ec03d96929a704310f07462d2ed9d1830b0d211e0618ff641ac9b62",
+    "hypothesis": "Clarifies informal group descriptions before edits or proposals, while using explicitly identified IDs directly.",
+    "sha256": "ce60492b560eab3bd227ad627fc5c2ae717e06d73d057c53cce99b4dcd3be5ee",
     "evidence": [
       {
         "case": "clarify-similar-people-groups",
-        "input_sha256": "0f16bc52430813070be98145c4571cb4f91b2298f367ddcbd96efdca6754dcf6",
-        "before": "0/5",
-        "after": "5/5",
+        "input_sha256": "e2fe95cd72f6cfca4704ee9d5ad7fbb4d4e72fc0731bc33eda5f043cf3b8a4c3",
+        "before": "0/3",
+        "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
         "controls": [
           {
             "case": "heldout-exact-people-group",
-            "input_sha256": "18f006ace31938656b0050d4a07bbbcfcbaafdcc367f96e9cbb5f4719c2366f9",
-            "before": "5/5",
-            "after": "5/5"
+            "input_sha256": "e932bab75824a169fe767c17b1235576855916d337862023c9028debabdd7a45",
+            "before": "3/3",
+            "after": "3/3"
+          },
+          {
+            "case": "heldout-clarify-similar-groups",
+            "input_sha256": "354a7692093a859f5d47e003123a0012ce82589177a58192a47194d6bb132836",
+            "before": "2/3",
+            "after": "3/3"
           }
-        ]
+        ],
+        "note": "Full-prompt ablation. Clarifies before preparing a proposal, with informal-description and explicit-ID controls on two fixtures."
       }
     ],
     "comparison_mode": "ablation"
@@ -342,12 +358,12 @@
       "weight-shorthand-exact-weight",
       "weight-shorthand-exact-selector"
     ],
-    "hypothesis": "Distinguishes numeric weight shorthand from selector IDs, clarifies genuine ambiguity before editing, and applies explicit targets directly.",
-    "sha256": "15819ace6191e4131a5a76c4c1a5e5634d25a12392c05242f68efc8db6bf6d93",
+    "hypothesis": "Clarifies weight-versus-selector ambiguity before edits or proposals and applies explicitly named fields directly.",
+    "sha256": "73f7515c812d4afa1146add66cb4bb64be70689e2f408a60af4c8245c95c9cf8",
     "evidence": [
       {
         "case": "weight-shorthand-clarify-selector",
-        "input_sha256": "ec92877898966d70f1230a9305a8e6866f624d8b89d9c5925ce2a178224a5bc0",
+        "input_sha256": "16ac170d8d972b1514b14b4f0f681d1c6eb7732a9b82801b4dadb48e882db4f2",
         "before": "0/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
@@ -355,13 +371,13 @@
         "controls": [
           {
             "case": "weight-shorthand-exact-weight",
-            "input_sha256": "38f5b091d24200bcd67987e949282bef83c12da1962f176daf8f539c7bafebf2",
-            "before": "2/3",
+            "input_sha256": "2f3c0160adc7c92d10d6ec37e305cb5046624024c3c536c82f9a090f0d039057",
+            "before": "3/3",
             "after": "3/3"
           },
           {
             "case": "weight-shorthand-exact-selector",
-            "input_sha256": "c9dd10742975167ea5060326a52268764805bf2ea12dbaacf644c06dadf3aa94",
+            "input_sha256": "e9e652f703d154390e730db64f774c25928f7928e996774d0df3d68c7b0b2e81",
             "before": "3/3",
             "after": "3/3"
           }
@@ -376,25 +392,28 @@
       "result-grouped-cross-month",
       "result-zero-target-misses"
     ],
-    "hypothesis": "Uses maintained inspection helpers for supported optimizer result audits to avoid assignment and signed-request miscounts from custom parsing.",
-    "sha256": "20a9c5f17999dc133daa1f772d29ddd63d3adefb08c91f49ba6fc5bbd6bb26f3",
+    "hypothesis": "Continues completed optimizer jobs without restarting and uses maintained audit helpers to reduce generated parsing code while preserving expanded signed-request counts.",
+    "sha256": "22d5184cd11c6161c7b85fb85b37e7256cbcc01c116d36e5117f48e5cb68ea7c",
     "evidence": [
       {
         "case": "result-grouped-cross-month",
-        "input_sha256": "34bbfb628c474ec8eb5bd122e88f3947e4215ecdba07542839bed5e9f1853105",
-        "before": "2/3",
-        "after": "3/3",
+        "input_sha256": "eb9550a6e0b0d5ba2c9ea2f4561382492d18251885e86e48c24ca245d88a4c14",
+        "before": "2/6",
+        "after": "6/6",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
-        "note": "Correctness witness on native bracketed exports. Latency observations are exploratory. The unchanged zero-miss control comes from the companion comparison.",
+        "note": "Two independent adjacent batches. Generated-token costs use two matched passing pairs. Audits continue completed jobs without restarting. Zero-miss control stays correct.",
         "controls": [
           {
             "case": "result-zero-target-misses",
-            "input_sha256": "b9fab83b5ad6781fc509241e2316cf22e79bf0dd8b2f8ad9c99f03e290c3170c",
-            "before": "3/3",
-            "after": "3/3"
+            "input_sha256": "1e59028ad616ade4efe2290d16d97246e3c97a1bfc34b1656c3297ddd1d63bc7",
+            "before": "6/6",
+            "after": "6/6"
           }
-        ]
+        ],
+        "cost_metric": "completion-tokens",
+        "cost_ratio": 0.11495,
+        "cost_target": 0.75
       }
     ]
   },
