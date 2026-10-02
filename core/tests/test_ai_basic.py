@@ -1468,7 +1468,7 @@ def test_environment_configuration_defaults_to_extended_sandbox_turn_limits(
 
     settings = AiSettings.from_env()
     assert settings.provider_timeout_seconds == 180
-    assert settings.sandbox_command_timeout_seconds == 30
+    assert settings.sandbox_command_timeout_seconds == 60
     assert settings.sandbox_turn_timeout_seconds == 3600
     assert settings.agent_max_tool_rounds == 200
     assert settings.agent_max_tool_calls == 400

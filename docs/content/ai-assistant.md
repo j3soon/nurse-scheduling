@@ -417,7 +417,7 @@ response cannot prove that the original operation did not take effect.
 | `AI_SANDBOX_BACKEND` | Required | Sandbox provider. Currently `e2b`. |
 | `E2B_API_KEY` | Required for E2B | E2B Cloud credential used only by the trusted application. |
 | `E2B_TEMPLATE` | `nurse-scheduling-ai-sandbox` | Prebuilt E2B template alias. |
-| `AI_SANDBOX_COMMAND_TIMEOUT_SECONDS` | `30` | Default and maximum deadline for one shell command. |
+| `AI_SANDBOX_COMMAND_TIMEOUT_SECONDS` | `60` | Default and maximum deadline for one shell command. |
 | `AI_SANDBOX_TURN_TIMEOUT_SECONDS` | `3600` | Deadline for the complete sandbox-backed user message. The Compose deployment's NGINX proxy waits up to 3660 seconds between response bytes, so raise its `proxy_read_timeout` before raising this past it. |
 | `AI_AGENT_MAX_TOOL_ROUNDS` | `200` | Maximum model tool-call rounds before the agent must answer from verified results. |
 | `AI_AGENT_MAX_TOOL_CALLS` | `400` | Maximum total tool calls in one sandbox-backed user message. |
