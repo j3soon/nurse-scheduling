@@ -209,3 +209,92 @@ def test_pdf_inspector_requires_a_selected_page_for_rendering(tmp_path: Path):
 
     with pytest.raises(ValueError, match="Select one page"):
         inspect_pdf(path, render=True)
+
+
+def test_xlsx_styles_preserve_blank_cells_and_distinguish_stored_color_sources(tmp_path):
+    from openpyxl.styles import Alignment, Border, Color, Font, GradientFill, PatternFill, Side
+
+    path = tmp_path / "styles.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet["B4"] = 1
+    sheet["B4"].font = Font(color="FFFF0000", bold=True)
+    sheet["B4"].fill = PatternFill("solid", fgColor="FFFFF2CC")
+    sheet["C4"] = 1
+    sheet["C4"].font = Font(color="FF000000")
+    sheet["D4"].fill = PatternFill("solid", fgColor=Color(theme=4, tint=0.4))
+    sheet["E4"] = 3.25
+    sheet["E4"].font = Font(color=Color(indexed=10))
+    sheet["E4"].alignment = Alignment(horizontal="center", wrap_text=True)
+    sheet["E4"].border = Border(bottom=Side(style="thin", color="FF112233"))
+    sheet["E4"].number_format = "0.00"
+    sheet["F4"].fill = GradientFill(stop=("FF112233", "FF445566"))
+    from copy import copy
+
+    sheet["G4"].fill = copy(sheet["D4"].fill)
+    sheet["H4"] = "=E4*2"
+    sheet["H4"].font = Font(color=Color(theme=0))
+    workbook.save(path)
+    plain = inspect_workbook(path, start_row=4, start_column=2, max_rows=1, max_columns=7)
+    assert "styles" not in plain
+    assert plain["sheets"][0]["rows"][0]["values"][2] is None
+    result = inspect_workbook(path, start_row=4, start_column=2, max_rows=1, max_columns=7, styles=True)
+    cells = {cell["cell"]: cell for cell in result["sheets"][0]["rows"][0]["values"]}
+    style = lambda coordinate: result["styles"][cells[coordinate]["style"]]
+    assert style("B4")["font"]["color"] == {"type": "rgb", "value": "FFFF0000"}
+    assert style("C4")["font"]["color"] == {"type": "rgb", "value": "FF000000"}
+    assert style("B4")["font"]["bold"]
+    assert style("B4")["fill"]["foreground"]["value"] == "FFFFF2CC"
+    assert cells["D4"]["value"] is None
+    assert cells["D4"]["style"] == cells["G4"]["style"]
+    assert style("D4")["fill"]["foreground"] == {"type": "theme", "value": 4, "tint": 0.4, "base_rgb": "4F81BD"}
+    assert style("E4")["font"]["color"] == {"type": "indexed", "value": 10, "base_rgb": "00FF0000"}
+    assert style("E4")["number_format"] == "0.00"
+    assert style("E4")["alignment"] == {"horizontal": "center", "wrapText": True}
+    assert style("E4")["borders"]["bottom"]["style"] == "thin"
+    assert style("F4")["fill"]["stops"][1]["color"]["value"] == "FF445566"
+    assert cells["H4"]["formula"] == "=E4*2"
+    assert cells["H4"]["cached_value"] is None
+    assert style("H4")["font"]["color"]["base_rgb"] == "FFFFFF"
+    assert result["styles_are_stored_not_rendered"]
+    assert result["cells_without_style_use"] == "0"
+    assert result["styles"]["0"]["font"]["color"]["base_rgb"] == "000000"
+
+
+def test_styled_request_case_oracle_matches_source_cells_and_saved_caches():
+    import json
+
+    from openpyxl import load_workbook
+
+    attachment = load_attachment_fixtures(("styled-requests-xlsx",))[0]
+    assert attachment.data == load_attachment_fixtures(("styled-requests-xlsx",))[0].data
+    case = json.loads(
+        (
+            Path(__file__).parent / "ai_eval/cases/basics/14-attachment-inspection/xlsx-styled-requests-and-caches.json"
+        ).read_text()
+    )
+    book = load_workbook(BytesIO(attachment.data), data_only=False)
+    cached = load_workbook(BytesIO(attachment.data), data_only=True)
+    seniors = []
+    off_days = {}
+    for row in book["Requests"].iter_rows(min_row=2):
+        name = row[0].value
+        if row[0].fill.fgColor.rgb == "FFFFF2CC":
+            seniors.append(name)
+        off_days[name] = [cell.column - 1 for cell in row[1:] if cell.font.color.rgb == "FFFF0000"]
+        assert all(cell.value == 1 for cell in row[1:])
+    capacity = {
+        row[0].value: cached["Capacity audit"][row[2].coordinate].value
+        for row in book["Capacity audit"].iter_rows(min_row=2)
+    }
+    assert case["answer_json"] == {
+        "seniorNames": sorted(seniors),
+        "offDays": off_days,
+        "savedCapacity": capacity,
+        "formulaCount": 3,
+    }
+    assert book["Capacity audit"].sheet_state == "hidden"
+    assert all(book["Capacity audit"].cell(row, 3).data_type == "f" for row in range(2, 5))
+    assert capacity["Day"] != book["Capacity audit"]["B2"].value * 2
+    book.close()
+    cached.close()

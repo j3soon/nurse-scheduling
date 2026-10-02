@@ -27,7 +27,7 @@ from xml.etree import ElementTree
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from openpyxl import Workbook
-from openpyxl.styles import PatternFill
+from openpyxl.styles import Font, PatternFill
 from PIL import Image, ImageDraw, ImageFont
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
@@ -119,6 +119,30 @@ def _colored_workbook() -> bytes:
     for row in (2, 4):
         roster.cell(row, 1).fill = PatternFill("solid", fgColor="FFF2CC")
     return _stable_workbook(workbook)
+
+
+def _styled_requests_workbook() -> bytes:
+    """Combine identical request values distinguished by colors with stale caches."""
+    workbook = Workbook()
+    workbook.active.title = "Cover"
+    workbook.active.append(["November roster", "Color-coded requests and saved capacity audit"])
+    roster = workbook.create_sheet("Requests")
+    roster.append(["Name", "Nov 01", "Nov 02", "Nov 03", "Nov 04", "Nov 05"])
+    names = ("Ada", "Bruno", "Cleo", "Dara", "Emil", "Faye", "Galen", "Hana")
+    for row, name in enumerate(names, start=2):
+        roster.append([name, 1, 1, 1, 1, 1])
+        if name in {"Ada", "Dara", "Hana"}:
+            roster.cell(row, 1).fill = PatternFill("solid", fgColor="FFFFF2CC")
+        for column in range(2, 7):
+            red = (row + column) % 3 == 0
+            roster.cell(row, column).font = Font(color="FFFF0000" if red else "FF000000")
+    audit = workbook.create_sheet("Capacity audit")
+    audit.sheet_state = "hidden"
+    audit.append(["Shift", "Input", "Saved"])
+    audit.append(["Day", 7, "=B2*2"])
+    audit.append(["Evening", 5, "=SUM(B2:B3)"])
+    audit.append(["Night", 3, "=B4+2"])
+    return _stable_workbook(workbook, {"xl/worksheets/sheet3.xml": {"C2": 13, "C3": 9}})
 
 
 def _pdf() -> bytes:
@@ -235,6 +259,11 @@ _FIXTURES: dict[str, tuple[str, str, Callable[[], bytes]]] = {
         "capacity-checks.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         _formula_workbook,
+    ),
+    "styled-requests-xlsx": (
+        "requests-and-capacity.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        _styled_requests_workbook,
     ),
     "colored-xlsx": (
         "staff-colors.xlsx",

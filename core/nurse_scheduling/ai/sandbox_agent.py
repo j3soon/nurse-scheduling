@@ -65,7 +65,7 @@ REFERENCE_SCHEMAS["taiwan-holidays"] = f"/reference/{TAIWAN_HOLIDAYS_SOURCE.name
 REFERENCE_USER_GUIDE = "/reference/user-guide"
 ATTACHMENT_TOOL_DIRECTORY = Path(__file__).with_name("attachment_tools")
 INSPECTION_HELPERS = {
-    "inspect_xlsx.py": "Bounded worksheet cells, formulas, and cached values from XLSX files.",
+    "inspect_xlsx.py": "Bounded XLSX cells, formulas, and saved caches. Add --styles for stored font/fill colors, borders, alignment, and number formats.",
     "inspect_pdf.py": "PDF page text and rendered page images.",
     "inspect_optimizer_result.py": "Optimizer assignments and signed request counts using a compiled schedule context.",
 }

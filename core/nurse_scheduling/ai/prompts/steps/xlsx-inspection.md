@@ -5,4 +5,4 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <!-- This file is mostly AI generated. -->
 
-For XLSX colors, comments, or other details the helper does not expose, inspect directly with installed `openpyxl`. For cell values, formulas, and last-saved caches, run `/reference/tools/inspect_xlsx.py` before writing a parser. It returns formulas and cached values together without recalculation.
+For XLSX cells, formulas, and last-saved caches, run `/reference/tools/inspect_xlsx.py` before writing a parser. Add `--styles` when fills, font colors, or other stored formatting carry meaning. It returns formulas and cached values together without recalculation. For comments, conditional formatting, or details it does not expose, inspect directly with installed `openpyxl`.
