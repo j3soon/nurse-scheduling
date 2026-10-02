@@ -31,6 +31,7 @@ from pathlib import Path
 import pytest
 
 from nurse_scheduling.ai.config import AiSettings
+from nurse_scheduling.ai.optimizer import optimizer_start_message
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.pi.edit import EDIT_TOOL
 from nurse_scheduling.ai.pi.read import READ_TOOL
@@ -452,9 +453,29 @@ def test_optimizer_case_uses_controlled_production_tool_contract():
     assert run.passed
     assert run.tools == ["optimizer"]
     assert any(tool["function"]["name"] == "optimizer" for tool in provider.tool_definitions[0])
-    assert "Started optimizer job eval-job" in next(
-        event["result"] for event in run.trajectory["events"] if event["kind"] == "tool"
+    assert optimizer_start_message(
+        "eval-job", hashlib.sha256(fixture_text("small-clinic").encode()).hexdigest()
+    ) == next(event["result"] for event in run.trajectory["events"] if event["kind"] == "tool")
+
+
+def test_optimizer_status_control_requires_a_fresh_call_in_the_later_user_turn():
+    case = CASE_BY_ID["tool-optimizer-status-on-request"]
+    responses = [
+        [ToolCallRequest((ToolCall("start", "optimizer", '{"action":"start"}'),))],
+        [TextDelta("Optimization is running in the background. You can keep chatting.")],
+    ]
+    provider = ScriptedProvider(
+        *responses,
+        [ToolCallRequest((ToolCall("status", "optimizer", '{"action":"status"}'),))],
+        [TextDelta("The optimizer is still running.")],
     )
+    run = asyncio.run(run_case(provider, settings(), case, _factory()))
+    assert run.passed
+    assert run.tools == ["optimizer", "optimizer"]
+    inferred = ScriptedProvider(*responses, [TextDelta("The optimizer is still running.")])
+    run = asyncio.run(run_case(inferred, settings(), case, _factory()))
+    assert not run.passed
+    assert any("action" in failure and "status" in failure for failure in run.failures)
 
 
 def test_optimizer_unavailability_is_a_tool_error_and_not_an_infrastructure_error():

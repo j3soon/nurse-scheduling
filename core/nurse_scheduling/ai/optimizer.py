@@ -45,6 +45,14 @@ MAX_REJECTION_DETAIL_CHARS = 300
 logger = logging.getLogger("nurse_scheduling.ai.optimizer")
 
 
+def optimizer_start_message(job_id: str, source_sha256: str) -> str:
+    """Render the startup acknowledgement shared by production and controlled evaluations."""
+    return (
+        f"Started optimizer job {job_id} in the background for schedule SHA-256 {source_sha256}. "
+        "The assistant will be woken when it finishes. The user can keep chatting meanwhile."
+    )
+
+
 def optimizer_completion_message(result_data: dict[str, Any]) -> str:
     """Render the completion turn shared by production and controlled evaluations."""
     result_path = WORKSPACE_OPTIMIZER_RESULT if result_data["download_available"] else "unavailable"
@@ -435,11 +443,7 @@ class SessionOptimizer:
             return AgentToolOutcome("This chat session expired while the optimizer job was starting.", False)
         if not _is_terminal(job.payload):
             await self._notify_update(job)
-        return AgentToolOutcome(
-            f"Started optimizer job {job.id} in the background for schedule SHA-256 {job.source_sha256}. "
-            "The assistant will be woken when it finishes. The user can keep chatting meanwhile.",
-            True,
-        )
+        return AgentToolOutcome(optimizer_start_message(job.id, job.source_sha256), True)
 
     async def _status(self, session_id: str) -> AgentToolOutcome:
         job = self._latest(session_id)

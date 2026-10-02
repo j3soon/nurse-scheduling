@@ -128,7 +128,8 @@ input fingerprint tracked. Preserve full prompt contexts, run metadata, diagnost
 The [evidence workflow](prompt-evidence.md) documents the repository/artifact boundary and reproducible commands. A passing linked case alone does not establish a section's benefit.
 
 The runner offers a controlled `optimizer` tool with the production tool definition. Ordinary cases acknowledge
-starts without submitting real jobs. Cases with `optimizer_completion` also deliver the production-shaped completion
+starts without submitting real jobs. Startup acknowledgements use the production formatter, including the source
+hash and automatic completion notification. Cases with `optimizer_completion` also deliver the production-shaped completion
 message and an exporter-generated workbook with verified fixed assignments. These test result interpretation and
 completion delivery through the agent harness, rather than stochastic solve quality or the service job lifecycle.
 Result sandboxes include a canonical compiled request context and `/reference/tools/inspect_optimizer_result.py`.

@@ -47,7 +47,7 @@ from nurse_scheduling.ai.agent import (
 )
 from nurse_scheduling.ai.app import PROPOSAL_APPROVED_HISTORY, PROPOSAL_REJECTED_HISTORY, build_provider_messages
 from nurse_scheduling.ai.config import AiSettings
-from nurse_scheduling.ai.optimizer import optimizer_completion_message
+from nurse_scheduling.ai.optimizer import optimizer_completion_message, optimizer_start_message
 from nurse_scheduling.ai.provider import (
     ChatMessage,
     ChatStreamEvent,
@@ -288,7 +288,7 @@ async def run_case(
             optimizer_started = True
             optimizer_source = _schedule_yaml
             return AgentToolOutcome(
-                "Started optimizer job eval-job in the background. The user can keep chatting.", True
+                optimizer_start_message("eval-job", hashlib.sha256(_schedule_yaml.encode()).hexdigest()), True
             )
         if action == "status" and optimizer_started:
             return AgentToolOutcome("Optimizer job eval-job is running.", True)

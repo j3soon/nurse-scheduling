@@ -122,6 +122,8 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   category or tag only when the changed behavior spans it or a selected case
   reveals a neighboring risk. A bare evaluation command exits without running
   cases. Use `--tuning` to opt into the default tuning set.
+- Reuse production response formatters in controlled evaluations. Shortened mock
+  replies can change the agent's decisions.
 - Treat one provider pass as a smoke check. Before claiming a tuning improvement,
   repeat affected cases at least three times with four total jobs and compare
   pass rate, infrastructure failures, turns, and tokens with a recorded baseline.

@@ -1,0 +1,78 @@
+{
+  "id": "tool-optimizer-status-on-request",
+  "fixture": "small-clinic",
+  "user_turns": [
+    "Start optimizing this roster.",
+    "Is the optimizer still running? Check its current status."
+  ],
+  "expect_proposal": false,
+  "intermediate_answer_contains": [
+    [
+      [
+        "running",
+        "background"
+      ],
+      [
+        "keep chatting",
+        "continue chatting",
+        "other questions",
+        "continue the conversation"
+      ]
+    ]
+  ],
+  "answer_contains": [
+    "running"
+  ],
+  "tool_usage": {
+    "required_calls": [
+      {
+        "name": "optimizer",
+        "arguments": {
+          "action": "start"
+        }
+      },
+      {
+        "name": "optimizer",
+        "arguments": {
+          "action": "status"
+        }
+      }
+    ],
+    "max_per_tool": {
+      "optimizer": 2
+    }
+  },
+  "turn_tool_usage": [
+    {
+      "required_calls": [
+        {
+          "name": "optimizer",
+          "arguments": {
+            "action": "start"
+          }
+        }
+      ],
+      "max_per_tool": {
+        "optimizer": 1
+      }
+    },
+    {
+      "required_calls": [
+        {
+          "name": "optimizer",
+          "arguments": {
+            "action": "status"
+          }
+        }
+      ],
+      "max_per_tool": {
+        "optimizer": 1
+      }
+    }
+  ],
+  "tags": [
+    "optimizer-start",
+    "control"
+  ],
+  "note": "This testcase is mostly AI generated. The optimizer remains running. An explicit later user request must still query current status rather than relying on the earlier start acknowledgement."
+}
