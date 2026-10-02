@@ -1001,6 +1001,86 @@ def test_run_all_repeats_cases_with_one_global_concurrency_limit():
     ]
 
 
+def test_completed_trace_is_saved_while_another_case_is_waiting_and_survives_cancellation(tmp_path, monkeypatch):
+    from .ai_eval import runner
+
+    cases = load_cases(CASES)[:2]
+    checkpoints = runner.RunCheckpoints(tmp_path / "run", {"production": {"model": "test"}}, 1, 2)
+
+    async def exercise():
+        saved = asyncio.Event()
+        waiting = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def run_case(_provider, _settings, case, *args, **kwargs):
+            if case.id == cases[0].id:
+                return CaseRun(
+                    case.id, case.category, False, 1, 1, error="provider unavailable", trajectory={"events": []}
+                )
+            waiting.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+        def persist(run):
+            checkpoints.record(run)
+            saved.set()
+
+        monkeypatch.setattr(runner, "run_case", run_case)
+        task = asyncio.create_task(run_all(cases, settings(), ScriptedProvider(), 2, _factory(), on_complete=persist))
+        await saved.wait()
+        await waiting.wait()
+        directory = tmp_path / "run"
+        assert json.loads((directory / "cases" / f"{cases[0].id}.json").read_text())["error"] == "provider unavailable"
+        assert not (directory / "cases" / f"{cases[1].id}.json").exists()
+        assert json.loads((directory / "progress.json").read_text()) == {
+            "status": "running",
+            "completed": 1,
+            "expected": 2,
+        }
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert cancelled.is_set()
+        assert len((directory / "results.jsonl").read_text().splitlines()) == 1
+
+    asyncio.run(exercise())
+
+
+def test_checkpoints_separate_variants_and_repetitions_and_refuse_existing_output(tmp_path):
+    from .ai_eval import runner
+
+    root = tmp_path / "comparison"
+    checkpoints = runner.RunCheckpoints(root, {"before": {"prompt": "A"}, "after": {"prompt": "B"}}, 3, 6)
+    for label in ("after", "before"):
+        run = CaseRun("case", "category", True, 1, 1, repetition=2, prompt_variant=label)
+        checkpoints.record(run)
+        assert (root / label / "cases" / "case--run-2.json").exists()
+        assert json.loads((root / label / "results.jsonl").read_text())["prompt_variant"] == label
+    with pytest.raises(FileExistsError):
+        runner.RunCheckpoints(root, {"production": {}}, 1, 1)
+
+
+def test_interrupted_cli_retains_completed_attempts_and_initial_metadata(tmp_path, monkeypatch):
+    from .ai_eval import runner
+
+    async def interrupted(*args, on_complete, **kwargs):
+        on_complete(CaseRun("ask-people-count", "00-summary", False, 1, 1, error="provider unavailable"))
+        raise RuntimeError("batch interrupted")
+
+    monkeypatch.setattr(runner.AiSettings, "from_env", settings)
+    monkeypatch.setattr(runner, "create_sandbox_factory", lambda _: FakeSandboxFactory())
+    monkeypatch.setattr(runner, "run_all", interrupted)
+    root = tmp_path / "run"
+    with pytest.raises(RuntimeError, match="batch interrupted"):
+        main(["--case", "ask-people-count", "--output-dir", str(root)])
+    assert json.loads((root / "progress.json").read_text()) == {"status": "interrupted", "completed": 1, "expected": 1}
+    assert json.loads((root / "metadata.json").read_text())["cases_sha256"]
+    assert json.loads((root / "results.jsonl").read_text())["error"] == "provider unavailable"
+    assert not (root / "summary.md").exists()
+
+
 def test_the_summary_reports_each_category_and_every_failure():
     runs = [
         CaseRun("a", "00-summary", True, 2.0, 1, [], provider_attempts=2, provider_attempts_per_turn=[2]),

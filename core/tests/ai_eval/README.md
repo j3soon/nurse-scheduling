@@ -75,6 +75,11 @@ hashes so comparisons do not silently mix configurations. Reference hashes cover
 including the user guide pages the app-UI cases are graded on. Case hashes cover each case's parsed criteria, including
 untracked case files during local development.
 
+Completed attempts are saved immediately to `results.jsonl` and `cases/`, with initial metadata and a
+`progress.json` status. Comparison arms keep separate directories. Interrupted batches retain completed
+attempts and are not complete comparisons. Final reports restore dataset order. Existing output directories
+are rejected before model work starts.
+
 Cases tagged `holdout` use schedules that differ from the primary tuning fixtures. Run them to check generalization,
 but do not rewrite prompts to match one held-out trajectory. Promote a recurring failure pattern into a separate
 tuning case before changing agent guidance.

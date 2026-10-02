@@ -26,7 +26,7 @@ import json
 import os
 import subprocess
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -790,6 +790,45 @@ def default_output_dir() -> Path:
     return artifact_root / "ai-evals" / timestamp
 
 
+class RunCheckpoints:
+    """Claim an output directory and persist completed attempts before the batch ends."""
+
+    def __init__(self, output_dir: Path, metadata: dict[str, dict[str, Any]], repetitions: int, expected: int):
+        output_dir.mkdir(parents=True, exist_ok=False)
+        self.output_dir = output_dir
+        self.repetitions = repetitions
+        self.expected = expected
+        self.completed = 0
+        self.directories = {}
+        for label, values in metadata.items():
+            directory = output_dir / label if len(metadata) > 1 else output_dir
+            directory.mkdir(exist_ok=True)
+            (directory / "cases").mkdir()
+            (directory / "metadata.json").write_text(json.dumps(values, indent=2, sort_keys=True) + "\n")
+            (directory / "results.jsonl").touch()
+            self.directories[label] = directory
+        self.set_status("running")
+
+    def set_status(self, status: str) -> None:
+        progress = {"status": status, "completed": self.completed, "expected": self.expected}
+        path = self.output_dir / "progress.json"
+        temporary = path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(progress, indent=2) + "\n")
+        temporary.replace(path)
+
+    def record(self, run: CaseRun) -> None:
+        directory = self.directories[run.prompt_variant]
+        suffix = f"--run-{run.repetition}" if self.repetitions > 1 else ""
+        path = directory / "cases" / f"{run.case_id}{suffix}.json"
+        temporary = path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(run.as_trajectory(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(path)
+        with (directory / "results.jsonl").open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(run.as_record(), ensure_ascii=False) + "\n")
+        self.completed += 1
+        self.set_status("running")
+
+
 def write_report(
     runs: Sequence[CaseRun],
     output_dir: Path,
@@ -798,15 +837,16 @@ def write_report(
     wall_seconds: float | None = None,
     metadata: dict[str, Any] | None = None,
     baseline_report: Path | None = None,
+    checkpointed: bool = False,
 ) -> Path:
     """Write one run's results and summary, and report where the summary landed."""
-    output_dir.mkdir(parents=True, exist_ok=False)
+    output_dir.mkdir(parents=True, exist_ok=checkpointed)
     (output_dir / "results.jsonl").write_text(
         "".join(json.dumps(run.as_record(), ensure_ascii=False) + "\n" for run in runs), encoding="utf-8"
     )
     # One file per case, so a failure can be read back in full.
     cases_dir = output_dir / "cases"
-    cases_dir.mkdir()
+    cases_dir.mkdir(exist_ok=checkpointed)
     repeated = max((run.repetition for run in runs), default=1) > 1
     for run in runs:
         suffix = f"--run-{run.repetition}" if repeated else ""
@@ -1040,6 +1080,7 @@ async def run_all(
     *,
     prompt_variants: Sequence[tuple[str, str]] | None = None,
     fail_fast: bool = True,
+    on_complete: Callable[[CaseRun], None] | None = None,
 ) -> list[CaseRun]:
     """Run selected cases with bounded parallelism and preserve dataset order."""
     if jobs <= 0 or repetitions <= 0:
@@ -1072,6 +1113,8 @@ async def run_all(
             run.repetition = repetition
             run.prompt_variant = label
         completed += 1
+        if on_complete is not None:
+            on_complete(run)
         mark = "pass" if run.passed else "FAIL"
         run_label = f"{run.case_id}#{repetition}" if repetitions > 1 else run.case_id
         if len(variants) > 1:
@@ -1082,7 +1125,14 @@ async def run_all(
     if sandbox_factory is None:
         raise ValueError("sandbox_factory is required for AI evaluation")
     async with managed_sandbox_factory(sandbox_factory):
-        indexed_runs = await asyncio.gather(*(run_bounded(index, *item) for index, item in enumerate(scheduled)))
+        tasks = [asyncio.create_task(run_bounded(index, *item)) for index, item in enumerate(scheduled)]
+        try:
+            indexed_runs = await asyncio.gather(*tasks)
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
     return [run for _, run in sorted(indexed_runs)]
 
 
@@ -1249,33 +1299,43 @@ def main(argv: Sequence[str] | None = None) -> int:
     settings = AiSettings.from_env()
     sandbox_factory = create_sandbox_factory(settings)
     variants = _prompt_variants(arguments)
-    started = time.perf_counter()
-    runs = asyncio.run(
-        run_all(
-            cases,
-            settings,
-            OpenAiCompatibleProvider(settings, include_usage=True, include_attempts=True),
-            arguments.jobs,
-            sandbox_factory,
-            arguments.repeat,
-            prompt_variants=variants,
-            fail_fast=not arguments.continue_after_failure,
+    output_dir = (arguments.output_dir or default_output_dir()).resolve()
+    metadata = {
+        label: _evaluation_metadata(
+            settings, cases, arguments.repeat, prompt, fail_fast=not arguments.continue_after_failure
         )
-    )
+        for label, prompt in variants
+    }
+    checkpoints = RunCheckpoints(output_dir, metadata, arguments.repeat, len(cases) * arguments.repeat * len(variants))
+    started = time.perf_counter()
+    try:
+        runs = asyncio.run(
+            run_all(
+                cases,
+                settings,
+                OpenAiCompatibleProvider(settings, include_usage=True, include_attempts=True),
+                arguments.jobs,
+                sandbox_factory,
+                arguments.repeat,
+                prompt_variants=variants,
+                fail_fast=not arguments.continue_after_failure,
+                on_complete=checkpoints.record,
+            )
+        )
+    except BaseException:
+        checkpoints.set_status("interrupted")
+        raise
     wall_seconds = time.perf_counter() - started
 
-    output_dir = (arguments.output_dir or default_output_dir()).resolve()
     if len(variants) == 2:
-        output_dir.mkdir(parents=True, exist_ok=False)
         for label, prompt in variants:
             write_report(
                 [run for run in runs if run.prompt_variant == label],
                 output_dir / label,
                 jobs=arguments.jobs,
                 wall_seconds=wall_seconds,
-                metadata=_evaluation_metadata(
-                    settings, cases, arguments.repeat, prompt, fail_fast=not arguments.continue_after_failure
-                ),
+                metadata=metadata[label],
+                checkpointed=True,
             )
         comparison, improved = prompt_comparison_markdown(runs, arguments.cost_metric, arguments.cost_ratio)
         step_number = arguments.prompt_compare_step or arguments.prompt_ablate_step
@@ -1307,12 +1367,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             output_dir,
             jobs=arguments.jobs,
             wall_seconds=wall_seconds,
-            metadata=_evaluation_metadata(
-                settings, cases, arguments.repeat, variants[0][1], fail_fast=not arguments.continue_after_failure
-            ),
+            metadata=metadata[variants[0][0]],
             baseline_report=arguments.baseline_report,
+            checkpointed=True,
         )
         improved = all(run.passed for run in runs)
+    checkpoints.completed = len(runs)
+    checkpoints.set_status("complete")
     print()
     print(summarize(runs))
     print(f"Wall time: {wall_seconds:.1f} seconds with {arguments.jobs} case job(s)")
