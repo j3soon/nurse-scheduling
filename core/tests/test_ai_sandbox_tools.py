@@ -26,7 +26,7 @@ from io import BytesIO
 import pytest
 from PIL import Image
 
-from nurse_scheduling.ai.pi.bash import BASH_TOOL
+from nurse_scheduling.ai.pi.bash import BASH_TOOL, bash_parameters
 from nurse_scheduling.ai.pi.edit import EDIT_TOOL
 from nurse_scheduling.ai.pi.read import READ_TOOL
 from nurse_scheduling.ai.pi.write import WRITE_TOOL
@@ -35,14 +35,19 @@ from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend
 from nurse_scheduling.ai.sandbox_tools import SandboxPiTools
 
 
-def test_sandbox_adapter_exposes_only_selected_pi_tool_definitions():
-    tools = SandboxPiTools(FakeSandboxBackend("fake-1"), 10)
+@pytest.mark.parametrize("limit", [2.5, 10])
+def test_sandbox_adapter_exposes_only_selected_pi_tool_definitions(limit):
+    tools = SandboxPiTools(FakeSandboxBackend("fake-1"), limit)
 
     definitions = [definition["function"] for definition in tools.definitions]
 
     assert [definition["name"] for definition in definitions] == [READ_TOOL, BASH_TOOL, EDIT_TOOL, WRITE_TOOL]
     assert "2000 lines or 50KB" in definitions[0]["description"]
     assert "last 2000 lines or 50KB" in definitions[1]["description"]
+    timeout_description = definitions[1]["parameters"]["properties"]["timeout"]["description"]
+    assert f"defaults to {limit:g} seconds" in timeout_description
+    assert "capped at that limit" in timeout_description
+    assert "no default timeout" in bash_parameters()["properties"]["timeout"]["description"]
     assert "unique, non-overlapping" in definitions[2]["description"]
     assert "overwrites if it does" in definitions[3]["description"]
 

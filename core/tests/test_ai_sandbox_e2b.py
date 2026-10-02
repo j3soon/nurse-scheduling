@@ -764,6 +764,8 @@ def test_nonzero_command_exit_is_returned_instead_of_raised(exit_code):
 @pytest.mark.parametrize("cleanup", ["ok", "rejected", "hung", "error"])
 def test_command_timeout_preserves_the_sandbox_only_after_confirmed_cleanup(cleanup):
     async def exercise():
+        loop_errors = []
+        asyncio.get_running_loop().set_exception_handler(lambda _loop, context: loop_errors.append(context))
         sandbox = FakeE2BSandbox()
         stopped = asyncio.Event()
 
@@ -801,6 +803,8 @@ def test_command_timeout_preserves_the_sandbox_only_after_confirmed_cleanup(clea
         sandbox.handle.wait.assert_awaited_once()
         assert sandbox.commands.run.await_count == 2  # Original launch plus cleanup, never replay.
         await backend.close()
+        await asyncio.sleep(0)
+        assert not loop_errors, f"Unexpected event-loop exception: {loop_errors}"
         return result
 
     result = asyncio.run(exercise())

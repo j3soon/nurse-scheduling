@@ -73,6 +73,21 @@ the evaluation ends as a behavioral failure with the original failed tool result
 deadlines are separate from E2B connection timeouts. Commands are never replayed automatically.
 Provider and other sandbox failures remain infrastructure errors.
 
+For a real-provider timeout recovery comparison, load the ignored local env file and run from `core/`:
+
+```bash
+set -a
+source ../docker/.env.staging
+set +a
+python -m tests.ai_eval.timeout_recovery_benchmark --baseline-ref b1521bd^ --repeat 3 --jobs 4
+```
+
+This runs `tool-timeout-checkpoint-recovery` against the historical and current E2B adapters with identical
+prompts and tools. Before teardown, an independent check verifies one sandbox, one hydration, preserved
+checkpoint data, one diagnostic execution, and no delayed child write. Reports and historical adapter snapshots
+stay under ignored `artifacts/`. The historical arm aborts, so its shorter run is not a cost saving.
+The ordinary `run_ai_eval.sh --case tool-timeout-checkpoint-recovery` grades the schedule and tool error only.
+
 Use `--repeat 3` for reliability checks on a tuning subset. Repetitions share the global `--jobs` limit and reports
 show per-case pass rates plus median and p95 cost. Use `--baseline-report <report-dir>` to compare reliability, model
 turns, and tokens with an earlier run. Reports record the model, Git revision, dirty diff hash, prompt, and fixture

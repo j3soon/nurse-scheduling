@@ -438,22 +438,20 @@ class E2BSandboxBackend:
                     request_timeout=self._control_request_timeout_seconds,
                 )
                 waiting = asyncio.create_task(handle.wait())
-                execution_deadline = asyncio.timeout(timeout)
-                try:
-                    async with execution_deadline:
-                        result = await asyncio.shield(waiting)
-                except TimeoutError:
-                    if not execution_deadline.expired():
-                        raise
+                # wait() keeps ownership of the task without shield's detached-exception
+                # logging when the deadline expires and SIGKILL produces a nonzero exit.
+                completed, _ = await asyncio.wait({waiting}, timeout=timeout)
+                if completed:
+                    result = waiting.result()
+                else:
                     cleaned = await self._stop_command_group(handle.pid)
                     if cleaned:
                         # Let the stream drain after SIGKILL, but never wait indefinitely.
                         try:
-                            async with asyncio.timeout(self._control_request_timeout_seconds):
-                                await asyncio.shield(waiting)
-                        except asyncio.CancelledError:
-                            if asyncio.current_task().cancelling():
-                                raise
+                            drained, _ = await asyncio.wait({waiting}, timeout=self._control_request_timeout_seconds)
+                            if not drained:
+                                raise TimeoutError("Command stream did not drain after cleanup")
+                            waiting.result()
                         except CommandExitException:
                             pass
                         except Exception:

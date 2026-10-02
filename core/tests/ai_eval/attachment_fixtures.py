@@ -270,6 +270,11 @@ _FIXTURES: dict[str, tuple[str, str, Callable[[], bytes]]] = {
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         _colored_workbook,
     ),
+    "timeout-checkpoint": (
+        "timeout-checkpoint.txt",
+        "text/plain",
+        lambda: (Path(__file__).with_name("fixtures") / "timeout-checkpoint.txt").read_bytes(),
+    ),
     "pyyaml-generator": (
         "generate_schedule.txt",
         "text/plain",

@@ -81,9 +81,14 @@ class SandboxPiTools:
 
     @property
     def definitions(self) -> list[dict[str, Any]]:
+        bash_schema = bash_parameters()
+        bash_schema["properties"]["timeout"]["description"] = (
+            f"Timeout in seconds. Optional, defaults to {self._command_timeout_seconds:g} seconds "
+            "and is capped at that limit."
+        )
         return [
             _tool_definition(READ_TOOL, READ_TOOL_DESCRIPTION, read_parameters()),
-            _tool_definition(BASH_TOOL, BASH_TOOL_DESCRIPTION, bash_parameters()),
+            _tool_definition(BASH_TOOL, BASH_TOOL_DESCRIPTION, bash_schema),
             _tool_definition(EDIT_TOOL, EDIT_TOOL_DESCRIPTION, edit_parameters()),
             _tool_definition(WRITE_TOOL, WRITE_TOOL_DESCRIPTION, write_parameters()),
         ]

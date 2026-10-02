@@ -89,6 +89,8 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   sandbox after a command timeout only when process cleanup is verified. Keep
   shell commands single-attempt because a lost acknowledgement does not prove
   they stopped or that replay is safe.
+  Evaluate tool deadlines through the tool's timeout parameter. Shell timers can
+  start separate process groups and exercise a different cleanup path.
 - Sandbox allocation is lazy. Tests that verify attachment hydration must make
   the agent call a tool, since a text-only turn never creates a sandbox.
 - Keep canonical schedule invariants in `NurseSchedulingData`. Implement
