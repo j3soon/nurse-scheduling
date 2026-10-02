@@ -55,6 +55,12 @@ def optimizer_start_message(job_id: str, source_sha256: str) -> str:
 
 def optimizer_completion_message(result_data: dict[str, Any]) -> str:
     """Render the completion turn shared by production and controlled evaluations."""
+    if (result_data.get("result") or {}).get("score") is not None:
+        result_data = {
+            **result_data,
+            "score_direction": "maximize",
+            "score_comparison_scope": "Compare only scores from unchanged constraints and weights.",
+        }
     result_path = WORKSPACE_OPTIMIZER_RESULT if result_data["download_available"] else "unavailable"
     return (
         f"Optimizer job finished. Result workbook: {result_path}.\n"

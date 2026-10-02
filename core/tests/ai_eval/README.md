@@ -169,8 +169,11 @@ completion delivery through the agent harness, rather than stochastic solve qual
 Result sandboxes include a canonical compiled request context and `/reference/tools/inspect_optimizer_result.py`.
 The same helpers are available in both arms of prompt comparisons. Their scripts, catalog, and context projector
 are fingerprinted so changes cannot silently reuse a result-reading receipt.
-Completions include bounded `request_audit` counts computed by the production reader. Cases marked
-`optimizer_completion_only` seed a fixed successful start and acknowledgement without a provider call.
+Completions include bounded `request_audit` counts computed by the production reader.
+Score-bearing completions report `score_direction: maximize` and restrict score
+comparisons to unchanged constraints and weights. `optimizer-score-same-model`
+checks direction and `optimizer-score-changed-model` guards comparability.
+Cases marked `optimizer_completion_only` seed a fixed successful start and acknowledgement without a provider call.
 The seed remains in the grading trace but is excluded from model tool and token metrics.
 `request-audit-stale-summary` supplies an earlier verified incumbent's counts with a different source hash
 to check that the agent uses the current workbook instead.
