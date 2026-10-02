@@ -682,3 +682,48 @@ def test_whole_turn_timeout_before_a_tool_call_does_not_start_a_sandbox():
         _collect(WaitingProvider(), factory, turn_timeout_seconds=0.01)
 
     assert factory.created == []
+
+
+def test_terminal_command_timeout_is_reported_before_any_further_sandbox_operation():
+    from nurse_scheduling.ai.sandbox_agent import SandboxCommandTimeoutError
+
+    def timeout(_command, _timeout, backend):
+        backend.closed = True
+        return CommandResult("", "", 124, timed_out=True, sandbox_terminated=True)
+
+    factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=timeout))
+    provider = ScriptedProvider(
+        [
+            ToolCallRequest(
+                (
+                    ToolCall("wait", BASH_TOOL, '{"command":"sleep 30","timeout":40}'),
+                    ToolCall("next", READ_TOOL, '{"path":"/workspace/schedule.yaml"}'),
+                )
+            ),
+        ]
+    )
+    events = []
+    batches = []
+
+    async def collect():
+        with pytest.raises(SandboxCommandTimeoutError, match="Command timed out after 10 seconds"):
+            async for event in run_sandbox_agent(
+                provider,
+                factory,
+                schedule_yaml(),
+                MESSAGES,
+                _limits(),
+                observe_tool_batch=batches.append,
+            ):
+                events.append(event)
+
+    asyncio.run(collect())
+    assert len(provider.requests) == 1
+    assert factory.created[0].commands == [("sleep 30", 10)]
+    assert [event.name for event in events if isinstance(event, AgentToolStart)] == [BASH_TOOL]
+    outcomes = [event for event in events if isinstance(event, AgentToolUse)]
+    assert len(outcomes) == 1
+    assert not outcomes[0].ok
+    assert outcomes[0].result == "Command timed out after 10 seconds"
+    assert batches[0].call_count == 1
+    assert not any(isinstance(event, AgentProposal) for event in events)

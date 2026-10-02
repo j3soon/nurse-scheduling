@@ -47,6 +47,7 @@ from nurse_scheduling.ai.app import (
     PROPOSAL_INVALID_HISTORY,
     PROPOSAL_REJECTED_HISTORY,
     PROVIDER_ERROR,
+    SANDBOX_COMMAND_TIMEOUT_ERROR,
     SANDBOX_TURN_TIMEOUT_ERROR,
     SERVICE_NAME,
     STALE_TURN_ERROR,
@@ -68,6 +69,7 @@ from nurse_scheduling.ai.sandbox_agent import (
     WORKSPACE_PENDING_DIFF,
     WORKSPACE_PENDING_PROPOSAL,
     WORKSPACE_SCHEDULE,
+    SandboxCommandTimeoutError,
     SandboxTurnTimeoutError,
 )
 from nurse_scheduling.server.auth import AuthCredential
@@ -1090,15 +1092,22 @@ def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming(monke
     assert saved[0][1:3] == ("Obsolete answer.", "stale")
 
 
-def test_sandbox_timeout_does_not_expose_exception_details() -> None:
+@pytest.mark.parametrize(
+    ("exception", "message"),
+    [
+        (SandboxTurnTimeoutError, SANDBOX_TURN_TIMEOUT_ERROR),
+        (SandboxCommandTimeoutError, SANDBOX_COMMAND_TIMEOUT_ERROR),
+    ],
+)
+def test_sandbox_timeout_does_not_expose_exception_details(exception, message) -> None:
     private_error = "Traceback from /srv/sandbox.py: internal-host"
-    provider = FakeProvider([[SandboxTurnTimeoutError(private_error)]])
+    provider = FakeProvider([[exception(private_error)]])
     client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=provider))
     session_id = create_session(client)
 
     response = client.post(f"/sessions/{session_id}/messages", json={"message": "Wait"})
 
-    assert parse_sse(response.text) == [("error", {"message": SANDBOX_TURN_TIMEOUT_ERROR})]
+    assert parse_sse(response.text) == [("error", {"message": message})]
     assert private_error not in response.text
 
 
@@ -2411,3 +2420,42 @@ def test_a_browser_may_send_the_newer_schedule_across_origins() -> None:
 
     assert preflight.status_code == 200
     assert "PUT" in preflight.headers["access-control-allow-methods"]
+
+
+def test_background_command_timeout_preserves_tool_result_and_reports_the_actual_cause():
+    def timeout(_command, _timeout, backend):
+        backend.closed = True
+        return CommandResult("", "", 124, timed_out=True, sandbox_terminated=True)
+
+    provider = ScriptedToolProvider(
+        [ToolCallRequest((ToolCall("start", OPTIMIZER_TOOL, '{"action":"start"}'),))],
+        [TextDelta("Optimization started.")],
+        [ToolCallRequest((ToolCall("wait", BASH_TOOL, '{"command":"sleep 30"}'),))],
+    )
+    optimizer = BackgroundTestOptimizer()
+    factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=timeout))
+    app = create_test_app(
+        settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT, optimizer_poll_interval_seconds=0.001),
+        provider=provider,
+        sandbox_factory=factory,
+        optimizer_backend=optimizer,
+    )
+    with AuthenticatedTestClient(app) as client:
+        session_id = create_session(client, schedule_yaml())
+        started = client.post(f"/sessions/{session_id}/messages", json={"message": "Optimize."})
+        assert "Optimization started" in started.text
+        optimizer.release.set()
+        deadline = time.monotonic() + 2
+        events = []
+        while time.monotonic() < deadline:
+            events = app.state.session_event_broker.events_after(session_id)
+            if any(event.type == "error" for event in events):
+                break
+            time.sleep(0.01)
+        assert events[-1].type == "error"
+        assert events[-1].data == {"message": SANDBOX_COMMAND_TIMEOUT_ERROR}
+        tool = next(event for event in events if event.type == "tool")
+        assert not tool.data["ok"]
+        assert "Command timed out" in tool.data["result"]
+        assert not any(event.type in {"proposal", "done"} for event in events)
+        assert len(provider.calls) == 3

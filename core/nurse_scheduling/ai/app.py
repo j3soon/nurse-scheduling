@@ -47,6 +47,7 @@ from .agent import AgentProposal, AgentReasoning, AgentSteering, AgentText, Agen
 from .background import (
     CANDIDATE_VALIDATION_ERROR,
     PROVIDER_ERROR,
+    SANDBOX_COMMAND_TIMEOUT_ERROR,
     SANDBOX_TURN_TIMEOUT_ERROR,
     STALE_TURN_ERROR,
     SessionEventBroker,
@@ -78,6 +79,7 @@ from .sandbox_agent import (
     SandboxAgentLimits,
     SandboxAttachment,
     SandboxCandidateError,
+    SandboxCommandTimeoutError,
     SandboxTurnTimeoutError,
     run_sandbox_agent,
 )
@@ -1236,6 +1238,9 @@ def create_app(
             except ProviderError:
                 outcome, error_code = "failed", "provider_error"
                 yield _sse_event("error", {"message": PROVIDER_ERROR})
+            except SandboxCommandTimeoutError:
+                outcome, error_code = "failed", "sandbox_command_timeout"
+                yield _sse_event("error", {"message": SANDBOX_COMMAND_TIMEOUT_ERROR})
             except SandboxTurnTimeoutError:
                 outcome, error_code = "failed", "sandbox_timeout"
                 yield _sse_event("error", {"message": SANDBOX_TURN_TIMEOUT_ERROR})

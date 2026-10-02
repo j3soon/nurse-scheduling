@@ -95,6 +95,10 @@ class SandboxCandidateError(SandboxError):
     """The final untrusted schedule failed trusted server-side review."""
 
 
+class SandboxCommandTimeoutError(SandboxError):
+    """A command timeout terminated the sandbox and the remaining turn."""
+
+
 class SandboxTurnTimeoutError(SandboxError):
     """The complete disposable agent turn exceeded its deadline."""
 
@@ -345,9 +349,10 @@ async def run_sandbox_agent(
                     limits.max_schedule_bytes,
                 )
                 pending_schedule_change: str | None = None
+                command_timeout: str | None = None
 
                 async def execute_command(name: str, arguments: str) -> AgentToolOutcome:
-                    nonlocal pending_schedule_change
+                    nonlocal pending_schedule_change, command_timeout
                     pending_schedule_change = None
                     if name == OPTIMIZER_TOOL and execute_optimizer is not None:
                         try:
@@ -370,6 +375,9 @@ async def run_sandbox_agent(
                             )
                         return await execute_optimizer(current_schedule, arguments)
                     outcome = await sandbox_tools.execute(name, arguments)
+                    if outcome.terminal:
+                        command_timeout = outcome.text
+                        return outcome
                     if name == READ_TOOL:
                         return outcome
                     candidate_status = await candidate_tracker.review_if_changed()
@@ -405,6 +413,8 @@ async def run_sandbox_agent(
                         yield AgentScheduleChange(pending_schedule_change)
                         pending_schedule_change = None
 
+                if command_timeout is not None:
+                    raise SandboxCommandTimeoutError(f"{command_timeout}. The sandbox was terminated.")
                 if not sandbox.started:
                     return
                 candidate = await _read_candidate(sandbox, limits.max_schedule_bytes)

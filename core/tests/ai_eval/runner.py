@@ -64,6 +64,7 @@ from nurse_scheduling.ai.sandbox_agent import (
     REFERENCE_ATTACHMENT_TOOLS,
     SANDBOX_SYSTEM_PROMPT,
     SandboxAgentLimits,
+    SandboxCommandTimeoutError,
     SandboxTurnMetrics,
     inspection_helper_catalog,
     run_sandbox_agent,
@@ -422,7 +423,14 @@ async def run_case(
             if action is not None:
                 text, pending_proposal = _apply_turn_action(action, text, pending_proposal, history, events)
     except (ProviderError, SandboxError) as error:
-        failure = "the provider failed" if isinstance(error, ProviderError) else "the sandbox failed"
+        command_timeout = isinstance(error, SandboxCommandTimeoutError)
+        failure = (
+            str(error)
+            if command_timeout
+            else ("the provider failed" if isinstance(error, ProviderError) else "the sandbox failed")
+        )
+        if command_timeout:
+            events.append({"kind": "evaluation_stop", "reason": failure})
         return CaseRun(
             case.id,
             case.category,
@@ -434,7 +442,7 @@ async def run_case(
             answers[-1] if answers else "",
             False,
             reasoning,
-            str(error),
+            "" if command_timeout else str(error),
             _trajectory(case, prompt_messages, events, None),
             token_usage=counting.token_usage,
             token_usage_turns=counting.token_usage_turns,

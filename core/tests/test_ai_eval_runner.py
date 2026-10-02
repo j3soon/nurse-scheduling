@@ -1519,3 +1519,23 @@ def test_a_report_keeps_one_trajectory_file_for_each_case(tmp_path: Path):
     trajectory = json.loads((tmp_path / "run" / "cases" / "a.json").read_text(encoding="utf-8"))
     assert trajectory["case_id"] == "a"
     assert trajectory["events"] == [{"kind": "text", "text": "hi"}]
+
+
+def test_command_timeout_keeps_original_tool_failure_and_is_not_an_infrastructure_error():
+    def timeout(_command, _timeout, backend):
+        backend.closed = True
+        return CommandResult("", "", 124, timed_out=True, sandbox_terminated=True)
+
+    provider = ScriptedProvider(
+        [ToolCallRequest((ToolCall("wait", BASH_TOOL, '{"command":"sleep 30"}'),))],
+    )
+    run = asyncio.run(run_case(provider, settings(), CASE_BY_ID["tool-optimizer-start"], _factory(timeout)))
+    assert not run.passed
+    assert not run.error
+    assert run.tools == [f"{BASH_TOOL}(failed)"]
+    assert "Command timed out" in run.failures[0]
+    outcome = next(event for event in run.trajectory["events"] if event["kind"] == "tool")
+    assert not outcome["ok"]
+    assert "Command timed out" in outcome["result"]
+    assert any(event["kind"] == "evaluation_stop" for event in run.trajectory["events"])
+    assert len(provider.messages) == 1

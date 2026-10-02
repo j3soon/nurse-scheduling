@@ -452,6 +452,7 @@ class E2BSandboxBackend:
                     COMMAND_TIMEOUT_EXIT_CODE,
                     duration_seconds=duration,
                     timed_out=True,
+                    sandbox_terminated=True,
                 )
             except Exception as exc:
                 raise SandboxError("E2B could not run the sandbox command.") from exc

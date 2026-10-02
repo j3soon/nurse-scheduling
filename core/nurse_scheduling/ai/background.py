@@ -40,6 +40,7 @@ from .sandbox_agent import (
     SandboxAgentLimits,
     SandboxAttachment,
     SandboxCandidateError,
+    SandboxCommandTimeoutError,
     SandboxTurnTimeoutError,
     run_sandbox_agent,
 )
@@ -50,6 +51,9 @@ CANDIDATE_VALIDATION_ERROR = (
     "discarded. The canonical schedule was not changed."
 )
 PROVIDER_ERROR = "The AI provider failed. Please try again."
+SANDBOX_COMMAND_TIMEOUT_ERROR = (
+    "An AI shell command timed out. The temporary workspace was discarded. Please try again."
+)
 SANDBOX_TURN_TIMEOUT_ERROR = "The AI response timed out. Please try again."
 STALE_TURN_ERROR = "The schedule changed while this response was generated, so the response was discarded."
 logger = logging.getLogger("nurse_scheduling.ai")
@@ -359,6 +363,9 @@ async def run_background_turn(
         except ProviderError:
             error_code = "provider_error"
             event_broker.publish(session_id, "error", {"message": PROVIDER_ERROR})
+        except SandboxCommandTimeoutError:
+            error_code = "sandbox_command_timeout"
+            event_broker.publish(session_id, "error", {"message": SANDBOX_COMMAND_TIMEOUT_ERROR})
         except SandboxTurnTimeoutError:
             error_code = "sandbox_timeout"
             event_broker.publish(session_id, "error", {"message": SANDBOX_TURN_TIMEOUT_ERROR})

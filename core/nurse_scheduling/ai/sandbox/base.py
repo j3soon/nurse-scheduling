@@ -51,6 +51,7 @@ class CommandResult:
     exit_code: int
     duration_seconds: float = 0.0
     timed_out: bool = False
+    sandbox_terminated: bool = False
 
 
 @dataclass(frozen=True)

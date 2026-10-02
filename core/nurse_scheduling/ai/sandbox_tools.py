@@ -132,7 +132,7 @@ class SandboxPiTools:
         full_output = result.stdout + result.stderr
         prepared = prepare_bash_output(full_output)
         full_output_path: str | None = None
-        if prepared.truncation.truncated:
+        if prepared.truncation.truncated and not result.sandbox_terminated:
             full_output_path = f"{FULL_OUTPUT_DIRECTORY}/pi-bash-{secrets.token_hex(8)}.log"
             await self._sandbox.write_file(full_output_path, full_output)
 
@@ -143,7 +143,7 @@ class SandboxPiTools:
             timed_out=result.timed_out,
             timeout_seconds=effective_timeout or self._command_timeout_seconds,
         )
-        return AgentToolOutcome(rendered.text, rendered.ok)
+        return AgentToolOutcome(rendered.text, rendered.ok, terminal=result.sandbox_terminated)
 
     async def _edit(self, arguments: str) -> AgentToolOutcome:
         try:

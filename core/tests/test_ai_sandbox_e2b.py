@@ -757,6 +757,7 @@ def test_command_timeout_returns_a_failure_and_destroys_the_sandbox():
     sandbox, result, backend = asyncio.run(exercise())
     assert result.exit_code == COMMAND_TIMEOUT_EXIT_CODE
     assert result.timed_out
+    assert result.sandbox_terminated
     assert result.stderr == ""
     sandbox.kill.assert_awaited_once_with(request_timeout=2)
     with pytest.raises(SandboxError, match="is closed"):

@@ -232,3 +232,26 @@ def test_reaper_finds_and_kills_an_owned_overdue_sandbox():
                 await sandbox.kill()
 
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("attempt", range(3))
+def test_command_timeout_terminates_without_replaying_or_masking_the_tool_result(attempt):
+    async def exercise():
+        factory = E2BSandboxFactory(
+            api_key=E2B_API_KEY,
+            template=os.getenv("E2B_TEMPLATE", "nurse-scheduling-ai-sandbox"),
+            turn_timeout_seconds=30,
+            command_timeout_seconds=1,
+        )
+        async with managed_sandbox(factory, cleanup_timeout_seconds=10) as sandbox:
+            tools = SandboxPiTools(sandbox, 1)
+            outcome = await tools.execute(BASH_TOOL, '{"command":"sleep 5","timeout":10}')
+            assert not outcome.ok
+            assert outcome.terminal
+            assert outcome.text == "Command timed out after 1 seconds"
+            assert sandbox.lifecycle_state is E2BSandboxState.CLOSED
+            sandbox_id = sandbox.sandbox_id
+        with pytest.raises(SandboxNotFoundException):
+            await AsyncSandbox.connect(sandbox_id, api_key=E2B_API_KEY)
+
+    asyncio.run(exercise())
