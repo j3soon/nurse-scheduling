@@ -17,7 +17,6 @@ optimizer paths. It also covers proposals, the HTTP API, and operational checks.
 For setup commands, see the [Core README](reproduce/core.md#ai-backend). The
 [user guide](../user-guide/experimental-ai.md) describes the browser controls.
 The separate [backend server guide](backend-server.md) covers the optimizer API.
-Scroll wide diagrams sideways to read their labels.
 
 **Diagram key:** Solid arrows are calls. Dashed arrows are returned results or
 SSE events. `opt` is conditional, `alt` shows alternative outcomes, and a loop
@@ -50,14 +49,14 @@ background work.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> waiting: foreground accepted or optimizer follow-up queued
+    [*] --> waiting: foreground accepted or<br/>optimizer follow-up queued
     waiting --> running: admitted at session head
     waiting --> stopped: Stop or shutdown
-    running --> completed: cleanup path, current version, result saved
-    running --> stale: cleanup, conversation version changed
+    running --> completed: cleanup, current version,<br/>result saved
+    running --> stale: cleanup, conversation<br/>version changed
     running --> failed: cleanup after error
-    running --> stopping: Stop, disconnect, or shutdown
-    stopping --> stopped: cleanup finishes, prompt saved if current
+    running --> stopping: Stop, disconnect,<br/>or shutdown
+    stopping --> stopped: cleanup finishes,<br/>prompt saved if current
     completed --> [*]
     stale --> [*]
     failed --> [*]
@@ -85,44 +84,60 @@ result becomes stale even if the YAML later returns to the same text.
 
 ## Architecture
 
-<div class="ai-diagram ai-diagram--wide" markdown="1" tabindex="0">
+The API, session, agent, workspace tools, and job monitors share the AI service
+process. The browser, model provider, sandbox VM, and optimizer API are external.
+
+<div class="ai-diagram" markdown="1" tabindex="0">
 
 ```mermaid
 flowchart TB
     Browser[<b>Browser</b><br/>Chat, approval, SSE]
-
-    subgraph Service[AI service process]
-        Routes[<b>API routes</b><br/>Auth and streams]
-        Store[<b>SessionStore</b><br/>Ownership, retention, memory limits]
-        Queue[<b>SessionRuns</b><br/>FIFO admission and Stop]
-        Session[<b>AgentSession</b><br/>Transcript, YAML, proposals<br/>Prepare, execute, finalize run]
-        Agent[<b>Agent</b><br/>Streaming state, tool IDs<br/>Steering queue]
-        Loop[<b>agent_loop</b><br/>Model responses and tool batches]
-        Workspace[<b>WorkspaceTools / SandboxWorkspace</b><br/>Tool validation, files, VM lifetime]
-        Jobs[<b>SessionOptimizer</b><br/>Independent jobs and result wake-ups]
-        Events[<b>SessionEventBroker</b><br/>Replay background SSE]
-
-        Routes --> Store --> Session
-        Routes --> Queue --> Session
-        Session -->|Fresh workspace per run| Workspace
-        Session --> Agent --> Loop
-        Routes -->|Admit queued steering| Agent
-        Loop -->|Execute AgentTool| Workspace
-        Workspace -->|Optimizer tool| Jobs
-        Jobs -.->|Queue fresh result review| Queue
-        Session --> Events
-        Jobs --> Events
-        Events -->|Session SSE| Routes
-    end
-
+    Routes[<b>API routes</b><br/>Auth and streams]
+    Session[<b>AgentSession</b><br/>Prepare, execute,<br/>finalize run]
+    Agent[<b>Agent</b><br/>Streaming state,<br/>tool IDs, steering]
+    Loop[<b>agent_loop</b><br/>Model responses<br/>and tool batches]
     Provider[<b>Model provider</b>]
+    Workspace[<b>WorkspaceTools /<br/>SandboxWorkspace</b><br/>Validation, files,<br/>VM lifetime]
     E2B[<b>E2B sandbox</b>]
+    Jobs[<b>SessionOptimizer</b><br/>Independent jobs]
     Optimizer[<b>Optimizer API</b>]
 
     Browser <-->|HTTP and SSE| Routes
-    Loop <-->|Prompts, calls, results| Provider
-    Workspace <-->|Lazy hydration, tools, cleanup| E2B
+    Routes --> Session --> Agent --> Loop
+    Loop <-->|Prompts, calls,<br/>results| Provider
+    Session -->|Fresh workspace<br/>per run| Workspace
+    Loop -->|Execute AgentTool| Workspace
+    Workspace <-->|Hydrate, tools, cleanup| E2B
+    Workspace -->|Optimizer tool| Jobs
     Jobs <-->|Job lifecycle| Optimizer
+
+```
+
+</div>
+
+Session ownership, admission, and background event delivery connect these
+components as follows.
+
+<div class="ai-diagram" markdown="1" tabindex="0">
+
+```mermaid
+flowchart TB
+    Routes[<b>API routes</b>]
+    Store[<b>SessionStore</b><br/>Ownership,<br/>retention,<br/>memory limits]
+    Queue[<b>SessionRuns</b><br/>FIFO admission<br/>and Stop]
+    Session[<b>AgentSession</b><br/>Transcript, YAML,<br/>proposals]
+    Agent[<b>Agent</b><br/>Steering queue]
+    Jobs[<b>SessionOptimizer</b><br/>Result wake-ups]
+    Events[<b>SessionEventBroker</b><br/>Replay background SSE]
+
+    Routes --> Store --> Session
+    Routes --> Queue --> Session
+    Routes -->|Queue steering| Agent
+    Jobs -.->|Queue result<br/>review| Queue
+    Session --> Events
+    Jobs --> Events
+    Events -->|Session SSE| Routes
+
 ```
 
 </div>
@@ -244,18 +259,27 @@ The investigated alternatives below were not adopted:
 
 ```mermaid
 flowchart TB
-    Start[<b>Browser message or optimizer follow-up</b>] --> Admit[<b>Admit run</b><br/>Reserve schedule, transcript, version]
+    Start[<b>Browser message or<br/>optimizer follow-up</b>] --> Admit[<b>Admit run</b><br/>Reserve schedule,<br/>transcript, version]
     Admit --> Step{<b>Model step</b>}
-    Step -->|Text or reasoning| Text[Stream delta or reasoning] --> Step
-    Step -->|Workspace tool| Tool[Run E2B tool<br/>Return result, working-copy preview if valid] --> Step
-    Step -->|Optimizer tool| Job[Start, inspect, or finish job<br/>Return tool result] --> Step
-    Step -->|Final answer| Cleanup[Read final YAML if used<br/>Cleanup sandbox]
-    Stop[<b>Stop or disconnect</b><br/>Cancels the run at any point] --> Cleanup
-    Cleanup --> Check{Conversation version and outcome}
-    Check -->|Current| Done[Save answer and any proposal<br/>SSE done]
-    Check -->|Stopped| Stopped[Save prompt and aborted answer if current<br/>SSE stopped]
-    Check -->|Changed| Stale[SSE stale<br/>Discard result]
-    Check -->|Failure| Error[SSE error<br/>Discard result]
+    Step -->|Text or reasoning| Text[Stream text<br/>or reasoning] --> Step
+    Step -->|Workspace tool| Tool[Run E2B tool<br/>Return result and preview<br/>when validation passes] --> Step
+    Step -->|Optimizer tool| Job[Start, inspect,<br/>or finish job<br/>Return tool result] --> Step
+```
+
+</div>
+
+<div class="ai-diagram" markdown="1" tabindex="0">
+
+```mermaid
+flowchart TB
+    Answer[<b>Final answer</b>] --> Cleanup
+    Stop[<b>Stop or disconnect</b><br/>Cancels the run] --> Cleanup
+    Cleanup[<b>Finalize run</b><br/>Read final YAML if used<br/>Clean up sandbox]
+    Cleanup --> Check{<b>Version and outcome</b>}
+    Check -->|Current,<br/>successful| Done[Save answer<br/>and proposal<br/>SSE done]
+    Check -->|Stopped| Stopped[Save prompt and<br/>aborted answer<br/>if current<br/>SSE stopped]
+    Check -->|Changed| Stale[Discard result<br/>SSE stale]
+    Check -->|Failure| Error[Discard result<br/>SSE error]
 
 ```
 
@@ -287,6 +311,16 @@ marks unfinished tool calls interrupted.
 <div class="ai-diagram" markdown="1" tabindex="0">
 
 ```mermaid
+---
+config:
+  sequence:
+    actorMargin: 12
+    width: 140
+    diagramMarginX: 4
+    diagramMarginY: 8
+    wrap: false
+    wrapPadding: 4
+---
 sequenceDiagram
     participant Browser
     participant AI as AgentSession
@@ -294,14 +328,14 @@ sequenceDiagram
     participant Model as Model provider
 
     Browser->>AI: POST /messages
-    AI->>Agent: Summary, transcript context, question
+    AI->>Agent: Summary, transcript<br/>context, question
     Agent->>Model: Stream response
     loop Text or reasoning chunks
         Model-->>Agent: TextDelta or ReasoningDelta
         Agent-->>AI: Text or reasoning
         AI-->>Browser: SSE delta or reasoning
     end
-    Model-->>Agent: Response ends without tool calls
+    Model-->>Agent: Response ends<br/>without tool calls
     Note over Agent: No E2B sandbox created
     Agent-->>AI: Answer complete
     alt Conversation version current
@@ -319,87 +353,159 @@ session transcript or sent back to the provider on later runs.
 
 ### Workspace and model tools
 
-<div class="ai-diagram ai-diagram--wide" markdown="1" tabindex="0">
+#### Workspace execution
+
+<div class="ai-diagram" markdown="1" tabindex="0">
 
 ```mermaid
+---
+config:
+  sequence:
+    actorMargin: 12
+    width: 140
+    diagramMarginX: 4
+    diagramMarginY: 8
+    wrap: false
+    wrapPadding: 4
+---
 sequenceDiagram
-    participant Browser
-    participant Session as AgentSession
     participant Agent
-    participant Workspace as WorkspaceTools / SandboxWorkspace
+    participant Workspace as Workspace tools
     participant E2B as E2B sandbox
 
-    Note over Session,Agent: One admitted run can contain multiple model/tool turns
+    Note over Workspace: WorkspaceTools /<br/>SandboxWorkspace
     loop Model chooses a workspace tool batch
         Agent->>Workspace: Open activity batch
-        opt First batch that needs workspace files
-            Workspace->>E2B: Create VM and hydrate schedule, references, attachments, prior proposal, optimizer workbook if any
+        opt First batch<br/>needing files
+            Workspace->>E2B: Create VM
+            Workspace->>E2B: Hydrate schedule, references,<br/>attachments, prior proposal,<br/>optimizer workbook if any
         end
         opt Sandbox paused
             Workspace->>E2B: Resume
         end
-        Note over Agent,E2B: All-read batch may overlap, mixed or mutating calls execute in order
-        Agent-->>Session: ToolExecutionStart with call ID
-        Session-->>Browser: SSE tool_start
+        Note over Agent,E2B: All-read calls may overlap.<br/>Mixed or mutating calls run in order.
         Agent->>Workspace: Execute tool, await result
         Workspace->>E2B: Read, bash, edit, or write
         E2B-->>Workspace: Tool output
         opt Non-read workspace tool
             Workspace->>E2B: Read working YAML
             E2B-->>Workspace: Contents or missing file
-            Workspace->>Workspace: If changed or missing, validate and attach model feedback
+            opt YAML changed<br/>or missing
+                Workspace->>Workspace: Validate and attach<br/>model feedback
+            end
         end
-        Workspace-->>Agent: AgentToolResult with output, status, image and preview details if present
-        Agent-->>Session: ToolExecutionEnd with matching call ID
-        Session-->>Browser: SSE tool
-        opt Changed working copy passes validation
-            Session-->>Browser: SSE schedule_change immediately after tool result
-        end
+        Workspace-->>Agent: AgentToolResult:<br/>output, status, optional<br/>image and preview details
         Agent->>Workspace: Close activity batch
         opt Idle gap
             Workspace->>E2B: Pause
         end
-        Note over Agent: Consume steering at boundary, continue model with ordered tool results
     end
-    opt Model completes normally after workspace use
-        Session->>Workspace: Read and review final candidate
+
+```
+
+</div>
+
+#### Tool events and model continuation
+
+This sequence shows the events around the same tool executions above.
+
+<div class="ai-diagram" markdown="1" tabindex="0">
+
+```mermaid
+---
+config:
+  sequence:
+    actorMargin: 12
+    width: 140
+    diagramMarginX: 4
+    diagramMarginY: 8
+    wrap: false
+    wrapPadding: 4
+---
+sequenceDiagram
+    participant Browser
+    participant Session as AgentSession
+    participant Agent
+
+    Note over Session,Agent: One run may contain<br/>multiple model/tool turns
+    loop Model chooses a workspace tool batch
+        Agent-->>Session: ToolExecutionStart<br/>with call ID
+        Session-->>Browser: SSE tool_start
+        Note over Agent: Await workspace tool execution
+        Agent-->>Session: ToolExecutionEnd<br/>with matching call ID
+        Session-->>Browser: SSE tool
+        opt Changed working copy passes validation
+            Session-->>Browser: SSE schedule_change<br/>immediately after tool result
+        end
+        Note over Agent: After the batch, consume steering.<br/>Continue the model with ordered tool results.
+    end
+
+```
+
+</div>
+
+#### Final review and cleanup
+
+<div class="ai-diagram" markdown="1" tabindex="0">
+
+```mermaid
+---
+config:
+  sequence:
+    actorMargin: 12
+    width: 140
+    diagramMarginX: 4
+    diagramMarginY: 8
+    wrap: false
+    wrapPadding: 4
+---
+sequenceDiagram
+    participant Browser
+    participant Session as AgentSession
+    participant Workspace as Workspace
+    participant E2B as E2B sandbox
+
+    Note over Workspace: WorkspaceTools /<br/>SandboxWorkspace
+    opt Model completes normally<br/>after workspace use
+        Session->>Workspace: Review final candidate
         opt Sandbox paused
             Workspace->>E2B: Resume
         end
         Workspace->>E2B: Read final YAML
         E2B-->>Workspace: Candidate or read error
-        Workspace->>Workspace: Validate and diff against run snapshot
-        Workspace-->>Session: Provisional proposal, unchanged, or validation failure
+        Workspace->>Workspace: Validate and diff<br/>against run snapshot
+        Workspace-->>Session: Proposal, unchanged,<br/>or validation failure
     end
-    opt VM was created, on every exit path
+    opt VM created,<br/>on every exit path
         Session->>Workspace: Await cleanup
         Workspace->>E2B: Destroy
         E2B-->>Workspace: Deletion outcome
     end
-    alt Successful cleanup and current snapshot
-        Session->>Session: Save answer and any proposal
+    alt Cleanup succeeds<br/>and snapshot current
+        Session->>Session: Save answer and<br/>any proposal
         opt Proposal exists
             Session-->>Browser: SSE proposal
         end
         Session-->>Browser: SSE done
-    else Invalid candidate or cleanup error
-        Session-->>Browser: SSE error, discard run
+    else Invalid candidate<br/>or cleanup error
+        Session-->>Browser: SSE error,<br/>discard run
     else Snapshot changed
-        Session-->>Browser: SSE stale, discard run
+        Session-->>Browser: SSE stale,<br/>discard run
     else Cancelled before commit
-        Note over Session: Keep prompt and aborted partial answer if current
-        Session-->>Browser: SSE stopped after cleanup
+        Note over Session: Keep prompt and aborted<br/>partial answer if current
+        Session-->>Browser: SSE stopped<br/>after cleanup
     end
     opt Deletion unconfirmed
-        Workspace->>E2B: Background reaper retries later
+        Workspace->>E2B: Background reaper<br/>retries later
     end
+
 ```
 
 </div>
 
 The model waits for each tool batch. The reaper runs later. Approving or
 rejecting a pending proposal happens after the run and is drawn in the
-Schedule Proposals flowchart below.
+Schedule Proposals diagrams below.
 
 The model can use `read`, `bash`, `edit`, and `write`. `read` handles text and
 supported images. Workspace helpers inspect XLSX and PDF files. Tool output,
@@ -435,98 +541,163 @@ complete service outage.
 
 ## Optimizer Jobs and Events
 
-<div class="ai-diagram ai-diagram--wide" markdown="1" tabindex="0">
+### Start and submission
+
+<div class="ai-diagram" markdown="1" tabindex="0">
 
 ```mermaid
+---
+config:
+  sequence:
+    actorMargin: 12
+    width: 140
+    diagramMarginX: 4
+    diagramMarginY: 8
+    wrap: false
+    wrapPadding: 4
+---
 sequenceDiagram
-    participant Browser
-    participant Agent as Agent / workspace tools
+    participant Agent as Agent / tools
     participant E2B as E2B sandbox
     participant Jobs as SessionOptimizer
     participant API as Optimizer API
-    participant Runs as SessionRuns / AgentSession
 
-    Note over Agent,Jobs: Model requests an optimizer tool within an admitted run
+    Note over Agent,Jobs: Model requests start within an admitted run
     Agent->>Agent: Open tool batch
-    opt Starting a job needs a workspace
-        Agent->>E2B: Create and hydrate workspace
+    opt Workspace needed
+        Agent->>E2B: Create and hydrate
     end
     opt Sandbox paused
-        Agent->>E2B: Resume workspace
+        Agent->>E2B: Resume
     end
-    alt start
-        Agent->>E2B: Read working schedule.yaml
-        E2B-->>Agent: Working YAML or read error
-        opt YAML readable
-            Agent->>Agent: Review candidate against run schedule
-        end
-        alt Read or review fails
-            Agent-->>Browser: Foreground SSE tool error, no job
-        else Working YAML passes review
-            Agent->>Jobs: start(current working YAML)
-            Jobs->>Jobs: Check run limits, validate, anonymize IDs, remove descriptions
-            alt Validation or run limit fails
-                Jobs-->>Agent: Tool error, no job
-                Agent-->>Browser: Foreground SSE tool error
-            else Prepared schedule accepted
-                Jobs->>API: Submit schedule
-                alt Submission rejected
-                    API-->>Jobs: Error, no job
-                    Jobs-->>Agent: Tool error
-                    Agent-->>Browser: Foreground SSE tool error
-                else Run cancelled before job ID returns
-                    API-->>Jobs: Late job ID
-                    Jobs->>API: Cancel if running, then delete when terminal
-                else Job ID returned to owned run
-                    API-->>Jobs: Job ID
-                    Jobs->>Jobs: Start independent monitor and progress relay
-                    opt Job not already terminal
-                        Jobs-->>Browser: Session SSE optimization state
-                    end
-                    Jobs-->>Agent: Tool result with session job ID
-                    Agent-->>Browser: Foreground SSE tool, answer may continue
-                    par Progress relay
-                        Jobs->>API: Open progress stream
-                        API-->>Jobs: Progress events
-                        Jobs-->>Browser: Session SSE optimization_progress
-                    and Status monitor
-                        loop Until completed, failed, or cancelled
-                            Jobs->>API: Poll job status
-                            API-->>Jobs: Current state
-                        end
-                    end
-                    opt Completed job
-                        Jobs->>API: Download result workbook
-                        API-->>Jobs: XLSX or download error
-                        Jobs->>Jobs: Restore person IDs and retain if possible
-                    end
-                    Jobs->>API: Delete remote job
-                    opt Session still owns job
-                        Jobs-->>Browser: Session SSE optimization state
-                        Jobs->>Runs: Queue result review behind active run
-                        Runs-->>Browser: Session SSE run_start when admitted
-                        Runs->>Agent: Start review run with result JSON and retained XLSX if any
-                        Agent-->>Browser: Session SSE answer and terminal event
-                    end
+    Agent->>E2B: Read working schedule.yaml
+    E2B-->>Agent: YAML or read error
+    opt YAML readable
+        Agent->>Agent: Review against<br/>run schedule
+    end
+    alt Read or review fails
+        Note right of Agent: Foreground SSE tool error,<br/>no job
+    else YAML passes review
+        Agent->>Jobs: start(working YAML)
+        Jobs->>Jobs: Check run limits, validate,<br/>anonymize IDs,<br/>remove descriptions
+        alt Validation or run limit fails
+            Jobs-->>Agent: Tool error, no job
+            Note right of Agent: Foreground SSE tool error
+        else Prepared schedule accepted
+            Jobs->>API: Submit schedule
+            alt Submission rejected
+                API-->>Jobs: Error, no job
+                Jobs-->>Agent: Tool error
+                Note right of Agent: Foreground SSE tool error
+            else Run cancelled before ID returns
+                API-->>Jobs: Late job ID
+                Jobs->>API: Cancel if running,<br/>delete when terminal
+            else ID returned to owned run
+                API-->>Jobs: Job ID
+                Jobs->>Jobs: Start independent monitor<br/>and progress relay
+                opt Job not<br/>already terminal
+                    Note right of Jobs: Browser receives session<br/>SSE optimization state
                 end
+                Jobs-->>Agent: Tool result with<br/>session job ID
+                Note right of Agent: Browser receives foreground<br/>SSE tool. Answer may continue.
             end
         end
-    else status
-        Agent->>Jobs: Read latest local job status
+    end
+
+```
+
+</div>
+
+### Background monitoring and result review
+
+<div class="ai-diagram" markdown="1" tabindex="0">
+
+```mermaid
+---
+config:
+  sequence:
+    actorMargin: 12
+    width: 140
+    diagramMarginX: 4
+    diagramMarginY: 8
+    wrap: false
+    wrapPadding: 4
+---
+sequenceDiagram
+    participant Browser
+    participant Jobs as SessionOptimizer
+    participant API as Optimizer API
+    participant Runs as Session runs
+
+    Note over Runs: SessionRuns /<br/>AgentSession
+    Note over Browser,Runs: Independent background task<br/>after a job ID is returned
+    par Progress relay
+        Jobs->>API: Open progress stream
+        API-->>Jobs: Progress events
+        Jobs-->>Browser: Session SSE<br/>optimization_progress
+    and Status monitor
+        loop Until completed, failed, or cancelled
+            Jobs->>API: Poll status
+            API-->>Jobs: Current state
+        end
+    end
+    opt Completed job
+        Jobs->>API: Download workbook
+        API-->>Jobs: XLSX or download error
+        Jobs->>Jobs: Restore person IDs,<br/>retain if possible
+    end
+    Jobs->>API: Delete remote job
+    opt Session still owns job
+        Jobs-->>Browser: Session SSE<br/>optimization state
+        Jobs->>Runs: Queue result review<br/>behind active run
+        Runs-->>Browser: Session SSE run_start<br/>when admitted
+        Runs->>Runs: Run Agent with result JSON<br/>and retained XLSX if any
+        Runs-->>Browser: Session SSE answer<br/>and terminal event
+    end
+
+```
+
+</div>
+
+### Status and finish-now tools
+
+<div class="ai-diagram" markdown="1" tabindex="0">
+
+```mermaid
+---
+config:
+  sequence:
+    actorMargin: 12
+    width: 140
+    diagramMarginX: 4
+    diagramMarginY: 8
+    wrap: false
+    wrapPadding: 4
+---
+sequenceDiagram
+    participant Browser
+    participant Agent as Agent / tools
+    participant Jobs as SessionOptimizer
+    participant API as Optimizer API
+
+    Note over Browser,API: Service-held job state.<br/>No E2B VM for a batch using only these tools.
+    alt status
+        Agent->>Jobs: Read latest local status
         Jobs-->>Agent: Tool result
         Agent-->>Browser: Foreground SSE tool
     else finish_now
-        Agent->>Jobs: Request best available result for latest job
+        Agent->>Jobs: Request best available<br/>result for latest job
         opt Job still running
             Jobs->>API: finish_now
-            API-->>Jobs: Current job state or error
+            API-->>Jobs: State or error
             opt Accepted and still running
-                Jobs-->>Browser: Session SSE optimization state
+                Jobs-->>Browser: Session SSE<br/>optimization state
             end
         end
         Jobs-->>Agent: Tool result
         Agent-->>Browser: Foreground SSE tool
     end
+
 ```
 
 </div>
@@ -573,23 +744,38 @@ uncertain response.
 
 ## Schedule Proposals
 
+### Create a proposal
+
 <div class="ai-diagram" markdown="1" tabindex="0">
 
 ```mermaid
 flowchart TB
-    Working[<b>Final sandbox YAML</b><br/>Untrusted working copy] --> Review[<b>Server review</b><br/>Parse, validate, diff against base]
+    Working[<b>Final sandbox YAML</b><br/>Untrusted working copy] --> Review[<b>Server review</b><br/>Parse, validate,<br/>diff against base]
     Review -->|Unchanged| Answer[<b>Answer only</b><br/>No proposal]
-    Review -->|Unreadable or new issues| Fail[<b>Run error</b><br/>No proposal saved]
-    Review -->|Changed, no new issues| Current{<b>Run version current?</b>}
+    Review -->|Unreadable or<br/>new issues| Fail[<b>Run error</b><br/>No proposal saved]
+    Review -->|Changed,<br/>no new issues| Current{<b>Run version current?</b>}
     Current -->|No| Stale[<b>Stale run</b><br/>Discard result]
     Current -->|Yes, after cleanup| Pending[<b>Pending proposal</b><br/>Browser receives diff only]
+
+```
+
+</div>
+
+### Approve or discard a proposal
+
+<div class="ai-diagram" markdown="1" tabindex="0">
+
+```mermaid
+flowchart TB
+    Pending[<b>Pending proposal</b>]
     Pending -->|Reject or schedule update| Discard[<b>Discard proposal</b><br/>Canonical YAML unchanged]
     Pending -->|Approve with base SHA-256| Revision{<b>Base revision matches?</b>}
     Revision -->|No, HTTP 409| Discard
-    Revision -->|Yes| Recheck[<b>Revalidate candidate</b><br/>Compare new issues with base]
+    Revision -->|Yes| Recheck[<b>Revalidate candidate</b><br/>Compare new issues<br/>with base]
     Recheck -->|New issues, HTTP 409| Discard
     Recheck -->|No new issues| Adopt[<b>Adopt in session</b><br/>Return YAML to browser]
     Adopt --> Import[<b>Browser import</b><br/>One undo step]
+
 ```
 
 </div>
