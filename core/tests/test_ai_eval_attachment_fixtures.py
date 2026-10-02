@@ -102,7 +102,7 @@ def test_yaml_generator_fixture_can_be_repaired_without_installation(tmp_path: P
 
     attachment = load_attachment_fixtures(["pyyaml-generator"])[0]
     output = tmp_path / "schedule.yaml"
-    script = attachment.data.decode().replace("/workspace/schedule.yaml", str(output))
+    script = attachment.data.decode("utf-8").replace('"/workspace/schedule.yaml"', repr(str(output)))
     generator = tmp_path / "generate_schedule.py"
     generator.write_text(script)
     monkeypatch.setitem(sys.modules, "yaml", None)
@@ -170,3 +170,19 @@ def test_generator_bytes_are_bound_to_evidence_fingerprint(monkeypatch):
         attachment_fixtures._FIXTURES, "pyyaml-generator", (filename, media_type, lambda: content + b"# Changed\n")
     )
     assert case_digest(case) != original
+
+
+@pytest.mark.parametrize("name", ["pyyaml-generator", "timeout-checkpoint"])
+def test_text_attachment_fixtures_normalize_checkout_line_endings(name, tmp_path: Path, monkeypatch):
+    from .ai_eval import attachment_fixtures
+
+    original = load_attachment_fixtures([name])[0]
+    case = next(case for case in load_cases(CASES) if name in case.attachments)
+    original_digest = case_digest(case)
+    fixtures = tmp_path / "fixtures"
+    fixtures.mkdir()
+    (fixtures / f"{name}.txt").write_bytes(original.data.replace(b"\n", b"\r\n"))
+    monkeypatch.setattr(attachment_fixtures, "__file__", str(tmp_path / "attachment_fixtures.py"))
+
+    assert load_attachment_fixtures([name])[0] == original
+    assert case_digest(case) == original_digest

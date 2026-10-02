@@ -273,12 +273,12 @@ _FIXTURES: dict[str, tuple[str, str, Callable[[], bytes]]] = {
     "timeout-checkpoint": (
         "timeout-checkpoint.txt",
         "text/plain",
-        lambda: (Path(__file__).with_name("fixtures") / "timeout-checkpoint.txt").read_bytes(),
+        lambda: (Path(__file__).with_name("fixtures") / "timeout-checkpoint.txt").read_text(encoding="utf-8").encode(),
     ),
     "pyyaml-generator": (
         "generate_schedule.txt",
         "text/plain",
-        lambda: (Path(__file__).with_name("fixtures") / "pyyaml-generator.txt").read_bytes(),
+        lambda: (Path(__file__).with_name("fixtures") / "pyyaml-generator.txt").read_text(encoding="utf-8").encode(),
     ),
     "instruction-note": (
         "handover-note.txt",

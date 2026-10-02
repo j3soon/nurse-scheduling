@@ -1386,7 +1386,7 @@ def test_prompt_comparison_cli_writes_first_class_metrics_without_a_cost_target(
     case = statistics["cases"]["ask-people-count"]
     assert case["before"]["pass_rate"] == case["after"]["pass_rate"] == 1
     assert case["metrics"]["completion_tokens"]["delta"]["mean"] == -80
-    assert "-80.0 ± 88.9" in (output / "comparison.md").read_text()
+    assert "-80.0 ± 88.9" in (output / "comparison.md").read_text(encoding="utf-8")
 
 
 def test_run_all_injects_each_prompt_variant_into_every_repetition():
