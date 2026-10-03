@@ -411,17 +411,17 @@
             "case": "result-grouped-cross-month",
             "before": "3/3",
             "after": "3/3",
-            "input_sha256": "59cc38473ecd859e3b5f6de92acf841afe87a297edcd6b93a73b160ace57eeeb"
+            "input_sha256": "d78d041b0afd3744ddc4b9792c2f1a2519fd13a73a48446d0c1bdb9a60ea302b"
           },
           {
             "case": "result-stale-summary-control",
             "before": "0/3",
             "after": "3/3",
-            "input_sha256": "20975ee80af836a692379167291619458ec360cfe8c7e9f81354e9820474ab2b"
+            "input_sha256": "f135e39ecaa30673242092fabda2739345f3677a0a0710e84354a152f725d2fe"
           }
         ],
         "note": "Adjacent prefix comparison after consolidating XLSX inspection. Single-tier counts provide the cost witness and stale-summary answers improve from 0/3 to 3/3. Zero-target output remains unreliable at 2/3 in each arm and is not a passing control. Full attempts remain in ignored artifacts.",
-        "input_sha256": "d1577c7ac7715a361a9e49a842f200cf9d56fa7c7ab6945ca1cc111a3f7ce039"
+        "input_sha256": "019086d4b2be8e81b68efb4ed0cfbafd55c5e3d4c739dacd5c0100d76b601614"
       }
     ],
     "comparison_mode": "ablation"
@@ -524,7 +524,7 @@
     "evidence": [
       {
         "case": "request-tier-counts-large",
-        "input_sha256": "5953291990d96eaae46620d52e73c1e436b1515ce4b8048127da45ea23eee3d3",
+        "input_sha256": "a2bb937d1c2c8617347b398a5f54b405d4bd6ebfe54df280d8ced1996f76c864",
         "before": "3/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
@@ -535,18 +535,18 @@
         "controls": [
           {
             "case": "request-filtered-cross-month",
-            "input_sha256": "b8cf8b43eecab07cc101a1d189a0a83769d5d8ca99bcec3f940947fa8255a1e5",
+            "input_sha256": "9607b019ed0c7ca59baa0dfd07af152d0fd911b8fb8ae2e3a0a950f3a4a6e8c7",
             "before": "0/3",
             "after": "3/3"
           },
           {
             "case": "request-bans-counts-large",
-            "input_sha256": "24721e9e370c297c9fff2316ac73484777c048d4d832fadcd9f1a721607507ab",
+            "input_sha256": "a84f7c34c584f28fe05ac18af63313ef8a9d40a89183797518be6ba6086d5184",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Canonical current selectors, counts-only default, source freshness guard. Prior diagnostic and infrastructure-invalid rounds remain in ignored artifacts. Ban-count cost improvement is not confirmed. Cell-mode equivalence confirmed after helper consolidation. These counts retain the original comparison context."
+        "note": "Canonical current selectors, counts-only default, source freshness guard. Prior diagnostic and infrastructure-invalid rounds remain in ignored artifacts. Ban-count cost improvement is not confirmed."
       }
     ]
   },
@@ -563,7 +563,7 @@
     "evidence": [
       {
         "case": "request-bans-counts-large",
-        "input_sha256": "7603d4fea463dc04faa7972c6a51450d4f8e7411e565cab429724615476c6cb5",
+        "input_sha256": "ac2c8ead4d14b39340622d8835d3c00e568e6498066915d049918dfbf1cc051f",
         "before": "5/5",
         "after": "5/5",
         "model": "unsloth/Qwen3.8-27B-NVFP4",

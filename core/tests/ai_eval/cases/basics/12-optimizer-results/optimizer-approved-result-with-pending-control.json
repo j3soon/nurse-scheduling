@@ -1,0 +1,75 @@
+{
+  "id": "optimizer-approved-result-with-pending-control",
+  "fixture": "request-audit",
+  "question": "Change Alex's OFF request for 2026-05-03 from weight 11000000 to 11000000000 and leave that proposal pending.",
+  "expect_proposal": true,
+  "changes": [
+    "preferences"
+  ],
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "removed": [
+        {
+          "type": "shift request",
+          "person": [
+            "Alex"
+          ],
+          "date": [
+            "03"
+          ],
+          "shiftType": [
+            "OFF"
+          ],
+          "weight": 11000000
+        }
+      ],
+      "added": [
+        {
+          "type": "shift request",
+          "person": [
+            "Alex"
+          ],
+          "date": [
+            "03"
+          ],
+          "shiftType": [
+            "OFF"
+          ],
+          "weight": 11000000000
+        }
+      ]
+    }
+  ],
+  "semantic_check": "",
+  "tool_usage": {
+    "required_calls": [
+      {
+        "name": "optimizer",
+        "arguments": {
+          "action": "start",
+          "timeout_seconds": 60
+        }
+      }
+    ],
+    "max_per_tool": {
+      "optimizer": 1
+    }
+  },
+  "tags": [
+    "optimizer-result",
+    "control",
+    "optimizer-snapshot"
+  ],
+  "note": "This testcase is mostly AI generated. A pending proposal exists but this job deliberately uses approved YAML. Runtime completion fixture verification rejects optimizing the modified source.",
+  "optimizer_completion": "request-audit",
+  "proposal_turn": 1,
+  "answer_json": {
+    "alexMay03": "D",
+    "strongUnmet": 1
+  },
+  "user_turns": [
+    "Change Alex's OFF request for 2026-05-03 from weight 11000000 to 11000000000 and leave that proposal pending.",
+    "Keep the proposal pending. Optimize the currently approved YAML for 60 seconds. After it finishes, return only JSON with alexMay03 (actual assigned shift) and strongUnmet (an integer count of unmet person/date targets at weight 11000000000 in the submitted input)."
+  ]
+}

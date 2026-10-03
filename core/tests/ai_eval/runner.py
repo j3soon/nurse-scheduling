@@ -89,7 +89,7 @@ from .grading import (
     semantic_trajectory_failures,
     tool_limit_failures,
 )
-from .optimizer_fixtures import completion_result
+from .optimizer_fixtures import RESULT_SOURCES, completion_result
 from .prompt_ladder import case_digest, load_prompt_steps, prompt_at_step
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -1131,7 +1131,11 @@ async def run_all(
     # Fixture solving and exporting are setup, outside timed model attempts.
     for case in cases:
         if case.optimizer_completion:
-            await asyncio.to_thread(completion_result, case.optimizer_completion, fixture_text(case.fixture))
+            await asyncio.to_thread(
+                completion_result,
+                case.optimizer_completion,
+                RESULT_SOURCES[case.optimizer_completion].read_text(encoding="utf-8"),
+            )
 
     concurrency_limit = asyncio.Semaphore(jobs)
     completed = 0

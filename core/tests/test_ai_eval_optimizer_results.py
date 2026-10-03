@@ -218,3 +218,87 @@ def test_optimizer_only_input_must_preserve_original_policy(alter_source):
         ),
     )
     assert result.passed == (not alter_source)
+
+
+def test_pending_completion_uses_the_modified_input_snapshot():
+    from .ai_eval.optimizer_fixtures import RESULT_SOURCES
+
+    approved = FIXTURE.read_text()
+    pending = RESULT_SOURCES["request-audit-pending"].read_text()
+    _, approved_result = completion_result("request-audit", approved)
+    _, pending_result = completion_result("request-audit-pending", pending)
+    assert approved_result["source_sha256"] != pending_result["source_sha256"]
+    for result, expected in [(approved_result, 1), (pending_result, 2)]:
+        tier = next(row for row in result["request_audit"]["summary"] if row["weight"] == 11000000000)
+        assert tier["unmet"] == expected
+    with pytest.raises(ValueError, match="differs from the controlled"):
+        completion_result("request-audit-pending", approved)
+    with pytest.raises(ValueError, match="differs from the controlled"):
+        completion_result("request-audit", pending)
+
+
+def test_multi_turn_completion_prewarms_the_expected_snapshot():
+    from .ai_eval.optimizer_fixtures import RESULT_SOURCES
+    from .ai_eval.runner import run_all
+
+    case = CASE_BY_ID["optimizer-result-from-pending-proposal"]
+    pending = RESULT_SOURCES[case.optimizer_completion].read_text()
+    provider = ScriptedProvider(
+        [ToolCallRequest((ToolCall("write", "write", json.dumps({"path": WORKSPACE_SCHEDULE, "content": pending})),))],
+        [ToolCallRequest((ToolCall("start", "optimizer", '{"action":"start","timeout_seconds":60}'),))],
+        [TextDelta("Running with the proposed input.")],
+        [TextDelta(json.dumps(case.answer_json))],
+    )
+    runs = asyncio.run(run_all([case], settings(), provider, 4, _factory()))
+    assert len(runs) == 1 and runs[0].passed, runs[0].failures
+
+
+@pytest.mark.parametrize("review_changes_workspace", [False, True])
+def test_pending_result_review_must_not_create_another_proposal(review_changes_workspace):
+    from nurse_scheduling.loader import _load_yaml
+
+    from .ai_eval.optimizer_fixtures import RESULT_SOURCES
+
+    case = CASE_BY_ID["optimizer-result-from-pending-proposal"]
+    pending = RESULT_SOURCES[case.optimizer_completion].read_text()
+    result = grade(
+        case,
+        RunOutcome(
+            answer=json.dumps(case.answer_json),
+            initial=_load_yaml(FIXTURE.read_bytes()),
+            proposed=_load_yaml(pending.encode()),
+            proposal_turns=[True, review_changes_workspace],
+            activity=[
+                {"kind": "optimizer", "turn": 2},
+                {"kind": "optimizer_input", "schedule_yaml": pending},
+                {
+                    "kind": "tool",
+                    "name": "optimizer",
+                    "ok": True,
+                    "arguments": '{"action":"start","timeout_seconds":60}',
+                },
+            ],
+        ),
+    )
+    assert result.passed == (not review_changes_workspace)
+
+
+def test_current_request_fingerprint_ignores_unrelated_result_cli_changes(tmp_path, monkeypatch):
+    from nurse_scheduling.ai import sandbox_agent
+    from nurse_scheduling.ai.attachment_tools import inspect_optimizer_result as reader
+
+    current = CASE_BY_ID["request-tier-counts-large"]
+    completed = CASE_BY_ID["result-assignment-details"]
+    before = case_digest(current), case_digest(completed)
+    key = "/reference/tools/inspect_optimizer_result.py"
+    changed = tmp_path / "inspect_optimizer_result.py"
+    changed.write_text(sandbox_agent.REFERENCE_ATTACHMENT_TOOLS[key].read_text() + "\n# Changed result CLI\n")
+    monkeypatch.setitem(sandbox_agent.REFERENCE_ATTACHMENT_TOOLS, key, changed)
+    assert case_digest(current) == before[0]
+    assert case_digest(completed) != before[1]
+
+    def changed_weight(value):
+        return value
+
+    monkeypatch.setattr(reader, "_weight", changed_weight)
+    assert case_digest(current) != before[0]

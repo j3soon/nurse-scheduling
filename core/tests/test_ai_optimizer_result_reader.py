@@ -26,7 +26,7 @@ import sys
 import pytest
 from openpyxl import load_workbook
 
-from nurse_scheduling.ai.attachment_tools.inspect_optimizer_result import _assigned, inspect_result
+from nurse_scheduling.ai.attachment_tools.inspect_optimizer_result import _assigned, inspect_result, load_context
 from nurse_scheduling.ai.result_context import MAX_REQUEST_AUDIT_BYTES, build_request_audit, build_result_context
 from nurse_scheduling.ai.sandbox_agent import INSPECTION_HELPERS, REFERENCE_ATTACHMENT_TOOLS, inspection_helper_catalog
 
@@ -278,3 +278,59 @@ def test_catalog_only_advertises_real_hydrated_scripts():
     assert len(INSPECTION_HELPERS) == len(REFERENCE_ATTACHMENT_TOOLS)
     for path, source in REFERENCE_ATTACHMENT_TOOLS.items():
         assert source.is_file() and path in catalog
+
+
+def test_default_context_must_match_the_completion_source(tmp_path, monkeypatch):
+    from nurse_scheduling.ai.attachment_tools import inspect_optimizer_result as reader
+
+    approved, pending = tmp_path / "schedule-context.json", tmp_path / "pending-schedule-context.json"
+    approved.write_text(json.dumps({"schema_version": 1, "source_sha256": "approved"}))
+    pending.write_text(json.dumps({"schema_version": 1, "source_sha256": "pending"}))
+    monkeypatch.setattr(reader, "CONTEXT", str(approved))
+    assert load_context("approved")["source_sha256"] == "approved"
+    assert load_context("pending")["source_sha256"] == "pending"
+    with pytest.raises(ValueError, match="No hydrated"):
+        load_context("unknown")
+    approved.write_text("broken JSON")
+    assert load_context("pending")["source_sha256"] == "pending"
+    pending.write_text(json.dumps({"schema_version": 2, "source_sha256": "pending"}))
+    with pytest.raises(ValueError, match="No hydrated"):
+        load_context("pending")
+
+
+@pytest.mark.parametrize("explicit_stale", [False, True])
+def test_result_cli_selects_pending_source_and_respects_explicit_context(tmp_path, monkeypatch, capsys, explicit_stale):
+    from nurse_scheduling.ai.attachment_tools import inspect_optimizer_result as reader
+
+    approved, pending = tmp_path / "schedule-context.json", tmp_path / "pending-schedule-context.json"
+    approved_context = build_result_context(FIXTURE.read_text())
+    pending_source = RESULT_SOURCES["request-audit-pending"].read_text()
+    pending_context = build_result_context(pending_source)
+    approved.write_text(json.dumps(approved_context))
+    pending.write_text(json.dumps(pending_context))
+    workbook, _ = completion_result("request-audit-pending", pending_source)
+    path = tmp_path / "result.xlsx"
+    path.write_bytes(workbook)
+    monkeypatch.setattr(reader, "CONTEXT", str(approved))
+    arguments = [
+        "inspect_optimizer_result.py",
+        str(path),
+        "--source-sha256",
+        pending_context["source_sha256"],
+        "--weight",
+        "11000000000",
+    ]
+    if explicit_stale:
+        arguments += ["--context", str(approved)]
+    monkeypatch.setattr(sys, "argv", arguments)
+    if explicit_stale:
+        with pytest.raises(SystemExit) as error:
+            reader.main()
+        assert error.value.code == 1
+        assert "does not match" in capsys.readouterr().err
+    else:
+        with pytest.raises(ValueError, match="does not match"):
+            inspect_result(path, approved_context, pending_context["source_sha256"])
+        reader.main()
+        result = json.loads(capsys.readouterr().out)
+        assert result["summary"] == [{"weight": 11000000000, "total": 5, "satisfied": 3, "unmet": 2}]

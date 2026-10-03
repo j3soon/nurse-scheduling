@@ -233,12 +233,31 @@ def _weight_arguments(arguments: list[str]) -> list[str]:
     return normalized
 
 
+def load_context(source_sha256: str, path: Path | None = None) -> dict:
+    """Resolve the approved or pending context by source, respecting an explicit path."""
+    if path is not None:
+        return json.loads(path.read_text(encoding="utf-8"))
+    approved = Path(CONTEXT)
+    for candidate in (approved, approved.with_name("pending-schedule-context.json")):
+        try:
+            context = json.loads(candidate.read_text(encoding="utf-8"))
+        except (FileNotFoundError, ValueError):
+            continue
+        if (
+            isinstance(context, dict)
+            and context.get("schema_version") == 1
+            and context.get("source_sha256") == source_sha256
+        ):
+            return context
+    raise ValueError("No hydrated optimizer context matches the completion source")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Audit an optimizer workbook using canonical compiled request selectors."
     )
     parser.add_argument("workbook", nargs="?", type=Path, default=Path(RESULT))
-    parser.add_argument("--context", type=Path, default=Path(CONTEXT))
+    parser.add_argument("--context", type=Path)
     parser.add_argument("--source-sha256", required=True, help="source_sha256 from the optimizer completion")
     parser.add_argument(
         "--weight", action="append", help="numeric request weight, repeatable. Use --weight=-.inf for bans"
@@ -255,7 +274,7 @@ def main() -> None:
     try:
         result = inspect_result(
             args.workbook,
-            json.loads(args.context.read_text()),
+            load_context(args.source_sha256, args.context),
             args.source_sha256,
             args.weight,
             args.max_unmet,
@@ -263,7 +282,7 @@ def main() -> None:
             dates=args.date,
             max_assignments=args.max_assignments,
         )
-    except (ValueError, KeyError) as error:
+    except (ValueError, KeyError, FileNotFoundError) as error:
         parser.exit(1, f"{error}\n")
     print(json.dumps(result, ensure_ascii=False, allow_nan=False))
 

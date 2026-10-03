@@ -66,6 +66,11 @@ the current prompt to confirm the baseline rather than relying on an old trace.
 
 ## Repair the owning layer
 
+First check whether a failing CLI already receives enough information to make
+the correct choice. Repair its defaults or validation before asking the model
+to reconcile state manually. Compare implementations with the same prompt and
+help text to isolate the code change from wording changes.
+
 Use a focused prompt clause for a decision policy or interpretation the model
 needs to learn. Extend an existing segment when it owns that behavior. Keep the
 instruction general enough to handle changed IDs and equivalent structures.

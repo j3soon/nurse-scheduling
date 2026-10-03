@@ -131,16 +131,14 @@ def case_digest(case: EvalCase) -> str:
                 + inspect.getsource(staffing_expression).encode()
             ).hexdigest()
     if "request-inspection" in case.tags:
+        from nurse_scheduling.ai.attachment_tools.inspect_optimizer_result import _weight, _weight_arguments
         from nurse_scheduling.ai.result_context import _project_context
 
         fields["request_context_sha256"] = hashlib.sha256(inspect.getsource(_project_context).encode()).hexdigest()
-        helper_names.update(
-            (
-                "inspect_shift_requests.py",
-                "inspect_optimizer_result.py",
-                "inspect_xlsx.py",
-            )
-        )
+        fields["request_weight_parser_sha256"] = hashlib.sha256(
+            inspect.getsource(_weight).encode() + inspect.getsource(_weight_arguments).encode()
+        ).hexdigest()
+        helper_names.add("inspect_shift_requests.py")
     if not case.semantic_check:
         # An optional oracle must not invalidate receipts for unrelated cases.
         fields.pop("semantic_check")
