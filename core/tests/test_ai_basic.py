@@ -1927,7 +1927,8 @@ def test_sandbox_command_failure_still_streams_the_requested_command() -> None:
     }
 
 
-def test_final_validation_failure_discards_the_turn_without_a_history_note() -> None:
+@pytest.mark.parametrize("invalid_kind", ["yaml", "history-list"])
+def test_final_validation_failure_discards_the_turn_without_a_history_note(invalid_kind) -> None:
     provider = ScriptedToolProvider(
         rename_call(),
         [TextDelta("Provisional invalid answer.")],
@@ -1935,7 +1936,12 @@ def test_final_validation_failure_discards_the_turn_without_a_history_note() -> 
     )
 
     def invalidate(_command: str, _timeout: float | None, backend: FakeSandboxBackend) -> CommandResult:
-        backend.files[WORKSPACE_SCHEDULE] = b"not: [valid"
+        if invalid_kind == "yaml":
+            backend.files[WORKSPACE_SCHEDULE] = b"not: [valid"
+        else:
+            payload = base_schedule_payload()
+            payload["people"]["items"][0]["history"] = "D"
+            backend.files[WORKSPACE_SCHEDULE] = schedule_yaml(payload).encode()
         return CommandResult("updated\n", "", 0)
 
     factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=invalidate))
@@ -1954,7 +1960,9 @@ def test_final_validation_failure_discards_the_turn_without_a_history_note() -> 
     events = parse_sse(failed.text)
     assert [name for name, _ in events] == ["tool_start", "tool", "delta", "error"]
     assert events[1][1]["ok"] is False
-    assert events[-1][1]["message"] == CANDIDATE_VALIDATION_ERROR
+    assert events[-1][1]["message"].startswith(CANDIDATE_VALIDATION_ERROR)
+    assert "schedule.yaml introduces problems" in events[-1][1]["message"]
+    assert ("not readable YAML" if invalid_kind == "yaml" else "people.items[0].history") in events[-1][1]["message"]
 
     recovered = client.post(f"/sessions/{session_id}/messages", json={"message": "Retry"})
 
@@ -2463,3 +2471,76 @@ def test_background_command_timeout_preserves_tool_result_and_reports_the_actual
         assert "Command timed out" in tool.data["result"]
         assert not any(event.type in {"proposal", "done"} for event in events)
         assert len(provider.calls) == 3
+
+
+def test_provider_http_failure_shows_status_and_reference_without_response_body(monkeypatch):
+    from nurse_scheduling.ai import provider as provider_module
+    from nurse_scheduling.ai.provider import OpenAiCompatibleProvider
+
+    real_client = httpx.AsyncClient
+    transport = httpx.MockTransport(lambda _request: httpx.Response(503, text="private provider body secret-token"))
+    monkeypatch.setattr(
+        provider_module.httpx, "AsyncClient", lambda **kwargs: real_client(**{**kwargs, "transport": transport})
+    )
+    settings = make_settings()
+    with AuthenticatedTestClient(
+        create_test_app(settings=settings, provider=OpenAiCompatibleProvider(settings))
+    ) as client:
+        session = create_session(client)
+        response = client.post(f"/sessions/{session}/messages", json={"message": "Review the schedule"})
+        message = parse_sse(response.text)[-1][1]["message"]
+        assert "HTTP 503" in message
+        assert re.search(r"Error ID: [0-9a-f-]{36}", message)
+        assert "private provider body" not in response.text
+        assert "secret-token" not in response.text
+        assert not any(name in {"proposal", "done"} for name, _ in parse_sse(response.text))
+
+
+@pytest.mark.parametrize("failure", ["provider-public", "provider-private", "validation"])
+def test_background_review_reports_safe_reasons_and_keeps_private_errors_hidden(failure):
+    turns = [
+        [ToolCallRequest((ToolCall("start", OPTIMIZER_TOOL, '{"action":"start"}'),))],
+        [TextDelta("Optimization started.")],
+    ]
+    if failure == "validation":
+        turns.extend([rename_call(), [TextDelta("Invalid candidate.")]])
+    elif failure == "provider-public":
+        turns.append(ProviderError.for_user("The AI provider returned HTTP 503."))
+    else:
+        turns.append(ProviderError("private SDK traceback secret-token"))
+    provider = ScriptedToolProvider(*turns)
+    optimizer = BackgroundTestOptimizer()
+
+    def invalidate(_command, _timeout, backend):
+        backend.files[WORKSPACE_SCHEDULE] = b"people: [unclosed"
+        return CommandResult("updated\n", "", 0)
+
+    factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=invalidate))
+    app = create_test_app(
+        settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT, optimizer_poll_interval_seconds=0.001),
+        provider=provider,
+        sandbox_factory=factory,
+        optimizer_backend=optimizer,
+    )
+    with AuthenticatedTestClient(app) as client:
+        session = create_session(client, schedule_yaml())
+        client.post(f"/sessions/{session}/messages", json={"message": "Optimize."})
+        optimizer.release.set()
+        deadline = time.monotonic() + 2
+        events = []
+        while time.monotonic() < deadline:
+            events = app.state.session_event_broker.events_after(session)
+            if any(event.type == "error" for event in events):
+                break
+            time.sleep(0.01)
+        assert events[-1].type == "error"
+        message = events[-1].data["message"]
+        if failure == "validation":
+            assert message.startswith(CANDIDATE_VALIDATION_ERROR)
+            assert "not readable YAML" in message
+        elif failure == "provider-public":
+            assert "HTTP 503" in message
+        else:
+            assert message == PROVIDER_ERROR
+        assert "secret-token" not in message
+        assert not any(event.type in {"proposal", "done"} for event in events)

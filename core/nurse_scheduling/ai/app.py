@@ -1362,9 +1362,9 @@ def create_app(
                 yield _sse_event("done", done)
             except asyncio.CancelledError:
                 raise
-            except ProviderError:
+            except ProviderError as exc:
                 outcome, error_code = "failed", "provider_error"
-                yield _sse_event("error", {"message": PROVIDER_ERROR})
+                yield _sse_event("error", {"message": exc.user_message or PROVIDER_ERROR})
             except SandboxDownloadError as exc:
                 outcome, error_code = "failed", "download_error"
                 yield _sse_event("error", {"message": str(exc)})
@@ -1377,7 +1377,10 @@ def create_app(
             except SandboxCandidateError as exc:
                 outcome, error_code = "failed", "candidate_validation"
                 logger.warning("AI candidate validation failed: %s", exc)
-                yield _sse_event("error", {"message": CANDIDATE_VALIDATION_ERROR})
+                yield _sse_event(
+                    "error",
+                    {"message": CANDIDATE_VALIDATION_ERROR + (f"\n\n{exc.user_message}" if exc.user_message else "")},
+                )
             except SandboxError:
                 outcome, error_code = "failed", "sandbox_error"
                 logger.exception("AI sandbox turn failed")

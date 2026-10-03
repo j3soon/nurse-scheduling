@@ -216,6 +216,15 @@ def tool_result_image_message(call_id: str, image: ToolResultImage) -> ChatMessa
 class ProviderError(RuntimeError):
     """A provider or protocol failure reported to the AI service."""
 
+    def __init__(self, message: str, *, user_message: str | None = None) -> None:
+        super().__init__(message)
+        self.user_message = user_message
+
+    @classmethod
+    def for_user(cls, message: str) -> "ProviderError":
+        """Mark a known explanation safe for the chat, without exposing SDK errors."""
+        return cls(message, user_message=message)
+
 
 def _redact_provider_error(response_body: str, provider_api_key: str) -> str:
     """Redact known credential forms before writing an upstream error to logs."""
@@ -285,7 +294,7 @@ class OpenAiCompatibleProvider:
                 raise
             except httpx.TimeoutException as exc:
                 if stream_started or attempt == self._settings.provider_max_attempts:
-                    raise ProviderError("The AI provider timed out.") from exc
+                    raise ProviderError.for_user("The AI provider timed out.") from exc
                 delay = self._settings.provider_retry_backoff_seconds * (2 ** (attempt - 1))
                 logger.warning(
                     "AI provider timed out before streaming attempt=%s max_attempts=%s retry_in_seconds=%.3f",
@@ -296,7 +305,7 @@ class OpenAiCompatibleProvider:
                 if delay > 0:
                     await asyncio.sleep(delay)
             except httpx.HTTPError as exc:
-                raise ProviderError("The AI provider is unavailable.") from exc
+                raise ProviderError.for_user("The AI provider is unavailable.") from exc
 
     async def _stream_attempt(
         self,
@@ -336,7 +345,9 @@ class OpenAiCompatibleProvider:
                         response.status_code,
                         content_type,
                     )
-                raise ProviderError(f"The AI provider returned HTTP {response.status_code}. Error ID: {error_id}.")
+                raise ProviderError.for_user(
+                    f"The AI provider returned HTTP {response.status_code}. Error ID: {error_id}."
+                )
 
             partial_calls: dict[int, _PartialToolCall] = {}
             text_chars = 0
@@ -364,18 +375,20 @@ class OpenAiCompatibleProvider:
                     delta = choices[0]["delta"]
                     content = delta.get("content")
                 except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
-                    raise ProviderError("The AI provider returned an invalid stream.") from exc
+                    raise ProviderError.for_user("The AI provider returned an invalid stream.") from exc
                 if isinstance(content, str) and content:
                     text_chars += len(content)
                     if text_chars > MAX_RESPONSE_TEXT_CHARS:
-                        raise ProviderError("The AI provider returned more text than one answer may contain.")
+                        raise ProviderError.for_user("The AI provider returned more text than one answer may contain.")
                     yield TextDelta(content)
                 # Providers name this field either way, and llama.cpp uses the first.
                 reasoning = delta.get("reasoning_content") or delta.get("reasoning")
                 if isinstance(reasoning, str) and reasoning:
                     reasoning_chars += len(reasoning)
                     if reasoning_chars > MAX_RESPONSE_REASONING_CHARS:
-                        raise ProviderError("The AI provider returned more reasoning than one answer may contain.")
+                        raise ProviderError.for_user(
+                            "The AI provider returned more reasoning than one answer may contain."
+                        )
                     yield ReasoningDelta(reasoning)
                 _merge_tool_call_fragments(partial_calls, delta.get("tool_calls"))
             if partial_calls:
@@ -385,11 +398,11 @@ class OpenAiCompatibleProvider:
 def _parse_token_usage(raw_usage: object) -> TokenUsage:
     """Parse the standard Chat Completions usage object from its final chunk."""
     if not isinstance(raw_usage, dict):
-        raise ProviderError("The AI provider returned invalid token usage.")
+        raise ProviderError.for_user("The AI provider returned invalid token usage.")
     prompt_details = raw_usage.get("prompt_tokens_details") or {}
     completion_details = raw_usage.get("completion_tokens_details") or {}
     if not isinstance(prompt_details, dict) or not isinstance(completion_details, dict):
-        raise ProviderError("The AI provider returned invalid token usage.")
+        raise ProviderError.for_user("The AI provider returned invalid token usage.")
     return TokenUsage(
         prompt_tokens=_usage_integer(raw_usage, "prompt_tokens"),
         completion_tokens=_usage_integer(raw_usage, "completion_tokens"),
@@ -405,7 +418,7 @@ def _usage_integer(values: dict[str, Any], key: str, *, default: int | None = No
     """Read one non-negative integer from a provider usage object."""
     value = values.get(key, default)
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise ProviderError("The AI provider returned invalid token usage.")
+        raise ProviderError.for_user("The AI provider returned invalid token usage.")
     return value
 
 
@@ -419,7 +432,7 @@ class _PartialToolCall:
 
     def complete(self) -> ToolCall:
         if not self.name:
-            raise ProviderError("The AI provider requested a tool without a name.")
+            raise ProviderError.for_user("The AI provider requested a tool without a name.")
         return ToolCall(id=self.id or str(uuid4()), name=self.name, arguments=self.arguments)
 
 
@@ -429,11 +442,13 @@ def _merge_tool_call_fragments(partial_calls: dict[int, _PartialToolCall], fragm
         return
     for fragment in fragments:
         if not isinstance(fragment, dict):
-            raise ProviderError("The AI provider returned an invalid stream.")
+            raise ProviderError.for_user("The AI provider returned an invalid stream.")
         index = _fragment_index(partial_calls, fragment)
         partial = partial_calls.setdefault(index, _PartialToolCall())
         if len(partial_calls) > MAX_TOOL_CALLS_PER_RESPONSE:
-            raise ProviderError(f"The AI provider requested more than {MAX_TOOL_CALLS_PER_RESPONSE} tools at once.")
+            raise ProviderError.for_user(
+                f"The AI provider requested more than {MAX_TOOL_CALLS_PER_RESPONSE} tools at once."
+            )
         if isinstance(fragment.get("id"), str):
             partial.id = fragment["id"]
         function = fragment.get("function")
@@ -445,7 +460,7 @@ def _merge_tool_call_fragments(partial_calls: dict[int, _PartialToolCall], fragm
         if isinstance(arguments, str):
             partial.arguments += arguments
             if len(partial.arguments) > MAX_TOOL_ARGUMENT_CHARS:
-                raise ProviderError("The AI provider sent tool arguments that are too large.")
+                raise ProviderError.for_user("The AI provider sent tool arguments that are too large.")
 
 
 def _fragment_index(partial_calls: dict[int, _PartialToolCall], fragment: dict[str, Any]) -> int:

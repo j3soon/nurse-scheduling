@@ -181,6 +181,9 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   whether the agent knows its role, rather than guessing from available tools
   or asking the user to inspect the UI. Keep navigation advice valid for someone
   on another page.
+- Show known provider reasons and trusted validation details in both foreground
+  and background chat errors. Keep raw provider bodies and private SDK errors
+  in server logs. Test that failed validation still discards the turn's edits.
 - Isolate prompt policies with the smallest fixture that exercises the claim.
   Use the large ward only when scale or reference cascades matter. Grade
   scheduling semantics rather than ineffective fields or equivalent formatting.

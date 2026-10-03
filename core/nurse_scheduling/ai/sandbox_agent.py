@@ -110,6 +110,10 @@ class SandboxDownloadError(SandboxError):
 class SandboxCandidateError(SandboxError):
     """The final untrusted schedule failed trusted server-side review."""
 
+    def __init__(self, message: str, *, user_message: str | None = None) -> None:
+        super().__init__(message)
+        self.user_message = user_message
+
 
 class SandboxCommandTimeoutError(SandboxError):
     """A command timeout terminated the sandbox and the remaining turn."""
@@ -448,7 +452,9 @@ async def run_sandbox_agent(
                     review.proposal is not None,
                 )
                 if not review.outcome.ok:
-                    raise SandboxCandidateError("The sandbox candidate failed trusted schedule validation.")
+                    raise SandboxCandidateError(
+                        "The sandbox candidate failed trusted schedule validation.", user_message=review.outcome.text
+                    )
                 try:
                     download = await sandbox.read_file(WORKSPACE_DOWNLOAD, max_bytes=limits.max_download_bytes)
                 except SandboxFileNotFoundError:

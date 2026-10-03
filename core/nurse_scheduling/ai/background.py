@@ -50,7 +50,7 @@ from .schedule_context import describe_schedule
 
 CANDIDATE_VALIDATION_ERROR = (
     "The candidate schedule failed trusted validation. All schedule changes made during this agent turn were "
-    "discarded. The canonical schedule was not changed."
+    "discarded. The current schedule was not changed."
 )
 PROVIDER_ERROR = "The AI provider failed. Please try again."
 SANDBOX_COMMAND_TIMEOUT_ERROR = (
@@ -390,9 +390,9 @@ async def run_background_turn(
             outcome, error_code = "cancelled", None
             event_broker.publish(session_id, "stopped", {"message_id": turn_id})
             raise
-        except ProviderError:
+        except ProviderError as exc:
             error_code = "provider_error"
-            event_broker.publish(session_id, "error", {"message": PROVIDER_ERROR})
+            event_broker.publish(session_id, "error", {"message": exc.user_message or PROVIDER_ERROR})
         except SandboxDownloadError as exc:
             error_code = "download_error"
             event_broker.publish(session_id, "error", {"message": str(exc)})
@@ -402,9 +402,13 @@ async def run_background_turn(
         except SandboxTurnTimeoutError:
             error_code = "sandbox_timeout"
             event_broker.publish(session_id, "error", {"message": SANDBOX_TURN_TIMEOUT_ERROR})
-        except SandboxCandidateError:
+        except SandboxCandidateError as exc:
             error_code = "candidate_validation"
-            event_broker.publish(session_id, "error", {"message": CANDIDATE_VALIDATION_ERROR})
+            event_broker.publish(
+                session_id,
+                "error",
+                {"message": CANDIDATE_VALIDATION_ERROR + (f"\n\n{exc.user_message}" if exc.user_message else "")},
+            )
         except SandboxError:
             error_code = "sandbox_error"
             logger.exception("Background AI sandbox turn failed session_id=%s", session_id)
