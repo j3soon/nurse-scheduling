@@ -334,30 +334,12 @@ def create_app(
         session = store.get(session_id)
         if session is None:
             return
-        run = runs.start(
-            session_id,
-            lambda run: session.run(
-                run,
-                prompt,
-                runtime=runtime,
-                background=True,
-                artifact=artifact,
-            ),
-            background=True,
-        )
-        try:
-            await run.wait()
-        finally:
-            run.cancel()
+        await session.review_optimizer_result(prompt, artifact, runtime=runtime, runs=runs)
 
     async def optimizer_updated(session_id: str, update: dict[str, object]) -> None:
         session = store.get(session_id)
-        if session is None:
-            return
-        session.publish(
-            "optimization_progress" if "progress" in update else "optimization",
-            update,
-        )
+        if session is not None:
+            session.publish_optimizer_update(update)
 
     session_optimizer = SessionOptimizer(
         optimizer_backend,

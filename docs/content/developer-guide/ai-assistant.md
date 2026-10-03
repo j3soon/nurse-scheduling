@@ -147,7 +147,7 @@ flowchart TB
     Routes -->|Start or stop runs| Queue
     Queue -->|Execute active run| Session
     Session -->|Queue accepted steering| Agent
-    Jobs -->|Queue new review run<br/>via callback| Queue
+    Jobs -->|Queue new review run<br/>via AgentSession| Queue
 
 ```
 
@@ -188,7 +188,7 @@ relative to `web-frontend/src/app/experimental-ai/`.
 | API routes<br/>`app.py` | Authenticate requests, invoke session operations, and serve HTTP and SSE responses. |
 | `SessionStore`<br/>`sessions.py` | Enforce session ownership, expiry, retained text budgets, and versioned conversation commits. |
 | `SessionRuns` / `AgentRun` / `RunSnapshot`<br/>`lifecycle.py` | Execute one run per session, queue background follow-ups, and keep ownership through cancellation and cleanup. Carry the conversation version used to authorize a commit. |
-| `AgentSession` / `RunOutput`<br/>`agent_session.py` | Prepare context, execute the agent, await cleanup, save the run, and publish public session events. |
+| `AgentSession` / `RunOutput`<br/>`agent_session.py` | Prepare context, execute the agent, await cleanup, save the run, queue optimizer reviews, and publish public session events. |
 | `Agent` / `AgentState`<br/>`agent.py`<br/>`agent_types.py` | Hold in-run messages, streaming state, pending tool call IDs, and queued steering. |
 | `agent_loop`<br/>`agent_loop.py` | Repeat model responses and tool batches until the agent finishes. |
 | Transcript and context<br/>`transcript.py`<br/>`context.py` | Define ordered message entries and project them into retained history and provider input. |

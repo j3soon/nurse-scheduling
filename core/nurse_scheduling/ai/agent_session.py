@@ -44,7 +44,7 @@ from .agent_types import (
 from .config import AiSettings
 from .context import build_provider_messages, history_context_chars, projected_history, recent_history, retained_entries
 from .history import ChatHistory
-from .lifecycle import TERMINAL_EVENTS, AgentRun, RunSnapshot
+from .lifecycle import TERMINAL_EVENTS, AgentRun, RunSnapshot, SessionRuns
 from .optimizer import OptimizerArtifact, SessionOptimizer
 from .provider import ChatMessage, ProviderError, TokenUsage, ToolCapableChatProvider
 from .sandbox import SandboxError, SandboxFactory
@@ -290,6 +290,29 @@ class AgentSession:
         self._listeners.clear()
         if self.event_stream is not None:
             self.event_stream.forget_session(self.id)
+
+    async def review_optimizer_result(
+        self,
+        prompt: str,
+        artifact: OptimizerArtifact | None,
+        *,
+        runtime: SessionRuntime,
+        runs: SessionRuns,
+    ) -> None:
+        """Queue a fresh review after prior runs finish, using the latest snapshot."""
+        run = runs.start(
+            self.id,
+            lambda run: self.run(run, prompt, runtime=runtime, background=True, artifact=artifact),
+            background=True,
+        )
+        try:
+            await run.wait()
+        finally:
+            run.cancel()
+
+    def publish_optimizer_update(self, update: dict[str, object]) -> None:
+        """Project independent job updates onto the same stream as agent output."""
+        self.publish("optimization_progress" if "progress" in update else "optimization", update)
 
     @property
     def active(self) -> bool:
