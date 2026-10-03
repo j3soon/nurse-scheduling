@@ -329,10 +329,12 @@ def test_http_backend_replays_an_optimizer_event_cut_off_before_its_delimiter() 
 
 def test_optimizer_progress_replay_does_not_displace_background_turn_events() -> None:
     event_stream = SessionEventStream(max_events_per_session=2, max_progress_events_per_session=2)
-    event_stream.publish("session-1", "run_start", {"run_id": "turn-1"})
+    event_stream.publish("session-1", {"type": "run_start", "trigger": "user", "run_id": "turn-1"})
     for score in (1, 2, 3):
-        event_stream.publish("session-1", "optimization_progress", {"job_id": "job-1", "score": score})
-    event_stream.publish("session-1", "done", {"run_id": "turn-1"})
+        event_stream.publish(
+            "session-1", {"type": "optimization_progress", "job_id": "job-1", "progress": {"currentBestScore": score}}
+        )
+    event_stream.publish("session-1", {"type": "done", "run_id": "turn-1"})
 
     events = event_stream.events_after("session-1")
     assert [(event.id, event.type) for event in events] == [
@@ -345,16 +347,19 @@ def test_optimizer_progress_replay_does_not_displace_background_turn_events() ->
 def test_background_and_progress_replay_have_separate_default_limits() -> None:
     event_stream = SessionEventStream()
     for index in range(1001):
-        event_stream.publish("session-1", "text_delta", {"index": index})
+        event_stream.publish("session-1", {"type": "delta", "run_id": "turn-1", "text": str(index)})
     for index in range(101):
-        event_stream.publish("session-1", "optimization_progress", {"job_id": str(index), "index": index})
+        event_stream.publish(
+            "session-1",
+            {"type": "optimization_progress", "job_id": str(index), "progress": {"currentBestScore": index}},
+        )
 
     events = event_stream.events_after("session-1")
     assert len(events) == 1100
-    assert events[0].data["index"] == 1
-    assert events[999].data["index"] == 1000
-    assert events[1000].data["index"] == 1
-    assert events[-1].data["index"] == 100
+    assert events[0].data["text"] == "1"
+    assert events[999].data["text"] == "1000"
+    assert events[1000].data["progress"]["currentBestScore"] == 1
+    assert events[-1].data["progress"]["currentBestScore"] == 100
 
 
 def test_retiring_a_session_ends_its_open_event_stream() -> None:
@@ -367,7 +372,7 @@ def test_retiring_a_session_ends_its_open_event_stream() -> None:
                 received.append(event.type if event is not None else None)
 
         reader = asyncio.create_task(consume())
-        event_stream.publish("session-1", "run_start", {"run_id": "turn-1"})
+        event_stream.publish("session-1", {"type": "run_start", "trigger": "user", "run_id": "turn-1"})
         await asyncio.sleep(0)
         event_stream.forget_session("session-1")
         await asyncio.wait_for(reader, timeout=1)

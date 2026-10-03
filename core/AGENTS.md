@@ -104,7 +104,9 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   replay gaps, and retention bounds in both event counts and serialized bytes.
   Distinguish replaceable progress updates from run and tool lifecycle events.
   Optimizer completion, failure, and result availability are lifecycle events.
-  Publish through `AgentSession` and keep HTTP serialization in the API adapter.
+  Publish typed `AgentSessionEvent` values through `AgentSession` and keep HTTP
+  serialization in the API adapter. In-process subscribers receive one event
+  value, following Pi's session event interface.
   POST `/messages` acknowledges the accepted message. GET `/events` delivers all
   runs and job updates. Reader disconnect never cancels work. Explicit Stop does.
   Test output arriving before acknowledgement, lost required replay history,

@@ -21,7 +21,7 @@
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import aclosing, asynccontextmanager
 from functools import partial
 
@@ -141,7 +141,7 @@ async def run_workspace(
     attachments: Sequence[SandboxAttachment] = (),
     optimizer_result: bytes | None = None,
     agent: Agent | None = None,
-) -> AsyncIterator[AgentEvent | AgentScheduleChange]:
+) -> AsyncGenerator[AgentEvent | AgentScheduleChange]:
     """Hydrate, run, read, validate, and destroy one fresh workspace run."""
     agent = agent or Agent()
     metrics = metrics or SandboxRunMetrics()
@@ -160,7 +160,7 @@ async def run_workspace(
                 toolset = WorkspaceTools(sandbox, schedule_yaml, limits, execute_optimizer)
 
                 @asynccontextmanager
-                async def tool_batch(calls: Sequence[ToolCall]) -> AsyncIterator[None]:
+                async def tool_batch(calls: Sequence[ToolCall]) -> AsyncGenerator[None]:
                     if any(toolset.needs_workspace(call.name, call.arguments) for call in calls):
                         async with sandbox.activity_batch():
                             yield

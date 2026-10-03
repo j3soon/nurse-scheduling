@@ -364,8 +364,8 @@ def test_terminal_foreground_event_never_blocks_cleanup_on_a_full_reader_queue()
 
         async def run(_turn):
             for _ in range(64):
-                events.publish("session", "delta", {"text": "output", "run_id": "turn"})
-            events.publish("session", "done", {"run_id": "turn"})
+                events.publish("session", {"type": "delta", "text": "output", "run_id": "turn"})
+            events.publish("session", {"type": "done", "run_id": "turn"})
 
         turn = turns.start("session", run)
         await asyncio.wait_for(turn.wait(), timeout=1)
@@ -392,7 +392,7 @@ def test_message_ack_and_get_replay_keep_execution_independent_of_readers():
         app = create_test_app(settings=make_settings(), provider=Provider())
         session = app.state.session_store.create("owner", schedule_yaml())
         observed = []
-        unsubscribe = session.subscribe(lambda kind, data: observed.append((kind, data)))
+        unsubscribe = session.subscribe(lambda event: observed.append(event))
 
         async def read_until(event_type, cursor=0):
             received = asyncio.Queue()
@@ -456,8 +456,8 @@ def test_message_ack_and_get_replay_keep_execution_independent_of_readers():
             assert "Partial " not in replay
             assert "event: stopped" not in replay
             assert session.transcript[-1].text == "Partial answer."
-            assert observed[0] == ("run_start", {"run_id": run_id, "trigger": "user"})
-            assert observed[-1] == ("done", {"run_id": run_id})
+            assert observed[0] == {"type": "run_start", "trigger": "user", "run_id": run_id}
+            assert observed[-1] == {"type": "done", "run_id": run_id}
             unsubscribe()
             unsubscribe()
             count = len(observed)
@@ -466,7 +466,17 @@ def test_message_ack_and_get_replay_keep_execution_independent_of_readers():
             # truncated stream. Current proposal ownership accompanies that snapshot.
             app.state.session_event_stream._max_events = 1
             session.proposal_diff = "Pending schedule changes"
-            session.publish("tool", {"run_id": run_id, "name": "read", "result": "read"})
+            session.publish(
+                {
+                    "type": "tool",
+                    "run_id": run_id,
+                    "tool_call_id": "read-1",
+                    "name": "read",
+                    "arguments": "{}",
+                    "result": "read",
+                    "ok": True,
+                }
+            )
             recovery = await read_until("session_reset")
             data = json.loads(next(line[6:] for line in recovery.splitlines() if line.startswith("data: ")))
             assert data["active_run_id"] is None
@@ -481,7 +491,7 @@ def test_retired_session_does_not_recreate_its_event_history():
     async def exercise():
         app = create_test_app(settings=make_settings(), provider=FakeProvider())
         session = app.state.session_store.create("owner", schedule_yaml())
-        session.publish("done", {"run_id": "old"})
+        session.publish({"type": "done", "run_id": "old"})
         reader = session.events(1)
         waiting = asyncio.create_task(anext(reader, None))
         await asyncio.sleep(0)
@@ -489,7 +499,19 @@ def test_retired_session_does_not_recreate_its_event_history():
         app.state.session_store._prune_expired()
         assert app.state.session_store.get(session.id) is None
         assert await asyncio.wait_for(waiting, 1) is None
-        session.publish("optimization", {"job_id": "late"})
+        session.publish(
+            {
+                "type": "optimization",
+                "job_id": "late",
+                "state": "completed",
+                "terminal": True,
+                "backend": {},
+                "request": {},
+                "result": None,
+                "error": None,
+                "downloadable": False,
+            }
+        )
         assert not app.state.session_event_stream.events_after(session.id)
         assert app.state.session_event_stream._retained_bytes == 0
         assert await anext(session.events(0), None) is None

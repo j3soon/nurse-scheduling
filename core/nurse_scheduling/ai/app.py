@@ -54,6 +54,7 @@ from .provider import OpenAiCompatibleProvider, ToolCapableChatProvider
 from .sandbox import SandboxFactory, managed_sandbox_factory
 from .sandbox.factory import create_sandbox_factory
 from .session_event_stream import SessionEventStream
+from .session_events import OptimizerUpdate
 from .sessions import SessionStore, schedule_revision
 from .transcript import ProposalDecision
 from .validation import new_schedule_issues, validate_frontend_schedule_yaml
@@ -364,7 +365,7 @@ def create_app(
             return
         await session.review_optimizer_result(prompt, artifact, runtime=runtime, runs=runs)
 
-    async def optimizer_updated(session_id: str, update: dict[str, object]) -> None:
+    async def optimizer_updated(session_id: str, update: OptimizerUpdate) -> None:
         session = store.get(session_id)
         if session is not None:
             session.publish_optimizer_update(update)

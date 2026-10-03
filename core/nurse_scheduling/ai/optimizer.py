@@ -25,7 +25,7 @@ import ipaddress
 import json
 import logging
 import math
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 from urllib.parse import urljoin, urlsplit
@@ -35,6 +35,7 @@ import httpx
 from pydantic import BaseModel, Field, ValidationError
 
 from .optimizer_privacy import OptimizerResultError, prepare_optimizer_schedule, restore_people_ids
+from .session_events import OptimizerUpdate
 
 OPTIMIZER_TOOL = "optimizer"
 WORKSPACE_OPTIMIZER_RESULT = "/workspace/optimizer-results/optimized-schedule.xlsx"
@@ -291,7 +292,7 @@ class OptimizerArtifact:
 
 
 CompletionCallback = Callable[[str, str, OptimizerArtifact | None], Awaitable[None]]
-UpdateCallback = Callable[[str, dict[str, Any]], Awaitable[None]]
+UpdateCallback = Callable[[str, OptimizerUpdate], Awaitable[None]]
 
 
 @dataclass
@@ -684,7 +685,7 @@ class SessionOptimizer:
 
     def _latest(self, session_id: str) -> SessionOptimization | None:
         owner = self._sessions.get(session_id)
-        return self._jobs.get(owner.latest) if owner is not None else None
+        return self._jobs.get(owner.latest) if owner is not None and owner.latest is not None else None
 
     def _release_reservation(self, session_id: str, owner: OptimizerSession, reservation: object) -> None:
         if self._sessions.get(session_id) is not owner or owner.reservation is not reservation:
@@ -703,7 +704,7 @@ class SessionOptimizer:
                 self._cached_artifact_bytes -= len(job.artifact.content)
                 self._artifact_order.remove(job_id)
 
-    def _start_task(self, coroutine: Awaitable[None]) -> asyncio.Task[None]:
+    def _start_task(self, coroutine: Coroutine[Any, Any, None]) -> asyncio.Task[None]:
         task = asyncio.create_task(coroutine)
         self._tasks.add(task)
 

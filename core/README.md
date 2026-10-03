@@ -464,7 +464,9 @@ disposable sandbox, where the agent can inspect it with Pi-compatible tools.
 
 Agent/session boundaries and the `read`, `bash`, `edit`, and `write` ports follow
 [Pi v1.0.0](https://github.com/earendil-works/pi/releases/tag/v1.0.0)
-(`a13d35a`). Sandbox, optimizer, and HTTP behavior remain service-specific.
+(`a13d35a`). `AgentSession.subscribe` supplies typed `AgentSessionEvent` values to listeners.
+The API frames these events as SSE for both session and compatibility readers.
+Sandbox, optimizer, and HTTP behavior remain service-specific.
 See the [architectural comparison](https://dev.nursescheduling.org/docs/developer-guide/ai-assistant/#mapping-to-pi)
 for the shared contracts and differences.
 

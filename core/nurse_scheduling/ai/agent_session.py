@@ -23,7 +23,7 @@ import asyncio
 import hashlib
 import json
 import logging
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
@@ -44,12 +44,22 @@ from .agent_types import (
 from .config import AiSettings
 from .context import build_provider_messages, history_context_chars, projected_history, recent_history, retained_entries
 from .history import ChatHistory
-from .lifecycle import TERMINAL_EVENTS, AgentRun, RunSnapshot, SessionRuns
+from .lifecycle import AgentRun, RunSnapshot, SessionRuns
 from .optimizer import OptimizerArtifact, SessionOptimizer
 from .optimizer_tool import execute_optimizer_tool
 from .provider import ChatMessage, ProviderError, TokenUsage, ToolCapableChatProvider
 from .sandbox import SandboxError, SandboxFactory
 from .session_event_stream import SessionEvent, SessionEventStream
+from .session_events import (
+    AgentSessionEvent,
+    AgentSessionRunEvent,
+    AgentSessionTerminalEvent,
+    OptimizationEvent,
+    OptimizationProgressEvent,
+    OptimizerUpdate,
+    RunDoneEvent,
+    TextEvent,
+)
 from .transcript import (
     AgentMessage,
     AssistantMessage,
@@ -98,7 +108,7 @@ class RunOutcome:
     status: Literal["completed", "stale", "cancelled", "failed"] = "cancelled"
     completion: RunCompletion | None = None
     error_code: str | None = None
-    terminal: tuple[str, dict[str, object]] | None = None
+    terminal: AgentSessionTerminalEvent | None = None
 
 
 class SessionPersistence(Protocol):
@@ -157,24 +167,30 @@ class RunOutput:
         interrupted = AssistantMessage("".join(self.pending_text), stop_reason, "".join(self.pending_reasoning))
         return [*entries, interrupted]
 
-    def consume(self, event: AgentEvent | AgentScheduleChange) -> tuple[str, dict[str, object]] | None:
+    def consume(self, event: AgentEvent | AgentScheduleChange) -> AgentSessionRunEvent | None:
         if isinstance(event, MessageTextDelta):
             self.assistant_parts.append(event.text)
             self.pending_text.append(event.text)
-            return "delta", {"text": event.text}
+            return {"type": "delta", "text": event.text}
         if isinstance(event, MessageReasoningDelta):
             self.pending_reasoning.append(event.text)
-            return "reasoning", {"text": event.text}
+            return {"type": "reasoning", "text": event.text}
         if isinstance(event, MessageEnd):
             self.pending_text.clear()
             self.pending_reasoning.clear()
-            return ("truncated", {}) if event.message.stop_reason == "length" else None
+            return {"type": "truncated"} if event.message.stop_reason == "length" else None
         if isinstance(event, TokenUsage):
             self.usage = event if self.usage is None else self.usage + event
         elif isinstance(event, ToolExecutionStart):
-            return "tool_start", {"tool_call_id": event.tool_call_id, "name": event.name, "arguments": event.arguments}
+            return {
+                "type": "tool_start",
+                "tool_call_id": event.tool_call_id,
+                "name": event.name,
+                "arguments": event.arguments,
+            }
         elif isinstance(event, ToolExecutionEnd):
-            return "tool", {
+            return {
+                "type": "tool",
                 "tool_call_id": event.tool_call_id,
                 "name": event.name,
                 "arguments": event.arguments,
@@ -182,9 +198,9 @@ class RunOutput:
                 "ok": event.ok,
             }
         elif isinstance(event, AgentSteering):
-            return "steering", {"message_id": event.message_id, "message": event.text}
+            return {"type": "steering", "message_id": event.message_id, "message": event.text}
         elif isinstance(event, AgentScheduleChange):
-            return "schedule_change", {"schedule_yaml": event.schedule_yaml}
+            return {"type": "schedule_change", "schedule_yaml": event.schedule_yaml}
         elif isinstance(event, AgentProposal):
             self.proposal = event
         return None
@@ -193,44 +209,50 @@ class RunOutput:
 class _RunEvents:
     """Batch text for one run and defer its terminal event until finalization."""
 
-    def __init__(self, run_id: str, publish: Callable[[str, dict[str, object]], None]) -> None:
+    def __init__(self, run_id: str, publish: Callable[[AgentSessionEvent], None]) -> None:
         self.run_id = run_id
         self._publish = publish
-        self._pending: tuple[str, dict[str, object]] | None = None
+        self._pending: TextEvent | None = None
         self._timer: asyncio.TimerHandle | None = None
-        self._terminal: tuple[str, dict[str, object]] | None = None
+        self._terminal: AgentSessionTerminalEvent | None = None
 
     def flush(self) -> None:
         if self._timer is not None:
             self._timer.cancel()
             self._timer = None
         if self._pending is not None:
-            self._publish(*self._pending)
+            self._publish(self._pending)
             self._pending = None
 
-    def emit(self, event_type: str, data: dict[str, object]) -> None:
+    def emit(self, event: AgentSessionRunEvent) -> None:
         # Every replayable fragment identifies its run, even after run_start expires.
-        data = {**data, "run_id": self.run_id}
-        if event_type in TERMINAL_EVENTS:
-            self._terminal = event_type, data
-        elif event_type in {"delta", "reasoning"}:
+        event = event.copy()
+        event["run_id"] = self.run_id
+        if (
+            event["type"] == "done"
+            or event["type"] == "stopped"
+            or event["type"] == "stale"
+            or event["type"] == "error"
+        ):
+            self._terminal = event
+        elif event["type"] == "delta" or event["type"] == "reasoning":
             # Batch tiny provider fragments before the stream assigns publication IDs.
-            if self._pending is not None and self._pending[0] != event_type:
+            if self._pending is not None and self._pending["type"] != event["type"]:
                 self.flush()
-            text = str(self._pending[1]["text"]) if self._pending is not None else ""
-            self._pending = event_type, {**data, "text": text + str(data["text"])}
-            if len(str(self._pending[1]["text"])) >= 2048:
+            text = self._pending["text"] if self._pending is not None else ""
+            self._pending = {"type": event["type"], "run_id": self.run_id, "text": text + event["text"]}
+            if len(self._pending["text"]) >= 2048:
                 self.flush()
             elif self._timer is None:
                 self._timer = asyncio.get_running_loop().call_later(0.025, self.flush)
         else:
             self.flush()
-            self._publish(event_type, data)
+            self._publish(event)
 
     def finish(self) -> None:
         self.flush()
         if self._terminal is not None:
-            self._publish(*self._terminal)
+            self._publish(self._terminal)
             self._terminal = None
 
 
@@ -263,10 +285,10 @@ class AgentSession:
     # The run that produced the pending proposal, so its decision joins that run's history.
     proposal_run_id: str | None = None
     event_stream: SessionEventStream | None = field(default=None, repr=False)
-    _listeners: list[Callable[[str, dict[str, object]], None]] = field(default_factory=list, repr=False)
+    _listeners: list[Callable[[AgentSessionEvent], None]] = field(default_factory=list, repr=False)
     _events_closed: bool = False
 
-    def subscribe(self, listener: Callable[[str, dict[str, object]], None]) -> Callable[[], None]:
+    def subscribe(self, listener: Callable[[AgentSessionEvent], None]) -> Callable[[], None]:
         """Observe public session events. HTTP serialization belongs to the caller."""
         self._listeners.append(listener)
         removed = False
@@ -280,15 +302,15 @@ class AgentSession:
 
         return unsubscribe
 
-    def publish(self, event_type: str, data: dict[str, object]) -> None:
+    def publish(self, event: AgentSessionEvent) -> None:
         if self._events_closed:
             return
         if self.event_stream is not None:
-            self.event_stream.publish(self.id, event_type, data)
+            self.event_stream.publish(self.id, event)
         for listener in tuple(self._listeners):
-            listener(event_type, data)
+            listener(event)
 
-    async def events(self, after_id: int) -> AsyncIterator[SessionEvent | None]:
+    async def events(self, after_id: int) -> AsyncGenerator[SessionEvent | None]:
         if self._events_closed:
             return
         assert self.event_stream is not None
@@ -321,9 +343,12 @@ class AgentSession:
         finally:
             run.cancel()
 
-    def publish_optimizer_update(self, update: dict[str, object]) -> None:
+    def publish_optimizer_update(self, update: OptimizerUpdate) -> None:
         """Project independent job updates onto the same stream as agent output."""
-        self.publish("optimization_progress" if "progress" in update else "optimization", update)
+        if "progress" in update:
+            self.publish(OptimizationProgressEvent(type="optimization_progress", **update))
+        else:
+            self.publish(OptimizationEvent(type="optimization", **update))
 
     @property
     def active(self) -> bool:
@@ -461,8 +486,8 @@ class AgentSession:
         """Project the reserved transcript and report its context usage."""
         retained_history = recent_history(snapshot.transcript, settings.max_history_chars)
         events.emit(
-            "context_usage",
             {
+                "type": "context_usage",
                 "used_chars": history_context_chars(snapshot.transcript, settings.max_history_chars),
                 "max_chars": settings.max_history_chars,
             },
@@ -471,7 +496,7 @@ class AgentSession:
             snapshot.previously_dropped + len(projected_history(snapshot.transcript)) - len(retained_history)
         )
         if dropped_history:
-            events.emit("history_trimmed", {"dropped": dropped_history})
+            events.emit({"type": "history_trimmed", "dropped": dropped_history})
         messages = build_provider_messages(
             snapshot.transcript,
             snapshot.schedule_yaml,
@@ -516,7 +541,7 @@ class AgentSession:
                 async for event in agent_events:
                     wire_event = output.consume(event)
                     if wire_event is not None:
-                        events.emit(*wire_event)
+                        events.emit(wire_event)
 
     def _commit_run(
         self,
@@ -550,20 +575,23 @@ class AgentSession:
     ) -> None:
         """Publish the committed result after its history write finishes."""
         if not completion.run_saved:
-            events.emit("stale", {"message": STALE_RUN_ERROR})
+            events.emit({"type": "stale", "message": STALE_RUN_ERROR})
             return
         if completion.history_trimmed_count and completion.history_trimmed_count != dropped_history:
-            events.emit("history_trimmed", {"dropped": completion.history_trimmed_count})
+            events.emit({"type": "history_trimmed", "dropped": completion.history_trimmed_count})
         if completion.proposal_saved and output.proposal is not None:
-            events.emit("proposal", {"diff": output.proposal.diff})
-        done: dict[str, object] = {}
+            events.emit({"type": "proposal", "diff": output.proposal.diff})
+        done: RunDoneEvent = {"type": "done"}
         if history_saved is not None and not background:
             done["history_saved"] = history_saved
         events.emit(
-            "context_usage",
-            {"used_chars": completion.context_used_chars, "max_chars": settings.max_history_chars},
+            {
+                "type": "context_usage",
+                "used_chars": completion.context_used_chars,
+                "max_chars": settings.max_history_chars,
+            },
         )
-        events.emit("done", done)
+        events.emit(done)
 
     async def _finalize_run(
         self,
@@ -583,14 +611,14 @@ class AgentSession:
         if outcome.completion is None:
             stop_reason = "aborted" if outcome.status == "cancelled" else "error"
             entries = output.interrupted_entries([entries[0], *self.agent.state.messages], stop_reason)
-            if outcome.terminal is not None and outcome.terminal[0] == "stopped":
+            if outcome.terminal is not None and outcome.terminal["type"] == "stopped":
                 # Keep the prompt so a follow-up can refer to it. Workspace changes and any
                 # proposal were discarded with the sandbox, which context.py accounts for.
                 runtime.store.finish(self.id, retained_entries(entries), snapshot=snapshot)
             else:
                 runtime.store.abort(self.id, snapshot)
         if outcome.terminal is not None:
-            events.emit(*outcome.terminal)
+            events.emit(outcome.terminal)
         try:
             history_saved = None
             if history_started:
@@ -662,7 +690,7 @@ class AgentSession:
                 )
                 if not history_started:
                     raise HTTPException(status_code=503, detail="AI chat history is temporarily unavailable.")
-            events.emit("run_start", {"trigger": "optimizer" if background else "user"})
+            events.emit({"type": "run_start", "trigger": "optimizer" if background else "user"})
             run.ready.set_result(True)
             if not background:
                 artifact = await runtime.session_optimizer.latest_result_artifact(session_id)
@@ -672,7 +700,7 @@ class AgentSession:
             completion = self._commit_run(run, snapshot, run_entries, output, store)
             outcome = RunOutcome("completed" if completion.run_saved else "stale", completion=completion)
         except asyncio.CancelledError:
-            outcome = RunOutcome(terminal=("stopped", {}))
+            outcome = RunOutcome(terminal={"type": "stopped"})
             raise
         except HTTPException:
             if not background:
@@ -680,10 +708,10 @@ class AgentSession:
             outcome = RunOutcome(
                 "failed",
                 error_code="history_unavailable",
-                terminal=(
-                    "error",
-                    {"message": "AI chat history is unavailable, so the optimizer result was not reviewed."},
-                ),
+                terminal={
+                    "type": "error",
+                    "message": "AI chat history is unavailable, so the optimizer result was not reviewed.",
+                },
             )
         except (ProviderError, SandboxRunTimeoutError, SandboxCandidateError, SandboxError) as exc:
             if isinstance(exc, ProviderError):
@@ -695,13 +723,13 @@ class AgentSession:
             else:
                 error_code, message = "sandbox_error", "The temporary AI sandbox failed. Please try again."
                 logger.exception("AI sandbox run failed session_id=%s", session_id)
-            outcome = RunOutcome("failed", error_code=error_code, terminal=("error", {"message": message}))
+            outcome = RunOutcome("failed", error_code=error_code, terminal={"type": "error", "message": message})
         except Exception:
             logger.exception("Unexpected AI run failure session_id=%s", session_id)
             outcome = RunOutcome(
                 "failed",
                 error_code="internal_error",
-                terminal=("error", {"message": "The AI response failed unexpectedly."}),
+                terminal={"type": "error", "message": "The AI response failed unexpectedly."},
             )
         finally:
             await self._finalize_run(

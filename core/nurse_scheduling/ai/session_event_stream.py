@@ -21,10 +21,11 @@
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 
 from .lifecycle import TERMINAL_EVENTS
+from .session_events import AgentSessionEvent
 
 # Serialized JSON bytes, including event IDs and types. SSE framing is added by HTTP.
 DEFAULT_SESSION_REPLAY_BYTES = 4 * 1024 * 1024
@@ -102,13 +103,14 @@ class SessionEventStream:
         self._signals: dict[str, set[asyncio.Event]] = {}
         self._retained_bytes = 0
 
-    def publish(self, session_id: str, event_type: str, data: dict[str, object]) -> None:
+    def publish(self, session_id: str, publication: AgentSessionEvent) -> None:
         if session_id not in self._sessions and len(self._sessions) >= self._max_sessions:
             self.forget_session(next(iter(self._sessions)))
         replay = self._sessions.setdefault(session_id, _Replay())
         # Copy JSON data so a publisher cannot later mutate the retained payload.
         replay.last_id += 1
-        event = SessionEvent(replay.last_id, event_type, json.loads(json.dumps(data)))
+        data = {key: value for key, value in publication.items() if key != "type"}
+        event = SessionEvent(replay.last_id, publication["type"], json.loads(json.dumps(data)))
         key = _replacement_key(event)
         if key is not None:
             replay.events = [old for old in replay.events if _replacement_key(old) != key]
@@ -202,7 +204,7 @@ class SessionEventStream:
         replay = self._sessions.get(session_id)
         return replay.last_id if replay is not None else 0
 
-    async def stream(self, session_id: str, after_id: int) -> AsyncIterator[SessionEvent | None]:
+    async def stream(self, session_id: str, after_id: int) -> AsyncGenerator[SessionEvent | None]:
         signal = asyncio.Event()
         self._signals.setdefault(session_id, set()).add(signal)
         try:
