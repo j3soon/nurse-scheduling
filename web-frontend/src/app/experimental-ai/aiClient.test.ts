@@ -51,6 +51,8 @@ function streamedResponse(chunks: string[]): Response {
   return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
 }
 
+import type { SessionEvent } from './sessionEvents';
+
 describe('AI client', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -717,4 +719,27 @@ describe('AI client', () => {
     expect(isOfficialAiEndpoint('https://ai.example.test')).toBe(false);
     expect(isOfficialAiEndpoint('')).toBe(false);
   });
+  it('routes parsed events through one typed handler without also calling legacy handlers', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      'id: 1\nevent: delta\ndata: {"run_id":"run","text":"Answer"}\n\n',
+      'id: 2\nevent: tool_start\ndata: {"run_id":"run","tool_call_id":"call","name":"read"}\n\n',
+      'id: 3\nevent: done\ndata: {"run_id":"run"}\n\n',
+    ])));
+    const events: SessionEvent[] = [];
+    const legacy = vi.fn();
+    await streamSessionEvents('session', {
+      onDelta: legacy,
+      forRun: () => ({ onDelta: legacy, onEvent: event => events.push(event) }),
+    }, new AbortController().signal, null);
+    expect(events).toEqual([
+      { type: 'run_context', runId: 'run' },
+      { type: 'delta', runId: 'run', text: 'Answer' },
+      { type: 'run_context', runId: 'run' },
+      { type: 'tool_start', runId: 'run', activity: { toolCallId: 'call', name: 'read', arguments: '' } },
+      { type: 'run_context', runId: 'run' },
+      { type: 'done', runId: 'run' },
+    ]);
+    expect(legacy).not.toHaveBeenCalled();
+  });
+
 });

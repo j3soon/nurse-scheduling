@@ -52,7 +52,8 @@ const mockNormalizeAiEndpoint = vi.hoisted(() => (endpoint: string) => {
   return /^[a-z]+:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 });
 
-vi.mock('./aiClient', () => ({
+vi.mock('./aiClient', async importOriginal => ({
+  dispatchSessionEvent: (await importOriginal<typeof import('./aiClient')>()).dispatchSessionEvent,
   AiHttpError: MockAiHttpError,
   AiStaleRunError: MockAiStaleRunError,
   DEFAULT_SESSION_RETENTION_SECONDS: 172800,

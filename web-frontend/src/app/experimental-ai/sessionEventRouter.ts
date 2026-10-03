@@ -19,12 +19,19 @@
 
 // This code is mostly AI generated.
 
-import type { SessionReset, StreamCallbacks } from './aiClient';
+import { dispatchSessionEvent, type SessionReset, type StreamCallbacks } from './aiClient';
+import { sessionEventCallbacks, type SessionEvent } from './sessionEvents';
+
+interface DeferredEvent {
+  event: SessionEvent;
+  background: StreamCallbacks;
+  ownsConversation: () => boolean;
+}
 
 interface ForegroundRun {
   runId?: string;
   callbacks: StreamCallbacks;
-  deferred: (() => void)[];
+  deferred: DeferredEvent[];
   reject: (error: Error) => void;
 }
 
@@ -33,7 +40,7 @@ export class SessionEventRouter {
   foreground: ForegroundRun | null = null;
 
   begin(callbacks: StreamCallbacks, reject: (error: Error) => void): ForegroundRun {
-    const run = { callbacks, reject, deferred: [] as (() => void)[] };
+    const run = { callbacks, reject, deferred: [] as DeferredEvent[] };
     this.foreground = run;
     return run;
   }
@@ -44,24 +51,24 @@ export class SessionEventRouter {
     if (foreground.runId) return foreground.runId === runId ? foreground.callbacks : undefined;
     // A fast run can publish before POST identifies it. Preserve both foreground
     // and review events until that acknowledgement chooses their destination.
-    return Object.fromEntries(Object.entries(background).map(([name, value]) => [
-      name, typeof value === 'function' ? (...args: unknown[]) => {
-        const deliver = () => {
-          if (!ownsConversation()) return;
-          const target = foreground.runId === runId ? foreground.callbacks : background;
-          const handler = target[name as keyof StreamCallbacks];
-          if (typeof handler === 'function') (handler as (...args: unknown[]) => unknown)(...args);
-        };
-        if (foreground.runId) deliver();
-        else foreground.deferred.push(deliver);
-      } : value,
-    ])) as StreamCallbacks;
+    return sessionEventCallbacks(event => {
+      if (!ownsConversation()) return;
+      if (foreground.runId) {
+        dispatchSessionEvent(foreground.runId === runId ? foreground.callbacks : background, event);
+      } else {
+        foreground.deferred.push({ event, background, ownsConversation });
+      }
+    }, runId);
   }
 
   acknowledge(run: ForegroundRun, runId: string, identify: (id: string) => void): void {
     run.runId = runId;
     identify(runId);
-    run.deferred.splice(0).forEach(deliver => deliver());
+    for (const { event, background, ownsConversation } of run.deferred.splice(0)) {
+      if (ownsConversation()) {
+        dispatchSessionEvent(event.runId === runId ? run.callbacks : background, event);
+      }
+    }
   }
 
   reset(reset: SessionReset): void {

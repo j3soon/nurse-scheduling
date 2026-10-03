@@ -79,4 +79,15 @@ describe('chat operation ownership', () => {
     expect(handlers.onEventId).not.toHaveBeenCalled();
     expect(handlers.onDone).not.toHaveBeenCalled();
   });
+  it('revokes a cached run handler together with its reader', () => {
+    let owns = true;
+    const onDelta = vi.fn();
+    const callbacks = scopedCallbacks({ onDelta, forRun: () => ({ onDelta }) }, () => owns);
+    const run = callbacks.forRun?.('run');
+    run?.onDelta('accepted');
+    owns = false;
+    run?.onEvent?.({ type: 'delta', runId: 'run', text: 'late' });
+    expect(onDelta).toHaveBeenCalledExactlyOnceWith('accepted');
+  });
+
 });

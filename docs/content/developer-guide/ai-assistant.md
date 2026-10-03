@@ -198,7 +198,7 @@ relative to `web-frontend/src/app/experimental-ai/`.
 | `SessionEventStream`<br/>`session_event_stream.py` | Retain bounded journal and recovery projections for every session event. |
 | Browser `ChatLifecycle`<br/>`chatLifecycle.ts` | Track operation ownership and derive busy and Stop state. |
 | Browser `useSessionEventStream`<br/>`useSessionEventStream.ts` | Own the SSE reader, replay cursor, reconnect delay, and teardown. Reader disconnect leaves server work running. |
-| Browser `SessionEventRouter`<br/>`sessionEventRouter.ts` | Route events by run ID and buffer early output until the POST acknowledgement identifies its answer. |
+| Browser `SessionEventRouter`<br/>`sessionEventRouter.ts` | Route typed `SessionEvent` values by run ID and buffer early output until the POST acknowledgement identifies its answer. |
 | Browser event reducer<br/>`assistantEvents.ts` | Apply assistant events from the session stream. |
 
 ## One Run at a Glance {#one-turn-at-a-glance}

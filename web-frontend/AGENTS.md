@@ -89,7 +89,8 @@ Replayable events carry run identity and advance the cursor only after a complet
 SSE frame. Test overlapping foreground completion and background replay explicitly.
 Keep connection ownership, cursors, reconnection, and teardown in
 `useSessionEventStream`. Keep run routing and pre-acknowledgement buffering in
-`SessionEventRouter`.
+`SessionEventRouter`. Route normalized `SessionEvent` values through one handler.
+Keep callback adaptation in the client boundary rather than invoking handlers by string name.
 Apply assistant output from the single session GET stream through
 `applyAssistantEvent`. Route foreground and review events by `run_id`, including
 output that arrives before POST message acceptance is acknowledged. Keep run identity on

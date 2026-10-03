@@ -19,6 +19,7 @@
 
 // This code is mostly AI generated.
 
+import type { SessionEvent, SessionEventHandler } from './sessionEvents';
 import {
   buildAuthHeaders,
   parseAuthRequirement,
@@ -75,6 +76,7 @@ export interface SessionReset {
 }
 
 export interface StreamCallbacks {
+  onEvent?: SessionEventHandler;
   forRun?: (runId: string, trigger?: string) => StreamCallbacks | undefined;
   onReset?: (reset: SessionReset) => void;
   lastEventId?: number;
@@ -391,60 +393,104 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
       incomplete: payload.incomplete === true,
       proposalDiff: typeof payload.proposal_diff === 'string' && payload.proposal_diff ? payload.proposal_diff : null,
     };
-    callbacks.onReset?.(reset);
-    for (const runId of runIds) callbacks.forRun?.(runId)?.onReset?.(reset);
+    dispatchSessionEvent(callbacks, { type: 'session_reset', reset });
+    for (const runId of runIds) {
+      const target = callbacks.forRun?.(runId);
+      if (target) dispatchSessionEvent(target, { type: 'session_reset', reset, runId });
+    }
     for (const event of payload.events) dispatchEvent(event.type, event.data, callbacks);
     // Proposal ownership may have changed since the retained run produced it.
-    callbacks.onProposal?.(reset.proposalDiff ?? '');
+    dispatchSessionEvent(callbacks, { type: 'proposal', diff: reset.proposalDiff ?? '' });
     return;
   }
   dispatchEvent(eventType, payload, callbacks);
+}
+
+/** Deliver normalized events. Legacy callback callers share this typed path. */
+export function dispatchSessionEvent(callbacks: StreamCallbacks, event: SessionEvent): void {
+  if (callbacks.onEvent) { callbacks.onEvent(event); return; }
+  switch (event.type) {
+    case 'session_reset': callbacks.onReset?.(event.reset); break;
+    case 'run_context': callbacks.onRunContext?.(event.runId); break;
+    case 'run_start': callbacks.onRunStart?.(event.runId, event.trigger); break;
+    case 'delta': callbacks.onDelta(event.text); break;
+    case 'reasoning': callbacks.onReasoning?.(event.text); break;
+    case 'truncated': callbacks.onTruncated?.(); break;
+    case 'tool_start': callbacks.onToolStart?.(event.activity); break;
+    case 'tool': callbacks.onTool?.(event.activity); break;
+    case 'steering': callbacks.onSteering?.(event.messageId, event.message); break;
+    case 'schedule_change': callbacks.onScheduleChange?.(event.scheduleYaml); break;
+    case 'proposal': callbacks.onProposal?.(event.diff); break;
+    case 'optimization': callbacks.onOptimization?.(event.activity); break;
+    case 'optimization_progress': callbacks.onOptimizationProgress?.(event.activity); break;
+    case 'done': callbacks.onDone?.(event.runId); break;
+    case 'stopped': callbacks.onStopped?.(event.runId); break;
+    case 'context_usage': callbacks.onContextUsage?.(event.usage); break;
+    case 'history_trimmed': callbacks.onHistoryTrimmed?.(event.dropped); break;
+    case 'stale':
+      if (callbacks.onStale) callbacks.onStale(event.message);
+      else throw new AiStaleRunError(event.message);
+      break;
+    case 'error':
+      if (callbacks.onError) callbacks.onError(event.message);
+      else throw new Error(event.message);
+      break;
+    default: { const exhaustive: never = event; return exhaustive; }
+  }
 }
 
 function dispatchEvent(eventType: string, payload: SsePayload, streamCallbacks: StreamCallbacks): void {
   const callbacks = typeof payload.run_id === 'string'
     ? streamCallbacks.forRun?.(payload.run_id, textField(payload.trigger)) ?? streamCallbacks
     : streamCallbacks;
-  if (typeof payload.run_id === 'string') callbacks.onRunContext?.(payload.run_id);
+  const runId = typeof payload.run_id === 'string' ? payload.run_id : undefined;
+  const emit = (event: SessionEvent) => dispatchSessionEvent(callbacks, runId === undefined ? event : { ...event, runId });
+  if (runId) emit({ type: 'run_context', runId });
 
   if (eventType === 'run_start' && typeof payload.run_id === 'string') {
-    callbacks.onRunStart?.(
-      payload.run_id,
-      typeof payload.trigger === 'string' ? payload.trigger : 'background work',
-    );
+    emit({
+      type: 'run_start', runId: payload.run_id,
+      trigger: typeof payload.trigger === 'string' ? payload.trigger : 'background work',
+    });
   } else if (eventType === 'delta' && typeof payload.text === 'string') {
-    callbacks.onDelta(payload.text);
+    emit({ type: 'delta', text: payload.text });
   } else if (eventType === 'reasoning' && typeof payload.text === 'string') {
-    callbacks.onReasoning?.(payload.text);
+    emit({ type: 'reasoning', text: payload.text });
   } else if (eventType === 'truncated') {
-    callbacks.onTruncated?.();
+    emit({ type: 'truncated' });
   } else if (eventType === 'tool_start' && typeof payload.name === 'string') {
-    callbacks.onToolStart?.({
-      ...toolCallIdentity(payload),
-      name: payload.name,
-      arguments: typeof payload.arguments === 'string' ? payload.arguments : '',
+    emit({
+      type: 'tool_start',
+      activity: {
+        ...toolCallIdentity(payload),
+        name: payload.name,
+        arguments: typeof payload.arguments === 'string' ? payload.arguments : '',
+      },
     });
   } else if (eventType === 'tool' && typeof payload.name === 'string') {
-    callbacks.onTool?.({
-      ...toolCallIdentity(payload),
-      name: payload.name,
-      arguments: typeof payload.arguments === 'string' ? payload.arguments : '',
-      result: typeof payload.result === 'string' ? payload.result : '',
-      ok: payload.ok !== false,
+    emit({
+      type: 'tool',
+      activity: {
+        ...toolCallIdentity(payload),
+        name: payload.name,
+        arguments: typeof payload.arguments === 'string' ? payload.arguments : '',
+        result: typeof payload.result === 'string' ? payload.result : '',
+        ok: payload.ok !== false,
+      },
     });
   } else if (
     eventType === 'steering'
     && typeof payload.message_id === 'string'
     && typeof payload.message === 'string'
   ) {
-    callbacks.onSteering?.(payload.message_id, payload.message);
+    emit({ type: 'steering', messageId: payload.message_id, message: payload.message });
   } else if (eventType === 'schedule_change') {
     if (typeof payload.schedule_yaml !== 'string') {
       throw new Error('The AI backend returned an invalid schedule change.');
     }
-    callbacks.onScheduleChange?.(payload.schedule_yaml);
+    emit({ type: 'schedule_change', scheduleYaml: payload.schedule_yaml });
   } else if (eventType === 'proposal' && typeof payload.diff === 'string') {
-    callbacks.onProposal?.(payload.diff);
+    emit({ type: 'proposal', diff: payload.diff });
   } else if (
     eventType === 'optimization'
     && typeof payload.job_id === 'string'
@@ -452,12 +498,15 @@ function dispatchEvent(eventType: string, payload: SsePayload, streamCallbacks: 
     && typeof payload.terminal === 'boolean'
     && typeof payload.downloadable === 'boolean'
   ) {
-    callbacks.onOptimization?.({
-      jobId: payload.job_id,
-      state: payload.state,
-      terminal: payload.terminal,
-      downloadable: payload.downloadable,
-      ...optimizationDetails(payload),
+    emit({
+      type: 'optimization',
+      activity: {
+        jobId: payload.job_id,
+        state: payload.state,
+        terminal: payload.terminal,
+        downloadable: payload.downloadable,
+        ...optimizationDetails(payload),
+      },
     });
   } else if (eventType === 'optimization_progress' && typeof payload.job_id === 'string') {
     const point = payload.progress as Record<string, unknown> | null | undefined;
@@ -467,40 +516,44 @@ function dispatchEvent(eventType: string, payload: SsePayload, streamCallbacks: 
       && typeof point.elapsedSeconds === 'number' && Number.isFinite(point.elapsedSeconds)
       && point.elapsedSeconds >= 0
     ) {
-      callbacks.onOptimizationProgress?.({
-        jobId: payload.job_id,
-        point: {
-          currentBestScore: point.currentBestScore,
-          elapsedSeconds: point.elapsedSeconds,
-          commentCount: typeof point.commentCount === 'number' ? point.commentCount : null,
-          solutionIndex: typeof point.solutionIndex === 'number' ? point.solutionIndex : null,
-          source: typeof point.source === 'string' ? point.source : undefined,
+      emit({
+        type: 'optimization_progress',
+        activity: {
+          jobId: payload.job_id,
+          point: {
+            currentBestScore: point.currentBestScore,
+            elapsedSeconds: point.elapsedSeconds,
+            commentCount: typeof point.commentCount === 'number' ? point.commentCount : null,
+            solutionIndex: typeof point.solutionIndex === 'number' ? point.solutionIndex : null,
+            source: typeof point.source === 'string' ? point.source : undefined,
+          },
         },
       });
     }
   } else if (eventType === 'done') {
-    callbacks.onDone?.(typeof payload.run_id === 'string' ? payload.run_id : undefined);
+    emit({ type: 'done' });
   } else if (eventType === 'stopped') {
-    callbacks.onStopped?.(typeof payload.run_id === 'string' ? payload.run_id : undefined);
+    emit({ type: 'stopped' });
   } else if (eventType === 'stale') {
     const message = typeof payload.message === 'string' ? payload.message : 'The AI response became stale.';
-    if (callbacks.onStale) callbacks.onStale(message);
-    else throw new AiStaleRunError(message);
+    emit({ type: 'stale', message });
   } else if (eventType === 'context_usage') {
     if (Number.isSafeInteger(payload.used_chars) && (payload.used_chars as number) >= 0
       && Number.isSafeInteger(payload.max_chars) && (payload.max_chars as number) > 0
       && (payload.used_chars as number) <= (payload.max_chars as number)) {
-      callbacks.onContextUsage?.({ usedChars: payload.used_chars as number, maxChars: payload.max_chars as number });
+      emit({
+        type: 'context_usage',
+        usage: { usedChars: payload.used_chars as number, maxChars: payload.max_chars as number },
+      });
     }
   } else if (eventType === 'history_trimmed') {
     const dropped = payload.dropped;
     if (typeof dropped === 'number' && Number.isInteger(dropped) && dropped > 0) {
-      callbacks.onHistoryTrimmed?.(dropped);
+      emit({ type: 'history_trimmed', dropped });
     }
   } else if (eventType === 'error') {
     const message = typeof payload.message === 'string' ? payload.message : 'The AI response failed.';
-    if (callbacks.onError) callbacks.onError(message);
-    else throw new Error(message);
+    emit({ type: 'error', message });
   }
 }
 
