@@ -46,7 +46,7 @@ from .context import build_provider_messages, history_context_chars, projected_h
 from .history import ChatHistory
 from .lifecycle import TERMINAL_EVENTS, AgentRun, RunSnapshot
 from .optimizer import OptimizerArtifact, SessionOptimizer
-from .provider import ProviderError, TokenUsage, ToolCapableChatProvider
+from .provider import ChatMessage, ProviderError, TokenUsage, ToolCapableChatProvider
 from .sandbox import SandboxError, SandboxFactory
 from .session_event_stream import SessionEvent, SessionEventStream
 from .transcript import (
@@ -177,6 +177,60 @@ class RunOutput:
         elif isinstance(event, AgentProposal):
             self.proposal = event
         return None
+
+
+class _RunEvents:
+    """Batch text for one run and defer its terminal event until finalization."""
+
+    def __init__(self, run_id: str, publish: Callable[[str, dict[str, object]], None]) -> None:
+        self.run_id = run_id
+        self._publish = publish
+        self._pending: tuple[str, dict[str, object]] | None = None
+        self._timer: asyncio.TimerHandle | None = None
+        self._terminal: tuple[str, dict[str, object]] | None = None
+
+    def flush(self) -> None:
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+        if self._pending is not None:
+            self._publish(*self._pending)
+            self._pending = None
+
+    def emit(self, event_type: str, data: dict[str, object]) -> None:
+        # Every replayable fragment identifies its run, even after run_start expires.
+        data = {**data, "run_id": self.run_id}
+        if event_type in TERMINAL_EVENTS:
+            self._terminal = event_type, data
+        elif event_type in {"delta", "reasoning"}:
+            # Batch tiny provider fragments before the stream assigns publication IDs.
+            if self._pending is not None and self._pending[0] != event_type:
+                self.flush()
+            text = str(self._pending[1]["text"]) if self._pending is not None else ""
+            self._pending = event_type, {**data, "text": text + str(data["text"])}
+            if len(str(self._pending[1]["text"])) >= 2048:
+                self.flush()
+            elif self._timer is None:
+                self._timer = asyncio.get_running_loop().call_later(0.025, self.flush)
+        else:
+            self.flush()
+            self._publish(event_type, data)
+
+    def finish(self) -> None:
+        self.flush()
+        if self._terminal is not None:
+            self._publish(*self._terminal)
+            self._terminal = None
+
+
+async def _write_history(history: ChatHistory, operation: str, *args) -> bool:
+    # asyncio cancellation and ASGI cancel scopes both wait for the history write.
+    task = asyncio.create_task(history.write(operation, *args))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        await task
+        raise
 
 
 @dataclass
@@ -360,6 +414,122 @@ class AgentSession:
         self.transcript.append(ProposalDecisionEntry(decision))
         return run_id
 
+    def _prepare_run(
+        self,
+        snapshot: RunSnapshot,
+        question: str,
+        attachments: Sequence[SandboxAttachment],
+        artifact: OptimizerArtifact | None,
+        settings: AiSettings,
+        events: _RunEvents,
+    ) -> tuple[list[ChatMessage], int]:
+        """Project the reserved transcript and report its context usage."""
+        retained_history = recent_history(snapshot.transcript, settings.max_history_chars)
+        events.emit(
+            "context_usage",
+            {
+                "used_chars": history_context_chars(snapshot.transcript, settings.max_history_chars),
+                "max_chars": settings.max_history_chars,
+            },
+        )
+        dropped_history = (
+            snapshot.previously_dropped + len(projected_history(snapshot.transcript)) - len(retained_history)
+        )
+        if dropped_history:
+            events.emit("history_trimmed", {"dropped": dropped_history})
+        messages = build_provider_messages(
+            snapshot.transcript,
+            snapshot.schedule_yaml,
+            question,
+            attachments,
+            pending_proposal=bool(snapshot.proposal_yaml),
+            optimizer_result_available=artifact is not None,
+            max_history_chars=settings.max_history_chars,
+        )
+        return messages, dropped_history
+
+    async def _execute_run(
+        self,
+        snapshot: RunSnapshot,
+        messages: Sequence[ChatMessage],
+        attachments: Sequence[SandboxAttachment],
+        artifact: OptimizerArtifact | None,
+        runtime: SessionRuntime,
+        background: bool,
+        output: RunOutput,
+        events: _RunEvents,
+    ) -> None:
+        """Execute the agent and await workspace cleanup before returning."""
+        async with runtime.concurrency_limit:
+            agent_events = run_workspace(
+                runtime.provider,
+                runtime.sandbox_factory,
+                snapshot.schedule_yaml,
+                messages,
+                WorkspaceLimits.from_settings(runtime.settings),
+                take_steering=None if background else lambda close: runtime.store.take_steering(self.id, close),
+                pending_proposal_yaml=snapshot.proposal_yaml,
+                pending_proposal_diff=snapshot.proposal_diff,
+                execute_optimizer=lambda current_yaml, arguments: runtime.session_optimizer.execute(
+                    self.id, current_yaml, arguments
+                ),
+                attachments=attachments,
+                optimizer_result=artifact.content if artifact is not None else None,
+                agent=self.agent,
+            )
+            async with aclosing(agent_events):
+                async for event in agent_events:
+                    wire_event = output.consume(event)
+                    if wire_event is not None:
+                        events.emit(*wire_event)
+
+    def _commit_run(
+        self,
+        run: AgentRun,
+        snapshot: RunSnapshot,
+        entries: Sequence[AgentMessage],
+        output: RunOutput,
+        store: SessionPersistence,
+    ) -> RunCompletion:
+        # The outcome is fixed once cleanup has finished and the session commit
+        # begins. Stop must not turn a committed answer into a stopped response
+        # while its history write is still pending.
+        run.finishing = True
+        completion = store.finish(
+            self.id,
+            retained_entries(entries),
+            (output.proposal.text, output.proposal.diff) if output.proposal is not None else None,
+            snapshot=snapshot,
+        )
+        return completion
+
+    def _publish_completion(
+        self,
+        completion: RunCompletion,
+        output: RunOutput,
+        events: _RunEvents,
+        settings: AiSettings,
+        dropped_history: int,
+        history_saved: bool | None,
+        background: bool,
+    ) -> None:
+        """Publish the committed result after its history write finishes."""
+        if not completion.run_saved:
+            events.emit("stale", {"message": STALE_RUN_ERROR})
+            return
+        if completion.history_trimmed_count and completion.history_trimmed_count != dropped_history:
+            events.emit("history_trimmed", {"dropped": completion.history_trimmed_count})
+        if completion.proposal_saved and output.proposal is not None:
+            events.emit("proposal", {"diff": output.proposal.diff})
+        done: dict[str, object] = {}
+        if history_saved is not None and not background:
+            done["history_saved"] = history_saved
+        events.emit(
+            "context_usage",
+            {"used_chars": completion.context_used_chars, "max_chars": settings.max_history_chars},
+        )
+        events.emit("done", done)
+
     async def run(
         self,
         run: AgentRun,
@@ -375,9 +545,7 @@ class AgentSession:
         """Own every run phase and finalize once, regardless of trigger or transport."""
         session_id = self.id
         settings, store = runtime.settings, runtime.store
-        concurrency_limit, history_log = runtime.concurrency_limit, runtime.history_log
-        provider, sandbox_factory = runtime.provider, runtime.sandbox_factory
-        session_optimizer = runtime.session_optimizer
+        history_log = runtime.history_log
         snapshot = (
             store.begin_background(session_id, run_id=run.id)
             if background
@@ -385,8 +553,6 @@ class AgentSession:
         )
         if snapshot is None:
             return
-        transcript, schedule_yaml = snapshot.transcript, snapshot.schedule_yaml
-        proposal_yaml, proposal_diff = snapshot.proposal_yaml, snapshot.proposal_diff
         history_question = question
         if attachments:
             filenames = json.dumps([attachment.filename for attachment in attachments], ensure_ascii=False)
@@ -397,58 +563,13 @@ class AgentSession:
         logged = False
         outcome = "cancelled"
         error_code = None
-        # Batch tiny provider fragments before the stream assigns publication IDs.
-        pending: tuple[str, dict[str, object]] | None = None
-        flush_timer: asyncio.TimerHandle | None = None
-
-        def flush() -> None:
-            nonlocal pending, flush_timer
-            if flush_timer is not None:
-                flush_timer.cancel()
-                flush_timer = None
-            if pending is not None:
-                self.publish(*pending)
-                pending = None
-
-        def publish(event_type: str, data: dict[str, object]) -> None:
-            nonlocal pending, flush_timer
-            if event_type in {"delta", "reasoning"}:
-                if pending is not None and pending[0] != event_type:
-                    flush()
-                text = str(pending[1]["text"]) if pending is not None else ""
-                pending = event_type, {**data, "text": text + str(data["text"])}
-                if len(str(pending[1]["text"])) >= 2048:
-                    flush()
-                elif flush_timer is None:
-                    flush_timer = asyncio.get_running_loop().call_later(0.025, flush)
-            else:
-                flush()
-                self.publish(event_type, data)
-
-        terminal_event: tuple[str, dict[str, object]] | None = None
-
-        async def emit(event_type: str, data: dict[str, object]) -> None:
-            nonlocal terminal_event
-            # Every replayable fragment identifies its run, even after run_start expires.
-            data = {**data, "run_id": run.id}
-            if event_type in TERMINAL_EVENTS:
-                terminal_event = event_type, data
-            else:
-                publish(event_type, data)
-
-        async def write_history(operation: str, *args) -> bool:
-            # asyncio cancellation and ASGI cancel scopes both wait for the history write.
-            task = asyncio.create_task(history_log.write(operation, *args))
-            try:
-                return await asyncio.shield(task)
-            except asyncio.CancelledError:
-                await task
-                raise
+        events = _RunEvents(run.id, self.publish)
 
         try:
             if history_log is not None:
                 logged = True
-                logged = await write_history(
+                logged = await _write_history(
+                    history_log,
                     "start_run",
                     run.id,
                     session_id,
@@ -459,87 +580,25 @@ class AgentSession:
                 )
                 if not logged:
                     raise HTTPException(status_code=503, detail="AI chat history is temporarily unavailable.")
-            await emit("run_start", {"trigger": "optimizer" if background else "user"})
+            events.emit("run_start", {"trigger": "optimizer" if background else "user"})
             run.ready.set_result(True)
             if not background:
-                artifact = await session_optimizer.latest_result_artifact(session_id)
-            retained_history = recent_history(transcript, settings.max_history_chars)
-            await emit(
-                "context_usage",
-                {
-                    "used_chars": history_context_chars(transcript, settings.max_history_chars),
-                    "max_chars": settings.max_history_chars,
-                },
-            )
-            dropped_history = snapshot.previously_dropped + len(projected_history(transcript)) - len(retained_history)
-            if dropped_history:
-                await emit("history_trimmed", {"dropped": dropped_history})
-            messages = build_provider_messages(
-                transcript,
-                schedule_yaml,
-                question,
-                attachments,
-                pending_proposal=bool(proposal_yaml),
-                optimizer_result_available=artifact is not None,
-                max_history_chars=settings.max_history_chars,
-            )
-            async with concurrency_limit:
-                agent_events = run_workspace(
-                    provider,
-                    sandbox_factory,
-                    schedule_yaml,
-                    messages,
-                    WorkspaceLimits.from_settings(settings),
-                    take_steering=None if background else lambda close: store.take_steering(session_id, close),
-                    pending_proposal_yaml=proposal_yaml,
-                    pending_proposal_diff=proposal_diff,
-                    execute_optimizer=lambda current_yaml, arguments: session_optimizer.execute(
-                        session_id, current_yaml, arguments
-                    ),
-                    attachments=attachments,
-                    optimizer_result=artifact.content if artifact is not None else None,
-                    agent=self.agent,
-                )
-                async with aclosing(agent_events):
-                    async for event in agent_events:
-                        wire_event = output.consume(event)
-                        if wire_event is not None:
-                            await emit(*wire_event)
+                artifact = await runtime.session_optimizer.latest_result_artifact(session_id)
+            messages, dropped_history = self._prepare_run(snapshot, question, attachments, artifact, settings, events)
+            await self._execute_run(snapshot, messages, attachments, artifact, runtime, background, output, events)
             run_entries = [run_entries[0], *self.agent.state.messages]
-            # The outcome is fixed once cleanup has finished and the session commit
-            # begins. Stop must not turn a committed answer into a stopped response
-            # while its history write is still pending.
-            run.finishing = True
-            completion = store.finish(
-                session_id,
-                retained_entries(run_entries),
-                (output.proposal.text, output.proposal.diff) if output.proposal is not None else None,
-                snapshot=snapshot,
-            )
+            completion = self._commit_run(run, snapshot, run_entries, output, store)
             completed = True
             outcome = "completed" if completion.run_saved else "stale"
             history_saved = None
             if logged:
                 # The history result is part of foreground done. Do not write it again in finally.
                 logged = False
-                # The prompt was written at start, without the attachment filenames in its session copy.
-                # The prompt entry was written when the run started.
-                history_saved = await write_history("finish_run", run.id, outcome, None, output.usage, run_entries[1:])
-            if not completion.run_saved:
-                await emit("stale", {"message": STALE_RUN_ERROR})
-                return
-            if completion.history_trimmed_count and completion.history_trimmed_count != dropped_history:
-                await emit("history_trimmed", {"dropped": completion.history_trimmed_count})
-            if completion.proposal_saved and output.proposal is not None:
-                await emit("proposal", {"diff": output.proposal.diff})
-            done = {"run_id": run.id}
-            if history_saved is not None and not background:
-                done["history_saved"] = history_saved
-            await emit(
-                "context_usage",
-                {"used_chars": completion.context_used_chars, "max_chars": settings.max_history_chars},
-            )
-            await emit("done", done)
+                # The prompt entry, including attachment filenames, was written at run start.
+                history_saved = await _write_history(
+                    history_log, "finish_run", run.id, outcome, None, output.usage, run_entries[1:]
+                )
+            self._publish_completion(completion, output, events, settings, dropped_history, history_saved, background)
         except asyncio.CancelledError:
             if not completed:
                 # Keep the prompt so a follow-up can refer to it. Workspace changes and any
@@ -547,13 +606,13 @@ class AgentSession:
                 run_entries = output.interrupted_entries([run_entries[0], *self.agent.state.messages], "aborted")
                 store.finish(session_id, retained_entries(run_entries), snapshot=snapshot)
                 completed = True
-            await emit("stopped", {})
+            events.emit("stopped", {})
             raise
         except HTTPException:
             if not background:
                 raise
             outcome, error_code = "failed", "history_unavailable"
-            await emit(
+            events.emit(
                 "error", {"message": "AI chat history is unavailable, so the optimizer result was not reviewed."}
             )
         except (ProviderError, SandboxRunTimeoutError, SandboxCandidateError, SandboxError) as exc:
@@ -567,11 +626,11 @@ class AgentSession:
             else:
                 error_code, message = "sandbox_error", "The temporary AI sandbox failed. Please try again."
                 logger.exception("AI sandbox run failed session_id=%s", session_id)
-            await emit("error", {"message": message})
+            events.emit("error", {"message": message})
         except Exception:
             outcome, error_code = "failed", "internal_error"
             logger.exception("Unexpected AI run failure session_id=%s", session_id)
-            await emit("error", {"message": "The AI response failed unexpectedly."})
+            events.emit("error", {"message": "The AI response failed unexpectedly."})
         finally:
             run.finishing = True
             if not completed:
@@ -579,7 +638,8 @@ class AgentSession:
                 run_entries = output.interrupted_entries([run_entries[0], *self.agent.state.messages], stop_reason)
                 store.abort(session_id, snapshot)
             if logged:
-                await write_history(
+                await _write_history(
+                    history_log,
                     "finish_run",
                     run.id,
                     outcome,
@@ -587,7 +647,4 @@ class AgentSession:
                     output.usage,
                     run_entries[1:],
                 )
-            if terminal_event is not None:
-                publish(*terminal_event)
-            else:
-                flush()
+            events.finish()
