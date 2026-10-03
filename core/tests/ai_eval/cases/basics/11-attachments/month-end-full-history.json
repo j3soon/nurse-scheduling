@@ -1,0 +1,77 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "id": "month-end-full-history",
+  "fixture": "new-schedule",
+  "question": "From the attached October roster, report the people.items.history values I should use for November. Use all seven provided days. Return only a JSON object with a histories field mapping each person to their array of shift IDs. Do not edit the schedule.",
+  "expect_proposal": false,
+  "attachments": [
+    "month-end-history-reverse-xlsx"
+  ],
+  "answer_json": {
+    "histories": {
+      "Ada": [
+        "D",
+        "D",
+        "D",
+        "D",
+        "OFF",
+        "N",
+        "N"
+      ],
+      "Bela": [
+        "N",
+        "N",
+        "N",
+        "N",
+        "N",
+        "N",
+        "OFF"
+      ],
+      "Cora": [
+        "E",
+        "OFF",
+        "N",
+        "D",
+        "D",
+        "E",
+        "E"
+      ],
+      "Dion": [
+        "OFF",
+        "OFF",
+        "D",
+        "D",
+        "D",
+        "D",
+        "D"
+      ],
+      "Eli": [
+        "D",
+        "E",
+        "N",
+        "E",
+        "OFF",
+        "OFF",
+        "OFF"
+      ],
+      "Finn": [
+        "N",
+        "N",
+        "N",
+        "N",
+        "N",
+        "N",
+        "E"
+      ]
+    }
+  },
+  "tool_usage": {
+    "required": [
+      "bash"
+    ]
+  },
+  "tags": [
+    "history-investigation"
+  ]
+}

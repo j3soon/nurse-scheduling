@@ -727,5 +727,41 @@
       }
     ],
     "comparison_mode": "ablation"
+  },
+  {
+    "id": "people-history-import",
+    "file": "steps/people-history-import.md",
+    "cases": [
+      "month-end-history-forward",
+      "month-end-history-reverse",
+      "month-end-full-history"
+    ],
+    "hypothesis": "Produces one shorthand history row per person from the final consecutive shift run, including OFF, while preserving full daily history when requested.",
+    "sha256": "c244762367884de1c0bea5856a3ee8ce606e49c28e5046e0652096fede907db8",
+    "evidence": [
+      {
+        "case": "month-end-history-forward",
+        "input_sha256": "204cd96c1ddccd32ab1b16bc5133f99137b1b38b4681377b2dfa17516cae225a",
+        "before": "1/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "month-end-history-reverse",
+            "input_sha256": "d10b3575aac2ef79852ba15d7add6863112b7cbd24f6d94c9d00b96dbd96362e",
+            "before": "1/3",
+            "after": "3/3"
+          },
+          {
+            "case": "month-end-full-history",
+            "input_sha256": "fe71b2c03aac4519d5ba63ca86a797535270dafbb5dfe7e34607f6ad310a1b2c",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Compare the previous full prompt with this final step. Grade captured CSV downloads. Both date orders improved. Full daily history stayed correct. The reversed-date receipt uses a clean paired recheck after an earlier E2B failure."
+      }
+    ]
   }
 ]

@@ -19,13 +19,17 @@
 
 # This test is mostly AI generated.
 
+import csv
+import hashlib
 import json
 import runpy
 import sys
+from io import BytesIO, StringIO
 from pathlib import Path
 from zipfile import ZipFile
 
 import pytest
+from openpyxl import load_workbook
 
 from nurse_scheduling.ai.attachment_tools.inspect_pdf import inspect_pdf
 from nurse_scheduling.ai.attachment_tools.inspect_xlsx import inspect_workbook
@@ -51,6 +55,43 @@ def test_xlsx_fixture_requires_reading_the_non_first_sheet(tmp_path: Path):
     assert workbook["sheet_names"] == ["Overview", "Night assignment"]
     assert all("NIGHT OWL 7429" not in str(row) for row in workbook["sheets"][0]["rows"])
     assert "NIGHT OWL 7429" in str(workbook["sheets"][1]["rows"])
+
+
+@pytest.mark.parametrize("order", ["forward", "reverse"])
+def test_history_import_oracles_match_calendar_order_and_final_runs(order):
+    attachment = load_attachment_fixtures([f"month-end-history-{order}-xlsx"])[0]
+    assert attachment.data == load_attachment_fixtures([f"month-end-history-{order}-xlsx"])[0].data
+    workbook = load_workbook(BytesIO(attachment.data), data_only=True)
+    rows = list(workbook.active.values)
+    histories = {}
+    lines = []
+    for person, *shifts in rows[1:]:
+        history = [shift for _, shift in sorted(zip(rows[0][1:], shifts, strict=True))]
+        histories[person] = history
+        count = 0
+        for shift in reversed(history):
+            if shift != history[-1]:
+                break
+            count += 1
+        lines.append(f"{person},{history[-1]},{count}")
+    workbook.close()
+    cases = {case.id: case for case in load_cases(CASES)}
+    expected = "\n".join(sorted(lines)) + "\n"
+    assert cases[f"month-end-history-{order}"].download_files == {"people-history.csv": expected}
+    assert cases["month-end-full-history"].answer_json == {"histories": histories}
+    parsed = list(csv.reader(StringIO(expected)))
+    assert len({row[0] for row in parsed}) == len(histories)
+    assert all(len(row) == 3 and row[2].isdigit() for row in parsed)
+
+
+@pytest.mark.parametrize("order", ["forward", "reverse"])
+def test_history_download_oracle_rejects_extra_runs_for_one_person(order):
+    case = next(case for case in load_cases(CASES) if case.id == f"month-end-history-{order}")
+    expected = case.download_files["people-history.csv"]
+    activity = [{"kind": "tool", "name": "bash", "ok": True, "arguments": "{}", "result": "parsed"}]
+    for data, accepted in [(expected, True), ("Ada,D,4\n" + expected, False)]:
+        download = {"kind": "download", "files": {"people-history.csv": hashlib.sha256(data.encode()).hexdigest()}}
+        assert grade(case, RunOutcome(activity=[*activity, download])).passed == accepted
 
 
 def test_pdf_fixture_renders_a_page_read_can_return_to_the_model(tmp_path: Path):

@@ -60,6 +60,11 @@ For file workflows, check actual delivered bytes and a later message in a fresh
 workspace. A claimed download path or a successful first-turn read does not prove
 delivery or retention. For complete imports, compare the whole parsed source
 with the proposal. Keep a partial-update control.
+For generated import files, grade the delivered file against the destination
+importer's row and field rules. Test malformed output with the real importer
+to detect silent conversions. Fix parser defects separately from model mistakes.
+Pair a summarized format with a full-history control. Keep its instruction
+scoped to that format so the agent preserves data in other formats.
 
 Inspect the test runner before describing a run as end-to-end. Record whether
 provider requests, sandbox commands, optimizer submission, solving, and result
@@ -155,8 +160,14 @@ and environment. Use the repository's repetition and concurrency policy. Here,
 start with three runs per version and four concurrent case jobs. Extend to five
 when results are noisy. Larger samples require a requested deeper investigation.
 Keep infrastructure errors separate and preserve failed attempts when retrying them.
+Recheck only affected cases with both versions and unchanged inputs. Keep the
+original failed batch and identify the clean recheck separately. A successful
+recheck does not erase the infrastructure failure from reliability reporting.
 Keep prompt, manifest, cases, test inputs, grader, and references unchanged while
 an evaluation is running. Wait for its reports before editing those inputs.
+Put cases in their final category before measuring. Before committing, check
+that the production prompt, parsed cases, and attachment bytes match the measured
+inputs. Category and tag changes can also change the saved fingerprints.
 When a candidate has no saved benefit receipt yet, run input and grader checks
 first. Run checks that enforce prompt evidence after the comparison completes
 and its final receipts are saved.
@@ -169,6 +180,8 @@ matched repetitions. Keep all metrics in full reports, even without a declared c
 target. User-facing summaries may focus on meaningful changes. Missing or
 partial usage is unavailable, not zero. Reasoning tokens are included in
 generated tokens. Do not add them again when calculating totals.
+With only one matched passing pair, standard deviation is unavailable and cost
+changes are preliminary. Report repeated correctness separately from those costs.
 
 Require correct answers before claiming cost improvements. Compare tool
 calls, tokens, or latency among passing runs with matched inputs. A relative

@@ -20,7 +20,7 @@
 # This test fixture generator is mostly AI generated.
 
 from collections.abc import Callable, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 from xml.etree import ElementTree
@@ -66,6 +66,30 @@ def _xlsx() -> bytes:
     workbook.save(output)
     workbook.close()
     return output.getvalue()
+
+
+def _history_workbook(reverse: bool = False) -> bytes:
+    """Include earlier long runs, recent OFF days, and reversible date columns."""
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "October shifts"
+    # Excel date cells do not store a timezone.
+    dates = [datetime(2025, 10, 25, tzinfo=UTC).replace(tzinfo=None) + timedelta(days=i) for i in range(7)]
+    indices = list(reversed(range(7))) if reverse else list(range(7))
+    sheet.append(["Person", *[dates[i] for i in indices]])
+    shifts = {
+        "Ada": ["D", "D", "D", "D", "OFF", "N", "N"],
+        "Bela": ["N", "N", "N", "N", "N", "N", "OFF"],
+        "Cora": ["E", "OFF", "N", "D", "D", "E", "E"],
+        "Dion": ["OFF", "OFF", "D", "D", "D", "D", "D"],
+        "Eli": ["D", "E", "N", "E", "OFF", "OFF", "OFF"],
+        "Finn": ["N", "N", "N", "N", "N", "N", "E"],
+    }
+    for name, history in shifts.items():
+        sheet.append([name, *[history[i] for i in indices]])
+    for cell in sheet[1][1:]:
+        cell.number_format = "yyyy-mm-dd"
+    return _stable_workbook(workbook)
 
 
 def _inventory_workbook() -> bytes:
@@ -300,6 +324,16 @@ def _pptx() -> bytes:
 
 
 _FIXTURES: dict[str, tuple[str, str, Callable[[], bytes]]] = {
+    "month-end-history-forward-xlsx": (
+        "october-forward.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        _history_workbook,
+    ),
+    "month-end-history-reverse-xlsx": (
+        "october-reverse.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        lambda: _history_workbook(reverse=True),
+    ),
     "schedule-yaml": (
         "schedule-source.yaml",
         "application/yaml",

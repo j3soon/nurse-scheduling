@@ -141,6 +141,9 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   Keep all metrics in full reports. User-facing summaries may show only material
   changes. Compare costs on matched passing repetitions with complete telemetry,
   retain every attempt in reliability counts, and never count missing usage as zero.
+  With only one matched passing pair, report cost changes as preliminary and
+  standard deviation as unavailable. Repeated correctness does not establish
+  repeated performance gains.
   Reserve `--tuning` for broad changes or final tuning confirmation.
   Use `--full` only when explicitly requested, for release-level confirmation,
   or when cross-cutting behavior could affect cases outside the tuning set.
@@ -166,10 +169,13 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   Bind the receipt to the clause, parsed testcase, and fixture with one input
   fingerprint. Keep tracked receipts to aggregate counts, model, and concise
   scope notes. Preserve exact contexts, environment metadata, timing, old
-  receipts, and investigation history in ignored `artifacts/`. Do not force
-  every later step to rerun after an earlier edit. Include a counterfactual
-  clarification reply where guessing the
-  likely target would produce the wrong edit, alongside an exact-target control.
+  receipts, and investigation history in ignored `artifacts/`.
+  Place cases in their final category before measuring. Before committing,
+  check that prompt, parsed case, and attachment fingerprints match the measured
+  inputs, including category and tags.
+  Do not force every later step to rerun after an earlier edit. Include a
+  counterfactual clarification reply where guessing the likely target would
+  produce the wrong edit, alongside an exact-target control.
 - Keep implementation comparisons separate from prompt comparisons. Removing
   a whole prompt section does not isolate a sentence added to it. Report failed
   controls even when the main witness passes. Retain their testcases and failed
@@ -189,6 +195,9 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   scheduling semantics rather than ineffective fields or equivalent formatting.
   For complete file imports, compare the whole parsed proposal with the uploaded
   source, including every rule and weight. Use a partial-update control.
+  For import-file generation, grade the delivered file against the destination
+  importer's row and field rules. Pair summarized formats with a full-history
+  control so format-specific guidance does not discard required data.
   Preserve exact selectors and values when fidelity to the user's wording is
   under test. Define structured answer fields and counting units explicitly. Do not
   let an undefined priority label or field name decide the grader's meaning. Keep original traces when correcting a grader, apply the correction
