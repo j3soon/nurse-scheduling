@@ -36,6 +36,8 @@ export type AssistantEvent =
   | { type: 'delta'; text: string }
   | { type: 'reasoning'; text: string }
   | { type: 'truncated' }
+  | { type: 'done' | 'stopped' }
+  | { type: 'error' | 'stale'; message: string }
   | { type: 'tool_start'; activity: ToolStartActivity }
   | { type: 'tool'; activity: ToolActivity }
   | { type: 'schedule_change'; before: string; after: string };
@@ -82,6 +84,14 @@ export function applyAssistantEvent<T extends ChatExportMessage>(message: T, eve
       return { ...message, activity: appendReasoningActivity(activity, event.text) };
     case 'truncated':
       return { ...message, truncated: true };
+    case 'done':
+      return completeResponse(message);
+    case 'stopped':
+      return stopResponse(message);
+    case 'error':
+      return failResponse(message, event.message);
+    case 'stale':
+      return staleResponse(message, event.message);
     case 'tool_start':
       return {
         ...message,

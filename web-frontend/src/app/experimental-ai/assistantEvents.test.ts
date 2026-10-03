@@ -24,7 +24,6 @@ import {
   AssistantEvent,
   applyAssistantEvent,
   toAssistantEvent,
-  stopResponse,
 } from './assistantEvents';
 import type { ChatExportMessage } from './chatExport';
 
@@ -100,10 +99,11 @@ describe('assistant events', () => {
   });
 
   it('stops a response without adding answer text', () => {
-    const message = stopResponse(reduce([
+    const message = reduce([
       { type: 'delta', text: 'Partial.' },
       { type: 'tool_start', activity: { toolCallId: 'a', name: 'bash', arguments: 'sleep 60' } },
-    ]));
+      { type: 'stopped' },
+    ]);
 
     expect(message.status).toBe('stopped');
     expect(message.content).toBe('Partial.');

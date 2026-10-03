@@ -30,12 +30,11 @@ import {
   rejectProposal, sendMessage, stopSession, updateSessionSchedule,
 } from './aiClient';
 import {
-  type AssistantEvent, applyAssistantEvent, completeResponse, failResponse,
-  messageId, resumeResponse, staleResponse, steerResponse, stopResponse, toAssistantEvent,
+  type AssistantEvent, applyAssistantEvent, messageId, resumeResponse, steerResponse, toAssistantEvent,
 } from './assistantEvents';
 import { ChatLifecycle, scopedEventHandler } from './chatLifecycle';
 import { SessionEventRouter } from './sessionEventRouter';
-import type { SessionEventHandler } from './sessionEvents';
+import type { SessionEvent, SessionEventHandler } from './sessionEvents';
 import { useSessionEventStream } from './useSessionEventStream';
 
 export interface ChatMessage extends ChatExportMessage {
@@ -184,6 +183,15 @@ export function useAiChat({
     onUnavailable();
   };
 
+  const projectSessionState = useCallback((event: SessionEvent): boolean => {
+    switch (event.type) {
+      case 'proposal': setProposalDiff(event.diff); return true;
+      case 'context_usage': setContextUsage(event.usage); return true;
+      case 'history_trimmed': setTrimmedHistoryCount(event.dropped); return true;
+      default: return false;
+    }
+  }, []);
+
   const startSessionEventStream = useCallback((sessionId: string, endpoint: string) => {
     if (sessionEvents.connected()) return;
     // One background run occupies one UI answer, keyed by its run ID.
@@ -221,13 +229,9 @@ export function useAiChat({
       if (activeId === undefined) return;
       setMessages(previous => previous.map(message => message.id === activeId ? update(message) : message));
     };
-    const failBackgroundRun = (message: string) => {
-      updateBackgroundMessage(entry => failResponse(entry, message));
-      lifecycle.finish(lifecycle.current('background'));
-      setError(message);
-    };
     const ownsConversation = lifecycle.capture();
     const handleBackground: SessionEventHandler = event => {
+      if (projectSessionState(event)) return;
       const output = toAssistantEvent(event, sandboxScheduleRef, scheduleYamlRef);
       if (output) {
         resumeBackgroundMessage();
@@ -268,10 +272,6 @@ export function useAiChat({
               : undefined;
             return steerResponse(previous, runId, user, continuation, `${runId}:${queuedId}`);
           });
-          break;
-        }
-        case 'proposal': {
-          setProposalDiff(event.diff);
           break;
         }
         case 'optimization': {
@@ -321,35 +321,10 @@ export function useAiChat({
           });
           break;
         }
-        case 'done': {
-          const { runId } = event;
-          updateBackgroundMessage(message => completeResponse(message), runId);
+        case 'done': case 'stopped': case 'stale': case 'error': {
+          updateBackgroundMessage(message => applyAssistantEvent(message, event), event.runId);
           lifecycle.finish(lifecycle.current('background'));
-          break;
-        }
-        case 'stopped': {
-          const { runId } = event;
-          updateBackgroundMessage(stopResponse, runId);
-          lifecycle.finish(lifecycle.current('background'));
-          break;
-        }
-        case 'stale': {
-          const { message } = event;
-          updateBackgroundMessage(entry => staleResponse(entry, message));
-          lifecycle.finish(lifecycle.current('background'));
-          setError(message);
-          break;
-        }
-        case 'context_usage': {
-          setContextUsage(event.usage);
-          break;
-        }
-        case 'history_trimmed': {
-          setTrimmedHistoryCount(event.dropped);
-          break;
-        }
-        case 'error': {
-          failBackgroundRun(event.message);
+          if (event.type === 'stale' || event.type === 'error') setError(event.message);
           break;
         }
       }
@@ -361,7 +336,7 @@ export function useAiChat({
         eventRouterRef.current.foreground?.reject(streamError);
       }
     });
-  }, [authToken, lifecycle, reportRequestError, sessionEvents, sessionRetentionSeconds, setError]);
+  }, [authToken, lifecycle, reportRequestError, sessionEvents, sessionRetentionSeconds, setError, projectSessionState]);
 
   useEffect(() => {
     if (!isClientReady || activeSessionId === null || conversationUnavailable) return;
@@ -437,6 +412,7 @@ export function useAiChat({
       // Subscribe before submitting. Neither a fast terminal event nor a reconnect
       // should finish a different operation.
       const handle = scopedEventHandler(event => {
+        if (projectSessionState(event)) return;
         const output = toAssistantEvent(event, sandboxScheduleRef, scheduleYamlRef);
         if (output) {
           if (startsVisibleOutput(output)) {
@@ -487,42 +463,23 @@ export function useAiChat({
             setQueuedMessages(queuedMessagesRef.current);
             runMessageIds.add(queuedId);
             const steeringStartedAt = Date.now();
-            if (activeAssistantHasOutput) {
-              const completedAssistantId = activeAssistantId;
-              const nextAssistantId = messageId();
-              runMessageIds.add(nextAssistantId);
-              setMessages(previous => steerResponse(
-                previous,
-                completedAssistantId,
-                { id: queuedId, runId, role: 'user', content: queuedMessage, createdAt },
-                { id: nextAssistantId, runId, role: 'assistant', content: '', status: 'pending', responseStartedAt: steeringStartedAt },
-              ));
-              activeAssistantId = nextAssistantId;
-              setSteeringAssistantId(nextAssistantId);
-              activeAssistantHasOutput = false;
-            } else {
-              const pendingAssistantId = activeAssistantId;
-              setMessages(previous => steerResponse(
-                previous,
-                pendingAssistantId,
-                { id: queuedId, runId, role: 'user', content: queuedMessage, createdAt },
-              ));
-              setSteeringAssistantId(pendingAssistantId);
-            }
+            const previousAssistantId = activeAssistantId;
+            const nextAssistantId = activeAssistantHasOutput ? messageId() : undefined;
+            if (nextAssistantId) runMessageIds.add(nextAssistantId);
+            setMessages(previous => steerResponse(
+              previous,
+              previousAssistantId,
+              { id: queuedId, runId, role: 'user', content: queuedMessage, createdAt },
+              nextAssistantId ? {
+                id: nextAssistantId, runId, role: 'assistant', content: '', status: 'pending',
+                responseStartedAt: steeringStartedAt,
+              } : undefined,
+            ));
+            activeAssistantId = nextAssistantId ?? previousAssistantId;
+            setSteeringAssistantId(activeAssistantId);
+            activeAssistantHasOutput = false;
             activeQuestion = queuedMessage;
             activeQuestionRequiresAttachments = false;
-            break;
-          }
-          case 'proposal': {
-            setProposalDiff(event.diff);
-            break;
-          }
-          case 'context_usage': {
-            setContextUsage(event.usage);
-            break;
-          }
-          case 'history_trimmed': {
-            setTrimmedHistoryCount(event.dropped);
             break;
           }
         }
@@ -561,8 +518,7 @@ export function useAiChat({
       if (!lifecycle.owns(operation)) return;
       setMessages(previous => previous.map(message => (
         message.id === activeAssistantId
-          ? controller.signal.aborted ? stopResponse(message)
-            : completeResponse(message)
+          ? applyAssistantEvent(message, { type: controller.signal.aborted ? 'stopped' : 'done' })
           : message
       )));
     } catch (streamError) {
@@ -570,9 +526,10 @@ export function useAiChat({
       const staleRunMessage = streamError instanceof AiStaleRunError ? streamError.message : null;
       setMessages(previous => previous.map(message => {
         if (message.id !== activeAssistantId) return message;
-        if (controller.signal.aborted) return stopResponse(message);
+        if (controller.signal.aborted) return applyAssistantEvent(message, { type: 'stopped' });
         return {
-          ...(staleRunMessage === null ? failResponse(message) : staleResponse(message, staleRunMessage)),
+          ...applyAssistantEvent(message, staleRunMessage === null
+            ? { type: 'error', message: '' } : { type: 'stale', message: staleRunMessage }),
           retry: {
             question: activeQuestion,
             requiresAttachments: activeQuestionRequiresAttachments,
