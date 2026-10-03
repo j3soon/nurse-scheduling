@@ -465,11 +465,12 @@ def test_message_ack_and_get_replay_keep_execution_independent_of_readers():
             # A missed required event restores a compact snapshot, not a silently
             # truncated stream. Current proposal ownership accompanies that snapshot.
             app.state.session_event_stream._max_events = 1
+            session.proposal_diff = "Pending schedule changes"
             session.publish("tool", {"run_id": run_id, "name": "read", "result": "read"})
             recovery = await read_until("session_reset")
             data = json.loads(next(line[6:] for line in recovery.splitlines() if line.startswith("data: ")))
             assert data["active_run_id"] is None
-            assert data["proposal_diff"] == ""
+            assert data["proposal_diff"] == "Pending schedule changes"
             assert any(event["type"] == "done" for event in data["events"])
             assert len(observed) == count
 

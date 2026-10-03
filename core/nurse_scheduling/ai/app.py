@@ -24,7 +24,7 @@ import json
 import logging
 import sys
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from dataclasses import replace
 from typing import Literal
 from uuid import UUID, uuid4
@@ -39,10 +39,10 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from ..sentry import init_sentry
 from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry
 from ..version import get_app_version
-from .agent_session import SessionRuntime
+from .agent_session import AgentSession, SessionRuntime
 from .config import AiSettings, validate_ai_auth_credentials
 from .history import ChatHistory, stop_maintenance
-from .lifecycle import TERMINAL_EVENTS, SessionRuns
+from .lifecycle import TERMINAL_EVENTS, AgentRun, SessionRuns
 from .optimizer import (
     HttpOptimizerBackend,
     OptimizerArtifact,
@@ -184,9 +184,37 @@ def owner_cookie_token(owner: str | None) -> str:
     return str(uuid4())
 
 
-def _sse_event(event_type: str, data: dict[str, object]) -> str:
-    """Serialize one server-sent event."""
-    return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+async def _session_sse(
+    session: AgentSession, after_id: int, *, until_run: AgentRun | None = None
+) -> AsyncIterator[str]:
+    """Frame the shared replay journal. A compatibility reader ends with its own run."""
+    async with aclosing(session.events(after_id)) as reader:
+        async for event in reader:
+            if event is None:
+                yield ": keepalive\n\n"
+                continue
+            data = event.data
+            if event.type == "session_reset":
+                data = {
+                    **data,
+                    "proposal_diff": session.proposal_diff,
+                    "active_run_id": session.snapshot.run_id if session.snapshot else None,
+                }
+            yield f"id: {event.id}\nevent: {event.type}\ndata: {json.dumps(data)}\n\n"
+            if until_run is not None and (
+                (data.get("run_id") == until_run.id and event.type in TERMINAL_EVENTS)
+                or (
+                    event.type == "session_reset"
+                    and (
+                        until_run.done.done()
+                        or any(
+                            item["type"] in TERMINAL_EVENTS and item["data"].get("run_id") == until_run.id
+                            for item in data["events"]
+                        )
+                    )
+                )
+            ):
+                return
 
 
 async def _read_files(uploads: list[UploadFile], settings: AiSettings) -> list[SandboxAttachment]:
@@ -480,22 +508,8 @@ def create_app(
         except ValueError:
             raise HTTPException(status_code=400, detail="Last-Event-ID must be an integer.") from None
 
-        async def generate_session_events():
-            async for event in session.events(after_id):
-                if event is None:
-                    yield ": keepalive\n\n"
-                else:
-                    data = event.data
-                    if event.type == "session_reset":
-                        data = {
-                            **data,
-                            "proposal_diff": session.proposal_diff,
-                            "active_run_id": session.snapshot.run_id if session.snapshot else None,
-                        }
-                    yield f"id: {event.id}\n{_sse_event(event.type, data)}"
-
         return StreamingResponse(
-            generate_session_events(),
+            _session_sse(session, after_id),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
@@ -606,25 +620,8 @@ def create_app(
         # Compatibility readers explicitly request SSE. They use the same journal
         # and cannot cancel execution by leaving. New clients receive a message acknowledgement.
         if "text/event-stream" in request.headers.get("accept", ""):
-
-            async def generate_events():
-                async for event in session.events(cursor):
-                    if event is not None:
-                        yield f"id: {event.id}\n{_sse_event(event.type, event.data)}"
-                        if (event.data.get("run_id") == run.id and event.type in TERMINAL_EVENTS) or (
-                            event.type == "session_reset"
-                            and (
-                                run.done.done()
-                                or any(
-                                    item["type"] in TERMINAL_EVENTS and item["data"].get("run_id") == run.id
-                                    for item in event.data["events"]
-                                )
-                            )
-                        ):
-                            return
-
             response = StreamingResponse(
-                generate_events(),
+                _session_sse(session, cursor, until_run=run),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )

@@ -471,6 +471,26 @@ def parse_sse(response_text: str) -> list[tuple[str, dict[str, str]]]:
     return events
 
 
+def test_compatibility_reader_recovers_current_session_proposal_after_a_replay_gap():
+    app = create_test_app(settings=make_settings(), provider=FakeProvider())
+    app.state.session_event_stream._max_events = 1
+    client = AuthenticatedTestClient(app)
+    session_id = create_session(client)
+    session = app.state.session_store._sessions[session_id]
+    session.proposal_yaml = schedule_yaml()
+    session.proposal_diff = "Pending schedule changes"
+
+    response = client.post(f"/sessions/{session_id}/messages", json={"message": "Explain"})
+
+    assert response.status_code == 200
+    resets = [data for kind, data in parse_sse(response.text) if kind == "session_reset"]
+    assert resets
+    assert all(data["proposal_diff"] == "Pending schedule changes" for data in resets)
+    assert resets[-1]["active_run_id"] is None
+    assert any(item["type"] == "done" for item in resets[-1]["events"])
+    assert not session.active
+
+
 @pytest.mark.parametrize("wait_stage", ["provider", "command"])
 def test_client_disconnect_leaves_the_run_active_until_explicit_stop(wait_stage: str, monkeypatch) -> None:
     saved = []
