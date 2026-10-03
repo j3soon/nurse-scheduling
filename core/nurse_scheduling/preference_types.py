@@ -43,39 +43,22 @@ def iter_succession_patterns(compiled_preference, histories, n_days):
     """Yield the same date windows and history suffixes used by the optimizer."""
     for p in compiled_preference.people:
         history = histories[p]
-        if history and n_days < len(compiled_preference.pattern):
-            # A short future range can still complete a pattern that began in history.
-            for suffix_len in range(1, min(len(compiled_preference.pattern) - 1, len(history)) + 1):
-                remaining = compiled_preference.pattern[suffix_len:]
+        pattern = compiled_preference.pattern
+        for d_begin in range(n_days - len(pattern) + 1):
+            if all(d in compiled_preference.date_set for d in range(d_begin, d_begin + len(pattern))):
+                yield p, d_begin, 0, pattern
+        # Patterns crossing history include day 0, the first scheduled date.
+        # Only their scheduled positions must belong to the selected dates.
+        if history:
+            for suffix_len in range(1, min(len(pattern) - 1, len(history)) + 1):
+                remaining = pattern[suffix_len:]
                 if len(remaining) > n_days or not all(d in compiled_preference.date_set for d in range(len(remaining))):
                     continue
-                prefix = compiled_preference.pattern[:suffix_len]
+                prefix = pattern[:suffix_len]
                 if all(
                     shift in element.shift_types for shift, element in zip(history[-suffix_len:], prefix, strict=True)
                 ):
                     yield p, 0, suffix_len, remaining
-        for d_begin in range(n_days - len(compiled_preference.pattern) + 1):
-            # Check if all dates in the pattern range are valid
-            if not all(
-                d in compiled_preference.date_set for d in range(d_begin, d_begin + len(compiled_preference.pattern))
-            ):
-                continue
-            # Match all patterns that start at day d_begin
-            patterns = [compiled_preference.pattern]
-            # Consider history data to check for patterns that start at day 0
-            # We only need to check day 0 since any pattern that matches history must include it
-            if d_begin == 0 and history is not None:
-                # For each pattern, check if its prefix matches the end of shift history
-                # If so, add the remaining suffix as a new pattern to check
-                for history_suffix_len in range(1, min(len(compiled_preference.pattern), len(history)) + 1):
-                    history_suffix = history[-history_suffix_len:]
-                    pattern_prefix = compiled_preference.pattern[:history_suffix_len]
-                    if all(history_suffix[i] in pattern_prefix[i].shift_types for i in range(history_suffix_len)):
-                        # If history suffix matches pattern prefix, add remaining pattern suffix as new pattern
-                        # This is equivalent to checking patterns that span across history and future days
-                        patterns.append(compiled_preference.pattern[history_suffix_len:])
-            for pattern_idx, pattern in enumerate(patterns):
-                yield p, d_begin, pattern_idx, pattern
 
 
 def shift_type_requirements(
@@ -262,15 +245,6 @@ def shift_type_successions(
     ):
         target_n_matched = len(pattern)
         unique_var_prefix = f"shift_type_successions_pref_{preference_idx}_p_{p}_dbegin_{d_begin}_pattern_{pattern_idx}"
-        if target_n_matched == 0:
-            # History already completes this pattern before the first schedulable day.
-            is_match_var_name = f"{unique_var_prefix}_is_match"
-            ctx.model_vars[is_match_var_name] = is_match = ctx.solver.new_bool_var(is_match_var_name)
-            ctx.solver.add_constraint(is_match == 1)
-            utils.add_objective(ctx, preference.weight, is_match)
-            ctx.reports.append(Report(unique_var_prefix, is_match, lambda x: x == 1))
-            continue
-
         pattern_element_matches = [
             _pattern_element_match_expr(d_begin + i, p, pattern[i]) for i in range(target_n_matched)
         ]

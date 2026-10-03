@@ -288,3 +288,51 @@ def test_short_horizon_hard_history_rest_rule_rejects_a_forced_day():
     data = load_data(source.encode())
     result = schedule(source.encode(), solver="ortools/cp-sat", timeout=5, forced_solution=_forced(data, {(0, 0): 0}))
     assert result.solver_status == "INFEASIBLE"
+
+
+@pytest.mark.parametrize("weight", [-10, 7, float("-inf")])
+def test_completed_history_pattern_does_not_constrain_future_shifts(weight):
+    source = _source(
+        {"type": "shift type successions", "person": ["ALL"], "date": ["ALL"], "pattern": ["N", "D"], "weight": weight},
+        ["N", "D"],
+    )
+    data = load_data(source.encode())
+    assignments = {(d, p): -1 for d in range(3) for p in range(2)}
+    result = schedule(source.encode(), solver="ortools/cp-sat", timeout=5, forced_solution=_forced(data, assignments))
+    assert result.solver_status == "OPTIMAL"
+    assert result.score == 0
+    row = audit_staffing_and_successions(data, assignments)["successions"][0]
+    assert row["windows"] == 4
+    assert row["unmet" if weight < 0 else "satisfied"] == 0
+
+
+@pytest.mark.parametrize("weight", [-10, float("-inf")])
+def test_history_window_checks_only_its_future_dates(weight):
+    raw = parse_schedule(RESULT_SOURCES["policy-audit-misses"].read_text())
+    raw["dates"]["range"]["endDate"] = "2026-05-06"
+    raw["people"]["items"] = [{"id": "Kai", "description": "", "history": ["N"] * 4}]
+    raw["preferences"] = [
+        {"type": "at most one shift per day"},
+        {"type": "shift request", "person": ["ALL"], "date": ["01", "02"], "shiftType": ["D"], "weight": 1},
+        {
+            "type": "shift type successions",
+            "person": ["ALL"],
+            "date": ["01", "02"],
+            "pattern": ["ALL"] * 6,
+            "weight": weight,
+        },
+    ]
+    source = schedule_yaml(raw)
+    data = load_data(source.encode())
+    assignments = {(d, 0): 0 if d < 2 else -1 for d in range(6)}
+    row = audit_staffing_and_successions(data, assignments)["successions"][0]
+    assert row["windows"] == 1
+    assert row["unmet"] == 1
+    forced = schedule(source.encode(), solver="ortools/cp-sat", timeout=5, forced_solution=_forced(data, assignments))
+    if weight == float("-inf"):
+        assert forced.solver_status == "INFEASIBLE"
+    else:
+        assert forced.score == -8
+    optimal = schedule(source.encode(), solver="ortools/cp-sat", timeout=5)
+    assert optimal.solver_status == "OPTIMAL"
+    assert optimal.score == 1
