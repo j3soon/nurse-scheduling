@@ -184,3 +184,107 @@ def test_a_succession_match_crossing_history_is_counted():
     assert row["windows"] == 6
     assert row["satisfied"] == 5
     assert row["unmet"] == 1
+
+
+@pytest.mark.parametrize(
+    "pattern,history,future",
+    [
+        (["N", "D"], ["N"], ["D"]),
+        (["N", "D", "OFF"], ["N", "D"], ["OFF"]),
+        (["N", "D", "N", "D"], ["N", "D", "N"], ["D", "OFF"]),
+    ],
+)
+@pytest.mark.parametrize("weight", [-10, 7])
+def test_short_horizon_still_checks_history_crossing_patterns(pattern, history, future, weight):
+    raw = parse_schedule(RESULT_SOURCES["policy-audit-misses"].read_text())
+    raw["dates"]["range"]["endDate"] = f"2026-05-{len(future):02d}"
+    raw["people"]["items"] = [{"id": "Kai", "description": "", "history": history}]
+    raw["preferences"] = [
+        {"type": "at most one shift per day"},
+        {
+            "type": "shift type successions",
+            "person": ["ALL"],
+            "date": ["ALL"],
+            "pattern": pattern,
+            "weight": weight,
+        },
+    ]
+    source = schedule_yaml(raw)
+    data = load_data(source.encode())
+    ids = {s.id: i for i, s in enumerate(data.shiftTypes.items)}
+    ids["OFF"] = -1
+    assignments = {(d, 0): ids[shift] for d, shift in enumerate(future)}
+    audit = audit_staffing_and_successions(data, assignments)["successions"][0]
+    assert audit["windows"] == 1
+    assert audit["unmet" if weight < 0 else "satisfied"] == 1
+    result = schedule(source.encode(), solver="ortools/cp-sat", timeout=5, forced_solution=_forced(data, assignments))
+    assert result.score == weight
+
+
+def test_short_horizon_optimizer_avoids_a_history_rest_penalty():
+    raw = parse_schedule(RESULT_SOURCES["policy-audit-misses"].read_text())
+    raw["dates"]["range"]["endDate"] = "2026-05-01"
+    raw["people"]["items"] = [{"id": "Kai", "description": "", "history": ["N"]}]
+    raw["preferences"] = [
+        {"type": "at most one shift per day"},
+        {
+            "type": "shift request",
+            "person": ["Kai"],
+            "date": ["ALL"],
+            "shiftType": ["D"],
+            "weight": 1,
+        },
+        {
+            "type": "shift type successions",
+            "person": ["ALL"],
+            "date": ["ALL"],
+            "pattern": ["N", "D"],
+            "weight": -10,
+        },
+    ]
+    result = schedule(schedule_yaml(raw).encode(), solver="ortools/cp-sat", timeout=5)
+    assert result.solver_status == "OPTIMAL"
+    assert result.score == 0
+    assert result.solution[0, 0, 0] == 0
+
+
+@pytest.mark.parametrize(
+    "history,pattern,dates,days",
+    [
+        ([], ["N", "D"], ["ALL"], 1),
+        (["N"], ["N", "D", "OFF"], ["ALL"], 1),
+        (["N", "D"], ["N", "D"], ["ALL"], 1),
+        (["N", "D"], ["N", "D", "OFF"], ["02"], 2),
+    ],
+)
+def test_short_history_windows_require_future_evidence_and_selected_dates(history, pattern, dates, days):
+    raw = parse_schedule(RESULT_SOURCES["policy-audit-misses"].read_text())
+    raw["dates"]["range"]["endDate"] = f"2026-05-{days:02d}"
+    raw["people"]["items"] = [{"id": "Kai", "description": "", "history": history}]
+    raw["preferences"] = [
+        {"type": "at most one shift per day"},
+        {"type": "shift type successions", "person": ["ALL"], "date": dates, "pattern": pattern, "weight": -10},
+    ]
+    data = load_data(schedule_yaml(raw).encode())
+    audit = audit_staffing_and_successions(data, {(d, 0): -1 for d in range(days)})["successions"][0]
+    assert audit["windows"] == 0
+
+
+def test_short_horizon_hard_history_rest_rule_rejects_a_forced_day():
+    raw = parse_schedule(RESULT_SOURCES["policy-audit-misses"].read_text())
+    raw["dates"]["range"]["endDate"] = "2026-05-01"
+    raw["people"]["items"] = [{"id": "Kai", "description": "", "history": ["N"]}]
+    raw["preferences"] = [
+        {"type": "at most one shift per day"},
+        {
+            "type": "shift type successions",
+            "person": ["ALL"],
+            "date": ["ALL"],
+            "pattern": ["N", "D"],
+            "weight": float("-inf"),
+        },
+    ]
+    source = schedule_yaml(raw)
+    data = load_data(source.encode())
+    result = schedule(source.encode(), solver="ortools/cp-sat", timeout=5, forced_solution=_forced(data, {(0, 0): 0}))
+    assert result.solver_status == "INFEASIBLE"

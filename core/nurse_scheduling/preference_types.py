@@ -43,6 +43,17 @@ def iter_succession_patterns(compiled_preference, histories, n_days):
     """Yield the same date windows and history suffixes used by the optimizer."""
     for p in compiled_preference.people:
         history = histories[p]
+        if history and n_days < len(compiled_preference.pattern):
+            # A short future range can still complete a pattern that began in history.
+            for suffix_len in range(1, min(len(compiled_preference.pattern) - 1, len(history)) + 1):
+                remaining = compiled_preference.pattern[suffix_len:]
+                if len(remaining) > n_days or not all(d in compiled_preference.date_set for d in range(len(remaining))):
+                    continue
+                prefix = compiled_preference.pattern[:suffix_len]
+                if all(
+                    shift in element.shift_types for shift, element in zip(history[-suffix_len:], prefix, strict=True)
+                ):
+                    yield p, 0, suffix_len, remaining
         for d_begin in range(n_days - len(compiled_preference.pattern) + 1):
             # Check if all dates in the pattern range are valid
             if not all(
