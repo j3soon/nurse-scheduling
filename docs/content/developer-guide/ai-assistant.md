@@ -193,6 +193,7 @@ relative to `web-frontend/src/app/experimental-ai/`.
 | `agent_loop`<br/>`agent_loop.py` | Repeat model responses and tool batches until the agent finishes. |
 | Transcript and context<br/>`transcript.py`<br/>`context.py` | Define ordered message entries and project them into retained history and provider input. |
 | `WorkspaceTools` / `SandboxWorkspace`<br/>`workspace_tools.py`<br/>`workspace.py`<br/>`sandbox/` | Bind model tools to file operations, validate working YAML, and manage VM hydration, pause, resume, and teardown. |
+| Optimizer tool adapter<br/>`optimizer_tool.py` | Define and validate model arguments, dispatch job operations, and format `AgentToolResult` content. |
 | `SessionOptimizer`<br/>`optimizer.py` | Own remote jobs, progress, artifacts, late-submission cleanup, and result-review wake-ups. |
 | `SessionEventStream`<br/>`session_event_stream.py` | Retain bounded journal and recovery projections for every session event. |
 | Browser `ChatLifecycle`<br/>`chatLifecycle.ts` | Track operation ownership and derive busy and Stop state. |

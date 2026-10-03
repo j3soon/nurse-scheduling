@@ -20,7 +20,6 @@
 # This file is mostly AI generated.
 
 import asyncio
-import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import aclosing, asynccontextmanager
@@ -30,7 +29,7 @@ from .agent import Agent
 from .agent_types import AgentEvent, AgentProposal, AgentTool, AgentToolBatchMetrics, AgentToolResult, ToolExecutionEnd
 from .candidate import review_schedule_candidate
 from .context import prepare_provider_request
-from .optimizer import OPTIMIZER_TOOL, optimizer_tool_definition, valid_optimizer_timeout
+from .optimizer_tool import OPTIMIZER_TOOL, optimizer_tool_definition, parse_optimizer_arguments
 from .pi.read import READ_TOOL
 from .provider import ChatMessage, ToolCapableChatProvider
 from .sandbox import SandboxFactory, SandboxFileNotFoundError
@@ -88,14 +87,10 @@ class WorkspaceTools:
         if self.execute_optimizer is None:
             return False
         try:
-            parsed = json.loads(arguments or "{}")
-        except json.JSONDecodeError:
+            action, _timeout = parse_optimizer_arguments(arguments)
+        except (TypeError, ValueError):
             return False
-        return (
-            isinstance(parsed, dict)
-            and parsed.get("action", "start") == "start"
-            and valid_optimizer_timeout(parsed.get("timeout_seconds"))
-        )
+        return action == "start"
 
     async def _execute(self, name: str, arguments: str) -> AgentToolResult:
         if name == OPTIMIZER_TOOL and self.execute_optimizer is not None:
