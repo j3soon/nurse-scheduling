@@ -98,6 +98,8 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 - Keep comments and docs minimal, concise, yet informative.
 - Name schedules by their owner: browser schedule, session snapshot, sandbox
   working copy, or pending proposal.
+- Name limits by what they count and state their scope and units. Distinguish
+  session text limits, model context limits, event replay limits, and process RAM.
 - Do not use em-dash or semicolon to connect sentences.
 - Mark every new file written entirely by an AI coding agent, tests included, with the
   module's marker comment immediately after the license block. Adding to a file a person

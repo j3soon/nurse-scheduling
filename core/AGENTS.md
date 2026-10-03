@@ -87,6 +87,13 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
 - Optimizer submissions and jobs belong to the optimizer service, not to the
   requesting run. Revoke the submission owner on cancellation and dispose of
   late remote responses. Keep progress readers inside the job lifecycle scope.
+- Queue optimizer result reviews as new runs through `SessionRuns`. Keep these
+  separate from steering consumed within an active run, so reviews capture the
+  latest session snapshot and hydrate their result artifacts at run start.
+- When changing SSE delivery, define disconnect and cancellation behavior,
+  replay gaps, and retention bounds in both event counts and serialized bytes.
+  Distinguish replaceable progress updates from run and tool lifecycle events.
+  Optimizer completion, failure, and result availability are lifecycle events.
 - Keep attachment limits server-configured and report them through
   `/capabilities`. Attachments and the optimizer tool are always offered.
   Keep schedules and attachments separate from model instructions.
