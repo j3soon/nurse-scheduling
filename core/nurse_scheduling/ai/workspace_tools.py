@@ -26,7 +26,15 @@ from contextlib import aclosing, asynccontextmanager
 from functools import partial
 
 from .agent import Agent
-from .agent_types import AgentEvent, AgentProposal, AgentTool, AgentToolBatchMetrics, AgentToolResult, ToolExecutionEnd
+from .agent_types import (
+    AgentEvent,
+    AgentLoopConfig,
+    AgentProposal,
+    AgentTool,
+    AgentToolBatchMetrics,
+    AgentToolResult,
+    ToolExecutionEnd,
+)
 from .candidate import review_schedule_candidate
 from .context import prepare_provider_request
 from .optimizer_tool import OPTIMIZER_TOOL, optimizer_tool_definition, parse_optimizer_arguments
@@ -163,12 +171,14 @@ async def run_workspace(
                     provider,
                     messages,
                     toolset.tools,
-                    activity_batch=tool_batch,
-                    observe_tool_batch=observe_tool_batch,
-                    take_steering=take_steering,
-                    max_tool_rounds=limits.max_tool_rounds,
-                    max_tool_calls=limits.max_tool_calls,
-                    prepare_request=prepare_provider_request,
+                    config=AgentLoopConfig(
+                        activity_batch=tool_batch,
+                        observe_tool_batch=observe_tool_batch,
+                        take_steering=take_steering,
+                        max_tool_rounds=limits.max_tool_rounds,
+                        max_tool_calls=limits.max_tool_calls,
+                        prepare_request=prepare_provider_request,
+                    ),
                 )
                 async with aclosing(events):
                     async for event in events:

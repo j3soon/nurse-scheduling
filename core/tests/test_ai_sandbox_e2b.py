@@ -31,7 +31,7 @@ from e2b.exceptions import FileNotFoundException, InvalidArgumentException, Sand
 from e2b.sandbox.commands.command_handle import CommandExitException
 
 from nurse_scheduling.ai.agent_loop import agent_loop
-from nurse_scheduling.ai.agent_types import AgentTool, AgentToolResult, ToolExecutionEnd
+from nurse_scheduling.ai.agent_types import AgentLoopConfig, AgentTool, AgentToolResult, ToolExecutionEnd
 from nurse_scheduling.ai.provider import ChatMessage, TextDelta, ToolCallRequest
 from nurse_scheduling.ai.sandbox import SandboxError, SandboxFileNotFoundError, managed_sandbox
 from nurse_scheduling.ai.sandbox import e2b as e2b_module
@@ -570,7 +570,7 @@ def test_agent_multi_tool_batch_pauses_once_after_both_calls():
             TwoCallProvider(),
             [{"role": "user", "content": "Read twice."}],
             [AgentTool({"type": "function", "function": {"name": "read"}}, execute)],
-            activity_batch,
+            AgentLoopConfig(activity_batch=activity_batch),
         ):
             if isinstance(event, ToolExecutionEnd):
                 await asyncio.sleep(0.01)

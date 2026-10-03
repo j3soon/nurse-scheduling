@@ -125,6 +125,21 @@ ToolBatchObserver = Callable[[AgentToolBatchMetrics], None]
 
 
 @dataclass(frozen=True)
+class AgentLoopConfig:
+    """Model-loop hooks and budgets, following Pi's AgentLoopConfig boundary.
+
+    Workspace lifetime and session persistence stay with their callers.
+    """
+
+    activity_batch: ToolBatchScope | None = None
+    observe_tool_batch: ToolBatchObserver | None = None
+    take_steering: SteeringSource | None = None
+    max_tool_rounds: int | None = None
+    max_tool_calls: int | None = None
+    prepare_request: RequestPreparer | None = None
+
+
+@dataclass(frozen=True)
 class AgentTool:
     """A model-facing definition bound to its execution and concurrency policy."""
 

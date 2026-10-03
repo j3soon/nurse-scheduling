@@ -28,6 +28,7 @@ import pytest
 
 from nurse_scheduling.ai.agent_loop import TRUNCATED_TOOL_CALL_RESULT, agent_loop
 from nurse_scheduling.ai.agent_types import (
+    AgentLoopConfig,
     AgentSteering,
     AgentTool,
     AgentToolResult,
@@ -106,7 +107,7 @@ def _run(provider: FakeProvider, *, tool_ok: bool = True, message_ends: bool = F
     async def collect() -> list:
         return [
             event
-            async for event in agent_loop(provider, QUESTION, _tools(execute), **limits)
+            async for event in agent_loop(provider, QUESTION, _tools(execute), AgentLoopConfig(**limits))
             if message_ends or not isinstance(event, MessageEnd)
         ]
 
@@ -205,7 +206,12 @@ def test_all_queued_steering_is_injected_after_the_next_tool_batch():
         return messages
 
     async def collect() -> list:
-        return [event async for event in agent_loop(provider, QUESTION, _tools(execute), take_steering=take_steering)]
+        return [
+            event
+            async for event in agent_loop(
+                provider, QUESTION, _tools(execute), AgentLoopConfig(take_steering=take_steering)
+            )
+        ]
 
     events = asyncio.run(collect())
 
@@ -344,7 +350,9 @@ def test_one_activity_batch_contains_all_calls_from_a_model_response():
         return AgentToolResult("command result", True)
 
     async def collect() -> None:
-        async for _event in agent_loop(provider, QUESTION, _tools(execute), activity_batch=activity_batch):
+        async for _event in agent_loop(
+            provider, QUESTION, _tools(execute), AgentLoopConfig(activity_batch=activity_batch)
+        ):
             pass
 
     asyncio.run(collect())
@@ -569,7 +577,10 @@ def test_each_request_is_projected_from_the_unchanged_run_messages():
         return AgentToolResult("result", True)
 
     async def collect() -> list:
-        return [event async for event in agent_loop(provider, QUESTION, _tools(execute), prepare_request=prepare)]
+        return [
+            event
+            async for event in agent_loop(provider, QUESTION, _tools(execute), AgentLoopConfig(prepare_request=prepare))
+        ]
 
     asyncio.run(collect())
 

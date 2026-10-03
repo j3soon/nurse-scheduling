@@ -27,6 +27,7 @@ from contextlib import asynccontextmanager
 
 from .agent_types import (
     AgentEvent,
+    AgentLoopConfig,
     AgentSteering,
     AgentTool,
     AgentToolBatchMetrics,
@@ -34,10 +35,6 @@ from .agent_types import (
     MessageEnd,
     MessageReasoningDelta,
     MessageTextDelta,
-    RequestPreparer,
-    SteeringSource,
-    ToolBatchObserver,
-    ToolBatchScope,
     ToolExecutionEnd,
     ToolExecutionStart,
 )
@@ -70,12 +67,8 @@ async def agent_loop(
     provider: ToolCapableChatProvider,
     messages: Sequence[ChatMessage],
     tools: Sequence[AgentTool],
-    activity_batch: ToolBatchScope | None = None,
-    observe_tool_batch: ToolBatchObserver | None = None,
-    take_steering: SteeringSource | None = None,
-    max_tool_rounds: int | None = None,
-    max_tool_calls: int | None = None,
-    prepare_request: RequestPreparer = prepare_provider_request,
+    config: AgentLoopConfig | None = None,
+    *,
     run_messages: list[AgentMessage] | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Run the model/tool loop shared by agent capability layers.
@@ -83,6 +76,8 @@ async def agent_loop(
     `run_messages` is the shared in-run record. Each provider request is a
     projection of it after the already bounded system and prior-run context.
     """
+    config = config or AgentLoopConfig()
+    prepare_request = config.prepare_request or prepare_provider_request
     by_name = {tool.name: tool for tool in tools}
     definitions = [tool.definition for tool in tools]
 
@@ -125,10 +120,10 @@ async def agent_loop(
                 conversation.append(ToolResultMessage(call.id, call.name, TRUNCATED_TOOL_CALL_RESULT, False))
                 yield ToolExecutionEnd(call.name, call.arguments, TRUNCATED_TOOL_CALL_RESULT, False, call.id)
             # A refused batch still spends a round, so repeated truncation ends in an answer.
-            final_answer_only = max_tool_rounds is not None and tool_rounds >= max_tool_rounds
+            final_answer_only = config.max_tool_rounds is not None and tool_rounds >= config.max_tool_rounds
             continue
         if not calls:
-            steering = tuple(take_steering(True)) if take_steering is not None else ()
+            steering = tuple(config.take_steering(True)) if config.take_steering is not None else ()
             if not steering:
                 break
             for message_id, text in steering:
@@ -136,8 +131,8 @@ async def agent_loop(
                 yield AgentSteering(message_id, text)
             continue
 
-        exceeds_rounds = max_tool_rounds is not None and tool_rounds >= max_tool_rounds
-        exceeds_calls = max_tool_calls is not None and tool_calls + len(calls) > max_tool_calls
+        exceeds_rounds = config.max_tool_rounds is not None and tool_rounds >= config.max_tool_rounds
+        exceeds_calls = config.max_tool_calls is not None and tool_calls + len(calls) > config.max_tool_calls
         if final_answer_only or exceeds_rounds or exceeds_calls:
             if final_answer_only:
                 break
@@ -154,7 +149,7 @@ async def agent_loop(
 
         tool_rounds += 1
         tool_calls += len(calls)
-        batch_scope = activity_batch or _unbatched_activity
+        batch_scope = config.activity_batch or _unbatched_activity
         async with batch_scope(calls):
             parallel = len(calls) > 1 and all(
                 by_name.get(call.name) is not None and by_name[call.name].read_only for call in calls
@@ -184,10 +179,10 @@ async def agent_loop(
                     yield ToolExecutionEnd(
                         call.name, call.arguments, outcome.text, outcome.ok, call.id, outcome.details
                     )
-            if observe_tool_batch is not None:
-                observe_tool_batch(AgentToolBatchMetrics(len(calls), parallel, execution_seconds))
-        if take_steering is not None:
-            for message_id, text in take_steering(False):
+            if config.observe_tool_batch is not None:
+                config.observe_tool_batch(AgentToolBatchMetrics(len(calls), parallel, execution_seconds))
+        if config.take_steering is not None:
+            for message_id, text in config.take_steering(False):
                 conversation.append(UserMessage(text))
                 yield AgentSteering(message_id, text)
 
