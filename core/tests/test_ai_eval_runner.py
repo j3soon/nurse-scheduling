@@ -1610,3 +1610,42 @@ def test_recoverable_command_timeout_remains_in_a_successful_evaluation_trajecto
     assert not run.error
     assert run.tools == [f"{BASH_TOOL}(failed)", "optimizer"]
     assert "Command timed out" in next(event["result"] for event in run.trajectory["events"] if event["kind"] == "tool")
+
+
+@pytest.mark.parametrize(
+    "case_id,relevant",
+    [
+        ("pdf-visual-layout", "inspect_pdf.py"),
+        ("xlsx-styled-requests-and-caches", "inspect_xlsx.py"),
+        ("result-assignment-details", "inspect_optimizer_result.py"),
+    ],
+)
+def test_helper_receipts_ignore_unrelated_scripts_but_bind_relevant_content(case_id, relevant, tmp_path, monkeypatch):
+    from nurse_scheduling.ai.sandbox_agent import INSPECTION_HELPERS
+
+    case = CASE_BY_ID[case_id]
+    before = case_digest(case)
+    unrelated = tmp_path / "unrelated.py"
+    unrelated.write_text("# Independent helper\n")
+    monkeypatch.setitem(REFERENCE_ATTACHMENT_TOOLS, "/reference/tools/unrelated.py", unrelated)
+    monkeypatch.setitem(INSPECTION_HELPERS, "unrelated.py", "Independent capability")
+    assert case_digest(case) == before
+    changed = tmp_path / relevant
+    changed.write_text("# Changed relevant helper\n")
+    monkeypatch.setitem(REFERENCE_ATTACHMENT_TOOLS, f"/reference/tools/{relevant}", changed)
+    assert case_digest(case) != before
+
+
+def test_request_receipt_binds_compiled_selector_producer(monkeypatch):
+    from nurse_scheduling.ai import result_context
+
+    case = CASE_BY_ID["request-tier-counts-large"]
+    before = case_digest(case)
+    pdf_before = case_digest(CASE_BY_ID["pdf-visual-layout"])
+
+    def replacement(data, source):
+        return {}
+
+    monkeypatch.setattr(result_context, "_project_context", replacement)
+    assert case_digest(case) != before
+    assert case_digest(CASE_BY_ID["pdf-visual-layout"]) == pdf_before

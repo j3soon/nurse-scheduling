@@ -50,11 +50,13 @@ from nurse_scheduling.ai.sandbox_agent import (
     WORKSPACE_PENDING_RESULT_CONTEXT,
     WORKSPACE_RESULT_CONTEXT,
     WORKSPACE_SCHEDULE,
+    WORKSPACE_SOURCE_CONTEXT,
     AgentScheduleChange,
     SandboxAgentLimits,
     SandboxAttachment,
     SandboxCandidateError,
     SandboxTurnTimeoutError,
+    hydrate_sandbox,
     run_sandbox_agent,
 )
 from nurse_scheduling.ai.schema import load_taiwan_holidays_reference, load_user_guide_references
@@ -143,6 +145,8 @@ def test_one_turn_hydrates_runs_reads_validates_proposes_and_closes():
     backend = factory.created[0]
     assert backend.closed
     assert WORKSPACE_SCHEDULE in backend.files
+    context = json.loads(backend.files[WORKSPACE_SOURCE_CONTEXT])
+    assert context["people"] == ["P1", "P2"]
     assert set(REFERENCE_SCHEMAS.values()) <= backend.files.keys()
     assert b"# Experimental AI Chat" in backend.files[f"{REFERENCE_USER_GUIDE}/experimental-ai.md"]
     assert b"# People" in backend.files[f"{REFERENCE_USER_GUIDE}/people.md"]
@@ -750,3 +754,10 @@ def test_recovered_command_timeout_keeps_files_and_allows_the_agent_to_continue(
     assert factory.created[0].files[WORKSPACE_SCHEDULE] == schedule_yaml().encode()
     assert len(provider.requests) == 3
     assert not any(isinstance(event, AgentProposal) for event in events)
+
+
+def test_uncompilable_draft_keeps_yaml_without_a_source_context():
+    backend = FakeSandboxBackend("draft")
+    asyncio.run(hydrate_sandbox(backend, "not a schedule"))
+    assert backend.files[WORKSPACE_SCHEDULE] == b"not a schedule"
+    assert WORKSPACE_SOURCE_CONTEXT not in backend.files

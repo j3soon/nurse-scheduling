@@ -1,0 +1,19 @@
+{
+  "id": "request-filtered-cross-month",
+  "fixture": "request-audit-groups",
+  "question": "In the current YAML, count the nonzero shift-request preference entries targeting the exact person Asha on 2026-06-01, and their expanded person/date targets. Return only JSON with two integer counts: requestEntries and personDateTargets. Count targets separately per preference entry. Do not edit or optimize.",
+  "expect_proposal": false,
+  "answer_json": {
+    "requestEntries": 2,
+    "personDateTargets": 2
+  },
+  "tool_usage": {
+    "forbidden": [
+      "optimizer"
+    ]
+  },
+  "tags": [
+    "request-inspection"
+  ],
+  "note": "This testcase is mostly AI generated. Oracle counts resolved selectors, not textual list lengths or unique cells across preferences."
+}

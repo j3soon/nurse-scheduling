@@ -20,7 +20,7 @@ old receipts, and round-by-round analysis under ignored repository-root `artifac
 the motivating testcase and briefly state the behavior change. Do not grow this page into a run journal.
 
 CI checks that every shipped clause has a clean benefit witness. The receipt's `input_sha256` binds its clause,
-parsed testcase, and fixture. Editing any of these invalidates the receipt. Controls have their own paired counts,
+parsed testcase, and fixture. Editing any of these invalidates the receipt. Helper fingerprints cover relevant scripts, their imports and catalog entries. Full hydration hashes stay in run metadata, so adding an unrelated helper does not invalidate a receipt. Controls have their own paired counts,
 so a targeted deeper investigation can extend one witness without rerunning already verified controls.
 CI validates reviewed receipts locally. It does not call the provider or require ignored artifacts to exist.
 Receipts describe their tested context, not a fresh evaluation of every later prompt composition.

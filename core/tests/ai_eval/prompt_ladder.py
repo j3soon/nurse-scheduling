@@ -87,7 +87,11 @@ def prompt_at_step(step: int, *, omit: int | None = None) -> str:
 def case_digest(case: EvalCase) -> str:
     """Bind a receipt to the parsed input and grading contract, not JSON formatting."""
     fields = asdict(case)
-    for optional in ("optimizer_completion", "optimizer_completion_only", "answer_json"):
+    for optional in (
+        "optimizer_completion",
+        "optimizer_completion_only",
+        "answer_json",
+    ):
         if not fields[optional]:
             fields.pop(optional)
     if any(isinstance(value, dict) for value in case.answer_json.values()):
@@ -96,27 +100,47 @@ def case_digest(case: EvalCase) -> str:
         fields["nested_json_oracle_sha256"] = hashlib.sha256(
             inspect.getsource(_answer_json_matches).encode()
         ).hexdigest()
+    helper_names = set()
     if case.optimizer_completion:
-        from nurse_scheduling.ai.result_context import build_result_context
-        from nurse_scheduling.ai.sandbox_agent import REFERENCE_ATTACHMENT_TOOLS, inspection_helper_catalog
-        from nurse_scheduling.preference_audit import audit_staffing_and_successions
-        from nurse_scheduling.preference_types import iter_succession_patterns, staffing_expression
+        from nurse_scheduling.ai.result_context import _project_context
 
-        from .optimizer_fixtures import fixture_digest
+        from .optimizer_fixtures import RESULT_SOURCES, fixture_digest
 
         fields["optimizer_fixture_sha256"] = fixture_digest(case.optimizer_completion)
-        fields["result_reader_sha256"] = {
-            path: hashlib.sha256(source.read_bytes()).hexdigest() for path, source in REFERENCE_ATTACHMENT_TOOLS.items()
-        }
-        fields["result_context_sha256"] = hashlib.sha256(
-            Path(build_result_context.__code__.co_filename).read_bytes()
-        ).hexdigest()
-        fields["policy_audit_sha256"] = hashlib.sha256(
-            Path(audit_staffing_and_successions.__code__.co_filename).read_bytes()
-            + inspect.getsource(iter_succession_patterns).encode()
-            + inspect.getsource(staffing_expression).encode()
-        ).hexdigest()
-        fields["helper_catalog_sha256"] = hashlib.sha256(inspection_helper_catalog().encode()).hexdigest()
+        fields["request_context_sha256"] = hashlib.sha256(inspect.getsource(_project_context).encode()).hexdigest()
+        helper_names.update(("inspect_optimizer_result.py", "inspect_xlsx.py"))
+        from nurse_scheduling.loader import _load_yaml
+
+        if any(
+            p["type"] in {"shift type requirement", "shift type successions"}
+            for p in _load_yaml(RESULT_SOURCES[case.optimizer_completion].read_bytes()).get("preferences", [])
+        ):
+            from nurse_scheduling.ai.result_context import build_result_context
+            from nurse_scheduling.preference_audit import audit_staffing_and_successions
+            from nurse_scheduling.preference_types import (
+                iter_succession_patterns,
+                staffing_expression,
+            )
+
+            fields["policy_context_sha256"] = hashlib.sha256(
+                Path(build_result_context.__code__.co_filename).read_bytes()
+            ).hexdigest()
+            fields["policy_audit_sha256"] = hashlib.sha256(
+                Path(audit_staffing_and_successions.__code__.co_filename).read_bytes()
+                + inspect.getsource(iter_succession_patterns).encode()
+                + inspect.getsource(staffing_expression).encode()
+            ).hexdigest()
+    if "request-inspection" in case.tags:
+        from nurse_scheduling.ai.result_context import _project_context
+
+        fields["request_context_sha256"] = hashlib.sha256(inspect.getsource(_project_context).encode()).hexdigest()
+        helper_names.update(
+            (
+                "inspect_shift_requests.py",
+                "inspect_optimizer_result.py",
+                "inspect_xlsx.py",
+            )
+        )
     if not case.semantic_check:
         # An optional oracle must not invalidate receipts for unrelated cases.
         fields.pop("semantic_check")
@@ -131,26 +155,48 @@ def case_digest(case: EvalCase) -> str:
             hashlib.sha256(attachment.data).hexdigest() for attachment in load_attachment_fixtures(case.attachments)
         ]
     elif case.attachments:
-        from nurse_scheduling.ai.sandbox_agent import REFERENCE_ATTACHMENT_TOOLS, inspection_helper_catalog
+        attachments = load_attachment_fixtures(case.attachments)
+        fields["attachments_sha256"] = [hashlib.sha256(attachment.data).hexdigest() for attachment in attachments]
+        for attachment in attachments:
+            if attachment.media_type == "application/pdf":
+                helper_names.add("inspect_pdf.py")
+            elif attachment.media_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+                helper_names.add("inspect_xlsx.py")
+    if helper_names:
+        from nurse_scheduling.ai.sandbox_agent import (
+            INSPECTION_HELPERS,
+            REFERENCE_ATTACHMENT_TOOLS,
+            inspection_helper_catalog,
+        )
 
-        fields["attachments_sha256"] = [
-            hashlib.sha256(attachment.data).hexdigest() for attachment in load_attachment_fixtures(case.attachments)
-        ]
         fields["inspection_helpers_sha256"] = {
-            path: hashlib.sha256(source.read_bytes()).hexdigest() for path, source in REFERENCE_ATTACHMENT_TOOLS.items()
+            name: hashlib.sha256(REFERENCE_ATTACHMENT_TOOLS[f"/reference/tools/{name}"].read_bytes()).hexdigest()
+            for name in sorted(helper_names)
         }
-        fields["helper_catalog_sha256"] = hashlib.sha256(inspection_helper_catalog().encode()).hexdigest()
+        fields["helper_catalog_sha256"] = hashlib.sha256(
+            inspect.getsource(inspection_helper_catalog).encode()
+            + json.dumps(
+                {name: INSPECTION_HELPERS[name] for name in sorted(helper_names)},
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()
     return hashlib.sha256(json.dumps(fields, sort_keys=True, default=str).encode()).hexdigest()
 
 
 def evidence_input_digest(step: PromptStep, case: EvalCase, fixture_digest: str) -> str:
     """Keep one portable fingerprint for the clause and its test inputs."""
-    inputs = {"clause": step.sha256, "case": case_digest(case), "fixture": fixture_digest}
+    inputs = {
+        "clause": step.sha256,
+        "case": case_digest(case),
+        "fixture": fixture_digest,
+    }
     return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
 
 
 def validate_prompt_evidence(
-    steps: tuple[PromptStep, ...], cases: Mapping[str, EvalCase], fixture_digests: Mapping[str, str]
+    steps: tuple[PromptStep, ...],
+    cases: Mapping[str, EvalCase],
+    fixture_digests: Mapping[str, str],
 ) -> None:
     """Require a clean repeated witness for each shipped clause.
 
@@ -175,7 +221,14 @@ def validate_prompt_evidence(
                     and isinstance(target, (int, float))
                     and 0 < ratio <= target < 1
                     and record.get("cost_metric")
-                    in {"tool-calls", "turns", "uncached-tokens", "completion-tokens", "total-tokens", "seconds"}
+                    in {
+                        "tool-calls",
+                        "turns",
+                        "uncached-tokens",
+                        "completion-tokens",
+                        "total-tokens",
+                        "seconds",
+                    }
                 ):
                     raise ValueError(f"{label} shows no measured benefit")
             for observation in (record, *record.get("controls", [])):

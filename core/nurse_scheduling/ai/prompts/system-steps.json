@@ -399,7 +399,7 @@
     "evidence": [
       {
         "case": "result-stale-summary-control",
-        "input_sha256": "dd451fc7ab56f71cb55c52c7b8bd52d195330eb80b119e1f44e9ea4bddc30cbc",
+        "input_sha256": "710e761ceadc0298756682db9e686d98b6923dee7e65eb6758fe91617ec3b3c7",
         "before": "1/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
@@ -407,18 +407,18 @@
         "controls": [
           {
             "case": "result-single-tier-summary",
-            "input_sha256": "3824a47c86c2f18ec98c97daf5011ae56e567465d067b82fed268fce9b8380c1",
+            "input_sha256": "7891f7a2c76ccc4d9862e7db7e3ff89e5bdc4ec8a72a5442249c13a868d29008",
             "before": "3/3",
             "after": "3/3"
           },
           {
             "case": "result-grouped-cross-month",
-            "input_sha256": "314944a41817dda1d7821d7e175f5394249f7948d9a9c1902cdf007150e4363d",
+            "input_sha256": "bf3425ff94f3489d8dec56b9f65e66b935df7498b1e471735ea704ff6b0a0758",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Refreshed with source-bound policy counts and the maintained reader. Exact contexts and cost distributions remain in ignored artifacts."
+        "note": "Refreshed with source-bound policy counts and the maintained reader. Exact contexts and cost distributions remain in ignored artifacts. Dependency fingerprint scoped to relevant helpers. Evaluated testcase and relevant dependency bytes verified unchanged."
       }
     ],
     "comparison_mode": "ablation"
@@ -436,7 +436,7 @@
     "evidence": [
       {
         "case": "xlsx-styled-requests-and-caches",
-        "input_sha256": "19e5cecb5e901b28ac078746d8763c4fcb3092cc7a8f3faf178a3041f1d178a0",
+        "input_sha256": "8b548d98f0327c167c3ff2b4afcffe4081e4dc3e8b339ae2a5e5afe8f7839cbb",
         "before": "3/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
@@ -447,18 +447,18 @@
         "controls": [
           {
             "case": "xlsx-formulas-and-caches",
-            "input_sha256": "5455da9f2705dcd86ae94f0d7c7b8871aa427370fa5e2b2358629703fb0de32c",
+            "input_sha256": "911daeb53b53d27a971136ee4c5261ba3d016c78241d4f57d9332faf3c63031a",
             "before": "3/3",
             "after": "3/3"
           },
           {
             "case": "xlsx-color-fallback",
-            "input_sha256": "1c73680500e2b3c5697f7181e3459a980d38c54d8fd661a67e5d18cd7f64dce9",
+            "input_sha256": "125e6f5e739d26f91a30d8ffa299b358112e1539c33aeaed1fc4c3b4e2a97774",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Refreshed with source-bound policy counts and the maintained reader. Exact contexts and cost distributions remain in ignored artifacts."
+        "note": "Refreshed with source-bound policy counts and the maintained reader. Exact contexts and cost distributions remain in ignored artifacts. Dependency fingerprint scoped to relevant helpers. Evaluated testcase and relevant dependency bytes verified unchanged."
       }
     ]
   },
@@ -474,7 +474,7 @@
     "evidence": [
       {
         "case": "pdf-visual-layout",
-        "input_sha256": "1e0c08904d560fe41cbbcfd8874e1e59520ef758355991bfa404abe0a0bfd446",
+        "input_sha256": "1d118dbf368c24153dfc5818305f573a1c254dacd14e2f0135e469581755dd80",
         "before": "3/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
@@ -485,12 +485,51 @@
         "controls": [
           {
             "case": "pdf-specified-text-page",
-            "input_sha256": "2a792c5238b3d9fc4b1d7997c5d6540f55c0ed1423f8dccd6e134fba56d4fbe2",
+            "input_sha256": "cc897a5a2d1e257fa418f832a7ef2c01954437651b884b03107f1849730fe717",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Visual inspection is the cost witness. Text inspection passed as a control but its cost benefit was not confirmed this round."
+        "note": "Visual inspection is the cost witness. Text inspection passed as a control but its cost benefit was not confirmed this round. Dependency fingerprint scoped to relevant helpers. Evaluated testcase and relevant dependency bytes verified unchanged."
+      }
+    ]
+  },
+  {
+    "id": "request-inspection",
+    "file": "steps/request-inspection.md",
+    "cases": [
+      "request-tier-counts-large",
+      "request-bans-counts-large",
+      "request-filtered-cross-month"
+    ],
+    "hypothesis": "Uses canonical bounded selectors for current shift-request queries, reducing raw YAML reads and generated parsing while checking source freshness.",
+    "sha256": "6c6171b52393fcf2c66686e0da9abc3dc29edb1e2e0cba47db7ecbd37c65695c",
+    "evidence": [
+      {
+        "case": "request-tier-counts-large",
+        "input_sha256": "4be20475678fb9d160e5879773e108d832a4edcfbadefac50d19853ca6f6a3a0",
+        "before": "3/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "cost_metric": "total-tokens",
+        "cost_ratio": 0.17851383314220184,
+        "cost_target": 0.8,
+        "controls": [
+          {
+            "case": "request-filtered-cross-month",
+            "input_sha256": "457160e90c9c236007d918353ab7076f3be05885bc8d2d939cbc9f9f72856c50",
+            "before": "0/3",
+            "after": "3/3"
+          },
+          {
+            "case": "request-bans-counts-large",
+            "input_sha256": "0487717a1fffde1618c20ac2c1341c7197b444a4e584209685548278c494d587",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Canonical current selectors, counts-only default, source freshness guard. Prior diagnostic and infrastructure-invalid rounds remain in ignored artifacts. Ban-count cost improvement is not confirmed."
       }
     ]
   }

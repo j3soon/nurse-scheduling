@@ -65,6 +65,7 @@ REFERENCE_SCHEMAS["taiwan-holidays"] = f"/reference/{TAIWAN_HOLIDAYS_SOURCE.name
 REFERENCE_USER_GUIDE = "/reference/user-guide"
 ATTACHMENT_TOOL_DIRECTORY = Path(__file__).with_name("attachment_tools")
 INSPECTION_HELPERS = {
+    "inspect_shift_requests.py": "Current YAML nonzero shift-request counts and resolved selectors. Repeat --weight, --person or --date to filter. --max-requests 0 returns counts only.",
     "inspect_xlsx.py": "Bounded XLSX cells, formulas, and saved caches. Add --styles for stored font/fill colors, borders, alignment, and number formats.",
     "inspect_pdf.py": "PDF page text and rendered page images.",
     "inspect_optimizer_result.py": "Optimizer assignments, signed request counts and available staffing/succession audits using a compiled schedule context.",
@@ -72,6 +73,7 @@ INSPECTION_HELPERS = {
 REFERENCE_ATTACHMENT_TOOLS = {
     f"/reference/tools/{name}": ATTACHMENT_TOOL_DIRECTORY / name for name in INSPECTION_HELPERS
 }
+WORKSPACE_SOURCE_CONTEXT = "/workspace/schedule-context.json"
 WORKSPACE_RESULT_CONTEXT = "/workspace/optimizer-results/schedule-context.json"
 WORKSPACE_PENDING_RESULT_CONTEXT = "/workspace/optimizer-results/pending-schedule-context.json"
 
@@ -464,6 +466,13 @@ async def hydrate_sandbox(
     """Copy trusted application state and searchable references into one turn."""
     started = time.perf_counter()
     files: dict[str, str | bytes] = {WORKSPACE_SCHEDULE: schedule_yaml}
+    try:
+        files[WORKSPACE_SOURCE_CONTEXT] = json.dumps(
+            build_result_context(schedule_yaml), ensure_ascii=False, allow_nan=False
+        )
+    except Exception:
+        # A draft may not compile. Its YAML remains available for direct inspection.
+        logger.debug("Current schedule inspection context unavailable", exc_info=True)
     if pending_proposal_yaml:
         files[WORKSPACE_PENDING_PROPOSAL] = pending_proposal_yaml
         files[WORKSPACE_PENDING_DIFF] = pending_proposal_diff
