@@ -1,27 +1,27 @@
 # AI Assistant Backend
 
-The experimental AI assistant answers questions about a schedule and can
-propose edits to it. It runs as a separate FastAPI application at
-`nurse_scheduling.ai_serve:app`. The service keeps the current schedule in a
-browser-owned session. When a tool needs a workspace, the run gets a fresh
-E2B Cloud sandbox with a working copy. Assistant edits change the canonical
-browser schedule only after the user approves a proposal.
+The experimental AI assistant answers questions about a schedule, proposes
+edits, and starts optimizer jobs. It runs as a separate FastAPI application at
+`nurse_scheduling.ai_serve:app`. The browser holds the schedule currently open
+in the app. The service keeps a session snapshot and creates a disposable E2B
+workspace with a working copy when a tool needs files. The browser applies
+assistant edits only after proposal approval.
 
 A **run** spans one complete answer, including cleanup and saving its result.
-A **turn**, following Pi terminology, is one model response plus its requested
-tool executions. An **AgentSession** persists across runs. Code, SSE events, and
-chat history name the complete answer a run, such as `run_id` and `run_start`.
+A **turn**, following Pi terminology, is one model response plus its tool
+executions. An **AgentSession** persists across runs.
 
-This page follows a run from admission through the model, workspace, and
-optimizer paths. It also covers proposals, the HTTP API, and operational checks.
-For setup commands, see the [Core README](reproduce/core.md#ai-backend). The
-[user guide](../user-guide/experimental-ai.md) describes the browser controls.
-The separate [backend server guide](backend-server.md) covers the optimizer API.
+This page covers the AI service and browser protocol. The
+[backend server guide](backend-server.md) covers the separate optimizer API.
+See the [Core README](reproduce/core.md#ai-backend) for setup and the
+[user guide](../user-guide/experimental-ai.md) for browser controls.
 
-**Diagram key:** Solid arrows are calls. Dashed arrows are returned results or
-SSE events. `opt` is conditional, `alt` shows alternative outcomes, and a loop
-may repeat within one run. Arrow style does not encode synchronous versus
-background work.
+**Diagram key:** Flowchart arrows label actions or data exchanges. State
+diagram arrows label transitions, with filled circles marking entry and exit.
+In sequence diagrams, solid arrows are calls and dashed arrows are returned
+results or SSE events. `opt` is conditional, `alt` shows alternative outcomes,
+`par` shows concurrent work, and `loop` repeats steps. Arrow style does not
+encode synchronous versus background work.
 
 <style>
 .ai-pi-mapping table {
@@ -55,8 +55,8 @@ stateDiagram-v2
     running --> completed: cleanup, current version,<br/>result saved
     running --> stale: cleanup, conversation<br/>version changed
     running --> failed: cleanup after error
-    running --> stopping: Stop, disconnect,<br/>or shutdown
-    stopping --> stopped: cleanup finishes,<br/>prompt saved if current
+    running --> cancelling: Stop, disconnect,<br/>or shutdown before commit
+    cancelling --> stopped: cleanup finishes,<br/>prompt saved if current
     completed --> [*]
     stale --> [*]
     failed --> [*]
@@ -70,17 +70,20 @@ stateDiagram-v2
 
 </div>
 
-These are the effective phases of `SessionRuns` and `AgentSession.run`.
-They are derived from execution and finalization, rather than a stored enum. A session admits one run at a time. Background optimizer
-follow-ups wait in its FIFO queue, while a second foreground request gets HTTP
-`409`. The process-wide model-stream limit defaults to four.
+The diagram shows the execution phases of `SessionRuns` and
+`AgentSession.run`. These phases are derived from execution and finalization.
+`cancelling` means cancellation was accepted and cleanup is still pending.
+Once workspace cleanup finishes and committing the result begins,
+`AgentRun.finishing` prevents further cancellation. A late Stop preserves the
+committed outcome while the final history write and terminal event finish.
 
-A session begins with a browser-supplied YAML snapshot, an unguessable ID, and
-an HTTP-only owner cookie. It expires after 48 hours of inactivity by default.
-Messages, schedule updates, and proposal decisions renew that window. Checking
-remaining lifetime does not. Each run reserves a conversation version. A
-changed schedule or decision on a pending proposal advances it, so an older
-result becomes stale even if the YAML later returns to the same text.
+A session admits one run at a time. Optimizer follow-ups wait in its FIFO
+queue, and a second foreground request gets HTTP `409`. The process-wide
+model-stream limit defaults to four.
+
+Each run reserves a conversation version. Schedule updates and pending
+proposal decisions advance it. An older result becomes stale even if the
+schedule later returns to the same YAML.
 
 ## Architecture
 
@@ -103,10 +106,12 @@ flowchart TB
     Optimizer[<b>Optimizer API</b>]
 
     Browser <-->|HTTP and SSE| Routes
-    Routes --> Session --> Agent --> Loop
+    Routes -->|Dispatch session<br/>requests| Session
+    Session -->|Start prompt with<br/>context and tools| Agent
+    Agent -->|Run model and<br/>tool loop| Loop
     Loop <-->|Prompts, calls,<br/>results| Provider
-    Session -->|Fresh workspace<br/>per run| Workspace
-    Loop -->|Execute AgentTool| Workspace
+    Session -->|Prepare tools<br/>and workspace| Workspace
+    Loop -->|Execute tool calls| Workspace
     Workspace <-->|Hydrate, tools, cleanup| E2B
     Workspace -->|Optimizer tool| Jobs
     Jobs <-->|Job lifecycle| Optimizer
@@ -130,156 +135,90 @@ flowchart TB
     Jobs[<b>SessionOptimizer</b><br/>Result wake-ups]
     Events[<b>SessionEventBroker</b><br/>Replay background SSE]
 
-    Routes --> Store --> Session
-    Routes --> Queue --> Session
-    Routes -->|Queue steering| Agent
-    Jobs -.->|Queue result<br/>review| Queue
-    Session --> Events
-    Jobs --> Events
-    Events -->|Session SSE| Routes
+    Routes -->|Check ownership,<br/>find session| Store
+    Store -->|Access session,<br/>apply limits| Session
+    Routes -->|Start or stop runs| Queue
+    Queue -->|Execute admitted run| Session
+    Session -->|Queue admitted steering| Agent
+    Jobs -->|Queue result<br/>review via callback| Queue
+    Session -->|Publish background<br/>run events| Events
+    Jobs -->|Publish job events<br/>via callback| Events
+    Events -->|Replay session SSE| Routes
 
 ```
 
 </div>
 
-The provider and E2B paths run inside an assistant run. The optimizer monitor
-can outlive that run and queue a follow-up when the job ends. Session state,
-run admission, replay, and job monitors are process-local, separate from the
-optimizer server's Redis store. Run one AI backend instance until shared AI
-storage exists. A restart loses active sessions even when PostgreSQL logging is
-enabled.
+The model and workspace execute within a run. `SessionOptimizer` owns its
+monitor independently and queues a review run when a job ends.
 
-| Diagram component | Code |
+Python paths below are relative to `nurse_scheduling/ai/`. Browser paths are
+relative to `web-frontend/src/app/experimental-ai/`.
+
+| Component and source | Responsibility |
 | --- | --- |
-| API routes / session registry | `ai/app.py`, `ai/sessions.py` |
-| SessionRuns / AgentRun / RunSnapshot | `ai/lifecycle.py` |
-| AgentSession / SSE projection | `ai/agent_session.py` |
-| Agent messages / model context | `ai/transcript.py`, `ai/context.py` |
-| Agent / model-tool loop / event types | `ai/agent.py`, `ai/agent_loop.py`, `ai/agent_types.py` |
-| Workspace tools / SandboxWorkspace | `ai/workspace_tools.py`, `ai/workspace.py`, `ai/sandbox/` |
-| Background event replay | `ai/session_events.py` |
-| SessionOptimizer | `ai/optimizer.py` |
-| Browser operation lifecycle | `web-frontend/src/app/experimental-ai/chatLifecycle.ts` |
-| Browser stream output reducer | `web-frontend/src/app/experimental-ai/assistantEvents.ts` |
-
-### Mapping to Pi
-
-This comparison follows Pi's public agent loop and coding-agent session at
-revision `d6af72e`. Links are pinned to that revision. These are architectural
-counterparts, not identical APIs or a mapping of Pi's separate harness runtime.
-Each row lists shared behavior first, then what only one side has.
-
-<div class="ai-pi-mapping" markdown="1">
-
-| Component | Shared | Ours only | Pi only |
-| --- | --- | --- | --- |
-| `Agent` / `AgentState`<br/>Pi: [Agent][pi-agent], [AgentState][pi-state] | Streaming flag, pending tool call IDs, in-run messages, the steering queue, and refusal of a second concurrent prompt. | Context arrives per run, and the session commits its retained transcript after cleanup. `AgentRun`, not `Agent`, owns cancellation, so Stop also reaches queued runs and cannot interrupt cleanup. | State also holds the model, thinking level, tools, persistent transcript, and partial streaming message. The agent becomes idle only after awaited `agent_end` subscribers finish. |
-| `agent_loop`<br/>Pi: [agentLoop][pi-loop] | Repeats model responses and tool batches. Steering enters after a tool batch, or continues the run when it arrives as the answer ends. Tool calls from a response cut off by the output limit fail without running. | A batch runs concurrently only when every call is read-only. Round and call budgets end with an answer-only request, and a refused truncated batch spends a round. Each request passes through one context projection. | Parallel execution by default. The whole batch runs sequentially if configured globally or required by any tool in it. Supports before and after tool-call hooks and context transform hooks. Tool-result early termination requires every finalized tool result in the batch to set `terminate: true`. |
-| `AgentTool` / `AgentToolResult`<br/>Pi: [AgentTool / AgentToolResult][pi-tools] | A model-facing definition bound to execution. Results carry model content and UI details, and start and end events correlate by `tool_call_id`. | Tools receive raw JSON arguments, return text, an optional image, and an explicit success flag, and declare whether they are read-only. | Schema-validated parameters, the call ID, an abort signal, and partial-update callbacks. Tools throw on failure instead of encoding it. |
-| `AgentSession` / `RunOutput` / `AgentMessage`<br/>Pi: [AgentSession][pi-session], [AgentMessage][pi-messages] | An application layer over `Agent`. Runs produce `UserMessage`, `AssistantMessage`, and `ToolResultMessage` records shaped like Pi's messages, with Pi's stop reasons, persisted in order. Later model input excludes aborted answer content. | Snapshot-versioned commits after sandbox cleanup, schedule revisions, and proposal decision entries. The in-memory session keeps prompts, assistant text and stop reasons, and decisions. A stopped run retains its prompt and aborted partial answer. Later model context replaces that answer with an interruption note. The persisted log is an audit record keyed by run, not a resumable session. | An append-only, branchable JSONL session with model and label entries, automatic compaction into summary entries, automatic retry of retryable errors, and extensions. Aborted and error assistant messages stay in session history, but [provider message transformation][pi-replay] omits them from later model replay. |
-| `SessionRuns` / `AgentRun` / `RunSnapshot`<br/>Pi: [ActiveRun and run lifecycle][pi-agent] | One active run with a cancellation handle, finishing before the next run starts. | Per-session FIFO admission, queued background runs, Stop that also cancels queued runs, and a versioned commit capability. | The agent's own `AbortController`, passed to tools, with a single-run guard instead of a queue. |
-| Steering queue<br/>Pi: [steer / followUp][pi-agent] | Queued input reaches the model at a boundary without starting a new run. | One queue serves both roles. It drains every message, deduplicates retried POSTs by ID, and closes atomically with the answer. Optimizer wake-ups enter `SessionRuns` as fresh runs. | Separate steering and follow-up queues, each draining one message at a time or all at once. |
-| `WorkspaceTools` / `SandboxWorkspace`<br/>Pi: [read, bash, edit, write][pi-coding-tools] | Pi's default `read`, `bash`, `edit`, and `write` contracts and model-facing wording, ported under `ai/pi`. | A lazy, disposable E2B VM per run with hydration, pause and resume, trusted YAML validation after each change, and teardown before commit. | Tools act on the user's local working directory, which persists across runs. Built-in `powershell`, `find`, `grep`, and `ls` tools are available beyond the default active four. |
-| SSE projection / `RunEvents` / `SessionEventBroker`<br/>Pi: [AgentEvent][pi-events], [Agent.subscribe][pi-agent] | Typed text, reasoning, and tool events with call IDs, a message end for each model response, and exactly one terminal outcome per run. | Events map onto a stable SSE contract. Foreground output is a bounded stream that disconnect cancels. Background output is a journal replayed with `Last-Event-ID`. | In-process subscribers receive agent, turn, message, and tool lifecycle events, including partial tool updates. Low-level `agent_end` marks the end of one loop run. `AgentSession` emits [`agent_settled`][pi-settled] after retries, compaction recovery, queued continuation work, and session boundary processing finish. |
-| `SessionOptimizer`<br/>Pi: no first-class built-in counterpart | Exposed to the model as one `AgentTool`. | Independent remote jobs, progress, anonymization, late-submission cleanup, and fresh review runs. | Similar behavior could be implemented through extensions. |
-| API routes / `SessionStore` / browser lifecycle<br/>Pi: nearest is [AgentSession][pi-session] | A session boundary that owns conversation lifetime. | HTTP authentication, cookie ownership, expiry, global memory limits, SSE reconnection, a browser-owned canonical schedule, and proposal approval. | Local single-user sessions stored on disk that can be resumed and branched. |
-
-</div>
-
-### Retention and Context
-
-Each run produces canonical entries shaped like Pi's messages: `user`,
-`assistant` for each model response with its text, reasoning, tool calls, and
-stop reason, `tool_result`, and this service's `proposal_decision`. Every
-destination is a projection of them. The chat history log stores them all as
-ordered rows under the run. The session transcript keeps prompts, answer text,
-stop reasons, and decisions, because later model context never replays a
-disposable sandbox's tools. Model context merges the responses between two
-prompts into the answer the user saw. Trimming for memory, the message cap, or
-the prompt budget removes whole exchanges, so an answer or proposal decision is
-never left without its prompt.
-
-During a run, `AgentState.messages` holds the messages the loop produces.
-`context.py` projects them for each provider request. `RunOutput` projects the
-same events onto SSE. History omits image bytes from tool results, and the
-session retains only the entries useful to later questions.
-
-| Content | Later model context | Session transcript | Browser and export | Chat history log |
-| --- | --- | --- | --- | --- |
-| Answer text | Yes, within the history budget | Yes | Yes | Yes |
-| Reasoning | No | No | Yes | Yes |
-| Tool calls and results | Only within their run | No | Yes, by `tool_call_id` | Yes |
-| Queued steering | Yes | Yes | Yes | Yes, in run order |
-| Stopped answer | Prompt and an interruption note | Prompt and aborted partial answer | Partial output, stopped status | Yes, `aborted` in a `cancelled` run |
-| Failed or stale answer | No | No | Failed output with retry, or a stale notice | Yes, with run status |
-| Attachment filenames | Yes, in the prompt note | Yes | Yes | Yes, in the prompt |
-| Proposal decision | Yes | Yes | Yes | Yes, under the proposing run |
-
-The investigated alternatives below were not adopted:
-
-- **One event journal for both transports.** Foreground output is bounded and
-  backpressured for its single reader, and disconnect cancels the run.
-  Background output must outlive readers, replay by cursor, and also carry
-  optimizer progress. Both already share `RunOutput` projection and
-  `TERMINAL_EVENTS`. A single journal would add replay cost to every answer or
-  drop backpressure.
-- **Separate steering and follow-up queues.** The browser offers one queue
-  action. Optimizer results start a fresh run because they can arrive after the
-  run ends and must see the current schedule.
-- **Summary compaction.** Every run re-sends the canonical schedule, so older
-  exchanges carry less state than a coding transcript. Trimming the oldest
-  complete exchanges avoids an extra provider call with its cost, latency, and
-  failure mode.
-- **Central schema validation of tool arguments.** The ported Pi tools already
-  validate with Pi's wording and accept the compatibility shapes Pi's
-  `prepareArguments` accepts, such as a legacy single edit. A generic schema
-  check would reject those shapes first. A contract test instead requires every
-  offered tool to refuse malformed arguments before any sandbox command, file
-  change, or optimizer submission.
-- **Recording failed attempts in the transcript.** Retry resends the question,
-  so a recorded attempt would duplicate it in model context. The browser also
-  replaces the failed pair on retry, so the question appears once and an old
-  Retry button cannot resend it again. The chat history log keeps each
-  attempt's outcome and ordered transcript as its lineage.
-
-[pi-agent]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/agent/src/agent.ts#L188
-[pi-state]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/agent/src/types.ts#L378
-[pi-loop]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/agent/src/agent-loop.ts#L37
-[pi-tools]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/agent/src/types.ts#L420
-[pi-session]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/coding-agent/src/core/agent-session.ts#L331
-[pi-replay]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/ai/src/api/transform-messages.ts#L195
-[pi-settled]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/coding-agent/src/core/agent-session.ts#L1469
-[pi-events]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/agent/src/types.ts#L485
-[pi-messages]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/agent/src/types.ts#L370
-[pi-coding-tools]: https://github.com/earendil-works/pi/tree/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/coding-agent/src/core/tools
+| API routes<br/>`app.py` | Authenticate requests, invoke session operations, and serve HTTP and SSE responses. |
+| `SessionStore`<br/>`sessions.py` | Enforce session ownership, expiry, memory limits, and versioned conversation commits. |
+| `SessionRuns` / `AgentRun` / `RunSnapshot`<br/>`lifecycle.py` | Admit one run per session, queue background follow-ups, and keep ownership through cancellation and cleanup. Carry the conversation version used to authorize a commit. |
+| `AgentSession` / `RunOutput`<br/>`agent_session.py` | Prepare context, execute the agent, await cleanup, save the run, and project agent events onto SSE. |
+| `Agent` / `AgentState`<br/>`agent.py`<br/>`agent_types.py` | Hold in-run messages, streaming state, pending tool call IDs, and queued steering. |
+| `agent_loop`<br/>`agent_loop.py` | Repeat model responses and tool batches until the agent finishes. |
+| Transcript and context<br/>`transcript.py`<br/>`context.py` | Define ordered message entries and project them into retained history and provider input. |
+| `WorkspaceTools` / `SandboxWorkspace`<br/>`workspace_tools.py`<br/>`workspace.py`<br/>`sandbox/` | Bind model tools to file operations, validate working YAML, and manage VM hydration, pause, resume, and teardown. |
+| `SessionOptimizer`<br/>`optimizer.py` | Own remote jobs, progress, artifacts, late-submission cleanup, and result-review wake-ups. |
+| `SessionEventBroker`<br/>`session_events.py` | Retain and replay background SSE by cursor. |
+| Browser `ChatLifecycle`<br/>`chatLifecycle.ts` | Track operation ownership and derive busy and Stop state. |
+| Browser event reducer<br/>`assistantEvents.ts` | Apply shared assistant events from both SSE streams. |
 
 ## One Run at a Glance {#one-turn-at-a-glance}
 
+Text and tool requests can share a model response. A run may contain several
+model responses and tool batches before it reaches finalization.
+
+**Model and tool steps**
+
 <div class="ai-diagram" markdown="1" tabindex="0">
 
 ```mermaid
 flowchart TB
-    Start[<b>Browser message or<br/>optimizer follow-up</b>] --> Admit[<b>Admit run</b><br/>Reserve schedule,<br/>transcript, version]
-    Admit --> Step{<b>Model step</b>}
-    Step -->|Text or reasoning| Text[Stream text<br/>or reasoning] --> Step
-    Step -->|Workspace tool| Tool[Run E2B tool<br/>Return result and preview<br/>when validation passes] --> Step
-    Step -->|Optimizer tool| Job[Start, inspect,<br/>or finish job<br/>Return tool result] --> Step
+    Start[<b>Run request</b><br/>Browser message or<br/>optimizer follow-up]
+    Admit[<b>SessionRuns / AgentSession</b><br/>Admit run, reserve schedule,<br/>transcript, version]
+    Step[<b>Agent / agent_loop</b><br/>Stream text and reasoning<br/>via AgentSession SSE<br/>Continue after tool results<br/>Finish when no calls<br/>or steering remain]
+    Tool[<b>Workspace tools</b><br/>Execute in E2B,<br/>validate working YAML]
+    Job[<b>SessionOptimizer</b><br/>Start, inspect,<br/>or finish job]
+
+    Start -->|Submit or queue| Admit
+    Admit -->|Prepare context and tools| Step
+    Step <-->|Workspace calls,<br/>results and validation| Tool
+    Step <-->|Optimizer calls<br/>and results| Job
 ```
 
 </div>
 
+**Run finalization**
+
 <div class="ai-diagram" markdown="1" tabindex="0">
 
 ```mermaid
 flowchart TB
-    Answer[<b>Final answer</b>] --> Cleanup
-    Stop[<b>Stop or disconnect</b><br/>Cancels the run] --> Cleanup
-    Cleanup[<b>Finalize run</b><br/>Read final YAML if used<br/>Clean up sandbox]
-    Cleanup --> Check{<b>Version and outcome</b>}
-    Check -->|Current,<br/>successful| Done[Save answer<br/>and proposal<br/>SSE done]
-    Check -->|Stopped| Stopped[Save prompt and<br/>aborted answer<br/>if current<br/>SSE stopped]
-    Check -->|Changed| Stale[Discard result<br/>SSE stale]
-    Check -->|Failure| Error[Discard result<br/>SSE error]
+    Answer[<b>Final answer</b>]
+    Stop[<b>Stop or disconnect</b><br/>Before commit begins]
+    Failure[<b>Execution error</b>]
+    Cleanup[<b>Workspace finalization</b><br/>Review final YAML<br/>on success<br/>Clean up on every exit]
+    Check{<b>AgentSession</b><br/>Version and outcome}
+    Done[<b>Completed</b><br/>Save answer<br/>and proposal<br/>SSE done]
+    Stopped[<b>Stopped</b><br/>Save prompt and<br/>aborted answer<br/>if current<br/>SSE stopped]
+    Stale[<b>Stale</b><br/>Discard result<br/>SSE stale]
+    Error[<b>Failed</b><br/>Discard result<br/>SSE error]
+
+    Answer -->|Review candidate| Cleanup
+    Stop -->|Cancel execution| Cleanup
+    Failure -->|Unwind execution| Cleanup
+    Cleanup -->|Finish cleanup| Check
+    Check -->|Current, successful| Done
+    Check -->|Cancelled| Stopped
+    Check -->|Version changed| Stale
+    Check -->|Failure| Error
 
 ```
 
@@ -295,16 +234,8 @@ flowchart TB
 A lost background event connection instead resumes from `Last-Event-ID` while
 the server run continues.
 
-The three paths below show a model step in detail. Text and tool requests can
-occur in the same provider response, and a run may loop through several model
-responses. A failed or stale run can leave provisional activity in the
-browser, but its prompt, answer, and candidate do not enter the session
-transcript. A stopped run keeps its prompt so a follow-up can refer to it. Its
-partial answer is stored as aborted, and model context replaces it with a short
-interruption note, much as Pi skips aborted assistant messages. The candidate
-is discarded with the sandbox. Every run ends with one terminal event. The
-browser keeps a stopped response's partial output under a stopped status and
-marks unfinished tool calls interrupted.
+The three paths below expand the model steps. [Retention and Context](#retention-and-context)
+shows what each outcome keeps for later questions.
 
 ### Text-only response
 
@@ -324,11 +255,11 @@ config:
 sequenceDiagram
     participant Browser
     participant AI as AgentSession
-    participant Agent as Agent
+    participant Agent as Agent /<br/>agent_loop
     participant Model as Model provider
 
     Browser->>AI: POST /messages
-    AI->>Agent: Summary, transcript<br/>context, question
+    AI->>Agent: Start prompt with summary,<br/>transcript context, question<br/>and tool definitions
     Agent->>Model: Stream response
     loop Text or reasoning chunks
         Model-->>Agent: TextDelta or ReasoningDelta
@@ -348,8 +279,9 @@ sequenceDiagram
 
 </div>
 
-Reasoning is streamed separately from answer text. It is not saved to the
-session transcript or sent back to the provider on later runs.
+**Provider retries.** A timeout is retried only before the provider delivers
+its first streamed event. Once text, reasoning, usage, or a tool call arrives,
+the request is not replayed because it could duplicate output or tool work.
 
 ### Workspace and model tools
 
@@ -369,7 +301,7 @@ config:
     wrapPadding: 4
 ---
 sequenceDiagram
-    participant Agent
+    participant Agent as Agent /<br/>agent_loop
     participant Workspace as Workspace tools
     participant E2B as E2B sandbox
 
@@ -383,18 +315,26 @@ sequenceDiagram
         opt Sandbox paused
             Workspace->>E2B: Resume
         end
-        Note over Agent,E2B: All-read calls may overlap.<br/>Mixed or mutating calls run in order.
-        Agent->>Workspace: Execute tool, await result
-        Workspace->>E2B: Read, bash, edit, or write
-        E2B-->>Workspace: Tool output
-        opt Non-read workspace tool
-            Workspace->>E2B: Read working YAML
-            E2B-->>Workspace: Contents or missing file
-            opt YAML changed<br/>or missing
-                Workspace->>Workspace: Validate and attach<br/>model feedback
+        alt Multiple calls, all read-only
+            Agent->>Workspace: Execute reads concurrently,<br/>await all results
+            Workspace->>E2B: Read files concurrently
+            E2B-->>Workspace: Text or image contents
+            Workspace-->>Agent: Results in call order
+        else Single call or mixed batch
+            loop Each tool call in order
+                Agent->>Workspace: Execute tool, await result
+                Workspace->>E2B: Read, bash, edit, or write
+                E2B-->>Workspace: Tool output
+                opt Non-read workspace tool
+                    Workspace->>E2B: Read working YAML
+                    E2B-->>Workspace: Contents or missing file
+                    opt YAML changed<br/>or missing
+                        Workspace->>Workspace: Validate and attach<br/>model feedback
+                    end
+                end
+                Workspace-->>Agent: AgentToolResult:<br/>output, status, optional<br/>image and preview details
             end
         end
-        Workspace-->>Agent: AgentToolResult:<br/>output, status, optional<br/>image and preview details
         Agent->>Workspace: Close activity batch
         opt Idle gap
             Workspace->>E2B: Pause
@@ -425,17 +365,31 @@ config:
 sequenceDiagram
     participant Browser
     participant Session as AgentSession
-    participant Agent
+    participant Agent as Agent /<br/>agent_loop
 
     Note over Session,Agent: One run may contain<br/>multiple model/tool turns
     loop Model chooses a workspace tool batch
-        Agent-->>Session: ToolExecutionStart<br/>with call ID
-        Session-->>Browser: SSE tool_start
-        Note over Agent: Await workspace tool execution
-        Agent-->>Session: ToolExecutionEnd<br/>with matching call ID
-        Session-->>Browser: SSE tool
-        opt Changed working copy passes validation
-            Session-->>Browser: SSE schedule_change<br/>immediately after tool result
+        alt Multiple calls, all read-only
+            loop Each call in order, before execution
+                Agent-->>Session: ToolExecutionStart with call ID
+                Session-->>Browser: SSE tool_start
+            end
+            Note over Agent: Execute reads concurrently,<br/>await all results
+            loop Each result in call order
+                Agent-->>Session: ToolExecutionEnd with call ID
+                Session-->>Browser: SSE tool
+            end
+        else Single call or mixed batch
+            loop Each tool call in order
+                Agent-->>Session: ToolExecutionStart<br/>with call ID
+                Session-->>Browser: SSE tool_start
+                Note over Agent: Await workspace tool execution
+                Agent-->>Session: ToolExecutionEnd<br/>with matching call ID
+                Session-->>Browser: SSE tool
+                opt Changed working copy passes validation
+                    Session-->>Browser: SSE schedule_change<br/>immediately after tool result
+                end
+            end
         end
         Note over Agent: After the batch, consume steering.<br/>Continue the model with ordered tool results.
     end
@@ -481,7 +435,7 @@ sequenceDiagram
         Workspace->>E2B: Destroy
         E2B-->>Workspace: Deletion outcome
     end
-    alt Cleanup succeeds<br/>and snapshot current
+    alt Successful run, cleanup succeeds<br/>and snapshot current
         Session->>Session: Save answer and<br/>any proposal
         opt Proposal exists
             Session-->>Browser: SSE proposal
@@ -503,9 +457,8 @@ sequenceDiagram
 
 </div>
 
-The model waits for each tool batch. The reaper runs later. Approving or
-rejecting a pending proposal happens after the run and is drawn in the
-Schedule Proposals diagrams below.
+[Schedule Proposals](#schedule-proposals) covers approval and rejection after
+the run.
 
 The model can use `read`, `bash`, `edit`, and `write`. `read` handles text and
 supported images. Workspace helpers inspect XLSX and PDF files. Tool output,
@@ -518,18 +471,21 @@ them with the four basic tools, and runs the inspect helpers through `bash`.
 | Sandbox path | Content |
 | --- | --- |
 | `/workspace/schedule.yaml` | The session schedule snapshot. |
-| `/workspace/pending-proposal.yaml`, `/workspace/pending-proposal.diff` | The pending proposal's full candidate YAML and its frozen diff against the canonical schedule, if any. Read-only reference, and the new diff is computed by the server at run end. |
+| `/workspace/pending-proposal.yaml`, `/workspace/pending-proposal.diff` | The pending proposal's full candidate YAML and its frozen diff against the schedule snapshot used to create it, if any. Read-only reference, and the new diff is computed by the server at run end. |
 | `/workspace/attachments/` | Uploaded files plus a `manifest.json` with safe paths and original filenames. |
 | `/workspace/optimizer-results/optimized-schedule.xlsx` | A retained optimizer workbook, if any. |
 | `/reference/` | Schema and guide references, plus `tools/inspect_xlsx.py` and `tools/inspect_pdf.py`. |
 
-Attachment contents last only in this run's sandbox. Later prompts retain only
-the filenames. The sandbox has no repository or retrieval access and no
-outbound Internet access.
+Uploads are available only in the run that received them. The sandbox has no
+repository, retrieval access, outbound Internet access, browser storage access,
+or provider, optimizer, or database credentials. Uploads and shell output remain
+untrusted throughout validation and review.
 
-A sandbox belongs to one run. If deletion cannot be confirmed, the background
-reaper retries and scans for overdue application-owned sandboxes. To run one
-cleanup pass while the AI service is offline:
+**Sandbox retries.** Replay-safe E2B operations can be retried. Creation and
+shell execution are not replayed after an uncertain response.
+
+The background reaper also scans for overdue application-owned sandboxes.
+To run one cleanup pass while the AI service is offline:
 
 ```sh
 python -m nurse_scheduling.ai.sandbox.reap
@@ -539,9 +495,9 @@ The command needs `E2B_API_KEY` and exits nonzero if listing fails or deletion
 remains unconfirmed. Schedule it externally if cleanup must continue during a
 complete service outage.
 
-## Optimizer Jobs and Events
+### Optimizer Jobs and Events
 
-### Start and submission
+#### Start and submission
 
 <div class="ai-diagram" markdown="1" tabindex="0">
 
@@ -557,14 +513,14 @@ config:
     wrapPadding: 4
 ---
 sequenceDiagram
-    participant Agent as Agent / tools
+    participant Agent as Workspace tools
     participant E2B as E2B sandbox
     participant Jobs as SessionOptimizer
     participant API as Optimizer API
 
-    Note over Agent,Jobs: Model requests start within an admitted run
-    Agent->>Agent: Open tool batch
-    opt Workspace needed
+    Note over Agent,Jobs: Agent / agent_loop executes the model's<br/>optimizer start call within an admitted run
+    Note over Agent: WorkspaceTools /<br/>SandboxWorkspace<br/>Batch opened by agent_loop
+    opt First batch needing files
         Agent->>E2B: Create and hydrate
     end
     opt Sandbox paused
@@ -599,7 +555,7 @@ sequenceDiagram
                     Note right of Jobs: Browser receives session<br/>SSE optimization state
                 end
                 Jobs-->>Agent: Tool result with<br/>session job ID
-                Note right of Agent: Browser receives foreground<br/>SSE tool. Answer may continue.
+                Note right of Agent: AgentSession emits<br/>foreground SSE tool.<br/>Batch closes, answer may continue.
             end
         end
     end
@@ -608,7 +564,7 @@ sequenceDiagram
 
 </div>
 
-### Background monitoring and result review
+#### Background monitoring and result review
 
 <div class="ai-diagram" markdown="1" tabindex="0">
 
@@ -659,7 +615,7 @@ sequenceDiagram
 
 </div>
 
-### Status and finish-now tools
+#### Status and finish-now tools
 
 <div class="ai-diagram" markdown="1" tabindex="0">
 
@@ -676,11 +632,12 @@ config:
 ---
 sequenceDiagram
     participant Browser
-    participant Agent as Agent / tools
+    participant Agent as Agent /<br/>workspace tools
     participant Jobs as SessionOptimizer
     participant API as Optimizer API
 
     Note over Browser,API: Service-held job state.<br/>No E2B VM for a batch using only these tools.
+    Note over Browser,Agent: Tool results reach the browser<br/>through AgentSession's SSE projection
     alt status
         Agent->>Jobs: Read latest local status
         Jobs-->>Agent: Tool result
@@ -702,45 +659,9 @@ sequenceDiagram
 
 </div>
 
-A job is independent of the run that started it. Its monitor is a separate
-background task, so stopping or disconnecting a run does not cancel a job
-whose ID was returned. The service still reviews the result when the job ends,
-while a job still being submitted when its run is cancelled is retired. The
-monitor then cancels and deletes the remote job.
-
 The `status` and `finish_now` actions use service-held job state and do not
-create an E2B sandbox when they are the only tools in a batch.
-
-The optimizer credential and reverse person-ID mapping stay in the AI service,
-outside E2B.
-
-A retained workbook is mounted for the review run at
-`/workspace/optimizer-results/optimized-schedule.xlsx`. The browser can also
-download it through the session-owned route.
-
-Foreground answers use the message request's SSE stream. Optimizer progress
-and result-review runs use replayable session SSE with `Last-Event-ID`. The
-broker retains up to 1,000 run events and 100 progress events per session.
-All run-associated events on either stream carry `run_id`, including
-`run_start`, `done`, `stopped`, `stale`, and `error`. Steering events also
-carry the queued user input's `message_id`, and tool events use `tool_call_id`.
-The browser keys a background answer by `run_id`. Foreground UI messages
-have their own local IDs. Browser operation tokens prevent an older stream
-callback from replacing newer state.
-
-| Event | Meaning |
-| --- | --- |
-| `delta`, `reasoning`, `truncated` | Answer text, a separate reasoning stream, and a marker that the answer stopped at the output limit. |
-| `tool_start`, `tool` | Tool request and completed result, correlated by `tool_call_id` and including success status. |
-| `schedule_change`, `proposal` | Working-copy preview and final candidate diff. |
-| `steering`, `history_trimmed` | Queued input consumed and prompt-history reduction. |
-| `optimization`, `optimization_progress`, `run_start` | Job state, progress, and a background review run. |
-| `done`, `stopped`, `stale`, `error` | Terminal run outcomes. |
-
-The service retries a provider timeout only before receiving a streamed event,
-avoiding a repeat of visible text or tool calls. Replay-safe E2B operations can
-also be retried. Sandbox creation and shell execution are not replayed after an
-uncertain response.
+create an E2B sandbox when they are the only tools in a batch. The optimizer
+credential and reverse person-ID mapping stay in the AI service.
 
 ## Schedule Proposals
 
@@ -750,7 +671,9 @@ uncertain response.
 
 ```mermaid
 flowchart TB
-    Working[<b>Final sandbox YAML</b><br/>Untrusted working copy] --> Review[<b>Server review</b><br/>Parse, validate,<br/>diff against base]
+    Working[<b>Final sandbox YAML</b><br/>Untrusted working copy]
+    Review[<b>Server review</b><br/>Parse, validate,<br/>diff against run snapshot]
+    Working -->|Read candidate| Review
     Review -->|Unchanged| Answer[<b>Answer only</b><br/>No proposal]
     Review -->|Unreadable or<br/>new issues| Fail[<b>Run error</b><br/>No proposal saved]
     Review -->|Changed,<br/>no new issues| Current{<b>Run version current?</b>}
@@ -768,30 +691,120 @@ flowchart TB
 ```mermaid
 flowchart TB
     Pending[<b>Pending proposal</b>]
-    Pending -->|Reject or schedule update| Discard[<b>Discard proposal</b><br/>Canonical YAML unchanged]
+    Pending -->|Reject or schedule update| Discard[<b>Discard proposal</b><br/>Browser schedule unchanged]
     Pending -->|Approve with base SHA-256| Revision{<b>Base revision matches?</b>}
     Revision -->|No, HTTP 409| Discard
     Revision -->|Yes| Recheck[<b>Revalidate candidate</b><br/>Compare new issues<br/>with base]
     Recheck -->|New issues, HTTP 409| Discard
     Recheck -->|No new issues| Adopt[<b>Adopt in session</b><br/>Return YAML to browser]
-    Adopt --> Import[<b>Browser import</b><br/>One undo step]
+    Adopt -->|Return approved YAML| Import[<b>Browser import</b><br/>One undo step]
 
 ```
 
 </div>
 
-A preview from a tool is provisional and never changes the canonical schedule.
-Approval and rejection record short action notes for later model runs. The
-sandbox has no canonical storage,
-provider key, optimizer key, or database credential. Uploads and shell output
-remain untrusted throughout review.
+A working-copy preview is provisional. The final proposal carries a diff;
+only approval returns candidate YAML for the browser to import.
+
+## Retention and Context
+
+`AgentState.messages` holds the run's `user`, `assistant`, and `tool_result`
+entries. Each assistant entry includes text, reasoning, tool calls, and a stop
+reason. Proposal decisions add short `proposal_decision` action notes after
+the run.
+
+Each destination receives a projection of these entries. `context.py` builds
+provider input, `RunOutput` projects agent events onto SSE, and the chat history
+log stores ordered entries under the run. The log omits image bytes from tool
+results.
+
+The session transcript keeps prompts, answer text, stop reasons, and decisions.
+Later runs never replay a disposable sandbox's tool exchanges. Model context
+merges the responses between two prompts into the answer the user saw.
+Trimming for memory, the message cap, or the prompt budget removes whole
+exchanges, so an answer or proposal decision is never left without its prompt.
+
+| Content | Later model context | Session transcript | Browser and export | Chat history log |
+| --- | --- | --- | --- | --- |
+| Answer text | Yes, within the history budget | Yes | Yes | Yes |
+| Reasoning | No | No | Yes | Yes |
+| Tool calls and results | Only within their run | No | Yes, by `tool_call_id` | Yes |
+| Queued steering | Yes | Yes | Yes | Yes, in run order |
+| Stopped answer | Prompt and an interruption note | Prompt and aborted partial answer | Partial output, stopped status, unfinished tools marked interrupted | Yes, `aborted` in a `cancelled` run |
+| Failed or stale answer | No | No | Failed output with retry, or a stale notice | Yes, with run status |
+| Attachment filenames | Yes, in the prompt note | Yes | Yes | Yes, in the prompt |
+| Proposal decision | Yes | Yes | Yes | Yes, under the proposing run |
+
+## Mapping to Pi
+
+This comparison follows Pi's public agent loop and coding-agent session at
+revision `d6af72e`. Links are pinned to that revision. These are architectural
+counterparts, not identical APIs or a mapping of Pi's separate harness runtime.
+Each row lists shared behavior first, then what only one side has.
+
+<div class="ai-pi-mapping" markdown="1">
+
+| Component | Shared | Ours only | Pi only |
+| --- | --- | --- | --- |
+| `Agent` / `AgentState`<br/>Pi: [Agent][pi-agent], [AgentState][pi-state] | Streaming flag, pending tool call IDs, in-run messages, the steering queue, and refusal of a second concurrent prompt. | Context arrives per run, and the session commits its retained transcript after cleanup. `AgentRun`, not `Agent`, owns cancellation, so Stop also reaches queued runs and cannot interrupt cleanup. | State also holds the model, thinking level, tools, persistent transcript, and partial streaming message. The agent becomes idle only after awaited `agent_end` subscribers finish. |
+| `agent_loop`<br/>Pi: [agentLoop][pi-loop] | Repeats model responses and tool batches. Steering enters after a tool batch, or continues the run when it arrives as the answer ends. Tool calls from a response cut off by the output limit fail without running. | A batch runs concurrently only when every call is read-only. Round and call budgets end with an answer-only request, and a refused truncated batch spends a round. Each request passes through one context projection. | Parallel execution by default. The whole batch runs sequentially if configured globally or required by any tool in it. Supports before and after tool-call hooks and context transform hooks. Tool-result early termination requires every finalized tool result in the batch to set `terminate: true`. |
+| `AgentTool` / `AgentToolResult`<br/>Pi: [AgentTool / AgentToolResult][pi-tools] | A model-facing definition bound to execution. Results carry model content and UI details, and start and end events correlate by `tool_call_id`. | Tools receive raw JSON arguments, return text, an optional image, and an explicit success flag, and declare whether they are read-only. | Schema-validated parameters, the call ID, an abort signal, and partial-update callbacks. Tools throw on failure instead of encoding it. |
+| `AgentSession` / `RunOutput` / `AgentMessage`<br/>Pi: [AgentSession][pi-session], [AgentMessage][pi-messages] | An application layer over `Agent`. Runs produce `UserMessage`, `AssistantMessage`, and `ToolResultMessage` records shaped like Pi's messages, with Pi's stop reasons, persisted in order. Later model input excludes aborted answer content. | Snapshot-versioned commits after sandbox cleanup, schedule revisions, and proposal decision entries. The in-memory session keeps prompts, assistant text and stop reasons, and decisions. A stopped run retains its prompt and aborted partial answer. Later model context replaces that answer with an interruption note. The persisted log is an audit record keyed by run, not a resumable session. | An append-only, branchable JSONL session with model and label entries, automatic compaction into summary entries, automatic retry of retryable errors, and extensions. Aborted and error assistant messages stay in session history, but [provider message transformation][pi-replay] omits them from later model replay. |
+| `SessionRuns` / `AgentRun` / `RunSnapshot`<br/>Pi: [ActiveRun and run lifecycle][pi-agent] | One active run with a cancellation handle, finishing before the next run starts. | Per-session FIFO admission, queued background runs, Stop that also cancels queued runs, and a versioned commit capability. | The agent's own `AbortController`, passed to tools, with a single-run guard instead of a queue. |
+| Steering queue<br/>Pi: [steer / followUp][pi-agent] | Queued input reaches the model at a boundary without starting a new run. | One queue serves both roles. It drains every message, deduplicates retried POSTs by ID, and closes atomically with the answer. Optimizer wake-ups enter `SessionRuns` as fresh runs. | Separate steering and follow-up queues, each draining one message at a time or all at once. |
+| `WorkspaceTools` / `SandboxWorkspace`<br/>Pi: [read, bash, edit, write][pi-coding-tools] | Pi's default `read`, `bash`, `edit`, and `write` contracts and model-facing wording, ported under `ai/pi`. | A lazy, disposable E2B VM per run with hydration, pause and resume, trusted YAML validation after each change, and teardown before commit. | Tools act on the user's local working directory, which persists across runs. Built-in `powershell`, `find`, `grep`, and `ls` tools are available beyond the default active four. |
+| SSE projection / `RunEvents` / `SessionEventBroker`<br/>Pi: [AgentEvent][pi-events], [Agent.subscribe][pi-agent] | Typed text, reasoning, and tool events with call IDs, a message end for each model response, and exactly one terminal outcome per run. | Events map onto a stable SSE contract. Foreground output is a bounded stream that disconnect cancels. Background output is a journal replayed with `Last-Event-ID`. | In-process subscribers receive agent, turn, message, and tool lifecycle events, including partial tool updates. Low-level `agent_end` marks the end of one loop run. `AgentSession` emits [`agent_settled`][pi-settled] after retries, compaction recovery, queued continuation work, and session boundary processing finish. |
+| `SessionOptimizer`<br/>Pi: no first-class built-in counterpart | Exposed to the model as one `AgentTool`. | Independent remote jobs, progress, anonymization, late-submission cleanup, and fresh review runs. | Similar behavior could be implemented through extensions. |
+| API routes / `SessionStore` / browser lifecycle<br/>Pi: nearest is [AgentSession][pi-session] | A session boundary that owns conversation lifetime. | HTTP authentication, cookie ownership, expiry, global memory limits, SSE reconnection, a browser-owned schedule, and proposal approval. | Local single-user sessions stored on disk that can be resumed and branched. |
+
+</div>
+
+### Design decisions
+
+The investigated alternatives below were not adopted:
+
+- **One event journal for both transports.** Foreground output is bounded and
+  backpressured for its single reader, and disconnect cancels the run.
+  Background output must outlive readers, replay by cursor, and also carry
+  optimizer progress. Both already share `RunOutput` projection and
+  `TERMINAL_EVENTS`. A single journal would add replay cost to every answer or
+  drop backpressure.
+- **Separate steering and follow-up queues.** The browser offers one queue
+  action. Optimizer results start a fresh run because they can arrive after the
+  run ends and must see the current schedule.
+- **Summary compaction.** The model receives the current schedule
+  summary on every run, so older exchanges carry less state than a coding
+  transcript. Trimming the oldest complete exchanges avoids an extra provider
+  call with its cost, latency, and failure mode.
+- **Central schema validation of tool arguments.** The ported Pi tools already
+  validate with Pi's wording and accept the compatibility shapes Pi's
+  `prepareArguments` accepts, such as a legacy single edit. A generic schema
+  check would reject those shapes first. A contract test instead requires every
+  offered tool to refuse malformed arguments before any sandbox command, file
+  change, or optimizer submission.
+- **Recording failed attempts in the transcript.** Retry resends the question,
+  so a recorded attempt would duplicate it in model context. The browser also
+  replaces the failed pair on retry, so the question appears once and an old
+  Retry button cannot resend it again. The chat history log keeps each
+  attempt's outcome and ordered transcript as its lineage.
+
+[pi-agent]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/agent/src/agent.ts#L188
+[pi-state]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/agent/src/types.ts#L378
+[pi-loop]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/agent/src/agent-loop.ts#L37
+[pi-tools]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/agent/src/types.ts#L420
+[pi-session]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/coding-agent/src/core/agent-session.ts#L331
+[pi-replay]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/ai/src/api/transform-messages.ts#L195
+[pi-settled]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/coding-agent/src/core/agent-session.ts#L1469
+[pi-events]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/agent/src/types.ts#L485
+[pi-messages]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/agent/src/types.ts#L370
+[pi-coding-tools]: https://github.com/earendil-works/pi/tree/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/coding-agent/src/core/tools
 
 ## HTTP API
 
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/health`, `/ready` | Check service identity and readiness. |
-| `GET` | `/capabilities` | Discover attachment limits, session lifetime, and authentication requirement. |
+| `GET` | `/capabilities` | Discover the app version, attachment limits, session lifetime, and authentication requirement. |
 | `POST` | `/sessions` | Create a session from `schedule_yaml`. |
 | `GET` | `/sessions/{id}` | Check a session's remaining lifetime. |
 | `POST` | `/sessions/{id}/messages` | Start a foreground SSE run with JSON text or multipart text and attachments. |
@@ -806,8 +819,15 @@ remain untrusted throughout review.
 For multipart messages, send one `message` field and repeat the `files` field
 for attachments. The message and event routes return server-sent events.
 `stop` and `messages/queue` return HTTP `202`. Creating a session sets its
-owner cookie. Later session routes require that cookie. All session routes
-also require a bearer key when bearer authentication is configured.
+owner cookie. Later session routes require that cookie.
+
+Sessions expire after 48 hours of inactivity by default. Sending or queueing
+a message, updating the schedule, or deciding a pending proposal renews the
+window. Checking remaining lifetime does not. Session IDs are unguessable.
+
+### Authentication
+
+All session routes require a bearer key when authentication is configured.
 
 `/health`, `/ready`, and `/capabilities` are public. Set `AI_AUTH_TOKEN` or
 `AI_AUTH_TOKENS` to require a bearer key for session routes. The latter is a
@@ -818,7 +838,39 @@ disabled. Native local runs may leave authentication off. The
 [configuration reference](reproduce/core.md#ai-backend-configuration) gives
 defaults and validation rules.
 
+### Streams and events
+
+Foreground answers use the message request's SSE stream. Optimizer progress
+and result-review runs use the session SSE stream. It replays from
+`Last-Event-ID` and retains up to 1,000 non-progress events and 100 optimizer
+progress events per session. Each run ends with one terminal event.
+All run-associated events on either stream carry `run_id`, including
+`run_start`, `done`, `stopped`, `stale`, and `error`. Steering events also
+carry the queued user input's `message_id`, and tool events use `tool_call_id`.
+The browser keys a background answer by `run_id`. Foreground UI messages
+have their own local IDs. Browser operation tokens prevent an older stream
+callback from replacing newer state.
+
+| Event | Meaning |
+| --- | --- |
+| `delta`, `reasoning`, `truncated` | Answer text, a separate reasoning stream, and a marker that the answer stopped at the output limit. |
+| `tool_start`, `tool` | Tool request and completed result, correlated by `tool_call_id` and including success status. |
+| `schedule_change`, `proposal` | Working-copy preview and final candidate diff. |
+| `steering`, `history_trimmed` | Queued input consumed and prompt-history reduction. |
+| `context_usage` | Selected history usage in serialized JSON characters: `used_chars` and `max_chars`. |
+| `optimization`, `optimization_progress`, `run_start` | Job state, progress, and a background review run. |
+| `done`, `stopped`, `stale`, `error` | Terminal run outcomes. |
+
+`context_usage` measures the retained history budget at the start of a run and after
+successful completion. It does not measure provider tokens or the model's
+total context window.
+
 ## Storage and Deployment
+
+Session state, run admission, background replay, and optimizer monitors are
+process-local. Run one AI backend instance until shared AI storage exists.
+These stores are separate from the optimizer server's Redis store. A restart
+loses active sessions even when PostgreSQL logging is enabled.
 
 ### Durable chat logging
 
@@ -881,6 +933,8 @@ LIMIT 100;
 
 Press Ctrl+C when finished. Compose removes the temporary pgAdmin container;
 the PostgreSQL service and its `postgres-ai-data` volume remain intact.
+
+### Proxy and credentials
 
 The production NGINX proxy routes `/ai/*` to the AI service and other paths to
 the optimizer API. It must disable response buffering for streaming routes.

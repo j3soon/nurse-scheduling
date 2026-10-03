@@ -16,7 +16,7 @@
   an anonymized real-scenario example and matching screenshot after the
   introduction.
 - Use `core/tests/testcases/real/large-ward-with-87-people-2025-11.yaml` as the
-  canonical real-scenario example unless another committed fixture better fits
+  reference real-scenario example unless another committed fixture better fits
   the page.
 - Keep Quick Start screenshots separate from app-page screenshots so a
   deep-dive update cannot change the minimal walkthrough.
@@ -37,7 +37,7 @@
   solver linearization details.
 - Keep tightly coupled schema and behavior on one page unless each topic has a
   clear independent purpose.
-- Keep `docs/PRIVACY.md` as a symlink to the canonical root `PRIVACY.md`.
+- Keep `docs/PRIVACY.md` as a symlink to the root `PRIVACY.md`.
 - Link to the deployed documentation at `https://dev.nursescheduling.org/docs/`,
   not `https://nursescheduling.org/docs/`. The dev site builds from the dev
   branch and reflects this repository's content, while the stable site lags.
@@ -114,6 +114,15 @@
 
 - Make architecture and data-flow figures understandable without surrounding
   prose. Use bold titles and short descriptions inside nodes.
+- Label architecture arrows with the action or data they represent. Distinguish
+  tool configuration and resource ownership from tool execution. Distinguish
+  preparing an adapter from allocating a resource when allocation is lazy.
+- Verify diagram paths and lifecycle transitions against code, including
+  cancellation, cleanup, and commit boundaries. Identify derived phases as
+  such rather than implying they are stored states.
+- Put runtime detail in the relevant diagram and avoid repeating it in prose.
+  Improve diagram layout and short labels before changing page styles. Follow
+  the requested viewport scope when checking readability.
 - Give distinct concepts distinct blocks. Preserve meaningful topology when
   adjusting layout.
 - Show alternatives as directly labeled branches. Add a decision node only
@@ -143,7 +152,7 @@
 - For walkthroughs that claim a GUI can reproduce a bundled schedule, start
   the frontend with `cd web-frontend && bun run dev`, follow the steps in a
   Playwright browser, and download the resulting YAML from Save and Load.
-  Compare its scheduling values with the canonical fixture using
+  Compare its scheduling values with the reference fixture using
   `cd web-frontend && bun scripts/compare-schedule-yaml.mjs ../core/tests/testcases/real/large-ward-with-87-people-2025-11.yaml ../artifacts/exported-schedule.yaml`.
   Keep browser downloads and review captures under the ignored `artifacts/`.
 - Do not load JavaScript from `polyfill.io`. Prefer a checked-in asset or the
