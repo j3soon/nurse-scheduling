@@ -54,7 +54,7 @@ from .optimizer import (
 from .provider import OpenAiCompatibleProvider, ToolCapableChatProvider
 from .sandbox import SandboxFactory, managed_sandbox_factory
 from .sandbox.factory import create_sandbox_factory
-from .session_events import SessionEventBroker
+from .session_event_stream import SessionEventStream
 from .sessions import SessionStore, schedule_revision
 from .transcript import ProposalDecision
 from .validation import new_schedule_issues, validate_frontend_schedule_yaml
@@ -316,7 +316,7 @@ def create_app(
     if sandbox_factory is None:
         sandbox_factory = create_sandbox_factory(settings)
     store = SessionStore(settings)
-    event_broker = SessionEventBroker(max_sessions=settings.max_sessions)
+    event_stream = SessionEventStream(max_sessions=settings.max_sessions)
     runs = SessionRuns()
     concurrency_limit = asyncio.Semaphore(settings.max_concurrent_requests)
     auth_registry = create_auth_registry(settings.auth_token, settings.auth_tokens)
@@ -351,7 +351,7 @@ def create_app(
         async def emit(event_type: str, data: dict[str, object]) -> None:
             # Retirement revokes publication as well as cancelling execution.
             if store.get(session_id) is not None:
-                event_broker.publish(session_id, event_type, data)
+                event_stream.publish(session_id, event_type, data)
 
         session = store.get(session_id)
         if session is None:
@@ -374,7 +374,7 @@ def create_app(
             run.cancel()
 
     async def optimizer_updated(session_id: str, update: dict[str, object]) -> None:
-        event_broker.publish(
+        event_stream.publish(
             session_id,
             "optimization_progress" if "progress" in update else "optimization",
             update,
@@ -401,7 +401,7 @@ def create_app(
         """Release everything keyed by a session once the store drops it."""
         runs.stop(session_id)
         session_optimizer.forget_session(session_id)
-        event_broker.forget_session(session_id)
+        event_stream.forget_session(session_id)
 
     store.on_retire(retire_session)
 
@@ -454,7 +454,7 @@ def create_app(
     app.state.sandbox_factory = sandbox_factory
     app.state.app_version = get_app_version()
     app.state.session_optimizer = session_optimizer
-    app.state.session_event_broker = event_broker
+    app.state.session_event_stream = event_stream
 
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:
@@ -520,7 +520,7 @@ def create_app(
             raise HTTPException(status_code=400, detail="Last-Event-ID must be an integer.") from None
 
         async def generate_session_events():
-            async for event in event_broker.stream(session_id, after_id):
+            async for event in event_stream.stream(session_id, after_id):
                 if event is None:
                     yield ": keepalive\n\n"
                 else:

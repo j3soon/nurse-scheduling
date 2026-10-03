@@ -33,7 +33,7 @@ class SessionEvent:
     data: dict[str, object]
 
 
-class SessionEventBroker:
+class SessionEventStream:
     """Process-local replay for background runs and independent optimizer progress."""
 
     def __init__(

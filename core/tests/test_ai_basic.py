@@ -1857,7 +1857,7 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         optimizer.release.set()
         deadline = time.monotonic() + 2
         while time.monotonic() < deadline:
-            events = app.state.session_event_broker.events_after(session_id)
+            events = app.state.session_event_stream.events_after(session_id)
             if any(event.type == "done" for event in events):
                 break
             time.sleep(0.01)

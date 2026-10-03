@@ -161,7 +161,7 @@ flowchart TB
     Session[<b>AgentSession</b><br/>Project run events]
     Jobs[<b>SessionOptimizer</b><br/>Independent job events]
     Foreground[<b>RunEvents</b><br/>Bounded buffer<br/>for one request]
-    Events[<b>SessionEventBroker</b><br/>Retained replay<br/>across runs]
+    Events[<b>SessionEventStream</b><br/>Retained replay<br/>across runs]
     Routes[<b>API routes</b><br/>Serve SSE responses]
     Browser[<b>Browser</b><br/>Shared event reducer]
 
@@ -192,7 +192,7 @@ relative to `web-frontend/src/app/experimental-ai/`.
 | `WorkspaceTools` / `SandboxWorkspace`<br/>`workspace_tools.py`<br/>`workspace.py`<br/>`sandbox/` | Bind model tools to file operations, validate working YAML, and manage VM hydration, pause, resume, and teardown. |
 | `SessionOptimizer`<br/>`optimizer.py` | Own remote jobs, progress, artifacts, late-submission cleanup, and result-review wake-ups. |
 | `RunEvents`<br/>`lifecycle.py` | Buffer foreground events for one message request's SSE response. |
-| `SessionEventBroker`<br/>`session_events.py` | Retain and replay background SSE by cursor. |
+| `SessionEventStream`<br/>`session_event_stream.py` | Retain and replay background SSE by cursor. |
 | Browser `ChatLifecycle`<br/>`chatLifecycle.ts` | Track operation ownership and derive busy and Stop state. |
 | Browser event reducer<br/>`assistantEvents.ts` | Apply shared assistant events from both SSE streams. |
 
@@ -804,7 +804,7 @@ Each row lists shared behavior first, then what only one side has.
 | `SessionRuns` / `AgentRun` / `RunSnapshot`<br/>Pi: [ActiveRun and run lifecycle][pi-agent] | One active run with a cancellation handle, finishing before the next run starts. | Per-session FIFO admission, queued background runs, Stop that also cancels queued runs, and a versioned commit capability. | The agent's own `AbortController`, passed to tools, with a single-run guard instead of a queue. |
 | Steering queue<br/>Pi: [steer / followUp][pi-agent] | Queued input reaches the model at a boundary without starting a new run. | One queue serves both roles. It drains every message, deduplicates retried POSTs by ID, and closes atomically with the answer. Optimizer wake-ups enter `SessionRuns` as fresh runs. | Separate steering and follow-up queues, each draining one message at a time or all at once. |
 | `WorkspaceTools` / `SandboxWorkspace`<br/>Pi: [read, bash, edit, write][pi-coding-tools] | Pi's default `read`, `bash`, `edit`, and `write` contracts and model-facing wording, ported under `ai/pi`. | A lazy, disposable E2B VM per run with hydration, pause and resume, trusted YAML validation after each change, and teardown before commit. | Tools act on the user's local working directory, which persists across runs. Built-in `powershell`, `find`, `grep`, and `ls` tools are available beyond the default active four. |
-| SSE projection / `RunEvents` / `SessionEventBroker`<br/>Pi: [AgentEvent][pi-events], [Agent.subscribe][pi-agent] | Typed text, reasoning, and tool events with call IDs, a message end for each model response, and exactly one terminal outcome per run. | Events map onto a stable SSE contract. Foreground output is a bounded stream that disconnect cancels. Background output is a journal replayed with `Last-Event-ID`. | In-process subscribers receive agent, turn, message, and tool lifecycle events, including partial tool updates. Low-level `agent_end` marks the end of one loop run. `AgentSession` emits [`agent_settled`][pi-settled] after retries, compaction recovery, queued continuation work, and session boundary processing finish. |
+| SSE projection / `RunEvents` / `SessionEventStream`<br/>Pi: [AgentEvent][pi-events], [Agent.subscribe][pi-agent] | Typed text, reasoning, and tool events with call IDs, a message end for each model response, and exactly one terminal outcome per run. | Events map onto a stable SSE contract. Foreground output is a bounded stream that disconnect cancels. Background output is a journal replayed with `Last-Event-ID`. | In-process subscribers receive agent, turn, message, and tool lifecycle events, including partial tool updates. Low-level `agent_end` marks the end of one loop run. `AgentSession` emits [`agent_settled`][pi-settled] after retries, compaction recovery, queued continuation work, and session boundary processing finish. |
 | `SessionOptimizer`<br/>Pi: no first-class built-in counterpart | Exposed to the model as one `AgentTool`. | Independent remote jobs, progress, anonymization, late-submission cleanup, and fresh review runs. | Similar behavior could be implemented through extensions. |
 | API routes / `SessionStore` / browser lifecycle<br/>Pi: nearest is [AgentSession][pi-session] | A session boundary that owns conversation lifetime. | HTTP authentication, cookie ownership, expiry, session text limits, SSE reconnection, a browser-owned schedule, and proposal approval. | Local single-user sessions stored on disk that can be resumed and branched. |
 

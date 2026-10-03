@@ -87,8 +87,8 @@ def test_retirement_cancels_the_owner_and_queued_followups_without_recreating_ev
         await asyncio.gather(active, queued, return_exceptions=True)
         assert cancelled.is_set()
         assert not app.state.runs.busy(session.id)
-        assert app.state.session_event_broker.events_after(session.id) == ()
-        assert session.id not in app.state.session_event_broker._signals
+        assert app.state.session_event_stream.events_after(session.id) == ()
+        assert session.id not in app.state.session_event_stream._signals
 
     asyncio.run(exercise())
 
@@ -302,7 +302,7 @@ def test_terminal_background_event_is_published_only_after_history_cleanup(monke
         running = asyncio.create_task(app.state.session_optimizer._on_completion(session.id, "Review", None))
         await finalizing.wait()
         assert app.state.runs.busy(session.id)
-        assert [event.type for event in app.state.session_event_broker.events_after(session.id)] == [
+        assert [event.type for event in app.state.session_event_stream.events_after(session.id)] == [
             "run_start",
             "context_usage",
         ]
@@ -310,7 +310,7 @@ def test_terminal_background_event_is_published_only_after_history_cleanup(monke
         release.set()
         await running
         assert not app.state.runs.busy(session.id)
-        assert [event.type for event in app.state.session_event_broker.events_after(session.id)] == [
+        assert [event.type for event in app.state.session_event_stream.events_after(session.id)] == [
             "run_start",
             "context_usage",
             "error",
@@ -344,7 +344,7 @@ def test_stop_during_completed_history_write_keeps_completed_outcome(monkeypatch
         await asyncio.wait_for(running, timeout=1)
 
         assert statuses == ["completed"]
-        assert [event.type for event in app.state.session_event_broker.events_after(session.id)][-1] == "done"
+        assert [event.type for event in app.state.session_event_stream.events_after(session.id)][-1] == "done"
         assert not app.state.runs.busy(session.id)
 
     asyncio.run(exercise())
