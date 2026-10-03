@@ -24,12 +24,12 @@ import math
 
 import pytest
 
+from nurse_scheduling.ai.pi import UPSTREAM_COMMIT, UPSTREAM_VERSION
 from nurse_scheduling.ai.pi.bash import (
     BASH_TOOL_DESCRIPTION,
     DEFAULT_MAX_BYTES,
     DEFAULT_MAX_LINES,
     MAX_TIMEOUT_SECONDS,
-    UPSTREAM_COMMIT,
     BashArgumentError,
     bash_parameters,
     format_size,
@@ -41,7 +41,8 @@ from nurse_scheduling.ai.pi.bash import (
 
 
 def test_pi_bash_schema_and_defaults_match_the_pinned_source():
-    assert UPSTREAM_COMMIT == "e266507b606b9552fa277252644054afd4384b11"
+    assert UPSTREAM_VERSION == "v1.0.0"
+    assert UPSTREAM_COMMIT == "a13d35a742c6ef8462812a28fbe1d8c8b7431c32"
     assert DEFAULT_MAX_LINES == 2_000
     assert DEFAULT_MAX_BYTES == 50 * 1_024
     assert "last 2000 lines or 50KB" in BASH_TOOL_DESCRIPTION
@@ -116,6 +117,19 @@ def test_pi_bash_truncation_notice_points_to_the_full_output():
     assert text.startswith("1\n2\n")
     assert text.endswith("[Showing lines 2-2001 of 2001. Full output: /tmp/pi-bash-test.log]")
     assert format_size(50 * 1_024) == "50.0KB"
+
+
+def test_pi_bash_missing_exit_code_is_a_failure_with_output():
+    result = render_bash_result(
+        prepare_bash_output("partial output"),
+        full_output_path=None,
+        exit_code=None,
+        timed_out=False,
+        timeout_seconds=10,
+    )
+
+    assert not result.ok
+    assert result.text == "partial output\n\nCommand terminated without an exit code"
 
 
 def _json_value(value) -> str:

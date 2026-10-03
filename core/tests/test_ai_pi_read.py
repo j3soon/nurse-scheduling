@@ -194,6 +194,20 @@ def test_pi_image_detection_rejects_an_invalid_bmp_header():
     assert detect_supported_image_mime_type(b"BM" + b"\x00" * 40) is None
 
 
+@pytest.mark.parametrize("content", [b"GIF", b"GIF is a file format", b"GIF89", b"GIF90a"])
+def test_pi_read_keeps_gif_prefixed_text_as_text(content: bytes):
+    result = render_read_result(content, ReadInput("notes.txt"))
+
+    assert detect_supported_image_mime_type(content) is None
+    assert result.image is None
+    assert result.text == content.decode()
+
+
+@pytest.mark.parametrize("signature", [b"GIF87a", b"GIF89a"])
+def test_pi_image_detection_accepts_both_gif_signatures(signature: bytes):
+    assert detect_supported_image_mime_type(signature) == "image/gif"
+
+
 def test_pi_read_applies_exif_orientation_before_resizing():
     output = BytesIO()
     image = Image.new("RGB", (10, 2_001), "red")

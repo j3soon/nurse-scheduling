@@ -18,7 +18,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # Adapted from Pi's packages/coding-agent/src/utils/mime.ts at
-# e266507b606b9552fa277252644054afd4384b11. Pi's MIT license is in LICENSE.
+# v1.0.0 (a13d35a742c6ef8462812a28fbe1d8c8b7431c32). Pi's MIT license is in LICENSE.
 # This code is mostly AI generated.
 
 IMAGE_TYPE_DETECTION_BYTES = 4_100
@@ -31,7 +31,7 @@ def detect_supported_image_mime_type(content: bytes) -> str | None:
         return None if len(buffer) > 3 and buffer[3] == 0xF7 else "image/jpeg"
     if buffer.startswith(b"\x89PNG\r\n\x1a\n"):
         return "image/png" if _is_png(buffer) and not _is_animated_png(buffer) else None
-    if buffer.startswith(b"GIF"):
+    if buffer.startswith((b"GIF87a", b"GIF89a")):
         return "image/gif"
     if buffer.startswith(b"RIFF") and buffer[8:12] == b"WEBP":
         return "image/webp"

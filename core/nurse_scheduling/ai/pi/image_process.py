@@ -18,7 +18,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # Adapted from Pi's packages/coding-agent/src/utils/image-process.ts and
-# image-resize-core.ts at e266507b606b9552fa277252644054afd4384b11.
+# image-resize-core.ts at v1.0.0 (a13d35a742c6ef8462812a28fbe1d8c8b7431c32).
 # Pi's MIT license is in LICENSE.
 # This code is mostly AI generated.
 
@@ -28,6 +28,7 @@ from io import BytesIO
 
 from PIL import Image, ImageOps
 
+# Use upstream defaults rather than model-specific resize overrides.
 MAX_IMAGE_DIMENSION = 2_000
 MAX_SOURCE_IMAGE_PIXELS = 16_000_000
 MAX_IMAGE_BASE64_BYTES = int(4.5 * 1_024 * 1_024)

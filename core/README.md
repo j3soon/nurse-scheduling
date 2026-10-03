@@ -454,6 +454,12 @@ and the [deployment guide](https://dev.nursescheduling.org/docs/developer-guide/
 Attachments are always enabled. Every upload is copied unchanged into the
 disposable sandbox, where the agent can inspect it with Pi-compatible tools.
 
+Agent/session boundaries and the `read`, `bash`, `edit`, and `write` ports follow
+[Pi v1.0.0](https://github.com/earendil-works/pi/releases/tag/v1.0.0)
+(`a13d35a`). Sandbox, optimizer, and HTTP behavior remain service-specific.
+See the [architectural comparison](https://dev.nursescheduling.org/docs/developer-guide/ai-assistant/#mapping-to-pi)
+for the shared contracts and differences.
+
 `AI_AUTH_TOKENS` uses a JSON object such as
 `'{"institution-a":"first-key","person-b":"second-key"}'`. IDs may contain
 letters, numbers, underscores, and hyphens. They appear in administrative

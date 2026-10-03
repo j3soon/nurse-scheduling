@@ -43,6 +43,11 @@ The hosted application anonymizes individual people IDs and removes descriptions
 
 ## AI Beta Access
 
+The experimental AI assistant follows the agent/session boundaries and selected
+default tools of [Pi v1.0.0](https://github.com/earendil-works/pi/releases/tag/v1.0.0)
+(`a13d35a`). See the [architectural comparison](https://dev.nursescheduling.org/docs/developer-guide/ai-assistant/#mapping-to-pi)
+for the sandbox, optimizer, and browser-specific differences.
+
 During the evaluation period, the hosted AI assistant is gated by an API key by default.
 
 To request access for experimentation, email [admin@nursescheduling.org](mailto:admin@nursescheduling.org) from your institution email address. Include your institution's name and a short description of how you plan to evaluate the assistant.

@@ -69,6 +69,10 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   Continue only after cleanup succeeds, otherwise stop the claim loop.
 
 ## Experimental AI
+- Follow Pi v1.0.0 (`a13d35a742c6ef8462812a28fbe1d8c8b7431c32`)
+  for agent/session boundaries, terminology, and the selected default tool ports.
+  Keep scheduling, sandbox, and HTTP-specific differences explicit in the
+  developer guide's Mapping to Pi section.
 - Session transitions are synchronous and owned by the service event loop.
   Admit agent runs through `SessionRuns` and keep foreground and background
   execution in `AgentSession.run`. Await owned cleanup before releasing
@@ -171,9 +175,12 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
 - Keep model-facing tool contracts and output behavior in pinned Pi ports under
   `ai/pi`. Keep E2B execution and service timeout policy in the thin sandbox
   adapter so upstream behavior remains identifiable and testable.
-- When changing `ai/pi`, compare with the exact upstream Pi revision cited in
-  the module header. Preserve model-facing wording and edge-case behavior, add
-  focused regression tests, and document intentional differences beside the port.
+- When changing `ai/pi`, compare with the release and full commit pinned in
+  `ai/pi/__init__.py` and each module header. Preserve model-facing wording and
+  edge-case behavior, add focused regression tests, and document intentional
+  differences beside the port. When updating the baseline, verify the tag's
+  commit and update source links, line anchors, tests, READMEs, and the
+  architectural comparison together.
 - Never execute tool calls from a response whose `finish_reason` is `length`.
   Cut-off arguments can still parse as different valid JSON. Return a failed
   result for each call so the model can reissue it, and keep a truncated text

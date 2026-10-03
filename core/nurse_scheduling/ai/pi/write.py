@@ -18,14 +18,14 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # Adapted from Pi's packages/coding-agent/src/core/tools/write.ts
-# at e266507b606b9552fa277252644054afd4384b11. Pi's MIT license is in LICENSE.
+# at v1.0.0 (a13d35a742c6ef8462812a28fbe1d8c8b7431c32). Pi's MIT license is in LICENSE.
 # This code is mostly AI generated.
 
 import json
 from dataclasses import dataclass
 from typing import Any
 
-from .bash import UPSTREAM_COMMIT
+from . import UPSTREAM_COMMIT
 
 WRITE_TOOL = "write"
 WRITE_PROMPT_SNIPPET = "Create or overwrite files"

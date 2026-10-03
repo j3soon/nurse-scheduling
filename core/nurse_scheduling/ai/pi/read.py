@@ -18,7 +18,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # Adapted from Pi's packages/coding-agent/src/core/tools/read.ts and truncate.ts
-# at e266507b606b9552fa277252644054afd4384b11. Pi's MIT license is in LICENSE.
+# at v1.0.0 (a13d35a742c6ef8462812a28fbe1d8c8b7431c32). Pi's MIT license is in LICENSE.
 # This code is mostly AI generated.
 
 import json
@@ -27,7 +27,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..transcript import ToolResultImage
-from .bash import DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, UPSTREAM_COMMIT, format_size
+from . import UPSTREAM_COMMIT
+from .bash import DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, format_size
 from .image_process import ImageProcessFailure, process_image
 from .mime import detect_supported_image_mime_type
 
@@ -37,6 +38,7 @@ READ_PROMPT_GUIDELINE = "Use read to examine files instead of cat or sed."
 UPSTREAM_SOURCE = (
     f"https://github.com/earendil-works/pi/blob/{UPSTREAM_COMMIT}/packages/coding-agent/src/core/tools/read.ts"
 )
+# Keep the shorter description used by our attachment-inspection guidance.
 READ_TOOL_DESCRIPTION = (
     "Read a text file or image. Text output is truncated to "
     f"{DEFAULT_MAX_LINES} lines or {DEFAULT_MAX_BYTES // 1_024}KB (whichever is hit first). "

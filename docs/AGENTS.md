@@ -9,6 +9,10 @@
   must resolve to the matching page under the deployed `/docs` path.
 - Write developer-guide pages for contributors and operators. Keep content
   minimal, precise, and self-contained.
+- Pin upstream architecture and tool comparisons to a verified release and
+  full commit. Check source line anchors against that commit when updating the
+  baseline, and describe architectural counterparts without implying identical
+  APIs.
 - Keep screenshots focused on a decision or result. Add concise alt text and
   describe any warning that appears in the image. Add screenshots where a
   beginner would otherwise struggle to follow a step.

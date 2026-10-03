@@ -1,4 +1,4 @@
-"""Faithful Python ports of selected Pi coding-agent behavior."""
+"""Selected Pi v1.0.0 tool contracts, adapted to the scheduling sandbox."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -18,3 +18,6 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # This code is mostly AI generated.
+
+UPSTREAM_VERSION = "v1.0.0"
+UPSTREAM_COMMIT = "a13d35a742c6ef8462812a28fbe1d8c8b7431c32"

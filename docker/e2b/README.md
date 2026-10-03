@@ -76,7 +76,8 @@ pytest -q tests/test_ai_sandbox.py tests/test_ai_sandbox_agent.py \
   tests/test_ai_sandbox_e2b.py
 ```
 
-The opt-in cloud checks use the prebuilt template, run the selected Pi tools,
+The opt-in cloud checks use the prebuilt template, run the selected
+[Pi v1.0.0](https://github.com/earendil-works/pi/releases/tag/v1.0.0) (`a13d35a`) tool ports,
 verify timeout pause, auto-resume, terminal explicit kill, and the observed
 manually paused timeout behavior. Every test destroys its sandbox on exit:
 
