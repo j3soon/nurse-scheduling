@@ -9,11 +9,6 @@
   "answer_json": {
     "handoffCode": "TEXT CHECK 5703"
   },
-  "tool_usage": {
-    "required": [
-      "bash"
-    ]
-  },
   "tags": [
     "attachment",
     "pdf-inspection"

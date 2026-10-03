@@ -344,3 +344,54 @@ def test_overview_bounds_metadata_and_reports_truncation(tmp_path):
     assert result["sheet_count"] == 105
     assert len(result["sheets"]) == 100
     assert result["sheets_truncated"]
+
+
+def test_pdf_search_finds_later_text_with_bounded_excerpt(tmp_path, monkeypatch):
+    attachment = load_attachment_fixtures(["search-pdf"])[0]
+    path = tmp_path / "manual.pdf"
+    path.write_bytes(attachment.data)
+    from nurse_scheduling.ai.attachment_tools import inspect_pdf as pdf_tools
+
+    calls = []
+    original_reader = pdf_tools.PdfReader
+
+    def observed_reader(*args, **kwargs):
+        calls.append(args)
+        return original_reader(*args, **kwargs)
+
+    def unexpected_render(*args, **kwargs):
+        raise AssertionError("Text search must not render pages")
+
+    monkeypatch.setattr(pdf_tools, "PdfReader", observed_reader)
+    monkeypatch.setattr(pdf_tools, "_render_page", unexpected_render)
+    result = inspect_pdf(path, find="continuity plan")
+    assert len(calls) == 1
+    assert result["page_count"] == result["pages_scanned"] == 28
+    assert result["matched_pages"] == 1
+    assert result["matches"][0]["page"] == 26
+    assert "BRIDGE 6842" in result["matches"][0]["excerpt"]
+    assert len(result["matches"][0]["excerpt"]) <= 400
+    assert not result["pages_truncated"]
+    assert not result["ocr_performed"]
+    limited = inspect_pdf(path, find="continuity plan", max_pages=10)
+    assert limited["matched_pages"] == 0
+    assert limited["pages_truncated"]
+    many = inspect_pdf(path, find="Routine", max_matches=2)
+    assert many["matched_pages"] == 28
+    assert len(many["matches"]) == 2 and many["matches_truncated"]
+
+
+def test_pdf_search_reports_scanned_pages_and_rejects_empty_terms(tmp_path):
+    path = tmp_path / "scan.pdf"
+    path.write_bytes(load_attachment_fixtures(["image-pdf"])[0].data)
+    result = inspect_pdf(path, find="not present")
+    assert result["pages_without_extractable_text"] == [1]
+    assert result["matched_pages"] == 0 and not result["ocr_performed"]
+    with pytest.raises(ValueError, match="nonempty"):
+        inspect_pdf(path, find=" ")
+
+
+@pytest.mark.parametrize("options", [{"page_number": 1}, {"render": True}])
+def test_pdf_search_rejects_conflicting_page_modes(tmp_path, options):
+    with pytest.raises(ValueError, match="separately"):
+        inspect_pdf(tmp_path / "missing.pdf", find="text", **options)

@@ -164,6 +164,8 @@ def case_digest(case: EvalCase) -> str:
                 helper_names.add("inspect_xlsx.py")
     if "xlsx-overview" in case.tags:
         helper_names.add("inspect_xlsx.py")
+    if "pdf-find" in case.tags:
+        helper_names.add("inspect_pdf.py")
     if helper_names:
         from nurse_scheduling.ai.sandbox_agent import (
             INSPECTION_HELPERS,

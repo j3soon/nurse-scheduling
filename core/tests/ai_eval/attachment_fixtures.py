@@ -168,6 +168,37 @@ def _pdf() -> bytes:
     return output.getvalue()
 
 
+def _search_pdf() -> bytes:
+    writer = PdfWriter()
+    font = writer._add_object(
+        DictionaryObject(
+            {
+                NameObject("/Type"): NameObject("/Font"),
+                NameObject("/Subtype"): NameObject("/Type1"),
+                NameObject("/BaseFont"): NameObject("/Helvetica"),
+            }
+        )
+    )
+    for number in range(1, 29):
+        page = writer.add_blank_page(width=600, height=800)
+        page[NameObject("/Resources")] = DictionaryObject(
+            {NameObject("/Font"): DictionaryObject({NameObject("/F1"): font})}
+        )
+        lines = [
+            f"Routine ward note {number}-{line}. " + "Keep the reference record for the next scheduled handover. "
+            for line in range(30)
+        ]
+        if number == 26:
+            lines[12] = "Continuity plan: Handoff code BRIDGE 6842. Use this code for the scheduled transfer."
+        content = "BT /F1 9 Tf 40 760 Td 12 TL " + " ".join(f"({line}) Tj T*" for line in lines) + " ET"
+        stream = DecodedStreamObject()
+        stream.set_data(content.encode())
+        page[NameObject("/Contents")] = writer._add_object(stream)
+    output = BytesIO()
+    writer.write(output)
+    return output.getvalue()
+
+
 def _inspection_pdf(*, visual: bool = False) -> bytes:
     """Generate stable text pages and a visual layout that text cannot disambiguate."""
     writer = PdfWriter()
@@ -269,6 +300,7 @@ def _pptx() -> bytes:
 
 
 _FIXTURES: dict[str, tuple[str, str, Callable[[], bytes]]] = {
+    "search-pdf": ("handover-manual.pdf", "application/pdf", _search_pdf),
     "inventory-xlsx": (
         "monthly-tabs.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

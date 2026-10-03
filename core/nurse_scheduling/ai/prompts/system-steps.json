@@ -477,30 +477,37 @@
     "file": "steps/pdf-inspection.md",
     "cases": [
       "pdf-specified-text-page",
-      "pdf-visual-layout"
+      "pdf-visual-layout",
+      "pdf-find-unknown-page"
     ],
     "hypothesis": "Uses the maintained PDF reader for selected pages and renders visual evidence only when needed, reducing generated parsing and latency.",
-    "sha256": "99885e399e003d2c82671c453ad5b05706962b59649fc69d133cdfe26ba9385a",
+    "sha256": "781c7ab30a0d0b359a7d6457730cec7799d7f84fa33dfe120fab448407b35c11",
     "evidence": [
       {
-        "case": "pdf-visual-layout",
-        "input_sha256": "1d118dbf368c24153dfc5818305f573a1c254dacd14e2f0135e469581755dd80",
-        "before": "3/3",
-        "after": "3/3",
+        "case": "pdf-find-unknown-page",
+        "before": "5/5",
+        "after": "5/5",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
-        "cost_metric": "completion-tokens",
-        "cost_ratio": 0.42263,
+        "cost_metric": "total-tokens",
+        "cost_ratio": 0.6111268503435088,
         "cost_target": 0.8,
         "controls": [
           {
             "case": "pdf-specified-text-page",
-            "input_sha256": "cc897a5a2d1e257fa418f832a7ef2c01954437651b884b03107f1849730fe717",
             "before": "3/3",
-            "after": "3/3"
+            "after": "3/3",
+            "input_sha256": "fdd8aa86a6311746610c2f43e2101a96da2b47b6fa6aeb25091ca974b4dae024"
+          },
+          {
+            "case": "pdf-visual-layout",
+            "before": "5/5",
+            "after": "5/5",
+            "input_sha256": "f0bea39bd2f861223be16a7e0d6623a2898575ff3b82927890ae3f58456dd1fc"
           }
         ],
-        "note": "Visual inspection is the cost witness. Text inspection passed as a control but its cost benefit was not confirmed this round. Dependency fingerprint scoped to relevant helpers. Evaluated testcase and relevant dependency bytes verified unchanged."
+        "note": "Search paragraph removed from the full prompt, with inspect_pdf.py --find available in both arms and the other PDF instructions unchanged. Search has five paired attempts, known-page text has three, and visual inspection has five. Visual inspection uses 5% more tokens with similar time. The known-page grader accepts correct read-tool answers. Initial restrictive-grader attempts and all distributions remain in ignored artifacts.",
+        "input_sha256": "d576cc2b8753c67f897bf4be503d8b41b12fd4db1a9fdee1a41061528591188b"
       }
     ]
   },
