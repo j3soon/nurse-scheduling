@@ -34,6 +34,7 @@ from nurse_scheduling.ai.agent_types import (
     ToolExecutionStart,
 )
 from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL, WORKSPACE_OPTIMIZER_RESULT
+from nurse_scheduling.ai.optimizer_tool import execute_optimizer_tool
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.pi.edit import EDIT_TOOL
 from nurse_scheduling.ai.pi.read import READ_TOOL
@@ -771,7 +772,7 @@ def test_every_offered_tool_refuses_malformed_arguments_before_acting(tool: str,
                     schedule_yaml(),
                     MESSAGES,
                     _limits(),
-                    execute_optimizer=lambda current, raw: optimizer.execute("session", current, raw),
+                    execute_optimizer=lambda current, raw: execute_optimizer_tool(optimizer, "session", current, raw),
                 )
             ]
         finally:

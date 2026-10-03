@@ -34,7 +34,6 @@ from uuid import uuid4
 import httpx
 from pydantic import BaseModel, Field, ValidationError
 
-from .agent_types import AgentToolResult
 from .optimizer_privacy import OptimizerResultError, prepare_optimizer_schedule, restore_people_ids
 
 OPTIMIZER_TOOL = "optimizer"
@@ -340,12 +339,6 @@ class SessionOptimizer:
         self._tasks: set[asyncio.Task[None]] = set()
         self._submissions: set[asyncio.Task] = set()
         self._closed = False
-
-    async def execute(self, session_id: str, schedule_yaml: str, arguments: str) -> AgentToolResult:
-        """Compatibility entry point. Tool parsing and formatting live in optimizer_tool."""
-        from .optimizer_tool import execute_optimizer_tool
-
-        return await execute_optimizer_tool(self, session_id, schedule_yaml, arguments)
 
     async def close(self) -> None:
         self._closed = True
@@ -721,13 +714,6 @@ class SessionOptimizer:
 
         task.add_done_callback(finished)
         return task
-
-
-def optimizer_tool_definition(default_timeout_seconds: int = 300) -> dict[str, Any]:
-    """Compatibility export for the model-facing contract in optimizer_tool."""
-    from .optimizer_tool import optimizer_tool_definition as definition
-
-    return definition(default_timeout_seconds)
 
 
 def _progress_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
