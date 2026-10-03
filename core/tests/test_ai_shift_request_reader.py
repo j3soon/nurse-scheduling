@@ -25,6 +25,7 @@ import sys
 
 import pytest
 
+from nurse_scheduling.ai.attachment_tools.inspect_request_tiers import inspect_tiers
 from nurse_scheduling.ai.attachment_tools.inspect_shift_requests import inspect_requests
 from nurse_scheduling.ai.result_context import build_result_context
 from nurse_scheduling.ai.sandbox_agent import REFERENCE_ATTACHMENT_TOOLS
@@ -109,3 +110,73 @@ def test_standalone_cli_uses_only_hydrated_helpers(tmp_path):
         check=True,
     )
     assert json.loads(process.stdout)["person_date_targets"] == 5130
+
+
+def test_tier_inventory_matches_independent_ward_counts():
+    source = fixture_text("ward87").encode()
+    result = inspect_tiers(build_result_context(source.decode()), source)
+    expected = [
+        ("-.inf", 8, 5130),
+        (-1000000000, 5, 5688),
+        (-100000000, 8, 2142),
+        (-1000, 6, 456),
+        (1, 2, 270),
+        (100, 2, 60),
+        (1000, 2, 60),
+        (10000, 2, 60),
+        (11000000, 33, 90),
+        (11000000000, 89, 408),
+    ]
+    assert [(r["weight"], r["request_entries"], r["person_date_targets"]) for r in result["tiers"]] == expected
+    assert result["tier_count"] == 10
+    assert result["request_entries"] == sum(row[1] for row in expected)
+    assert result["person_date_targets"] == sum(row[2] for row in expected)
+    assert not result["tiers_truncated"]
+
+
+def test_tier_limit_preserves_complete_totals_and_source_guard():
+    source = fixture_text("ward87").encode()
+    context = build_result_context(source.decode())
+    complete = inspect_tiers(context, source)
+    limited = inspect_tiers(context, source, max_tiers=1)
+    assert limited["tiers"] == complete["tiers"][:1]
+    assert limited["tiers_truncated"]
+    for field in ("tier_count", "request_entries", "person_date_targets"):
+        assert limited[field] == complete[field]
+    with pytest.raises(ValueError, match="stale"):
+        inspect_tiers(context, source + b"\n")
+    with pytest.raises(ValueError, match="positive"):
+        inspect_tiers(context, source, max_tiers=0)
+    assert inspect_tiers(context, source, max_tiers=10000) == complete
+    context["requests"] = []
+    empty = inspect_tiers(context, source)
+    assert empty["tiers"] == []
+    assert empty["tier_count"] == empty["request_entries"] == empty["person_date_targets"] == 0
+    assert not empty["tiers_truncated"]
+
+
+def test_tier_inventory_standalone_cli(tmp_path):
+    for path in REFERENCE_ATTACHMENT_TOOLS.values():
+        (tmp_path / path.name).write_bytes(path.read_bytes())
+    source = fixture_text("ward87")
+    (tmp_path / "source.yaml").write_text(source)
+    (tmp_path / "context.json").write_text(json.dumps(build_result_context(source)))
+    process = subprocess.run(
+        [
+            sys.executable,
+            str(tmp_path / "inspect_request_tiers.py"),
+            "--context",
+            str(tmp_path / "context.json"),
+            "--source",
+            str(tmp_path / "source.yaml"),
+            "--max-tiers",
+            "1",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    result = json.loads(process.stdout)
+    assert result["tier_count"] == 10
+    assert result["tiers"] == [{"weight": "-.inf", "request_entries": 8, "person_date_targets": 5130}]
+    assert result["tiers_truncated"]

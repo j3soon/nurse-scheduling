@@ -139,6 +139,8 @@ def case_digest(case: EvalCase) -> str:
             inspect.getsource(_weight).encode() + inspect.getsource(_weight_arguments).encode()
         ).hexdigest()
         helper_names.add("inspect_shift_requests.py")
+    if "request-tier-inventory" in case.tags:
+        helper_names.add("inspect_request_tiers.py")
     if not case.semantic_check:
         # An optional oracle must not invalidate receipts for unrelated cases.
         fields.pop("semantic_check")

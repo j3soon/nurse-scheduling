@@ -582,5 +582,44 @@
         "note": "The unchanged request-count witness remains valid. Independent checking remains authorized when requested. Stale-policy conclusions are not confirmed in the new comparison, so that testcase remains linked without a passing control receipt. Failed attempts remain in ignored artifacts."
       }
     ]
+  },
+  {
+    "id": "request-tier-inventory",
+    "file": "steps/request-tier-inventory.md",
+    "cases": [
+      "request-tier-inventory-large",
+      "request-filtered-cross-month",
+      "request-bans-counts-large"
+    ],
+    "hypothesis": "Returns all nonzero weight-tier counts without repeated raw YAML parsing or individual request dumps.",
+    "sha256": "07652c58a82929fea7c64f269698c6a488c9c4046e996e5e2fe3b32c6a0cbe08",
+    "evidence": [
+      {
+        "case": "request-tier-inventory-large",
+        "input_sha256": "e249fefa5d404bde9ad487ce2ee2f9c2193aed30edf1a616b93204655de26caa",
+        "before": "3/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "cost_metric": "total-tokens",
+        "cost_ratio": 0.08636516352767168,
+        "cost_target": 0.8,
+        "controls": [
+          {
+            "case": "request-filtered-cross-month",
+            "input_sha256": "125e0c94473d5e0def012d12d36c05185f75e9705f7f70c6a97ffa14f3d873e7",
+            "before": "3/3",
+            "after": "3/3"
+          },
+          {
+            "case": "request-bans-counts-large",
+            "input_sha256": "f8b1b951fc7898412d8b185fb0ce590509852099479a07e4fedde1f28421ca58",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Full prompt with and without this final pointer, with identical helpers available. All tier counts must match independently checked selectors. Exact JSON object shape clarified in both arms after diagnostic array-only replies. Earlier format failures and cost outliers remain in ignored artifacts. Baseline cost variance is high."
+      }
+    ]
   }
 ]

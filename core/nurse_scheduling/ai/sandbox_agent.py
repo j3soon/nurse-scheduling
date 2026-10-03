@@ -65,6 +65,7 @@ REFERENCE_SCHEMAS["taiwan-holidays"] = f"/reference/{TAIWAN_HOLIDAYS_SOURCE.name
 REFERENCE_USER_GUIDE = "/reference/user-guide"
 ATTACHMENT_TOOL_DIRECTORY = Path(__file__).with_name("attachment_tools")
 INSPECTION_HELPERS = {
+    "inspect_request_tiers.py": "Current YAML inventory of all nonzero shift-request weight tiers, with entry and expanded target counts. --max-tiers bounds returned tiers.",
     "inspect_shift_requests.py": "Current YAML nonzero shift-request counts and resolved selectors. Repeat --weight, --person or --date to filter. --max-requests 0 returns counts only.",
     "inspect_xlsx.py": "XLSX inspection. Use --overview for up to 100 sheet names, visibility states, and reported sizes without reading cells. Otherwise inspect bounded cells, formulas, and saved caches. Add --styles for stored font/fill colors, borders, alignment, and number formats.",
     "inspect_pdf.py": "PDF page text and rendered page images. Use --find TEXT for bounded literal search with matching page numbers and excerpts. Reports search truncation and pages without text. No OCR.",
