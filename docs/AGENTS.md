@@ -60,6 +60,12 @@
   schedule" for human requirements and decisions, "the app" for GUI behavior,
   and "the optimizer" for generating assignments. Avoid "scheduler" and
   "planner" when readers could interpret them as either a person or software.
+- Use plain descriptions for accepting requests, queue order, and starting runs.
+  Do not present application-specific wording as upstream agent terminology.
+- Format API paths, event names, headers, and identifiers as code where the
+  diagram renderer supports it. Mermaid flowcharts accept HTML code labels,
+  while sequence diagrams display those tags literally. Keep sequence labels
+  plain and verify the rendered output.
 - Use established terms consistently. Prefer "shift types" to an undefined
   phrase such as "shift families." Distinguish a nurse's monthly primary shift
   from actual daily assignments. Define new concepts, such as near-hard
