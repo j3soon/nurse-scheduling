@@ -43,16 +43,16 @@ from .transcript import (
 from .workspace import SANDBOX_SYSTEM_PROMPT, SandboxAttachment
 
 PROPOSAL_APPROVED_HISTORY = (
-    "The user approved the previous schedule proposal. Its changes are now part of the current canonical schedule."
+    "The user approved the previous schedule proposal. Its changes are now part of the current schedule."
 )
 PROPOSAL_REJECTED_HISTORY = (
     "The user rejected the previous schedule proposal. All schedule changes made during that agent run were "
-    "discarded. This run starts with a fresh workspace containing the current canonical schedule."
+    "discarded. This run starts with a fresh workspace containing the current schedule."
 )
 PROPOSAL_INVALID_HISTORY = (
     "The previous schedule proposal failed trusted validation when the user approved it, so it was discarded. All "
     "schedule changes made during that agent run were dropped. This run starts with a fresh workspace containing "
-    "the current canonical schedule."
+    "the current schedule."
 )
 PROPOSAL_DECISION_HISTORY: dict[ProposalDecision, str] = {
     "approved": PROPOSAL_APPROVED_HISTORY,
@@ -63,7 +63,7 @@ ABORTED_RESPONSE_HISTORY = "[This response was interrupted before completion. It
 
 
 def retained_entries(entries: Sequence[AgentMessage]) -> list[AgentMessage]:
-    """Keep what later model context may use from a run's canonical entries.
+    """Keep what later model context may use from a run's ordered entries.
 
     Tool calls, tool results, and reasoning describe a sandbox that no longer
     exists, so later runs never see them. The chat history log keeps the full run.

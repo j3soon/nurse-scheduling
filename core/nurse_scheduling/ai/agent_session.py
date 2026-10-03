@@ -66,7 +66,7 @@ from .workspace_tools import run_workspace
 
 CANDIDATE_VALIDATION_ERROR = (
     "The candidate schedule failed trusted validation. All schedule changes made during this agent run were "
-    "discarded. The canonical schedule was not changed."
+    "discarded. The current schedule was not changed."
 )
 PROVIDER_ERROR = "The AI provider failed. Please try again."
 SANDBOX_RUN_TIMEOUT_ERROR = "The AI response timed out. Please try again."
@@ -265,7 +265,7 @@ class AgentSession:
         return self.agent.queued_steering if self.active else ()
 
     def update_schedule(self, schedule_yaml: str) -> None:
-        """Replace canonical YAML and invalidate proposals and in-flight results."""
+        """Replace the session schedule and invalidate proposals and in-flight results."""
         if self.schedule_yaml == schedule_yaml:
             return
         self.version += 1

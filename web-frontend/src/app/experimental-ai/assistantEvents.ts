@@ -113,11 +113,11 @@ type AssistantEventCallbacks = Required<
 >;
 
 // Convert stream callbacks to events. A preview diffs against the previous working
-// copy, or the canonical schedule before the run's first preview.
+// copy, or the browser schedule before the run's first preview.
 export function assistantEventCallbacks(
   apply: (event: AssistantEvent) => void,
   workingSchedule: { current: string | null },
-  canonicalSchedule: { readonly current: string },
+  browserSchedule: { readonly current: string },
 ): AssistantEventCallbacks {
   return {
     onDelta: text => apply({ type: 'delta', text }),
@@ -126,7 +126,7 @@ export function assistantEventCallbacks(
     onToolStart: activity => apply({ type: 'tool_start', activity }),
     onTool: activity => apply({ type: 'tool', activity }),
     onScheduleChange: after => {
-      const before = workingSchedule.current ?? canonicalSchedule.current;
+      const before = workingSchedule.current ?? browserSchedule.current;
       workingSchedule.current = after;
       apply({ type: 'schedule_change', before, after });
     },

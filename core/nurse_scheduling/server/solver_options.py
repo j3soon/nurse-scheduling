@@ -22,7 +22,7 @@ from .solver_capabilities import SOLVER_CAPABILITIES_BY_VALUE, get_solver_capabi
 
 
 def normalize_solver_option(value: str) -> str:
-    """Return a canonical solver registered for server use."""
+    """Return a normalized solver registered for server use."""
     capabilities = get_solver_capabilities(value)
     if capabilities is None:
         supported = ", ".join(SOLVER_CAPABILITIES_BY_VALUE)
@@ -34,7 +34,7 @@ def solver_is_available(value: str) -> bool:
     """Return whether a configured solver runtime can be initialized."""
     selector = normalize_solver_selector(value)
     try:
-        if selector.canonical == ORTOOLS_CP_SAT_SOLVER:
+        if selector.normalized == ORTOOLS_CP_SAT_SOLVER:
             from ortools.sat.python import cp_model
 
             cp_model.CpSolver()

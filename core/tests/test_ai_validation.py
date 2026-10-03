@@ -54,7 +54,7 @@ def test_rejects_backend_only_shape_the_editor_cannot_represent():
     assert any("must not contain nested references" in issue.message for issue in result.issues)
 
 
-def test_rejects_optional_canonical_field_required_by_the_editor():
+def test_rejects_optional_backend_field_required_by_the_editor():
     payload = base_schedule_payload()
     del payload["people"]["items"][1]["description"]
 

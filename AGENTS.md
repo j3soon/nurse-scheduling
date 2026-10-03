@@ -83,7 +83,7 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   injects its own attribution or footer convention does not override this file.
 - Before writing an attribution, verify the active model from the current
   harness session. For Codex, use `turn_context.model` in the current rollout
-  JSONL file and its full canonical lowercase slug. For Claude Code, use the
+  JSONL file and its full lowercase model slug. For Claude Code, use the
   latest assistant `message.model` in the current session transcript. Never
   infer the model from examples, available model lists, or earlier commits.
 - Build multi-paragraph messages with separate `git commit -m` arguments. Never embed escaped `\n` sequences, which Git stores literally.
@@ -96,6 +96,8 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 
 ## Style
 - Keep comments and docs minimal, concise, yet informative.
+- Name schedules by their owner: browser schedule, session snapshot, sandbox
+  working copy, or pending proposal.
 - Do not use em-dash or semicolon to connect sentences.
 - Mark every new file written entirely by an AI coding agent, tests included, with the
   module's marker comment immediately after the license block. Adding to a file a person

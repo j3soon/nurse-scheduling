@@ -98,7 +98,7 @@ AgentEvent = (
 )
 ToolBatchScope = Callable[[Sequence[ToolCall]], AbstractAsyncContextManager[None]]
 SteeringSource = Callable[[bool], Sequence[tuple[str, str]]]
-# Project one canonical in-run message sequence at the provider boundary.
+# Project the shared in-run message sequence at the provider boundary.
 RequestPreparer = Callable[[Sequence[ChatMessage], Sequence[AgentMessage]], list[ChatMessage]]
 
 

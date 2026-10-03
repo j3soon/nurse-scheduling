@@ -176,7 +176,7 @@ class CapabilitiesResponse(BaseModel):
 
 
 def owner_cookie_token(owner: str | None) -> str:
-    """Return a canonical browser owner token or replace an invalid value."""
+    """Return a normalized browser owner token or replace an invalid value."""
     if owner is not None:
         try:
             return str(UUID(owner))
@@ -325,12 +325,12 @@ def create_app(
     def refresh_owner_cookie(response: Response, owner: str) -> None:
         """Keep browser ownership available for the session's sliding lifetime."""
         try:
-            canonical_owner = str(UUID(owner))
+            normalized_owner = str(UUID(owner))
         except ValueError:
             return
         response.set_cookie(
             OWNER_COOKIE,
-            canonical_owner,
+            normalized_owner,
             httponly=True,
             secure=settings.cookie_secure,
             # Public deployments allow approved cross-site frontends. Browsers

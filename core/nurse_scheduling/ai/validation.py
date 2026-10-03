@@ -28,7 +28,7 @@ from ruamel.yaml.error import YAMLError
 from ..frontend_validation import load_frontend_data
 
 # The assistant is reachable only from the web frontend, so it validates the
-# frontend subset alone. The canonical backend flavor accepts shapes the editor
+# frontend subset alone. The backend model accepts shapes the editor
 # cannot represent, which would let the model produce unusable schedules.
 MAX_VALIDATION_ISSUES = 20
 MAX_ISSUE_MESSAGE_CHARS = 300

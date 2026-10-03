@@ -2604,7 +2604,7 @@ def test_the_prompt_points_to_the_schedule_without_disclosing_its_facts() -> Non
     assert "Preserve all unrequested fields, selectors, and objects" in normalized_prompt
     assert "/workspace/optimizer-results/optimized-schedule.xlsx" in normalized_prompt
     assert "Repair any validation error before answering" in normalized_prompt
-    assert "user must approve it before the canonical schedule changes" in normalized_prompt
+    assert "user must approve it before the schedule in the browser changes" in normalized_prompt
     assert "Update, rename, and remove only existing entities" in normalized_prompt
     assert "Use the server-side `optimizer` tool for a finished roster" in normalized_prompt
     assert "Use `optimizer` to start optimization" in normalized_prompt

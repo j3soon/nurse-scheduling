@@ -895,7 +895,7 @@ def _compile_preference(data, preference, people_map, shift_map, date_map, dates
 
 
 def _compile_export(data, people_map, shift_map, date_map):
-    """Validate and resolve export references against the canonical schedule."""
+    """Validate and resolve export references against the schedule."""
     formatting = []
     for rule in data.export.formatting:
         people = ()
@@ -954,7 +954,7 @@ def _compile_export(data, people_map, shift_map, date_map):
 
 
 def _validate_and_compile_schedule(data: NurseSchedulingData) -> CompiledSchedule:
-    """Validate canonical semantics and compile reusable index-based data."""
+    """Validate schedule semantics and compile reusable index-based data."""
     if data.apiVersion != "alpha":
         raise ValueError(f"Unsupported API version: {data.apiVersion}")
 

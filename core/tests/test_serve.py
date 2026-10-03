@@ -37,7 +37,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from nurse_scheduling.loader import MAX_NESTING_DEPTH
-from nurse_scheduling.scheduler import CANONICAL_SOLVER_CHOICES, ScheduleResult
+from nurse_scheduling.scheduler import NORMALIZED_SOLVER_CHOICES, ScheduleResult
 from nurse_scheduling.server.app import create_app
 from nurse_scheduling.server.auth import AuthCredential, create_stream_token, extract_bearer_token, verify_stream_token
 from nurse_scheduling.server.config import (
@@ -453,8 +453,8 @@ def test_app_version_prefers_generated_build_artifact(tmp_path, monkeypatch):
     assert server_app.get_app_version() == "v9.8.7-generated"
 
 
-def test_solver_capability_registry_matches_canonical_choices():
-    assert tuple(item.value for item in SOLVER_CAPABILITIES) == CANONICAL_SOLVER_CHOICES
+def test_solver_capability_registry_matches_normalized_choices():
+    assert tuple(item.value for item in SOLVER_CAPABILITIES) == NORMALIZED_SOLVER_CHOICES
 
     by_value = {item.value: item for item in SOLVER_CAPABILITIES}
     expected = {
@@ -875,7 +875,7 @@ def test_cuopt_availability_requires_a_successful_probe(monkeypatch, solve_statu
     assert solver_is_available("pulp/cuopt") is expected
 
 
-def test_optimization_options_use_configured_canonical_solver_metadata(monkeypatch):
+def test_optimization_options_use_configured_normalized_solver_metadata(monkeypatch):
     monkeypatch.setattr(
         "nurse_scheduling.server.app.validate_solver_availability",
         lambda _solver_ids: None,

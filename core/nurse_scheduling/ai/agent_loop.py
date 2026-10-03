@@ -80,7 +80,7 @@ async def agent_loop(
 ) -> AsyncIterator[AgentEvent]:
     """Run the model/tool loop shared by agent capability layers.
 
-    `run_messages` is the canonical in-run record. Each provider request is a
+    `run_messages` is the shared in-run record. Each provider request is a
     projection of it after the already bounded system and prior-run context.
     """
     by_name = {tool.name: tool for tool in tools}

@@ -112,7 +112,7 @@ MODEL_TOPIC_COVERAGE = {
     models.ExportExtraColumn: ("export.extraColumns",),
     models.ExportExtraRow: ("export.extraRows",),
 }
-CANONICAL_FIELD_REQUIREMENTS = {
+SCHEMA_FIELD_REQUIREMENTS = {
     "schedule": {
         "required": ("apiVersion", "dates", "people", "shiftTypes", "preferences"),
         "optional": ("appVersion", "description", "export"),
@@ -217,7 +217,7 @@ def test_taiwan_holiday_reference_is_the_frontend_source():
     assert "SPECIAL_DATE_INFO" in load_taiwan_holidays_reference()
 
 
-def test_user_guide_references_are_the_canonical_user_facing_markdown():
+def test_user_guide_references_match_the_user_facing_markdown():
     references = load_user_guide_references()
 
     assert set(references) == {
@@ -275,16 +275,16 @@ def test_reference_topics_name_every_authoritative_pydantic_field(model: type[Ba
     paths = MODEL_TOPIC_COVERAGE[model]
     guidance = " ".join(text for path in paths for text in (*SCHEMA_TOPICS[path].fields, *SCHEMA_TOPICS[path].rules))
     classified_fields = {
-        field for path in paths for fields in CANONICAL_FIELD_REQUIREMENTS[path].values() for field in fields
+        field for path in paths for fields in SCHEMA_FIELD_REQUIREMENTS[path].values() for field in fields
     }
 
     assert all(f"`{field}`" in guidance for field in model.model_fields)
     assert classified_fields == model.model_fields.keys()
 
 
-@pytest.mark.parametrize("path", CANONICAL_FIELD_REQUIREMENTS)
-def test_reference_marks_every_canonical_field_required_or_optional(path: str):
-    for status, fields in CANONICAL_FIELD_REQUIREMENTS[path].items():
+@pytest.mark.parametrize("path", SCHEMA_FIELD_REQUIREMENTS)
+def test_reference_marks_every_schema_field_required_or_optional(path: str):
+    for status, fields in SCHEMA_FIELD_REQUIREMENTS[path].items():
         for field in fields:
             assert status in _field_guidance(path, field), f"{path}.{field} should be marked {status}"
 

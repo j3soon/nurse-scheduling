@@ -18,7 +18,7 @@ researchers, and other users around the world can try and deploy the system
 without deep integration with an existing hospital information system. The
 system is therefore deliberately decoupled and lightweight.
 
-The canonical schedule is kept in the browser. The frontend sends
+The current schedule is kept in the browser. The frontend sends
 scheduling data to backend services when the user explicitly invokes
 features such as optimization or the experimental AI chat. See the [privacy
 policy](../PRIVACY.md) for the exact data-handling behavior.
@@ -26,7 +26,7 @@ policy](../PRIVACY.md) for the exact data-handling behavior.
 Both the frontend and the backend can be self-hosted. The optimization
 backend is intentionally simple to deploy: the minimal configuration runs
 in memory mode with just a FastAPI server, and requires no Redis, Docker,
-or other infrastructure. Keeping the canonical schedule browser-side
+or other infrastructure. Keeping the current schedule in the browser
 substantially lowers the infrastructure and integration requirements.
 
 ## Solver

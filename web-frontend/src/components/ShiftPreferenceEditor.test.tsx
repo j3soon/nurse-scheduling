@@ -302,7 +302,7 @@ describe('ShiftPreferenceEditor', () => {
     expect(onSave).toHaveBeenCalledWith([{ shiftTypeId: 'N', weight: -Infinity }]);
   });
 
-  it('reopens with saved canonical mixed values after rerender', async () => {
+  it('reopens with saved normalized mixed values after rerender', async () => {
     const user = userEvent.setup();
     const onSave = vi.fn();
     const { rerender } = render(

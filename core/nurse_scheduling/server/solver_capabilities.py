@@ -1,4 +1,4 @@
-"""Canonical server-facing solver capability registry."""
+"""Central server-facing solver capability registry."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -20,7 +20,7 @@
 from dataclasses import dataclass
 from typing import Literal
 
-from ..scheduler import CANONICAL_SOLVER_CHOICES
+from ..scheduler import NORMALIZED_SOLVER_CHOICES
 
 
 @dataclass(frozen=True)
@@ -85,8 +85,8 @@ SOLVER_CAPABILITIES = (
 
 SOLVER_CAPABILITIES_BY_VALUE = {item.value: item for item in SOLVER_CAPABILITIES}
 
-if tuple(SOLVER_CAPABILITIES_BY_VALUE) != CANONICAL_SOLVER_CHOICES:
-    raise RuntimeError("Solver capability registry must match the canonical solver choices")
+if tuple(SOLVER_CAPABILITIES_BY_VALUE) != NORMALIZED_SOLVER_CHOICES:
+    raise RuntimeError("Solver capability registry must match the registered solver choices")
 
 
 def get_solver_capabilities(solver: str) -> SolverCapabilities | None:

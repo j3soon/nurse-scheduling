@@ -80,7 +80,7 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   in `SessionStore`, with checks and mutations in the same synchronous operation.
   `SessionStore` reaches steering and other `Agent` state only through
   `AgentSession` methods.
-- Record each run as canonical entries shaped like Pi's messages in
+- Record each run as ordered entries shaped like Pi's messages in
   `transcript.py`. Chat history stores them all. Put the session retention
   projection and the model-facing projection and wording in `context.py`, so
   retention, model context, and audit remain separate decisions.
@@ -101,12 +101,12 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   and let the agent write a focused sandbox parser when a helper is insufficient.
 - Sandbox allocation is lazy. Tests that verify attachment hydration must make
   the agent call a tool, since a text-only run never creates a sandbox.
-- Keep canonical schedule invariants in `NurseSchedulingData`. Implement
+- Keep shared schedule validation rules in `NurseSchedulingData`. Implement
   consumer-specific subsets through explicit Pydantic entry points rather than
   input-controlled or global validation flags.
 - The assistant is reachable only from the web frontend, so its schedule tools
   target the frontend subset alone. Validate through
-  `ai/validation.py`, and do not expose the canonical backend flavor, which
+  `ai/validation.py`, and do not expose the backend model, which
   accepts shapes the editor cannot represent.
 - Frontend validation checks normalized frontend state, not raw import
   compatibility. Do not broaden it merely because an import path can convert
