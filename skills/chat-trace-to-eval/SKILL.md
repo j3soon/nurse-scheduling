@@ -61,6 +61,10 @@ under test. If testing completion callbacks, preserve the actual message role,
 shape, and result artifact. An uploaded workbook alone does not test callback
 delivery. Record any harness capability that must be added.
 
+Validate scheduling fixtures with `validate_frontend_schedule_yaml` before live
+AI comparisons. Backend-valid shapes outside the frontend subset can make the
+model-facing schema produce misleading failures.
+
 Run deterministic fixture and grader checks first. Run the selected case with
 the current prompt to confirm the baseline rather than relying on an old trace.
 

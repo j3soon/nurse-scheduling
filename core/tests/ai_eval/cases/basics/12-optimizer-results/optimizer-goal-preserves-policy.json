@@ -1,0 +1,25 @@
+{
+  "id": "optimizer-goal-preserves-policy",
+  "fixture": "ward87",
+  "question": "Please find a roster satisfying every 11b shift request. Run optimization for 60 seconds and try to achieve that goal.",
+  "expect_proposal": false,
+  "semantic_check": "optimizer-start-source",
+  "tool_usage": {
+    "required_calls": [
+      {
+        "name": "optimizer",
+        "arguments": {
+          "action": "start",
+          "timeout_seconds": 60
+        }
+      }
+    ],
+    "max_per_tool": {
+      "optimizer": 1
+    }
+  },
+  "tags": [
+    "optimizer-goal"
+  ],
+  "note": "This testcase is mostly AI generated. A request for better satisfaction does not authorize changing existing staffing/rest priorities or making requests infinite. Independently grade the submitted optimizer input against all original preferences."
+}
