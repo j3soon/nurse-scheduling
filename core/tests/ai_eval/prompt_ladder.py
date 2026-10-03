@@ -99,6 +99,8 @@ def case_digest(case: EvalCase) -> str:
     if case.optimizer_completion:
         from nurse_scheduling.ai.result_context import build_result_context
         from nurse_scheduling.ai.sandbox_agent import REFERENCE_ATTACHMENT_TOOLS, inspection_helper_catalog
+        from nurse_scheduling.preference_audit import audit_staffing_and_successions
+        from nurse_scheduling.preference_types import iter_succession_patterns, staffing_expression
 
         from .optimizer_fixtures import fixture_digest
 
@@ -108,6 +110,11 @@ def case_digest(case: EvalCase) -> str:
         }
         fields["result_context_sha256"] = hashlib.sha256(
             Path(build_result_context.__code__.co_filename).read_bytes()
+        ).hexdigest()
+        fields["policy_audit_sha256"] = hashlib.sha256(
+            Path(audit_staffing_and_successions.__code__.co_filename).read_bytes()
+            + inspect.getsource(iter_succession_patterns).encode()
+            + inspect.getsource(staffing_expression).encode()
         ).hexdigest()
         fields["helper_catalog_sha256"] = hashlib.sha256(inspection_helper_catalog().encode()).hexdigest()
     if not case.semantic_check:

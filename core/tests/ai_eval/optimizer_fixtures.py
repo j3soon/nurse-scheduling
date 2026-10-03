@@ -33,6 +33,24 @@ from nurse_scheduling.loader import _load_yaml
 FIXTURE = Path(__file__).with_name("fixtures") / "request-audit.yaml"
 ASSIGNMENTS = {"Alex": ["OFF", "K", "D"], "Mira": ["D", "N", "OFF"], "Kai": ["N", "D", "N"]}
 RESULT_ASSIGNMENTS = {
+    "policy-audit-misses": {
+        "Alex": ["OFF", "K", "D"],
+        "Mira": ["D", "OFF", "OFF"],
+        "Kai": ["N", "D", "N"],
+        "Lina": ["OFF", "OFF", "OFF"],
+    },
+    "policy-audit-clean": {
+        "Alex": ["OFF", "K", "D"],
+        "Mira": ["D", "OFF", "OFF"],
+        "Kai": ["OFF", "D", "N"],
+        "Lina": ["D", "D", "D"],
+    },
+    "policy-audit-stale": {
+        "Alex": ["OFF", "K", "D"],
+        "Mira": ["D", "OFF", "OFF"],
+        "Kai": ["N", "D", "N"],
+        "Lina": ["OFF", "OFF", "OFF"],
+    },
     "request-audit": ASSIGNMENTS,
     "request-audit-all-strong": {**ASSIGNMENTS, "Mira": ["D", "OFF", "OFF"]},
     "request-audit-stale-summary": {**ASSIGNMENTS, "Mira": ["D", "OFF", "OFF"]},
@@ -46,7 +64,13 @@ RESULT_ASSIGNMENTS = {
     },
 }
 RESULT_SOURCES = {
-    name: FIXTURE.with_name("request-audit-groups.yaml") if name == "request-audit-groups" else FIXTURE
+    name: (
+        FIXTURE.with_name("policy-audit.yaml")
+        if name.startswith("policy-audit-")
+        else FIXTURE.with_name("request-audit-groups.yaml")
+        if name == "request-audit-groups"
+        else FIXTURE
+    )
     for name in RESULT_ASSIGNMENTS
 }
 
@@ -59,6 +83,11 @@ def fixture_digest(name: str) -> str:
         RESULT_SOURCES[name].read_bytes()
         + json.dumps(RESULT_ASSIGNMENTS[name], sort_keys=True).encode()
         + (
+            json.dumps(RESULT_ASSIGNMENTS["policy-audit-clean"], sort_keys=True).encode() + b"Archived input snapshot"
+            if name == "policy-audit-stale"
+            else b""
+        )
+        + (
             b"earlier request-audit incumbent, archived source comment"
             if name == "request-audit-stale-summary"
             else b""
@@ -70,6 +99,10 @@ def fixture_digest(name: str) -> str:
 def completion_result(name: str, source: str) -> tuple[bytes, dict]:
     """Replay a checked incumbent, export it, and simulate timeout completion metadata."""
     fixture_digest(name)
+    if name == "policy-audit-stale":
+        workbook, metadata = completion_result("policy-audit-misses", source)
+        _, older = completion_result("policy-audit-clean", source + "\n# Archived input snapshot\n")
+        return workbook, {**metadata, "request_audit": older["request_audit"]}
     if name == "request-audit-stale-summary":
         workbook, metadata = completion_result("request-audit-all-strong", source)
         _, older_metadata = completion_result("request-audit", source + "\n# Archived optimizer input snapshot\n")

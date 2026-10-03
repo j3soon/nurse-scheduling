@@ -95,6 +95,7 @@ from .prompt_ladder import case_digest, load_prompt_steps, prompt_at_step
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 CASES = Path(__file__).resolve().parent / "cases"
 FIXTURES = {
+    "policy-audit": Path(__file__).resolve().parent / "fixtures" / "policy-audit.yaml",
     "request-audit-groups": Path(__file__).resolve().parent / "fixtures" / "request-audit-groups.yaml",
     "weight-units": Path(__file__).resolve().parent / "fixtures" / "weight-units.yaml",
     "request-audit": Path(__file__).resolve().parent / "fixtures" / "request-audit.yaml",
@@ -1501,6 +1502,16 @@ def _reference_digests() -> dict[str, str]:
     for destination, source in REFERENCE_ATTACHMENT_TOOLS.items():
         digests[destination.removeprefix("/reference/")] = hashlib.sha256(source.read_bytes()).hexdigest()
     digests["tools/README.md"] = hashlib.sha256(inspection_helper_catalog().encode()).hexdigest()
+    import inspect
+
+    from nurse_scheduling.preference_audit import audit_staffing_and_successions
+    from nurse_scheduling.preference_types import iter_succession_patterns, staffing_expression
+
+    digests["policy_audit"] = hashlib.sha256(
+        Path(audit_staffing_and_successions.__code__.co_filename).read_bytes()
+        + inspect.getsource(iter_succession_patterns).encode()
+        + inspect.getsource(staffing_expression).encode()
+    ).hexdigest()
     digests["result_context.py"] = hashlib.sha256(
         Path(build_result_context.__code__.co_filename).read_bytes()
     ).hexdigest()

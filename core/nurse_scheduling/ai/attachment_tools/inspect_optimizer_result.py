@@ -20,6 +20,7 @@
 # This file is mostly AI generated.
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -193,7 +194,7 @@ def inspect_result(
                             "weight": request["weight"],
                         }
                     )
-    return {
+    result = {
         "source_sha256": source_sha256,
         "score": score,
         "score_direction": "maximize",
@@ -202,6 +203,14 @@ def inspect_result(
         "unmet": unmet[:max_unmet],
         "unmet_truncated": len(unmet) > max_unmet,
     }
+
+    if "policy" in context:
+        if context.get("workbook_sha256") == hashlib.sha256(path.read_bytes()).hexdigest():
+            result["policy"] = context["policy"]
+            result["policy_scope"] = context["policy_scope"]
+        else:
+            result["policy_unavailable"] = "The workbook does not match the policy audit context."
+    return result
 
 
 def _weight_arguments(arguments: list[str]) -> list[str]:

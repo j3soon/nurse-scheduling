@@ -51,6 +51,7 @@ CROSS_YEAR_UNIT_PATH = Path(__file__).parent / "ai_eval" / "fixtures" / "cross-y
 WARD_PATH = Path(__file__).parent / "testcases" / "real" / "large-ward-with-87-people-2025-11.yaml"
 
 FIXTURE_SCHEDULES = {
+    "policy-audit": _load_yaml((CASES_PATH.parent / "fixtures" / "policy-audit.yaml").read_bytes()),
     "request-audit-groups": _load_yaml((CASES_PATH.parent / "fixtures" / "request-audit-groups.yaml").read_bytes()),
     "weight-units": _load_yaml((CASES_PATH.parent / "fixtures" / "weight-units.yaml").read_bytes()),
     "request-audit": _load_yaml((CASES_PATH.parent / "fixtures" / "request-audit.yaml").read_bytes()),
@@ -862,6 +863,7 @@ def test_the_dataset_only_uses_registered_fixtures():
     cases = load_cases(CASES_PATH)
 
     assert {case.fixture for case in cases} == {
+        "policy-audit",
         "cross-year-unit",
         "new-schedule",
         "request-audit",

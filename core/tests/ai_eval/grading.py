@@ -271,6 +271,9 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         "request-audit",
         "request-audit-all-strong",
         "request-audit-groups",
+        "policy-audit-misses",
+        "policy-audit-clean",
+        "policy-audit-stale",
         "request-audit-stale-summary",
     }:
         raise EvalCaseError(f"{source} has an unknown optimizer_completion fixture.")

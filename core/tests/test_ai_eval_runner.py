@@ -1477,7 +1477,7 @@ def test_reference_digests_cover_every_file_hydrated_into_the_sandbox():
     expected.add(TAIWAN_HOLIDAYS_SOURCE.name)
     expected.update(f"user-guide/{relative}" for relative in load_user_guide_references())
     expected.update(path.removeprefix("/reference/") for path in REFERENCE_ATTACHMENT_TOOLS)
-    expected.update({"tools/README.md", "result_context.py"})
+    expected.update({"tools/README.md", "result_context.py", "policy_audit"})
     assert set(digests) == expected
     assert digests == dict(sorted(digests.items()))
     assert all(len(digest) == 64 for digest in digests.values())

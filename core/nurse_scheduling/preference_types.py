@@ -30,6 +30,43 @@ logger = logging.getLogger(__name__)
 # runtime preference handlers focused on solver construction.
 
 
+def staffing_expression(shift_at, n_people, compiled_preference, day, group):
+    """Build one staffing equation from canonical eligibility and coefficients."""
+    coefficients = dict(compiled_preference.coefficients)
+    people = compiled_preference.qualified_people
+    if people is None:
+        people = range(n_people)
+    return sum(coefficients[s] * shift_at(day, s, p) for s in group for p in people)
+
+
+def iter_succession_patterns(compiled_preference, histories, n_days):
+    """Yield the same date windows and history suffixes used by the optimizer."""
+    for p in compiled_preference.people:
+        history = histories[p]
+        for d_begin in range(n_days - len(compiled_preference.pattern) + 1):
+            # Check if all dates in the pattern range are valid
+            if not all(
+                d in compiled_preference.date_set for d in range(d_begin, d_begin + len(compiled_preference.pattern))
+            ):
+                continue
+            # Match all patterns that start at day d_begin
+            patterns = [compiled_preference.pattern]
+            # Consider history data to check for patterns that start at day 0
+            # We only need to check day 0 since any pattern that matches history must include it
+            if d_begin == 0 and history is not None:
+                # For each pattern, check if its prefix matches the end of shift history
+                # If so, add the remaining suffix as a new pattern to check
+                for history_suffix_len in range(1, min(len(compiled_preference.pattern), len(history)) + 1):
+                    history_suffix = history[-history_suffix_len:]
+                    pattern_prefix = compiled_preference.pattern[:history_suffix_len]
+                    if all(history_suffix[i] in pattern_prefix[i].shift_types for i in range(history_suffix_len)):
+                        # If history suffix matches pattern prefix, add remaining pattern suffix as new pattern
+                        # This is equivalent to checking patterns that span across history and future days
+                        patterns.append(compiled_preference.pattern[history_suffix_len:])
+            for pattern_idx, pattern in enumerate(patterns):
+                yield p, d_begin, pattern_idx, pattern
+
+
 def shift_type_requirements(
     ctx: Context,
     preference: models.ShiftTypeRequirementsPreference,
@@ -60,7 +97,6 @@ def shift_type_requirements(
     # Also note that this requirement is used in other preference types,
     # so this could not be implemented as a special case of shift_count.
 
-    coefficients = dict(compiled_preference.coefficients)
     for d in compiled_preference.dates:
         for group_idx, ss in enumerate(compiled_preference.shift_type_groups):
             for s in ss:
@@ -83,12 +119,10 @@ def shift_type_requirements(
 
             # Every person has a variable for each shift type, so default
             # eligibility includes all people for every concrete shift.
-            qualified_ps_by_s = {s: range(ctx.n_people) for s in ss}
             if compiled_preference.qualified_people is not None:
                 # If qualifiedPeople is specified, only allow those people to
                 # work any shift type in the group.
                 qualified_ps = compiled_preference.qualified_people
-                qualified_ps_by_s = {s: qualified_ps for s in ss}
                 for s in ss:
                     unqualified_n_people = sum(
                         ctx.shifts[(d, s, p)] for p in range(ctx.n_people) if p not in qualified_ps
@@ -99,7 +133,13 @@ def shift_type_requirements(
             # requirement group. For singleton groups this is the simple
             # per-shift constraint; for aggregate groups this sums across all
             # shift types in the group.
-            actual_n_people = sum(coefficients[s] * ctx.shifts[(d, s, p)] for s in ss for p in qualified_ps_by_s[s])
+            actual_n_people = staffing_expression(
+                lambda d, s, p: ctx.shifts[(d, s, p)],
+                ctx.n_people,
+                compiled_preference,
+                d,
+                ss,
+            )
             if preference.preferredNumPeople is not None:
                 ctx.solver.add_constraint(actual_n_people >= preference.requiredNumPeople)
             else:
@@ -118,7 +158,13 @@ def shift_type_requirements(
                 # Add the objective
                 weight = preference.weight
                 utils.add_objective(ctx, weight, diff)
-                ctx.reports.append(Report(f"shift_type_requirements_{diff_var_name}", diff, lambda x: x == 0))
+                ctx.reports.append(
+                    Report(
+                        f"shift_type_requirements_{diff_var_name}",
+                        diff,
+                        lambda x: x == 0,
+                    )
+                )
 
 
 def all_people_work_at_most_one_shift_per_day(ctx: Context, preference, compiled_preference, preference_idx):
@@ -150,7 +196,11 @@ def shift_request(
                 # Add the objective
                 utils.add_objective(ctx, weight, ctx.solver.negate(ctx.offs[(d, p)]))
                 ctx.reports.append(
-                    Report(f"shift_request_pref_{preference_idx}_d_{d}_p_{p}_offs", ctx.offs[(d, p)], lambda x: x == 0)
+                    Report(
+                        f"shift_request_pref_{preference_idx}_d_{d}_p_{p}_offs",
+                        ctx.offs[(d, p)],
+                        lambda x: x == 0,
+                    )
                 )
             else:
                 for s in compiled_preference.shift_types:
@@ -196,88 +246,63 @@ def shift_type_successions(
             return matches[0], True
         return sum(matches), False
 
-    # Resolve the Pydantic private attribute once because this hot loop runs
-    # for every selected person and pattern start date.
-    histories = ctx.compiled_schedule.histories
-    for p in compiled_preference.people:
-        history = histories[p]
-        for d_begin in range(ctx.n_days - len(compiled_preference.pattern) + 1):
-            # Check if all dates in the pattern range are valid
-            if not all(
-                d in compiled_preference.date_set for d in range(d_begin, d_begin + len(compiled_preference.pattern))
-            ):
-                continue
-            # Match all patterns that start at day d_begin
-            patterns = [compiled_preference.pattern]
-            # Consider history data to check for patterns that start at day 0
-            # We only need to check day 0 since any pattern that matches history must include it
-            if d_begin == 0 and history is not None:
-                # For each pattern, check if its prefix matches the end of shift history
-                # If so, add the remaining suffix as a new pattern to check
-                for history_suffix_len in range(1, min(len(compiled_preference.pattern), len(history)) + 1):
-                    history_suffix = history[-history_suffix_len:]
-                    pattern_prefix = compiled_preference.pattern[:history_suffix_len]
-                    if all(history_suffix[i] in pattern_prefix[i].shift_types for i in range(history_suffix_len)):
-                        # If history suffix matches pattern prefix, add remaining pattern suffix as new pattern
-                        # This is equivalent to checking patterns that span across history and future days
-                        patterns.append(compiled_preference.pattern[history_suffix_len:])
-            for pattern_idx, pattern in enumerate(patterns):
-                target_n_matched = len(pattern)
-                unique_var_prefix = (
-                    f"shift_type_successions_pref_{preference_idx}_p_{p}_dbegin_{d_begin}_pattern_{pattern_idx}"
-                )
-                if target_n_matched == 0:
-                    # History already completes this pattern before the first schedulable day.
-                    is_match_var_name = f"{unique_var_prefix}_is_match"
-                    ctx.model_vars[is_match_var_name] = is_match = ctx.solver.new_bool_var(is_match_var_name)
-                    ctx.solver.add_constraint(is_match == 1)
-                    utils.add_objective(ctx, preference.weight, is_match)
-                    ctx.reports.append(Report(unique_var_prefix, is_match, lambda x: x == 1))
-                    continue
+    for p, d_begin, pattern_idx, pattern in iter_succession_patterns(
+        compiled_preference, ctx.compiled_schedule.histories, ctx.n_days
+    ):
+        target_n_matched = len(pattern)
+        unique_var_prefix = f"shift_type_successions_pref_{preference_idx}_p_{p}_dbegin_{d_begin}_pattern_{pattern_idx}"
+        if target_n_matched == 0:
+            # History already completes this pattern before the first schedulable day.
+            is_match_var_name = f"{unique_var_prefix}_is_match"
+            ctx.model_vars[is_match_var_name] = is_match = ctx.solver.new_bool_var(is_match_var_name)
+            ctx.solver.add_constraint(is_match == 1)
+            utils.add_objective(ctx, preference.weight, is_match)
+            ctx.reports.append(Report(unique_var_prefix, is_match, lambda x: x == 1))
+            continue
 
-                pattern_element_matches = [
-                    _pattern_element_match_expr(d_begin + i, p, pattern[i]) for i in range(target_n_matched)
-                ]
-                actual_n_matched = sum(match_expr for match_expr, _is_literal in pattern_element_matches)
-                weight = preference.weight
+        pattern_element_matches = [
+            _pattern_element_match_expr(d_begin + i, p, pattern[i]) for i in range(target_n_matched)
+        ]
+        actual_n_matched = sum(match_expr for match_expr, _is_literal in pattern_element_matches)
+        weight = preference.weight
 
-                if weight == -math.inf:
-                    ctx.solver.add_constraint(actual_n_matched <= target_n_matched - 1)
-                    continue
-                if weight == math.inf:
-                    ctx.solver.add_constraint(actual_n_matched == target_n_matched)
-                    continue
+        if weight == -math.inf:
+            ctx.solver.add_constraint(actual_n_matched <= target_n_matched - 1)
+            continue
+        if weight == math.inf:
+            ctx.solver.add_constraint(actual_n_matched == target_n_matched)
+            continue
 
-                # Construct: is_match = all pattern elements match.
-                is_match_var_name = f"{unique_var_prefix}_is_match"
-                is_literal_pattern = all(is_literal for _match_expr, is_literal in pattern_element_matches)
-                if weight < 0 and is_literal_pattern:
-                    # For negative soft successions, is_match only needs to
-                    # mark a violation. If every literal matches, the right
-                    # side becomes 1 and forces is_match to 1. Otherwise, the
-                    # constraint allows is_match to remain 0, and the negative
-                    # objective weight makes 0 strictly preferred.
-                    ctx.model_vars[is_match_var_name] = is_match = ctx.solver.new_bool_var(is_match_var_name)
-                    ctx.solver.add_constraint(is_match >= actual_n_matched - target_n_matched + 1)
-                    utils.add_objective(ctx, weight, is_match)
-                    ctx.reports.append(Report(unique_var_prefix, is_match, lambda x: x == 0))
-                    continue
-                if is_literal_pattern and ctx.solver.should_use_bool_and_var(len(pattern_element_matches)):
-                    ctx.model_vars[is_match_var_name] = is_match = ctx.solver.create_bool_and_var(
-                        is_match_var_name,
-                        [match_expr for match_expr, _is_literal in pattern_element_matches],
-                    )
-                else:
-                    ctx.model_vars[is_match_var_name] = is_match = ctx.solver.create_bool_var_with_constraint(
-                        is_match_var_name,
-                        actual_n_matched,
-                        constants.Operator.EQ,
-                        target_n_matched,
-                        (0, target_n_matched),
-                    )
+        # Construct: is_match = all pattern elements match.
+        is_match_var_name = f"{unique_var_prefix}_is_match"
+        is_literal_pattern = all(is_literal for _match_expr, is_literal in pattern_element_matches)
+        if weight < 0 and is_literal_pattern:
+            # For negative soft successions, is_match only needs to
+            # mark a violation. If every literal matches, the right
+            # side becomes 1 and forces is_match to 1. Otherwise, the
+            # constraint allows is_match to remain 0, and the negative
+            # objective weight makes 0 strictly preferred.
+            ctx.model_vars[is_match_var_name] = is_match = ctx.solver.new_bool_var(is_match_var_name)
+            ctx.solver.add_constraint(is_match >= actual_n_matched - target_n_matched + 1)
+            utils.add_objective(ctx, weight, is_match)
+            ctx.reports.append(Report(unique_var_prefix, is_match, lambda x: x == 0))
+            continue
+        if is_literal_pattern and ctx.solver.should_use_bool_and_var(len(pattern_element_matches)):
+            ctx.model_vars[is_match_var_name] = is_match = ctx.solver.create_bool_and_var(
+                is_match_var_name,
+                [match_expr for match_expr, _is_literal in pattern_element_matches],
+            )
+        else:
+            ctx.model_vars[is_match_var_name] = is_match = ctx.solver.create_bool_var_with_constraint(
+                is_match_var_name,
+                actual_n_matched,
+                constants.Operator.EQ,
+                target_n_matched,
+                (0, target_n_matched),
+            )
 
-                utils.add_objective(ctx, weight, is_match)
-                ctx.reports.append(Report(unique_var_prefix, is_match, lambda x: x == 1))
+        utils.add_objective(ctx, weight, is_match)
+        ctx.reports.append(Report(unique_var_prefix, is_match, lambda x: x == 1))
 
 
 def shift_count(
@@ -435,7 +460,11 @@ def shift_affinity(
                     weight = preference.weight
                     utils.add_objective(ctx, weight, is_match)
                     ctx.reports.append(
-                        Report(f"shift_affinity_{unique_var_prefix}_is_match", is_match, lambda x: x == 1)
+                        Report(
+                            f"shift_affinity_{unique_var_prefix}_is_match",
+                            is_match,
+                            lambda x: x == 1,
+                        )
                     )
 
 

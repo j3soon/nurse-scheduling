@@ -176,6 +176,11 @@ assignments, verifies the completion source hash, and reports truncated output.
 The same helpers are available in both arms of prompt comparisons. Their scripts, catalog, and context projector
 are fingerprinted so changes cannot silently reuse a result-reading receipt.
 Completions include bounded `request_audit` counts computed by the production reader.
+When space permits, `policy` adds canonical staffing shortfalls and signed
+succession-window counts, including history. Its scope excludes other preference
+types. The reader also exposes these counts when the compiled context's source
+and workbook hashes match. `result-policy-misses`, `result-policy-clean`, and
+`result-policy-stale` check preferred targets, clean counts, and stale-audit fallback.
 Score-bearing completions report `score_direction: maximize` and restrict score
 comparisons to unchanged constraints and weights. `optimizer-score-same-model`
 checks direction and `optimizer-score-changed-model` guards comparability.

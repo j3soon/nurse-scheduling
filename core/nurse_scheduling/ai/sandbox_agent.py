@@ -67,7 +67,7 @@ ATTACHMENT_TOOL_DIRECTORY = Path(__file__).with_name("attachment_tools")
 INSPECTION_HELPERS = {
     "inspect_xlsx.py": "Bounded XLSX cells, formulas, and saved caches. Add --styles for stored font/fill colors, borders, alignment, and number formats.",
     "inspect_pdf.py": "PDF page text and rendered page images.",
-    "inspect_optimizer_result.py": "Optimizer assignments and signed request counts using a compiled schedule context.",
+    "inspect_optimizer_result.py": "Optimizer assignments, signed request counts and available staffing/succession audits using a compiled schedule context.",
 }
 REFERENCE_ATTACHMENT_TOOLS = {
     f"/reference/tools/{name}": ATTACHMENT_TOOL_DIRECTORY / name for name in INSPECTION_HELPERS
@@ -500,7 +500,7 @@ async def hydrate_sandbox(
     if optimizer_result is not None:
         files[WORKSPACE_OPTIMIZER_RESULT] = optimizer_result
         files[WORKSPACE_RESULT_CONTEXT] = json.dumps(
-            build_result_context(schedule_yaml), ensure_ascii=False, allow_nan=False
+            build_result_context(schedule_yaml, workbook=optimizer_result), ensure_ascii=False, allow_nan=False
         )
         if pending_proposal_yaml:
             files[WORKSPACE_PENDING_RESULT_CONTEXT] = json.dumps(
