@@ -298,3 +298,49 @@ def test_styled_request_case_oracle_matches_source_cells_and_saved_caches():
     assert capacity["Day"] != book["Capacity audit"]["B2"].value * 2
     book.close()
     cached.close()
+
+
+def test_overview_preserves_all_sheet_headers_without_opening_cells(tmp_path, monkeypatch):
+    attachment = load_attachment_fixtures(["inventory-xlsx"])[0]
+    path = tmp_path / "tabs.xlsx"
+    path.write_bytes(attachment.data)
+    from openpyxl.worksheet._read_only import ReadOnlyWorksheet
+
+    from nurse_scheduling.ai.attachment_tools import inspect_xlsx
+
+    loads = []
+    original_load = inspect_xlsx.load_workbook
+
+    def observed_load(*args, **kwargs):
+        loads.append(kwargs)
+        return original_load(*args, **kwargs)
+
+    def unexpected_cell_read(*args, **kwargs):
+        raise AssertionError("An overview must not read cell values")
+
+    monkeypatch.setattr(ReadOnlyWorksheet, "iter_rows", unexpected_cell_read)
+    monkeypatch.setattr(inspect_xlsx, "load_workbook", observed_load)
+    result = inspect_workbook(path, overview=True)
+    assert len(loads) == 1
+    assert loads[0]["data_only"] is False
+    assert result["sheet_count"] == 24
+    assert sum(s["state"] != "visible" for s in result["sheets"]) == 3
+    assert sum(s["reported_rows"] >= 80 and s["reported_columns"] >= 30 for s in result["sheets"]) == 12
+    assert not result["sheets_truncated"]
+    assert all("rows" not in s for s in result["sheets"])
+    assert inspect_workbook(path, sheet_name="Tab 24", overview=True)["sheets"][0]["state"] == "veryHidden"
+    with pytest.raises(ValueError, match="Unknown sheet"):
+        inspect_workbook(path, sheet_name="missing", overview=True)
+
+
+def test_overview_bounds_metadata_and_reports_truncation(tmp_path):
+    book = Workbook()
+    for i in range(104):
+        book.create_sheet(f"Sheet {i}")
+    path = tmp_path / "many.xlsx"
+    book.save(path)
+    book.close()
+    result = inspect_workbook(path, overview=True)
+    assert result["sheet_count"] == 105
+    assert len(result["sheets"]) == 100
+    assert result["sheets_truncated"]

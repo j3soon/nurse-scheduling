@@ -169,7 +169,8 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   Use the large ward only when scale or reference cascades matter. Grade
   scheduling semantics rather than ineffective fields or equivalent formatting.
   Preserve exact selectors and values when fidelity to the user's wording is
-  under test. Keep original traces when correcting a grader, apply the correction
+  under test. Define structured answer fields and counting units explicitly. Do not
+  let an undefined priority label or field name decide the grader's meaning. Keep original traces when correcting a grader, apply the correction
   to both variants, and rerun affected comparisons before claiming an improvement.
 - Expose Pi's default `read`, `bash`, `edit`, and `write` model tools over
   the disposable sandbox. Always offer the server-side `optimizer` lifecycle

@@ -68,6 +68,22 @@ def _xlsx() -> bytes:
     return output.getvalue()
 
 
+def _inventory_workbook() -> bytes:
+    """Keep content-heavy and hidden tabs outside the ordinary first-sheet window."""
+    workbook = Workbook()
+    workbook.remove(workbook.active)
+    for number in range(24):
+        sheet = workbook.create_sheet(f"Tab {number + 1:02d}")
+        rows, columns = (120, 32) if number < 12 else (12, 3)
+        for row in range(rows):
+            sheet.append([f"Entry {number}-{row}-{column}" for column in range(columns)])
+        if number in {5, 21}:
+            sheet.sheet_state = "hidden"
+        elif number == 23:
+            sheet.sheet_state = "veryHidden"
+    return _stable_workbook(workbook)
+
+
 def _stable_workbook(workbook: Workbook, caches: dict[str, dict[str, int]] | None = None) -> bytes:
     """Fix ZIP and document timestamps so receipts bind reproducible attachment bytes."""
     source, output = BytesIO(), BytesIO()
@@ -253,6 +269,11 @@ def _pptx() -> bytes:
 
 
 _FIXTURES: dict[str, tuple[str, str, Callable[[], bytes]]] = {
+    "inventory-xlsx": (
+        "monthly-tabs.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        _inventory_workbook,
+    ),
     "text-inspection-pdf": ("ward-pages.pdf", "application/pdf", _inspection_pdf),
     "visual-inspection-pdf": ("color-boxes.pdf", "application/pdf", lambda: _inspection_pdf(visual=True)),
     "formula-xlsx": (

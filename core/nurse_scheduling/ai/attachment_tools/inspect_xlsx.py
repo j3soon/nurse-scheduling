@@ -159,6 +159,15 @@ def _stored_style(cell: Any, workbook: Any, theme: list[str | None]) -> dict[str
     return result
 
 
+def _sheet_metadata(sheet: Any) -> dict[str, Any]:
+    return {
+        "name": sheet.title,
+        "state": sheet.sheet_state,
+        "reported_rows": sheet.max_row,
+        "reported_columns": sheet.max_column,
+    }
+
+
 def inspect_workbook(
     path: Path,
     *,
@@ -168,6 +177,7 @@ def inspect_workbook(
     max_rows: int = 200,
     max_columns: int = 50,
     styles: bool = False,
+    overview: bool = False,
 ) -> dict[str, Any]:
     """Return bounded cells with both formulas and last-saved cached values."""
     if min(start_row, start_column, max_rows, max_columns) <= 0:
@@ -176,16 +186,20 @@ def inspect_workbook(
         raise ValueError("Select at most 10,000 cells per sheet")
     _check_archive(path)
     formula_book = load_workbook(path, read_only=True, data_only=False, keep_links=False)
-    try:
-        cached_book = load_workbook(path, read_only=True, data_only=True, keep_links=False)
-    except Exception:
-        formula_book.close()
-        raise
+    cached_book = None
     try:
         available = formula_book.sheetnames
         if sheet_name is not None and sheet_name not in available:
             raise ValueError(f"Unknown sheet {sheet_name!r}. Available sheets: {available}")
-        selected = [sheet_name] if sheet_name is not None else available[:MAX_SHEETS]
+        selected = [sheet_name] if sheet_name is not None else available[: 100 if overview else MAX_SHEETS]
+        if overview:
+            return {
+                "path": str(path),
+                "sheet_count": len(available),
+                "sheets": [_sheet_metadata(formula_book[name]) for name in selected],
+                "sheets_truncated": sheet_name is None and len(available) > 100,
+            }
+        cached_book = load_workbook(path, read_only=True, data_only=True, keep_links=False)
         sheets = []
         style_table: dict[str, Any] = {}
         theme = _theme_colors(formula_book) if styles else []
@@ -234,10 +248,7 @@ def inspect_workbook(
                     rows.append({"row": row_number, "values": values})
             sheets.append(
                 {
-                    "name": name,
-                    "state": worksheet.sheet_state,
-                    "reported_rows": worksheet.max_row,
-                    "reported_columns": worksheet.max_column,
+                    **_sheet_metadata(worksheet),
                     "first_column": start_column,
                     "rows": rows,
                     "truncated": (
@@ -262,7 +273,8 @@ def inspect_workbook(
         return result
     finally:
         formula_book.close()
-        cached_book.close()
+        if cached_book is not None:
+            cached_book.close()
 
 
 def main() -> None:
@@ -270,6 +282,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("path", type=Path)
     parser.add_argument("--sheet")
+    parser.add_argument(
+        "--overview",
+        action="store_true",
+        help="List up to 100 sheet names, visibility states, and reported sizes without reading cells.",
+    )
     parser.add_argument(
         "--styles",
         action="store_true",
@@ -288,8 +305,9 @@ def main() -> None:
         max_rows=args.max_rows,
         max_columns=args.max_columns,
         styles=args.styles,
+        overview=args.overview,
     )
-    print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+    print(json.dumps(result, ensure_ascii=False, indent=None if args.overview else 2, default=str))
 
 
 if __name__ == "__main__":
