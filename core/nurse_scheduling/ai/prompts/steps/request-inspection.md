@@ -5,9 +5,11 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <!-- This file is mostly AI generated. -->
 
-For counts or resolved selectors of nonzero shift requests in the current YAML, run
-`python /reference/tools/inspect_shift_requests.py`. Filter with repeatable `--weight`, `--person`,
-or `--date` options. Counts are returned by default. Add `--max-requests N` for bounded details.
-The helper checks the current source
-and reports targets per preference entry, not unique cells or joint feasibility. If the context is
-unavailable or stale, inspect the current YAML instead.
+To count shift requests or find which people and dates they apply to, run
+`python /reference/tools/inspect_shift_requests.py`. Requests with weight 0 are excluded.
+Filter by `--weight`, `--person`, or `--date`. Each option can be repeated.
+The script returns counts by default. Add `--max-requests N` to show up to N matching request entries.
+Each request entry counts its person/date pairs separately. If two entries cover the same
+person and date, that pair is counted twice. These counts do not tell you whether all requests
+can be satisfied together. The script checks that its saved data matches the current YAML.
+If it reports missing or outdated schedule data, read the current YAML instead.

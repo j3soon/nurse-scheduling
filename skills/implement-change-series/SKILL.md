@@ -36,6 +36,8 @@ Choose commit boundaries by behavior and revertability:
   related commit rather than making standalone cleanup commits.
 - Keep commit bodies focused on rationale and behavior. Include validation only
   when it materially helps review, not as a routine successful-check summary.
+- Apply the repository's plain technical English rule to commit titles and
+  bodies. Explain the problem and resulting behavior before the mechanism.
 
 ## Implement one slice at a time
 

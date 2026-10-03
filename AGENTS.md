@@ -104,6 +104,24 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 
 ## Style
 - Keep comments and docs minimal, concise, yet informative.
+- Use plain technical English, inspired by ASD-STE100, in prompts, docs,
+  commit descriptions, and replies. State the problem or task first. Use active
+  voice, concrete verbs, and one main idea per sentence. Use the same term for
+  the same concept. Explain necessary technical terms on first use and preserve
+  exact code identifiers. Formal ASD-STE100 compliance is not required.
+- Prefer complete, short sentences over compressed phrases. Write "check that
+  the saved data matches the current YAML" instead of "apply a current-source
+  freshness guard." Keep detailed mechanisms and evaluation bookkeeping in
+  supporting docs. Before finishing, read the text without the conversation
+  and check that the problem, action, and result are clear.
+- Name the schedule's role or format directly, such as "current schedule,"
+  "original schedule," "validated schedule," or "backend schedule format."
+  Avoid "canonical schedule" when the reader must guess which property it means.
+- When reporting validation, lead with what passed. Separate correctness checks
+  from performance measurements, and limit each caveat to the claim it affects.
+  If test input changed, say which checks were repeated and which measurements
+  still need confirmation. Do not imply that a working feature is unvalidated
+  because its performance numbers have not been measured again.
 - Do not use em-dash or semicolon to connect sentences.
 - Mark every new file written entirely by an AI coding agent, tests included, with the
   module's marker comment immediately after the license block. Adding to a file a person

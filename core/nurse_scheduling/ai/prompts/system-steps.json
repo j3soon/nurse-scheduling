@@ -545,34 +545,34 @@
       "request-bans-counts-large",
       "request-filtered-cross-month"
     ],
-    "hypothesis": "Uses canonical bounded selectors for current shift-request queries, reducing raw YAML reads and generated parsing while checking source freshness.",
-    "sha256": "6c6171b52393fcf2c66686e0da9abc3dc29edb1e2e0cba47db7ecbd37c65695c",
+    "hypothesis": "Answers shift-request questions with the counting script instead of repeatedly reading YAML and writing parsing code. Checks that saved data matches the current YAML.",
+    "sha256": "3afc9d1aa4746e06de8ddd856c73f00232e1d1ff1916c6ca7e8497d052f5797b",
     "evidence": [
       {
         "case": "request-tier-counts-large",
-        "input_sha256": "a2bb937d1c2c8617347b398a5f54b405d4bd6ebfe54df280d8ced1996f76c864",
+        "input_sha256": "4728e535fc57adc9141fd5bb6e9432b75034bb77becf5a6e3b0ea5d65c4b2e91",
         "before": "3/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
         "cost_metric": "total-tokens",
-        "cost_ratio": 0.17851383314220184,
+        "cost_ratio": 0.3103647520618179,
         "cost_target": 0.8,
         "controls": [
           {
             "case": "request-filtered-cross-month",
-            "input_sha256": "9607b019ed0c7ca59baa0dfd07af152d0fd911b8fb8ae2e3a0a950f3a4a6e8c7",
-            "before": "0/3",
+            "input_sha256": "37f23c09edb3110a94fca4342858726a3039c57b2e6d448b0b8c126ba63cab2f",
+            "before": "1/3",
             "after": "3/3"
           },
           {
             "case": "request-bans-counts-large",
-            "input_sha256": "a84f7c34c584f28fe05ac18af63313ef8a9d40a89183797518be6ba6086d5184",
+            "input_sha256": "aa9a15679355d87c471f514f28db28f4c2dd2669c745a468fa07a5562beffdfe",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Canonical current selectors, counts-only default, source freshness guard. Prior diagnostic and infrastructure-invalid rounds remain in ignored artifacts. Ban-count cost improvement is not confirmed."
+        "note": "Plain-language rewrite compared with the previous prompt step, not with the old wording. Request counts stayed correct with 69% fewer mean tokens, with substantial variation between runs. The cross-month case improved from 1/3 to 3/3. Ban counts stayed correct, without a confirmed time reduction."
       }
     ]
   },

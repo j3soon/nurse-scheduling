@@ -79,6 +79,8 @@ Use a focused prompt clause for a decision policy or interpretation the model
 needs to learn. Extend an existing segment when it owns that behavior. Keep the
 instruction general enough to handle changed IDs and equivalent structures.
 Examples may clarify the policy, but must not encode the testcase's answer.
+Apply the repository's plain technical English rule. Explain when to act, what
+to do, and what the result means. Retest wording changes before accepting them.
 
 Use a maintained helper for repeated deterministic parsing or calculations.
 Prefer a small general helper with a documented CLI and structured output over
