@@ -34,6 +34,7 @@ import {
   rejectProposal,
   scheduleRevision,
   streamMessage,
+  sendMessage,
   streamSessionEvents,
   stopSession,
   updateSessionSchedule,
@@ -165,6 +166,49 @@ describe('AI client', () => {
     });
   });
 
+  it('submits a message and returns its admitted run ID without reading SSE', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ run_id: 'r' }), { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await sendMessage('s', 'Hello', new AbortController().signal, 'token')).toBe('r');
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching('/s/messages'), expect.objectContaining({
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', Authorization: 'Bearer token' },
+    }));
+  });
+
+  it('recovers a run once through session_reset and continues with the next event', async () => {
+    const recovery = {
+      events: [
+        { type: 'run_start', data: { run_id: 'r', trigger: 'user' } },
+        { type: 'delta', data: { run_id: 'r', text: 'Recovered answer.' } },
+        { type: 'tool', data: { run_id: 'r', tool_call_id: 't', name: 'read', result: 'Read', ok: true } },
+      ],
+      active_run_id: 'r', incomplete: true, proposal_diff: '',
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      `id: 8\nevent: session_reset\ndata: ${JSON.stringify(recovery)}\n\n`,
+      'id: 9\nevent: done\ndata: {"run_id":"r"}\n\n',
+      'id: 9\nevent: done\ndata: {"run_id":"r"}\n\n',
+    ])));
+    const reset = vi.fn();
+    const delta = vi.fn();
+    const done = vi.fn();
+    const cursor = vi.fn();
+    const tool = vi.fn();
+    const proposal = vi.fn();
+    const foreground = { onDelta: delta, onDone: done, onTool: tool, onReset: vi.fn() };
+    await streamSessionEvents('s', {
+      lastEventId: 5, onDelta: vi.fn(), forRun: id => id === 'r' ? foreground : undefined,
+      onReset: reset, onEventId: cursor, onProposal: proposal,
+    }, new AbortController().signal, null);
+    expect(reset).toHaveBeenCalledWith(expect.objectContaining({ runIds: ['r'], activeRunId: 'r', incomplete: true }));
+    expect(foreground.onReset).toHaveBeenCalledOnce();
+    expect(delta).toHaveBeenCalledExactlyOnceWith('Recovered answer.');
+    expect(tool).toHaveBeenCalledWith(expect.objectContaining({ toolCallId: 't' }));
+    expect(done).toHaveBeenCalledExactlyOnceWith('r');
+    expect(cursor.mock.calls.map(([id]) => id)).toEqual([8, 9]);
+    expect(proposal).toHaveBeenCalledExactlyOnceWith('');
+  });
+
   it('parses deltas split across network chunks', async () => {
     const fetchMock = vi.fn().mockResolvedValue(streamedResponse([
       'event: delta\ndata: {"text":"Hel',
@@ -192,7 +236,7 @@ describe('AI client', () => {
       expect.objectContaining({
         body: JSON.stringify({ message: 'Who works?' }),
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer stream-token' },
+        headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json', Authorization: 'Bearer stream-token' },
       }),
     );
   });
@@ -274,7 +318,7 @@ describe('AI client', () => {
     );
 
     const request = fetchMock.mock.calls[0][1] as RequestInit;
-    expect(request.headers).toBeUndefined();
+    expect(request.headers).toEqual({ Accept: 'text/event-stream' });
     expect(request.body).toBeInstanceOf(FormData);
     const form = request.body as FormData;
     expect(form.get('message')).toBe('What is shown?');

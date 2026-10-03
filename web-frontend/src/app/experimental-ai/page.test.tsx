@@ -30,6 +30,7 @@ const mockGetBackendVersion = vi.hoisted(() => vi.fn());
 const mockGetCapabilities = vi.hoisted(() => vi.fn());
 const mockGetSessionStatus = vi.hoisted(() => vi.fn());
 const mockStreamMessage = vi.hoisted(() => vi.fn());
+const mockSendMessage = vi.hoisted(() => vi.fn());
 const mockStreamSessionEvents = vi.hoisted(() => vi.fn());
 const mockStopSession = vi.hoisted(() => vi.fn());
 const mockGenerateYaml = vi.hoisted(() => vi.fn(() => 'description: current schedule\n'));
@@ -68,7 +69,7 @@ vi.mock('./aiClient', () => ({
     endpoint === '/ai' || mockNormalizeAiEndpoint(endpoint) === 'https://api.nursescheduling.org/ai'
   ),
   queueMessage: mockQueueMessage,
-  streamMessage: mockStreamMessage,
+  sendMessage: mockSendMessage,
   streamSessionEvents: mockStreamSessionEvents,
   stopSession: mockStopSession,
   approveProposal: mockApproveProposal,
@@ -126,8 +127,24 @@ describe('ExperimentalAiPage', () => {
       callbacks.onDelta('Alice');
       callbacks.onDelta(' works Monday.');
     });
-    mockStreamSessionEvents.mockReset().mockResolvedValue(undefined);
-    mockStopSession.mockReset().mockResolvedValue(undefined);
+    mockStreamSessionEvents.mockReset().mockImplementation(() => new Promise<void>(() => {}));
+    // Existing UI scenarios describe run callbacks. Deliver them through the
+    // session stream while the POST returns only its admission acknowledgement.
+    mockSendMessage.mockReset().mockImplementation(async (id, message, signal, token, attachments, endpoint) => {
+      const stream = mockStreamSessionEvents.mock.calls.at(-1)?.[1] as StreamCallbacks;
+      const runId = `user-run-${mockSendMessage.mock.calls.length}`;
+      const callbacks = stream.forRun!(runId, 'user')!;
+      void Promise.resolve(mockStreamMessage(id, message, callbacks, signal, token, attachments, endpoint))
+        .then(() => callbacks.onDone?.(runId), (error: Error) => {
+          if (error instanceof MockAiStaleRunError) callbacks.onStale?.(error.message);
+          else callbacks.onError?.(error.message);
+        });
+      return runId;
+    });
+    mockStopSession.mockReset().mockImplementation(async () => {
+      const stream = mockStreamSessionEvents.mock.calls.at(-1)?.[1] as StreamCallbacks | undefined;
+      stream?.forRun?.(`user-run-${mockSendMessage.mock.calls.length}`)?.onStopped?.();
+    });
     mockGenerateYaml.mockClear();
     mockApproveProposal.mockReset().mockResolvedValue('description: proposed schedule\n');
     mockRejectProposal.mockReset().mockResolvedValue(undefined);
@@ -849,6 +866,127 @@ describe('ExperimentalAiPage', () => {
       content: 'Partial answer.',
     }));
     expect(stored.messages[0].status).toBeUndefined();
+  });
+
+  it('reissues Stop after admission when the first Stop reached the server too early', async () => {
+    const user = userEvent.setup();
+    let accept: ((id: string) => void) | undefined;
+    mockSendMessage.mockImplementationOnce(() => new Promise<string>(resolve => { accept = resolve; }));
+    mockStopSession.mockResolvedValue(undefined);
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Wait');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(accept).toBeDefined());
+    await user.click(screen.getByRole('button', { name: 'Stop' }));
+    expect(mockStopSession).toHaveBeenCalledOnce();
+    const signal = mockSendMessage.mock.calls[0][2] as AbortSignal;
+    expect(signal.aborted).toBe(false);
+    await act(async () => accept?.('accepted'));
+    await waitFor(() => expect(mockStopSession).toHaveBeenCalledTimes(2));
+    const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as StreamCallbacks;
+    act(() => stream.forRun?.('accepted')?.onStopped?.('accepted'));
+    expect(await screen.findByText('Stopped before completion.')).toBeInTheDocument();
+  });
+
+  it('keeps deferred review events when their reader disconnects before foreground admission is acknowledged', async () => {
+    const user = userEvent.setup();
+    let disconnect: (() => void) | undefined;
+    let accept: ((id: string) => void) | undefined;
+    mockStreamSessionEvents.mockImplementationOnce(() => new Promise<void>(resolve => { disconnect = resolve; }));
+    mockSendMessage.mockImplementationOnce(() => new Promise<string>(resolve => { accept = resolve; }));
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Wait');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(accept).toBeDefined());
+    const stream = mockStreamSessionEvents.mock.calls[0][1] as StreamCallbacks;
+    act(() => {
+      const review = stream.forRun?.('review', 'optimizer');
+      review?.onRunStart?.('review', 'optimizer');
+      review?.onDelta('Earlier review.');
+      review?.onDone?.('review');
+      stream.onEventId?.(3);
+      disconnect?.();
+    });
+    await waitFor(() => expect(mockStreamSessionEvents).toHaveBeenCalledTimes(2), { timeout: 4000 });
+    await act(async () => accept?.('accepted'));
+    expect(screen.getByText('Earlier review.')).toBeInTheDocument();
+    const next = mockStreamSessionEvents.mock.calls[1][1] as StreamCallbacks;
+    act(() => {
+      next.forRun?.('accepted')?.onDelta('Current answer.');
+      next.forRun?.('accepted')?.onDone?.('accepted');
+    });
+    expect(await screen.findByText('Current answer.')).toBeInTheDocument();
+  });
+
+  it('routes a terminal event received before the admission acknowledgement to its foreground answer', async () => {
+    const user = userEvent.setup();
+    mockSendMessage.mockImplementationOnce(async () => {
+      const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as StreamCallbacks;
+      const previous = stream.forRun!('previous', 'optimizer')!;
+      previous.onRunStart?.('previous', 'optimizer');
+      previous.onDelta('Previous review.');
+      previous.onDone?.('previous');
+      const foreground = stream.forRun!('accepted', 'user')!;
+      foreground.onDelta('Fast answer.');
+      foreground.onDone?.('accepted');
+      return 'accepted';
+    });
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Explain');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText('Fast answer.')).toBeInTheDocument();
+    expect(screen.getByText('Previous review.')).toBeInTheDocument();
+    expect(screen.getAllByText('Fast answer.')).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+  });
+
+  it('rebuilds matching foreground output from recovery without repeating its partial answer', async () => {
+    const user = userEvent.setup();
+    let callbacks: StreamCallbacks | undefined;
+    mockStreamMessage.mockImplementationOnce(async (_id, _message, target) => {
+      callbacks = target;
+      target.onDelta('Partial');
+      await new Promise<void>(() => {});
+    });
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Explain');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Partial');
+    const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as StreamCallbacks;
+    const reset = { runIds: ['user-run-1'], activeRunId: 'user-run-1', terminalRunIds: [], incomplete: false, proposalDiff: null };
+    act(() => {
+      stream.onReset?.(reset);
+      callbacks?.onReset?.(reset);
+      callbacks?.onDelta('Partial answer recovered.');
+      callbacks?.onSteering?.('recovered-input', 'Focus on Tuesday.');
+      callbacks?.onDelta('Tuesday recovered.');
+      callbacks?.onDone?.('user-run-1');
+    });
+    expect(await screen.findByText('Partial answer recovered.')).toBeInTheDocument();
+    expect(screen.queryByText('Partial')).not.toBeInTheDocument();
+    expect(screen.getByText('Focus on Tuesday.')).toBeInTheDocument();
+    expect(screen.getByText('Tuesday recovered.')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument());
+  });
+
+  it('replays a completed foreground answer into one message and preserves consumed steering', async () => {
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Explain');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as StreamCallbacks;
+    act(() => {
+      stream.onReset?.({ runIds: ['user-run-1'], activeRunId: null, terminalRunIds: ['user-run-1'], incomplete: false, proposalDiff: null });
+      stream.onRunStart?.('user-run-1', 'user');
+      stream.onDelta('Alice works Monday.');
+      stream.onSteering?.('queued', 'Compare Tuesday.');
+      stream.onDelta('Tuesday is free.');
+      stream.onDone?.('user-run-1');
+    });
+    expect(screen.getAllByText('Alice works Monday.')).toHaveLength(1);
+    expect(screen.getByText('Compare Tuesday.')).toBeInTheDocument();
+    expect(screen.getByText('Tuesday is free.')).toBeInTheDocument();
   });
 
   it('keeps a foreground response active when an older background completion is replayed', async () => {
@@ -1631,8 +1769,8 @@ describe('ExperimentalAiPage', () => {
   it('discards queued questions when the active conversation expires', async () => {
     const user = userEvent.setup();
     let rejectStream: ((reason: Error) => void) | undefined;
-    mockStreamMessage.mockImplementationOnce(async () => {
-      await new Promise<void>((_resolve, reject) => {
+    mockSendMessage.mockImplementationOnce(async () => {
+      return await new Promise<string>((_resolve, reject) => {
         rejectStream = reject;
       });
     });
@@ -1650,7 +1788,7 @@ describe('ExperimentalAiPage', () => {
 
     expect(await screen.findByText(/expired or is no longer available/)).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText('Queued for steering')).not.toBeInTheDocument());
-    expect(mockStreamMessage).toHaveBeenCalledTimes(1);
+    expect(mockSendMessage).toHaveBeenCalledTimes(1);
   });
 
   it('requires the advertised AI token and uses a session-only credential', async () => {

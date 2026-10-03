@@ -29,10 +29,9 @@ from dataclasses import replace
 from typing import Literal
 from uuid import UUID, uuid4
 
-import anyio
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -43,7 +42,7 @@ from ..version import get_app_version
 from .agent_session import SessionRuntime
 from .config import AiSettings, validate_ai_auth_credentials
 from .history import ChatHistory, stop_maintenance
-from .lifecycle import AgentRun, RunEvents, SessionRuns
+from .lifecycle import TERMINAL_EVENTS, SessionRuns
 from .optimizer import (
     HttpOptimizerBackend,
     OptimizerArtifact,
@@ -274,22 +273,6 @@ async def _parse_message_request(
     return question, files
 
 
-class RunResponse(StreamingResponse):
-    """The response owns cancellation even if ASGI never iterates its body."""
-
-    def __init__(self, *args, run: AgentRun, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self.run = run
-
-    async def __call__(self, scope, receive, send) -> None:
-        try:
-            await super().__call__(scope, receive, send)
-        finally:
-            self.run.cancel()
-            with anyio.CancelScope(shield=True):
-                await asyncio.shield(self.run.done)
-
-
 def create_app(
     *,
     settings: AiSettings | None = None,
@@ -315,8 +298,8 @@ def create_app(
     )
     if sandbox_factory is None:
         sandbox_factory = create_sandbox_factory(settings)
-    store = SessionStore(settings)
     event_stream = SessionEventStream(max_sessions=settings.max_sessions)
+    store = SessionStore(settings, event_stream=event_stream)
     runs = SessionRuns()
     concurrency_limit = asyncio.Semaphore(settings.max_concurrent_requests)
     auth_registry = create_auth_registry(settings.auth_token, settings.auth_tokens)
@@ -348,11 +331,6 @@ def create_app(
         )
 
     async def optimizer_completed(session_id: str, prompt: str, artifact: OptimizerArtifact | None) -> None:
-        async def emit(event_type: str, data: dict[str, object]) -> None:
-            # Retirement revokes publication as well as cancelling execution.
-            if store.get(session_id) is not None:
-                event_stream.publish(session_id, event_type, data)
-
         session = store.get(session_id)
         if session is None:
             return
@@ -362,7 +340,6 @@ def create_app(
                 run,
                 prompt,
                 runtime=runtime,
-                emit=emit,
                 background=True,
                 artifact=artifact,
             ),
@@ -374,8 +351,10 @@ def create_app(
             run.cancel()
 
     async def optimizer_updated(session_id: str, update: dict[str, object]) -> None:
-        event_stream.publish(
-            session_id,
+        session = store.get(session_id)
+        if session is None:
+            return
+        session.publish(
             "optimization_progress" if "progress" in update else "optimization",
             update,
         )
@@ -511,8 +490,8 @@ def create_app(
         request: Request,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> StreamingResponse:
-        """Replay and stream assistant runs triggered by background work."""
-        store.require_owned(session_id, owner)
+        """Replay every session event. Disconnect only detaches this reader."""
+        session = store.require_owned(session_id, owner)
         raw_cursor = request.headers.get("last-event-id", "0")
         try:
             after_id = max(0, int(raw_cursor))
@@ -520,11 +499,18 @@ def create_app(
             raise HTTPException(status_code=400, detail="Last-Event-ID must be an integer.") from None
 
         async def generate_session_events():
-            async for event in event_stream.stream(session_id, after_id):
+            async for event in session.events(after_id):
                 if event is None:
                     yield ": keepalive\n\n"
                 else:
-                    yield f"id: {event.id}\n{_sse_event(event.type, event.data)}"
+                    data = event.data
+                    if event.type == "session_reset":
+                        data = {
+                            **data,
+                            "proposal_diff": session.proposal_diff,
+                            "active_run_id": session.snapshot.run_id if session.snapshot else None,
+                        }
+                    yield f"id: {event.id}\n{_sse_event(event.type, data)}"
 
         return StreamingResponse(
             generate_session_events(),
@@ -605,35 +591,28 @@ def create_app(
         return response
 
     @app.post("/sessions/{session_id}/messages", dependencies=[Depends(require_auth)])
-    async def stream_message(
+    async def send_message(
         session_id: str,
         request: Request,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
-    ) -> StreamingResponse:
-        """Stream one answer and retain only text after successful completion."""
+    ) -> Response:
+        """Admit a run independently of its event subscribers."""
         question, attachments = await _parse_message_request(request, settings)
         session = store.require_owned(session_id, owner)
-        events = RunEvents()
+        cursor = event_stream.cursor(session_id)
         run = runs.start(
             session_id,
             lambda run: session.run(
                 run,
                 question,
                 runtime=runtime,
-                emit=events.emit,
                 owner=owner,
                 credential_id=request.state.auth_credential_id,
                 attachments=attachments,
             ),
         )
-        try:
-            if not await asyncio.shield(run.ready):
-                await run.wait()
-        except BaseException:
-            run.cancel()
-            with anyio.CancelScope(shield=True):
-                await asyncio.shield(run.done)
-            raise
+        if not await asyncio.shield(run.ready):
+            await run.wait()
         request_logger.info(
             "AI request started session_id=%s question_chars=%s question=%s files=%s",
             session_id,
@@ -642,17 +621,33 @@ def create_app(
             len(attachments),
         )
 
-        async def generate_events():
-            run.streaming.set()
-            async for event_type, data in events.stream(run):
-                yield _sse_event(event_type, data)
+        # Compatibility readers explicitly request SSE. They use the same journal
+        # and cannot cancel execution by leaving. New clients receive an admission ACK.
+        if "text/event-stream" in request.headers.get("accept", ""):
 
-        response = RunResponse(
-            generate_events(),
-            run=run,
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
+            async def generate_events():
+                async for event in session.events(cursor):
+                    if event is not None:
+                        yield f"id: {event.id}\n{_sse_event(event.type, event.data)}"
+                        if (event.data.get("run_id") == run.id and event.type in TERMINAL_EVENTS) or (
+                            event.type == "session_reset"
+                            and (
+                                run.done.done()
+                                or any(
+                                    item["type"] in TERMINAL_EVENTS and item["data"].get("run_id") == run.id
+                                    for item in event.data["events"]
+                                )
+                            )
+                        ):
+                            return
+
+            response = StreamingResponse(
+                generate_events(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+        else:
+            response = JSONResponse({"run_id": run.id}, status_code=status.HTTP_202_ACCEPTED)
         refresh_owner_cookie(response, owner)
         return response
 

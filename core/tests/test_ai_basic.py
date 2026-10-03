@@ -95,7 +95,7 @@ PNG_BYTES = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
 AI_AUTH_TOKEN = "ai-shared-test-token"
-AI_AUTH_HEADERS = {"Authorization": f"Bearer {AI_AUTH_TOKEN}"}
+AI_AUTH_HEADERS = {"Authorization": f"Bearer {AI_AUTH_TOKEN}", "Accept": "text/event-stream"}
 AI_AUTH_TOKENS = (
     AuthCredential(id="institution-a", token="institution-a-ai-token"),
     AuthCredential(id="person_b", token="person-b-ai-token"),
@@ -463,6 +463,8 @@ def parse_sse(response_text: str) -> list[tuple[str, dict[str, str]]]:
     events: list[tuple[str, dict[str, str]]] = []
     for block in response_text.strip().split("\n\n"):
         lines = block.splitlines()
+        if not any(line.startswith("event: ") for line in lines):
+            continue
         event_type = next(line.removeprefix("event: ") for line in lines if line.startswith("event: "))
         data = next(json.loads(line.removeprefix("data: ")) for line in lines if line.startswith("data: "))
         events.append((event_type, data))
@@ -470,7 +472,7 @@ def parse_sse(response_text: str) -> list[tuple[str, dict[str, str]]]:
 
 
 @pytest.mark.parametrize("wait_stage", ["provider", "command"])
-def test_client_disconnect_cancels_the_turn_and_closes_its_sandbox(wait_stage: str, monkeypatch) -> None:
+def test_client_disconnect_leaves_the_run_active_until_explicit_stop(wait_stage: str, monkeypatch) -> None:
     saved = []
     monkeypatch.setattr(ChatHistory, "start_run", lambda *_args: None)
     monkeypatch.setattr(ChatHistory, "finish_run", lambda _self, *args: saved.append(args))
@@ -536,6 +538,7 @@ def test_client_disconnect_cancels_the_turn_and_closes_its_sandbox(wait_stage: s
             "headers": [
                 (b"authorization", f"Bearer {AI_AUTH_TOKEN}".encode()),
                 (b"content-type", b"application/json"),
+                (b"accept", b"text/event-stream"),
                 (b"cookie", f"{OWNER_COOKIE}=browser-owner".encode()),
             ],
             "client": ("127.0.0.1", 12345),
@@ -547,6 +550,10 @@ def test_client_disconnect_cancels_the_turn_and_closes_its_sandbox(wait_stage: s
         await request_events.put({"type": "http.disconnect"})
         await asyncio.wait_for(request_task, timeout=1)
 
+        assert session.active
+        assert not operation_cancelled.is_set()
+        app.state.runs.stop(session.id)
+        await app.state.runs.close()
         backend = factory.created[0] if factory.created else None
         return backend, operation_cancelled.is_set(), session.active, list(session.transcript)
 
@@ -590,7 +597,7 @@ def test_stop_endpoint_cancels_an_active_assistant_turn() -> None:
             httpx.AsyncClient(
                 transport=transport,
                 base_url="http://testserver",
-                headers={"Authorization": f"Bearer {AI_AUTH_TOKEN}"},
+                headers=AI_AUTH_HEADERS,
             ) as client,
         ):
             session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
@@ -608,8 +615,9 @@ def test_stop_endpoint_cancels_an_active_assistant_turn() -> None:
     assert status_code == 202
     assert not session_active
     # Stop is a typed terminal outcome, not synthetic answer text.
-    assert events[0][0] == "context_usage"
-    assert events[1] == ("delta", {"text": "Partial answer.", "run_id": events[-1][1]["run_id"]})
+    assert events[0][0] == "run_start"
+    assert events[1][0] == "context_usage"
+    assert events[2] == ("delta", {"text": "Partial answer.", "run_id": events[-1][1]["run_id"]})
     assert events[-1][0] == "stopped"
     assert [name for name, _ in events].count("stopped") == 1
 
@@ -638,7 +646,7 @@ def test_a_stopped_prompt_stays_in_context_for_the_next_run() -> None:
             httpx.AsyncClient(
                 transport=transport,
                 base_url="http://testserver",
-                headers={"Authorization": f"Bearer {AI_AUTH_TOKEN}"},
+                headers=AI_AUTH_HEADERS,
             ) as client,
         ):
             session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
@@ -672,7 +680,7 @@ def test_an_answer_cut_off_by_the_output_limit_is_saved_with_its_stop_reason() -
 
     events = parse_sse(client.post(f"/sessions/{session_id}/messages", json={"message": "Explain."}).text)
 
-    assert [name for name, _ in events] == ["context_usage", "delta", "truncated", "context_usage", "done"]
+    assert [name for name, _ in events] == ["run_start", "delta", "truncated", "context_usage", "done"]
     assert app.state.session_store._sessions[session_id].transcript == [
         UserMessage("Explain."),
         AssistantMessage("The first half", "length"),
@@ -706,7 +714,7 @@ def test_stop_cancels_background_turn_waiting_behind_foreground_turn() -> None:
             httpx.AsyncClient(
                 transport=transport,
                 base_url="http://testserver",
-                headers={"Authorization": f"Bearer {AI_AUTH_TOKEN}"},
+                headers=AI_AUTH_HEADERS,
             ) as client,
         ):
             session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
@@ -757,7 +765,7 @@ def test_stop_before_stream_registration_cancels_the_reserved_turn(monkeypatch: 
             httpx.AsyncClient(
                 transport=transport,
                 base_url="http://testserver",
-                headers={"Authorization": f"Bearer {AI_AUTH_TOKEN}"},
+                headers=AI_AUTH_HEADERS,
             ) as client,
         ):
             session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
@@ -775,7 +783,7 @@ def test_stop_before_stream_registration_cancels_the_reserved_turn(monkeypatch: 
     assert provider_calls == 0
 
 
-def test_disconnect_before_stream_iteration_releases_the_session(monkeypatch) -> None:
+def test_disconnect_before_stream_iteration_does_not_cancel_execution(monkeypatch) -> None:
     saved = []
     monkeypatch.setattr(ChatHistory, "start_run", lambda *_args: None)
     monkeypatch.setattr(ChatHistory, "finish_run", lambda _self, *args: saved.append(args))
@@ -814,6 +822,7 @@ def test_disconnect_before_stream_iteration_releases_the_session(monkeypatch) ->
             "headers": [
                 (b"authorization", f"Bearer {AI_AUTH_TOKEN}".encode()),
                 (b"content-type", b"application/json"),
+                (b"accept", b"text/event-stream"),
                 (b"cookie", f"{OWNER_COOKIE}=browser-owner".encode()),
             ],
             "client": ("127.0.0.1", 12345),
@@ -821,11 +830,13 @@ def test_disconnect_before_stream_iteration_releases_the_session(monkeypatch) ->
         }
 
         await app(scope, receive, send)
+        while app.state.runs.busy(session.id):
+            await asyncio.sleep(0)
         return session.active
 
     assert not asyncio.run(exercise())
     assert len(saved) == 1
-    assert saved[0][1] == "cancelled"
+    assert saved[0][1] == "completed"
 
 
 def test_health_and_streamed_schedule_question() -> None:
@@ -848,9 +859,8 @@ def test_health_and_streamed_schedule_question() -> None:
     run_id = events[-1][1]["run_id"]
     assert isinstance(run_id, str) and run_id
     assert events == [
-        ("context_usage", {"used_chars": 0, "max_chars": 200_000, "run_id": run_id}),
-        ("delta", {"text": "Hello", "run_id": run_id}),
-        ("delta", {"text": " from AI", "run_id": run_id}),
+        ("run_start", {"trigger": "user", "run_id": run_id}),
+        ("delta", {"text": "Hello from AI", "run_id": run_id}),
         ("context_usage", {"used_chars": 97, "max_chars": 200_000, "run_id": run_id}),
         ("done", {"run_id": run_id}),
     ]
@@ -1145,6 +1155,7 @@ def test_provider_failure_is_streamed_without_recording_a_turn() -> None:
     )
 
     assert parse_sse(failed.text) == [
+        ("run_start", {"trigger": "user", "run_id": ANY}),
         ("context_usage", {"used_chars": 0, "max_chars": 200_000, "run_id": ANY}),
         ("delta", {"text": "Provisional answer.", "run_id": ANY}),
         ("error", {"message": PROVIDER_ERROR, "run_id": ANY}),
@@ -1183,6 +1194,7 @@ def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming(monke
     response = client.post(f"/sessions/{session_id}/messages", json={"message": "Edit it"})
 
     assert parse_sse(response.text) == [
+        ("run_start", {"trigger": "user", "run_id": ANY}),
         ("context_usage", {"used_chars": 0, "max_chars": 200_000, "run_id": ANY}),
         ("delta", {"text": "Obsolete answer.", "run_id": ANY}),
         ("stale", {"message": STALE_RUN_ERROR, "run_id": ANY}),
@@ -1201,6 +1213,7 @@ def test_sandbox_timeout_does_not_expose_exception_details() -> None:
     response = client.post(f"/sessions/{session_id}/messages", json={"message": "Wait"})
 
     assert parse_sse(response.text) == [
+        ("run_start", {"trigger": "user", "run_id": ANY}),
         ("context_usage", {"used_chars": 0, "max_chars": 200_000, "run_id": ANY}),
         ("error", {"message": SANDBOX_RUN_TIMEOUT_ERROR, "run_id": ANY}),
     ]
@@ -1497,8 +1510,8 @@ def test_context_usage_reports_selected_history_before_and_after_each_run() -> N
     second_chars = len(json.dumps(ChatMessage(role="user", content="B" * 50), ensure_ascii=False)) + len(
         json.dumps(ChatMessage(role="assistant", content="Second answer."), ensure_ascii=False)
     )
-    assert first_usage == [{"used_chars": 0, "max_chars": 140}, {"used_chars": first_chars, "max_chars": 140}]
-    assert second_usage == [first_usage[-1], {"used_chars": second_chars, "max_chars": 140}]
+    assert first_usage[-1] == {"used_chars": first_chars, "max_chars": 140}
+    assert second_usage[-1] == {"used_chars": second_chars, "max_chars": 140}
 
 
 def test_session_budget_keeps_the_latest_exchange_and_reports_all_dropped_messages() -> None:
@@ -1858,16 +1871,31 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         deadline = time.monotonic() + 2
         while time.monotonic() < deadline:
             events = app.state.session_event_stream.events_after(session_id)
-            if any(event.type == "done" for event in events):
+            if any(
+                event.type == "done"
+                and event.data.get("run_id")
+                == next(
+                    (
+                        item.data["run_id"]
+                        for item in events
+                        if item.type == "run_start" and item.data["trigger"] == "optimizer"
+                    ),
+                    None,
+                )
+                for event in events
+            ):
                 break
             time.sleep(0.01)
 
+        user_run_ids = {
+            event.data["run_id"] for event in events if event.type == "run_start" and event.data["trigger"] == "user"
+        }
+        events = [event for event in events if event.data.get("run_id") not in user_run_ids]
         assert [event.type for event in events] == [
             "optimization",
             "optimization_progress",
             "optimization",
             "run_start",
-            "context_usage",
             "tool_start",
             "tool",
             "delta",
@@ -1883,9 +1911,9 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         assert events[3].data == {"trigger": "optimizer", "run_id": run_id}
         assert all(event.data["run_id"] == run_id for event in events[3:])
         assert all("message_id" not in event.data for event in events[3:])
-        assert events[7].data == {"text": "The optimizer returned score 23.", "run_id": events[3].data["run_id"]}
-        assert events[4].data["max_chars"] == 200_000
-        assert events[8].data["used_chars"] > events[4].data["used_chars"]
+        assert events[6].data == {"text": "The optimizer returned score 23.", "run_id": events[3].data["run_id"]}
+        assert events[7].data["max_chars"] == 200_000
+        assert events[7].data["used_chars"] > 0
         if history_enabled:
             assert len(history_starts) == 3
             assert history_starts[-1][1] == session_id
@@ -2054,7 +2082,15 @@ def test_sandbox_cleanup_failure_does_not_commit_provisional_turn_or_proposal() 
     failed = client.post(f"/sessions/{session_id}/messages", json={"message": "Failed edit"})
 
     events = parse_sse(failed.text)
-    assert [name for name, _ in events] == ["context_usage", "tool_start", "tool", "schedule_change", "delta", "error"]
+    assert [name for name, _ in events] == [
+        "run_start",
+        "context_usage",
+        "tool_start",
+        "tool",
+        "schedule_change",
+        "delta",
+        "error",
+    ]
     assert events[-1][1]["message"] == "The temporary AI sandbox failed. Please try again."
     revision = hashlib.sha256(schedule.encode("utf-8")).hexdigest()
     approval = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
@@ -2087,8 +2123,8 @@ def test_sandbox_command_failure_still_streams_the_requested_command() -> None:
     failed = client.post(f"/sessions/{session_id}/messages", json={"message": "Run an edit"})
 
     events = parse_sse(failed.text)
-    assert [name for name, _ in events] == ["context_usage", "tool_start", "error"]
-    assert events[1][1] == {
+    assert [name for name, _ in events] == ["run_start", "context_usage", "tool_start", "error"]
+    assert events[2][1] == {
         "run_id": events[-1][1]["run_id"],
         "tool_call_id": "call_0",
         "name": BASH_TOOL,
@@ -2121,8 +2157,8 @@ def test_final_validation_failure_discards_the_turn_without_a_history_note() -> 
     failed = client.post(f"/sessions/{session_id}/messages", json={"message": "Invalid edit"})
 
     events = parse_sse(failed.text)
-    assert [name for name, _ in events] == ["context_usage", "tool_start", "tool", "delta", "error"]
-    assert events[2][1]["ok"] is False
+    assert [name for name, _ in events] == ["run_start", "context_usage", "tool_start", "tool", "delta", "error"]
+    assert events[3][1]["ok"] is False
     assert events[-1][1]["message"] == CANDIDATE_VALIDATION_ERROR
 
     recovered = client.post(f"/sessions/{session_id}/messages", json={"message": "Retry"})

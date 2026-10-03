@@ -20,15 +20,17 @@
 # This test is mostly AI generated.
 
 import asyncio
+import json
 
 import httpx
 import pytest
 from fastapi import HTTPException
 
-from nurse_scheduling.ai.app import SessionStore
+from nurse_scheduling.ai.app import OWNER_COOKIE, SessionStore
 from nurse_scheduling.ai.history import ChatHistory
-from nurse_scheduling.ai.lifecycle import RunEvents, SessionRuns
-from nurse_scheduling.ai.provider import ProviderError
+from nurse_scheduling.ai.lifecycle import SessionRuns
+from nurse_scheduling.ai.provider import ProviderError, TextDelta
+from nurse_scheduling.ai.session_event_stream import SessionEventStream
 from nurse_scheduling.ai.transcript import AssistantMessage, UserMessage
 
 from .ai_test_helper import schedule_yaml
@@ -353,19 +355,137 @@ def test_stop_during_completed_history_write_keeps_completed_outcome(monkeypatch
 def test_terminal_foreground_event_never_blocks_cleanup_on_a_full_reader_queue():
     async def exercise():
         turns = SessionRuns()
-        events = RunEvents()
+        events = SessionEventStream()
 
         async def run(_turn):
             for _ in range(64):
-                await events.emit("delta", {"text": "output"})
-            await events.emit("done", {"run_id": "turn"})
+                events.publish("session", "delta", {"text": "output", "run_id": "turn"})
+            events.publish("session", "done", {"run_id": "turn"})
 
         turn = turns.start("session", run)
         await asyncio.wait_for(turn.wait(), timeout=1)
         assert not turns.busy("session")
-        received = [event async for event in events.stream(turn)]
+        received = events.events_after("session")
         assert len(received) == 65
-        assert received[-1] == ("done", {"run_id": "turn"})
+        assert received[-1].type == "done"
+        assert received[-1].data == {"run_id": "turn"}
         await turns.close()
+
+    asyncio.run(exercise())
+
+
+def test_message_ack_and_get_replay_keep_execution_independent_of_readers():
+    async def exercise():
+        release = asyncio.Event()
+
+        class Provider:
+            async def stream_events(self, _messages, tools=None):
+                yield TextDelta("Partial ")
+                await release.wait()
+                yield TextDelta("answer.")
+
+        app = create_test_app(settings=make_settings(), provider=Provider())
+        session = app.state.session_store.create("owner", schedule_yaml())
+        observed = []
+        unsubscribe = session.subscribe(lambda kind, data: observed.append((kind, data)))
+
+        async def read_until(event_type, cursor=0):
+            received = asyncio.Queue()
+            await received.put({"type": "http.request", "body": b"", "more_body": False})
+            chunks = []
+
+            async def send(message):
+                if message["type"] == "http.response.body":
+                    chunks.append(message.get("body", b""))
+                    if f"event: {event_type}\n".encode() in b"".join(chunks):
+                        await received.put({"type": "http.disconnect"})
+
+            path = f"/sessions/{session.id}/events"
+            scope = {
+                "type": "http",
+                "asgi": {"version": "3.0", "spec_version": "2.3"},
+                "http_version": "1.1",
+                "method": "GET",
+                "scheme": "http",
+                "path": path,
+                "raw_path": path.encode(),
+                "query_string": b"",
+                "root_path": "",
+                "headers": [
+                    (key.lower().encode(), value.encode())
+                    for key, value in {
+                        **AI_AUTH_HEADERS,
+                        "Cookie": f"{OWNER_COOKIE}=owner",
+                        "Last-Event-ID": str(cursor),
+                    }.items()
+                ],
+                "client": ("127.0.0.1", 1),
+                "server": ("testserver", 80),
+            }
+            await asyncio.wait_for(app(scope, received.get, send), 1)
+            return b"".join(chunks).decode()
+
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://testserver",
+                headers={**AI_AUTH_HEADERS, "Accept": "application/json", "Cookie": f"{OWNER_COOKIE}=owner"},
+            ) as client,
+        ):
+            response = await client.post(f"/sessions/{session.id}/messages", json={"message": "Explain"})
+            assert response.status_code == 202
+            run_id = response.json()["run_id"]
+            assert session.active
+            refused = await client.post(f"/sessions/{session.id}/messages", json={"message": "Again"})
+            assert refused.status_code == 409
+            first = await read_until("delta")
+            cursor = max(int(line[4:]) for line in first.splitlines() if line.startswith("id: "))
+            assert session.active
+            release.set()
+            while app.state.runs.busy(session.id):
+                await asyncio.sleep(0)
+            replay = await read_until("done", cursor)
+            assert '"text": "answer."' in replay
+            assert f'"run_id": "{run_id}"' in replay
+            assert "Partial " not in replay
+            assert "event: stopped" not in replay
+            assert session.transcript[-1].text == "Partial answer."
+            assert observed[0] == ("run_start", {"run_id": run_id, "trigger": "user"})
+            assert observed[-1] == ("done", {"run_id": run_id})
+            unsubscribe()
+            unsubscribe()
+            count = len(observed)
+
+            # A missed required event restores a compact snapshot, not a silently
+            # truncated stream. Current proposal ownership accompanies that snapshot.
+            app.state.session_event_stream._max_events = 1
+            session.publish("tool", {"run_id": run_id, "name": "read", "result": "read"})
+            recovery = await read_until("session_reset")
+            data = json.loads(next(line[6:] for line in recovery.splitlines() if line.startswith("data: ")))
+            assert data["active_run_id"] is None
+            assert data["proposal_diff"] == ""
+            assert any(event["type"] == "done" for event in data["events"])
+            assert len(observed) == count
+
+    asyncio.run(exercise())
+
+
+def test_retired_session_does_not_recreate_its_event_history():
+    async def exercise():
+        app = create_test_app(settings=make_settings(), provider=FakeProvider())
+        session = app.state.session_store.create("owner", schedule_yaml())
+        session.publish("done", {"run_id": "old"})
+        reader = session.events(1)
+        waiting = asyncio.create_task(anext(reader, None))
+        await asyncio.sleep(0)
+        session.expires_at = 0
+        app.state.session_store._prune_expired()
+        assert app.state.session_store.get(session.id) is None
+        assert await asyncio.wait_for(waiting, 1) is None
+        session.publish("optimization", {"job_id": "late"})
+        assert not app.state.session_event_stream.events_after(session.id)
+        assert app.state.session_event_stream._retained_bytes == 0
+        assert await anext(session.events(0), None) is None
 
     asyncio.run(exercise())

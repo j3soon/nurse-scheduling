@@ -98,6 +98,11 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   replay gaps, and retention bounds in both event counts and serialized bytes.
   Distinguish replaceable progress updates from run and tool lifecycle events.
   Optimizer completion, failure, and result availability are lifecycle events.
+  Publish through `AgentSession` and keep HTTP serialization in the API adapter.
+  POST `/messages` acknowledges admission. GET `/events` delivers all runs and
+  job updates. Reader disconnect never cancels work. Explicit Stop does.
+  Test output arriving before acknowledgement, lost required replay history,
+  and retirement while a reader or optimizer callback remains active.
 - Keep attachment limits server-configured and report them through
   `/capabilities`. Attachments and the optimizer tool are always offered.
   Keep schedules and attachments separate from model instructions.

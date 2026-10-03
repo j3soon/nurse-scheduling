@@ -99,7 +99,7 @@ class SessionEventStream:
         self._max_bytes = max_bytes_per_session
         self._max_total_bytes = max_total_bytes
         self._sessions: dict[str, _Replay] = {}
-        self._signals: dict[str, asyncio.Event] = {}
+        self._signals: dict[str, set[asyncio.Event]] = {}
         self._retained_bytes = 0
 
     def publish(self, session_id: str, event_type: str, data: dict[str, object]) -> None:
@@ -117,7 +117,8 @@ class SessionEventStream:
         self._trim(replay)
         self._charge(replay)
         self._trim_total()
-        self._signals.setdefault(session_id, asyncio.Event()).set()
+        for signal in self._signals.get(session_id, ()):
+            signal.set()
 
     def _recover(self, replay: _Replay, event: SessionEvent) -> None:
         key = _replacement_key(event)
@@ -189,8 +190,7 @@ class SessionEventStream:
         replay = self._sessions.pop(session_id, None)
         if replay is not None:
             self._retained_bytes -= replay.bytes
-        signal = self._signals.pop(session_id, None)
-        if signal is not None:
+        for signal in self._signals.pop(session_id, ()):
             signal.set()
 
     def events_after(self, session_id: str, after_id: int = 0) -> tuple[SessionEvent, ...]:
@@ -198,30 +198,42 @@ class SessionEventStream:
         replay = self._sessions.get(session_id)
         return tuple(event for event in replay.events if event.id > after_id) if replay else ()
 
+    def cursor(self, session_id: str) -> int:
+        replay = self._sessions.get(session_id)
+        return replay.last_id if replay is not None else 0
+
     async def stream(self, session_id: str, after_id: int) -> AsyncIterator[SessionEvent | None]:
-        signal = self._signals.setdefault(session_id, asyncio.Event())
-        while self._signals.get(session_id) is signal:
-            replay = self._sessions.get(session_id)
-            if replay is not None and (after_id < replay.lost_through or after_id > replay.last_id):
-                after_id = replay.last_id
-                yield SessionEvent(
-                    after_id,
-                    "session_reset",
-                    {
-                        "events": [event.payload() for event in replay.recovery],
-                        "incomplete": replay.incomplete,
-                    },
-                )
-                continue
-            event = next((event for event in replay.events if event.id > after_id), None) if replay else None
-            if event is not None:
-                # Recheck after every yield. A slow reader must not hold a batch of
-                # evicted payloads or silently continue over newly expired history.
-                after_id = event.id
-                yield event
-                continue
-            signal.clear()
-            try:
-                await asyncio.wait_for(signal.wait(), timeout=15)
-            except TimeoutError:
-                yield None
+        signal = asyncio.Event()
+        self._signals.setdefault(session_id, set()).add(signal)
+        try:
+            while signal in self._signals.get(session_id, ()):
+                replay = self._sessions.get(session_id)
+                if replay is not None and (after_id < replay.lost_through or after_id > replay.last_id):
+                    after_id = replay.last_id
+                    yield SessionEvent(
+                        after_id,
+                        "session_reset",
+                        {
+                            "events": [event.payload() for event in replay.recovery],
+                            "incomplete": replay.incomplete,
+                        },
+                    )
+                    continue
+                event = next((event for event in replay.events if event.id > after_id), None) if replay else None
+                if event is not None:
+                    # Recheck after every yield. A slow reader must not hold a batch of
+                    # evicted payloads or silently continue over newly expired history.
+                    after_id = event.id
+                    yield event
+                    continue
+                signal.clear()
+                try:
+                    await asyncio.wait_for(signal.wait(), timeout=15)
+                except TimeoutError:
+                    yield None
+        finally:
+            readers = self._signals.get(session_id)
+            if readers is not None:
+                readers.discard(signal)
+                if not readers:
+                    self._signals.pop(session_id, None)

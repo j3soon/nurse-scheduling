@@ -1,4 +1,4 @@
-"""Event-loop-owned run admission, cancellation and bounded streaming output."""
+"""Event-loop-owned run admission, cancellation and owned cleanup."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -20,7 +20,7 @@
 # This code is mostly AI generated.
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from uuid import uuid4
 
@@ -55,7 +55,6 @@ class AgentRun:
     done: asyncio.Future[None] = field(default_factory=lambda: asyncio.get_running_loop().create_future())
     cancelled: bool = False
     finishing: bool = False
-    streaming: asyncio.Event = field(default_factory=asyncio.Event)
     admitted: asyncio.Event = field(default_factory=asyncio.Event)
 
     def cancel(self) -> None:
@@ -129,40 +128,3 @@ class SessionRuns:
         for run in runs:
             run.cancel()
         await asyncio.gather(*(run.done for run in runs))
-
-
-class RunEvents:
-    """Bounded foreground output. Disconnect cancels work, not its cleanup."""
-
-    def __init__(self) -> None:
-        self._queue: asyncio.Queue[tuple[str, dict[str, object]]] = asyncio.Queue(maxsize=64)
-        self._terminal: tuple[str, dict[str, object]] | None = None
-
-    async def emit(self, event_type: str, data: dict[str, object]) -> None:
-        # Finalization must never depend on an HTTP reader that may have left.
-        if event_type in TERMINAL_EVENTS:
-            self._terminal = event_type, data
-            return
-        await self._queue.put((event_type, data))
-
-    async def stream(self, run: AgentRun) -> AsyncIterator[tuple[str, dict[str, object]]]:
-        while True:
-            if not self._queue.empty():
-                yield self._queue.get_nowait()
-                continue
-            if run.done.done():
-                if self._terminal is not None:
-                    yield self._terminal
-                # Stop is a normal terminal outcome for the streaming transport.
-                if not run.task.cancelled():
-                    run.task.result()
-                return
-            next_event = asyncio.create_task(self._queue.get())
-            try:
-                await asyncio.wait((next_event, run.done), return_when=asyncio.FIRST_COMPLETED)
-                if next_event.done():
-                    yield next_event.result()
-            finally:
-                if not next_event.done():
-                    next_event.cancel()
-                await asyncio.gather(next_event, return_exceptions=True)

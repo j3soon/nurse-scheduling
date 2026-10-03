@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, Page, test } from '@playwright/test';
-import { createServer } from 'node:http';
+import { createServer, type ServerResponse } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 
@@ -40,11 +40,19 @@ function frontendOrigin(): string {
 
 async function startCancelableAiBackend() {
   let disconnected = false;
+  let stopped = false;
+  let eventResponse: ServerResponse | undefined;
+  const journal: string[] = [];
+  const publish = (type: string, data: Record<string, unknown>) => {
+    const frame = `id: ${journal.length + 1}\nevent: ${type}\ndata: ${JSON.stringify({ ...data, run_id: 'cancel-run' })}\n\n`;
+    journal.push(frame);
+    eventResponse?.write(frame);
+  };
   const allowedOrigin = frontendOrigin();
   const server = createServer((request, response) => {
     request.resume();
     const headers: Record<string, string> = {
-      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Headers': 'Content-Type, Last-Event-ID',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     };
     if (request.headers.origin === allowedOrigin) {
@@ -70,20 +78,28 @@ async function startCancelableAiBackend() {
         .end(JSON.stringify({ id: 'cancel-session' }));
       return;
     }
-    if (request.url === '/ai/sessions/cancel-session/messages') {
-      response.writeHead(200, {
-        ...headers,
-        'Cache-Control': 'no-cache',
-        'Content-Type': 'text/event-stream',
-      });
-      response.write('event: tool_start\ndata: {"name":"bash","arguments":"{\\"command\\":\\"sleep 30\\"}"}\n\n');
+    if (request.url === '/ai/sessions/cancel-session/events') {
+      eventResponse = response;
+      response.writeHead(200, { ...headers, 'Cache-Control': 'no-cache', 'Content-Type': 'text/event-stream' });
+      response.flushHeaders();
+      const cursor = Number(request.headers['last-event-id'] ?? 0);
+      journal.slice(cursor).forEach(frame => response.write(frame));
       response.on('close', () => {
         if (!response.writableEnded) disconnected = true;
+        if (eventResponse === response) eventResponse = undefined;
       });
       return;
     }
+    if (request.url === '/ai/sessions/cancel-session/messages') {
+      response.writeHead(202, { ...headers, 'Content-Type': 'application/json' }).end(JSON.stringify({ run_id: 'cancel-run' }));
+      publish('run_start', { trigger: 'user' });
+      publish('tool_start', { name: 'bash', tool_call_id: 'call', arguments: JSON.stringify({ command: 'sleep 30' }) });
+      return;
+    }
     if (request.url === '/ai/sessions/cancel-session/stop' && request.method === 'POST') {
-      response.writeHead(200, headers).end();
+      stopped = true;
+      response.writeHead(202, headers).end();
+      publish('stopped', {});
       return;
     }
     response.writeHead(404, headers).end();
@@ -97,6 +113,7 @@ async function startCancelableAiBackend() {
   return {
     origin: `http://127.0.0.1:${address.port}`,
     wasDisconnected: () => disconnected,
+    wasStopped: () => stopped,
     close: async () => {
       const closed = new Promise<void>((resolve, reject) => {
         server.close(error => error ? reject(error) : resolve());
@@ -112,6 +129,8 @@ async function mockAiBackend(
   answerDeltas = ['The image and schedule ', 'were received.'],
   failFirstMessage = false,
   requiredAuthToken?: string,
+  sessionEvents: { type: string; data: Record<string, unknown> }[] = [],
+  reportContext = true,
 ): Promise<CapturedRequests> {
   const captured = {
     scheduleYaml: '',
@@ -121,6 +140,12 @@ async function mockAiBackend(
     authorizationHeaders: [] as string[],
   };
   const allowedOrigin = frontendOrigin();
+  const journal: string[] = [];
+  let wakeReader: (() => void) | undefined;
+  const publish = (type: string, data: Record<string, unknown>) => {
+    journal.push(`id: ${journal.length + 1}\nevent: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+  sessionEvents.forEach(event => publish(event.type, event.data));
 
   await page.route('**/info', route => route.fulfill({
     status: 200, contentType: 'application/json', body: JSON.stringify({ app_version: 'v0.4.3-backend' }),
@@ -129,7 +154,7 @@ async function mockAiBackend(
     const request = route.request();
     const corsHeaders = {
       'Access-Control-Allow-Credentials': 'true',
-      'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+      'Access-Control-Allow-Headers': 'Authorization, Content-Type, Last-Event-ID',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       'Access-Control-Allow-Origin': allowedOrigin,
     };
@@ -175,7 +200,9 @@ async function mockAiBackend(
       return;
     }
     if (request.url().endsWith('/sessions/browser-session/events')) {
-      await route.fulfill({ status: 200, contentType: 'text/event-stream', headers: corsHeaders, body: '' });
+      const cursor = Number(request.headers()['last-event-id'] ?? 0);
+      if (journal.length <= cursor) await new Promise<void>(resolve => { wakeReader = resolve; });
+      await route.fulfill({ status: 200, contentType: 'text/event-stream', headers: corsHeaders, body: journal.slice(cursor).join('') });
       return;
     }
     if (request.url().endsWith('/sessions/browser-session') && request.method() === 'GET') {
@@ -192,11 +219,9 @@ async function mockAiBackend(
     captured.messageBodies.push(captured.messageBody);
     captured.messageContentType = request.headers()['content-type'] ?? '';
     const firstMessageFailed = failFirstMessage && captured.messageBodies.length === 1;
-    await route.fulfill({
-      status: 200,
-      contentType: 'text/event-stream',
-      headers: corsHeaders,
-      body: firstMessageFailed
+    const runId = `answer-${captured.messageBodies.length}`;
+    publish('run_start', { run_id: runId, trigger: 'user' });
+    const frames = firstMessageFailed
         ? [
           `event: tool_start\ndata: ${JSON.stringify({ name: 'bash', arguments: '{"command":"sleep 30"}' })}\n\n`,
           'event: delta\ndata: {"text":"Provisional response."}\n\n',
@@ -206,8 +231,17 @@ async function mockAiBackend(
           'event: context_usage\ndata: {"used_chars":500,"max_chars":2000}\n\n',
           ...answerDeltas.map(text => `event: delta\ndata: ${JSON.stringify({ text })}\n\n`),
           'event: done\ndata: {"run_id":"answer-id"}\n\n',
-        ].join(''),
-    });
+        ].join('');
+    for (const frame of frames.trim().split('\n\n')) {
+      const lines = frame.split('\n');
+      const type = lines.find(line => line.startsWith('event: '))!.slice(7);
+      if (!reportContext && type === 'context_usage') continue;
+      const data = JSON.parse(lines.find(line => line.startsWith('data: '))!.slice(6));
+      publish(type, { ...data, run_id: runId });
+    }
+    await route.fulfill({ status: 202, contentType: 'application/json', headers: corsHeaders, body: JSON.stringify({ run_id: runId }) });
+    wakeReader?.();
+    wakeReader = undefined;
   });
 
   return captured;
@@ -256,12 +290,8 @@ test('asks about the current schedule and renders a streamed answer', async ({ p
   await expect(page).toHaveURL(/\/dates$/);
 });
 
-test('explains unavailable context usage for older AI servers', async ({ page }) => {
-  await mockAiBackend(page);
-  await page.route('**/ai/sessions/browser-session/messages', route => route.fulfill({
-    status: 200, contentType: 'text/event-stream',
-    body: 'event: delta\ndata: {"text":"Done."}\n\nevent: done\ndata: {"message_id":"legacy-answer"}\n\n',
-  }));
+test('explains unavailable context usage when the backend omits it', async ({ page }) => {
+  await mockAiBackend(page, ['Done.'], false, undefined, [], false);
   await page.goto('/experimental-ai');
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Question');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
@@ -323,7 +353,7 @@ test('retries a failed text run without hiding its provisional activity', async 
   ]);
 });
 
-test('Stop aborts the active AI stream', async ({ page }) => {
+test('Stop cancels the run while keeping the session stream open', async ({ page }) => {
   const backend = await startCancelableAiBackend();
   for (const origin of ['null', 'https://untrusted.example']) {
     const response = await fetch(`${backend.origin}/ai/capabilities`, { headers: { Origin: origin } });
@@ -343,7 +373,8 @@ test('Stop aborts the active AI stream', async ({ page }) => {
     await expect(page.getByText('bash · running')).toBeVisible();
     await page.getByRole('button', { name: 'Stop' }).click();
 
-    await expect.poll(backend.wasDisconnected).toBe(true);
+    await expect.poll(backend.wasStopped).toBe(true);
+    expect(backend.wasDisconnected()).toBe(false);
     await expect(page.getByText('bash · interrupted')).toBeVisible();
     await expect(page.getByText('Stopped before completion.')).toBeVisible();
   } finally {
@@ -352,7 +383,6 @@ test('Stop aborts the active AI stream', async ({ page }) => {
 });
 
 test('downloads a completed background optimization from chat', async ({ page }) => {
-  await mockAiBackend(page, ['Optimization started.']);
   const workbookBytes = Buffer.from('browser-result-workbook');
   const completedRun = {
     job_id: 'opt-browser', state: 'completed', terminal: true, downloadable: true,
@@ -361,14 +391,10 @@ test('downloads a completed background optimization from chat', async ({ page })
     backend: { url: 'http://optimizer:8000', app_version: 'v0.4.3', api_version: '0.2.0', request_timeout_seconds: 30,
       claimed_performance: { score: 125, app_version: 'v0.4.2', measured_at: '2026-09-18T01:00:00Z' } },
   };
-  await page.route('**/ai/sessions/browser-session/events', route => route.fulfill({
-    status: 200,
-    contentType: 'text/event-stream',
-    body: [
-      'id: 1\nevent: optimization\ndata: {"job_id":"opt-browser","state":"running","terminal":false,"downloadable":false}\n\n',
-      `id: 2\nevent: optimization\ndata: ${JSON.stringify(completedRun)}\n\n`,
-    ].join(''),
-  }));
+  await mockAiBackend(page, ['Optimization started.'], false, undefined, [
+    { type: 'optimization', data: { job_id: 'opt-browser', state: 'running', terminal: false, downloadable: false } },
+    { type: 'optimization', data: completedRun },
+  ]);
   await page.route('**/ai/sessions/browser-session/optimizations/opt-browser/xlsx', route => route.fulfill({
     status: 200,
     contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -447,16 +473,13 @@ test('downloads a completed background optimization from chat', async ({ page })
 });
 
 test('keeps multiline optimizer errors in one field in chat and exports', async ({ page }) => {
-  await mockAiBackend(page, ['Optimization started.']);
   const error = 'Failed\nOutcome: optimal\r\nBackend version: forged';
-  await page.route('**/ai/sessions/browser-session/events', route => route.fulfill({
-    status: 200,
-    contentType: 'text/event-stream',
-    body: `id: 1\nevent: optimization\ndata: ${JSON.stringify({
+  await mockAiBackend(page, ['Optimization started.'], false, undefined, [{
+    type: 'optimization', data: {
       job_id: 'failed-run', state: 'failed', terminal: true, downloadable: false,
       error: { code: 'backend-error', message: error },
-    })}\n\n`,
-  }));
+    },
+  }]);
   await page.goto('/experimental-ai');
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Optimize it.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();

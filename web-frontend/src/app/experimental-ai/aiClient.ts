@@ -66,7 +66,17 @@ export interface ContextUsage {
   maxChars: number;
 }
 
+export interface SessionReset {
+  runIds: string[];
+  activeRunId: string | null;
+  terminalRunIds: string[];
+  incomplete: boolean;
+  proposalDiff: string | null;
+}
+
 export interface StreamCallbacks {
+  forRun?: (runId: string, trigger?: string) => StreamCallbacks | undefined;
+  onReset?: (reset: SessionReset) => void;
   lastEventId?: number;
   onEventId?: (id: number) => void;
   onRunStart?: (runId: string, trigger: string) => void;
@@ -136,6 +146,10 @@ interface SsePayload {
   used_chars?: unknown;
   max_chars?: unknown;
   dropped?: unknown;
+  events?: { type: string; data: SsePayload }[];
+  incomplete?: boolean;
+  active_run_id?: string | null;
+  proposal_diff?: string;
 }
 
 // Older backends omit the ID, so callers fall back to matching by tool name.
@@ -348,7 +362,8 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
     .map(line => line.slice('data:'.length).trimStart())
     .join('\n');
   if (!rawData) return;
-  if (Number.isSafeInteger(eventId) && eventId > 0 && eventId <= (callbacks.lastEventId ?? 0)) return;
+  if (eventType !== 'session_reset' && Number.isSafeInteger(eventId) && eventId > 0
+    && eventId <= (callbacks.lastEventId ?? 0)) return;
 
   let payload: SsePayload;
   try {
@@ -359,10 +374,37 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
 
   // Acknowledge before dispatching, so a handler that throws cannot make a
   // replayed stream repeat the same event after every reconnect.
-  if (Number.isSafeInteger(eventId) && eventId > 0) {
+  if (Number.isSafeInteger(eventId) && eventId >= 0) {
     callbacks.lastEventId = eventId;
     callbacks.onEventId?.(eventId);
   }
+  if (eventType === 'session_reset') {
+    if (!Array.isArray(payload.events)) throw new Error('The AI backend returned an invalid recovery snapshot.');
+    const runIds = [...new Set(payload.events.flatMap(event =>
+      typeof event.data?.run_id === 'string' ? [event.data.run_id] : []))];
+    const reset = {
+      runIds,
+      terminalRunIds: payload.events.flatMap(event =>
+        ['done', 'stopped', 'stale', 'error'].includes(event.type) && typeof event.data?.run_id === 'string'
+          ? [event.data.run_id] : []),
+      activeRunId: typeof payload.active_run_id === 'string' ? payload.active_run_id : null,
+      incomplete: payload.incomplete === true,
+      proposalDiff: typeof payload.proposal_diff === 'string' && payload.proposal_diff ? payload.proposal_diff : null,
+    };
+    callbacks.onReset?.(reset);
+    for (const runId of runIds) callbacks.forRun?.(runId)?.onReset?.(reset);
+    for (const event of payload.events) dispatchEvent(event.type, event.data, callbacks);
+    // Proposal ownership may have changed since the retained run produced it.
+    callbacks.onProposal?.(reset.proposalDiff ?? '');
+    return;
+  }
+  dispatchEvent(eventType, payload, callbacks);
+}
+
+function dispatchEvent(eventType: string, payload: SsePayload, streamCallbacks: StreamCallbacks): void {
+  const callbacks = typeof payload.run_id === 'string'
+    ? streamCallbacks.forRun?.(payload.run_id, textField(payload.trigger)) ?? streamCallbacks
+    : streamCallbacks;
   if (typeof payload.run_id === 'string') callbacks.onRunContext?.(payload.run_id);
 
   if (eventType === 'run_start' && typeof payload.run_id === 'string') {
@@ -462,6 +504,49 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
   }
 }
 
+async function postMessage(
+  sessionId: string,
+  message: string,
+  signal: AbortSignal,
+  authToken: string | null,
+  attachments: MessageAttachments,
+  endpoint: string,
+  accept: string,
+): Promise<Response> {
+  const files = attachments.files ?? [];
+  let body: BodyInit;
+  const headers: Record<string, string> = { Accept: accept };
+  if (files.length > 0) {
+    const form = new FormData();
+    form.append('message', message);
+    files.forEach(file => form.append('files', file, file.name));
+    body = form;
+  } else {
+    headers['Content-Type'] = 'application/json';
+    body = JSON.stringify({ message });
+  }
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/messages`, {
+    method: 'POST', credentials: 'include', headers: authorizedHeaders(authToken, headers), body, signal,
+  });
+  if (!response.ok) throw await responseError(response);
+  return response;
+}
+
+export async function sendMessage(
+  sessionId: string,
+  message: string,
+  signal: AbortSignal,
+  authToken: string | null,
+  attachments: MessageAttachments = {},
+  endpoint = getAiBaseUrl(),
+): Promise<string> {
+  const response = await postMessage(sessionId, message, signal, authToken, attachments, endpoint, 'application/json');
+  const body = await response.json() as { run_id?: unknown };
+  if (typeof body.run_id !== 'string' || !body.run_id) throw new Error('The AI backend returned an invalid run ID.');
+  return body.run_id;
+}
+
+/** Compatibility consumer. The browser uses sendMessage and the session GET stream. */
 export async function streamMessage(
   sessionId: string,
   message: string,
@@ -471,27 +556,7 @@ export async function streamMessage(
   attachments: MessageAttachments = {},
   endpoint = getAiBaseUrl(),
 ): Promise<void> {
-  const files = attachments.files ?? [];
-  let body: BodyInit;
-  let headers: Record<string, string> | undefined;
-  if (files.length > 0) {
-    const form = new FormData();
-    form.append('message', message);
-    files.forEach(file => form.append('files', file, file.name));
-    body = form;
-  } else {
-    headers = { 'Content-Type': 'application/json' };
-    body = JSON.stringify({ message });
-  }
-
-  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/messages`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: authorizedHeaders(authToken, headers),
-    body,
-    signal,
-  });
-  if (!response.ok) throw await responseError(response);
+  const response = await postMessage(sessionId, message, signal, authToken, attachments, endpoint, 'text/event-stream');
   await consumeStream(response, callbacks);
 }
 

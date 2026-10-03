@@ -403,6 +403,14 @@ and the [deployment guide](https://dev.nursescheduling.org/docs/developer-guide/
 
 ### AI backend configuration
 
+Messages return HTTP `202` with an admitted `run_id`. Subscribe to session
+`GET /events` for answers, tools, and optimizer updates, and reconnect with
+`Last-Event-ID`. Disconnect leaves work running. Use `POST /stop` to cancel.
+Replay and recovery each retain at most 1,000 main events, 100 progress entries,
+and 4 MiB per session, with a combined 64 MiB process limit. Expired required
+history produces `session_reset`. These are serialized event limits, separate
+from session text and model context limits.
+
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `AI_AUTH_TOKEN` | Unset | Shared bearer token. Setting it protects every AI session route. Use at least 16 ASCII characters. |

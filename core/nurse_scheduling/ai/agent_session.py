@@ -23,7 +23,7 @@ import asyncio
 import hashlib
 import json
 import logging
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
@@ -48,6 +48,7 @@ from .lifecycle import TERMINAL_EVENTS, AgentRun, RunSnapshot
 from .optimizer import OptimizerArtifact, SessionOptimizer
 from .provider import ProviderError, TokenUsage, ToolCapableChatProvider
 from .sandbox import SandboxError, SandboxFactory
+from .session_event_stream import SessionEvent, SessionEventStream
 from .transcript import (
     AgentMessage,
     AssistantMessage,
@@ -196,6 +197,45 @@ class AgentSession:
     proposal_diff: str = ""
     # The run that produced the pending proposal, so its decision joins that run's history.
     proposal_run_id: str | None = None
+    event_stream: SessionEventStream | None = field(default=None, repr=False)
+    _listeners: list[Callable[[str, dict[str, object]], None]] = field(default_factory=list, repr=False)
+    _events_closed: bool = False
+
+    def subscribe(self, listener: Callable[[str, dict[str, object]], None]) -> Callable[[], None]:
+        """Observe public session events. HTTP serialization belongs to the caller."""
+        self._listeners.append(listener)
+        removed = False
+
+        def unsubscribe() -> None:
+            nonlocal removed
+            if not removed:
+                removed = True
+                if listener in self._listeners:
+                    self._listeners.remove(listener)
+
+        return unsubscribe
+
+    def publish(self, event_type: str, data: dict[str, object]) -> None:
+        if self._events_closed:
+            return
+        if self.event_stream is not None:
+            self.event_stream.publish(self.id, event_type, data)
+        for listener in tuple(self._listeners):
+            listener(event_type, data)
+
+    async def events(self, after_id: int) -> AsyncIterator[SessionEvent | None]:
+        if self._events_closed:
+            return
+        assert self.event_stream is not None
+        async with aclosing(self.event_stream.stream(self.id, after_id)) as reader:
+            async for event in reader:
+                yield event
+
+    def close_events(self) -> None:
+        self._events_closed = True
+        self._listeners.clear()
+        if self.event_stream is not None:
+            self.event_stream.forget_session(self.id)
 
     @property
     def active(self) -> bool:
@@ -326,7 +366,6 @@ class AgentSession:
         question: str,
         *,
         runtime: SessionRuntime,
-        emit: Callable[[str, dict[str, object]], Awaitable[None]],
         background: bool = False,
         owner: str | None = None,
         credential_id: str | None = None,
@@ -358,7 +397,34 @@ class AgentSession:
         logged = False
         outcome = "cancelled"
         error_code = None
-        publish = emit
+        # Batch tiny provider fragments before the stream assigns publication IDs.
+        pending: tuple[str, dict[str, object]] | None = None
+        flush_timer: asyncio.TimerHandle | None = None
+
+        def flush() -> None:
+            nonlocal pending, flush_timer
+            if flush_timer is not None:
+                flush_timer.cancel()
+                flush_timer = None
+            if pending is not None:
+                self.publish(*pending)
+                pending = None
+
+        def publish(event_type: str, data: dict[str, object]) -> None:
+            nonlocal pending, flush_timer
+            if event_type in {"delta", "reasoning"}:
+                if pending is not None and pending[0] != event_type:
+                    flush()
+                text = str(pending[1]["text"]) if pending is not None else ""
+                pending = event_type, {**data, "text": text + str(data["text"])}
+                if len(str(pending[1]["text"])) >= 2048:
+                    flush()
+                elif flush_timer is None:
+                    flush_timer = asyncio.get_running_loop().call_later(0.025, flush)
+            else:
+                flush()
+                self.publish(event_type, data)
+
         terminal_event: tuple[str, dict[str, object]] | None = None
 
         async def emit(event_type: str, data: dict[str, object]) -> None:
@@ -368,7 +434,7 @@ class AgentSession:
             if event_type in TERMINAL_EVENTS:
                 terminal_event = event_type, data
             else:
-                await publish(event_type, data)
+                publish(event_type, data)
 
         async def write_history(operation: str, *args) -> bool:
             # asyncio cancellation and ASGI cancel scopes both wait for the history write.
@@ -380,8 +446,6 @@ class AgentSession:
                 raise
 
         try:
-            if background:
-                await emit("run_start", {"trigger": "optimizer"})
             if history_log is not None:
                 logged = True
                 logged = await write_history(
@@ -395,10 +459,10 @@ class AgentSession:
                 )
                 if not logged:
                     raise HTTPException(status_code=503, detail="AI chat history is temporarily unavailable.")
+            await emit("run_start", {"trigger": "optimizer" if background else "user"})
             run.ready.set_result(True)
             if not background:
                 artifact = await session_optimizer.latest_result_artifact(session_id)
-                await run.streaming.wait()
             retained_history = recent_history(transcript, settings.max_history_chars)
             await emit(
                 "context_usage",
@@ -524,4 +588,6 @@ class AgentSession:
                     run_entries[1:],
                 )
             if terminal_event is not None:
-                await publish(*terminal_event)
+                publish(*terminal_event)
+            else:
+                flush()

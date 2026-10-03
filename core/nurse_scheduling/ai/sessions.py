@@ -31,6 +31,7 @@ from .agent_session import AgentSession, RunCompletion, schedule_revision
 from .config import AiSettings
 from .context import history_context_chars, projected_history, recent_history
 from .lifecycle import RunSnapshot
+from .session_event_stream import SessionEventStream
 from .transcript import AgentMessage, ProposalDecision, UserMessage, entry_text
 
 __all__ = ["SessionStore", "schedule_revision"]
@@ -58,7 +59,8 @@ def _session_bytes(session: "AgentSession") -> int:
 class SessionStore:
     """Bounded session state. Synchronous transitions run on the owning event loop."""
 
-    def __init__(self, settings: AiSettings) -> None:
+    def __init__(self, settings: AiSettings, *, event_stream: SessionEventStream | None = None) -> None:
+        self._event_stream = event_stream
         self._settings = settings
         self._sessions: dict[str, AgentSession] = {}
         self._retained_bytes = 0
@@ -167,6 +169,7 @@ class SessionStore:
             expires_at=time.monotonic() + self._settings.session_ttl_seconds,
             schedule_yaml=schedule_yaml,
             revision=schedule_revision(schedule_yaml),
+            event_stream=self._event_stream,
         )
         self._sessions[session.id] = session
         self._recount(session)
@@ -333,7 +336,7 @@ class SessionStore:
         now = time.monotonic()
         expired_ids = [session_id for session_id, session in self._sessions.items() if session.expires_at <= now]
         for session_id in expired_ids:
-            del self._sessions[session_id]
+            self._sessions.pop(session_id).close_events()
             self._forget(session_id)
             if self._on_retire is not None:
                 self._on_retire(session_id)

@@ -46,12 +46,14 @@ async function mockProposingBackend(page: Page): Promise<{ approvals: number; re
   const baseURL = test.info().project.use.baseURL;
   if (!baseURL) throw new Error('Playwright baseURL is required for the AI backend mock.');
   const allowedOrigin = new URL(baseURL).origin;
+  const journal: string[] = [];
+  let wakeReader: (() => void) | undefined;
 
   await page.route('**/ai/**', async route => {
     const request = route.request();
     const corsHeaders = {
       'Access-Control-Allow-Credentials': 'true',
-      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Headers': 'Content-Type, Last-Event-ID',
       'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
       'Access-Control-Allow-Origin': allowedOrigin,
     };
@@ -80,9 +82,9 @@ async function mockProposingBackend(page: Page): Promise<{ approvals: number; re
       return;
     }
     if (request.url().endsWith('/events')) {
-      // The real session event stream carries background runs only, never the
-      // foreground answer below.
-      await route.fulfill({ status: 200, contentType: 'text/event-stream', headers: corsHeaders, body: '' });
+      const cursor = Number(request.headers()['last-event-id'] ?? 0);
+      if (journal.length <= cursor) await new Promise<void>(resolve => { wakeReader = resolve; });
+      await route.fulfill({ status: 200, contentType: 'text/event-stream', headers: corsHeaders, body: journal.slice(cursor).join('') });
       return;
     }
     if (request.url().endsWith('/schedule')) {
@@ -100,19 +102,31 @@ async function mockProposingBackend(page: Page): Promise<{ approvals: number; re
       });
       return;
     }
-    await route.fulfill({
-      status: 200,
-      contentType: 'text/event-stream',
-      headers: corsHeaders,
-      body: [
+    if (request.url().endsWith('/proposal/reject')) {
+      await route.fulfill({ status: 204, headers: corsHeaders });
+      return;
+    }
+    const runId = `answer-${journal.length}`;
+    const publish = (type: string, data: Record<string, unknown>) => {
+      journal.push(`id: ${journal.length + 1}\nevent: ${type}\ndata: ${JSON.stringify({ ...data, run_id: runId })}\n\n`);
+    };
+    publish('run_start', { trigger: 'user' });
+    const frames = [
         'event: reasoning\ndata: {"text":"The ward has one nurse, so I will add another."}\n\n',
         'event: tool\ndata: {"name":"bash","arguments":"{\\"command\\":\\"python3 /tmp/edit.py\\"}","result":"exit_code: 0","ok":true}\n\n',
         `event: schedule_change\ndata: ${JSON.stringify({ schedule_yaml: PROPOSED_YAML })}\n\n`,
         'event: delta\ndata: {"text":"I propose adding one nurse."}\n\n',
         'event: proposal\ndata: {"diff":"- people.items[0]: added {\\"id\\": \\"Proposed Nurse\\"}"}\n\n',
         'event: done\ndata: {"run_id":"answer-id"}\n\n',
-      ].join(''),
-    });
+      ].join('');
+    for (const frame of frames.trim().split('\n\n')) {
+      const lines = frame.split('\n');
+      publish(lines.find(line => line.startsWith('event: '))!.slice(7),
+        JSON.parse(lines.find(line => line.startsWith('data: '))!.slice(6)));
+    }
+    await route.fulfill({ status: 202, contentType: 'application/json', headers: corsHeaders, body: JSON.stringify({ run_id: runId }) });
+    wakeReader?.();
+    wakeReader = undefined;
   });
 
   return state;

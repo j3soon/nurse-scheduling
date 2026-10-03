@@ -55,7 +55,7 @@ stateDiagram-v2
     running --> completed: cleanup, current version,<br/>result saved
     running --> stale: cleanup, conversation<br/>version changed
     running --> failed: cleanup after error
-    running --> cancelling: Stop, disconnect,<br/>or shutdown before commit
+    running --> cancelling: Stop or shutdown<br/>before commit
     cancelling --> stopped: cleanup finishes,<br/>prompt saved if current
     completed --> [*]
     stale --> [*]
@@ -124,7 +124,7 @@ flowchart TB
 
 </div>
 
-Session ownership, admission, and background event delivery connect these
+Session ownership, admission, and event delivery connect these
 components as follows.
 
 <div class="ai-diagram" markdown="1" tabindex="0">
@@ -158,22 +158,21 @@ monitor independently and queues a review run when a job ends.
 
 ```mermaid
 flowchart TB
-    Session[<b>AgentSession</b><br/>Project run events]
-    Jobs[<b>SessionOptimizer</b><br/>Independent job events]
-    Foreground[<b>RunEvents</b><br/>Bounded buffer<br/>for one request]
-    Events[<b>SessionEventStream</b><br/>Retained replay<br/>across runs]
-    Routes[<b>API routes</b><br/>Serve SSE responses]
-    Browser[<b>Browser</b><br/>Shared event reducer]
+    Session[<b>AgentSession</b><br/>Publish every run and job event<br/>Notify in-process subscribers]
+    Jobs[<b>SessionOptimizer</b><br/>Independent job updates]
+    Events[<b>SessionEventStream</b><br/>Assign session event IDs<br/>Bound journal and recovery<br/>Coalesce replaceable updates]
+    Routes[<b>API routes</b><br/>Serialize SSE frames]
+    Browser[<b>Browser</b><br/>One session stream<br/>Route answers by run_id]
 
-    Session -->|Emit foreground events| Foreground
-    Session -->|Publish background<br/>review events| Events
-    Jobs -->|Publish job updates<br/>via callback| Events
-    Foreground -->|POST /messages SSE<br/>Disconnect cancels run| Routes
-    Events -->|GET /events SSE<br/>Reconnect with Last-Event-ID<br/>Disconnect leaves work running| Routes
-    Routes -->|Deliver either event stream| Browser
+    Jobs -->|Report progress, state,<br/>and result availability| Session
+    Session -->|Retain public events| Events
+    Events -->|Replay after cursor<br/>or send session_reset<br/>when required history expires| Routes
+    Routes -->|GET /events<br/>Disconnect detaches reader| Browser
+    Browser -->|Reconnect with Last-Event-ID| Routes
+    Browser -->|POST /messages<br/>202 with accepted run_id<br/>POST /stop cancels runs| Routes
 ```
 
-**Figure 4. Foreground and background events use different SSE lifetimes.**
+**Figure 4. One session stream delivers all run and optimizer events.**
 
 </div>
 
@@ -185,16 +184,15 @@ relative to `web-frontend/src/app/experimental-ai/`.
 | API routes<br/>`app.py` | Authenticate requests, invoke session operations, and serve HTTP and SSE responses. |
 | `SessionStore`<br/>`sessions.py` | Enforce session ownership, expiry, retained text budgets, and versioned conversation commits. |
 | `SessionRuns` / `AgentRun` / `RunSnapshot`<br/>`lifecycle.py` | Admit one run per session, queue background follow-ups, and keep ownership through cancellation and cleanup. Carry the conversation version used to authorize a commit. |
-| `AgentSession` / `RunOutput`<br/>`agent_session.py` | Prepare context, execute the agent, await cleanup, save the run, and project agent events onto SSE. |
+| `AgentSession` / `RunOutput`<br/>`agent_session.py` | Prepare context, execute the agent, await cleanup, save the run, and publish public session events. |
 | `Agent` / `AgentState`<br/>`agent.py`<br/>`agent_types.py` | Hold in-run messages, streaming state, pending tool call IDs, and queued steering. |
 | `agent_loop`<br/>`agent_loop.py` | Repeat model responses and tool batches until the agent finishes. |
 | Transcript and context<br/>`transcript.py`<br/>`context.py` | Define ordered message entries and project them into retained history and provider input. |
 | `WorkspaceTools` / `SandboxWorkspace`<br/>`workspace_tools.py`<br/>`workspace.py`<br/>`sandbox/` | Bind model tools to file operations, validate working YAML, and manage VM hydration, pause, resume, and teardown. |
 | `SessionOptimizer`<br/>`optimizer.py` | Own remote jobs, progress, artifacts, late-submission cleanup, and result-review wake-ups. |
-| `RunEvents`<br/>`lifecycle.py` | Buffer foreground events for one message request's SSE response. |
-| `SessionEventStream`<br/>`session_event_stream.py` | Retain and replay background SSE by cursor. |
+| `SessionEventStream`<br/>`session_event_stream.py` | Retain bounded journal and recovery projections for every session event. |
 | Browser `ChatLifecycle`<br/>`chatLifecycle.ts` | Track operation ownership and derive busy and Stop state. |
-| Browser event reducer<br/>`assistantEvents.ts` | Apply shared assistant events from both SSE streams. |
+| Browser event reducer<br/>`assistantEvents.ts` | Apply assistant events from the session stream. |
 
 ## One Run at a Glance {#one-turn-at-a-glance}
 
@@ -226,7 +224,7 @@ flowchart TB
 ```mermaid
 flowchart TB
     Answer[<b>Final answer</b>]
-    Stop[<b>Stop or disconnect</b><br/>Before commit begins]
+    Stop[<b>Stop or shutdown</b><br/>Before commit begins]
     Failure[<b>Execution error</b>]
     Cleanup[<b>Workspace finalization</b><br/>Review final YAML<br/>on success<br/>Clean up on every exit]
     Check{<b>AgentSession</b><br/>Version and outcome}
@@ -253,12 +251,9 @@ flowchart TB
 | Browser action during a foreground run | Result |
 | --- | --- |
 | Queue the next message | HTTP `202` injects it at the next model boundary. If the run is closing, HTTP `409` makes the browser send it as a new run later. |
-| Stop the current answer | The browser clears its locally queued messages, aborts the foreground SSE stream, and sends `POST /stop` (HTTP `202`). The service cancels the active run and every queued follow-up run. Cleanup still finishes. |
+| Stop the current answer | The browser clears its locally queued messages and sends `POST /stop` (HTTP `202`). Its session stream remains open, and the UI waits for a terminal event confirming cleanup. The service cancels the active run and every queued follow-up run. Cleanup still finishes. |
 | Start a second answer directly | HTTP `409` leaves the current run running. |
-| Disconnect the foreground SSE stream | Cancels only the active run. Cleanup still finishes. Queued follow-up runs run once admitted. |
-
-A lost background event connection instead resumes from `Last-Event-ID` while
-the server run continues.
+| Disconnect the session SSE stream | Detaches the reader. Runs and optimizer jobs continue. Reconnect with `Last-Event-ID` to recover output. |
 
 The three paths below expand the model steps. [Retention and Context](#retention-and-context)
 shows what each outcome keeps for later questions.
@@ -285,6 +280,7 @@ sequenceDiagram
     participant Model as Model provider
 
     Browser->>AI: POST /messages
+    Note over Browser,AI: POST: 202 with run_id<br/>GET /events may arrive first
     AI->>Agent: Start prompt with summary,<br/>transcript context, question<br/>and tool definitions
     Agent->>Model: Stream response
     loop Text or reasoning chunks
@@ -566,19 +562,19 @@ sequenceDiagram
         Agent->>Agent: Review against<br/>run schedule
     end
     alt Read or review fails
-        Note right of Agent: Foreground SSE tool error,<br/>no job
+        Note right of Agent: Session SSE tool error,<br/>no job
     else YAML passes review
         Agent->>Jobs: start(working YAML)
         Jobs->>Jobs: Check run limits, validate,<br/>anonymize IDs,<br/>remove descriptions
         alt Validation or run limit fails
             Jobs-->>Agent: Tool error, no job
-            Note right of Agent: Foreground SSE tool error
+            Note right of Agent: Session SSE tool error
         else Prepared schedule accepted
             Jobs->>API: Submit schedule
             alt Submission rejected
                 API-->>Jobs: Error, no job
                 Jobs-->>Agent: Tool error
-                Note right of Agent: Foreground SSE tool error
+                Note right of Agent: Session SSE tool error
             else Run cancelled before ID returns
                 API-->>Jobs: Late job ID
                 Jobs->>API: Cancel if running,<br/>delete when terminal
@@ -589,7 +585,7 @@ sequenceDiagram
                     Note right of Jobs: Browser receives session<br/>SSE optimization state
                 end
                 Jobs-->>Agent: Tool result with<br/>session job ID
-                Note right of Agent: AgentSession emits<br/>foreground SSE tool.<br/>Batch closes, answer may continue.
+                Note right of Agent: AgentSession emits<br/>session SSE tool.<br/>Batch closes, answer may continue.
             end
         end
     end
@@ -626,7 +622,7 @@ sequenceDiagram
     par Progress relay
         Jobs->>API: Open progress stream
         API-->>Jobs: Progress events
-        Jobs-->>Browser: Session SSE<br/>optimization_progress
+        Jobs-->>Browser: Via AgentSession<br/>GET /events<br/>optimization_progress
     and Status monitor
         loop Until completed, failed, or cancelled
             Jobs->>API: Poll status
@@ -640,11 +636,11 @@ sequenceDiagram
     end
     Jobs->>API: Delete remote job
     opt Session still owns job
-        Jobs-->>Browser: Session SSE<br/>optimization state
+        Jobs-->>Browser: Via AgentSession<br/>GET /events<br/>optimization state
         Jobs->>Runs: Queue result review<br/>behind active run
-        Runs-->>Browser: Session SSE run_start<br/>when admitted
+        Runs-->>Browser: Via AgentSession<br/>GET /events run_start<br/>when admitted
         Runs->>Runs: Run Agent with result JSON<br/>and retained XLSX if any
-        Runs-->>Browser: Session SSE answer<br/>and terminal event
+        Runs-->>Browser: Via AgentSession<br/>GET /events answer<br/>and terminal event
     end
 
 ```
@@ -679,18 +675,18 @@ sequenceDiagram
     alt status
         Agent->>Jobs: Read latest local status
         Jobs-->>Agent: Tool result
-        Agent-->>Browser: Foreground SSE tool
+        Agent-->>Browser: Session SSE tool
     else finish_now
         Agent->>Jobs: Request best available<br/>result for latest job
         opt Job still running
             Jobs->>API: finish_now
             API-->>Jobs: State or error
             opt Accepted and still running
-                Jobs-->>Browser: Session SSE<br/>optimization state
+                Jobs-->>Browser: Via AgentSession<br/>GET /events<br/>optimization state
             end
         end
         Jobs-->>Agent: Tool result
-        Agent-->>Browser: Foreground SSE tool
+        Agent-->>Browser: Session SSE tool
     end
 
 ```
@@ -758,7 +754,7 @@ reason. Proposal decisions add short `proposal_decision` action notes after
 the run.
 
 Each destination receives a projection of these entries. `context.py` builds
-provider input, `RunOutput` projects agent events onto SSE, and the chat history
+provider input, `RunOutput` projects agent events onto the public session contract, and the chat history
 log stores ordered entries under the run. The log omits image bytes from tool
 results.
 
@@ -805,7 +801,7 @@ Each row lists shared behavior first, then what only one side has.
 | `SessionRuns` / `AgentRun` / `RunSnapshot`<br/>Pi: [ActiveRun and run lifecycle][pi-agent] | One active run with a cancellation handle, finishing before the next run starts. | Per-session FIFO admission, queued background runs, Stop that also cancels queued runs, and a versioned commit capability. | The agent's own `AbortController`, passed to tools, with a single-run guard instead of a queue. |
 | Steering queue<br/>Pi: [steer / followUp][pi-agent] | Queued input reaches the model at a boundary without starting a new run. | One queue serves both roles. It drains every message, deduplicates retried POSTs by ID, and closes atomically with the answer. Optimizer wake-ups enter `SessionRuns` as fresh runs. | Separate steering and follow-up queues, each draining one message at a time or all at once. |
 | `WorkspaceTools` / `SandboxWorkspace`<br/>Pi: [read, bash, edit, write][pi-coding-tools] | Pi's default `read`, `bash`, `edit`, and `write` contracts and output behavior, ported under `ai/pi`. | A lazy, disposable E2B VM per run with hydration, pause and resume, YAML validation after each change, and teardown before commit. A shorter `read` description, fixed image limits with a source-pixel bound, and server command timeouts. | Tools act on the user's local working directory, which persists across runs. Image resize options can follow the active model's limits. Built-in `powershell`, `find`, `grep`, and `ls` tools are available beyond the default active four. Nested calls through [`ctx.executeTool()`][pi-nested-tools] share validation and hooks and carry parent tool call IDs. |
-| SSE projection / `RunEvents` / `SessionEventStream`<br/>Pi: [AgentEvent][pi-events], [Agent.subscribe][pi-agent] | Typed text, reasoning, and tool events with call IDs, a message end for each model response, and exactly one terminal outcome per run. | Events map onto a stable SSE contract. Foreground output is a bounded stream that disconnect cancels. Background output is a journal replayed with `Last-Event-ID`. | In-process subscribers receive agent, turn, message, and tool lifecycle events, including partial tool updates. Low-level `agent_end` marks the end of one loop run. `AgentSession` emits [`agent_settled`][pi-settled] after retries, compaction recovery, queued continuation work, and session boundary processing finish. |
+| Session events / `SessionEventStream`<br/>Pi: [AgentEvent][pi-events], [Agent.subscribe][pi-agent] | Typed text, reasoning, and tool events with call IDs, a message end for each model response, and exactly one terminal outcome per run. | `AgentSession.subscribe` exposes public events in process. `SessionEventStream` retains all run and job events for HTTP replay with `Last-Event-ID`. Disconnect detaches the reader. Explicit Stop cancels runs. | In-process subscribers receive agent, turn, message, and tool lifecycle events, including partial tool updates. Low-level `agent_end` marks the end of one loop run. `AgentSession` emits [`agent_settled`][pi-settled] after retries, compaction recovery, queued continuation work, and session boundary processing finish. |
 | `SessionOptimizer`<br/>Pi: no first-class built-in counterpart | Exposed to the model as one `AgentTool`. | Independent remote jobs, progress, anonymization, late-submission cleanup, and fresh review runs. | Similar behavior could be implemented through extensions. |
 | API routes / `SessionStore` / browser lifecycle<br/>Pi: nearest is [AgentSession][pi-session] | A session boundary that owns conversation lifetime. | HTTP authentication, cookie ownership, expiry, session text limits, SSE reconnection, a browser-owned schedule, and proposal approval. | Local single-user sessions stored on disk that can be resumed and branched. |
 
@@ -815,12 +811,6 @@ Each row lists shared behavior first, then what only one side has.
 
 The investigated alternatives below were not adopted:
 
-- **One event journal for both transports.** Foreground output is bounded and
-  backpressured for its single reader, and disconnect cancels the run.
-  Background output must outlive readers, replay by cursor, and also carry
-  optimizer progress. Both already share `RunOutput` projection and
-  `TERMINAL_EVENTS`. A single journal would add replay cost to every answer or
-  drop backpressure.
 - **Separate steering and follow-up queues.** The browser offers one queue
   action. Optimizer results start a fresh run because they can arrive after the
   run ends and must see the current schedule.
@@ -862,17 +852,17 @@ The investigated alternatives below were not adopted:
 | `GET` | `/capabilities` | Discover the app version, attachment limits, session lifetime, and authentication requirement. |
 | `POST` | `/sessions` | Create a session from `schedule_yaml`. |
 | `GET` | `/sessions/{id}` | Check a session's remaining lifetime. |
-| `POST` | `/sessions/{id}/messages` | Start a foreground SSE run with JSON text or multipart text and attachments. |
+| `POST` | `/sessions/{id}/messages` | Admit a foreground run from JSON or multipart input. Return HTTP `202` with `run_id`. |
 | `POST` | `/sessions/{id}/messages/queue` | Queue steering text for the active run's next model boundary. |
 | `POST` | `/sessions/{id}/stop` | Stop the active assistant run. |
-| `GET` | `/sessions/{id}/events` | Replayable SSE for optimizer progress and background runs. |
+| `GET` | `/sessions/{id}/events` | One replayable SSE stream for every run and optimizer update. |
 | `PUT` | `/sessions/{id}/schedule` | Replace the session snapshot and discard a pending proposal. |
 | `POST` | `/sessions/{id}/proposal/approve` | Revalidate and adopt a proposal against its base revision. |
 | `POST` | `/sessions/{id}/proposal/reject` | Discard a proposal. |
 | `GET` | `/sessions/{id}/optimizations/{job_id}/xlsx` | Download a retained optimizer workbook. |
 
 For multipart messages, send one `message` field and repeat the `files` field
-for attachments. The message and event routes return server-sent events.
+for attachments. The message route acknowledges admission. The event route returns server-sent events.
 `stop` and `messages/queue` return HTTP `202`. Creating a session sets its
 owner cookie. Later session routes require that cookie.
 
@@ -895,9 +885,8 @@ defaults and validation rules.
 
 ### Streams and events
 
-Foreground answers use the message request's SSE stream. Optimizer progress
-and result-review runs use the session SSE stream. It replays from
-`Last-Event-ID`. Each session has a journal and a recovery projection, each
+Every answer, tool result, optimizer update, and result-review run uses
+`GET /events`. It replays from `Last-Event-ID`. Each session has a journal and a recovery projection, each
 limited to 1,000 main events, 100 progress entries, and 4 MiB of serialized JSON.
 Their combined retention is capped at 64 MiB across the process. Progress keeps
 the latest update per job and cannot displace main events through its count
@@ -907,18 +896,24 @@ Each run ends with one terminal event.
 Expired required events cause `session_reset`, carrying the bounded recovery
 projection and an `incomplete` flag when older activity has also expired.
 Adjacent answer and reasoning fragments are combined in this projection.
+The API includes the active run ID and current proposal diff. The browser
+rebuilds matching answers without duplicating text or consumed steering.
+An incomplete snapshot visibly reports expired output.
 Replaced progress, context usage, and intermediate preview IDs do not create a
 replay gap. These limits count retained JSON, not total process RAM.
 
-The message stream ends with its run, and disconnect cancels that run. The
-session stream stays open across runs, and disconnect leaves background work
-running. Both streams feed the same browser event reducer.
-All run-associated events on either stream carry `run_id`, including
+The session stream stays open across runs. Disconnect detaches only its
+reader. Explicit `POST /stop` cancels active and queued runs, and its terminal
+event follows cleanup. An explicit `Accept: text/event-stream` on POST
+`/messages` remains available for API consumers. It reads the same journal,
+ends at its run's terminal event, and also leaves work running on disconnect.
+All run-associated events carry `run_id`, including
 `run_start`, `done`, `stopped`, `stale`, and `error`. Steering events also
 carry the queued user input's `message_id`, and tool events use `tool_call_id`.
-The browser keys a background answer by `run_id`. Foreground UI messages
-have their own local IDs. Browser operation tokens prevent an older stream
-callback from replacing newer state.
+The browser routes events by `run_id` and records that identity on its local
+answer segments. Operation tokens prevent an older connection or run callback
+from replacing newer state. Tiny text fragments are grouped before publication
+for up to 25 ms or 2,048 characters to limit replay entries.
 
 | Event | Meaning |
 | --- | --- |
@@ -927,7 +922,8 @@ callback from replacing newer state.
 | `schedule_change`, `proposal` | Working-copy preview and final candidate diff. |
 | `steering`, `history_trimmed` | Queued input consumed and prompt-history reduction. |
 | `context_usage` | Selected history usage in serialized JSON characters: `used_chars` and `max_chars`. |
-| `optimization`, `optimization_progress`, `run_start` | Job state, progress, and a background review run. |
+| `optimization`, `optimization_progress`, `run_start` | Job state, progress, and an admitted user or optimizer review run. |
+| `session_reset` | Recovery snapshot after required replay history expires, with current proposal ownership and an expired-output flag. |
 | `done`, `stopped`, `stale`, `error` | Terminal run outcomes. |
 
 `context_usage` measures the retained history budget at the start of a run and after
@@ -936,7 +932,7 @@ total context window.
 
 ## Storage and Deployment
 
-Session state, run admission, background replay, and optimizer monitors are
+Session state, run admission, event replay, and optimizer monitors are
 process-local. Run one AI backend instance until shared AI storage exists.
 These stores are separate from the optimizer server's Redis store. A restart
 loses active sessions even when PostgreSQL logging is enabled.
