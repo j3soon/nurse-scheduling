@@ -282,7 +282,7 @@ class AgentSession:
         self.agent.close_steering()
         return True
 
-    def admit_steering(self, message_id: str, max_messages: int) -> bool:
+    def check_steering(self, message_id: str, max_messages: int) -> bool:
         """Check a queued message against the active run. False means a retried duplicate."""
         if not self.active or not self.agent.accepting_steering:
             raise HTTPException(status_code=409, detail="The active response is no longer accepting messages.")

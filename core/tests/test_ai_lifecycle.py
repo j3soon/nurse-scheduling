@@ -1,4 +1,4 @@
-"""Adversarial admission, cancellation and session snapshot orderings."""
+"""Adversarial run scheduling, cancellation and session snapshot orderings."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -37,7 +37,7 @@ from .ai_test_helper import schedule_yaml
 from .test_ai_basic import AI_AUTH_HEADERS, FakeProvider, create_test_app, make_settings
 
 
-def test_setup_failure_releases_admission_and_the_next_request_can_run(monkeypatch):
+def test_setup_failure_releases_session_and_the_next_request_can_run(monkeypatch):
     async def exercise():
         app = create_test_app(settings=make_settings(), provider=FakeProvider())
         original = app.state.session_optimizer.latest_result_artifact
@@ -126,7 +126,7 @@ def test_cancelling_a_queued_turn_does_not_let_its_successor_overtake_the_owner(
     asyncio.run(exercise())
 
 
-def test_stop_is_idempotent_through_cleanup_and_cancels_all_admitted_turns():
+def test_stop_is_idempotent_through_cleanup_and_cancels_active_and_queued_runs():
     async def exercise():
         turns = SessionRuns()
         started = asyncio.Event()
@@ -168,7 +168,7 @@ def test_stop_is_idempotent_through_cleanup_and_cancels_all_admitted_turns():
     asyncio.run(exercise())
 
 
-def test_shutdown_joins_cleanup_and_closes_admission():
+def test_shutdown_joins_cleanup_and_stops_accepting_runs():
     async def exercise():
         turns = SessionRuns()
         started = asyncio.Event()

@@ -112,8 +112,8 @@ class SessionStore:
     def _trim_history_to_budget(self, session: AgentSession, protected_messages: int) -> None:
         """Drop this session's oldest context until retained text fits the budget.
 
-        A run grows a session without passing an admission check, so sessions admitted
-        cheaply would otherwise accumulate answers and proposals far past the budget and
+        A run adds output without another capacity check. Initially small sessions
+        would otherwise accumulate answers and proposals far past the budget and
         hold them until they expire. Older context is the part a later run needs least,
         and the message cap already truncates from the same end.
 
@@ -242,7 +242,7 @@ class SessionStore:
     ) -> None:
         """Queue a message for the next model boundary of an active response."""
         session = self._get_owned(session_id, owner_token)
-        if not session.admit_steering(message_id, self._settings.max_history_messages):
+        if not session.check_steering(message_id, self._settings.max_history_messages):
             return
         message_bytes = _text_bytes(message)
         self._require_capacity(message_bytes)

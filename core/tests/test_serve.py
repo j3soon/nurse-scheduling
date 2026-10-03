@@ -2257,7 +2257,7 @@ def test_declared_oversize_body_is_refused_before_the_upload_is_buffered():
         assert refused.status_code == 413
         assert refused.json()["error"]["code"] == "request_too_large"
 
-        # A body the middleware admits still reaches the route's own limit.
+        # A body the middleware accepts still reaches the route's own limit.
         oversized = client.post(
             "/optimize",
             files={"file": ("schedule.yaml", b"x" * 1025, "application/x-yaml")},

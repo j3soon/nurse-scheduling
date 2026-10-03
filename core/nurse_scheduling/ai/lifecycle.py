@@ -1,4 +1,4 @@
-"""Event-loop-owned run admission, cancellation and owned cleanup."""
+"""Event-loop-owned run scheduling, cancellation and owned cleanup."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -47,7 +47,7 @@ class RunSnapshot:
 
 @dataclass(eq=False)
 class AgentRun:
-    """One operation, from admission through cleanup, independent of its HTTP reader."""
+    """One operation, from acceptance through cleanup, independent of its HTTP reader."""
 
     id: str = field(default_factory=lambda: str(uuid4()))
     task: asyncio.Task[None] = field(init=False)
@@ -55,7 +55,7 @@ class AgentRun:
     done: asyncio.Future[None] = field(default_factory=lambda: asyncio.get_running_loop().create_future())
     cancelled: bool = False
     finishing: bool = False
-    admitted: asyncio.Event = field(default_factory=asyncio.Event)
+    ready_to_start: asyncio.Event = field(default_factory=asyncio.Event)
 
     def cancel(self) -> None:
         # Cancellation is an edge, not a repeated interrupt of resource cleanup.
@@ -69,11 +69,11 @@ class AgentRun:
 
 
 class SessionRuns:
-    """Event-loop-owned FIFO admission. No transition below suspends.
+    """Event-loop-owned FIFO execution. No transition below suspends.
 
     A foreground request is rejected while any run owns the session. Background
-    follow-ups queue behind it. Stop cancels the admitted generation, including
-    queued runs, without affecting optimizer jobs that may complete later.
+    follow-ups queue behind it. Stop cancels active and queued runs, without
+    affecting optimizer jobs that may complete later.
     """
 
     def __init__(self) -> None:
@@ -94,10 +94,10 @@ class SessionRuns:
         run = AgentRun()
         pending.append(run)
         if len(pending) == 1:
-            run.admitted.set()
+            run.ready_to_start.set()
 
         async def execute() -> None:
-            await run.admitted.wait()
+            await run.ready_to_start.wait()
             await execute_run(run)
 
         def finished(task: asyncio.Task[None]) -> None:
@@ -106,7 +106,7 @@ class SessionRuns:
             if not pending:
                 self._runs.pop(session_id, None)
             elif was_head:
-                pending[0].admitted.set()
+                pending[0].ready_to_start.set()
             if not run.ready.done():
                 run.ready.set_result(False)
             run.done.set_result(None)

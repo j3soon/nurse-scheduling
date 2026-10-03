@@ -403,7 +403,7 @@ and the [deployment guide](https://dev.nursescheduling.org/docs/developer-guide/
 
 ### AI backend configuration
 
-Messages return HTTP `202` with an admitted `run_id`. Subscribe to session
+Messages return HTTP `202` with the new `run_id`. Subscribe to session
 `GET /events` for answers, tools, and optimizer updates, and reconnect with
 `Last-Event-ID`. Disconnect leaves work running. Use `POST /stop` to cancel.
 Replay and recovery each retain at most 1,000 main events, 100 progress entries,

@@ -2507,8 +2507,8 @@ def test_steering_adjusts_retained_bytes_without_a_full_recount() -> None:
 
 
 def test_completed_turns_do_not_accumulate_past_the_budget() -> None:
-    # A turn grows a session without passing an admission check, so sessions
-    # admitted cheaply must not keep every answer they produce.
+    # Completed runs add output without another capacity check. Initially small
+    # sessions must not keep every answer they produce.
     settings = make_settings(max_session_bytes=10_000, max_schedule_bytes=1000, max_history_messages=20)
     app = create_test_app(settings=settings, provider=FakeProvider())
     store = app.state.session_store

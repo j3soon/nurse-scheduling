@@ -1530,7 +1530,7 @@ export default function ExperimentalAiPage() {
           ? { ...message, runId: foreground.runId } : message));
         foreground.deferred.splice(0).forEach(deliver => deliver());
         if (!runFinished && lifecycle.getSnapshot().foreground?.phase === 'stopping') {
-          // Stop may have reached the server before the message was admitted.
+          // Stop may have reached the server before the message was accepted.
           await stopSession(sessionId, authToken, sessionEndpoint).catch(stopError => {
             if (!lifecycle.owns(operation)) return;
             lifecycle.stopFailed([operation]);

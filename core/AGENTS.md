@@ -74,9 +74,9 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   Keep scheduling, sandbox, and HTTP-specific differences explicit in the
   developer guide's Mapping to Pi section.
 - Session transitions are synchronous and owned by the service event loop.
-  Admit agent runs through `SessionRuns` and keep foreground and background
-  execution in `AgentSession.run`. Await owned cleanup before releasing
-  admission. Commit conversation changes only with the matching `RunSnapshot`.
+  Start agent runs through `SessionRuns` and keep foreground and background
+  execution in `AgentSession.run`. Await owned cleanup before starting the next
+  run. Commit conversation changes only with the matching `RunSnapshot`.
   Follow Pi terminology: a run spans multiple model/tool turns. Keep model-loop
   state and steering in `Agent`, application finalization in `AgentSession`,
   and sandbox lifetime and hydration in `SandboxWorkspace`. Session mutations
@@ -99,8 +99,8 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   Distinguish replaceable progress updates from run and tool lifecycle events.
   Optimizer completion, failure, and result availability are lifecycle events.
   Publish through `AgentSession` and keep HTTP serialization in the API adapter.
-  POST `/messages` acknowledges admission. GET `/events` delivers all runs and
-  job updates. Reader disconnect never cancels work. Explicit Stop does.
+  POST `/messages` acknowledges the accepted message. GET `/events` delivers all
+  runs and job updates. Reader disconnect never cancels work. Explicit Stop does.
   Test output arriving before acknowledgement, lost required replay history,
   and retirement while a reader or optimizer callback remains active.
 - Keep attachment limits server-configured and report them through

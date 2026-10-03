@@ -596,7 +596,7 @@ def create_app(
         request: Request,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> Response:
-        """Admit a run independently of its event subscribers."""
+        """Start a run independently of its event subscribers."""
         question, attachments = await _parse_message_request(request, settings)
         session = store.require_owned(session_id, owner)
         cursor = event_stream.cursor(session_id)
@@ -622,7 +622,7 @@ def create_app(
         )
 
         # Compatibility readers explicitly request SSE. They use the same journal
-        # and cannot cancel execution by leaving. New clients receive an admission ACK.
+        # and cannot cancel execution by leaving. New clients receive a message acknowledgement.
         if "text/event-stream" in request.headers.get("accept", ""):
 
             async def generate_events():

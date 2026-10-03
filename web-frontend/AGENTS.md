@@ -89,7 +89,7 @@ Replayable events carry run identity and advance the cursor only after a complet
 SSE frame. Test overlapping foreground completion and background replay explicitly.
 Apply assistant output from the single session GET stream through
 `applyAssistantEvent`. Route foreground and review events by `run_id`, including
-output that arrives before POST admission is acknowledged. Keep run identity on
+output that arrives before POST message acceptance is acknowledged. Keep run identity on
 answer segments so recovery replaces matching output without duplicating text or
 consumed steering. Stop keeps the stream open until a terminal event confirms
 cleanup. A lost reader reconnects without cancelling server work. When

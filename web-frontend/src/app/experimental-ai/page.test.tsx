@@ -129,7 +129,7 @@ describe('ExperimentalAiPage', () => {
     });
     mockStreamSessionEvents.mockReset().mockImplementation(() => new Promise<void>(() => {}));
     // Existing UI scenarios describe run callbacks. Deliver them through the
-    // session stream while the POST returns only its admission acknowledgement.
+    // session stream while the POST returns only its message acknowledgement.
     mockSendMessage.mockReset().mockImplementation(async (id, message, signal, token, attachments, endpoint) => {
       const stream = mockStreamSessionEvents.mock.calls.at(-1)?.[1] as StreamCallbacks;
       const runId = `user-run-${mockSendMessage.mock.calls.length}`;
@@ -868,7 +868,7 @@ describe('ExperimentalAiPage', () => {
     expect(stored.messages[0].status).toBeUndefined();
   });
 
-  it('reissues Stop after admission when the first Stop reached the server too early', async () => {
+  it('reissues Stop after message acceptance when the first Stop reached the server too early', async () => {
     const user = userEvent.setup();
     let accept: ((id: string) => void) | undefined;
     mockSendMessage.mockImplementationOnce(() => new Promise<string>(resolve => { accept = resolve; }));
@@ -888,7 +888,7 @@ describe('ExperimentalAiPage', () => {
     expect(await screen.findByText('Stopped before completion.')).toBeInTheDocument();
   });
 
-  it('keeps deferred review events when their reader disconnects before foreground admission is acknowledged', async () => {
+  it('keeps deferred review events when their reader disconnects before foreground message acceptance is acknowledged', async () => {
     const user = userEvent.setup();
     let disconnect: (() => void) | undefined;
     let accept: ((id: string) => void) | undefined;
@@ -918,7 +918,7 @@ describe('ExperimentalAiPage', () => {
     expect(await screen.findByText('Current answer.')).toBeInTheDocument();
   });
 
-  it('routes a terminal event received before the admission acknowledgement to its foreground answer', async () => {
+  it('routes a terminal event received before the message acknowledgement to its foreground answer', async () => {
     const user = userEvent.setup();
     mockSendMessage.mockImplementationOnce(async () => {
       const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as StreamCallbacks;

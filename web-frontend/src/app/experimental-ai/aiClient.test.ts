@@ -166,7 +166,7 @@ describe('AI client', () => {
     });
   });
 
-  it('submits a message and returns its admitted run ID without reading SSE', async () => {
+  it('submits a message and returns its active run ID without reading SSE', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ run_id: 'r' }), { status: 202 }));
     vi.stubGlobal('fetch', fetchMock);
     expect(await sendMessage('s', 'Hello', new AbortController().signal, 'token')).toBe('r');

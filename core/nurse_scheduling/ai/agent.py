@@ -69,7 +69,7 @@ class Agent:
 
     @property
     def steered_count(self) -> int:
-        """Messages admitted during this run, including those already delivered."""
+        """Messages accepted during this run, including those already delivered."""
         return len(self._steering_ids)
 
     @property
@@ -91,7 +91,7 @@ class Agent:
         self.state.messages.clear()
 
     def steer(self, message_id: str, text: str) -> None:
-        """Queue already admitted input. The session enforces ownership and limits."""
+        """Queue already accepted input. The session enforces ownership and limits."""
         if not self._accepting_steering:
             raise RuntimeError("The active run is no longer accepting messages.")
         if message_id not in self._steering_ids:
