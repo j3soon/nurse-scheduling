@@ -60,6 +60,7 @@ from nurse_scheduling.ai.schema import (
     load_user_guide_references,
 )
 from nurse_scheduling.ai.system_prompt import PROMPT_DIRECTORY, compose_system_prompt, load_system_prompt_sections
+from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
 
 from .ai_eval.comparison import comparison_metrics_markdown, comparison_statistics
 from .ai_eval.grading import EvalCase, ExpectedDiff, ToolUsageExpectation, TurnAction, load_cases
@@ -67,6 +68,7 @@ from .ai_eval.prompt_ladder import STEPS_PATH, case_digest, load_prompt_steps, p
 from .ai_eval.runner import (
     CASES,
     DEFAULT_CASE_JOBS,
+    FIXTURES,
     CaseRun,
     _evaluation_metadata,
     _parse_args,
@@ -1649,3 +1651,10 @@ def test_request_receipt_binds_compiled_selector_producer(monkeypatch):
     monkeypatch.setattr(result_context, "_project_context", replacement)
     assert case_digest(case) != before
     assert case_digest(CASE_BY_ID["pdf-visual-layout"]) == pdf_before
+
+
+@pytest.mark.parametrize("fixture", sorted(set(FIXTURES) - {"new-schedule"}))
+def test_complete_evaluation_fixtures_match_frontend_subset(fixture):
+    # new-schedule intentionally starts with an incomplete construction scaffold.
+    result = validate_frontend_schedule_yaml(fixture_text(fixture), max_bytes=2000000)
+    assert result.valid, result.issues
