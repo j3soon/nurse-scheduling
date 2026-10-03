@@ -56,6 +56,9 @@ import {
   createSession,
   downloadOptimization,
   downloadGeneratedZip,
+  getUploads,
+  removeUpload,
+  type UploadedFile,
   getAiBaseUrl,
   getCapabilities,
   getSessionStatus,
@@ -466,6 +469,8 @@ export default function ExperimentalAiPage() {
   ]);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
+  const [removingUploadId, setRemovingUploadId] = useState<string | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sessionExpiresAt, setSessionExpiresAt] = useState<number | null>(null);
   const [sessionRetentionSeconds, setSessionRetentionSeconds] = useState(DEFAULT_SESSION_RETENTION_SECONDS);
@@ -753,6 +758,36 @@ export default function ExperimentalAiPage() {
         }
       });
   }, [activeSessionId, aiEndpoint, authToken, isClientReady, reportRequestError]);
+
+  useEffect(() => {
+    if (!activeSessionId || !fileCapability.retained || conversationUnavailable) {
+      setUploadedFiles([]);
+      return;
+    }
+    if (isStreaming || removingUploadId !== null || (authRequired && authToken === null)) return;
+    const controller = new AbortController();
+    getUploads(activeSessionId, authToken, sessionEndpointRef.current ?? aiEndpoint, controller.signal)
+      .then(files => { if (!controller.signal.aborted) setUploadedFiles(files); })
+      .catch(uploadError => {
+        if (!controller.signal.aborted) reportRequestError(uploadError, 'Uploaded files could not be listed.');
+      });
+    return () => controller.abort();
+  }, [activeSessionId, fileCapability.retained, isStreaming, removingUploadId, aiEndpoint, authToken, authRequired, conversationUnavailable, reportRequestError]);
+
+  const removeUploadedFile = async (uploadId: string) => {
+    const sessionId = sessionIdRef.current;
+    if (!sessionId) return;
+    setRemovingUploadId(uploadId);
+    try {
+      await removeUpload(sessionId, uploadId, authToken, sessionEndpointRef.current ?? aiEndpoint);
+      setUploadedFiles(files => files.filter(file => file.id !== uploadId));
+      renewSessionExpiration();
+    } catch (uploadError) {
+      reportRequestError(uploadError, 'The uploaded file could not be removed.');
+    } finally {
+      setRemovingUploadId(null);
+    }
+  };
 
   useEffect(() => {
     if (activeSessionId === null || sessionExpiresAt === null) return;
@@ -1793,7 +1828,26 @@ export default function ExperimentalAiPage() {
   };
 
   return (
-    <main className="mx-auto flex min-h-[calc(100dvh-3.5rem)] max-w-5xl flex-col px-4 pb-36 pt-8 sm:px-6">
+    <main className={`mx-auto flex min-h-[calc(100dvh-3.5rem)] max-w-5xl flex-col px-4 pb-36 pt-8 sm:px-6 ${fileCapability.retained ? 'xl:mr-72' : ''}`}>
+      {fileCapability.retained && (
+        <aside aria-label="Session files" className="mb-4 rounded-xl border border-gray-200 bg-white p-4 xl:fixed xl:right-4 xl:top-24 xl:z-10 xl:max-h-[calc(100dvh-8rem)] xl:w-64 xl:overflow-y-auto">
+          <details open>
+            <summary className="cursor-pointer font-semibold">Uploaded files ({uploadedFiles.length})</summary>
+            <p className="mt-2 text-xs text-gray-600">Available for later questions until removed or this chat expires. Uploading the same filename replaces its contents.</p>
+            {uploadedFiles.length === 0 ? <p className="mt-3 text-sm text-gray-500">No uploaded files.</p> : (
+              <ul className="mt-3 space-y-3">
+                {uploadedFiles.map(file => (
+                  <li key={file.id} className="flex items-start gap-2">
+                    <span className="min-w-0 flex-1 break-words text-sm">{file.filename}<span className="block text-xs text-gray-500">{(file.bytes / 1000).toLocaleString()} KB</span></span>
+                    <button type="button" aria-label={`Remove ${file.filename}`} disabled={isStreaming || removingUploadId !== null}
+                      onClick={() => void removeUploadedFile(file.id)} className="rounded px-2 py-1 text-xs text-red-700 hover:bg-red-50 disabled:opacity-50">Remove</button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </details>
+        </aside>
+      )}
       <div className="mb-6">
         <div className="mb-2 flex items-center gap-3">
           <h1 className="text-3xl font-bold text-gray-900">Schedule AI Chat</h1>
@@ -2174,7 +2228,7 @@ export default function ExperimentalAiPage() {
         onDragLeave={leaveAttachmentDropZone}
         onDrop={dropAttachments}
         aria-label="Message composer"
-        className={`fixed inset-x-10 bottom-0 z-30 mx-auto max-w-5xl space-y-3 bg-gradient-to-t from-white via-white to-white/90 px-4 pb-4 pt-3 sm:px-6 ${
+        className={`fixed inset-x-10 bottom-0 z-30 mx-auto max-w-5xl space-y-3 ${fileCapability.retained ? 'xl:right-72' : ''} bg-gradient-to-t from-white via-white to-white/90 px-4 pb-4 pt-3 sm:px-6 ${
           isDraggingFiles ? 'rounded-xl ring-2 ring-blue-400 ring-offset-2' : ''
         }`}
       >

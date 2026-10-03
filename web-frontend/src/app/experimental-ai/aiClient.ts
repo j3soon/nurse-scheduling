@@ -75,7 +75,15 @@ export interface AiCapabilities {
     enabled: boolean;
     max_files: number;
     max_bytes_per_file: number;
+    retained?: boolean;
   };
+}
+
+export interface UploadedFile {
+  id: string;
+  filename: string;
+  media_type: string;
+  bytes: number;
 }
 
 export interface MessageAttachments {
@@ -193,6 +201,7 @@ export async function getCapabilities(signal?: AbortSignal, endpoint = getAiBase
     || files.max_files <= 0
     || !Number.isInteger(files.max_bytes_per_file)
     || files.max_bytes_per_file <= 0
+    || (files.retained !== undefined && typeof files.retained !== 'boolean')
   ) {
     throw new Error('The AI backend returned invalid capabilities.');
   }
@@ -468,6 +477,25 @@ export async function downloadOptimization(
   );
   if (!response.ok) throw await responseError(response);
   return response.blob();
+}
+
+export async function getUploads(sessionId: string, authToken: string | null, endpoint = getAiBaseUrl(), signal?: AbortSignal): Promise<UploadedFile[]> {
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/uploads`, {
+    credentials: 'include', headers: authorizedHeaders(authToken), signal,
+  });
+  if (!response.ok) throw await responseError(response);
+  const files = await response.json();
+  if (!Array.isArray(files) || files.some(file => typeof file.id !== 'string' || typeof file.filename !== 'string' || typeof file.media_type !== 'string' || !Number.isSafeInteger(file.bytes) || file.bytes < 0)) {
+    throw new Error('The AI backend returned an invalid upload list.');
+  }
+  return files;
+}
+
+export async function removeUpload(sessionId: string, uploadId: string, authToken: string | null, endpoint = getAiBaseUrl()): Promise<void> {
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/uploads/${encodeURIComponent(uploadId)}`, {
+    method: 'DELETE', credentials: 'include', headers: authorizedHeaders(authToken),
+  });
+  if (!response.ok) throw await responseError(response);
 }
 
 export async function downloadGeneratedZip(

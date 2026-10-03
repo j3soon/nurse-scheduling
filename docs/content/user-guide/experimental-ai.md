@@ -160,9 +160,12 @@ guide you through those controls, but it cannot navigate, click, or upload for
 you. It can always start optimization itself. An unavailable optimizer API
 reports a tool error instead.
 
-Files attached with **Attach files** belong to the next chat message. To replace
-the schedule currently open in the app, use **Upload** on **Save and Load**
-instead.
+Files attached with **Attach files** remain available for later questions in the
+same chat. The **Uploaded files** panel lists their names and sizes. Use **Remove**
+when a file is no longer needed. Uploading the same filename replaces its contents.
+The panel sits on the right on large screens and can be collapsed on smaller screens.
+To replace the schedule currently open in the app directly, use **Upload** on
+**Save and Load**.
 
 The browser uploads one YAML snapshot when it creates the chat session. Later
 questions in that session use the same service-held snapshot. The current
@@ -174,8 +177,17 @@ and the page reports when a preserved chat has expired.
 
 The complete schedule YAML is sent to the configured AI service and placed in
 the assistant's temporary workspace. Relevant schedule content reaches the
-model when the assistant inspects it. Attached files are copied to that isolated
-workspace for the current question and are destroyed with it. The assistant can
+model when the assistant inspects it. Uploaded source files stay with the chat
+until removed or the session expires. The service loads them into each new
+workspace. The file count and per-file size limits apply to retained uploads,
+and their bytes share the service's session memory budget.
+
+Each message uses a fresh temporary virtual machine, not your computer or a
+persistent desktop. The service loads the current schedule, relevant references,
+and retained uploads into it. Other files created during a response disappear
+when that workspace closes. Download generated output with **Download files (ZIP)**.
+A chat message can mention a removed file even when it is no longer available.
+Upload that source again if a later question needs it. The assistant can
 inspect spreadsheet cells, including formulas and last-saved values, or extract
 text and render selected PDF pages. Rendered pages and any images the assistant
 extracts may be sent to the model when it reads them. File support still depends

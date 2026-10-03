@@ -26,6 +26,8 @@ import {
   createSession,
   downloadOptimization,
   downloadGeneratedZip,
+  getUploads,
+  removeUpload,
   getAiBaseUrl,
   getCapabilities,
   getSessionStatus,
@@ -431,6 +433,18 @@ describe('AI client', () => {
         headers: { Authorization: 'Bearer result-token' },
       },
     );
+  });
+
+  it('lists and removes retained uploads with the session credentials', async () => {
+    const files = [{ id: 'file/id', filename: 'ward.xlsx', media_type: 'application/xlsx', bytes: 123 }];
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(files)))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await getUploads('session/id', 'upload-token')).toEqual(files);
+    await removeUpload('session/id', 'file/id', 'upload-token');
+    expect(fetchMock).toHaveBeenLastCalledWith('https://api.nursescheduling.org/ai/sessions/session%2Fid/uploads/file%2Fid', {
+      method: 'DELETE', credentials: 'include', headers: { Authorization: 'Bearer upload-token' },
+    });
   });
 
   it('downloads a generated ZIP with authentication', async () => {

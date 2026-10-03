@@ -133,6 +133,7 @@ class SandboxAttachment:
     filename: str
     media_type: str
     data: bytes
+    id: str = ""
 
 
 @dataclass(frozen=True)
@@ -520,6 +521,8 @@ async def hydrate_sandbox(
         manifest = []
         for index, attachment in enumerate(attachments, start=1):
             safe_name = _safe_attachment_name(attachment.filename, index)
+            if attachment.id:
+                safe_name = f"{attachment.id}-{safe_name.split('-', 1)[1]}"
             path = f"{WORKSPACE_ATTACHMENTS}/{safe_name}"
             files[path] = attachment.data
             manifest.append(

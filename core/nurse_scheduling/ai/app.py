@@ -202,6 +202,7 @@ class FileAttachmentCapability(BaseModel):
     enabled: bool
     max_files: int
     max_bytes_per_file: int
+    retained: bool = True
 
 
 class CapabilitiesResponse(BaseModel):
@@ -245,6 +246,7 @@ class ChatSession:
     proposal_yaml: str = ""
     proposal_diff: str = ""
     downloads: dict[str, bytes] = field(default_factory=dict)
+    uploads: dict[str, SandboxAttachment] = field(default_factory=dict)
 
 
 SESSION_MEMORY_LIMIT_MESSAGE = "The AI service has reached its memory limit."
@@ -260,13 +262,14 @@ def _text_bytes(value: object) -> int:
 
 
 def _session_bytes(session: "ChatSession") -> int:
-    """Return the chat text one session retains."""
+    """Return the text and file bytes one session retains."""
     total = _text_bytes(session.schedule_yaml) + _text_bytes(session.proposal_yaml) + _text_bytes(session.proposal_diff)
     total += sum(_text_bytes(message.get("content")) for message in session.history)
     return (
         total
         + sum(_text_bytes(text) for _message_id, text in session.steering_queue)
         + sum(map(len, session.downloads.values()))
+        + sum(len(upload.data) for upload in session.uploads.values())
     )
 
 
@@ -296,7 +299,7 @@ class SessionStore:
 
     @property
     def retained_bytes(self) -> int:
-        """Return the chat text retained across live sessions."""
+        """Return the text and file bytes retained across live sessions."""
         with self._lock:
             return self._retained_bytes
 
@@ -321,7 +324,7 @@ class SessionStore:
         self._retained_bytes -= self._session_bytes.pop(session_id, 0)
 
     def _require_capacity(self, additional_bytes: int) -> None:
-        """Refuse text that would push retained chat state past the configured budget.
+        """Refuse content that would push retained session state past the configured budget.
 
         Checked where a client pushes new text. A completed turn is never refused here,
         because its answer has already streamed to the user; `_trim_history_to_budget`
@@ -435,6 +438,46 @@ class SessionStore:
         """Validate access to a session without exposing its state."""
         with self._lock:
             self._get_owned(session_id, owner_token)
+
+    def retain_uploads(
+        self, session_id: str, owner_token: str | None, uploads: Sequence[SandboxAttachment]
+    ) -> tuple[SandboxAttachment, ...]:
+        """Retain uploads by filename and hydrate their latest versions on later turns."""
+        with self._lock:
+            session = self._get_owned(session_id, owner_token)
+            updated = dict(session.uploads)
+            for upload in uploads:
+                existing = next((item for item in updated.values() if item.filename == upload.filename), None)
+                retained = replace(upload, id=existing.id if existing else str(uuid4()))
+                updated[retained.id] = retained
+            if len(updated) > self._settings.max_attachment_files:
+                raise HTTPException(status_code=413, detail="Too many retained files. Remove unused uploads first.")
+            delta = sum(len(item.data) for item in updated.values()) - sum(
+                len(item.data) for item in session.uploads.values()
+            )
+            self._require_capacity(delta)
+            session.uploads = updated
+            self._charge(session, delta)
+            return tuple(updated.values())
+
+    def attachments(self, session_id: str) -> tuple[SandboxAttachment, ...]:
+        """Snapshot retained source files for a foreground or background turn."""
+        with self._lock:
+            self._prune_expired()
+            session = self._sessions.get(session_id)
+            return tuple(session.uploads.values()) if session is not None else ()
+
+    def remove_upload(self, session_id: str, owner_token: str | None, upload_id: str) -> None:
+        """Remove an unused source file between turns and reclaim its bytes."""
+        with self._lock:
+            session = self._get_owned(session_id, owner_token)
+            if session.active:
+                raise HTTPException(status_code=409, detail="Wait for the active response before removing files.")
+            upload = session.uploads.pop(upload_id, None)
+            if upload is None:
+                raise HTTPException(status_code=404, detail="The uploaded file is no longer available.")
+            self._charge(session, -len(upload.data))
+            session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
 
     def save_download(self, session_id: str, download_id: str, content: bytes) -> bool:
         """Retain a bounded generated ZIP within the existing session memory budget."""
@@ -904,7 +947,7 @@ def create_app(
         CORSMiddleware,
         allow_origin_regex=ORIGIN_REGEX,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT"],
+        allow_methods=["GET", "POST", "PUT", "DELETE"],
         allow_headers=["Authorization", "Content-Type", "Last-Event-ID"],
     )
     app.state.settings = settings
@@ -1012,6 +1055,28 @@ def create_app(
                 background_task.cancel()
         return Response(status_code=status.HTTP_202_ACCEPTED)
 
+    @app.get("/sessions/{session_id}/uploads", dependencies=[Depends(require_auth)])
+    async def list_uploads(session_id: str, owner: str | None = Cookie(default=None, alias=OWNER_COOKIE)):
+        """List source-file metadata without returning file contents."""
+        store.require_owned(session_id, owner)
+        return [
+            {"id": item.id, "filename": item.filename, "media_type": item.media_type, "bytes": len(item.data)}
+            for item in store.attachments(session_id)
+        ]
+
+    @app.delete("/sessions/{session_id}/uploads/{upload_id}", dependencies=[Depends(require_auth)], status_code=204)
+    async def remove_upload(
+        session_id: str,
+        upload_id: str,
+        response: Response,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> Response:
+        """Remove one retained source file from the session."""
+        store.remove_upload(session_id, owner, upload_id)
+        refresh_owner_cookie(response, owner)
+        response.status_code = 204
+        return response
+
     @app.get("/sessions/{session_id}/downloads/{download_id}", dependencies=[Depends(require_auth)])
     async def download_generated_zip(
         session_id: str,
@@ -1108,6 +1173,11 @@ def create_app(
             history, schedule_yaml, base_revision, proposal_yaml, proposal_diff, previously_dropped = store.begin(
                 session_id, owner
             )
+            try:
+                hydrated_attachments = store.retain_uploads(session_id, owner, attachments)
+            except BaseException:
+                store.abort(session_id)
+                raise
         except BaseException:
             pending_turn_stops.discard(session_id)
             release_turn()
@@ -1146,7 +1216,7 @@ def create_app(
             retained_history,
             schedule_yaml,
             question,
-            attachments,
+            hydrated_attachments,
             system_prompt=SANDBOX_SYSTEM_PROMPT,
             pending_proposal=bool(proposal_yaml),
             optimizer_result_available=latest_artifact is not None,
@@ -1194,7 +1264,7 @@ def create_app(
                                 session_id, current_yaml, arguments
                             )
                         ),
-                        attachments=attachments,
+                        attachments=hydrated_attachments,
                         optimizer_result=latest_artifact.content if latest_artifact is not None else None,
                     )
                     async for event in agent_events:

@@ -77,7 +77,8 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   `/capabilities`. Attachments and the optimizer tool are always offered.
   Keep schedules and attachments separate from model instructions.
 - Bound uploads before provider calls and place them under fixed sandbox paths.
-  Do not retain raw attachments longer than their documented turn behavior requires.
+  Retain uploaded source files only until the user removes them or the session expires.
+  Count retained files and generated downloads against the session memory budget.
 - Keep model-facing prompts and intermediate messages concise. Avoid repeated
   warnings about malicious uploads or prescribed workbook-inspection commands.
   Rely on sandbox and server controls for security, and give generated artifacts

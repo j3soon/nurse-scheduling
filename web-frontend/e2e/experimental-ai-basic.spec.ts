@@ -499,3 +499,43 @@ test('downloads generated files through the ZIP button', async ({ page }) => {
   expect(download.suggestedFilename()).toBe('download.zip');
   expect(await readFile((await download.path())!)).toEqual(Buffer.from('captured ZIP bytes'));
 });
+
+
+test('keeps uploads visible on the right and allows removal', async ({ page }) => {
+  await mockAiBackend(page);
+  let retained = false;
+  await page.route('**/ai/capabilities', route => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({ file_attachments: { enabled: true, retained: true, max_files: 8, max_bytes_per_file: 5000000 } }),
+  }));
+  await page.route('**/ai/sessions/*/uploads', route => route.fulfill({
+    contentType: 'application/json', body: JSON.stringify(retained ? [{ id: 'file-1', filename: 'ward.csv', media_type: 'text/csv', bytes: 26 }] : []),
+  }));
+  await page.route('**/ai/sessions/*/uploads/file-1', route => {
+    expect(route.request().method()).toBe('DELETE');
+    retained = false;
+    return route.fulfill({ status: 204 });
+  });
+  await page.route('**/ai/sessions/*/messages', route => {
+    if (route.request().postData()?.includes('ward.csv')) retained = true;
+    return route.fulfill({ contentType: 'text/event-stream', body: 'event: delta\ndata: {"text":"Workbook inspected."}\n\nevent: done\ndata: {}\n\n' });
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/experimental-ai');
+  await page.getByLabel('Attach files').setInputFiles({ name: 'ward.csv', mimeType: 'text/csv', buffer: Buffer.from('name,date\nAlex,2026-10-01\n') });
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Read this file');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  const panel = page.getByRole('complementary', { name: 'Session files' });
+  await expect(panel.getByRole('button', { name: 'Remove ward.csv' })).toBeVisible();
+  const panelBox = (await panel.boundingBox())!;
+  const chatBox = (await page.getByRole('region', { name: 'Chat messages' }).boundingBox())!;
+  expect(panelBox.x).toBeGreaterThan(chatBox.x + chatBox.width);
+  await page.screenshot({ path: '../artifacts/20261003-agent-improvements/uploads-desktop.png' });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(panel).toBeInViewport();
+  await panel.getByText('Uploaded files (1)', { exact: true }).click();
+  await expect(panel.getByRole('button', { name: 'Remove ward.csv' })).toBeHidden();
+  await panel.getByText('Uploaded files (1)', { exact: true }).click();
+  await panel.getByRole('button', { name: 'Remove ward.csv' }).click();
+  await expect(panel.getByText('No uploaded files.')).toBeVisible();
+});

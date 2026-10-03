@@ -19,11 +19,13 @@
 
 // This test is mostly AI generated.
 
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ExperimentalAiPage from './page';
 
 const mockCreateSession = vi.hoisted(() => vi.fn());
+const mockGetUploads = vi.hoisted(() => vi.fn());
+const mockRemoveUpload = vi.hoisted(() => vi.fn());
 const mockDownloadGeneratedZip = vi.hoisted(() => vi.fn());
 const mockDownloadOptimization = vi.hoisted(() => vi.fn());
 const mockGetCapabilities = vi.hoisted(() => vi.fn());
@@ -59,6 +61,8 @@ vi.mock('./aiClient', () => ({
   createSession: mockCreateSession,
   downloadOptimization: mockDownloadOptimization,
   downloadGeneratedZip: mockDownloadGeneratedZip,
+  getUploads: mockGetUploads,
+  removeUpload: mockRemoveUpload,
   getAiBaseUrl: () => '/ai',
   getCapabilities: mockGetCapabilities,
   getSessionStatus: mockGetSessionStatus,
@@ -112,6 +116,8 @@ describe('ExperimentalAiPage', () => {
     vi.restoreAllMocks();
     vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined);
     mockCreateSession.mockReset().mockResolvedValue('session-id');
+    mockGetUploads.mockReset().mockResolvedValue([]);
+    mockRemoveUpload.mockReset().mockResolvedValue(undefined);
     mockDownloadGeneratedZip.mockReset().mockResolvedValue(new Blob(['zip']));
     mockDownloadOptimization.mockReset().mockResolvedValue(new Blob(['workbook']));
     mockGetCapabilities.mockReset().mockResolvedValue(defaultCapabilities);
@@ -135,6 +141,21 @@ describe('ExperimentalAiPage', () => {
     mockUseTabSwitchWarning.mockReset();
     window.localStorage.clear();
     window.sessionStorage.clear();
+  });
+
+  it('lists retained session uploads and removes an unused file', async () => {
+    mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, file_attachments: { ...defaultCapabilities.file_attachments, retained: true } });
+    mockRemoveUpload.mockImplementation(async () => { mockGetUploads.mockResolvedValue([]); });
+    mockGetUploads.mockResolvedValue([{ id: 'upload-1', filename: 'ward.xlsx', media_type: 'application/xlsx', bytes: 5000 }]);
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Read the workbook');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    const panel = await screen.findByRole('complementary', { name: 'Session files' });
+    expect(await within(panel).findByText('ward.xlsx')).toBeInTheDocument();
+    await user.click(within(panel).getByRole('button', { name: 'Remove ward.xlsx' }));
+    await waitFor(() => expect(mockRemoveUpload).toHaveBeenCalledWith('session-id', 'upload-1', null, '/ai'));
+    expect(await within(panel).findByText('No uploaded files.')).toBeInTheDocument();
   });
 
   it('downloads server-captured files from an assistant answer', async () => {

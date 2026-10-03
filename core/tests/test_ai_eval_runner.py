@@ -869,6 +869,7 @@ def test_cases_are_selected_by_id_and_by_category():
         "shift-type-rename-cascade",
         "tool-write-minimal-schedule",
         "remember-edit-after-clarification",
+        "reread-retained-upload",
         "revise-pending-copy-scope",
     }
     assert len(select(cases, [], [], full=True)) == len(cases)

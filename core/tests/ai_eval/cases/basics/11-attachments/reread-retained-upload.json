@@ -1,0 +1,15 @@
+{
+  "id": "reread-retained-upload",
+  "fixture": "small-clinic",
+  "user_turns": [
+    "List only the sheet names of my attached workbook. Do not change the schedule.",
+    "Read the same attachment again. What is the handover code on Night assignment? Do not change the schedule."
+  ],
+  "attachments": ["multi-sheet-xlsx"],
+  "expect_proposal": false,
+  "answer_contains": ["NIGHT OWL 7429"],
+  "intermediate_answer_contains": [["Overview", "Night assignment"]],
+  "turn_tool_usage": [null, {"required": ["bash"]}],
+  "tags": ["tuning", "attachment", "retained-upload"],
+  "note": "This testcase is mostly AI generated. Each turn creates a fresh VM. Rehydrate the retained source and inspect its contents on the follow-up. Review the second-turn tool output as well as the answer."
+}

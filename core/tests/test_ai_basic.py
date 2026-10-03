@@ -812,6 +812,7 @@ def test_capabilities_report_configured_attachment_limits() -> None:
             "enabled": True,
             "max_files": 5,
             "max_bytes_per_file": 4321,
+            "retained": True,
         },
         "session_retention_seconds": 172800,
         "auth": {"required": True, "scheme": "bearer"},
@@ -1682,7 +1683,11 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
     with AuthenticatedTestClient(app) as client:
         session_id = create_session(client, schedule_yaml())
         assert "optimizer" not in client.get("/capabilities").json()
-        started = client.post(f"/sessions/{session_id}/messages", json={"message": "Optimize this schedule."})
+        started = client.post(
+            f"/sessions/{session_id}/messages",
+            data={"message": "Optimize this schedule."},
+            files={"files": ("source.txt", b"original input", "text/plain")},
+        )
         follow_up = client.post(f"/sessions/{session_id}/messages", json={"message": "Can we still talk?"})
 
         assert started.status_code == 200
@@ -1728,7 +1733,10 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
             for backend in factory.created
             if "/workspace/optimizer-results/optimized-schedule.xlsx" in backend.files
         )
-        assert "/workspace/attachments/manifest.json" not in background_sandbox.files
+        background_manifest = json.loads(background_sandbox.files["/workspace/attachments/manifest.json"])
+        source = background_manifest["attachments"][0]
+        assert source["original_filename"] == "source.txt"
+        assert background_sandbox.files[source["path"]] == b"original input"
         assert background_sandbox.files["/workspace/optimizer-results/optimized-schedule.xlsx"].startswith(
             b"PK\x03\x04"
         )
@@ -1746,14 +1754,10 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         )
         assert later.status_code == 200
         assert "I can still inspect" in later.text
-        later_sandbox = next(
-            backend
-            for backend in factory.created
-            if "/workspace/optimizer-results/optimized-schedule.xlsx" in backend.files
-            and "/workspace/attachments/manifest.json" in backend.files
-        )
+        later_sandbox = factory.created[-1]
         later_manifest = json.loads(later_sandbox.files["/workspace/attachments/manifest.json"])
         assert [entry["original_filename"] for entry in later_manifest["attachments"]] == [
+            "source.txt",
             "note.txt",
         ]
         assert later_sandbox.files["/workspace/optimizer-results/optimized-schedule.xlsx"] == download.content

@@ -87,6 +87,8 @@ class BackgroundSessionStore(Protocol):
 
     def abort(self, session_id: str) -> None: ...
 
+    def attachments(self, session_id: str) -> tuple[SandboxAttachment, ...]: ...
+
     def save_download(self, session_id: str, download_id: str, content: bytes) -> bool: ...
 
 
@@ -278,10 +280,12 @@ async def run_background_turn(
                 "history_trimmed",
                 {"dropped": dropped_history},
             )
+        attachments = store.attachments(session_id)
         messages = build_provider_messages(
             retained_history,
             schedule_yaml,
             question,
+            attachments,
             system_prompt=SANDBOX_SYSTEM_PROMPT,
             pending_proposal=bool(proposal_yaml),
             optimizer_result_available=artifact is not None,
@@ -309,6 +313,7 @@ async def run_background_turn(
                         lambda current_yaml, arguments: session_optimizer.execute(session_id, current_yaml, arguments)
                     ),
                     optimizer_result=artifact.content if artifact is not None else None,
+                    attachments=attachments,
                 )
                 async for event in agent_events:
                     if isinstance(event, AgentText):

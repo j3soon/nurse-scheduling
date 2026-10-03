@@ -357,7 +357,7 @@ async def run_case(
                     break
                 question = optimizer_completion_message(result_data)
                 optimizer_started = False
-            attachments = case_attachments if turn_index == 0 else ()
+            attachments = case_attachments
             messages = build_provider_messages(
                 history,
                 text,
