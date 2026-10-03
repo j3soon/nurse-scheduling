@@ -55,6 +55,7 @@ import {
   approveProposal,
   createSession,
   downloadOptimization,
+  downloadGeneratedZip,
   getAiBaseUrl,
   getCapabilities,
   getSessionStatus,
@@ -70,6 +71,7 @@ import {
 
 interface ChatMessage extends ChatExportMessage {
   id: string;
+  downloadId?: string;
   retry?: {
     question: string;
     requiresAttachments: boolean;
@@ -268,6 +270,7 @@ function isChatMessage(value: unknown): value is ChatMessage {
       && typeof message.retry.question === 'string'
       && typeof message.retry.requiresAttachments === 'boolean'
     ))
+    && (message.downloadId === undefined || typeof message.downloadId === 'string')
     && (message.optimizerJob === undefined || (message.optimizerJob !== null
       && typeof message.optimizerJob.jobId === 'string'
       && typeof message.optimizerJob.downloadable === 'boolean'
@@ -1196,6 +1199,7 @@ export default function ExperimentalAiPage() {
             ],
           }));
         },
+        onDownload: downloadId => updateBackgroundMessage(message => ({ ...message, downloadId })),
         onProposal: diff => setProposalDiff(diff),
         onOptimization: activity => {
           if (!activity.terminal) {
@@ -1476,6 +1480,9 @@ export default function ExperimentalAiPage() {
             activeQuestion = queuedMessage;
             activeQuestionRequiresAttachments = false;
           },
+          onDownload: downloadId => setMessages(previous => previous.map(message => (
+            message.id === activeAssistantId ? { ...message, downloadId } : message
+          ))),
           onScheduleChange: candidate => {
             const before = sandboxScheduleRef.current ?? scheduleYaml;
             sandboxScheduleRef.current = candidate;
@@ -1624,6 +1631,24 @@ export default function ExperimentalAiPage() {
       });
   };
 
+  const downloadGeneratedFiles = async (downloadId: string) => {
+    const sessionId = sessionIdRef.current;
+    if (!sessionId) return;
+    try {
+      const blob = await downloadGeneratedZip(sessionId, downloadId, authToken, sessionEndpointRef.current ?? aiEndpoint);
+      const url = URL.createObjectURL(blob);
+      if (optimizationDownloadUrlRef.current) URL.revokeObjectURL(optimizationDownloadUrlRef.current);
+      optimizationDownloadUrlRef.current = url;
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'download.zip';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (downloadError) {
+      reportRequestError(downloadError, 'The generated files could not be downloaded.');
+    }
+  };
   const downloadOptimizationResult = async (jobId: string) => {
     const sessionId = sessionIdRef.current;
     if (sessionId === null || downloadingOptimizationId !== null) return;
@@ -2022,6 +2047,12 @@ export default function ExperimentalAiPage() {
               >
                 <FiDownload aria-hidden="true" className="h-4 w-4" />
                 {downloadingOptimizationId === message.optimizerJob.jobId ? 'Downloading...' : 'Download result'}
+              </button>
+            )}
+            {message.downloadId && (
+              <button type="button" onClick={() => void downloadGeneratedFiles(message.downloadId!)}
+                className="mt-3 rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700">
+                Download files (ZIP)
               </button>
             )}
             {message.attachmentNames && message.attachmentNames.length > 0 && (

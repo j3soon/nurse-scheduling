@@ -24,6 +24,7 @@ import userEvent from '@testing-library/user-event';
 import ExperimentalAiPage from './page';
 
 const mockCreateSession = vi.hoisted(() => vi.fn());
+const mockDownloadGeneratedZip = vi.hoisted(() => vi.fn());
 const mockDownloadOptimization = vi.hoisted(() => vi.fn());
 const mockGetCapabilities = vi.hoisted(() => vi.fn());
 const mockGetSessionStatus = vi.hoisted(() => vi.fn());
@@ -57,6 +58,7 @@ vi.mock('./aiClient', () => ({
   PRODUCTION_AI_API_URL: 'https://api.nursescheduling.org/ai',
   createSession: mockCreateSession,
   downloadOptimization: mockDownloadOptimization,
+  downloadGeneratedZip: mockDownloadGeneratedZip,
   getAiBaseUrl: () => '/ai',
   getCapabilities: mockGetCapabilities,
   getSessionStatus: mockGetSessionStatus,
@@ -110,6 +112,7 @@ describe('ExperimentalAiPage', () => {
     vi.restoreAllMocks();
     vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined);
     mockCreateSession.mockReset().mockResolvedValue('session-id');
+    mockDownloadGeneratedZip.mockReset().mockResolvedValue(new Blob(['zip']));
     mockDownloadOptimization.mockReset().mockResolvedValue(new Blob(['workbook']));
     mockGetCapabilities.mockReset().mockResolvedValue(defaultCapabilities);
     mockGetSessionStatus.mockReset().mockResolvedValue(172800);
@@ -132,6 +135,22 @@ describe('ExperimentalAiPage', () => {
     mockUseTabSwitchWarning.mockReset();
     window.localStorage.clear();
     window.sessionStorage.clear();
+  });
+
+  it('downloads server-captured files from an assistant answer', async () => {
+    mockStreamMessage.mockImplementation(async (_id: string, _question: string, callbacks: { onDownload: (id: string) => void }) => {
+      callbacks.onDownload('zip-turn');
+    });
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Make a downloadable CSV');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:generated-zip');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    await user.click(await screen.findByRole('button', { name: 'Download files (ZIP)' }));
+    await waitFor(() => expect(mockDownloadGeneratedZip).toHaveBeenCalledWith('session-id', 'zip-turn', null, '/ai'));
+    expect(click).toHaveBeenCalled();
   });
 
   it('sends a question with the current schedule and renders streamed text', async () => {

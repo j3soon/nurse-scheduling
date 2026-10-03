@@ -58,6 +58,7 @@ export interface StreamCallbacks {
   onSteering?: (messageId: string, message: string) => void;
   onScheduleChange?: (scheduleYaml: string) => void;
   onProposal?: (diff: string) => void;
+  onDownload?: (downloadId: string) => void;
   onOptimization?: (activity: OptimizationActivity) => void;
   onOptimizationProgress?: (activity: OptimizationProgressActivity) => void;
   onDone?: (messageId?: string) => void;
@@ -94,6 +95,7 @@ interface SsePayload {
   message?: unknown;
   name?: unknown;
   diff?: unknown;
+  download_id?: unknown;
   arguments?: unknown;
   result?: unknown;
   ok?: unknown;
@@ -288,6 +290,8 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
       throw new Error('The AI backend returned an invalid schedule change.');
     }
     callbacks.onScheduleChange?.(payload.schedule_yaml);
+  } else if (eventType === 'download' && typeof payload.download_id === 'string') {
+    callbacks.onDownload?.(payload.download_id);
   } else if (eventType === 'proposal' && typeof payload.diff === 'string') {
     callbacks.onProposal?.(payload.diff);
   } else if (
@@ -461,6 +465,20 @@ export async function downloadOptimization(
       credentials: 'include',
       headers: authorizedHeaders(authToken),
     },
+  );
+  if (!response.ok) throw await responseError(response);
+  return response.blob();
+}
+
+export async function downloadGeneratedZip(
+  sessionId: string,
+  downloadId: string,
+  authToken: string | null,
+  endpoint = getAiBaseUrl(),
+): Promise<Blob> {
+  const response = await fetch(
+    `${endpoint}/sessions/${encodeURIComponent(sessionId)}/downloads/${encodeURIComponent(downloadId)}`,
+    { credentials: 'include', headers: authorizedHeaders(authToken) },
   );
   if (!response.ok) throw await responseError(response);
   return response.blob();

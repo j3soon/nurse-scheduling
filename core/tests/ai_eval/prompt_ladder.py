@@ -91,6 +91,7 @@ def case_digest(case: EvalCase) -> str:
         "optimizer_completion",
         "optimizer_completion_only",
         "answer_json",
+        "download_files",
     ):
         if not fields[optional]:
             fields.pop(optional)

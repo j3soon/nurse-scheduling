@@ -467,9 +467,9 @@ def test_read_tool_does_not_trigger_a_redundant_schedule_change_scan():
             super().__init__(sandbox_id)
             self.read_paths: list[str] = []
 
-        async def read_file(self, path: str) -> bytes:
+        async def read_file(self, path: str, *, max_bytes: int | None = None) -> bytes:
             self.read_paths.append(path)
-            return await super().read_file(path)
+            return await super().read_file(path, max_bytes=max_bytes)
 
     provider = ScriptedProvider(
         [ToolCallRequest((ToolCall("call-1", READ_TOOL, '{"path":"schedule.yaml"}'),))],
@@ -538,7 +538,7 @@ def test_failure_before_tools_skips_sandbox_and_command_failure_closes_it(failur
 
 def test_candidate_read_failure_closes_the_sandbox():
     class ReadFailureBackend(FakeSandboxBackend):
-        async def read_file(self, path: str) -> bytes:
+        async def read_file(self, path: str, *, max_bytes: int | None = None) -> bytes:
             raise SandboxError(f"cannot read {path}")
 
     factory = FakeSandboxFactory(ReadFailureBackend)

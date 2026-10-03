@@ -405,15 +405,28 @@ class E2BSandboxBackend:
             except Exception as exc:
                 raise SandboxError(f"E2B could not write {len(entries)} sandbox files") from exc
 
-    async def read_file(self, path: str) -> bytes:
+    async def read_file(self, path: str, *, max_bytes: int | None = None) -> bytes:
         async with self._active_operation(read_only=True):
             try:
-                content = await self._request_with_retry(
-                    "read_file",
-                    lambda: self._sandbox.files.read(path, format="bytes", user=E2B_USER),
-                )
+                if max_bytes is None:
+                    content = await self._request_with_retry(
+                        "read_file",
+                        lambda: self._sandbox.files.read(path, format="bytes", user=E2B_USER),
+                    )
+                else:
+                    content = bytearray()
+                    stream_reader = await self._request_with_retry(
+                        "read_file", lambda: self._sandbox.files.read(path, format="stream", user=E2B_USER)
+                    )
+                    async with stream_reader as stream:
+                        async for chunk in stream:
+                            if len(content) + len(chunk) > max_bytes:
+                                raise SandboxError("The generated file exceeds the download size limit.")
+                            content.extend(chunk)
             except FileNotFoundException as exc:
                 raise SandboxFileNotFoundError(f"Sandbox file not found: {path}") from exc
+            except SandboxError:
+                raise
             except Exception as exc:
                 raise SandboxError(f"E2B could not read sandbox file: {path}") from exc
         return bytes(content)

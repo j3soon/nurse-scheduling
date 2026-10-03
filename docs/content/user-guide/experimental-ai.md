@@ -145,6 +145,12 @@ Raw HTML is ignored. Remote images written in an answer are not loaded.
 Use **HTML** under **Export chat** for a styled, standalone transcript, or
 **Markdown** for a plain-text transcript. Export runs in the browser.
 
+When the assistant creates files for download, it puts them in one ZIP archive.
+Use **Download files (ZIP)** below its answer. The archive and its uncompressed
+contents are each limited to 50 MB by default. Downloads remain available while
+the chat session exists, subject to the service memory limit. A workspace path
+printed in an answer is not itself a download link.
+
 ## Ask how to use the app
 
 The assistant runs inside the existing Nurse Scheduling app and can explain

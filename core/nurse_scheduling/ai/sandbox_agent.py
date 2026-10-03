@@ -32,6 +32,7 @@ from pathlib import Path
 from .agent import AgentEvent, AgentProposal, AgentToolBatchMetrics, AgentToolOutcome, AgentToolUse, run_tool_agent
 from .candidate import SCHEDULE_FILENAME, review_schedule_candidate
 from .config import AiSettings
+from .downloads import WORKSPACE_DOWNLOAD, validate_download_zip
 from .optimizer import OPTIMIZER_TOOL, WORKSPACE_OPTIMIZER_RESULT, optimizer_tool_definition
 from .pi.read import READ_TOOL
 from .provider import ChatMessage, ToolCapableChatProvider
@@ -95,6 +96,17 @@ def inspection_helper_catalog() -> str:
 SANDBOX_SYSTEM_PROMPT = compose_system_prompt()
 
 
+@dataclass(frozen=True)
+class AgentDownload:
+    """One validated ZIP captured before sandbox cleanup."""
+
+    content: bytes
+
+
+class SandboxDownloadError(SandboxError):
+    """The generated ZIP could not be captured safely."""
+
+
 class SandboxCandidateError(SandboxError):
     """The final untrusted schedule failed trusted server-side review."""
 
@@ -134,12 +146,14 @@ class SandboxAgentLimits:
     max_tool_rounds: int
     max_tool_calls: int
     optimizer_default_timeout_seconds: int = 300
+    max_download_bytes: int = 50_000_000
 
     @classmethod
     def from_settings(cls, settings: AiSettings) -> "SandboxAgentLimits":
         """Collect sandbox-turn limits from validated application settings."""
         return cls(
             max_schedule_bytes=settings.max_schedule_bytes,
+            max_download_bytes=settings.max_download_bytes,
             turn_timeout_seconds=settings.sandbox_turn_timeout_seconds,
             cleanup_timeout_seconds=settings.sandbox_cleanup_timeout_seconds,
             bash_command_timeout_seconds=settings.sandbox_command_timeout_seconds,
@@ -271,8 +285,11 @@ class _LazySandboxTurn:
     async def write_file(self, path: str, content: str | bytes) -> None:
         await (await self._start()).write_file(path, content)
 
-    async def read_file(self, path: str) -> bytes:
-        return await (await self._start()).read_file(path)
+    async def read_file(self, path: str, *, max_bytes: int | None = None) -> bytes:
+        backend = await self._start()
+        if max_bytes is None:
+            return await backend.read_file(path)
+        return await backend.read_file(path, max_bytes=max_bytes)
 
     async def run(self, command: str, *, timeout_seconds: float | None = None):
         return await (await self._start()).run(command, timeout_seconds=timeout_seconds)
@@ -328,7 +345,7 @@ async def run_sandbox_agent(
     execute_optimizer: Callable[[str, str], Awaitable[AgentToolOutcome]] | None = None,
     attachments: Sequence[SandboxAttachment] = (),
     optimizer_result: bytes | None = None,
-) -> AsyncIterator[AgentEvent | AgentScheduleChange]:
+) -> AsyncIterator[AgentEvent | AgentScheduleChange | AgentDownload]:
     """Hydrate, run, read, validate, and destroy one fresh sandbox turn."""
     metrics = metrics or SandboxTurnMetrics()
     try:
@@ -431,6 +448,18 @@ async def run_sandbox_agent(
                 )
                 if not review.outcome.ok:
                     raise SandboxCandidateError("The sandbox candidate failed trusted schedule validation.")
+                try:
+                    download = await sandbox.read_file(WORKSPACE_DOWNLOAD, max_bytes=limits.max_download_bytes)
+                except SandboxFileNotFoundError:
+                    download = None
+                except SandboxError as exc:
+                    raise SandboxDownloadError(str(exc)) from exc
+                if download is not None:
+                    try:
+                        await asyncio.to_thread(validate_download_zip, download, limits.max_download_bytes)
+                    except ValueError as exc:
+                        raise SandboxDownloadError(str(exc)) from exc
+                    yield AgentDownload(download)
                 if review.proposal is not None:
                     yield AgentProposal(review.proposal.text, review.proposal.diff.render())
     except TimeoutError as exc:

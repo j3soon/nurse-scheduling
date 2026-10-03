@@ -63,6 +63,7 @@ from nurse_scheduling.ai.sandbox.factory import create_sandbox_factory
 from nurse_scheduling.ai.sandbox_agent import (
     REFERENCE_ATTACHMENT_TOOLS,
     SANDBOX_SYSTEM_PROMPT,
+    AgentDownload,
     SandboxAgentLimits,
     SandboxCommandTimeoutError,
     SandboxTurnMetrics,
@@ -363,6 +364,7 @@ async def run_case(
                 question,
                 attachments,
                 system_prompt=system_prompt,
+                max_download_bytes=settings.max_download_bytes,
                 pending_proposal=pending_proposal is not None,
                 optimizer_result_available=optimizer_result is not None,
             )
@@ -438,6 +440,17 @@ async def run_case(
                                     break
                         if stopped_on_limit:
                             break
+                    elif isinstance(event, AgentDownload):
+                        from io import BytesIO
+                        from zipfile import ZipFile
+
+                        with ZipFile(BytesIO(event.content)) as archive:
+                            files = {
+                                item.filename: hashlib.sha256(archive.read(item)).hexdigest()
+                                for item in archive.infolist()
+                                if not item.is_dir()
+                            }
+                        events.append({"kind": "download", "files": files})
                     elif isinstance(event, AgentProposal):
                         turn_proposal = event
                         events.append({"kind": "proposal", "diff": event.diff})

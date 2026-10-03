@@ -838,6 +838,7 @@ def test_cases_are_selected_by_id_and_by_category():
         "dates-range-expand-taiwan-yes",
         "dates-range-shrink",
         "direct-combined-exact-edits",
+        "download-generated-zip",
         "external-update-invalidates-pending",
         "explain-ai-attachments",
         "guide-add-person",

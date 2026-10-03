@@ -20,6 +20,7 @@
 # This test is mostly AI generated.
 
 import copy
+import hashlib
 import json
 from pathlib import Path
 
@@ -34,6 +35,7 @@ from nurse_scheduling.loader import _load_yaml
 
 from .ai_eval.attachment_fixtures import attachment_fixture_names
 from .ai_eval.grading import (
+    EvalCase,
     EvalCaseError,
     RunOutcome,
     computed_values,
@@ -1148,3 +1150,26 @@ def test_count_batch_case_checks_semantics_and_validation_trajectory(mutation):
         ]
     result = grade(case, RunOutcome(initial=original, proposed=proposed, activity=activity))
     assert result.passed == (mutation is None)
+
+
+@pytest.mark.parametrize(
+    "files,expected",
+    [
+        ({}, False),
+        ({"sample.csv": "wrong"}, False),
+        ({"sample.csv": hashlib.sha256(b"name,date\n").hexdigest()}, True),
+    ],
+    ids=["missing", "wrong-bytes", "exact-bytes"],
+)
+def test_download_grader_requires_captured_file_bytes(files, expected):
+    case = EvalCase(
+        id="zip",
+        fixture="small-clinic",
+        question="Download",
+        expect_proposal=False,
+        download_files={"sample.csv": "name,date\n"},
+    )
+    result = grade(
+        case, RunOutcome(answer="Download /workspace/download.zip", activity=[{"kind": "download", "files": files}]), {}
+    )
+    assert result.passed is expected

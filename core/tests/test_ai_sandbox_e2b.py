@@ -975,3 +975,34 @@ def test_cancelled_command_disconnects_its_stream_before_managed_teardown():
         sandbox.kill.assert_awaited_once()
 
     asyncio.run(exercise())
+
+
+def test_bounded_file_read_stops_and_closes_the_stream():
+    class Stream:
+        closed = False
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            self.closed = True
+
+        async def __aiter__(self):
+            yield b"abc"
+            yield b"def"
+            raise AssertionError("The oversized read must stop before the next chunk")
+
+    async def exercise():
+        sandbox = FakeE2BSandbox()
+        stream = Stream()
+        sandbox.files.read.return_value = stream
+        backend = make_backend(sandbox)
+        try:
+            with pytest.raises(SandboxError, match="download size limit"):
+                await backend.read_file("/workspace/download.zip", max_bytes=4)
+            assert stream.closed
+            sandbox.files.read.assert_awaited_once_with("/workspace/download.zip", format="stream", user="user")
+        finally:
+            await backend.close()
+
+    asyncio.run(exercise())

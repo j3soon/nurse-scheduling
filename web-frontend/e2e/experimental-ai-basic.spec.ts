@@ -479,3 +479,23 @@ test('previews and sends arbitrary file attachments', async ({ page }) => {
   expect(captured.messageBody).toContain('coverage.custom');
   expect(captured.messageBody).toContain('Alice,day');
 });
+
+
+test('downloads generated files through the ZIP button', async ({ page }) => {
+  await mockAiBackend(page);
+  await page.route('**/ai/sessions/*/messages', route => route.fulfill({
+    contentType: 'text/event-stream',
+    body: 'event: delta\ndata: {"text":"Files ready."}\n\nevent: download\ndata: {"download_id":"zip-turn"}\n\nevent: done\ndata: {}\n\n',
+  }));
+  await page.route('**/ai/sessions/*/downloads/zip-turn', route => route.fulfill({
+    contentType: 'application/zip', body: Buffer.from('captured ZIP bytes'),
+  }));
+  await page.goto('/experimental-ai');
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Create a downloadable CSV');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  const pendingDownload = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download files (ZIP)' }).click();
+  const download = await pendingDownload;
+  expect(download.suggestedFilename()).toBe('download.zip');
+  expect(await readFile((await download.path())!)).toEqual(Buffer.from('captured ZIP bytes'));
+});

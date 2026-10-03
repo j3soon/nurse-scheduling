@@ -25,6 +25,7 @@ import {
   approveProposal,
   createSession,
   downloadOptimization,
+  downloadGeneratedZip,
   getAiBaseUrl,
   getCapabilities,
   getSessionStatus,
@@ -429,6 +430,17 @@ describe('AI client', () => {
         credentials: 'include',
         headers: { Authorization: 'Bearer result-token' },
       },
+    );
+  });
+
+  it('downloads a generated ZIP with authentication', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('zip-data', { headers: { 'Content-Type': 'application/zip' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const zip = await downloadGeneratedZip('session/id', 'turn/id', 'zip-token');
+    expect(await zip.text()).toBe('zip-data');
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.nursescheduling.org/ai/sessions/session%2Fid/downloads/turn%2Fid',
+      { credentials: 'include', headers: { Authorization: 'Bearer zip-token' } },
     );
   });
 

@@ -1,0 +1,9 @@
+{
+  "id": "download-generated-zip",
+  "fixture": "small-clinic",
+  "question": "Give me a downloadable CSV file named sample.csv containing exactly these two lines, with a final newline: name,date\nAlex,2026-10-01. Do not edit the schedule or start optimization.",
+  "expect_proposal": false,
+  "download_files": {"sample.csv": "name,date\nAlex,2026-10-01\n"},
+  "tags": ["tuning", "attachment", "downloads"],
+  "note": "This testcase is mostly AI generated. Grade the server-captured ZIP, not a claim that a sandbox path is downloadable."
+}

@@ -89,7 +89,7 @@ class SandboxBackend(Protocol):
         """Create or replace several files inside the sandbox in one request."""
         ...
 
-    async def read_file(self, path: str) -> bytes:
+    async def read_file(self, path: str, *, max_bytes: int | None = None) -> bytes:
         """Read one file inside the sandbox."""
         ...
 

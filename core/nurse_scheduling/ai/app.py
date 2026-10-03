@@ -75,11 +75,13 @@ from .sandbox import SandboxError, SandboxFactory, managed_sandbox_factory
 from .sandbox.factory import create_sandbox_factory
 from .sandbox_agent import (
     SANDBOX_SYSTEM_PROMPT,
+    AgentDownload,
     AgentScheduleChange,
     SandboxAgentLimits,
     SandboxAttachment,
     SandboxCandidateError,
     SandboxCommandTimeoutError,
+    SandboxDownloadError,
     SandboxTurnTimeoutError,
     run_sandbox_agent,
 )
@@ -242,6 +244,7 @@ class ChatSession:
     steering_ids: set[str] = field(default_factory=set)
     proposal_yaml: str = ""
     proposal_diff: str = ""
+    downloads: dict[str, bytes] = field(default_factory=dict)
 
 
 SESSION_MEMORY_LIMIT_MESSAGE = "The AI service has reached its memory limit."
@@ -260,7 +263,11 @@ def _session_bytes(session: "ChatSession") -> int:
     """Return the chat text one session retains."""
     total = _text_bytes(session.schedule_yaml) + _text_bytes(session.proposal_yaml) + _text_bytes(session.proposal_diff)
     total += sum(_text_bytes(message.get("content")) for message in session.history)
-    return total + sum(_text_bytes(text) for _message_id, text in session.steering_queue)
+    return (
+        total
+        + sum(_text_bytes(text) for _message_id, text in session.steering_queue)
+        + sum(map(len, session.downloads.values()))
+    )
 
 
 @dataclass(frozen=True)
@@ -428,6 +435,29 @@ class SessionStore:
         """Validate access to a session without exposing its state."""
         with self._lock:
             self._get_owned(session_id, owner_token)
+
+    def save_download(self, session_id: str, download_id: str, content: bytes) -> bool:
+        """Retain a bounded generated ZIP within the existing session memory budget."""
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None or len(content) > self._settings.max_download_bytes:
+                return False
+            previous = session.downloads.get(download_id, b"")
+            delta = len(content) - len(previous)
+            if self._retained_bytes + delta > self._settings.max_session_bytes:
+                return False
+            session.downloads[download_id] = content
+            self._charge(session, delta)
+            return True
+
+    def download(self, session_id: str, owner_token: str | None, download_id: str) -> bytes:
+        """Read a generated ZIP only for its owning browser."""
+        with self._lock:
+            session = self._get_owned(session_id, owner_token)
+            try:
+                return session.downloads[download_id]
+            except KeyError:
+                raise HTTPException(status_code=404, detail="This generated ZIP is no longer available.") from None
 
     def has_active_turn(self, session_id: str, owner_token: str | None) -> bool:
         """Check whether Stop has a reserved turn to cancel."""
@@ -982,6 +1012,19 @@ def create_app(
                 background_task.cancel()
         return Response(status_code=status.HTTP_202_ACCEPTED)
 
+    @app.get("/sessions/{session_id}/downloads/{download_id}", dependencies=[Depends(require_auth)])
+    async def download_generated_zip(
+        session_id: str,
+        download_id: str,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> Response:
+        """Deliver one captured ZIP without exposing arbitrary sandbox paths."""
+        return Response(
+            content=store.download(session_id, owner, download_id),
+            media_type="application/zip",
+            headers={"Content-Disposition": 'attachment; filename="download.zip"'},
+        )
+
     @app.get(
         "/sessions/{session_id}/optimizations/{job_id}/xlsx",
         dependencies=[Depends(require_auth)],
@@ -1108,6 +1151,7 @@ def create_app(
             pending_proposal=bool(proposal_yaml),
             optimizer_result_available=latest_artifact is not None,
             max_history_chars=settings.max_history_chars,
+            max_download_bytes=settings.max_download_bytes,
         )
         history_question = question
         if attachments:
@@ -1123,6 +1167,7 @@ def create_app(
             pending_turn_stops.discard(session_id)
             assistant_parts: list[str] = []
             pending_proposal: AgentProposal | None = None
+            pending_download: bytes | None = None
             completed = False
             outcome = "cancelled"
             error_code = None
@@ -1196,6 +1241,8 @@ def create_app(
                                 "schedule_change",
                                 {"schedule_yaml": event.schedule_yaml},
                             )
+                        elif isinstance(event, AgentDownload):
+                            pending_download = event.content
                         elif isinstance(event, AgentProposal):
                             pending_proposal = event
                 proposal = None
@@ -1229,6 +1276,16 @@ def create_app(
                     yield _sse_event("history_trimmed", {"dropped": completion.history_trimmed_count})
                 if completion.proposal_saved:
                     yield _sse_event("proposal", {"diff": pending_proposal.diff})
+                if pending_download is not None:
+                    if store.save_download(session_id, turn_id, pending_download):
+                        yield _sse_event("download", {"download_id": turn_id})
+                    else:
+                        yield _sse_event(
+                            "error",
+                            {
+                                "message": "The generated ZIP could not be retained because the service memory limit was reached."
+                            },
+                        )
                 done = {"message_id": turn_id}
                 if history_saved is not None:
                     done["history_saved"] = history_saved
@@ -1238,6 +1295,9 @@ def create_app(
             except ProviderError:
                 outcome, error_code = "failed", "provider_error"
                 yield _sse_event("error", {"message": PROVIDER_ERROR})
+            except SandboxDownloadError as exc:
+                outcome, error_code = "failed", "download_error"
+                yield _sse_event("error", {"message": str(exc)})
             except SandboxCommandTimeoutError:
                 outcome, error_code = "failed", "sandbox_command_timeout"
                 yield _sse_event("error", {"message": SANDBOX_COMMAND_TIMEOUT_ERROR})

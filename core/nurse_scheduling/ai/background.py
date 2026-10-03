@@ -36,11 +36,13 @@ from .provider import ChatMessage, ProviderError, TokenUsage, ToolCapableChatPro
 from .sandbox import SandboxError, SandboxFactory
 from .sandbox_agent import (
     SANDBOX_SYSTEM_PROMPT,
+    AgentDownload,
     AgentScheduleChange,
     SandboxAgentLimits,
     SandboxAttachment,
     SandboxCandidateError,
     SandboxCommandTimeoutError,
+    SandboxDownloadError,
     SandboxTurnTimeoutError,
     run_sandbox_agent,
 )
@@ -84,6 +86,8 @@ class BackgroundSessionStore(Protocol):
     ) -> TurnCompletion: ...
 
     def abort(self, session_id: str) -> None: ...
+
+    def save_download(self, session_id: str, download_id: str, content: bytes) -> bool: ...
 
 
 @dataclass(frozen=True)
@@ -194,9 +198,15 @@ def build_provider_messages(
     pending_proposal: bool = False,
     optimizer_result_available: bool = False,
     max_history_chars: int = DEFAULT_MAX_HISTORY_CHARS,
+    max_download_bytes: int = 50_000_000,
 ) -> list[ChatMessage]:
     """Build a provider prompt that keeps schedule data separate from instructions."""
     system_content = f"{system_prompt}\n\nCurrent schedule summary:\n{describe_schedule(schedule_yaml)}"
+    system_content += (
+        "\nGenerated file download: write one ZIP to /workspace/download.zip. "
+        f"Its size and total uncompressed contents must each be at most {max_download_bytes} bytes. "
+        "The server captures it and provides a download button.\n"
+    )
     if pending_proposal:
         system_content += (
             "\nA validated proposal is pending. Its exact candidate and diff are available in the trusted workspace "
@@ -276,9 +286,11 @@ async def run_background_turn(
             pending_proposal=bool(proposal_yaml),
             optimizer_result_available=artifact is not None,
             max_history_chars=settings.max_history_chars,
+            max_download_bytes=settings.max_download_bytes,
         )
         assistant_parts: list[str] = []
         pending_proposal: AgentProposal | None = None
+        pending_download: bytes | None = None
         completed = False
         outcome = "failed"
         error_code: str | None = "internal_error"
@@ -329,6 +341,8 @@ async def run_background_turn(
                             "schedule_change",
                             {"schedule_yaml": event.schedule_yaml},
                         )
+                    elif isinstance(event, AgentDownload):
+                        pending_download = event.content
                     elif isinstance(event, AgentProposal):
                         pending_proposal = event
             proposal = None
@@ -355,6 +369,17 @@ async def run_background_turn(
                 )
             if completion.proposal_saved and pending_proposal is not None:
                 event_broker.publish(session_id, "proposal", {"diff": pending_proposal.diff})
+            if pending_download is not None:
+                if store.save_download(session_id, turn_id, pending_download):
+                    event_broker.publish(session_id, "download", {"download_id": turn_id})
+                else:
+                    event_broker.publish(
+                        session_id,
+                        "error",
+                        {
+                            "message": "The generated ZIP could not be retained because the service memory limit was reached."
+                        },
+                    )
             event_broker.publish(session_id, "done", {"message_id": turn_id})
         except asyncio.CancelledError:
             outcome, error_code = "cancelled", None
@@ -363,6 +388,9 @@ async def run_background_turn(
         except ProviderError:
             error_code = "provider_error"
             event_broker.publish(session_id, "error", {"message": PROVIDER_ERROR})
+        except SandboxDownloadError as exc:
+            error_code = "download_error"
+            event_broker.publish(session_id, "error", {"message": str(exc)})
         except SandboxCommandTimeoutError:
             error_code = "sandbox_command_timeout"
             event_broker.publish(session_id, "error", {"message": SANDBOX_COMMAND_TIMEOUT_ERROR})

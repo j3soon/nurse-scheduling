@@ -118,6 +118,7 @@ class EvalCase:
     optimizer_completion: str = ""
     optimizer_completion_only: bool = False
     answer_json: dict[str, Any] = field(default_factory=dict)
+    download_files: dict[str, str] = field(default_factory=dict)
     category: str = ""
     assertions: tuple[Assertion, ...] = ()
     expected_diff: tuple[ExpectedDiff, ...] = ()
@@ -209,6 +210,11 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     for required in ("id", "fixture", "expect_proposal"):
         if required not in entry:
             raise EvalCaseError(f"{source} is missing `{required}`.")
+    download_files = entry.get("download_files", {})
+    if not isinstance(download_files, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) for k, v in download_files.items()
+    ):
+        raise EvalCaseError(f"{source} has invalid download_files.")
     raw_turns = entry.get("user_turns")
     if raw_turns is None:
         if "question" not in entry:
@@ -311,6 +317,7 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         optimizer_completion_only=optimizer_completion_only,
         answer_json=answer_json,
         category=category,
+        download_files=download_files,
         assertions=assertions,
         expected_diff=expected_diff,
         semantic_check=semantic_check,
@@ -524,6 +531,17 @@ def grade(case: EvalCase, outcome: RunOutcome, computed: dict[str, Any] | None =
             detail="" if proposed == case.expect_proposal else f"a proposal was {'not ' if not proposed else ''}made",
         )
     )
+    if case.download_files:
+        import hashlib
+
+        downloads = [event.get("files", {}) for event in outcome.activity if event.get("kind") == "download"]
+        expected = {name: hashlib.sha256(text.encode()).hexdigest() for name, text in case.download_files.items()}
+        checks.append(
+            CheckResult(
+                "captured ZIP contains the requested files",
+                len(downloads) == 1 and all(downloads[0].get(name) == digest for name, digest in expected.items()),
+            )
+        )
     if case.expect_proposal and proposed:
         checks.extend(_check_assertion(outcome, assertion) for assertion in case.assertions)
         checks.extend(_check_expected_diff(outcome, expected) for expected in case.expected_diff)
