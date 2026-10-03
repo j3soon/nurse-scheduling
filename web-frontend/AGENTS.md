@@ -87,6 +87,7 @@ owns a callback and derive busy/Stop state from its phases. Scope stream callbac
 to their connection, and scope other async completions to their conversation.
 Replayable events carry run identity and advance the cursor only after a complete
 SSE frame. Test overlapping foreground completion and background replay explicitly.
+Keep run routing and pre-acknowledgement buffering in `SessionEventRouter`.
 Apply assistant output from the single session GET stream through
 `applyAssistantEvent`. Route foreground and review events by `run_id`, including
 output that arrives before POST message acceptance is acknowledged. Keep run identity on

@@ -23,6 +23,7 @@
 
 import Image from 'next/image';
 import { ChatLifecycle, scopedCallbacks } from './chatLifecycle';
+import { SessionEventRouter } from './sessionEventRouter';
 import { ChangeEvent, DragEvent, FormEvent, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { FiArrowDown, FiArrowUp, FiChevronDown, FiDownload, FiMic, FiPlus, FiSquare } from 'react-icons/fi';
 import AppVersionText from '@/components/AppVersionText';
@@ -542,12 +543,7 @@ export default function ExperimentalAiPage() {
   const sessionEndpointRef = useRef<string | null>(null);
   const authTokensRef = useRef<Record<string, string>>({});
   const abortControllerRef = useRef<AbortController | null>(null);
-  const foregroundRunRef = useRef<{
-    runId?: string;
-    callbacks: StreamCallbacks;
-    deferred: (() => void)[];
-    reject: (error: Error) => void;
-  } | null>(null);
+  const eventRouterRef = useRef(new SessionEventRouter());
   const sessionEventsControllerRef = useRef<AbortController | null>(null);
   const sessionEventsRetryRef = useRef(0);
   const sessionEventsTimerRef = useRef<number | null>(null);
@@ -1178,35 +1174,13 @@ export default function ExperimentalAiPage() {
         lastSessionEventIdRef.current = id;
         sessionEventsRetryRef.current = 0;
       },
-      forRun: runId => {
-        const foreground = foregroundRunRef.current;
-        if (!foreground) return undefined;
-        if (foreground.runId) return foreground.runId === runId ? foreground.callbacks : undefined;
-        // A fast run can publish before its POST acknowledgement arrives. Defer
-        // these callbacks until that acknowledgement identifies the foreground run.
-        return Object.fromEntries(Object.entries(handlers).map(([name, value]) => [
-          name, typeof value === 'function' ? (...args: unknown[]) => {
-            const deliver = () => {
-              const target = foreground.runId === runId ? foreground.callbacks : handlers;
-              if (!ownsConversation()) return;
-              const handler = target[name as keyof StreamCallbacks];
-              if (typeof handler === 'function') (handler as (...args: unknown[]) => unknown)(...args);
-            };
-            if (foreground.runId) deliver();
-            else foreground.deferred.push(deliver);
-          } : value,
-        ])) as StreamCallbacks;
-      },
+      forRun: runId => eventRouterRef.current.forRun(runId, handlers, ownsConversation),
       onReset: reset => {
         setMessages(previous => previous.filter(message => !reset.runIds.includes(message.runId ?? message.id)));
         setProposalDiff(reset.proposalDiff);
         setActiveOptimization(null);
         lifecycle.finish(lifecycle.current('background'));
-        const foreground = foregroundRunRef.current;
-        if (foreground?.runId && !reset.terminalRunIds.includes(foreground.runId)
-          && reset.activeRunId !== foreground.runId) {
-          foreground.reject(new Error('This response expired from event replay. Start a new question.'));
-        }
+        eventRouterRef.current.reset(reset);
         if (reset.incomplete) setSessionNotice('Some earlier response output expired from event replay.');
       },
       onRunContext: id => {
@@ -1326,7 +1300,7 @@ export default function ExperimentalAiPage() {
         reportRequestError(streamError, 'The AI session event stream disconnected.');
       }
       if (streamError instanceof AiHttpError && streamError.status === 404) {
-        foregroundRunRef.current?.reject(streamError);
+        eventRouterRef.current.foreground?.reject(streamError);
         return;
       }
       // Rejected credentials cannot succeed until the token changes, which restarts
@@ -1435,7 +1409,7 @@ export default function ExperimentalAiPage() {
         onError: message => rejectRun(new Error(message)),
         onStale: message => rejectRun(new AiStaleRunError(message)),
         onReset: () => {
-          const runId = foregroundRunRef.current?.runId;
+          const runId = eventRouterRef.current.foreground?.runId;
           activeAssistantId = initialAssistantId;
           activeAssistantHasOutput = false;
           activeQuestion = question;
@@ -1457,7 +1431,7 @@ export default function ExperimentalAiPage() {
           )));
         }, sandboxScheduleRef, scheduleYamlRef),
         onSteering: (queuedId, queuedMessage) => {
-          const runId = foregroundRunRef.current?.runId;
+          const runId = eventRouterRef.current.foreground?.runId;
           const createdAt = queuedMessagesRef.current.find(message => message.id === queuedId)?.createdAt ?? Date.now();
           queuedMessagesRef.current = queuedMessagesRef.current.filter(message => message.id !== queuedId);
           setQueuedMessages(queuedMessagesRef.current);
@@ -1506,17 +1480,11 @@ export default function ExperimentalAiPage() {
         onContextUsage: setContextUsage,
         onHistoryTrimmed: setTrimmedHistoryCount,
       }, () => lifecycle.owns(operation) && !controller.signal.aborted);
-      const foreground = {
-        callbacks,
-        deferred: [] as (() => void)[],
-        reject: rejectRun,
-        runId: undefined as string | undefined,
-      };
-      foregroundRunRef.current = foreground;
+      const foreground = eventRouterRef.current.begin(callbacks, rejectRun);
       const aborted = () => finishRun();
       controller.signal.addEventListener('abort', aborted, { once: true });
       try {
-        foreground.runId = await sendMessage(
+        const runId = await sendMessage(
           sessionId,
           question,
           controller.signal,
@@ -1526,9 +1494,10 @@ export default function ExperimentalAiPage() {
           },
           sessionEndpoint,
         );
-        setMessages(previous => previous.map(message => runMessageIds.has(message.id)
-          ? { ...message, runId: foreground.runId } : message));
-        foreground.deferred.splice(0).forEach(deliver => deliver());
+        eventRouterRef.current.acknowledge(foreground, runId, acceptedId => {
+          setMessages(previous => previous.map(message => runMessageIds.has(message.id)
+            ? { ...message, runId: acceptedId } : message));
+        });
         if (!runFinished && lifecycle.getSnapshot().foreground?.phase === 'stopping') {
           // Stop may have reached the server before the message was accepted.
           await stopSession(sessionId, authToken, sessionEndpoint).catch(stopError => {
@@ -1540,7 +1509,7 @@ export default function ExperimentalAiPage() {
         await finished;
       } finally {
         controller.signal.removeEventListener('abort', aborted);
-        if (foregroundRunRef.current === foreground) foregroundRunRef.current = null;
+        eventRouterRef.current.finish(foreground);
       }
       if (!lifecycle.owns(operation)) return;
       setMessages(previous => previous.map(message => (

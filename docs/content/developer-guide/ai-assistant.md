@@ -196,6 +196,7 @@ relative to `web-frontend/src/app/experimental-ai/`.
 | `SessionOptimizer`<br/>`optimizer.py` | Own remote jobs, progress, artifacts, late-submission cleanup, and result-review wake-ups. |
 | `SessionEventStream`<br/>`session_event_stream.py` | Retain bounded journal and recovery projections for every session event. |
 | Browser `ChatLifecycle`<br/>`chatLifecycle.ts` | Track operation ownership and derive busy and Stop state. |
+| Browser `SessionEventRouter`<br/>`sessionEventRouter.ts` | Route events by run ID and buffer early output until the POST acknowledgement identifies its answer. |
 | Browser event reducer<br/>`assistantEvents.ts` | Apply assistant events from the session stream. |
 
 ## One Run at a Glance {#one-turn-at-a-glance}
