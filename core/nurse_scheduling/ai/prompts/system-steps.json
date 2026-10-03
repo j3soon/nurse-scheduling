@@ -532,5 +532,44 @@
         "note": "Canonical current selectors, counts-only default, source freshness guard. Prior diagnostic and infrastructure-invalid rounds remain in ignored artifacts. Ban-count cost improvement is not confirmed."
       }
     ]
+  },
+  {
+    "id": "verified-helper-counts",
+    "file": "steps/verified-helper-counts.md",
+    "cases": [
+      "request-bans-counts-large",
+      "result-policy-stale",
+      "optimizer-independent-request-check"
+    ],
+    "hypothesis": "Avoids duplicate computations for read-only questions covered by source-verified helper counts, while preserving explicitly independent checks and joint-feasibility reasoning.",
+    "sha256": "d545bfa3acc22ae960037c4e41f919694ad50924addcbc5a58b776b5b3608071",
+    "evidence": [
+      {
+        "case": "request-bans-counts-large",
+        "input_sha256": "c082648aa08953fc64208f498bf569b9c5b83a5962a0a3d134a21c696903cf27",
+        "before": "5/5",
+        "after": "5/5",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "cost_metric": "total-tokens",
+        "cost_ratio": 0.6945307308970099,
+        "cost_target": 0.8,
+        "controls": [
+          {
+            "case": "result-policy-stale",
+            "input_sha256": "4b37bfadcc4ad52fcedefe6bc29f66ede871077a17823fe0206ab4ba73b233d8",
+            "before": "3/3",
+            "after": "3/3"
+          },
+          {
+            "case": "optimizer-independent-request-check",
+            "input_sha256": "8cd9c2a3818f6266e8a3883e96b3cb86dfc9d3ea34a10029fc8d4d13e611be60",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Main witness extended from three to five unchanged pairs. Cost variance remains substantial. Stale policy review has no demonstrated latency benefit. Independent checking stays authorized when requested."
+      }
+    ]
   }
 ]
