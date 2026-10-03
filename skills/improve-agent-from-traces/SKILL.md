@@ -56,6 +56,11 @@ by weakening the task, staffing, rest policy, validation, or grading criteria.
 Add a contrasting control where a superficially similar request warrants a
 different action, such as genuine ambiguity or an explicitly authorized change.
 
+For file workflows, check actual delivered bytes and a later message in a fresh
+workspace. A claimed download path or a successful first-turn read does not prove
+delivery or retention. For complete imports, compare the whole parsed source
+with the proposal. Keep a partial-update control.
+
 Inspect the test runner before describing a run as end-to-end. Record whether
 provider requests, sandbox commands, optimizer submission, solving, and result
 delivery are real or simulated. A live model and a successful optimizer-tool
@@ -101,6 +106,10 @@ instruction general enough to handle changed IDs and equivalent structures.
 Examples may clarify the policy, but must not encode the testcase's answer.
 Apply the repository's plain technical English rule. Explain when to act, what
 to do, and what the result means. Retest wording changes before accepting them.
+
+For app identity questions, supply facts the host app knows. Make the testcase
+distinguish known identity from a guess based on available tools. Avoid adding
+another clause when existing guidance already passes without a measured cost gain.
 
 Use a maintained helper for repeated deterministic parsing or calculations.
 Prefer a small general helper with a documented CLI and structured output over
@@ -148,6 +157,9 @@ when results are noisy. Larger samples require a requested deeper investigation.
 Keep infrastructure errors separate and preserve failed attempts when retrying them.
 Keep prompt, manifest, cases, test inputs, grader, and references unchanged while
 an evaluation is running. Wait for its reports before editing those inputs.
+When a candidate has no saved benefit receipt yet, run input and grader checks
+first. Run checks that enforce prompt evidence after the comparison completes
+and its final receipts are saved.
 
 Report success rate, infrastructure failures, tool calls and reads, turns,
 latency, and input, cached, uncached, generated, reasoning, and total tokens.
@@ -188,9 +200,11 @@ a positive result.
 Require understood failures and repeated correctness or cost gains before calling
 a candidate an agent improvement. A small
 success-rate change alone is weak evidence. Inspect the failed attempts and
-repeat noisy comparisons within the allowed limit. A gain on one case can be
-offset by a regression on a contrasting case. Keep failed controls and report
-them even when the main witness passes. Do not retain an old clean-control
+repeat noisy comparisons within the allowed limit. Report which criterion
+failed when a candidate fixes the main issue but misses another required field.
+Repair that failure and rerun both versions without relaxing the grader. A gain
+on one case can be offset by a regression on a contrasting case. Keep failed
+controls and report them even when the main witness passes. Do not retain an old clean-control
 receipt after a failed recheck. Investigate the failure or report it as an
 unresolved risk instead of assuming it is unrelated to the change.
 

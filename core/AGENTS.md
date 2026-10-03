@@ -79,6 +79,9 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
 - Bound uploads before provider calls and place them under fixed sandbox paths.
   Retain uploaded source files only until the user removes them or the session expires.
   Count retained files and generated downloads against the session memory budget.
+- Test file workflows across message boundaries and session expiry. Check the
+  bytes delivered by the download API and the files loaded into the next VM.
+  A printed workspace path does not prove delivery or retention.
 - Keep model-facing prompts and intermediate messages concise. Avoid repeated
   warnings about malicious uploads or prescribed workbook-inspection commands.
   Rely on sandbox and server controls for security, and give generated artifacts
@@ -174,9 +177,15 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
 - Include the SPDX license header and AI marker in generated Markdown prompt
   fragments. Strip their leading provenance comments during assembly, preserving
   instruction comments and the model-facing clause hashes.
+- Supply app identity and enabled capabilities from server-known facts. Test
+  whether the agent knows its role, rather than guessing from available tools
+  or asking the user to inspect the UI. Keep navigation advice valid for someone
+  on another page.
 - Isolate prompt policies with the smallest fixture that exercises the claim.
   Use the large ward only when scale or reference cascades matter. Grade
   scheduling semantics rather than ineffective fields or equivalent formatting.
+  For complete file imports, compare the whole parsed proposal with the uploaded
+  source, including every rule and weight. Use a partial-update control.
   Preserve exact selectors and values when fidelity to the user's wording is
   under test. Define structured answer fields and counting units explicitly. Do not
   let an undefined priority label or field name decide the grader's meaning. Keep original traces when correcting a grader, apply the correction
