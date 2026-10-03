@@ -175,6 +175,13 @@ export class AiStaleRunError extends Error {
   }
 }
 
+export function isAuthenticationError(error: unknown): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && 'status' in error
+    && error.status === 401;
+}
+
 export const PRODUCTION_AI_API_URL = 'https://api.nursescheduling.org/ai';
 export const LOCAL_AI_API_URL = 'http://localhost:8001';
 export const DEFAULT_SESSION_RETENTION_SECONDS = 48 * 60 * 60;

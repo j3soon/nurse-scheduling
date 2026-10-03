@@ -24,6 +24,12 @@ import type { ToolActivity, ToolStartActivity } from './aiClient';
 import type { SessionEvent } from './sessionEvents';
 import type { ChatExportMessage } from './chatExport';
 
+export function messageId(): string {
+  return typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random()}`;
+}
+
 // Streamed output of one assistant response. Foreground and replayed background
 // streams both reduce these onto the message they own.
 export type AssistantEvent =

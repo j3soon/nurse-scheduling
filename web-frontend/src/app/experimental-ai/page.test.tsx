@@ -67,6 +67,7 @@ vi.mock('./aiClient', async importOriginal => {
   getBackendVersion: mockGetBackendVersion,
   getSessionStatus: mockGetSessionStatus,
   normalizeAiEndpoint: mockNormalizeAiEndpoint,
+  isAuthenticationError: awaitClient.isAuthenticationError,
   isOfficialAiEndpoint: (endpoint: string) => (
     endpoint === '/ai' || mockNormalizeAiEndpoint(endpoint) === 'https://api.nursescheduling.org/ai'
   ),

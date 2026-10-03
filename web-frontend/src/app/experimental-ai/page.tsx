@@ -22,11 +22,7 @@
 'use client';
 
 import Image from 'next/image';
-import { ChatLifecycle, scopedEventHandler } from './chatLifecycle';
-import { SessionEventRouter } from './sessionEventRouter';
-import { useSessionEventStream } from './useSessionEventStream';
-import type { SessionEventHandler } from './sessionEvents';
-import { ChangeEvent, DragEvent, FormEvent, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { ChangeEvent, DragEvent, FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { FiArrowDown, FiArrowUp, FiChevronDown, FiDownload, FiMic, FiPlus, FiSquare } from 'react-icons/fi';
 import AppVersionText from '@/components/AppVersionText';
 import BackendTokenField, { isValidBackendToken } from '@/components/BackendTokenField';
@@ -46,68 +42,32 @@ import { CURRENT_APP_VERSION } from '@/utils/version';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
 import yaml from 'js-yaml';
 import { ActivityEntry, AssistantActivity } from './AssistantActivity';
-import { ChatExportMessage, downloadChatExport, type ChatExportFormat } from './chatExport';
+import { downloadChatExport, type ChatExportFormat } from './chatExport';
 import { parseOptimizerMessage } from './optimizerMessage';
-import {
-  AssistantEvent,
-  applyAssistantEvent,
-  toAssistantEvent,
-  completeResponse,
-  failResponse,
-  interruptRunningTools,
-  resumeResponse,
-  staleResponse,
-  steerResponse,
-  stopResponse,
-} from './assistantEvents';
+import { interruptRunningTools, messageId } from './assistantEvents';
+import { useAiChat, type ChatMessage, type ActiveOptimization } from './useAiChat';
 import {
   AiCapabilities,
   AiHttpError,
-  AiStaleRunError,
   DEFAULT_SESSION_RETENTION_SECONDS,
   LOCAL_AI_API_URL,
-  OptimizationActivity,
   type ContextUsage,
   PRODUCTION_AI_API_URL,
-  approveProposal,
-  createSession,
   downloadOptimization,
   getAiBaseUrl,
   getCapabilities,
   getBackendVersion,
   getSessionStatus,
+  isAuthenticationError,
   isOfficialAiEndpoint,
   normalizeAiEndpoint,
-  queueMessage,
-  rejectProposal,
-  sendMessage,
-  stopSession,
-  updateSessionSchedule,
 } from './aiClient';
-
-interface ChatMessage extends ChatExportMessage {
-  id: string;
-  runId?: string;
-  retry?: {
-    question: string;
-    requiresAttachments: boolean;
-  };
-  optimizerJob?: Pick<OptimizationActivity, 'jobId' | 'downloadable'>;
-}
-
-interface ActiveOptimization extends OptimizationActivity {
-  points: OptimizationProgressPoint[];
-}
 
 const AI_STORAGE_KEY = 'nurse-scheduling-ai-data';
 const AI_AUTH_STORAGE_KEY = 'nurse-scheduling-ai-auth';
 const AI_SERVER_STORAGE_KEY = 'nurse-scheduling-ai-server';
 const AI_CONVERSATION_STORAGE_KEY = 'nurse-scheduling-ai-conversation';
 const FIREFOX_ON_DEVICE_SPEECH_VERSION = 157;
-// A solver can emit a progress event per incumbent solution, and the whole series is
-// persisted with the conversation. Halving the oldest points keeps the sparkline shape
-// while bounding the array and the tab storage a long run consumes.
-const OPTIMIZATION_PROGRESS_POINT_LIMIT = 500;
 const SPEECH_LANGUAGES = [
   { value: '', label: 'Browser default' },
   { value: 'en-US', label: 'English (United States)' },
@@ -213,12 +173,6 @@ interface SelectedAttachment {
   previewUrl?: string;
 }
 
-interface QueuedChatMessage {
-  createdAt: number;
-  id: string;
-  content: string;
-}
-
 interface StoredChatConversation {
   sessionId: string;
   endpoint: string;
@@ -244,12 +198,6 @@ const DISABLED_FILE_CAPABILITY: AiCapabilities['file_attachments'] = {
 function fileExtension(filename: string): string {
   const lastDot = filename.lastIndexOf('.');
   return lastDot < 0 ? '' : filename.slice(lastDot).toLowerCase();
-}
-
-function messageId(): string {
-  return typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random()}`;
 }
 
 function isActivityEntry(value: unknown): value is ActivityEntry {
@@ -385,54 +333,6 @@ function formatResponseTime(timestamp: number): string {
     : { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
-function optimizationMessage(activity: OptimizationActivity): string {
-  const summary = activity.state === 'completed'
-    ? activity.downloadable
-      ? 'Optimization finished. Download the optimized schedule to review it.'
-      : 'Optimization finished, but no result workbook is available to download.'
-    : `Optimization ended with status: ${activity.state}.`;
-  const details: string[] = [];
-  const add = (label: string, value: string | number | undefined) => {
-    // Indent continuation lines so field values cannot introduce another label.
-    if (value !== undefined) details.push(`${label}: ${String(value).replace(/\r\n?|\n/g, '\n ')}`);
-  };
-  add('Outcome', activity.result?.outcome);
-  add('Final score', activity.result?.score);
-  add('Solver', activity.request?.solver);
-  add('Solver status', activity.result?.solverStatus);
-  add('Termination reason', activity.result?.terminationReason);
-  if (activity.request?.timeoutSeconds !== undefined) add('Solver timeout', `${activity.request.timeoutSeconds}s`);
-  if (activity.backend) {
-    add('Backend URL', activity.backend.url ?? 'unknown');
-    add('Backend version', activity.backend.appVersion ?? 'unknown');
-    add('API version', activity.backend.apiVersion);
-    add('Service', activity.backend.serviceName);
-    add('Deployment', activity.backend.deploymentId);
-    add('Instance', activity.backend.instanceId);
-    if (activity.backend.requestTimeoutSeconds !== undefined) {
-      add('Backend request timeout', `${activity.backend.requestTimeoutSeconds}s`);
-    }
-    const claimed = activity.backend.claimedPerformance;
-    add('Claimed performance', claimed ? `${claimed.score} (version ${claimed.appVersion}, measured ${claimed.measuredAt})` : 'unavailable');
-  }
-  add('Error code', activity.error?.code);
-  add('Error', activity.error?.message);
-  return [summary, ...details].join('\n');
-}
-
-function isAuthenticationError(error: unknown): boolean {
-  return typeof error === 'object'
-    && error !== null
-    && 'status' in error
-    && error.status === 401;
-}
-
-// Output that closes a steering placeholder, so queued input starts a new response.
-function startsVisibleOutput(event: AssistantEvent): boolean {
-  if (event.type === 'delta' || event.type === 'reasoning') return event.text.length > 0;
-  return event.type === 'tool_start';
-}
-
 function OptimizationSparkline({ points }: { points: OptimizationProgressPoint[] }) {
   const firstTime = points[0].elapsedSeconds;
   const lastTime = points[points.length - 1].elapsedSeconds;
@@ -503,21 +403,8 @@ export default function ExperimentalAiPage() {
     shiftTypeData,
   ]);
 
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [backendVersion, setBackendVersion] = useState<string | undefined>();
-  const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  const [sessionExpiresAt, setSessionExpiresAt] = useState<number | null>(null);
-  const [sessionRetentionSeconds, setSessionRetentionSeconds] = useState(DEFAULT_SESSION_RETENTION_SECONDS);
-  const [conversationUnavailable, setConversationUnavailable] = useState(false);
-  const [sessionNotice, setSessionNotice] = useState<string | null>(null);
-  const [trimmedHistoryCount, setTrimmedHistoryCount] = useState(0);
   const [draft, setDraft] = useState('');
-  const [lifecycle] = useState(() => new ChatLifecycle());
-  const operations = useSyncExternalStore(lifecycle.subscribe, lifecycle.getSnapshot, lifecycle.getSnapshot);
-  const isStreaming = Object.values(operations).some(active => active !== null && active.phase !== 'interrupted');
-  const isStopping = Object.values(operations).some(active => active?.phase === 'stopping');
-  const [activeOptimization, setActiveOptimization] = useState<ActiveOptimization | null>(null);
   const [downloadingOptimizationId, setDownloadingOptimizationId] = useState<string | null>(null);
   const [isClientReady, setIsClientReady] = useState(false);
   const [aiEndpoint, setAiEndpoint] = useState(getAiBaseUrl);
@@ -535,8 +422,6 @@ export default function ExperimentalAiPage() {
   const [fileCapability, setFileCapability] = useState(DISABLED_FILE_CAPABILITY);
   const [selectedAttachments, setSelectedAttachments] = useState<SelectedAttachment[]>([]);
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
-  const [queuedMessages, setQueuedMessages] = useState<QueuedChatMessage[]>([]);
-  const [steeringAssistantId, setSteeringAssistantId] = useState<string | null>(null);
   const [speechSupported, setSpeechSupported] = useState(false);
   const [firefoxVersion, setFirefoxVersion] = useState<number | null>(null);
   const [isListening, setIsListening] = useState(false);
@@ -544,18 +429,7 @@ export default function ExperimentalAiPage() {
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [showReasoning, setShowReasoning] = useState(true);
   const [showTools, setShowTools] = useState(true);
-  const [proposalDiff, setProposalDiff] = useState<string | null>(null);
-  const [proposalNotice, setProposalNotice] = useState<string | null>(null);
-  const [isApplyingProposal, setIsApplyingProposal] = useState(false);
-  const syncedScheduleRef = useRef<string | null>(null);
-  const sessionIdRef = useRef<string | null>(null);
-  const sessionEndpointRef = useRef<string | null>(null);
   const authTokensRef = useRef<Record<string, string>>({});
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const eventRouterRef = useRef(new SessionEventRouter());
-  const sessionEvents = useSessionEventStream();
-  const scheduleYamlRef = useRef(scheduleYaml);
-  const sandboxScheduleRef = useRef<string | null>(null);
   const selectedAttachmentsRef = useRef<SelectedAttachment[]>([]);
   const followPageBottomRef = useRef(true);
   const hasMessagesRef = useRef(false);
@@ -563,31 +437,11 @@ export default function ExperimentalAiPage() {
   const draftInputRef = useRef<HTMLTextAreaElement | null>(null);
   const composerDragDepthRef = useRef(0);
   const speechRecognitionRef = useRef<BrowserSpeechRecognition | null>(null);
-  const queuedMessagesRef = useRef<QueuedChatMessage[]>([]);
   const optimizationDownloadUrlRef = useRef<string | null>(null);
   const chatExportUrlRef = useRef<string | null>(null);
   const conversationStorageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const persistConversationRef = useRef<(() => void) | null>(null);
   const checkedSessionRef = useRef<string | null>(null);
-  const resetRuntime = useCallback(() => {
-    abortControllerRef.current?.abort();
-    abortControllerRef.current = null;
-    sessionEvents.reset();
-    sessionIdRef.current = null;
-    sessionEndpointRef.current = null;
-    syncedScheduleRef.current = null;
-    sandboxScheduleRef.current = null;
-    checkedSessionRef.current = null;
-    queuedMessagesRef.current = [];
-    lifecycle.reset();
-    setActiveSessionId(null);
-    setSessionExpiresAt(null);
-    setQueuedMessages([]);
-    setActiveOptimization(null);
-    setProposalDiff(null);
-    setDownloadingOptimizationId(null);
-    setIsApplyingProposal(false);
-  }, [lifecycle, sessionEvents]);
   const reportRequestError = useCallback((requestError: unknown, fallback: string) => {
     if (isAuthenticationError(requestError)) {
       setAuthRequired(true);
@@ -598,8 +452,70 @@ export default function ExperimentalAiPage() {
     }
     setError(requestError instanceof Error ? requestError.message : fallback);
   }, []);
+  const {
+    messages,
+    setMessages,
+    contextUsage,
+    setContextUsage,
+    activeSessionId,
+    setActiveSessionId,
+    sessionExpiresAt,
+    setSessionExpiresAt,
+    sessionRetentionSeconds,
+    setSessionRetentionSeconds,
+    conversationUnavailable,
+    setConversationUnavailable,
+    sessionNotice,
+    setSessionNotice,
+    trimmedHistoryCount,
+    setTrimmedHistoryCount,
+    lifecycle,
+    isStreaming,
+    isStopping,
+    activeOptimization,
+    setActiveOptimization,
+    queuedMessages,
+    steeringAssistantId,
+    proposalDiff,
+    setProposalDiff,
+    proposalNotice,
+    setProposalNotice,
+    isApplyingProposal,
+    syncedScheduleRef,
+    sessionIdRef,
+    sessionEndpointRef,
+    sendRequest,
+    queue,
+    retryMessage,
+    stop,
+    applyProposal,
+    discardProposal,
+    reset: resetChat,
+    eventCursor,
+  } = useAiChat({
+    scheduleYaml, aiEndpoint, authRequired, authToken, isClientReady,
+    setError, reportRequestError,
+    onSendStart: clearComposer => {
+      followPageBottomRef.current = true;
+      setShowScrollToBottom(false);
+      if (clearComposer) {
+        setDraft('');
+        selectedAttachmentsRef.current.forEach(attachment => {
+          if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+        });
+        setSelectedAttachments([]);
+      }
+    },
+    onSessionCreated: id => { checkedSessionRef.current = id; },
+    onUnavailable: () => window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY),
+    onApplySchedule: schedule => loadFromYaml(yaml.load(schedule)),
+  });
+  const resetRuntime = useCallback(() => {
+    resetChat();
+    checkedSessionRef.current = null;
+    setDownloadingOptimizationId(null);
+  }, [resetChat]);
   hasMessagesRef.current = messages.length > 0;
-  scheduleYamlRef.current = scheduleYaml;
   useTabSwitchWarning(isStreaming || draft.trim().length > 0 || selectedAttachments.length > 0);
 
   useEffect(() => {
@@ -637,7 +553,7 @@ export default function ExperimentalAiPage() {
       )));
       setProposalDiff(storedConversation.proposalDiff);
       setSessionRetentionSeconds(storedConversation.retentionSeconds);
-      sessionEvents.cursor.current = storedConversation.sessionEventId ?? 0;
+      eventCursor.current = storedConversation.sessionEventId ?? 0;
       setBackendVersion(storedConversation.backendVersion);
       setContextUsage(storedConversation.contextUsage ?? null);
       setActiveOptimization(storedConversation.activeOptimization
@@ -677,7 +593,10 @@ export default function ExperimentalAiPage() {
     setSpeechSupported(hasSpeechRecognition && (
       detectedFirefoxVersion === null || detectedFirefoxVersion >= FIREFOX_ON_DEVICE_SPEECH_VERSION
     ));
-  }, [lifecycle, sessionEvents.cursor]);
+  }, [lifecycle, eventCursor, sessionEndpointRef, sessionIdRef, syncedScheduleRef,
+    setActiveOptimization, setActiveSessionId, setContextUsage, setConversationUnavailable,
+    setMessages, setProposalDiff, setSessionExpiresAt, setSessionNotice,
+    setSessionRetentionSeconds, setTrimmedHistoryCount]);
 
   const rememberPreferences = (preferences: AiPreferences) => {
     setShowReasoning(preferences.showReasoning);
@@ -717,7 +636,7 @@ export default function ExperimentalAiPage() {
         }
       });
     return () => capabilitiesController.abort();
-  }, [aiEndpoint, isClientReady]);
+  }, [aiEndpoint, isClientReady, setSessionRetentionSeconds]);
 
   useEffect(() => {
     if (!isClientReady) return;
@@ -742,7 +661,7 @@ export default function ExperimentalAiPage() {
           messages,
           syncedSchedule: syncedScheduleRef.current ?? scheduleYaml,
           proposalDiff,
-          sessionEventId: sessionEvents.cursor.current,
+          sessionEventId: eventCursor.current,
           activeOptimization,
           backendVersion,
           contextUsage,
@@ -777,7 +696,8 @@ export default function ExperimentalAiPage() {
     sessionExpiresAt,
     sessionRetentionSeconds,
     trimmedHistoryCount,
-    sessionEvents.cursor,
+    eventCursor,
+    sessionEndpointRef, sessionIdRef, syncedScheduleRef,
   ]);
 
   useEffect(() => {
@@ -816,7 +736,8 @@ export default function ExperimentalAiPage() {
           reportRequestError(statusError, 'The stored AI chat could not be checked.');
         }
       });
-  }, [activeSessionId, aiEndpoint, authToken, isClientReady, reportRequestError, resetRuntime]);
+  }, [activeSessionId, aiEndpoint, authToken, isClientReady, reportRequestError, resetRuntime,
+    sessionEndpointRef, sessionIdRef, setConversationUnavailable, setSessionExpiresAt, setSessionNotice]);
 
   useEffect(() => {
     if (activeSessionId === null || sessionExpiresAt === null) return;
@@ -835,11 +756,10 @@ export default function ExperimentalAiPage() {
     }
     const timeout = window.setTimeout(expire, delay);
     return () => window.clearTimeout(timeout);
-  }, [activeSessionId, resetRuntime, sessionExpiresAt, sessionRetentionSeconds]);
+  }, [activeSessionId, resetRuntime, sessionExpiresAt, sessionRetentionSeconds,
+    setConversationUnavailable, setSessionNotice]);
 
   useEffect(() => () => {
-    lifecycle.reset();
-    abortControllerRef.current?.abort();
     speechRecognitionRef.current?.stop();
     selectedAttachmentsRef.current.forEach(attachment => {
       if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
@@ -1018,17 +938,6 @@ export default function ExperimentalAiPage() {
     });
   };
 
-  const renewSessionExpiration = () => {
-    setSessionExpiresAt(Date.now() + sessionRetentionSeconds * 1000);
-  };
-
-  const markConversationUnavailable = (notice: string) => {
-    resetRuntime();
-    setConversationUnavailable(true);
-    setSessionNotice(notice);
-    window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
-  };
-
   const startNewConversation = () => {
     if (messages.length > 0 && !window.confirm('Start a new chat? The current transcript will be cleared.')) return;
     selectedAttachments.forEach(attachment => {
@@ -1096,504 +1005,21 @@ export default function ExperimentalAiPage() {
     });
   };
 
-  const startSessionEventStream = useCallback((sessionId: string, endpoint: string) => {
-    if (sessionEvents.connected()) return;
-    // One background run occupies one UI answer, keyed by its run ID.
-    const beginBackgroundMessage = (runId: string) => {
-      lifecycle.begin('background', runId);
-      // The server renews the session when it starts this run.
-      setSessionExpiresAt(Date.now() + sessionRetentionSeconds * 1000);
-      sandboxScheduleRef.current = scheduleYamlRef.current;
-      setMessages(previous => previous.some(message => message.id === runId)
-        // A restored or reconnected run resumes its own message, so clear the
-        // interrupted state rather than stacking a second response beside it.
-        ? previous.map(message => message.id === runId
-          ? resumeResponse(message)
-          : message)
-        : [
-          ...previous,
-          {
-            id: runId,
-            runId,
-            role: 'assistant',
-            content: '',
-            status: 'pending',
-            responseStartedAt: Date.now(),
-          },
-        ]);
-    };
-    // A reconnect replays only retained events, so a long run can lose its own
-    // run_start. Adopt the remaining output instead of discarding the answer.
-    const resumeBackgroundMessage = () => {
-      if (lifecycle.getSnapshot().background?.phase !== 'interrupted' && lifecycle.current('background')) return;
-      beginBackgroundMessage(lifecycle.current('background')?.id ?? messageId());
-    };
-    const updateBackgroundMessage = (update: (message: ChatMessage) => ChatMessage, messageId?: string) => {
-      const activeId = lifecycle.current('background')?.id ?? messageId;
-      if (activeId === undefined) return;
-      setMessages(previous => previous.map(message => message.id === activeId ? update(message) : message));
-    };
-    const failBackgroundRun = (message: string) => {
-      updateBackgroundMessage(entry => failResponse(entry, message));
-      lifecycle.finish(lifecycle.current('background'));
-      setError(message);
-    };
-    const ownsConversation = lifecycle.capture();
-    const handleBackground: SessionEventHandler = event => {
-      const output = toAssistantEvent(event, sandboxScheduleRef, scheduleYamlRef);
-      if (output) {
-        resumeBackgroundMessage();
-        updateBackgroundMessage(message => applyAssistantEvent(message, output));
-        return;
-      }
-      switch (event.type) {
-        case 'session_reset': {
-          const { reset } = event;
-          setMessages(previous => previous.filter(message => !reset.runIds.includes(message.runId ?? message.id)));
-          setProposalDiff(reset.proposalDiff);
-          setActiveOptimization(null);
-          lifecycle.finish(lifecycle.current('background'));
-
-          if (reset.incomplete) setSessionNotice('Some earlier response output expired from event replay.');
-          break;
-        }
-        case 'run_context': {
-          const id = event.runId;
-          if (lifecycle.current('background')?.id !== id) beginBackgroundMessage(id);
-          break;
-        }
-        case 'run_start': {
-          beginBackgroundMessage(event.runId);
-          break;
-        }
-        case 'steering': {
-          const { messageId: queuedId, message: content } = event;
-          const runId = lifecycle.current('background')?.id;
-          if (!runId) return;
-          setMessages(previous => {
-            if (previous.some(message => message.id === queuedId)) return previous;
-            const answer = previous.find(message => message.id === runId);
-            const now = Date.now();
-            const user: ChatMessage = { id: queuedId, runId, role: 'user', content, createdAt: now };
-            const continuation: ChatMessage | undefined = answer && (answer.content || answer.activity?.length)
-              ? { id: runId, runId, role: 'assistant', content: '', status: 'pending', responseStartedAt: now }
-              : undefined;
-            return steerResponse(previous, runId, user, continuation, `${runId}:${queuedId}`);
-          });
-          break;
-        }
-        case 'proposal': {
-          setProposalDiff(event.diff);
-          break;
-        }
-        case 'optimization': {
-          const { activity } = event;
-          if (!activity.terminal) {
-            setActiveOptimization(current => ({
-              ...activity,
-              points: current?.jobId === activity.jobId ? current.points : [],
-            }));
-            return;
-          }
-          setActiveOptimization(current => current?.jobId === activity.jobId ? null : current);
-          const content = optimizationMessage(activity);
-          setMessages(previous => previous.some(message => message.id === `optimizer-${activity.jobId}`)
-            ? previous
-            : [
-              ...previous,
-              {
-                id: `optimizer-${activity.jobId}`,
-                role: 'optimizer',
-                createdAt: Date.now(),
-                content,
-                optimizerJob: { jobId: activity.jobId, downloadable: activity.downloadable },
-              },
-            ]);
-          break;
-        }
-        case 'optimization_progress': {
-          const { jobId, point } = event.activity;
-          setActiveOptimization(current => {
-            if (current !== null && current.jobId !== jobId) return current;
-            const previous = current?.points ?? [];
-            const last = previous.at(-1);
-            if (last?.elapsedSeconds === point.elapsedSeconds && last.currentBestScore === point.currentBestScore) {
-              return current;
-            }
-            const retained = previous.length >= OPTIMIZATION_PROGRESS_POINT_LIMIT
-              ? previous.filter((_, index) => index % 2 === 0 || index === previous.length - 1)
-              : previous;
-            return {
-              jobId,
-              state: current?.state ?? 'running',
-              terminal: false,
-              downloadable: false,
-              points: [...retained, point],
-            };
-          });
-          break;
-        }
-        case 'done': {
-          const { runId } = event;
-          updateBackgroundMessage(message => completeResponse(message), runId);
-          lifecycle.finish(lifecycle.current('background'));
-          break;
-        }
-        case 'stopped': {
-          const { runId } = event;
-          updateBackgroundMessage(stopResponse, runId);
-          lifecycle.finish(lifecycle.current('background'));
-          break;
-        }
-        case 'stale': {
-          const { message } = event;
-          updateBackgroundMessage(entry => staleResponse(entry, message));
-          lifecycle.finish(lifecycle.current('background'));
-          setError(message);
-          break;
-        }
-        case 'context_usage': {
-          setContextUsage(event.usage);
-          break;
-        }
-        case 'history_trimmed': {
-          setTrimmedHistoryCount(event.dropped);
-          break;
-        }
-        case 'error': {
-          failBackgroundRun(event.message);
-          break;
-        }
-      }
-    };
-    const handle: SessionEventHandler = event => eventRouterRef.current.dispatch(event, handleBackground, ownsConversation);
-    sessionEvents.connect(sessionId, handle, authToken, endpoint, (streamError, firstFailure) => {
-      if (firstFailure) reportRequestError(streamError, 'The AI session event stream disconnected.');
-      if (streamError instanceof AiHttpError && streamError.status === 404) {
-        eventRouterRef.current.foreground?.reject(streamError);
-      }
-    });
-  }, [authToken, lifecycle, reportRequestError, sessionEvents, sessionRetentionSeconds]);
-
-  useEffect(() => {
-    if (!isClientReady || activeSessionId === null || conversationUnavailable) return;
-    startSessionEventStream(activeSessionId, sessionEndpointRef.current ?? aiEndpoint);
-  }, [activeSessionId, aiEndpoint, conversationUnavailable, isClientReady, startSessionEventStream]);
-
-  const sendRequest = async (
-    question: string,
-    attachmentsForMessage: SelectedAttachment[],
-    clearComposer: boolean,
-    createdAt = Date.now(),
-  ) => {
-    if (!question || lifecycle.busy || conversationUnavailable || (authRequired && authToken === null)) return;
-
-    const userMessage: ChatMessage = {
-      id: messageId(),
-      role: 'user',
-      createdAt,
-      content: question,
-      attachmentNames: attachmentsForMessage.map(attachment => attachment.file.name),
-    };
-    const initialAssistantId = messageId();
-    let activeAssistantId = initialAssistantId;
-    const runMessageIds = new Set([initialAssistantId]);
-    let activeAssistantHasOutput = false;
-    let activeQuestion = question;
-    let activeQuestionRequiresAttachments = attachmentsForMessage.length > 0;
-    const responseStartedAt = Date.now();
-    followPageBottomRef.current = true;
-    setShowScrollToBottom(false);
-    setMessages(previous => [
-      ...previous,
-      userMessage,
-      { id: activeAssistantId, role: 'assistant', content: '', status: 'pending', responseStartedAt },
-    ]);
-    if (clearComposer) {
-      setDraft('');
-      attachmentsForMessage.forEach(attachment => {
-        if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
-      });
-      setSelectedAttachments([]);
-    }
-    setError(null);
-    setProposalDiff(null);
-    setProposalNotice(null);
-    const operation = lifecycle.begin('foreground', activeAssistantId);
-    sandboxScheduleRef.current = scheduleYaml;
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-
-    try {
-      let sessionId = sessionIdRef.current;
-      const sessionEndpoint = sessionEndpointRef.current ?? aiEndpoint;
-      if (sessionId === null) {
-        sessionId = await createSession(scheduleYaml, authToken, sessionEndpoint);
-        if (!lifecycle.owns(operation)) return;
-        controller.signal.throwIfAborted();
-        sessionIdRef.current = sessionId;
-        sessionEndpointRef.current = sessionEndpoint;
-        startSessionEventStream(sessionId, sessionEndpoint);
-        checkedSessionRef.current = sessionId;
-        setActiveSessionId(sessionId);
-        setConversationUnavailable(false);
-        setSessionNotice(null);
-      } else if (syncedScheduleRef.current !== scheduleYaml) {
-        // The schedule can change elsewhere in the app between questions.
-        await updateSessionSchedule(sessionId, scheduleYaml, authToken, sessionEndpoint);
-      }
-      if (!lifecycle.owns(operation)) return;
-      controller.signal.throwIfAborted();
-      syncedScheduleRef.current = scheduleYaml;
-      renewSessionExpiration();
-      let runFinished = false;
-      let finishRun!: () => void;
-      let rejectRun!: (error: Error) => void;
-      const finished = new Promise<void>((resolve, reject) => {
-        finishRun = () => { runFinished = true; resolve(); };
-        rejectRun = reject;
-      });
-      void finished.catch(() => {});
-      // Subscribe before submitting. Neither a fast terminal event nor a reconnect
-      // should finish a different operation.
-      const handle = scopedEventHandler(event => {
-        const output = toAssistantEvent(event, sandboxScheduleRef, scheduleYamlRef);
-        if (output) {
-          if (startsVisibleOutput(output)) {
-            activeAssistantHasOutput = true;
-            setSteeringAssistantId(null);
-          }
-          const assistantId = activeAssistantId;
-          setMessages(previous => previous.map(message => (
-            message.id === assistantId ? applyAssistantEvent(message, output) : message
-          )));
-          return;
-        }
-        switch (event.type) {
-          case 'done': {
-            finishRun();
-            break;
-          }
-          case 'stopped': {
-            controller.abort(); finishRun();
-            break;
-          }
-          case 'error': {
-            rejectRun(new Error(event.message));
-            break;
-          }
-          case 'stale': {
-            rejectRun(new AiStaleRunError(event.message));
-            break;
-          }
-          case 'session_reset': {
-            const runId = eventRouterRef.current.foreground?.runId;
-            activeAssistantId = initialAssistantId;
-            activeAssistantHasOutput = false;
-            activeQuestion = question;
-            setMessages(previous => [
-              ...previous.filter(message => !runMessageIds.has(message.id)),
-              { id: initialAssistantId, runId, role: 'assistant', content: '', status: 'pending', responseStartedAt },
-            ]);
-            runMessageIds.clear();
-            runMessageIds.add(initialAssistantId);
-            break;
-          }
-          case 'steering': {
-            const { messageId: queuedId, message: queuedMessage } = event;
-            const runId = eventRouterRef.current.foreground?.runId;
-            const createdAt = queuedMessagesRef.current.find(message => message.id === queuedId)?.createdAt ?? Date.now();
-            queuedMessagesRef.current = queuedMessagesRef.current.filter(message => message.id !== queuedId);
-            setQueuedMessages(queuedMessagesRef.current);
-            runMessageIds.add(queuedId);
-            const steeringStartedAt = Date.now();
-            if (activeAssistantHasOutput) {
-              const completedAssistantId = activeAssistantId;
-              const nextAssistantId = messageId();
-              runMessageIds.add(nextAssistantId);
-              setMessages(previous => steerResponse(
-                previous,
-                completedAssistantId,
-                { id: queuedId, runId, role: 'user', content: queuedMessage, createdAt },
-                { id: nextAssistantId, runId, role: 'assistant', content: '', status: 'pending', responseStartedAt: steeringStartedAt },
-              ));
-              activeAssistantId = nextAssistantId;
-              setSteeringAssistantId(nextAssistantId);
-              activeAssistantHasOutput = false;
-            } else {
-              const pendingAssistantId = activeAssistantId;
-              setMessages(previous => steerResponse(
-                previous,
-                pendingAssistantId,
-                { id: queuedId, runId, role: 'user', content: queuedMessage, createdAt },
-              ));
-              setSteeringAssistantId(pendingAssistantId);
-            }
-            activeQuestion = queuedMessage;
-            activeQuestionRequiresAttachments = false;
-            break;
-          }
-          case 'proposal': {
-            setProposalDiff(event.diff);
-            break;
-          }
-          case 'context_usage': {
-            setContextUsage(event.usage);
-            break;
-          }
-          case 'history_trimmed': {
-            setTrimmedHistoryCount(event.dropped);
-            break;
-          }
-        }
-      }, () => lifecycle.owns(operation) && !controller.signal.aborted);
-      const foreground = eventRouterRef.current.begin(handle, rejectRun);
-      const aborted = () => finishRun();
-      controller.signal.addEventListener('abort', aborted, { once: true });
-      try {
-        const runId = await sendMessage(
-          sessionId,
-          question,
-          controller.signal,
-          authToken,
-          {
-            files: attachmentsForMessage.map(attachment => attachment.file),
-          },
-          sessionEndpoint,
-        );
-        eventRouterRef.current.acknowledge(foreground, runId, acceptedId => {
-          setMessages(previous => previous.map(message => runMessageIds.has(message.id)
-            ? { ...message, runId: acceptedId } : message));
-        });
-        if (!runFinished && lifecycle.getSnapshot().foreground?.phase === 'stopping') {
-          // Stop may have reached the server before the message was accepted.
-          await stopSession(sessionId, authToken, sessionEndpoint).catch(stopError => {
-            if (!lifecycle.owns(operation)) return;
-            lifecycle.stopFailed([operation]);
-            reportRequestError(stopError, 'The AI response could not be stopped.');
-          });
-        }
-        await finished;
-      } finally {
-        controller.signal.removeEventListener('abort', aborted);
-        eventRouterRef.current.finish(foreground);
-      }
-      if (!lifecycle.owns(operation)) return;
-      setMessages(previous => previous.map(message => (
-        message.id === activeAssistantId
-          ? controller.signal.aborted ? stopResponse(message)
-            : completeResponse(message)
-          : message
-      )));
-    } catch (streamError) {
-      if (!lifecycle.owns(operation)) return;
-      const staleRunMessage = streamError instanceof AiStaleRunError ? streamError.message : null;
-      setMessages(previous => previous.map(message => {
-        if (message.id !== activeAssistantId) return message;
-        if (controller.signal.aborted) return stopResponse(message);
-        return {
-          ...(staleRunMessage === null ? failResponse(message) : staleResponse(message, staleRunMessage)),
-          retry: {
-            question: activeQuestion,
-            requiresAttachments: activeQuestionRequiresAttachments,
-          },
-        };
-      }));
-      if (streamError instanceof AiHttpError && streamError.status === 404) {
-        markConversationUnavailable('This chat expired or is no longer available. Start a new chat to continue.');
-      } else if (!controller.signal.aborted && staleRunMessage === null) {
-        reportRequestError(streamError, 'The AI request failed.');
-      }
-    } finally {
-      if (lifecycle.owns(operation)) {
-        setSteeringAssistantId(null);
-        if (abortControllerRef.current === controller) abortControllerRef.current = null;
-        lifecycle.finish(operation);
-      }
-    }
-  };
-
-  const sendQueuedMessage = useEffectEvent(() => {
-    if (lifecycle.busy || conversationUnavailable) return;
-    const next = queuedMessagesRef.current[0];
-    if (!next) return;
-    queuedMessagesRef.current = queuedMessagesRef.current.slice(1);
-    setQueuedMessages(queuedMessagesRef.current);
-    void sendRequest(next.content, [], false, next.createdAt);
-  });
-
-  useEffect(() => {
-    if (!isStreaming && queuedMessages.length > 0) sendQueuedMessage();
-  }, [isStreaming, queuedMessages.length]);
-
   const send = async (event: FormEvent) => {
     event.preventDefault();
     const question = draft.trim();
     if (!question || (authRequired && authToken === null)) return;
     if (isStreaming) {
-      const queuedMessage = { id: messageId(), content: question, createdAt: Date.now() };
-      queuedMessagesRef.current = [...queuedMessagesRef.current, queuedMessage];
-      setQueuedMessages(queuedMessagesRef.current);
       setDraft('');
-      const sessionId = sessionIdRef.current;
-      if (sessionId !== null) {
-        try {
-          await queueMessage(
-            sessionId,
-            queuedMessage.id,
-            queuedMessage.content,
-            authToken,
-            sessionEndpointRef.current ?? aiEndpoint,
-          );
-          renewSessionExpiration();
-        } catch (queueError) {
-          const responseFinishing = typeof queueError === 'object'
-            && queueError !== null
-            && 'status' in queueError
-            && queueError.status === 409;
-          if (!responseFinishing) reportRequestError(queueError, 'The queued AI message could not be submitted yet.');
-        }
-      }
-      return;
+      await queue(question);
+    } else {
+      await sendRequest(question, selectedAttachments.map(attachment => attachment.file), true);
     }
-    await sendRequest(question, selectedAttachments, true);
-  };
-
-  const retryMessage = (failedId: string, question: string) => {
-    if (!question || isStreaming || (authRequired && authToken === null)) return;
-    // The retried run replaces the failed pair, so the question is not repeated.
-    setMessages(previous => {
-      const failedIndex = previous.findIndex(message => message.id === failedId);
-      if (failedIndex < 0) return previous;
-      const start = previous[failedIndex - 1]?.role === 'user' ? failedIndex - 1 : failedIndex;
-      return [...previous.slice(0, start), ...previous.slice(failedIndex + 1)];
-    });
-    void sendRequest(question, [], false);
   };
 
   const prepareAttachmentRetry = (question: string) => {
     setDraft(question);
     setError(null);
-  };
-
-  const stop = () => {
-    if (isStopping) return;
-    const stopping = lifecycle.stop();
-    queuedMessagesRef.current = [];
-    setQueuedMessages([]);
-    const sessionId = sessionIdRef.current;
-    if (sessionId === null) {
-      abortControllerRef.current?.abort();
-      return;
-    }
-    // The request only asks the server to stop. The run stays active until a terminal
-    // event reports it ended, so every one of those clears the pending state instead.
-    void stopSession(sessionId, authToken, sessionEndpointRef.current ?? aiEndpoint)
-      .catch(stopError => {
-        if (!stopping.some(operation => lifecycle.owns(operation))) return;
-        reportRequestError(stopError, 'The AI response could not be stopped.');
-        lifecycle.stopFailed(stopping);
-      });
   };
 
   const exportChat = (format: ChatExportFormat) => {
@@ -1709,55 +1135,6 @@ export default function ExperimentalAiPage() {
   const backgroundRunningTool = messages.find(message => message.id === lifecycle.current('background')?.id)
     ?.activity?.find(entry => entry.kind === 'tool' && entry.state === 'running');
 
-  const applyProposal = async () => {
-    const sessionId = sessionIdRef.current;
-    if (sessionId === null || proposalDiff === null) return;
-    const ownsConversation = lifecycle.capture();
-    const baseSchedule = scheduleYaml;
-    setIsApplyingProposal(true);
-    setError(null);
-    try {
-      const approvedYaml = await approveProposal(
-        sessionId,
-        scheduleYaml,
-        authToken,
-        sessionEndpointRef.current ?? aiEndpoint,
-      );
-      if (!ownsConversation()) return;
-      if (scheduleYamlRef.current !== baseSchedule) {
-        setProposalDiff(null);
-        setProposalNotice('The schedule changed while approval was pending. The proposal was not applied.');
-        return;
-      }
-      // One import call is one history entry, so undo reverts the whole proposal.
-      loadFromYaml(yaml.load(approvedYaml));
-      syncedScheduleRef.current = approvedYaml;
-      renewSessionExpiration();
-      setProposalDiff(null);
-      setProposalNotice('The proposed schedule was applied. Undo reverts it in one step.');
-    } catch (approveError) {
-      if (ownsConversation()) reportRequestError(approveError, 'The proposal could not be applied.');
-    } finally {
-      if (ownsConversation()) setIsApplyingProposal(false);
-    }
-  };
-
-  const discardProposal = async () => {
-    const sessionId = sessionIdRef.current;
-    const ownsConversation = lifecycle.capture();
-    setProposalDiff(null);
-    setProposalNotice(null);
-    if (sessionId === null) return;
-    try {
-      await rejectProposal(sessionId, authToken, sessionEndpointRef.current ?? aiEndpoint);
-      if (!ownsConversation()) return;
-      renewSessionExpiration();
-    } catch (rejectError) {
-      if (ownsConversation() && isAuthenticationError(rejectError)) {
-        reportRequestError(rejectError, 'The proposal could not be rejected.');
-      }
-    }
-  };
 
   return (
     <main className="mx-auto flex min-h-[calc(100dvh-3.5rem)] max-w-5xl flex-col px-4 pb-36 pt-8 sm:px-6">
