@@ -331,13 +331,12 @@ def test_optimizer_progress_replay_does_not_displace_background_turn_events() ->
     event_stream = SessionEventStream(max_events_per_session=2, max_progress_events_per_session=2)
     event_stream.publish("session-1", "run_start", {"run_id": "turn-1"})
     for score in (1, 2, 3):
-        event_stream.publish("session-1", "optimization_progress", {"score": score})
+        event_stream.publish("session-1", "optimization_progress", {"job_id": "job-1", "score": score})
     event_stream.publish("session-1", "done", {"run_id": "turn-1"})
 
     events = event_stream.events_after("session-1")
     assert [(event.id, event.type) for event in events] == [
         (1, "run_start"),
-        (3, "optimization_progress"),
         (4, "optimization_progress"),
         (5, "done"),
     ]
@@ -348,7 +347,7 @@ def test_background_and_progress_replay_have_separate_default_limits() -> None:
     for index in range(1001):
         event_stream.publish("session-1", "text_delta", {"index": index})
     for index in range(101):
-        event_stream.publish("session-1", "optimization_progress", {"index": index})
+        event_stream.publish("session-1", "optimization_progress", {"job_id": str(index), "index": index})
 
     events = event_stream.events_after("session-1")
     assert len(events) == 1100

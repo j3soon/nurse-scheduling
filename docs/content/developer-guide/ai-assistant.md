@@ -897,8 +897,19 @@ defaults and validation rules.
 
 Foreground answers use the message request's SSE stream. Optimizer progress
 and result-review runs use the session SSE stream. It replays from
-`Last-Event-ID` and retains up to 1,000 non-progress events and 100 optimizer
-progress events per session. Each run ends with one terminal event.
+`Last-Event-ID`. Each session has a journal and a recovery projection, each
+limited to 1,000 main events, 100 progress entries, and 4 MiB of serialized JSON.
+Their combined retention is capped at 64 MiB across the process. Progress keeps
+the latest update per job and cannot displace main events through its count
+limit. Byte pressure prefers completed run output before active work.
+Each run ends with one terminal event.
+
+Expired required events cause `session_reset`, carrying the bounded recovery
+projection and an `incomplete` flag when older activity has also expired.
+Adjacent answer and reasoning fragments are combined in this projection.
+Replaced progress, context usage, and intermediate preview IDs do not create a
+replay gap. These limits count retained JSON, not total process RAM.
+
 The message stream ends with its run, and disconnect cancels that run. The
 session stream stays open across runs, and disconnect leaves background work
 running. Both streams feed the same browser event reducer.
