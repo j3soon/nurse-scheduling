@@ -119,6 +119,7 @@ class EvalCase:
     optimizer_completion_only: bool = False
     answer_json: dict[str, Any] = field(default_factory=dict)
     download_files: dict[str, str] = field(default_factory=dict)
+    import_attachment: str = ""
     category: str = ""
     assertions: tuple[Assertion, ...] = ()
     expected_diff: tuple[ExpectedDiff, ...] = ()
@@ -215,6 +216,11 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         isinstance(k, str) and isinstance(v, str) for k, v in download_files.items()
     ):
         raise EvalCaseError(f"{source} has invalid download_files.")
+    import_attachment = entry.get("import_attachment", "")
+    if not isinstance(import_attachment, str) or (
+        import_attachment and (import_attachment not in entry.get("attachments", []) or not entry["expect_proposal"])
+    ):
+        raise EvalCaseError(f"{source} import_attachment must name an attached schedule in a proposal case.")
     raw_turns = entry.get("user_turns")
     if raw_turns is None:
         if "question" not in entry:
@@ -318,6 +324,7 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         answer_json=answer_json,
         category=category,
         download_files=download_files,
+        import_attachment=import_attachment,
         assertions=assertions,
         expected_diff=expected_diff,
         semantic_check=semantic_check,
@@ -531,6 +538,8 @@ def grade(case: EvalCase, outcome: RunOutcome, computed: dict[str, Any] | None =
             detail="" if proposed == case.expect_proposal else f"a proposal was {'not ' if not proposed else ''}made",
         )
     )
+    if case.import_attachment:
+        checks.append(_check_import_schedule(case, outcome))
     if case.download_files:
         import hashlib
 
@@ -602,6 +611,16 @@ def grade(case: EvalCase, outcome: RunOutcome, computed: dict[str, Any] | None =
             for check in _check_tool_usage(activity, expected)
         )
     return CaseResult(case_id=case.id, checks=tuple(checks))
+
+
+def _check_import_schedule(case: EvalCase, outcome: RunOutcome) -> CheckResult:
+    """Compare the complete proposal with the named uploaded source."""
+    from nurse_scheduling.loader import _load_yaml
+
+    from .attachment_fixtures import load_attachment_fixtures
+
+    attachment = load_attachment_fixtures((case.import_attachment,))[0]
+    return CheckResult("complete uploaded schedule preserved", outcome.proposed == _load_yaml(attachment.data))
 
 
 def _check_optimizer_start_source(case: EvalCase, outcome: RunOutcome) -> list[CheckResult]:

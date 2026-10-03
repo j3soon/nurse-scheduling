@@ -92,6 +92,7 @@ def case_digest(case: EvalCase) -> str:
         "optimizer_completion_only",
         "answer_json",
         "download_files",
+        "import_attachment",
     ):
         if not fields[optional]:
             fields.pop(optional)
@@ -101,6 +102,10 @@ def case_digest(case: EvalCase) -> str:
         fields["nested_json_oracle_sha256"] = hashlib.sha256(
             inspect.getsource(_answer_json_matches).encode()
         ).hexdigest()
+    if case.import_attachment:
+        from .grading import _check_import_schedule
+
+        fields["import_oracle_sha256"] = hashlib.sha256(inspect.getsource(_check_import_schedule).encode()).hexdigest()
     helper_names = set()
     if case.optimizer_completion:
         from nurse_scheduling.ai.result_context import _project_context

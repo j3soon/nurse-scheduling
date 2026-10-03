@@ -33,7 +33,7 @@ from nurse_scheduling.ai.pi.write import WRITE_TOOL
 from nurse_scheduling.ai.schedule_context import describe_schedule
 from nurse_scheduling.loader import _load_yaml
 
-from .ai_eval.attachment_fixtures import attachment_fixture_names
+from .ai_eval.attachment_fixtures import attachment_fixture_names, load_attachment_fixtures
 from .ai_eval.grading import (
     EvalCase,
     EvalCaseError,
@@ -909,8 +909,13 @@ def test_every_dataset_path_and_placeholder_resolves_against_its_fixture():
             found = resolve(schedule, expected_diff.path)
             if not expected_diff.compares_value:
                 assert len(found) == 1 and isinstance(found[0], list), f"{case.id} diff path must select one list"
+        imported = (
+            _load_yaml(load_attachment_fixtures([case.import_attachment])[0].data) if case.import_attachment else {}
+        )
         for changed in case.changes:
-            assert resolve(schedule, changed) or changed == "export", f"{case.id} may change a missing part {changed}"
+            assert resolve(schedule, changed) or resolve(imported, changed) or changed == "export", (
+                f"{case.id} may change a missing part {changed}"
+            )
         for expected in case.answer_contains:
             options = [expected] if isinstance(expected, str) else list(expected)
             assert all(option.format(**values).strip() for option in options), f"{case.id} expects an empty value"
@@ -1173,3 +1178,13 @@ def test_download_grader_requires_captured_file_bytes(files, expected):
         case, RunOutcome(answer="Download /workspace/download.zip", activity=[{"kind": "download", "files": files}]), {}
     )
     assert result.passed is expected
+
+
+@pytest.mark.parametrize("drop_rule", [False, True], ids=["exact-upload", "missing-rule"])
+def test_import_grader_checks_every_uploaded_rule(drop_rule):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "import-complete-uploaded-yaml")
+    proposed = _load_yaml(load_attachment_fixtures([case.import_attachment])[0].data)
+    if drop_rule:
+        proposed["preferences"].pop()
+    result = grade(case, RunOutcome(initial=FIXTURE_SCHEDULES[case.fixture], proposed=proposed))
+    assert result.passed is not drop_rule

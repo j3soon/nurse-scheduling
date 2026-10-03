@@ -32,7 +32,8 @@ Record whether a flaw reached the user or was corrected before the final answer.
 Verify claimed errors against authoritative code, schemas, or independently
 checked outputs. Distinguish model mistakes, deficient tool contracts, parsing
 errors, evaluator defects, and infrastructure failures. A nonzero shell exit
-can report a normal condition, such as a diff, rather than a broken command.
+can report a normal condition, such as a diff or a missing-file check, rather
+than a broken command. Grade that condition instead of requiring a zero exit.
 Separate assistant overhead from solver time and backend latency.
 
 Rank findings by recurrence, consequence, wasted calls/tokens/time, expected

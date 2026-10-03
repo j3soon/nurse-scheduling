@@ -300,6 +300,13 @@ def _pptx() -> bytes:
 
 
 _FIXTURES: dict[str, tuple[str, str, Callable[[], bytes]]] = {
+    "schedule-yaml": (
+        "schedule-source.yaml",
+        "application/yaml",
+        lambda: (
+            Path(__file__).resolve().parents[1] / "testcases/real/large-ward-with-87-people-2025-11.yaml"
+        ).read_bytes(),
+    ),
     "search-pdf": ("handover-manual.pdf", "application/pdf", _search_pdf),
     "inventory-xlsx": (
         "monthly-tabs.xlsx",

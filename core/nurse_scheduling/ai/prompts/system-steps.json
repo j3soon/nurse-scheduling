@@ -647,5 +647,55 @@
         "note": "Full prompt with and without this final pointer, with identical helpers available. All tier counts must match independently checked selectors. Exact JSON object shape clarified in both arms after diagnostic array-only replies. Earlier format failures and cost outliers remain in ignored artifacts. Baseline cost variance is high."
       }
     ]
+  },
+  {
+    "id": "uploaded-yaml-import",
+    "file": "steps/uploaded-yaml-import.md",
+    "cases": [
+      "import-complete-uploaded-yaml",
+      "import-description-only"
+    ],
+    "hypothesis": "Imports a complete uploaded YAML without reading or rewriting its whole contents, while preserving partial-update scope.",
+    "sha256": "c2f7cb61b725beafe2d2168efa13fdbea892f6969d00881b54e9cf2a574dbb7f",
+    "evidence": [
+      {
+        "case": "import-complete-uploaded-yaml",
+        "input_sha256": "e1c4d4066745c23b0bab9b223dce54d9d3a08894be1d3b1e6d7d387929e5f02d",
+        "before": "3/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "cost_metric": "total-tokens",
+        "cost_ratio": 0.32908843500013746,
+        "cost_target": 0.75,
+        "token_metrics": {
+          "pairs": 3,
+          "missing_pairs": 0,
+          "before": {
+            "mean": 48502.666666666664,
+            "std": 10120.963804565914
+          },
+          "after": {
+            "mean": 15961.666666666666,
+            "std": 2770.104751328609
+          },
+          "delta": {
+            "mean": -32541.0,
+            "std": 12828.73481680871
+          },
+          "relative_delta": -0.6709115649998625
+        },
+        "controls": [
+          {
+            "case": "import-description-only",
+            "input_sha256": "265558320e965429ec819254b612b8da649516258df6dfd83e888abd14003bad",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Full-prompt ablation. The complete uploaded schedule stays intact. Mean total tokens fall 67%, with fewer full-file reads. Partial updates preserve the current schedule."
+      }
+    ],
+    "comparison_mode": "ablation"
   }
 ]

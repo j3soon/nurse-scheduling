@@ -1,0 +1,31 @@
+{
+  "id": "import-complete-uploaded-yaml",
+  "fixture": "new-schedule",
+  "question": "Replace the entire current schedule with the attached schedule-source.yaml and propose it for approval. Preserve every setting and rule from that file. Do not start optimization.",
+  "attachments": [
+    "schedule-yaml"
+  ],
+  "expect_proposal": true,
+  "import_attachment": "schedule-yaml",
+  "assert": [
+    {
+      "path": "people.items",
+      "count": 87
+    }
+  ],
+  "changes": [
+    "apiVersion",
+    "appVersion",
+    "description",
+    "dates",
+    "people",
+    "shiftTypes",
+    "preferences",
+    "export"
+  ],
+  "tags": [
+    "attachment",
+    "yaml-import-investigation"
+  ],
+  "note": "This testcase is mostly AI generated. Grade the full parsed uploaded schedule, including all rules and weights. Compare costs of copying the uploaded file with retyping it."
+}
