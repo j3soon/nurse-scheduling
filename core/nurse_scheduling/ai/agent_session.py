@@ -91,6 +91,16 @@ class RunCompletion:
     context_used_chars: int = 0
 
 
+@dataclass(frozen=True)
+class RunOutcome:
+    """One execution result, finalized after workspace cleanup and before releasing the run."""
+
+    status: Literal["completed", "stale", "cancelled", "failed"] = "cancelled"
+    completion: RunCompletion | None = None
+    error_code: str | None = None
+    terminal: tuple[str, dict[str, object]] | None = None
+
+
 class SessionPersistence(Protocol):
     """Session operations needed by a foreground or background run."""
 
@@ -555,6 +565,53 @@ class AgentSession:
         )
         events.emit("done", done)
 
+    async def _finalize_run(
+        self,
+        run: AgentRun,
+        snapshot: RunSnapshot,
+        entries: Sequence[AgentMessage],
+        output: RunOutput,
+        outcome: RunOutcome,
+        events: _RunEvents,
+        runtime: SessionRuntime,
+        history_started: bool,
+        dropped_history: int,
+        background: bool,
+    ) -> None:
+        """Resolve the transcript, write the audit once, then publish the terminal outcome."""
+        run.finishing = True
+        if outcome.completion is None:
+            stop_reason = "aborted" if outcome.status == "cancelled" else "error"
+            entries = output.interrupted_entries([entries[0], *self.agent.state.messages], stop_reason)
+            if outcome.terminal is not None and outcome.terminal[0] == "stopped":
+                # Keep the prompt so a follow-up can refer to it. Workspace changes and any
+                # proposal were discarded with the sandbox, which context.py accounts for.
+                runtime.store.finish(self.id, retained_entries(entries), snapshot=snapshot)
+            else:
+                runtime.store.abort(self.id, snapshot)
+        if outcome.terminal is not None:
+            events.emit(*outcome.terminal)
+        try:
+            history_saved = None
+            if history_started:
+                assert runtime.history_log is not None
+                # The prompt entry, including attachment filenames, was written at run start.
+                history_saved = await _write_history(
+                    runtime.history_log,
+                    "finish_run",
+                    run.id,
+                    outcome.status,
+                    outcome.error_code,
+                    output.usage,
+                    entries[1:],
+                )
+            if outcome.completion is not None:
+                self._publish_completion(
+                    outcome.completion, output, events, runtime.settings, dropped_history, history_saved, background
+                )
+        finally:
+            events.finish()
+
     async def run(
         self,
         run: AgentRun,
@@ -584,16 +641,16 @@ class AgentSession:
             history_question += f"\n[Files were attached: {filenames}.]"
         output = RunOutput()
         run_entries: list[AgentMessage] = [UserMessage(history_question)]
-        completed = False
-        logged = False
-        outcome = "cancelled"
-        error_code = None
+        history_started = False
+        outcome = RunOutcome()
+        dropped_history = 0
         events = _RunEvents(run.id, self.publish)
 
         try:
             if history_log is not None:
-                logged = True
-                logged = await _write_history(
+                # Cancellation during start still waits for its matching audit finalization.
+                history_started = True
+                history_started = await _write_history(
                     history_log,
                     "start_run",
                     run.id,
@@ -603,7 +660,7 @@ class AgentSession:
                     settings.provider_model,
                     len(attachments),
                 )
-                if not logged:
+                if not history_started:
                     raise HTTPException(status_code=503, detail="AI chat history is temporarily unavailable.")
             events.emit("run_start", {"trigger": "optimizer" if background else "user"})
             run.ready.set_result(True)
@@ -613,35 +670,22 @@ class AgentSession:
             await self._execute_run(snapshot, messages, attachments, artifact, runtime, background, output, events)
             run_entries = [run_entries[0], *self.agent.state.messages]
             completion = self._commit_run(run, snapshot, run_entries, output, store)
-            completed = True
-            outcome = "completed" if completion.run_saved else "stale"
-            history_saved = None
-            if logged:
-                # The history result is part of foreground done. Do not write it again in finally.
-                logged = False
-                # The prompt entry, including attachment filenames, was written at run start.
-                history_saved = await _write_history(
-                    history_log, "finish_run", run.id, outcome, None, output.usage, run_entries[1:]
-                )
-            self._publish_completion(completion, output, events, settings, dropped_history, history_saved, background)
+            outcome = RunOutcome("completed" if completion.run_saved else "stale", completion=completion)
         except asyncio.CancelledError:
-            if not completed:
-                # Keep the prompt so a follow-up can refer to it. Workspace changes and any
-                # proposal were discarded with the sandbox, which context.py accounts for.
-                run_entries = output.interrupted_entries([run_entries[0], *self.agent.state.messages], "aborted")
-                store.finish(session_id, retained_entries(run_entries), snapshot=snapshot)
-                completed = True
-            events.emit("stopped", {})
+            outcome = RunOutcome(terminal=("stopped", {}))
             raise
         except HTTPException:
             if not background:
                 raise
-            outcome, error_code = "failed", "history_unavailable"
-            events.emit(
-                "error", {"message": "AI chat history is unavailable, so the optimizer result was not reviewed."}
+            outcome = RunOutcome(
+                "failed",
+                error_code="history_unavailable",
+                terminal=(
+                    "error",
+                    {"message": "AI chat history is unavailable, so the optimizer result was not reviewed."},
+                ),
             )
         except (ProviderError, SandboxRunTimeoutError, SandboxCandidateError, SandboxError) as exc:
-            outcome = "failed"
             if isinstance(exc, ProviderError):
                 error_code, message = "provider_error", PROVIDER_ERROR
             elif isinstance(exc, SandboxRunTimeoutError):
@@ -651,25 +695,24 @@ class AgentSession:
             else:
                 error_code, message = "sandbox_error", "The temporary AI sandbox failed. Please try again."
                 logger.exception("AI sandbox run failed session_id=%s", session_id)
-            events.emit("error", {"message": message})
+            outcome = RunOutcome("failed", error_code=error_code, terminal=("error", {"message": message}))
         except Exception:
-            outcome, error_code = "failed", "internal_error"
             logger.exception("Unexpected AI run failure session_id=%s", session_id)
-            events.emit("error", {"message": "The AI response failed unexpectedly."})
+            outcome = RunOutcome(
+                "failed",
+                error_code="internal_error",
+                terminal=("error", {"message": "The AI response failed unexpectedly."}),
+            )
         finally:
-            run.finishing = True
-            if not completed:
-                stop_reason = "aborted" if outcome == "cancelled" else "error"
-                run_entries = output.interrupted_entries([run_entries[0], *self.agent.state.messages], stop_reason)
-                store.abort(session_id, snapshot)
-            if logged:
-                await _write_history(
-                    history_log,
-                    "finish_run",
-                    run.id,
-                    outcome,
-                    error_code,
-                    output.usage,
-                    run_entries[1:],
-                )
-            events.finish()
+            await self._finalize_run(
+                run,
+                snapshot,
+                run_entries,
+                output,
+                outcome,
+                events,
+                runtime,
+                history_started,
+                dropped_history,
+                background,
+            )

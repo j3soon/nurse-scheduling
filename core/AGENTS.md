@@ -79,7 +79,9 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   run. Commit conversation changes only with the matching `RunSnapshot`.
   Follow Pi terminology: a run spans multiple model/tool turns. Keep model-loop
   state and steering in `Agent`, application finalization in `AgentSession`,
-  and sandbox lifetime and hydration in `SandboxWorkspace`. Session mutations
+  and sandbox lifetime and hydration in `SandboxWorkspace`. Resolve a run into
+  one `RunOutcome`, then finalize its transcript, audit write, and terminal event
+  together. Session mutations
   belong to `AgentSession`. Keep ownership, expiry, and global retention accounting
   in `SessionStore`, with checks and mutations in the same synchronous operation.
   `SessionStore` reaches steering and other `Agent` state only through

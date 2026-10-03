@@ -284,39 +284,44 @@ def test_stop_during_history_start_waits_for_history_then_releases_the_session(m
     asyncio.run(exercise())
 
 
-def test_terminal_background_event_is_published_only_after_history_cleanup(monkeypatch):
+@pytest.mark.parametrize("failed", [False, True], ids=["completed", "failed"])
+def test_terminal_background_event_is_published_only_after_history_cleanup(monkeypatch, failed):
     async def exercise():
         finalizing = asyncio.Event()
         release = asyncio.Event()
+        records = []
 
         async def write(_self, operation, *_args):
             if operation == "finish_run":
                 finalizing.set()
                 await release.wait()
+            records.append(operation)
             return True
 
         monkeypatch.setattr(ChatHistory, "write", write)
         app = create_test_app(
             settings=make_settings(history_postgres_url="test"),
-            provider=FakeProvider([[ProviderError("private failure")]]),
+            provider=FakeProvider([[ProviderError("private failure")]]) if failed else FakeProvider(),
         )
         session = app.state.session_store.create("owner", schedule_yaml())
         running = asyncio.create_task(app.state.session_optimizer._on_completion(session.id, "Review", None))
         await finalizing.wait()
         assert app.state.runs.busy(session.id)
-        assert [event.type for event in app.state.session_event_stream.events_after(session.id)] == [
-            "run_start",
-            "context_usage",
-        ]
+        assert not any(
+            event.type in {"done", "error", "stopped", "stale"}
+            for event in app.state.session_event_stream.events_after(session.id)
+        )
         app.state.runs.stop(session.id)
         release.set()
         await running
         assert not app.state.runs.busy(session.id)
-        assert [event.type for event in app.state.session_event_stream.events_after(session.id)] == [
-            "run_start",
-            "context_usage",
-            "error",
+        terminals = [
+            event.type
+            for event in app.state.session_event_stream.events_after(session.id)
+            if event.type in {"done", "error", "stopped", "stale"}
         ]
+        assert terminals == ["error" if failed else "done"]
+        assert records == ["start_run", "finish_run"]
 
     asyncio.run(exercise())
 
