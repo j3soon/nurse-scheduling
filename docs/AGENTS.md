@@ -114,6 +114,8 @@
 
 - Make architecture and data-flow figures understandable without surrounding
   prose. Use bold titles and short descriptions inside nodes.
+- Give each diagram a numbered caption that names what it illustrates. Keep
+  the caption with the figure so it remains meaningful when captured separately.
 - Label architecture arrows with the action or data they represent. Distinguish
   tool configuration and resource ownership from tool execution. Distinguish
   preparing an adapter from allocating a resource when allocation is lazy.

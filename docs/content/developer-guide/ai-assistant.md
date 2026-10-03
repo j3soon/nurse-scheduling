@@ -68,6 +68,8 @@ stateDiagram-v2
     class stale,failed,stopped otherState
 ```
 
+**Figure 1. Run admission, cancellation, and terminal outcomes.**
+
 </div>
 
 The diagram shows the execution phases of `SessionRuns` and
@@ -118,6 +120,8 @@ flowchart TB
 
 ```
 
+**Figure 2. Model execution, tool setup, and external services.**
+
 </div>
 
 Session ownership, admission, and background event delivery connect these
@@ -128,29 +132,50 @@ components as follows.
 ```mermaid
 flowchart TB
     Routes[<b>API routes</b>]
-    Store[<b>SessionStore</b><br/>Ownership,<br/>retention,<br/>memory limits]
-    Queue[<b>SessionRuns</b><br/>FIFO admission<br/>and Stop]
+    Store[<b>SessionStore</b><br/>Ownership, retention,<br/>retained text budget]
+    Queue[<b>SessionRuns</b><br/>New runs, FIFO<br/>admission and Stop]
     Session[<b>AgentSession</b><br/>Transcript, YAML,<br/>proposals]
-    Agent[<b>Agent</b><br/>Steering queue]
+    Agent[<b>Agent</b><br/>Steering within<br/>the active run]
     Jobs[<b>SessionOptimizer</b><br/>Result wake-ups]
-    Events[<b>SessionEventBroker</b><br/>Replay background SSE]
 
     Routes -->|Check ownership,<br/>find session| Store
     Store -->|Access session,<br/>apply limits| Session
     Routes -->|Start or stop runs| Queue
     Queue -->|Execute admitted run| Session
     Session -->|Queue admitted steering| Agent
-    Jobs -->|Queue result<br/>review via callback| Queue
-    Session -->|Publish background<br/>run events| Events
-    Jobs -->|Publish job events<br/>via callback| Events
-    Events -->|Replay session SSE| Routes
+    Jobs -->|Queue new review run<br/>via callback| Queue
 
 ```
+
+**Figure 3. Session ownership, run admission, and steering.**
 
 </div>
 
 The model and workspace execute within a run. `SessionOptimizer` owns its
 monitor independently and queues a review run when a job ends.
+
+<div class="ai-diagram" markdown="1" tabindex="0">
+
+```mermaid
+flowchart TB
+    Session[<b>AgentSession</b><br/>Project run events]
+    Jobs[<b>SessionOptimizer</b><br/>Independent job events]
+    Foreground[<b>RunEvents</b><br/>Bounded buffer<br/>for one request]
+    Events[<b>SessionEventBroker</b><br/>Retained replay<br/>across runs]
+    Routes[<b>API routes</b><br/>Serve SSE responses]
+    Browser[<b>Browser</b><br/>Shared event reducer]
+
+    Session -->|Emit foreground events| Foreground
+    Session -->|Publish background<br/>review events| Events
+    Jobs -->|Publish job updates<br/>via callback| Events
+    Foreground -->|POST /messages SSE<br/>Disconnect cancels run| Routes
+    Events -->|GET /events SSE<br/>Reconnect with Last-Event-ID<br/>Disconnect leaves work running| Routes
+    Routes -->|Deliver either event stream| Browser
+```
+
+**Figure 4. Foreground and background events use different SSE lifetimes.**
+
+</div>
 
 Python paths below are relative to `nurse_scheduling/ai/`. Browser paths are
 relative to `web-frontend/src/app/experimental-ai/`.
@@ -158,7 +183,7 @@ relative to `web-frontend/src/app/experimental-ai/`.
 | Component and source | Responsibility |
 | --- | --- |
 | API routes<br/>`app.py` | Authenticate requests, invoke session operations, and serve HTTP and SSE responses. |
-| `SessionStore`<br/>`sessions.py` | Enforce session ownership, expiry, memory limits, and versioned conversation commits. |
+| `SessionStore`<br/>`sessions.py` | Enforce session ownership, expiry, retained text budgets, and versioned conversation commits. |
 | `SessionRuns` / `AgentRun` / `RunSnapshot`<br/>`lifecycle.py` | Admit one run per session, queue background follow-ups, and keep ownership through cancellation and cleanup. Carry the conversation version used to authorize a commit. |
 | `AgentSession` / `RunOutput`<br/>`agent_session.py` | Prepare context, execute the agent, await cleanup, save the run, and project agent events onto SSE. |
 | `Agent` / `AgentState`<br/>`agent.py`<br/>`agent_types.py` | Hold in-run messages, streaming state, pending tool call IDs, and queued steering. |
@@ -166,6 +191,7 @@ relative to `web-frontend/src/app/experimental-ai/`.
 | Transcript and context<br/>`transcript.py`<br/>`context.py` | Define ordered message entries and project them into retained history and provider input. |
 | `WorkspaceTools` / `SandboxWorkspace`<br/>`workspace_tools.py`<br/>`workspace.py`<br/>`sandbox/` | Bind model tools to file operations, validate working YAML, and manage VM hydration, pause, resume, and teardown. |
 | `SessionOptimizer`<br/>`optimizer.py` | Own remote jobs, progress, artifacts, late-submission cleanup, and result-review wake-ups. |
+| `RunEvents`<br/>`lifecycle.py` | Buffer foreground events for one message request's SSE response. |
 | `SessionEventBroker`<br/>`session_events.py` | Retain and replay background SSE by cursor. |
 | Browser `ChatLifecycle`<br/>`chatLifecycle.ts` | Track operation ownership and derive busy and Stop state. |
 | Browser event reducer<br/>`assistantEvents.ts` | Apply shared assistant events from both SSE streams. |
@@ -174,8 +200,6 @@ relative to `web-frontend/src/app/experimental-ai/`.
 
 Text and tool requests can share a model response. A run may contain several
 model responses and tool batches before it reaches finalization.
-
-**Model and tool steps**
 
 <div class="ai-diagram" markdown="1" tabindex="0">
 
@@ -193,9 +217,9 @@ flowchart TB
     Step <-->|Optimizer calls<br/>and results| Job
 ```
 
-</div>
+**Figure 5. Model and tool steps within one run.**
 
-**Run finalization**
+</div>
 
 <div class="ai-diagram" markdown="1" tabindex="0">
 
@@ -221,6 +245,8 @@ flowchart TB
     Check -->|Failure| Error
 
 ```
+
+**Figure 6. Cleanup and committing a run's outcome.**
 
 </div>
 
@@ -276,6 +302,8 @@ sequenceDiagram
         AI-->>Browser: SSE stale
     end
 ```
+
+**Figure 7. Streaming a text-only answer without a sandbox.**
 
 </div>
 
@@ -343,6 +371,8 @@ sequenceDiagram
 
 ```
 
+**Figure 8. Lazy sandbox creation, tool batches, and validation feedback.**
+
 </div>
 
 #### Tool events and model continuation
@@ -395,6 +425,8 @@ sequenceDiagram
     end
 
 ```
+
+**Figure 9. Tool events and model continuation across batches.**
 
 </div>
 
@@ -454,6 +486,8 @@ sequenceDiagram
     end
 
 ```
+
+**Figure 10. Final candidate review, sandbox cleanup, and run outcomes.**
 
 </div>
 
@@ -562,6 +596,8 @@ sequenceDiagram
 
 ```
 
+**Figure 11. Starting an optimizer job from sandbox YAML.**
+
 </div>
 
 #### Background monitoring and result review
@@ -613,6 +649,8 @@ sequenceDiagram
 
 ```
 
+**Figure 12. Background monitoring and queued result-review runs.**
+
 </div>
 
 #### Status and finish-now tools
@@ -657,6 +695,8 @@ sequenceDiagram
 
 ```
 
+**Figure 13. Inspecting or finishing an optimizer job without a sandbox.**
+
 </div>
 
 The `status` and `finish_now` actions use service-held job state and do not
@@ -682,6 +722,8 @@ flowchart TB
 
 ```
 
+**Figure 14. Reviewing sandbox YAML before saving a proposal.**
+
 </div>
 
 ### Approve or discard a proposal
@@ -700,6 +742,8 @@ flowchart TB
     Adopt -->|Return approved YAML| Import[<b>Browser import</b><br/>One undo step]
 
 ```
+
+**Figure 15. Approving, revalidating, or discarding a schedule proposal.**
 
 </div>
 
@@ -721,8 +765,15 @@ results.
 The session transcript keeps prompts, answer text, stop reasons, and decisions.
 Later runs never replay a disposable sandbox's tool exchanges. Model context
 merges the responses between two prompts into the answer the user saw.
-Trimming for memory, the message cap, or the prompt budget removes whole
+Trimming for retained text, the message cap, or the prompt budget removes whole
 exchanges, so an answer or proposal decision is never left without its prompt.
+
+`SessionStore` counts UTF-8 bytes in schedule snapshots, pending proposal YAML
+and diffs, transcript text, and queued steering across live sessions.
+`AI_MAX_SESSION_BYTES` defaults to 256 MiB. Client text that exceeds the budget
+is refused with HTTP `429`. Completed runs instead trim older exchanges while
+preserving the latest run and pending proposal, so retained text can exceed
+the budget. This accounting does not measure total process RAM.
 
 | Content | Later model context | Session transcript | Browser and export | Chat history log |
 | --- | --- | --- | --- | --- |
@@ -755,7 +806,7 @@ Each row lists shared behavior first, then what only one side has.
 | `WorkspaceTools` / `SandboxWorkspace`<br/>Pi: [read, bash, edit, write][pi-coding-tools] | Pi's default `read`, `bash`, `edit`, and `write` contracts and model-facing wording, ported under `ai/pi`. | A lazy, disposable E2B VM per run with hydration, pause and resume, trusted YAML validation after each change, and teardown before commit. | Tools act on the user's local working directory, which persists across runs. Built-in `powershell`, `find`, `grep`, and `ls` tools are available beyond the default active four. |
 | SSE projection / `RunEvents` / `SessionEventBroker`<br/>Pi: [AgentEvent][pi-events], [Agent.subscribe][pi-agent] | Typed text, reasoning, and tool events with call IDs, a message end for each model response, and exactly one terminal outcome per run. | Events map onto a stable SSE contract. Foreground output is a bounded stream that disconnect cancels. Background output is a journal replayed with `Last-Event-ID`. | In-process subscribers receive agent, turn, message, and tool lifecycle events, including partial tool updates. Low-level `agent_end` marks the end of one loop run. `AgentSession` emits [`agent_settled`][pi-settled] after retries, compaction recovery, queued continuation work, and session boundary processing finish. |
 | `SessionOptimizer`<br/>Pi: no first-class built-in counterpart | Exposed to the model as one `AgentTool`. | Independent remote jobs, progress, anonymization, late-submission cleanup, and fresh review runs. | Similar behavior could be implemented through extensions. |
-| API routes / `SessionStore` / browser lifecycle<br/>Pi: nearest is [AgentSession][pi-session] | A session boundary that owns conversation lifetime. | HTTP authentication, cookie ownership, expiry, global memory limits, SSE reconnection, a browser-owned schedule, and proposal approval. | Local single-user sessions stored on disk that can be resumed and branched. |
+| API routes / `SessionStore` / browser lifecycle<br/>Pi: nearest is [AgentSession][pi-session] | A session boundary that owns conversation lifetime. | HTTP authentication, cookie ownership, expiry, session text limits, SSE reconnection, a browser-owned schedule, and proposal approval. | Local single-user sessions stored on disk that can be resumed and branched. |
 
 </div>
 
@@ -844,6 +895,9 @@ Foreground answers use the message request's SSE stream. Optimizer progress
 and result-review runs use the session SSE stream. It replays from
 `Last-Event-ID` and retains up to 1,000 non-progress events and 100 optimizer
 progress events per session. Each run ends with one terminal event.
+The message stream ends with its run, and disconnect cancels that run. The
+session stream stays open across runs, and disconnect leaves background work
+running. Both streams feed the same browser event reducer.
 All run-associated events on either stream carry `run_id`, including
 `run_start`, `done`, `stopped`, `stale`, and `error`. Steering events also
 carry the queued user input's `message_id`, and tool events use `tool_call_id`.
