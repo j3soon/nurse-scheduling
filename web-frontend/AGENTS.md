@@ -106,6 +106,9 @@ To test specific source files from the repository root, run:
 - Use `PascalCase` for component files and components.
 - Prefix hooks with `use`.
 - Follow the existing Next.js App Router and shared-code patterns under `src/`.
+- Validate the whole CSV field before converting an integer count. `parseInt`
+  accepts numeric prefixes of dates and malformed values, so it cannot validate
+  those counts.
 - ESLint uses `next/core-web-vitals` plus TypeScript rules from
   `eslint.config.mjs`.
 - Every frontend test file (`*.test.ts` and `*.test.tsx`) must include the AGPL

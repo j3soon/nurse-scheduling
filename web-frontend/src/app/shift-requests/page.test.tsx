@@ -138,6 +138,21 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
     expect(alert).toHaveBeenCalledWith('Successfully processed 1 shift type entries from people history CSV!');
   });
 
+  it.each(['2025-10-25', '1.5', '2D', '2e1'])('rejects a malformed history repetition count %s', async (count) => {
+    const user = userEvent.setup();
+    fileContentsByName.set('people-history.csv', `Person 1,D,${count}\n`);
+
+    renderShiftRequestsPage();
+
+    await user.click(screen.getByRole('button', { name: /quick add preference/i }));
+    fireEvent.click(screen.getByRole('button', { name: /upload people history \(shorthand\)/i }));
+
+    expect(alert).toHaveBeenCalledWith(
+      expect.stringContaining(`Invalid repetition count '${count}'`),
+    );
+    expect(reorderItems).not.toHaveBeenCalled();
+  });
+
   it('alerts when the uploaded people-history file has no content', async () => {
     const user = userEvent.setup();
     fileContentsByName.set('people-history.csv', '');
