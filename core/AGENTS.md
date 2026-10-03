@@ -85,6 +85,10 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
 - Keep bundled attachment helpers general and optional. Preserve meaningful
   source data such as spreadsheet formulas and cached values, report truncation,
   and let the agent write a focused sandbox parser when a helper is insufficient.
+- Prefer extending an existing helper when an operation shares its parser,
+  dependencies, and output format. Reuse loading and validation instead of
+  adding a sibling script. Keep a separate helper when its interface is useful
+  independently.
 - Separate command execution deadlines from provider connection timeouts. Reuse a
   sandbox after a command timeout only when process cleanup is verified. Keep
   shell commands single-attempt because a lost acknowledgement does not prove
@@ -162,6 +166,10 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   every later step to rerun after an earlier edit. Include a counterfactual
   clarification reply where guessing the
   likely target would produce the wrong edit, alongside an exact-target control.
+- Keep implementation comparisons separate from prompt comparisons. Removing
+  a whole prompt section does not isolate a sentence added to it. Report failed
+  controls even when the main witness passes. Retain their testcases and failed
+  attempts instead of carrying forward an old clean-control receipt.
 - Include the SPDX license header and AI marker in generated Markdown prompt
   fragments. Strip their leading provenance comments during assembly, preserving
   instruction comments and the model-facing clause hashes.

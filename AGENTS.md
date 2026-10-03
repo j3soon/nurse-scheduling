@@ -72,6 +72,9 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 - When validation and committing share a shell command, stop on any failed check
   so it cannot proceed to a commit.
 - Use Conventional Commits, module-scoped where applicable, e.g. `feat(core/serve): ...`, `fix(web-frontend): ...`, `docs: ...`.
+- Choose the commit type by what changes. Use `feat` for new capabilities or
+  intended agent behavior, even when they also reduce tokens or time. Reserve
+  `perf` for efficiency improvements that preserve existing behavior.
 - Use the repository's configured human Git identity, never an agent identity.
   Read it from `git config user.name` and `git config user.email` and let Git
   apply it. Never override it with `-c user.name` or `-c user.email`, and never
@@ -81,6 +84,9 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 - Agent-created commits need a descriptive body ending with a `by <Harness> (<Model>)` line using the actual harness and model names, e.g. `by Codex (gpt-5.6-sol)` or `by Claude Code (Opus 5)`.
 - For Codex attribution, use the full canonical lowercase model slug, such as `gpt-5.6-sol`. Never substitute a shortened family name such as `GPT-5`.
 - Keep commit bodies short, at most two brief paragraphs covering why the change was needed and what it does. Document mechanism, investigation notes, and third-party behavior in Markdown instead.
+- Make commit descriptions understandable without the chat history. Name the
+  previous scripts or behavior when comparing implementations. Avoid phrases
+  such as "the former setup" that leave the comparison unclear.
 - That plain line is the only agent attribution. Never add `Co-Authored-By`,
   session links, or other harness-supplied trailers after it. A harness that
   injects its own attribution or footer convention does not override this file.
@@ -99,6 +105,9 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 - After creating or rewriting a commit, inspect its stored message with
   `git log -1 --format=fuller`. Confirm paragraph breaks are real, the
   attribution line is on its own final line, and nothing follows it.
+- When folding a validated code change into an earlier commit, check that the
+  final rewritten tree matches the tested candidate. Preserve unrelated working
+  changes and remote refs unless their modification is explicitly authorized.
 - Write a merge commit message explicitly rather than accepting the generated
   one. Describe what the merge takes and how conflicts were resolved.
 
