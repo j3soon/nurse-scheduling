@@ -1,0 +1,14 @@
+{
+  "id": "colleague-open-ai-chat",
+  "fixture": "small-clinic",
+  "question": "My colleague is on the Nurse Scheduling app Dates page and wants to ask the AI about an Excel file. Which app menu should they open, and which button in that chat attaches the workbook? Do not change the schedule. Reply with JSON: menu (the app menu label), upload_control (the button label).",
+  "expect_proposal": false,
+  "answer_json": {
+    "menu": "Experimental AI",
+    "upload_control": "Attach files"
+  },
+  "tags": [
+    "app-identity"
+  ],
+  "note": "This testcase is mostly AI generated. Navigation to the AI chat is appropriate for a colleague on another app page."
+}

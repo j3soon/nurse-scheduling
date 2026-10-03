@@ -697,5 +697,35 @@
       }
     ],
     "comparison_mode": "ablation"
+  },
+  {
+    "id": "app-identity",
+    "file": "steps/app-identity.md",
+    "cases": [
+      "current-chat-identity",
+      "colleague-open-ai-chat"
+    ],
+    "hypothesis": "Identifies the current chat without sending the user to another chat, while preserving navigation advice for other users.",
+    "sha256": "638ee74a28f48ed6570c100f546637eb601f68f21544deab93089c51507de340",
+    "evidence": [
+      {
+        "case": "current-chat-identity",
+        "input_sha256": "7d71f60471387980cebe70106b2fda3a6867401cde445e4450731f54e8b748c0",
+        "before": "0/5",
+        "after": "5/5",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "colleague-open-ai-chat",
+            "input_sha256": "cf3d092b764084c006b88417a4838959dd215884596238245acbc3c1398c8006",
+            "before": "5/5",
+            "after": "5/5"
+          }
+        ],
+        "note": "Full-prompt ablation over three user turns. Correctly identifies the current chat and upload control. Navigation from another page stays correct. Costs are not compared because the baseline answers fail."
+      }
+    ],
+    "comparison_mode": "ablation"
   }
 ]
