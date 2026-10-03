@@ -299,6 +299,7 @@ class AgentSession:
         """Reserve this conversation version and open its steering queue."""
         if self.active:
             raise HTTPException(status_code=409, detail="This chat session already has an active response.")
+        self.agent.reset()
         self.agent.open_steering(accepting_steering)
         self.snapshot = RunSnapshot(
             list(self.transcript),
@@ -333,7 +334,7 @@ class AgentSession:
         if self.snapshot is not snapshot:
             return False
         self.snapshot = None
-        self.agent.close_steering()
+        self.agent.reset()
         return True
 
     def check_steering(self, message_id: str, max_messages: int) -> bool:

@@ -83,7 +83,8 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   belong to `AgentSession`. Keep ownership, expiry, and global retention accounting
   in `SessionStore`, with checks and mutations in the same synchronous operation.
   `SessionStore` reaches steering and other `Agent` state only through
-  `AgentSession` methods.
+  `AgentSession` methods. Keep steering queue cleanup separate from transcript
+  cleanup. Reset idle agent state explicitly at session run boundaries.
 - Record each run as ordered entries shaped like Pi's messages in
   `transcript.py`. Chat history stores them all. Put the session retention
   projection and the model-facing projection and wording in `context.py`, so

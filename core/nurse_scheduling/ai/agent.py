@@ -88,7 +88,14 @@ class Agent:
         self._accepting_steering = False
         self._steering_queue.clear()
         self._steering_ids.clear()
+
+    def reset(self) -> None:
+        """Clear idle run state and queues, following Pi's explicit reset boundary."""
+        if self.state.is_streaming:
+            raise RuntimeError("Agent is already running. Wait for completion before resetting.")
+        self.close_steering()
         self.state.messages.clear()
+        self.state.pending_tool_calls.clear()
 
     def steer(self, message_id: str, text: str) -> None:
         """Queue already accepted input. The session enforces ownership and limits."""

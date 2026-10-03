@@ -577,3 +577,41 @@ def test_each_request_is_projected_from_the_unchanged_run_messages():
     # A marker added for one request never becomes part of the next one's record.
     assert [request.count(marker) for request, _tools in provider.requests] == [1, 1]
     assert provider.requests[1][0][2]["role"] == "tool"
+
+
+def test_closing_steering_preserves_messages_until_explicit_reset():
+    from nurse_scheduling.ai.agent import Agent
+
+    agent = Agent()
+    agent.open_steering(True)
+    agent.steer("queued", "Next question")
+    agent.state.messages.append(AssistantMessage("Partial answer"))
+
+    agent.close_steering()
+    assert not agent.accepting_steering
+    assert agent.queued_steering == ()
+    assert not agent.has_steered("queued")
+    assert agent.state.messages == [AssistantMessage("Partial answer")]
+
+    agent.reset()
+    assert agent.state.messages == []
+
+
+def test_reset_refuses_to_clear_messages_or_steering_during_execution():
+    from nurse_scheduling.ai.agent import Agent
+
+    async def scenario():
+        agent = Agent()
+        agent.open_steering(True)
+        agent.steer("queued", "Next question")
+        events = agent.prompt(FakeProvider(_text("partial", "answer")), QUESTION, [])
+        await anext(events)
+        with pytest.raises(RuntimeError, match="Wait for completion"):
+            agent.reset()
+        assert agent.accepting_steering
+        assert agent.queued_steering == ("Next question",)
+        await events.aclose()
+        agent.reset()
+        assert agent.queued_steering == ()
+
+    asyncio.run(scenario())
