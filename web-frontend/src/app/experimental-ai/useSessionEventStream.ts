@@ -20,8 +20,10 @@
 // This code is mostly AI generated.
 
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { AiHttpError, streamSessionEvents, type StreamCallbacks } from './aiClient';
-import { scopedCallbacks } from './chatLifecycle';
+import { AiHttpError, streamSessionEvents } from './aiClient';
+import { scopedEventHandler } from './chatLifecycle';
+
+import type { SessionEventHandler, SessionStreamOptions } from './sessionEvents';
 
 const RETRY_MS = 1000;
 const MAX_RETRY_MS = 30000;
@@ -51,7 +53,7 @@ export function useSessionEventStream() {
 
   const connect = useCallback((
     sessionId: string,
-    callbacks: StreamCallbacks,
+    handle: SessionEventHandler,
     authToken: string | null,
     endpoint: string,
     onError: (error: unknown, firstFailure: boolean) => void,
@@ -75,15 +77,15 @@ export function useSessionEventStream() {
         retryCount.current += 1;
         current.timer = setTimeout(open, delay);
       };
-      const handlers = scopedCallbacks({
-        ...callbacks,
+      const handlers: SessionStreamOptions = {
+        onEvent: scopedEventHandler(handle, ownsReader),
         lastEventId: cursor.current,
         onEventId: id => {
+          if (!ownsReader()) return;
           cursor.current = id;
           retryCount.current = 0;
-          callbacks.onEventId?.(id);
         },
-      }, ownsReader);
+      };
       void streamSessionEvents(sessionId, handlers, controller.signal, authToken, endpoint).then(
         reconnect,
         (error: unknown) => {

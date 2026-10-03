@@ -19,7 +19,7 @@
 
 // This code is mostly AI generated.
 
-import type { SessionEvent, SessionEventHandler } from './sessionEvents';
+import type { SessionEvent, SessionEventHandler, SessionStreamOptions } from './sessionEvents';
 import {
   buildAuthHeaders,
   parseAuthRequirement,
@@ -355,7 +355,7 @@ function optimizationDetails(payload: SsePayload): Partial<OptimizationActivity>
   };
 }
 
-function consumeEvent(block: string, callbacks: StreamCallbacks): void {
+function consumeEvent(block: string, callbacks: SessionStreamOptions): void {
   const lines = block.split('\n');
   const eventId = Number(lines.find(line => line.startsWith('id:'))?.slice('id:'.length).trim());
   const eventType = lines.find(line => line.startsWith('event:'))?.slice('event:'.length).trim() ?? 'message';
@@ -393,17 +393,42 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
       incomplete: payload.incomplete === true,
       proposalDiff: typeof payload.proposal_diff === 'string' && payload.proposal_diff ? payload.proposal_diff : null,
     };
-    dispatchSessionEvent(callbacks, { type: 'session_reset', reset });
-    for (const runId of runIds) {
-      const target = callbacks.forRun?.(runId);
-      if (target) dispatchSessionEvent(target, { type: 'session_reset', reset, runId });
-    }
+    callbacks.onEvent({ type: 'session_reset', reset });
     for (const event of payload.events) dispatchEvent(event.type, event.data, callbacks);
     // Proposal ownership may have changed since the retained run produced it.
-    dispatchSessionEvent(callbacks, { type: 'proposal', diff: reset.proposalDiff ?? '' });
+    callbacks.onEvent({ type: 'proposal', diff: reset.proposalDiff ?? '' });
     return;
   }
   dispatchEvent(eventType, payload, callbacks);
+}
+
+/** Adapt callback consumers to one handler without string-indexed invocation. */
+export function sessionEventCallbacks(handle: SessionEventHandler, runId?: string): StreamCallbacks {
+  const emit = (event: SessionEvent) => handle(
+    event.runId !== undefined || runId === undefined ? event : { ...event, runId },
+  );
+  return {
+    onEvent: emit,
+    onReset: reset => emit({ type: 'session_reset', reset }),
+    onRunContext: runId => emit({ type: 'run_context', runId }),
+    onRunStart: (runId, trigger) => emit({ type: 'run_start', runId, trigger }),
+    onDelta: text => emit({ type: 'delta', text }),
+    onReasoning: text => emit({ type: 'reasoning', text }),
+    onTruncated: () => emit({ type: 'truncated' }),
+    onToolStart: activity => emit({ type: 'tool_start', activity }),
+    onTool: activity => emit({ type: 'tool', activity }),
+    onSteering: (messageId, message) => emit({ type: 'steering', messageId, message }),
+    onScheduleChange: scheduleYaml => emit({ type: 'schedule_change', scheduleYaml }),
+    onProposal: diff => emit({ type: 'proposal', diff }),
+    onOptimization: activity => emit({ type: 'optimization', activity }),
+    onOptimizationProgress: activity => emit({ type: 'optimization_progress', activity }),
+    onDone: runId => emit({ type: 'done', runId }),
+    onStopped: runId => emit({ type: 'stopped', runId }),
+    onStale: message => emit({ type: 'stale', message }),
+    onError: message => emit({ type: 'error', message }),
+    onContextUsage: usage => emit({ type: 'context_usage', usage }),
+    onHistoryTrimmed: dropped => emit({ type: 'history_trimmed', dropped }),
+  };
 }
 
 /** Deliver normalized events. Legacy callback callers share this typed path. */
@@ -439,12 +464,9 @@ export function dispatchSessionEvent(callbacks: StreamCallbacks, event: SessionE
   }
 }
 
-function dispatchEvent(eventType: string, payload: SsePayload, streamCallbacks: StreamCallbacks): void {
-  const callbacks = typeof payload.run_id === 'string'
-    ? streamCallbacks.forRun?.(payload.run_id, textField(payload.trigger)) ?? streamCallbacks
-    : streamCallbacks;
+function dispatchEvent(eventType: string, payload: SsePayload, streamCallbacks: SessionStreamOptions): void {
   const runId = typeof payload.run_id === 'string' ? payload.run_id : undefined;
-  const emit = (event: SessionEvent) => dispatchSessionEvent(callbacks, runId === undefined ? event : { ...event, runId });
+  const emit = (event: SessionEvent) => streamCallbacks.onEvent(runId === undefined ? event : { ...event, runId });
   if (runId) emit({ type: 'run_context', runId });
 
   if (eventType === 'run_start' && typeof payload.run_id === 'string') {
@@ -610,10 +632,33 @@ export async function streamMessage(
   endpoint = getAiBaseUrl(),
 ): Promise<void> {
   const response = await postMessage(sessionId, message, signal, authToken, attachments, endpoint, 'text/event-stream');
-  await consumeStream(response, callbacks);
+  await consumeStream(response, streamOptions(callbacks));
 }
 
-async function consumeStream(response: Response, callbacks: StreamCallbacks, replayable = false): Promise<void> {
+// Adapt older callback consumers once at the HTTP client boundary.
+function streamOptions(callbacks: StreamCallbacks | SessionStreamOptions): SessionStreamOptions {
+  if (!('onDelta' in callbacks)) return callbacks;
+  return {
+    lastEventId: callbacks.lastEventId,
+    onEventId: callbacks.onEventId,
+    onEvent: event => {
+      if (event.type === 'session_reset') {
+        dispatchSessionEvent(callbacks, event);
+        for (const runId of event.reset.runIds) {
+          const target = callbacks.forRun?.(runId);
+          if (target) dispatchSessionEvent(target, { ...event, runId });
+        }
+      } else {
+        const target = event.runId
+          ? callbacks.forRun?.(event.runId, event.type === 'run_start' ? event.trigger : undefined) ?? callbacks
+          : callbacks;
+        dispatchSessionEvent(target, event);
+      }
+    },
+  };
+}
+
+async function consumeStream(response: Response, callbacks: SessionStreamOptions, replayable = false): Promise<void> {
   if (!response.body) throw new Error('The AI backend returned an empty stream.');
 
   const reader = response.body.getReader();
@@ -646,7 +691,7 @@ async function consumeStream(response: Response, callbacks: StreamCallbacks, rep
 
 export async function streamSessionEvents(
   sessionId: string,
-  callbacks: StreamCallbacks,
+  callbacks: SessionStreamOptions | StreamCallbacks,
   signal: AbortSignal,
   authToken: string | null,
   endpoint = getAiBaseUrl(),
@@ -661,7 +706,7 @@ export async function streamSessionEvents(
     signal,
   });
   if (!response.ok) throw await responseError(response);
-  await consumeStream(response, callbacks, true);
+  await consumeStream(response, streamOptions(callbacks), true);
 }
 
 export async function queueMessage(

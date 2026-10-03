@@ -20,7 +20,8 @@
 // This code is mostly AI generated.
 
 import type { ActivityEntry } from './AssistantActivity';
-import type { StreamCallbacks, ToolActivity, ToolStartActivity } from './aiClient';
+import type { ToolActivity, ToolStartActivity } from './aiClient';
+import type { SessionEvent } from './sessionEvents';
 import type { ChatExportMessage } from './chatExport';
 
 // Streamed output of one assistant response. Foreground and replayed background
@@ -153,27 +154,21 @@ export function stopResponse<T extends ChatExportMessage>(message: T): T {
   };
 }
 
-type AssistantEventCallbacks = Required<
-  Pick<StreamCallbacks, 'onDelta' | 'onReasoning' | 'onTruncated' | 'onToolStart' | 'onTool' | 'onScheduleChange'>
->;
-
-// Convert stream callbacks to events. A preview diffs against the previous working
-// copy, or the browser schedule before the run's first preview.
-export function assistantEventCallbacks(
-  apply: (event: AssistantEvent) => void,
+// A preview diffs against the previous working copy, or the browser schedule
+// before the run's first preview. Other session events do not change an answer.
+export function toAssistantEvent(
+  event: SessionEvent,
   workingSchedule: { current: string | null },
   browserSchedule: { readonly current: string },
-): AssistantEventCallbacks {
-  return {
-    onDelta: text => apply({ type: 'delta', text }),
-    onReasoning: text => apply({ type: 'reasoning', text }),
-    onTruncated: () => apply({ type: 'truncated' }),
-    onToolStart: activity => apply({ type: 'tool_start', activity }),
-    onTool: activity => apply({ type: 'tool', activity }),
-    onScheduleChange: after => {
+): AssistantEvent | null {
+  switch (event.type) {
+    case 'delta': case 'reasoning': case 'truncated': case 'tool_start': case 'tool':
+      return event;
+    case 'schedule_change': {
       const before = workingSchedule.current ?? browserSchedule.current;
-      workingSchedule.current = after;
-      apply({ type: 'schedule_change', before, after });
-    },
-  };
+      workingSchedule.current = event.scheduleYaml;
+      return { type: 'schedule_change', before, after: event.scheduleYaml };
+    }
+    default: return null;
+  }
 }

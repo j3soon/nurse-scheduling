@@ -22,9 +22,10 @@
 'use client';
 
 import Image from 'next/image';
-import { ChatLifecycle, scopedCallbacks } from './chatLifecycle';
+import { ChatLifecycle, scopedEventHandler } from './chatLifecycle';
 import { SessionEventRouter } from './sessionEventRouter';
 import { useSessionEventStream } from './useSessionEventStream';
+import type { SessionEventHandler } from './sessionEvents';
 import { ChangeEvent, DragEvent, FormEvent, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { FiArrowDown, FiArrowUp, FiChevronDown, FiDownload, FiMic, FiPlus, FiSquare } from 'react-icons/fi';
 import AppVersionText from '@/components/AppVersionText';
@@ -50,7 +51,7 @@ import { parseOptimizerMessage } from './optimizerMessage';
 import {
   AssistantEvent,
   applyAssistantEvent,
-  assistantEventCallbacks,
+  toAssistantEvent,
   completeResponse,
   failResponse,
   interruptRunningTools,
@@ -80,7 +81,6 @@ import {
   queueMessage,
   rejectProposal,
   sendMessage,
-  type StreamCallbacks,
   stopSession,
   updateSessionSchedule,
 } from './aiClient';
@@ -1139,100 +1139,135 @@ export default function ExperimentalAiPage() {
       setError(message);
     };
     const ownsConversation = lifecycle.capture();
-    const handlers: StreamCallbacks = {
-      forRun: runId => eventRouterRef.current.forRun(runId, handlers, ownsConversation),
-      onReset: reset => {
-        setMessages(previous => previous.filter(message => !reset.runIds.includes(message.runId ?? message.id)));
-        setProposalDiff(reset.proposalDiff);
-        setActiveOptimization(null);
-        lifecycle.finish(lifecycle.current('background'));
-        eventRouterRef.current.reset(reset);
-        if (reset.incomplete) setSessionNotice('Some earlier response output expired from event replay.');
-      },
-      onRunContext: id => {
-        if (lifecycle.current('background')?.id !== id) beginBackgroundMessage(id);
-      },
-      onRunStart: beginBackgroundMessage,
-      onSteering: (queuedId, content) => {
-        const runId = lifecycle.current('background')?.id;
-        if (!runId) return;
-        setMessages(previous => {
-          if (previous.some(message => message.id === queuedId)) return previous;
-          const answer = previous.find(message => message.id === runId);
-          const now = Date.now();
-          const user: ChatMessage = { id: queuedId, runId, role: 'user', content, createdAt: now };
-          const continuation: ChatMessage | undefined = answer && (answer.content || answer.activity?.length)
-            ? { id: runId, runId, role: 'assistant', content: '', status: 'pending', responseStartedAt: now }
-            : undefined;
-          return steerResponse(previous, runId, user, continuation, `${runId}:${queuedId}`);
-        });
-      },
-      ...assistantEventCallbacks(event => {
+    const handleBackground: SessionEventHandler = event => {
+      const output = toAssistantEvent(event, sandboxScheduleRef, scheduleYamlRef);
+      if (output) {
         resumeBackgroundMessage();
-        updateBackgroundMessage(message => applyAssistantEvent(message, event));
-      }, sandboxScheduleRef, scheduleYamlRef),
-      onProposal: diff => setProposalDiff(diff),
-      onOptimization: activity => {
-        if (!activity.terminal) {
-          setActiveOptimization(current => ({
-            ...activity,
-            points: current?.jobId === activity.jobId ? current.points : [],
-          }));
-          return;
+        updateBackgroundMessage(message => applyAssistantEvent(message, output));
+        return;
+      }
+      switch (event.type) {
+        case 'session_reset': {
+          const { reset } = event;
+          setMessages(previous => previous.filter(message => !reset.runIds.includes(message.runId ?? message.id)));
+          setProposalDiff(reset.proposalDiff);
+          setActiveOptimization(null);
+          lifecycle.finish(lifecycle.current('background'));
+
+          if (reset.incomplete) setSessionNotice('Some earlier response output expired from event replay.');
+          break;
         }
-        setActiveOptimization(current => current?.jobId === activity.jobId ? null : current);
-        const content = optimizationMessage(activity);
-        setMessages(previous => previous.some(message => message.id === `optimizer-${activity.jobId}`)
-          ? previous
-          : [
-            ...previous,
-            {
-              id: `optimizer-${activity.jobId}`,
-              role: 'optimizer',
-              createdAt: Date.now(),
-              content,
-              optimizerJob: { jobId: activity.jobId, downloadable: activity.downloadable },
-            },
-          ]);
-      },
-      onOptimizationProgress: ({ jobId, point }) => {
-        setActiveOptimization(current => {
-          if (current !== null && current.jobId !== jobId) return current;
-          const previous = current?.points ?? [];
-          const last = previous.at(-1);
-          if (last?.elapsedSeconds === point.elapsedSeconds && last.currentBestScore === point.currentBestScore) {
-            return current;
+        case 'run_context': {
+          const id = event.runId;
+          if (lifecycle.current('background')?.id !== id) beginBackgroundMessage(id);
+          break;
+        }
+        case 'run_start': {
+          beginBackgroundMessage(event.runId);
+          break;
+        }
+        case 'steering': {
+          const { messageId: queuedId, message: content } = event;
+          const runId = lifecycle.current('background')?.id;
+          if (!runId) return;
+          setMessages(previous => {
+            if (previous.some(message => message.id === queuedId)) return previous;
+            const answer = previous.find(message => message.id === runId);
+            const now = Date.now();
+            const user: ChatMessage = { id: queuedId, runId, role: 'user', content, createdAt: now };
+            const continuation: ChatMessage | undefined = answer && (answer.content || answer.activity?.length)
+              ? { id: runId, runId, role: 'assistant', content: '', status: 'pending', responseStartedAt: now }
+              : undefined;
+            return steerResponse(previous, runId, user, continuation, `${runId}:${queuedId}`);
+          });
+          break;
+        }
+        case 'proposal': {
+          setProposalDiff(event.diff);
+          break;
+        }
+        case 'optimization': {
+          const { activity } = event;
+          if (!activity.terminal) {
+            setActiveOptimization(current => ({
+              ...activity,
+              points: current?.jobId === activity.jobId ? current.points : [],
+            }));
+            return;
           }
-          const retained = previous.length >= OPTIMIZATION_PROGRESS_POINT_LIMIT
-            ? previous.filter((_, index) => index % 2 === 0 || index === previous.length - 1)
-            : previous;
-          return {
-            jobId,
-            state: current?.state ?? 'running',
-            terminal: false,
-            downloadable: false,
-            points: [...retained, point],
-          };
-        });
-      },
-      onDone: runId => {
-        updateBackgroundMessage(message => completeResponse(message), runId);
-        lifecycle.finish(lifecycle.current('background'));
-      },
-      onStopped: runId => {
-        updateBackgroundMessage(stopResponse, runId);
-        lifecycle.finish(lifecycle.current('background'));
-      },
-      onStale: message => {
-        updateBackgroundMessage(entry => staleResponse(entry, message));
-        lifecycle.finish(lifecycle.current('background'));
-        setError(message);
-      },
-      onContextUsage: setContextUsage,
-      onHistoryTrimmed: setTrimmedHistoryCount,
-      onError: failBackgroundRun,
+          setActiveOptimization(current => current?.jobId === activity.jobId ? null : current);
+          const content = optimizationMessage(activity);
+          setMessages(previous => previous.some(message => message.id === `optimizer-${activity.jobId}`)
+            ? previous
+            : [
+              ...previous,
+              {
+                id: `optimizer-${activity.jobId}`,
+                role: 'optimizer',
+                createdAt: Date.now(),
+                content,
+                optimizerJob: { jobId: activity.jobId, downloadable: activity.downloadable },
+              },
+            ]);
+          break;
+        }
+        case 'optimization_progress': {
+          const { jobId, point } = event.activity;
+          setActiveOptimization(current => {
+            if (current !== null && current.jobId !== jobId) return current;
+            const previous = current?.points ?? [];
+            const last = previous.at(-1);
+            if (last?.elapsedSeconds === point.elapsedSeconds && last.currentBestScore === point.currentBestScore) {
+              return current;
+            }
+            const retained = previous.length >= OPTIMIZATION_PROGRESS_POINT_LIMIT
+              ? previous.filter((_, index) => index % 2 === 0 || index === previous.length - 1)
+              : previous;
+            return {
+              jobId,
+              state: current?.state ?? 'running',
+              terminal: false,
+              downloadable: false,
+              points: [...retained, point],
+            };
+          });
+          break;
+        }
+        case 'done': {
+          const { runId } = event;
+          updateBackgroundMessage(message => completeResponse(message), runId);
+          lifecycle.finish(lifecycle.current('background'));
+          break;
+        }
+        case 'stopped': {
+          const { runId } = event;
+          updateBackgroundMessage(stopResponse, runId);
+          lifecycle.finish(lifecycle.current('background'));
+          break;
+        }
+        case 'stale': {
+          const { message } = event;
+          updateBackgroundMessage(entry => staleResponse(entry, message));
+          lifecycle.finish(lifecycle.current('background'));
+          setError(message);
+          break;
+        }
+        case 'context_usage': {
+          setContextUsage(event.usage);
+          break;
+        }
+        case 'history_trimmed': {
+          setTrimmedHistoryCount(event.dropped);
+          break;
+        }
+        case 'error': {
+          failBackgroundRun(event.message);
+          break;
+        }
+      }
     };
-    sessionEvents.connect(sessionId, handlers, authToken, endpoint, (streamError, firstFailure) => {
+    const handle: SessionEventHandler = event => eventRouterRef.current.dispatch(event, handleBackground, ownsConversation);
+    sessionEvents.connect(sessionId, handle, authToken, endpoint, (streamError, firstFailure) => {
       if (firstFailure) reportRequestError(streamError, 'The AI session event stream disconnected.');
       if (streamError instanceof AiHttpError && streamError.status === 404) {
         eventRouterRef.current.foreground?.reject(streamError);
@@ -1321,70 +1356,98 @@ export default function ExperimentalAiPage() {
       void finished.catch(() => {});
       // Subscribe before submitting. Neither a fast terminal event nor a reconnect
       // should finish a different operation.
-      const callbacks = scopedCallbacks({
-        onDone: finishRun,
-        onStopped: () => { controller.abort(); finishRun(); },
-        onError: message => rejectRun(new Error(message)),
-        onStale: message => rejectRun(new AiStaleRunError(message)),
-        onReset: () => {
-          const runId = eventRouterRef.current.foreground?.runId;
-          activeAssistantId = initialAssistantId;
-          activeAssistantHasOutput = false;
-          activeQuestion = question;
-          setMessages(previous => [
-            ...previous.filter(message => !runMessageIds.has(message.id)),
-            { id: initialAssistantId, runId, role: 'assistant', content: '', status: 'pending', responseStartedAt },
-          ]);
-          runMessageIds.clear();
-          runMessageIds.add(initialAssistantId);
-        },
-        ...assistantEventCallbacks(event => {
-          if (startsVisibleOutput(event)) {
+      const handle = scopedEventHandler(event => {
+        const output = toAssistantEvent(event, sandboxScheduleRef, scheduleYamlRef);
+        if (output) {
+          if (startsVisibleOutput(output)) {
             activeAssistantHasOutput = true;
             setSteeringAssistantId(null);
           }
           const assistantId = activeAssistantId;
           setMessages(previous => previous.map(message => (
-            message.id === assistantId ? applyAssistantEvent(message, event) : message
+            message.id === assistantId ? applyAssistantEvent(message, output) : message
           )));
-        }, sandboxScheduleRef, scheduleYamlRef),
-        onSteering: (queuedId, queuedMessage) => {
-          const runId = eventRouterRef.current.foreground?.runId;
-          const createdAt = queuedMessagesRef.current.find(message => message.id === queuedId)?.createdAt ?? Date.now();
-          queuedMessagesRef.current = queuedMessagesRef.current.filter(message => message.id !== queuedId);
-          setQueuedMessages(queuedMessagesRef.current);
-          runMessageIds.add(queuedId);
-          const steeringStartedAt = Date.now();
-          if (activeAssistantHasOutput) {
-            const completedAssistantId = activeAssistantId;
-            const nextAssistantId = messageId();
-            runMessageIds.add(nextAssistantId);
-            setMessages(previous => steerResponse(
-              previous,
-              completedAssistantId,
-              { id: queuedId, runId, role: 'user', content: queuedMessage, createdAt },
-              { id: nextAssistantId, runId, role: 'assistant', content: '', status: 'pending', responseStartedAt: steeringStartedAt },
-            ));
-            activeAssistantId = nextAssistantId;
-            setSteeringAssistantId(nextAssistantId);
-            activeAssistantHasOutput = false;
-          } else {
-            const pendingAssistantId = activeAssistantId;
-            setMessages(previous => steerResponse(
-              previous,
-              pendingAssistantId,
-              { id: queuedId, runId, role: 'user', content: queuedMessage, createdAt },
-            ));
-            setSteeringAssistantId(pendingAssistantId);
+          return;
+        }
+        switch (event.type) {
+          case 'done': {
+            finishRun();
+            break;
           }
-          activeQuestion = queuedMessage;
-          activeQuestionRequiresAttachments = false;
-        },
-        onProposal: diff => setProposalDiff(diff),
-        onContextUsage: setContextUsage,
-        onHistoryTrimmed: setTrimmedHistoryCount,
+          case 'stopped': {
+            controller.abort(); finishRun();
+            break;
+          }
+          case 'error': {
+            rejectRun(new Error(event.message));
+            break;
+          }
+          case 'stale': {
+            rejectRun(new AiStaleRunError(event.message));
+            break;
+          }
+          case 'session_reset': {
+            const runId = eventRouterRef.current.foreground?.runId;
+            activeAssistantId = initialAssistantId;
+            activeAssistantHasOutput = false;
+            activeQuestion = question;
+            setMessages(previous => [
+              ...previous.filter(message => !runMessageIds.has(message.id)),
+              { id: initialAssistantId, runId, role: 'assistant', content: '', status: 'pending', responseStartedAt },
+            ]);
+            runMessageIds.clear();
+            runMessageIds.add(initialAssistantId);
+            break;
+          }
+          case 'steering': {
+            const { messageId: queuedId, message: queuedMessage } = event;
+            const runId = eventRouterRef.current.foreground?.runId;
+            const createdAt = queuedMessagesRef.current.find(message => message.id === queuedId)?.createdAt ?? Date.now();
+            queuedMessagesRef.current = queuedMessagesRef.current.filter(message => message.id !== queuedId);
+            setQueuedMessages(queuedMessagesRef.current);
+            runMessageIds.add(queuedId);
+            const steeringStartedAt = Date.now();
+            if (activeAssistantHasOutput) {
+              const completedAssistantId = activeAssistantId;
+              const nextAssistantId = messageId();
+              runMessageIds.add(nextAssistantId);
+              setMessages(previous => steerResponse(
+                previous,
+                completedAssistantId,
+                { id: queuedId, runId, role: 'user', content: queuedMessage, createdAt },
+                { id: nextAssistantId, runId, role: 'assistant', content: '', status: 'pending', responseStartedAt: steeringStartedAt },
+              ));
+              activeAssistantId = nextAssistantId;
+              setSteeringAssistantId(nextAssistantId);
+              activeAssistantHasOutput = false;
+            } else {
+              const pendingAssistantId = activeAssistantId;
+              setMessages(previous => steerResponse(
+                previous,
+                pendingAssistantId,
+                { id: queuedId, runId, role: 'user', content: queuedMessage, createdAt },
+              ));
+              setSteeringAssistantId(pendingAssistantId);
+            }
+            activeQuestion = queuedMessage;
+            activeQuestionRequiresAttachments = false;
+            break;
+          }
+          case 'proposal': {
+            setProposalDiff(event.diff);
+            break;
+          }
+          case 'context_usage': {
+            setContextUsage(event.usage);
+            break;
+          }
+          case 'history_trimmed': {
+            setTrimmedHistoryCount(event.dropped);
+            break;
+          }
+        }
       }, () => lifecycle.owns(operation) && !controller.signal.aborted);
-      const foreground = eventRouterRef.current.begin(callbacks, rejectRun);
+      const foreground = eventRouterRef.current.begin(handle, rejectRun);
       const aborted = () => finishRun();
       controller.signal.addEventListener('abort', aborted, { once: true });
       try {

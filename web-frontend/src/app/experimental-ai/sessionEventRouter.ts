@@ -19,18 +19,18 @@
 
 // This code is mostly AI generated.
 
-import { dispatchSessionEvent, type SessionReset, type StreamCallbacks } from './aiClient';
-import { sessionEventCallbacks, type SessionEvent } from './sessionEvents';
+import type { SessionReset } from './aiClient';
+import type { SessionEvent, SessionEventHandler } from './sessionEvents';
 
 interface DeferredEvent {
   event: SessionEvent;
-  background: StreamCallbacks;
+  background: SessionEventHandler;
   ownsConversation: () => boolean;
 }
 
 interface ForegroundRun {
   runId?: string;
-  callbacks: StreamCallbacks;
+  handle: SessionEventHandler;
   deferred: DeferredEvent[];
   reject: (error: Error) => void;
 }
@@ -39,26 +39,29 @@ interface ForegroundRun {
 export class SessionEventRouter {
   foreground: ForegroundRun | null = null;
 
-  begin(callbacks: StreamCallbacks, reject: (error: Error) => void): ForegroundRun {
-    const run = { callbacks, reject, deferred: [] as DeferredEvent[] };
+  begin(handle: SessionEventHandler, reject: (error: Error) => void): ForegroundRun {
+    const run = { handle, reject, deferred: [] as DeferredEvent[] };
     this.foreground = run;
     return run;
   }
 
-  forRun(runId: string, background: StreamCallbacks, ownsConversation: () => boolean): StreamCallbacks | undefined {
+  dispatch(event: SessionEvent, background: SessionEventHandler, ownsConversation: () => boolean): void {
+    if (!ownsConversation()) return;
+    if (event.type === 'session_reset' && !event.runId) {
+      background(event);
+      this.reset(event.reset);
+      for (const runId of event.reset.runIds) this.dispatch({ ...event, runId }, background, ownsConversation);
+      return;
+    }
     const foreground = this.foreground;
-    if (!foreground) return undefined;
-    if (foreground.runId) return foreground.runId === runId ? foreground.callbacks : undefined;
+    if (!foreground || !event.runId) { background(event); return; }
+    if (foreground.runId) {
+      (foreground.runId === event.runId ? foreground.handle : background)(event);
+      return;
+    }
     // A fast run can publish before POST identifies it. Preserve both foreground
     // and review events until that acknowledgement chooses their destination.
-    return sessionEventCallbacks(event => {
-      if (!ownsConversation()) return;
-      if (foreground.runId) {
-        dispatchSessionEvent(foreground.runId === runId ? foreground.callbacks : background, event);
-      } else {
-        foreground.deferred.push({ event, background, ownsConversation });
-      }
-    }, runId);
+    foreground.deferred.push({ event, background, ownsConversation });
   }
 
   acknowledge(run: ForegroundRun, runId: string, identify: (id: string) => void): void {
@@ -66,7 +69,7 @@ export class SessionEventRouter {
     identify(runId);
     for (const { event, background, ownsConversation } of run.deferred.splice(0)) {
       if (ownsConversation()) {
-        dispatchSessionEvent(event.runId === runId ? run.callbacks : background, event);
+        (event.runId === runId ? run.handle : background)(event);
       }
     }
   }

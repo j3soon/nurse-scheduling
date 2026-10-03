@@ -19,7 +19,7 @@
 
 // This test is mostly AI generated.
 
-import { ChatLifecycle, scopedCallbacks } from './chatLifecycle';
+import { ChatLifecycle, scopedEventHandler } from './chatLifecycle';
 
 describe('chat operation ownership', () => {
   it.each(['foreground', 'background'] as const)(
@@ -64,30 +64,15 @@ describe('chat operation ownership', () => {
     expect(lifecycle.getSnapshot().background?.phase).toBe('stopping');
   });
 
-  it('revokes output, proposals and cursors together when a stream loses ownership', () => {
+  it('revokes events together when a reader or conversation loses ownership', () => {
     let owns = true;
-    const handlers = { onDelta: vi.fn(), onProposal: vi.fn(), onEventId: vi.fn(), onDone: vi.fn() };
-    const callbacks = scopedCallbacks(handlers, () => owns);
-    callbacks.onDelta('accepted');
+    const handle = vi.fn();
+    const receive = scopedEventHandler(handle, () => owns);
+    receive({ type: 'delta', text: 'accepted' });
     owns = false;
-    callbacks.onDelta('late');
-    callbacks.onProposal?.('late proposal');
-    callbacks.onEventId?.(8);
-    callbacks.onDone?.('old');
-    expect(handlers.onDelta).toHaveBeenCalledExactlyOnceWith('accepted');
-    expect(handlers.onProposal).not.toHaveBeenCalled();
-    expect(handlers.onEventId).not.toHaveBeenCalled();
-    expect(handlers.onDone).not.toHaveBeenCalled();
+    receive({ type: 'delta', text: 'late' });
+    receive({ type: 'proposal', diff: 'late proposal' });
+    receive({ type: 'done', runId: 'old' });
+    expect(handle).toHaveBeenCalledExactlyOnceWith({ type: 'delta', text: 'accepted' });
   });
-  it('revokes a cached run handler together with its reader', () => {
-    let owns = true;
-    const onDelta = vi.fn();
-    const callbacks = scopedCallbacks({ onDelta, forRun: () => ({ onDelta }) }, () => owns);
-    const run = callbacks.forRun?.('run');
-    run?.onDelta('accepted');
-    owns = false;
-    run?.onEvent?.({ type: 'delta', runId: 'run', text: 'late' });
-    expect(onDelta).toHaveBeenCalledExactlyOnceWith('accepted');
-  });
-
 });

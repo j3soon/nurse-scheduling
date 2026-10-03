@@ -23,7 +23,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AssistantEvent,
   applyAssistantEvent,
-  assistantEventCallbacks,
+  toAssistantEvent,
   stopResponse,
 } from './assistantEvents';
 import type { ChatExportMessage } from './chatExport';
@@ -83,10 +83,8 @@ describe('assistant events', () => {
   it('diffs each preview against the previous working copy', () => {
     const events: AssistantEvent[] = [];
     const working = { current: null as string | null };
-    const callbacks = assistantEventCallbacks(event => events.push(event), working, { current: 'v0' });
-
-    callbacks.onScheduleChange('v1');
-    callbacks.onScheduleChange('v2');
+    events.push(toAssistantEvent({ type: 'schedule_change', scheduleYaml: 'v1' }, working, { current: 'v0' })!);
+    events.push(toAssistantEvent({ type: 'schedule_change', scheduleYaml: 'v2' }, working, { current: 'v0' })!);
 
     expect(events).toEqual([
       { type: 'schedule_change', before: 'v0', after: 'v1' },

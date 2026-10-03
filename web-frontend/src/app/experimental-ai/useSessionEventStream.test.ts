@@ -21,7 +21,8 @@
 
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AiHttpError, streamSessionEvents, type StreamCallbacks } from './aiClient';
+import { AiHttpError, streamSessionEvents } from './aiClient';
+import type { SessionStreamOptions } from './sessionEvents';
 import { useSessionEventStream } from './useSessionEventStream';
 
 vi.mock('./aiClient', async importOriginal => ({
@@ -35,22 +36,22 @@ afterEach(() => { vi.useRealTimers(); vi.resetAllMocks(); });
 describe('session event connection', () => {
   it('reconnects with the cursor and revokes the previous reader, then cancels on reset', async () => {
     vi.useFakeTimers();
-    const readers: { callbacks: StreamCallbacks; signal: AbortSignal; end: () => void }[] = [];
+    const readers: { callbacks: SessionStreamOptions; signal: AbortSignal; end: () => void }[] = [];
     stream.mockImplementation((_id, callbacks, signal) => new Promise(resolve => {
       readers.push({ callbacks, signal, end: resolve });
     }));
     const onDelta = vi.fn();
     const { result } = renderHook(useSessionEventStream);
-    act(() => result.current.connect('session', { onDelta }, null, '/ai', vi.fn()));
+    act(() => result.current.connect('session', onDelta, null, '/ai', vi.fn()));
     readers[0].callbacks.onEventId?.(7);
     readers[0].end();
     await act(() => vi.advanceTimersByTimeAsync(1000));
     expect(readers).toHaveLength(2);
     expect(readers[1].callbacks.lastEventId).toBe(7);
-    readers[0].callbacks.onDelta('old reader');
+    readers[0].callbacks.onEvent({ type: 'delta', text: 'old reader' });
     readers[0].callbacks.onEventId?.(99);
-    readers[1].callbacks.onDelta('current reader');
-    expect(onDelta).toHaveBeenCalledExactlyOnceWith('current reader');
+    readers[1].callbacks.onEvent({ type: 'delta', text: 'current reader' });
+    expect(onDelta).toHaveBeenCalledExactlyOnceWith({ type: 'delta', text: 'current reader' });
     expect(result.current.cursor.current).toBe(7);
     act(() => result.current.reset());
     expect(readers[1].signal.aborted).toBe(true);
@@ -66,11 +67,11 @@ describe('session event connection', () => {
       .mockImplementation(() => new Promise(() => {}));
     const onError = vi.fn();
     const { result, unmount } = renderHook(useSessionEventStream);
-    act(() => result.current.connect('session', { onDelta: vi.fn() }, 'old', '/ai', onError));
+    act(() => result.current.connect('session', vi.fn(), 'old', '/ai', onError));
     await act(() => vi.advanceTimersByTimeAsync(60000));
     expect(stream).toHaveBeenCalledTimes(1);
     expect(onError).toHaveBeenCalledWith(expect.any(AiHttpError), true);
-    act(() => result.current.connect('session', { onDelta: vi.fn() }, 'new', '/ai', onError));
+    act(() => result.current.connect('session', vi.fn(), 'new', '/ai', onError));
     expect(stream.mock.calls[1][3]).toBe('new');
     const signal = stream.mock.calls[1][2];
     unmount();

@@ -52,8 +52,9 @@ const mockNormalizeAiEndpoint = vi.hoisted(() => (endpoint: string) => {
   return /^[a-z]+:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 });
 
-vi.mock('./aiClient', async importOriginal => ({
-  dispatchSessionEvent: (await importOriginal<typeof import('./aiClient')>()).dispatchSessionEvent,
+vi.mock('./aiClient', async importOriginal => {
+  const awaitClient = await importOriginal<typeof import('./aiClient')>();
+  return ({
   AiHttpError: MockAiHttpError,
   AiStaleRunError: MockAiStaleRunError,
   DEFAULT_SESSION_RETENTION_SECONDS: 172800,
@@ -71,12 +72,21 @@ vi.mock('./aiClient', async importOriginal => ({
   ),
   queueMessage: mockQueueMessage,
   sendMessage: mockSendMessage,
-  streamSessionEvents: mockStreamSessionEvents,
+  streamSessionEvents: (id: string, options: import('./sessionEvents').SessionStreamOptions, ...args: unknown[]) => {
+    const { sessionEventCallbacks } = awaitClient;
+    return mockStreamSessionEvents(id, {
+      ...sessionEventCallbacks(options.onEvent),
+      lastEventId: options.lastEventId,
+      onEventId: options.onEventId,
+      forRun: (runId: string) => sessionEventCallbacks(options.onEvent, runId),
+    }, ...args);
+  },
   stopSession: mockStopSession,
   approveProposal: mockApproveProposal,
   rejectProposal: mockRejectProposal,
   updateSessionSchedule: mockUpdateSessionSchedule,
-}));
+});
+});
 
 vi.mock('@/utils/yamlGenerator', () => ({
   generateYamlFromState: mockGenerateYaml,
@@ -112,7 +122,9 @@ const defaultCapabilities = {
 };
 
 describe('ExperimentalAiPage', () => {
+  let pendingForegroundRunId: string | null = null;
   beforeEach(() => {
+    pendingForegroundRunId = null;
     vi.restoreAllMocks();
     vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined);
     mockCreateSession.mockReset().mockResolvedValue('session-id');
@@ -134,9 +146,14 @@ describe('ExperimentalAiPage', () => {
     mockSendMessage.mockReset().mockImplementation(async (id, message, signal, token, attachments, endpoint) => {
       const stream = mockStreamSessionEvents.mock.calls.at(-1)?.[1] as StreamCallbacks;
       const runId = `user-run-${mockSendMessage.mock.calls.length}`;
+      pendingForegroundRunId = runId;
       const callbacks = stream.forRun!(runId, 'user')!;
       void Promise.resolve(mockStreamMessage(id, message, callbacks, signal, token, attachments, endpoint))
-        .then(() => callbacks.onDone?.(runId), (error: Error) => {
+        .then(() => {
+          if (pendingForegroundRunId === runId) pendingForegroundRunId = null;
+          callbacks.onDone?.(runId);
+        }, (error: Error) => {
+          if (pendingForegroundRunId === runId) pendingForegroundRunId = null;
           if (error instanceof MockAiStaleRunError) callbacks.onStale?.(error.message);
           else callbacks.onError?.(error.message);
         });
@@ -144,7 +161,7 @@ describe('ExperimentalAiPage', () => {
     });
     mockStopSession.mockReset().mockImplementation(async () => {
       const stream = mockStreamSessionEvents.mock.calls.at(-1)?.[1] as StreamCallbacks | undefined;
-      stream?.forRun?.(`user-run-${mockSendMessage.mock.calls.length}`)?.onStopped?.();
+      if (pendingForegroundRunId) stream?.forRun?.(pendingForegroundRunId)?.onStopped?.();
     });
     mockGenerateYaml.mockClear();
     mockApproveProposal.mockReset().mockResolvedValue('description: proposed schedule\n');

@@ -90,7 +90,8 @@ SSE frame. Test overlapping foreground completion and background replay explicit
 Keep connection ownership, cursors, reconnection, and teardown in
 `useSessionEventStream`. Keep run routing and pre-acknowledgement buffering in
 `SessionEventRouter`. Route normalized `SessionEvent` values through one handler.
-Keep callback adaptation in the client boundary rather than invoking handlers by string name.
+Use `SessionEventHandler` directly in browser consumers. Keep callback adaptation
+in the HTTP client boundary for compatibility consumers.
 Apply assistant output from the single session GET stream through
 `applyAssistantEvent`. Route foreground and review events by `run_id`, including
 output that arrives before POST message acceptance is acknowledged. Keep run identity on

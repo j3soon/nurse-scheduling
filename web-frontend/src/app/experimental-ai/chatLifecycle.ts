@@ -19,8 +19,7 @@
 
 // This code is mostly AI generated.
 
-import { dispatchSessionEvent, type StreamCallbacks } from './aiClient';
-import { sessionEventCallbacks } from './sessionEvents';
+import type { SessionEventHandler } from './sessionEvents';
 
 type Kind = 'foreground' | 'background';
 export interface Operation {
@@ -128,16 +127,7 @@ export class ChatLifecycle {
   }
 }
 
-/** Revoke every callback together when a connection or conversation is replaced. */
-export function scopedCallbacks(callbacks: StreamCallbacks, owns: () => boolean): StreamCallbacks {
-  return {
-    ...sessionEventCallbacks(event => { if (owns()) dispatchSessionEvent(callbacks, event); }),
-    lastEventId: callbacks.lastEventId,
-    onEventId: id => { if (owns()) callbacks.onEventId?.(id); },
-    forRun: (runId, trigger) => {
-      if (!owns()) return;
-      const target = callbacks.forRun?.(runId, trigger);
-      return target ? scopedCallbacks(target, owns) : undefined;
-    },
-  };
+/** Revoke event delivery when its connection or conversation is replaced. */
+export function scopedEventHandler(handle: SessionEventHandler, owns: () => boolean): SessionEventHandler {
+  return event => { if (owns()) handle(event); };
 }

@@ -24,7 +24,6 @@ import type {
   OptimizationActivity,
   OptimizationProgressActivity,
   SessionReset,
-  StreamCallbacks,
   ToolActivity,
   ToolStartActivity,
 } from './aiClient';
@@ -51,31 +50,8 @@ export type SessionEvent = (
 
 export type SessionEventHandler = (event: SessionEvent) => void;
 
-/** Adapt callback consumers to one handler without string-indexed invocation. */
-export function sessionEventCallbacks(handle: SessionEventHandler, runId?: string): StreamCallbacks {
-  const emit = (event: SessionEvent) => handle(
-    event.runId !== undefined || runId === undefined ? event : { ...event, runId },
-  );
-  return {
-    onEvent: emit,
-    onReset: reset => emit({ type: 'session_reset', reset }),
-    onRunContext: runId => emit({ type: 'run_context', runId }),
-    onRunStart: (runId, trigger) => emit({ type: 'run_start', runId, trigger }),
-    onDelta: text => emit({ type: 'delta', text }),
-    onReasoning: text => emit({ type: 'reasoning', text }),
-    onTruncated: () => emit({ type: 'truncated' }),
-    onToolStart: activity => emit({ type: 'tool_start', activity }),
-    onTool: activity => emit({ type: 'tool', activity }),
-    onSteering: (messageId, message) => emit({ type: 'steering', messageId, message }),
-    onScheduleChange: scheduleYaml => emit({ type: 'schedule_change', scheduleYaml }),
-    onProposal: diff => emit({ type: 'proposal', diff }),
-    onOptimization: activity => emit({ type: 'optimization', activity }),
-    onOptimizationProgress: activity => emit({ type: 'optimization_progress', activity }),
-    onDone: runId => emit({ type: 'done', runId }),
-    onStopped: runId => emit({ type: 'stopped', runId }),
-    onStale: message => emit({ type: 'stale', message }),
-    onError: message => emit({ type: 'error', message }),
-    onContextUsage: usage => emit({ type: 'context_usage', usage }),
-    onHistoryTrimmed: dropped => emit({ type: 'history_trimmed', dropped }),
-  };
+export interface SessionStreamOptions {
+  onEvent: SessionEventHandler;
+  lastEventId?: number;
+  onEventId?: (id: number) => void;
 }
