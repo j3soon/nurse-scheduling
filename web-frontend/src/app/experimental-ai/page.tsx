@@ -46,7 +46,18 @@ import yaml from 'js-yaml';
 import { ActivityEntry, AssistantActivity } from './AssistantActivity';
 import { ChatExportMessage, downloadChatExport, type ChatExportFormat } from './chatExport';
 import { parseOptimizerMessage } from './optimizerMessage';
-import { AssistantEvent, applyAssistantEvent, assistantEventCallbacks, interruptRunningTools, stopResponse } from './assistantEvents';
+import {
+  AssistantEvent,
+  applyAssistantEvent,
+  assistantEventCallbacks,
+  completeResponse,
+  failResponse,
+  interruptRunningTools,
+  resumeResponse,
+  staleResponse,
+  steerResponse,
+  stopResponse,
+} from './assistantEvents';
 import {
   AiCapabilities,
   AiHttpError,
@@ -1131,7 +1142,7 @@ export default function ExperimentalAiPage() {
         // A restored or reconnected run resumes its own message, so clear the
         // interrupted state rather than stacking a second response beside it.
         ? previous.map(message => message.id === runId
-          ? { ...message, status: 'pending' as const, responseCompletedAt: undefined }
+          ? resumeResponse(message)
           : message)
         : [
           ...previous,
@@ -1157,13 +1168,7 @@ export default function ExperimentalAiPage() {
       setMessages(previous => previous.map(message => message.id === activeId ? update(message) : message));
     };
     const failBackgroundRun = (message: string) => {
-      updateBackgroundMessage(entry => ({
-        ...entry,
-        content: entry.content || message,
-        status: 'failed',
-        responseCompletedAt: Date.now(),
-        activity: interruptRunningTools(entry.activity ?? []),
-      }));
+      updateBackgroundMessage(entry => failResponse(entry, message));
       lifecycle.finish(lifecycle.current('background'));
       setError(message);
     };
@@ -1193,18 +1198,12 @@ export default function ExperimentalAiPage() {
         setMessages(previous => {
           if (previous.some(message => message.id === queuedId)) return previous;
           const answer = previous.find(message => message.id === runId);
-          const user: ChatMessage = { id: queuedId, runId, role: 'user', content, createdAt: Date.now() };
-          if (answer && (answer.content || answer.activity?.length)) {
-            return [
-              ...previous.map(message => message.id === runId
-                ? { ...message, id: `${runId}:${queuedId}`, status: undefined, responseCompletedAt: Date.now() }
-                : message),
-              user,
-              { id: runId, runId, role: 'assistant', content: '', status: 'pending', responseStartedAt: Date.now() },
-            ];
-          }
-          const index = previous.findIndex(message => message.id === runId);
-          return index < 0 ? [...previous, user] : [...previous.slice(0, index), user, ...previous.slice(index)];
+          const now = Date.now();
+          const user: ChatMessage = { id: queuedId, runId, role: 'user', content, createdAt: now };
+          const continuation: ChatMessage | undefined = answer && (answer.content || answer.activity?.length)
+            ? { id: runId, runId, role: 'assistant', content: '', status: 'pending', responseStartedAt: now }
+            : undefined;
+          return steerResponse(previous, runId, user, continuation, `${runId}:${queuedId}`);
         });
       },
       ...assistantEventCallbacks(event => {
@@ -1256,11 +1255,7 @@ export default function ExperimentalAiPage() {
         });
       },
       onDone: runId => {
-        updateBackgroundMessage(message => ({
-          ...message,
-          status: undefined,
-          responseCompletedAt: Date.now(),
-        }), runId);
+        updateBackgroundMessage(message => completeResponse(message), runId);
         lifecycle.finish(lifecycle.current('background'));
       },
       onStopped: runId => {
@@ -1268,13 +1263,7 @@ export default function ExperimentalAiPage() {
         lifecycle.finish(lifecycle.current('background'));
       },
       onStale: message => {
-        updateBackgroundMessage(entry => ({
-          ...entry,
-          content: message,
-          status: 'failed',
-          responseCompletedAt: Date.now(),
-          activity: [{ kind: 'response', text: message }],
-        }));
+        updateBackgroundMessage(entry => staleResponse(entry, message));
         lifecycle.finish(lifecycle.current('background'));
         setError(message);
       },
@@ -1441,36 +1430,22 @@ export default function ExperimentalAiPage() {
             const completedAssistantId = activeAssistantId;
             const nextAssistantId = messageId();
             runMessageIds.add(nextAssistantId);
-            setMessages(previous => [
-              ...previous.map(message => (
-                message.id === completedAssistantId
-                  ? { ...message, runId, status: undefined, responseCompletedAt: steeringStartedAt }
-                  : message
-              )),
+            setMessages(previous => steerResponse(
+              previous,
+              completedAssistantId,
               { id: queuedId, runId, role: 'user', content: queuedMessage, createdAt },
-              {
-                id: nextAssistantId,
-                runId,
-                role: 'assistant',
-                content: '',
-                status: 'pending',
-                responseStartedAt: steeringStartedAt,
-              },
-            ]);
+              { id: nextAssistantId, runId, role: 'assistant', content: '', status: 'pending', responseStartedAt: steeringStartedAt },
+            ));
             activeAssistantId = nextAssistantId;
             setSteeringAssistantId(nextAssistantId);
             activeAssistantHasOutput = false;
           } else {
             const pendingAssistantId = activeAssistantId;
-            setMessages(previous => {
-              const pendingIndex = previous.findIndex(message => message.id === pendingAssistantId);
-              if (pendingIndex < 0) return [...previous, { id: queuedId, runId, role: 'user', content: queuedMessage, createdAt }];
-              return [
-                ...previous.slice(0, pendingIndex),
-                { id: queuedId, runId, role: 'user', content: queuedMessage, createdAt },
-                ...previous.slice(pendingIndex),
-              ];
-            });
+            setMessages(previous => steerResponse(
+              previous,
+              pendingAssistantId,
+              { id: queuedId, runId, role: 'user', content: queuedMessage, createdAt },
+            ));
             setSteeringAssistantId(pendingAssistantId);
           }
           activeQuestion = queuedMessage;
@@ -1515,7 +1490,7 @@ export default function ExperimentalAiPage() {
       setMessages(previous => previous.map(message => (
         message.id === activeAssistantId
           ? controller.signal.aborted ? stopResponse(message)
-            : { ...message, status: undefined, responseCompletedAt: Date.now() }
+            : completeResponse(message)
           : message
       )));
     } catch (streamError) {
@@ -1525,13 +1500,7 @@ export default function ExperimentalAiPage() {
         if (message.id !== activeAssistantId) return message;
         if (controller.signal.aborted) return stopResponse(message);
         return {
-          ...message,
-          content: staleRunMessage ?? message.content,
-          status: 'failed',
-          responseCompletedAt: Date.now(),
-          activity: staleRunMessage === null
-            ? interruptRunningTools(message.activity ?? [])
-            : [{ kind: 'response' as const, text: staleRunMessage }],
+          ...(staleRunMessage === null ? failResponse(message) : staleResponse(message, staleRunMessage)),
           retry: {
             question: activeQuestion,
             requiresAttachments: activeQuestionRequiresAttachments,

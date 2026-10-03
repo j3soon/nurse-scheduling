@@ -98,6 +98,51 @@ export function interruptRunningTools(entries: ActivityEntry[]): ActivityEntry[]
   ));
 }
 
+export function resumeResponse<T extends ChatExportMessage>(message: T): T {
+  return { ...message, status: 'pending', responseCompletedAt: undefined };
+}
+
+export function completeResponse<T extends ChatExportMessage>(message: T, completedAt = Date.now()): T {
+  return { ...message, status: undefined, responseCompletedAt: completedAt };
+}
+
+export function failResponse<T extends ChatExportMessage>(message: T, fallbackText = ''): T {
+  return {
+    ...message,
+    content: message.content || fallbackText,
+    status: 'failed',
+    responseCompletedAt: Date.now(),
+    activity: interruptRunningTools(message.activity ?? []),
+  };
+}
+
+export function staleResponse<T extends ChatExportMessage>(message: T, text: string): T {
+  return { ...failResponse(message), content: text, activity: [{ kind: 'response', text }] };
+}
+
+// Insert steering before an empty answer. If output has already started, finish
+// that segment and append the caller's new answer, preserving its run identity.
+export function steerResponse<T extends ChatExportMessage & { id: string; runId?: string }>(
+  messages: T[],
+  assistantId: string,
+  user: T,
+  continuation?: T,
+  completedId = assistantId,
+): T[] {
+  if (messages.some(message => message.id === user.id)) return messages;
+  if (continuation) {
+    return [
+      ...messages.map(message => message.id === assistantId
+        ? { ...completeResponse(message, continuation.responseStartedAt), id: completedId, runId: user.runId }
+        : message),
+      user,
+      continuation,
+    ];
+  }
+  const index = messages.findIndex(message => message.id === assistantId);
+  return index < 0 ? [...messages, user] : [...messages.slice(0, index), user, ...messages.slice(index)];
+}
+
 // A stopped response keeps its partial output instead of gaining synthetic answer text.
 export function stopResponse<T extends ChatExportMessage>(message: T): T {
   return {
