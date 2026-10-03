@@ -244,6 +244,7 @@ async def run_case(
     *,
     system_prompt: str = SANDBOX_SYSTEM_PROMPT,
     fail_fast: bool = True,
+    optimizer_completion_factory: Callable[[str, str], tuple[bytes, dict]] | None = None,
 ) -> CaseRun:
     """Answer one case the way the service would, then grade what it produced."""
     text = fixture_text(case.fixture)
@@ -344,7 +345,12 @@ async def run_case(
                     events.append({"kind": "evaluation_stop", "reason": "optimizer was not started"})
                     break
                 try:
-                    optimizer_result, result_data = completion_result(case.optimizer_completion, optimizer_source)
+                    if optimizer_completion_factory is None:
+                        optimizer_result, result_data = completion_result(case.optimizer_completion, optimizer_source)
+                    else:
+                        optimizer_result, result_data = await asyncio.to_thread(
+                            optimizer_completion_factory, case.optimizer_completion, optimizer_source
+                        )
                 except ValueError as error:
                     events.append({"kind": "evaluation_stop", "reason": str(error)})
                     break

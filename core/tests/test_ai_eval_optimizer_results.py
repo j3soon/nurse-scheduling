@@ -93,6 +93,58 @@ def test_completion_is_not_delivered_without_a_started_job():
     assert run.trajectory["events"][-1]["reason"] == "optimizer was not started"
 
 
+def test_real_optimizer_solves_without_replaying_a_fixed_assignment(tmp_path):
+    from .ai_eval.real_optimizer import solve
+    from .ai_eval.runner import fixture_text
+
+    source = fixture_text("policy-audit")
+    receipt = solve(source, tmp_path, 5)
+    metadata = receipt["metadata"]
+    assert metadata["result"] == {
+        "outcome": "optimal",
+        "score": 44_011_000_000,
+        "solver_status": "OPTIMAL",
+        "termination_reason": "optimality_proven",
+    }
+    assert all(row["unmet"] == 0 for row in metadata["request_audit"]["summary"])
+    assert metadata["request_audit"]["policy"]["staffing"][0]["preferred_shortfall"] == 0
+    assert metadata["request_audit"]["policy"]["successions"][0]["unmet"] == 0
+    assert (tmp_path / "submitted.yaml").read_text() == source
+    assert load_workbook(tmp_path / "result.xlsx").active.cell(8, 5).value == "OPTIMAL"
+
+
+def test_real_completion_factory_receives_the_actual_submitted_source(tmp_path):
+    from .ai_eval.real_optimizer import solve
+
+    case = replace(
+        CASE_BY_ID["optimizer-score-same-model"],
+        fixture="policy-audit",
+        answer_json={"score": 44_011_000_000},
+        answer_contains=(),
+        answer_matches=(),
+        answer_not_matches=(),
+    )
+    provider = ScriptedProvider(
+        [ToolCallRequest((ToolCall("start", "optimizer", '{"action":"start","timeout_seconds":60}'),))],
+        [TextDelta("Running in the background.")],
+        [TextDelta('{"score":44011000000}')],
+    )
+    received = []
+
+    def completion(name, source):
+        received.append((name, source))
+        receipt = solve(source, tmp_path, 5)
+        return (tmp_path / "result.xlsx").read_bytes(), receipt["metadata"]
+
+    run = asyncio.run(run_case(provider, settings(), case, _factory(), optimizer_completion_factory=completion))
+    assert run.passed, run.failures
+    assert len(received) == 1
+    inputs = [e["schedule_yaml"] for e in run.trajectory["events"] if e["kind"] == "optimizer_input"]
+    assert received[0][1] == inputs[0]
+    callback = next(e["text"] for e in run.trajectory["events"] if e["kind"] == "optimizer")
+    assert '"termination_reason": "optimality_proven"' in callback
+
+
 @pytest.mark.parametrize("value", ["lower", "higher"])
 def test_score_oracle_rejects_the_wrong_direction(value):
     case = CASE_BY_ID["optimizer-score-same-model"]

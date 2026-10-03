@@ -166,6 +166,28 @@ starts without submitting real jobs. Startup acknowledgements use the production
 hash and automatic completion notification. Cases with `optimizer_completion` also deliver the production-shaped completion
 message and an exporter-generated workbook with verified fixed assignments. These test result interpretation and
 completion delivery through the agent harness, rather than stochastic solve quality or the service job lifecycle.
+
+For an on-demand check with unrestricted OR-Tools solves, run from `core/`:
+
+```bash
+set -a
+source ../docker/.env.staging
+set +a
+python -m tests.ai_eval.provider_preflight
+python -m tests.ai_eval.real_optimizer --repeat 3 --timeout 60 --output-dir /app/artifacts/real-optimizer-check
+```
+
+This runs the small policy fixture and the 87-person ward with four concurrent
+case jobs. It solves the agent's submitted YAML through the production
+`OptimizationRunner`, exports the actual workbook, and delivers its actual
+completion metadata. It grades preservation of the input and the agent's reported
+status, score, and unmet 11b request count. Passing these checks does not imply
+every finite-weight preference was satisfied. Inspect the retained audits for
+schedule quality. Timing separates the optimizer subprocess from agent and
+sandbox work, with solver/model/export time reported separately. HTTP submission,
+queue persistence, anonymization, and worker recovery are outside this check.
+It is not part of ordinary prompt comparisons or CI.
+
 `optimizer-start-preserves-ward` checks the submitted YAML retains every original
 constraint and weight. `optimizer-edit-before-start` checks requested changes
 reach that snapshot before startup, using the `optimizer-start-source` oracle.
