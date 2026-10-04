@@ -11,6 +11,11 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 
 ## Workflow
 - Linux setup: run `./scripts/setup_env.sh`.
+- Inside a dev container built from `docker/Dockerfile.dev*` (`/.dockerenv`
+  exists), Python dependencies are already installed system-wide. Do not run
+  the setup script, install `uv`, or create a virtual environment there. Run
+  `python`, `pytest`, and `ruff` directly. In the cuOpt image, `python3` is the
+  base 3.10 interpreter without project packages, so use `python`.
 - Keep edits scoped to the requested module. Preserve existing patterns.
 - Run affected tests and lint checks before finishing.
 - Avoid trailing spaces. End files with a newline.

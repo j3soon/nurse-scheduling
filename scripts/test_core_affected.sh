@@ -93,6 +93,7 @@ fi
 
 if ((${#required_solvers[@]} > 0)); then
   python - "${required_solvers[@]}" <<'PY'
+import os
 import sys
 
 from nurse_scheduling.server.solver_options import solver_is_available
@@ -100,7 +101,10 @@ from nurse_scheduling.server.solver_options import solver_is_available
 unavailable = [solver for solver in dict.fromkeys(sys.argv[1:]) if not solver_is_available(solver)]
 if unavailable:
     print(f"Required optional solver runtimes unavailable: {', '.join(unavailable)}", file=sys.stderr)
-    print("From core/, run: uv pip install -r requirements-optional.txt", file=sys.stderr)
+    if os.path.exists("/.dockerenv"):
+        print("This dev image omits them. Pass explicit test paths that do not need them.", file=sys.stderr)
+    else:
+        print("From core/, run: uv pip install -r requirements-optional.txt", file=sys.stderr)
     raise SystemExit(2)
 PY
 fi

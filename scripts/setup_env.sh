@@ -12,6 +12,9 @@ DOCS_DIR="$ROOT_DIR/docs"
 
 if ! command -v uv >/dev/null 2>&1; then
   echo "Error: 'uv' is not installed. See README.md prerequisites."
+  if [[ -f /.dockerenv ]]; then
+    echo "Dev containers install Python dependencies system-wide. Run python, pytest, and ruff directly."
+  fi
   exit 1
 fi
 
