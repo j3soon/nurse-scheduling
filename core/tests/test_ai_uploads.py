@@ -87,6 +87,22 @@ def test_duplicate_filename_is_numbered_instead_of_replaced():
     assert _unique_filename("a.tar.gz", taken) == "a.tar (1).gz"
 
 
+def test_upload_history_is_charged_before_retaining_files():
+    store = SessionStore(make_settings(max_session_bytes=500))
+    session = store.create("owner", "description: test")
+    original = store.retained_bytes
+
+    with pytest.raises(HTTPException) as error:
+        store.retain_uploads(session.id, "owner", [SandboxAttachment("ward.csv", "text/csv", b"x" * 400)])
+
+    assert error.value.status_code == 429
+    assert store.retained_bytes == original
+    assert store.attachments(session.id) == ()
+    assert session.history == []
+    assert store.retain_uploads(session.id, "owner", [SandboxAttachment("ward.csv", "text/csv", b"x")])
+    assert store.retained_bytes <= 500
+
+
 def test_upload_limits_removal_and_expiry_reclaim_bytes():
     store = SessionStore(make_settings(max_attachment_files=3, max_session_bytes=2000))
     session = store.create("owner", "description: test")

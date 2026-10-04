@@ -494,8 +494,6 @@ class SessionStore:
                 raise HTTPException(status_code=409, detail="Wait for the active response before uploading files.")
             if len(session.uploads) + len(uploads) > self._settings.max_attachment_files:
                 raise HTTPException(status_code=413, detail="Too many retained files. Remove unused uploads first.")
-            delta = sum(len(upload.data) for upload in uploads)
-            self._require_capacity(delta)
             filenames = {item.filename for item in session.uploads.values()}
             retained_uploads = []
             for upload in uploads:
@@ -503,8 +501,10 @@ class SessionStore:
                 filenames.add(filename)
                 retained_uploads.append(replace(upload, filename=filename, id=str(uuid4())))
             first_index = len(session.uploads) + 1
+            history_event = upload_event(retained_uploads, first_index)
+            self._require_capacity(sum(len(upload.data) for upload in retained_uploads) + _text_bytes(history_event))
             session.uploads.update((item.id, item) for item in retained_uploads)
-            self._append_history_event(session, upload_event(retained_uploads, first_index))
+            self._append_history_event(session, history_event)
             self._recount(session)
             session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
             return tuple(retained_uploads)
