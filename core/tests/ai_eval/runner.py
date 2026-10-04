@@ -45,7 +45,12 @@ from nurse_scheduling.ai.agent import (
     AgentToolStart,
     AgentToolUse,
 )
-from nurse_scheduling.ai.app import PROPOSAL_APPROVED_HISTORY, PROPOSAL_REJECTED_HISTORY, build_provider_messages
+from nurse_scheduling.ai.app import (
+    PROPOSAL_APPROVED_HISTORY,
+    PROPOSAL_REJECTED_HISTORY,
+    attachment_notes,
+    build_provider_messages,
+)
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.optimizer import optimizer_completion_message, optimizer_start_message
 from nurse_scheduling.ai.provider import (
@@ -359,11 +364,14 @@ async def run_case(
                 question = optimizer_completion_message(result_data)
                 optimizer_started = False
             attachments = case_attachments
+            # Case files arrive with the first question, and later turns see them as earlier uploads.
+            new_upload_ids = [attachment.id for attachment in attachments] if turn_index == 0 else []
             messages = build_provider_messages(
                 history,
                 text,
                 question,
                 attachments,
+                new_upload_ids=new_upload_ids,
                 system_prompt=system_prompt,
                 max_download_bytes=settings.max_download_bytes,
                 pending_proposal=pending_proposal is not None,
@@ -464,8 +472,9 @@ async def run_case(
                 intermediate_proposals.append(turn_proposal is not None)
             if turn_index + 1 == case.proposal_turn:
                 proposal_event = turn_proposal
+            history_question = question + attachment_notes(attachments, new_upload_ids)[0]
             history.extend(
-                [ChatMessage(role="user", content=question), ChatMessage(role="assistant", content=answer_text)]
+                [ChatMessage(role="user", content=history_question), ChatMessage(role="assistant", content=answer_text)]
             )
             if stopped_on_limit:
                 break

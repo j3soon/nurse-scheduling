@@ -53,7 +53,6 @@ from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFact
 from nurse_scheduling.ai.sandbox_agent import (
     REFERENCE_ATTACHMENT_TOOLS,
     SANDBOX_SYSTEM_PROMPT,
-    WORKSPACE_ATTACHMENT_MANIFEST,
     WORKSPACE_SCHEDULE,
     SandboxTurnMetrics,
 )
@@ -452,7 +451,7 @@ def test_a_correct_answer_passes_and_records_its_cost():
     assert run.seconds >= 0
 
 
-def test_attachment_case_hydrates_generated_file_and_manifest():
+def test_attachment_case_hydrates_generated_file_and_lists_it_in_the_question():
     factory = _factory()
     run = _run(
         "read-second-xlsx-sheet",
@@ -465,10 +464,12 @@ def test_attachment_case_hydrates_generated_file_and_manifest():
 
     assert run.passed
     backend = factory.created[0]
-    manifest = json.loads(backend.files[WORKSPACE_ATTACHMENT_MANIFEST])
-    attachment = manifest["attachments"][0]
-    assert attachment["original_filename"] == "ward-notes.xlsx"
-    assert backend.files[attachment["path"]].startswith(b"PK")
+    assert backend.files["/workspace/attachments/01-ward-notes.xlsx"].startswith(b"PK")
+    question = run.trajectory["prompt"][-1]["content"]
+    assert (
+        '[Files attached to this message: [{"filename": "ward-notes.xlsx", "path": "/workspace/attachments/01-ward-notes.xlsx"'
+        in question
+    )
 
 
 def test_optimizer_case_uses_controlled_production_tool_contract():

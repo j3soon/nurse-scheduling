@@ -92,9 +92,12 @@ background assistant turn. It does not cancel the independent optimizer run.
 
 Sandbox and conversation state are separate. The backend copies the current
 schedule to `/workspace/schedule.yaml` and searchable schema documentation to
-`/reference`. It writes uploads below `/workspace/attachments` and records safe
-paths, original names, media types, and sizes in `manifest.json`. It then runs
-every command for that user message in the same sandbox,
+`/reference`. It writes uploads below `/workspace/attachments` under safe paths
+prefixed with their upload IDs. The user message lists the files attached to
+it and the files uploaded earlier, with the original name, sandbox path, media
+type, and size of each file. Filenames stay out of the system prompt because
+they are untrusted input. The backend then runs every command for that user
+message in the same sandbox,
 reads the candidate, and destroys the sandbox. A later message always starts a
 new sandbox. Only conversation history, the canonical schedule revision, and a
 pending validated proposal remain in application state.
@@ -624,7 +627,7 @@ FastAPI.
 Upload requests contain only repeated `files` fields. Other field names are
 rejected. Uploads are refused while a response is active. A message can name
 the files attached to it in an optional `upload_ids` list. The chat history
-records those filenames. Every turn can read all retained files. Sessions are
+keeps the list of those files. Every turn can read all retained files. Sessions are
 process-local. Use one AI backend instance until shared AI storage is added.
 
 `GET /health`, `GET /ready`, and `GET /capabilities` stay public so deployment

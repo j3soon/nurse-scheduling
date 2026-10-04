@@ -953,7 +953,7 @@ def test_message_rejects_unknown_upload_ids_and_records_attached_files() -> None
     app = create_test_app(settings=make_settings(), provider=provider)
     client = AuthenticatedTestClient(app)
     session_id = create_session(client)
-    upload_id, _unused_id = upload_files(
+    upload_id, other_id = upload_files(
         client, session_id, ("notes.txt", b"notes", "text/plain"), ("other.txt", b"other", "text/plain")
     )
 
@@ -968,14 +968,22 @@ def test_message_rejects_unknown_upload_ids_and_records_attached_files() -> None
     assert invalid.status_code == 422
     assert accepted.status_code == 200
     history = app.state.session_store._sessions[session_id].history
-    assert history[0]["content"] == 'Read\n[Files were attached: ["notes.txt"].]'
+    entry = {
+        "filename": "notes.txt",
+        "path": f"/workspace/attachments/{upload_id}-notes.txt",
+        "media_type": "text/plain",
+        "bytes": 5,
+    }
+    other = {**entry, "filename": "other.txt", "path": f"/workspace/attachments/{other_id}-other.txt"}
+    assert history[0]["content"] == f"Read\n[Files attached to this message: {json.dumps([entry])}]"
+    assert (
+        provider.calls[0][-1]["content"] == f"{history[0]['content']}\n[Files uploaded earlier: {json.dumps([other])}]"
+    )
 
 
 def test_arbitrary_file_is_available_in_the_disposable_sandbox() -> None:
-    read_manifest = [
-        ToolCallRequest((ToolCall("call_0", READ_TOOL, json.dumps({"path": "/workspace/attachments/manifest.json"})),))
-    ]
-    provider = ScriptedToolProvider(read_manifest, [TextDelta("I inspected the custom file.")])
+    read_schedule = [ToolCallRequest((ToolCall("call_0", READ_TOOL, json.dumps({"path": WORKSPACE_SCHEDULE})),))]
+    provider = ScriptedToolProvider(read_schedule, [TextDelta("I inspected the custom file.")])
     factory = FakeSandboxFactory()
     client = AuthenticatedTestClient(
         create_test_app(settings=make_settings(), provider=provider, sandbox_factory=factory)
@@ -991,12 +999,13 @@ def test_arbitrary_file_is_available_in_the_disposable_sandbox() -> None:
     assert response.status_code == 200
     assert "I inspected the custom file." in response.text
     backend = factory.created[0]
-    manifest = json.loads(backend.files["/workspace/attachments/manifest.json"])
-    uploaded = manifest["attachments"][0]
-    assert uploaded["original_filename"] == "archive.custom"
-    assert uploaded["media_type"] == "application/x-custom"
-    assert backend.files[uploaded["path"]] == b"arbitrary bytes"
-    assert "/workspace/attachments/manifest.json" in provider.calls[0][0]["content"]
+    path = f"/workspace/attachments/{upload_ids[0]}-archive.custom"
+    assert backend.files[path] == b"arbitrary bytes"
+    entry = {"filename": "archive.custom", "path": path, "media_type": "application/x-custom", "bytes": 15}
+    assert provider.calls[0][-1]["content"] == (
+        f"Inspect this custom file.\n[Files attached to this message: {json.dumps([entry])}]"
+    )
+    assert "archive.custom" not in provider.calls[0][0]["content"]
 
 
 @pytest.mark.parametrize(
@@ -1737,12 +1746,11 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
     with AuthenticatedTestClient(app) as client:
         session_id = create_session(client, schedule_yaml())
         assert "optimizer" not in client.get("/capabilities").json()
+        source_ids = upload_files(client, session_id, ("source.txt", b"original input", "text/plain"))
+        source_path = f"/workspace/attachments/{source_ids[0]}-source.txt"
         started = client.post(
             f"/sessions/{session_id}/messages",
-            json={
-                "message": "Optimize this schedule.",
-                "upload_ids": upload_files(client, session_id, ("source.txt", b"original input", "text/plain")),
-            },
+            json={"message": "Optimize this schedule.", "upload_ids": source_ids},
         )
         follow_up = client.post(f"/sessions/{session_id}/messages", json={"message": "Can we still talk?"})
 
@@ -1789,10 +1797,10 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
             for backend in factory.created
             if "/workspace/optimizer-results/optimized-schedule.xlsx" in backend.files
         )
-        background_manifest = json.loads(background_sandbox.files["/workspace/attachments/manifest.json"])
-        source = background_manifest["attachments"][0]
-        assert source["original_filename"] == "source.txt"
-        assert background_sandbox.files[source["path"]] == b"original input"
+        assert f'[Files uploaded earlier: [{{"filename": "source.txt", "path": "{source_path}"' in str(
+            provider.calls[3][-1]["content"]
+        )
+        assert background_sandbox.files[source_path] == b"original input"
         assert background_sandbox.files["/workspace/optimizer-results/optimized-schedule.xlsx"].startswith(
             b"PK\x03\x04"
         )
@@ -1803,21 +1811,16 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         assert download.content.startswith(b"PK\x03\x04")
         assert download.headers["content-disposition"] == 'attachment; filename="optimized-schedule.xlsx"'
 
+        note_ids = upload_files(client, session_id, ("note.txt", b"note", "text/plain"))
         later = client.post(
             f"/sessions/{session_id}/messages",
-            json={
-                "message": "Can you inspect the workbook again?",
-                "upload_ids": upload_files(client, session_id, ("note.txt", b"note", "text/plain")),
-            },
+            json={"message": "Can you inspect the workbook again?", "upload_ids": note_ids},
         )
         assert later.status_code == 200
         assert "I can still inspect" in later.text
         later_sandbox = factory.created[-1]
-        later_manifest = json.loads(later_sandbox.files["/workspace/attachments/manifest.json"])
-        assert [entry["original_filename"] for entry in later_manifest["attachments"]] == [
-            "source.txt",
-            "note.txt",
-        ]
+        assert later_sandbox.files[source_path] == b"original input"
+        assert later_sandbox.files[f"/workspace/attachments/{note_ids[0]}-note.txt"] == b"note"
         assert later_sandbox.files["/workspace/optimizer-results/optimized-schedule.xlsx"] == download.content
 
     assert optimizer.closed

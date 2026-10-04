@@ -22,7 +22,7 @@
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Collection, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import Protocol
@@ -44,6 +44,7 @@ from .sandbox_agent import (
     SandboxCommandTimeoutError,
     SandboxDownloadError,
     SandboxTurnTimeoutError,
+    attachment_path,
     run_sandbox_agent,
 )
 from .schedule_context import describe_schedule
@@ -190,19 +191,38 @@ def recent_history(history: list[ChatMessage], max_chars: int) -> list[ChatMessa
     return kept
 
 
+def attachment_notes(attachments: Sequence[SandboxAttachment], new_upload_ids: Collection[str] = ()) -> tuple[str, str]:
+    """Describe this message's new uploads and the earlier uploads, with the sandbox path of each file."""
+    new_files: list[dict[str, str | int]] = []
+    earlier_files: list[dict[str, str | int]] = []
+    for index, attachment in enumerate(attachments, start=1):
+        entry: dict[str, str | int] = {
+            "filename": attachment.filename,
+            "path": attachment_path(attachment, index),
+            "media_type": attachment.media_type,
+            "bytes": len(attachment.data),
+        }
+        (new_files if attachment.id in new_upload_ids else earlier_files).append(entry)
+    return (
+        f"\n[Files attached to this message: {json.dumps(new_files, ensure_ascii=False)}]" if new_files else "",
+        f"\n[Files uploaded earlier: {json.dumps(earlier_files, ensure_ascii=False)}]" if earlier_files else "",
+    )
+
+
 def build_provider_messages(
     history: list[ChatMessage],
     schedule_yaml: str,
     question: str,
     attachments: Sequence[SandboxAttachment] = (),
     *,
+    new_upload_ids: Collection[str] = (),
     system_prompt: str = SANDBOX_SYSTEM_PROMPT,
     pending_proposal: bool = False,
     optimizer_result_available: bool = False,
     max_history_chars: int = DEFAULT_MAX_HISTORY_CHARS,
     max_download_bytes: int = 50_000_000,
 ) -> list[ChatMessage]:
-    """Build a provider prompt that keeps schedule data separate from instructions."""
+    """Build a provider prompt that keeps schedule data and untrusted filenames separate from instructions."""
     system_content = f"{system_prompt}\n\nCurrent schedule summary:\n{describe_schedule(schedule_yaml)}"
     system_content += (
         "\nGenerated file download: write one ZIP to /workspace/download.zip. "
@@ -214,14 +234,12 @@ def build_provider_messages(
             "\nA validated proposal is pending. Its exact candidate and diff are available in the trusted workspace "
             "files described above."
         )
-    if attachments:
-        system_content += f"\nAttached files: {len(attachments)}. Manifest: /workspace/attachments/manifest.json."
     if optimizer_result_available:
         system_content += f"\nOptimization result: {WORKSPACE_OPTIMIZER_RESULT}."
     return [
         ChatMessage(role="system", content=system_content),
         *recent_history(history, max_history_chars),
-        ChatMessage(role="user", content=question),
+        ChatMessage(role="user", content=question + "".join(attachment_notes(attachments, new_upload_ids))),
     ]
 
 

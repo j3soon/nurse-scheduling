@@ -31,11 +31,10 @@ from nurse_scheduling.ai.sandbox_agent import SandboxAttachment
 
 from .test_ai_basic import AuthenticatedTestClient, ScriptedToolProvider, create_session, create_test_app, make_settings
 
-MANIFEST = "/workspace/attachments/manifest.json"
-
 
 def test_followup_hydrates_retained_upload_and_removal_stops_hydration():
-    read = [ToolCallRequest((ToolCall("read", "read", json.dumps({"path": MANIFEST})),))]
+    # The fake sandbox starts only when a tool runs, so each turn reads one file.
+    read = [ToolCallRequest((ToolCall("read", "read", json.dumps({"path": "/workspace/schedule.yaml"})),))]
     provider = ScriptedToolProvider(
         read, [TextDelta("Read")], read, [TextDelta("Read again")], read, [TextDelta("Removed")]
     )
@@ -54,17 +53,21 @@ def test_followup_hydrates_retained_upload_and_removal_stops_hydration():
         assert len(files) == 1 and files[0]["filename"] == "notes.txt" and files[0]["bytes"] == 13
         client.post(f"/sessions/{session}/messages", json={"message": "Read", "upload_ids": [files[0]["id"]]})
         client.post(f"/sessions/{session}/messages", json={"message": "Read again"})
-        first = json.loads(factory.created[0].files[MANIFEST])["attachments"][0]
-        second = json.loads(factory.created[1].files[MANIFEST])["attachments"][0]
-        assert first["path"] == second["path"]
-        assert factory.created[1].files[second["path"]] == b"ward handover"
+        path = f"/workspace/attachments/{files[0]['id']}-notes.txt"
+        entry = json.dumps([{"filename": "notes.txt", "path": path, "media_type": "text/plain", "bytes": 13}])
+        attached_question = f"Read\n[Files attached to this message: {entry}]"
+        assert provider.calls[0][-1]["content"] == attached_question
+        assert provider.calls[2][1]["content"] == attached_question
+        assert provider.calls[2][-1]["content"] == f"Read again\n[Files uploaded earlier: {entry}]"
+        assert factory.created[0].files[path] == factory.created[1].files[path] == b"ward handover"
         assert factory.created[0].closed and factory.created[1].closed
         with AuthenticatedTestClient(app) as other:
             assert other.delete(f"/sessions/{session}/uploads/{files[0]['id']}").status_code == 404
         assert client.delete(f"/sessions/{session}/uploads/{files[0]['id']}").status_code == 204
         assert client.get(f"/sessions/{session}/uploads").json() == []
         client.post(f"/sessions/{session}/messages", json={"message": "Check removed file"})
-        assert MANIFEST not in factory.created[2].files
+        assert provider.calls[4][-1]["content"] == "Check removed file"
+        assert not any(name.startswith("/workspace/attachments/") for name in factory.created[2].files)
         preflight = client.options(
             f"/sessions/{session}/uploads/example",
             headers={"Origin": "http://localhost:3000", "Access-Control-Request-Method": "DELETE"},

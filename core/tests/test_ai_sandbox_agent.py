@@ -44,7 +44,6 @@ from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFact
 from nurse_scheduling.ai.sandbox_agent import (
     REFERENCE_SCHEMAS,
     REFERENCE_USER_GUIDE,
-    WORKSPACE_ATTACHMENT_MANIFEST,
     WORKSPACE_PENDING_DIFF,
     WORKSPACE_PENDING_PROPOSAL,
     WORKSPACE_PENDING_RESULT_CONTEXT,
@@ -56,6 +55,7 @@ from nurse_scheduling.ai.sandbox_agent import (
     SandboxAttachment,
     SandboxCandidateError,
     SandboxTurnTimeoutError,
+    attachment_path,
     hydrate_sandbox,
     run_sandbox_agent,
 )
@@ -328,27 +328,19 @@ def test_hydration_uploads_every_reference_in_one_request():
 def test_hydration_places_untrusted_attachments_under_safe_paths():
     factory = FakeSandboxFactory()
     provider = ScriptedProvider(
-        [ToolCallRequest((ToolCall("call-1", READ_TOOL, json.dumps({"path": WORKSPACE_ATTACHMENT_MANIFEST})),))],
+        [ToolCallRequest((ToolCall("call-1", READ_TOOL, json.dumps({"path": WORKSPACE_SCHEDULE})),))],
         [TextDelta("Inspected.")],
     )
+    unnamed = SandboxAttachment("../../staff data.bin", "application/octet-stream", b"payload")
+    uploaded = SandboxAttachment("報表 (1).xlsx", "application/octet-stream", b"sheet", id="upload-id")
 
-    _collect(
-        provider,
-        factory,
-        attachments=(SandboxAttachment("../../staff data.bin", "application/octet-stream", b"payload"),),
-    )
+    _collect(provider, factory, attachments=(unnamed, uploaded))
 
     backend = factory.created[0]
-    manifest = json.loads(backend.files[WORKSPACE_ATTACHMENT_MANIFEST])
-    attachment = manifest["attachments"][0]
-    assert attachment == {
-        "original_filename": "../../staff data.bin",
-        "path": "/workspace/attachments/01-staff_data.bin",
-        "media_type": "application/octet-stream",
-        "bytes": 7,
-        "trusted": False,
-    }
-    assert backend.files[attachment["path"]] == b"payload"
+    assert attachment_path(unnamed, 1) == "/workspace/attachments/01-staff_data.bin"
+    assert attachment_path(uploaded, 2) == "/workspace/attachments/upload-id-1_.xlsx"
+    assert backend.files["/workspace/attachments/01-staff_data.bin"] == b"payload"
+    assert backend.files["/workspace/attachments/upload-id-1_.xlsx"] == b"sheet"
     assert b"inspect_workbook" in backend.files["/reference/tools/inspect_xlsx.py"]
     assert b"inspect_pdf" in backend.files["/reference/tools/inspect_pdf.py"]
 
@@ -364,7 +356,7 @@ def test_hydration_keeps_optimizer_result_outside_user_attachments():
 
     backend = factory.created[0]
     assert backend.files[WORKSPACE_OPTIMIZER_RESULT] == b"workbook"
-    assert WORKSPACE_ATTACHMENT_MANIFEST not in backend.files
+    assert not any(path.startswith("/workspace/attachments/") for path in backend.files)
     context = json.loads(backend.files[WORKSPACE_RESULT_CONTEXT])
     assert context["schema_version"] == 1
     assert context["people"] == ["P1", "P2"]

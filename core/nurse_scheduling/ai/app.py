@@ -52,6 +52,7 @@ from .background import (
     SANDBOX_TURN_TIMEOUT_ERROR,
     STALE_TURN_ERROR,
     SessionEventBroker,
+    attachment_notes,
     build_provider_messages,
     recent_history,
     run_background_turn,
@@ -1198,11 +1199,9 @@ def create_app(
             )
             # Uploads cannot change while the turn is active, so this snapshot stays valid for the whole turn.
             hydrated_attachments = store.attachments(session_id)
-            retained = {item.id: item for item in hydrated_attachments}
-            if any(upload_id not in retained for upload_id in upload_ids):
+            if not set(upload_ids) <= {item.id for item in hydrated_attachments}:
                 store.abort(session_id)
                 raise HTTPException(status_code=422, detail="An attached file is no longer available.")
-            attachments = tuple(retained[upload_id] for upload_id in upload_ids)
         except BaseException:
             pending_turn_stops.discard(session_id)
             release_turn()
@@ -1217,7 +1216,7 @@ def create_app(
                     request.state.auth_credential_id,
                     question,
                     settings.provider_model,
-                    len(attachments),
+                    len(upload_ids),
                 )
                 if not logged:
                     raise HTTPException(status_code=503, detail="AI chat history is temporarily unavailable.")
@@ -1231,7 +1230,7 @@ def create_app(
             session_id,
             len(question),
             json.dumps(_question_log_preview(question), ensure_ascii=False),
-            len(attachments),
+            len(upload_ids),
         )
         stream_started = threading.Event()
         latest_artifact = await session_optimizer.latest_result_artifact(session_id)
@@ -1242,16 +1241,15 @@ def create_app(
             schedule_yaml,
             question,
             hydrated_attachments,
+            new_upload_ids=upload_ids,
             system_prompt=SANDBOX_SYSTEM_PROMPT,
             pending_proposal=bool(proposal_yaml),
             optimizer_result_available=latest_artifact is not None,
             max_history_chars=settings.max_history_chars,
             max_download_bytes=settings.max_download_bytes,
         )
-        history_question = question
-        if attachments:
-            filenames = json.dumps([attachment.filename for attachment in attachments], ensure_ascii=False)
-            history_question = f"{history_question}\n[Files were attached: {filenames}.]"
+        # Later turns list retained files again, so history keeps only the files this message attached.
+        history_question = question + attachment_notes(hydrated_attachments, upload_ids)[0]
 
         async def generate_events():
             stream_started.set()

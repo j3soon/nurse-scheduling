@@ -455,10 +455,11 @@ def attachment_fixture_names() -> frozenset[str]:
 def load_attachment_fixtures(names: Sequence[str]) -> tuple[SandboxAttachment, ...]:
     """Build named attachments without storing generated binaries in Git."""
     attachments = []
-    for name in names:
+    for index, name in enumerate(names, start=1):
         try:
             filename, media_type, build = _FIXTURES[name]
         except KeyError as exc:
             raise ValueError(f"Unknown attachment fixture: {name}") from exc
-        attachments.append(SandboxAttachment(filename, media_type, build()))
+        # Positional IDs keep the sandbox paths that case questions cite, such as /workspace/attachments/01-*.
+        attachments.append(SandboxAttachment(filename, media_type, build(), id=f"{index:02d}"))
     return tuple(attachments)

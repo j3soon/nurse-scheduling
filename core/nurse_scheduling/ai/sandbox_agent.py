@@ -60,7 +60,6 @@ WORKSPACE_SCHEDULE = f"/workspace/{SCHEDULE_FILENAME}"
 WORKSPACE_PENDING_PROPOSAL = "/workspace/pending-proposal.yaml"
 WORKSPACE_PENDING_DIFF = "/workspace/pending-proposal.diff"
 WORKSPACE_ATTACHMENTS = "/workspace/attachments"
-WORKSPACE_ATTACHMENT_MANIFEST = f"{WORKSPACE_ATTACHMENTS}/manifest.json"
 REFERENCE_SCHEMAS = {group: f"/reference/{path.name}" for group, path in SCHEMA_REFERENCE_FILES.items()}
 REFERENCE_SCHEMAS["taiwan-holidays"] = f"/reference/{TAIWAN_HOLIDAYS_SOURCE.name}"
 REFERENCE_USER_GUIDE = "/reference/user-guide"
@@ -523,28 +522,8 @@ async def hydrate_sandbox(
     for destination, source in REFERENCE_ATTACHMENT_TOOLS.items():
         files[destination] = source.read_text(encoding="utf-8")
     files["/reference/tools/README.md"] = inspection_helper_catalog()
-    if attachments:
-        manifest = []
-        for index, attachment in enumerate(attachments, start=1):
-            safe_name = _safe_attachment_name(attachment.filename, index)
-            if attachment.id:
-                safe_name = f"{attachment.id}-{safe_name.split('-', 1)[1]}"
-            path = f"{WORKSPACE_ATTACHMENTS}/{safe_name}"
-            files[path] = attachment.data
-            manifest.append(
-                {
-                    "original_filename": attachment.filename,
-                    "path": path,
-                    "media_type": attachment.media_type,
-                    "bytes": len(attachment.data),
-                    "trusted": False,
-                }
-            )
-        files[WORKSPACE_ATTACHMENT_MANIFEST] = json.dumps(
-            {"attachments": manifest},
-            ensure_ascii=False,
-            indent=2,
-        )
+    for index, attachment in enumerate(attachments, start=1):
+        files[attachment_path(attachment, index)] = attachment.data
     if optimizer_result is not None:
         files[WORKSPACE_OPTIMIZER_RESULT] = optimizer_result
         files[WORKSPACE_RESULT_CONTEXT] = json.dumps(
@@ -565,13 +544,13 @@ async def hydrate_sandbox(
     )
 
 
-def _safe_attachment_name(filename: str, index: int) -> str:
-    """Create a deterministic basename below the fixed attachment directory."""
-    basename = filename.replace("\\", "/").rsplit("/", 1)[-1]
+def attachment_path(attachment: SandboxAttachment, index: int) -> str:
+    """Return a deterministic path below the fixed attachment directory, prefixed by the upload ID or position."""
+    basename = attachment.filename.replace("\\", "/").rsplit("/", 1)[-1]
     sanitized = re.sub(r"[^A-Za-z0-9._-]+", "_", basename).strip("._")
     if not sanitized:
         sanitized = "attachment"
-    return f"{index:02d}-{sanitized[:120]}"
+    return f"{WORKSPACE_ATTACHMENTS}/{attachment.id or f'{index:02d}'}-{sanitized[:120]}"
 
 
 async def _read_candidate(sandbox: SandboxBackend, max_schedule_bytes: int) -> str:
