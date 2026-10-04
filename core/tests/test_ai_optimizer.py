@@ -28,13 +28,13 @@ import httpx
 import pytest
 
 from nurse_scheduling.ai.optimizer import (
-    HttpOptimizerBackend,
     OptimizerArtifact,
     OptimizerError,
     OptimizerJobPayload,
     OptimizerResultUnavailable,
     SessionOptimizer,
 )
+from nurse_scheduling.ai.optimizer_http import HttpOptimizerBackend
 from nurse_scheduling.ai.optimizer_tool import execute_optimizer_tool, optimizer_tool_definition
 from nurse_scheduling.ai.session_event_stream import SessionEventStream
 

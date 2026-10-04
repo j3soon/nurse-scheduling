@@ -96,6 +96,8 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
 - Keep model argument parsing and tool result formatting in `optimizer_tool.py`.
   `SessionOptimizer` returns job data or domain errors. Keep submission ownership,
   monitoring, and cleanup independent of model-facing tool contracts.
+  Keep optimizer HTTP requests, response parsing, and downloads in
+  `optimizer_http.py`, behind the `OptimizerBackend` interface.
 - Optimizer submissions and jobs belong to the optimizer service, not to the
   requesting run. Revoke the submission owner on cancellation and dispose of
   late remote responses. Keep progress readers inside the job lifecycle scope.

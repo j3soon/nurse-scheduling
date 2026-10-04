@@ -196,6 +196,7 @@ relative to `web-frontend/src/app/experimental-ai/`.
 | `WorkspaceTools` / `SandboxWorkspace`<br/>`workspace_tools.py`<br/>`workspace.py`<br/>`sandbox/` | Bind model tools to file operations, validate working YAML, and manage VM hydration, pause, resume, and teardown. |
 | Optimizer tool adapter<br/>`optimizer_tool.py` | Define and validate model arguments, dispatch job operations, and format `AgentToolResult` content. |
 | `SessionOptimizer`<br/>`optimizer.py` | Own remote jobs, progress, artifacts, late-submission cleanup, and result-review wake-ups. |
+| `HttpOptimizerBackend`<br/>`optimizer_http.py` | Call the optimizer API, parse reconnectable progress SSE, and download bounded result workbooks. Keep credentials inside the HTTP adapter. |
 | `AgentSessionEvent` / `SessionEventStream`<br/>`session_events.py`, `session_event_stream.py` | Define public run and optimizer events, then retain bounded journal and recovery projections. The API frames them as SSE. |
 | Browser `ChatLifecycle`<br/>`chatLifecycle.ts` | Track operation ownership and derive busy and Stop state. |
 | Browser `useAiChat`<br/>`useAiChat.ts` | Own chat control and projection: send, queue, Stop, replayed answers, optimizer updates, and proposal decisions. Expose conversation snapshots and restore operations. The page owns rendering and browser storage. |

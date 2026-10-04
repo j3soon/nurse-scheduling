@@ -44,12 +44,12 @@ from .config import AiSettings, validate_ai_auth_credentials
 from .history import ChatHistory, stop_maintenance
 from .lifecycle import TERMINAL_EVENTS, AgentRun, SessionRuns
 from .optimizer import (
-    HttpOptimizerBackend,
     OptimizerArtifact,
     OptimizerBackend,
     OptimizerResultUnavailable,
     SessionOptimizer,
 )
+from .optimizer_http import HttpOptimizerBackend
 from .provider import OpenAiCompatibleProvider, ToolCapableChatProvider
 from .sandbox import SandboxFactory, managed_sandbox_factory
 from .sandbox.factory import create_sandbox_factory
