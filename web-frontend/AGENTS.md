@@ -94,8 +94,8 @@ SSE frame. Test overlapping foreground completion and background replay explicit
 Keep connection ownership, cursors, reconnection, and teardown in
 `useSessionEventStream`. Keep run routing and pre-acknowledgement buffering in
 `SessionEventRouter`. Route normalized `SessionEvent` values through one handler.
-Use `SessionEventHandler` directly in browser consumers. Keep callback adaptation
-in the HTTP client boundary for compatibility consumers.
+Use `SessionEventHandler` directly in browser consumers and HTTP client tests.
+Both GET and compatibility POST SSE readers emit the same typed event interface.
 Page test fixtures should emit typed `SessionEvent` values directly, without
 converting them through legacy callback bundles.
 Apply assistant output from the single session GET stream through

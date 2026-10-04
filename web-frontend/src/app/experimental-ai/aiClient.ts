@@ -19,7 +19,7 @@
 
 // This code is mostly AI generated.
 
-import type { SessionEvent, SessionEventHandler, SessionStreamOptions } from './sessionEvents';
+import type { SessionEvent, SessionStreamOptions } from './sessionEvents';
 import {
   buildAuthHeaders,
   parseAuthRequirement,
@@ -73,32 +73,6 @@ export interface SessionReset {
   terminalRunIds: string[];
   incomplete: boolean;
   proposalDiff: string | null;
-}
-
-export interface StreamCallbacks {
-  onEvent?: SessionEventHandler;
-  forRun?: (runId: string, trigger?: string) => StreamCallbacks | undefined;
-  onReset?: (reset: SessionReset) => void;
-  lastEventId?: number;
-  onEventId?: (id: number) => void;
-  onRunStart?: (runId: string, trigger: string) => void;
-  onRunContext?: (runId: string) => void;
-  onDelta: (text: string) => void;
-  onReasoning?: (text: string) => void;
-  onTruncated?: () => void;
-  onToolStart?: (activity: ToolStartActivity) => void;
-  onTool?: (activity: ToolActivity) => void;
-  onSteering?: (messageId: string, message: string) => void;
-  onScheduleChange?: (scheduleYaml: string) => void;
-  onProposal?: (diff: string) => void;
-  onOptimization?: (activity: OptimizationActivity) => void;
-  onOptimizationProgress?: (activity: OptimizationProgressActivity) => void;
-  onDone?: (runId?: string) => void;
-  onStopped?: (runId?: string) => void;
-  onStale?: (message: string) => void;
-  onContextUsage?: (usage: ContextUsage) => void;
-  onHistoryTrimmed?: (dropped: number) => void;
-  onError?: (message: string) => void;
 }
 
 export interface AiCapabilities {
@@ -409,68 +383,6 @@ function consumeEvent(block: string, callbacks: SessionStreamOptions): void {
   dispatchEvent(eventType, payload, callbacks);
 }
 
-/** Adapt callback consumers to one handler without string-indexed invocation. */
-export function sessionEventCallbacks(handle: SessionEventHandler, runId?: string): StreamCallbacks {
-  const emit = (event: SessionEvent) => handle(
-    event.runId !== undefined || runId === undefined ? event : { ...event, runId },
-  );
-  return {
-    onEvent: emit,
-    onReset: reset => emit({ type: 'session_reset', reset }),
-    onRunContext: runId => emit({ type: 'run_context', runId }),
-    onRunStart: (runId, trigger) => emit({ type: 'run_start', runId, trigger }),
-    onDelta: text => emit({ type: 'delta', text }),
-    onReasoning: text => emit({ type: 'reasoning', text }),
-    onTruncated: () => emit({ type: 'truncated' }),
-    onToolStart: activity => emit({ type: 'tool_start', activity }),
-    onTool: activity => emit({ type: 'tool', activity }),
-    onSteering: (messageId, message) => emit({ type: 'steering', messageId, message }),
-    onScheduleChange: scheduleYaml => emit({ type: 'schedule_change', scheduleYaml }),
-    onProposal: diff => emit({ type: 'proposal', diff }),
-    onOptimization: activity => emit({ type: 'optimization', activity }),
-    onOptimizationProgress: activity => emit({ type: 'optimization_progress', activity }),
-    onDone: runId => emit({ type: 'done', runId }),
-    onStopped: runId => emit({ type: 'stopped', runId }),
-    onStale: message => emit({ type: 'stale', message }),
-    onError: message => emit({ type: 'error', message }),
-    onContextUsage: usage => emit({ type: 'context_usage', usage }),
-    onHistoryTrimmed: dropped => emit({ type: 'history_trimmed', dropped }),
-  };
-}
-
-/** Deliver normalized events. Legacy callback callers share this typed path. */
-export function dispatchSessionEvent(callbacks: StreamCallbacks, event: SessionEvent): void {
-  if (callbacks.onEvent) { callbacks.onEvent(event); return; }
-  switch (event.type) {
-    case 'session_reset': callbacks.onReset?.(event.reset); break;
-    case 'run_context': callbacks.onRunContext?.(event.runId); break;
-    case 'run_start': callbacks.onRunStart?.(event.runId, event.trigger); break;
-    case 'delta': callbacks.onDelta(event.text); break;
-    case 'reasoning': callbacks.onReasoning?.(event.text); break;
-    case 'truncated': callbacks.onTruncated?.(); break;
-    case 'tool_start': callbacks.onToolStart?.(event.activity); break;
-    case 'tool': callbacks.onTool?.(event.activity); break;
-    case 'steering': callbacks.onSteering?.(event.messageId, event.message); break;
-    case 'schedule_change': callbacks.onScheduleChange?.(event.scheduleYaml); break;
-    case 'proposal': callbacks.onProposal?.(event.diff); break;
-    case 'optimization': callbacks.onOptimization?.(event.activity); break;
-    case 'optimization_progress': callbacks.onOptimizationProgress?.(event.activity); break;
-    case 'done': callbacks.onDone?.(event.runId); break;
-    case 'stopped': callbacks.onStopped?.(event.runId); break;
-    case 'context_usage': callbacks.onContextUsage?.(event.usage); break;
-    case 'history_trimmed': callbacks.onHistoryTrimmed?.(event.dropped); break;
-    case 'stale':
-      if (callbacks.onStale) callbacks.onStale(event.message);
-      else throw new AiStaleRunError(event.message);
-      break;
-    case 'error':
-      if (callbacks.onError) callbacks.onError(event.message);
-      else throw new Error(event.message);
-      break;
-    default: { const exhaustive: never = event; return exhaustive; }
-  }
-}
-
 function dispatchEvent(eventType: string, payload: SsePayload, streamCallbacks: SessionStreamOptions): void {
   const runId = typeof payload.run_id === 'string' ? payload.run_id : undefined;
   const emit = (event: SessionEvent) => streamCallbacks.onEvent(runId === undefined ? event : { ...event, runId });
@@ -632,37 +544,14 @@ export async function sendMessage(
 export async function streamMessage(
   sessionId: string,
   message: string,
-  callbacks: StreamCallbacks,
+  callbacks: SessionStreamOptions,
   signal: AbortSignal,
   authToken: string | null,
   attachments: MessageAttachments = {},
   endpoint = getAiBaseUrl(),
 ): Promise<void> {
   const response = await postMessage(sessionId, message, signal, authToken, attachments, endpoint, 'text/event-stream');
-  await consumeStream(response, streamOptions(callbacks));
-}
-
-// Adapt older callback consumers once at the HTTP client boundary.
-function streamOptions(callbacks: StreamCallbacks | SessionStreamOptions): SessionStreamOptions {
-  if (!('onDelta' in callbacks)) return callbacks;
-  return {
-    lastEventId: callbacks.lastEventId,
-    onEventId: callbacks.onEventId,
-    onEvent: event => {
-      if (event.type === 'session_reset') {
-        dispatchSessionEvent(callbacks, event);
-        for (const runId of event.reset.runIds) {
-          const target = callbacks.forRun?.(runId);
-          if (target) dispatchSessionEvent(target, { ...event, runId });
-        }
-      } else {
-        const target = event.runId
-          ? callbacks.forRun?.(event.runId, event.type === 'run_start' ? event.trigger : undefined) ?? callbacks
-          : callbacks;
-        dispatchSessionEvent(target, event);
-      }
-    },
-  };
+  await consumeStream(response, callbacks);
 }
 
 async function consumeStream(response: Response, callbacks: SessionStreamOptions, replayable = false): Promise<void> {
@@ -698,7 +587,7 @@ async function consumeStream(response: Response, callbacks: SessionStreamOptions
 
 export async function streamSessionEvents(
   sessionId: string,
-  callbacks: SessionStreamOptions | StreamCallbacks,
+  callbacks: SessionStreamOptions,
   signal: AbortSignal,
   authToken: string | null,
   endpoint = getAiBaseUrl(),
@@ -713,7 +602,7 @@ export async function streamSessionEvents(
     signal,
   });
   if (!response.ok) throw await responseError(response);
-  await consumeStream(response, streamOptions(callbacks), true);
+  await consumeStream(response, callbacks, true);
 }
 
 export async function queueMessage(

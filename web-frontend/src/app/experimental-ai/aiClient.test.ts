@@ -191,24 +191,24 @@ describe('AI client', () => {
       'id: 9\nevent: done\ndata: {"run_id":"r"}\n\n',
       'id: 9\nevent: done\ndata: {"run_id":"r"}\n\n',
     ])));
-    const reset = vi.fn();
-    const delta = vi.fn();
-    const done = vi.fn();
+    const events: SessionEvent[] = [];
     const cursor = vi.fn();
-    const tool = vi.fn();
-    const proposal = vi.fn();
-    const foreground = { onDelta: delta, onDone: done, onTool: tool, onReset: vi.fn() };
     await streamSessionEvents('s', {
-      lastEventId: 5, onDelta: vi.fn(), forRun: id => id === 'r' ? foreground : undefined,
-      onReset: reset, onEventId: cursor, onProposal: proposal,
+      lastEventId: 5, onEvent: event => events.push(event), onEventId: cursor,
     }, new AbortController().signal, null);
-    expect(reset).toHaveBeenCalledWith(expect.objectContaining({ runIds: ['r'], activeRunId: 'r', incomplete: true }));
-    expect(foreground.onReset).toHaveBeenCalledOnce();
-    expect(delta).toHaveBeenCalledExactlyOnceWith('Recovered answer.');
-    expect(tool).toHaveBeenCalledWith(expect.objectContaining({ toolCallId: 't' }));
-    expect(done).toHaveBeenCalledExactlyOnceWith('r');
+    expect(events).toEqual([
+      { type: 'session_reset', reset: { runIds: ['r'], terminalRunIds: [], activeRunId: 'r', incomplete: true, proposalDiff: null } },
+      { type: 'run_context', runId: 'r' },
+      { type: 'run_start', runId: 'r', trigger: 'user' },
+      { type: 'run_context', runId: 'r' },
+      { type: 'delta', runId: 'r', text: 'Recovered answer.' },
+      { type: 'run_context', runId: 'r' },
+      { type: 'tool', runId: 'r', activity: { toolCallId: 't', name: 'read', arguments: '', result: 'Read', ok: true } },
+      { type: 'proposal', diff: '' },
+      { type: 'run_context', runId: 'r' },
+      { type: 'done', runId: 'r' },
+    ]);
     expect(cursor.mock.calls.map(([id]) => id)).toEqual([8, 9]);
-    expect(proposal).toHaveBeenCalledExactlyOnceWith('');
   });
 
   it('parses deltas split across network chunks', async () => {
@@ -218,21 +218,23 @@ describe('AI client', () => {
       'event: done\ndata: {"run_id":"message-id"}\n\n',
     ]));
     vi.stubGlobal('fetch', fetchMock);
-    const deltas: string[] = [];
-    const onDone = vi.fn();
+    const events: SessionEvent[] = [];
     const controller = new AbortController();
 
     await streamMessage(
       'session/id',
       'Who works?',
-      { onDelta: delta => deltas.push(delta), onDone },
+      { onEvent: event => events.push(event) },
       controller.signal,
       'stream-token',
     );
 
-    expect(deltas).toEqual(['Hello', ' world']);
-    expect(onDone).toHaveBeenCalledOnce();
-    expect(onDone).toHaveBeenCalledWith('message-id');
+    expect(events).toEqual([
+      { type: 'delta', text: 'Hello' },
+      { type: 'delta', text: ' world' },
+      { type: 'run_context', runId: 'message-id' },
+      { type: 'done', runId: 'message-id' },
+    ]);
     expect(fetchMock).toHaveBeenCalledWith(
       'https://api.nursescheduling.org/ai/sessions/session%2Fid/messages',
       expect.objectContaining({
@@ -252,25 +254,23 @@ describe('AI client', () => {
       },
     }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response));
-    const deltas: string[] = [];
-    const onDone = vi.fn();
+    const onEvent = vi.fn();
 
     const streaming = streamMessage(
       'session-id',
       'Question',
-      { onDelta: delta => deltas.push(delta), onDone },
+      { onEvent },
       new AbortController().signal,
       null,
     );
     streamController?.enqueue(encoder.encode('event: delta\ndata: {"text":"First"}\n\n'));
 
-    await vi.waitFor(() => expect(deltas).toEqual(['First']));
-    expect(onDone).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(onEvent).toHaveBeenCalledExactlyOnceWith({ type: 'delta', text: 'First' }));
 
     streamController?.enqueue(encoder.encode('event: done\ndata: {"run_id":"message-id"}\n\n'));
     streamController?.close();
     await streaming;
-    expect(onDone).toHaveBeenCalledOnce();
+    expect(onEvent).toHaveBeenLastCalledWith({ type: 'done', runId: 'message-id' });
   });
 
   it('surfaces a provider status with its backend error ID', async () => {
@@ -282,7 +282,7 @@ describe('AI client', () => {
     await expect(streamMessage(
       'session-id',
       'Question',
-      { onDelta: vi.fn() },
+      { onEvent: event => { if (event.type === 'error') throw new Error(event.message); } },
       new AbortController().signal,
       null,
     )).rejects.toThrow(providerError);
@@ -297,7 +297,7 @@ describe('AI client', () => {
     await expect(streamMessage(
       'session-id',
       'Question',
-      { onDelta: vi.fn() },
+      { onEvent: event => { if (event.type === 'stale') throw new AiStaleRunError(event.message); } },
       new AbortController().signal,
       null,
     )).rejects.toEqual(new AiStaleRunError('The schedule changed.'));
@@ -313,7 +313,7 @@ describe('AI client', () => {
     await streamMessage(
       'session-id',
       'What is shown?',
-      { onDelta: vi.fn() },
+      { onEvent: vi.fn() },
       new AbortController().signal,
       null,
       { files: [image] },
@@ -339,40 +339,28 @@ describe('AI client', () => {
       'event: proposal\ndata: {"diff":"- people.items[0].id"}\n\n',
       'event: done\ndata: {"run_id":"1"}\n\n',
     ])));
-    const toolStarts: string[] = [];
-    const tools: string[] = [];
-    const reasoning: string[] = [];
-    const scheduleChanges: string[] = [];
-    const steering: string[] = [];
-    const diffs: string[] = [];
-    const texts: string[] = [];
-    let truncated = 0;
+    const events: SessionEvent[] = [];
 
     await streamMessage(
       'session-id',
       'Rename P1.',
-      {
-        onDelta: text => texts.push(text),
-        onReasoning: text => reasoning.push(text),
-        onTruncated: () => { truncated += 1; },
-        onToolStart: activity => toolStarts.push(`${activity.toolCallId}:${activity.name}:${activity.arguments}`),
-        onTool: activity => tools.push(`${activity.toolCallId}:${activity.name}:${activity.ok}:${activity.result}`),
-        onSteering: (messageId, message) => steering.push(`${messageId}:${message}`),
-        onScheduleChange: scheduleYaml => scheduleChanges.push(scheduleYaml),
-        onProposal: diff => diffs.push(diff),
-      },
+      { onEvent: event => events.push(event) },
       new AbortController().signal,
       null,
     );
 
-    expect(toolStarts).toEqual(['call-1:bash:{"command":"sed -n 1p schedule.yaml"}']);
-    expect(tools).toEqual(['call-1:bash:true:exit_code: 0']);
-    expect(steering).toEqual(['queued-1:Focus on P2.']);
-    expect(reasoning).toEqual(['Checking people.']);
-    expect(scheduleChanges).toEqual(['people:\n  - id: Head\n']);
-    expect(texts).toEqual(['Renamed P1.']);
-    expect(truncated).toBe(1);
-    expect(diffs).toEqual(['- people.items[0].id']);
+    expect(events).toEqual([
+      { type: 'reasoning', text: 'Checking people.' },
+      { type: 'tool_start', activity: { toolCallId: 'call-1', name: 'bash', arguments: '{"command":"sed -n 1p schedule.yaml"}' } },
+      { type: 'tool', activity: { toolCallId: 'call-1', name: 'bash', arguments: '{"command":"sed -n 1p schedule.yaml"}', result: 'exit_code: 0', ok: true } },
+      { type: 'steering', messageId: 'queued-1', message: 'Focus on P2.' },
+      { type: 'schedule_change', scheduleYaml: 'people:\n  - id: Head\n' },
+      { type: 'delta', text: 'Renamed P1.' },
+      { type: 'truncated' },
+      { type: 'proposal', diff: '- people.items[0].id' },
+      { type: 'run_context', runId: '1' },
+      { type: 'done', runId: '1' },
+    ]);
   });
 
   it('keeps run lifecycle identity separate from queued user message identity', async () => {
@@ -381,22 +369,23 @@ describe('AI client', () => {
       'id: 2\nevent: steering\ndata: {"run_id":"run-1","message_id":"queued-1","message":"Focus on P2."}\n\n',
       'id: 3\nevent: stopped\ndata: {"run_id":"run-1"}\n\n',
     ])));
-    const start = vi.fn();
-    const context = vi.fn();
-    const steering = vi.fn();
-    const stopped = vi.fn();
+    const events: SessionEvent[] = [];
 
     await streamSessionEvents(
       'session/id',
-      { onDelta: () => {}, onRunStart: start, onRunContext: context, onSteering: steering, onStopped: stopped },
+      { onEvent: event => events.push(event) },
       new AbortController().signal,
       null,
     );
 
-    expect(start).toHaveBeenCalledWith('run-1', 'optimizer');
-    expect(context.mock.calls).toEqual([['run-1'], ['run-1'], ['run-1']]);
-    expect(steering).toHaveBeenCalledWith('queued-1', 'Focus on P2.');
-    expect(stopped).toHaveBeenCalledWith('run-1');
+    expect(events).toEqual([
+      { type: 'run_context', runId: 'run-1' },
+      { type: 'run_start', runId: 'run-1', trigger: 'optimizer' },
+      { type: 'run_context', runId: 'run-1' },
+      { type: 'steering', runId: 'run-1', messageId: 'queued-1', message: 'Focus on P2.' },
+      { type: 'run_context', runId: 'run-1' },
+      { type: 'stopped', runId: 'run-1' },
+    ]);
   });
 
   it('receives context usage and ignores invalid budgets', async () => {
@@ -407,9 +396,9 @@ describe('AI client', () => {
       'event: context_usage\ndata: {"used_chars":101,"max_chars":100}\n\n',
       'event: context_usage\ndata: {"used_chars":"25","max_chars":100}\n\n',
     ])));
-    const onContextUsage = vi.fn();
-    await streamSessionEvents('session', { onDelta: vi.fn(), onContextUsage }, new AbortController().signal, null);
-    expect(onContextUsage).toHaveBeenCalledExactlyOnceWith({ usedChars: 250, maxChars: 1000 });
+    const onEvent = vi.fn();
+    await streamSessionEvents('session', { onEvent }, new AbortController().signal, null);
+    expect(onEvent).toHaveBeenCalledExactlyOnceWith({ type: 'context_usage', usage: { usedChars: 250, maxChars: 1000 } });
   });
 
   it('reports a trimmed prompt history and ignores a meaningless count', async () => {
@@ -420,17 +409,20 @@ describe('AI client', () => {
       'id: 4\nevent: done\ndata: {"run_id":"background-1"}\n\n',
     ]));
     vi.stubGlobal('fetch', fetchMock);
-    const trimmed = vi.fn();
+    const onEvent = vi.fn();
 
     await streamSessionEvents(
       'session/id',
-      { onDelta: () => {}, onHistoryTrimmed: trimmed },
+      { onEvent },
       new AbortController().signal,
       null,
     );
 
-    expect(trimmed).toHaveBeenCalledTimes(1);
-    expect(trimmed).toHaveBeenCalledWith(6);
+    expect(onEvent.mock.calls).toEqual([
+      [{ type: 'history_trimmed', dropped: 6 }],
+      [{ type: 'run_context', runId: 'background-1' }],
+      [{ type: 'done', runId: 'background-1' }],
+    ]);
   });
 
   it('decodes optimizer provenance and preserves a zero final score', async () => {
@@ -444,14 +436,14 @@ describe('AI client', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
       `event: optimization\ndata: ${JSON.stringify(payload)}\n\n`,
     ])));
-    const onOptimization = vi.fn();
-    await streamSessionEvents('session', { onDelta: vi.fn(), onOptimization }, new AbortController().signal, null);
-    expect(onOptimization).toHaveBeenCalledWith(expect.objectContaining({
+    const onEvent = vi.fn();
+    await streamSessionEvents('session', { onEvent }, new AbortController().signal, null);
+    expect(onEvent).toHaveBeenCalledExactlyOnceWith({ type: 'optimization', activity: expect.objectContaining({
       result: { outcome: 'optimal', score: 0, solverStatus: 'OPTIMAL', terminationReason: 'completed' },
       request: { solver: 'ortools/cp-sat', timeoutSeconds: 300 },
       backend: expect.objectContaining({ url: 'http://optimizer:8000', appVersion: 'v0.4.3', requestTimeoutSeconds: 30,
         claimedPerformance: { score: 125, appVersion: 'v0.4.2', measuredAt: '2026-09-18T01:00:00Z' } }),
-    }));
+    }) });
   });
 
   it('streams optimizer-triggered runs with authentication', async () => {
@@ -463,47 +455,31 @@ describe('AI client', () => {
       'id: 5\nevent: done\ndata: {"run_id":"background-1"}\n\n',
     ]));
     vi.stubGlobal('fetch', fetchMock);
-    const starts: string[] = [];
-    const texts: string[] = [];
-    const done = vi.fn();
-    const optimizations = vi.fn();
-    const progress = vi.fn();
+    const events: SessionEvent[] = [];
     const eventIds: number[] = [];
 
     await streamSessionEvents(
       'session/id',
       {
-        onRunStart: (runId, trigger) => starts.push(`${runId}:${trigger}`),
-        onDelta: text => texts.push(text),
-        onOptimization: optimizations,
-        onOptimizationProgress: progress,
-        onDone: done,
+        onEvent: event => events.push(event),
         onEventId: id => eventIds.push(id),
       },
       new AbortController().signal,
       'event-token',
     );
 
-    expect(starts).toEqual(['background-1:optimizer']);
-    expect(texts).toEqual(['Score 23.']);
-    expect(done).toHaveBeenCalledWith('background-1');
     expect(eventIds).toEqual([1, 2, 3, 4, 5]);
-    expect(optimizations).toHaveBeenCalledWith({
-      jobId: 'opt-1',
-      state: 'running',
-      terminal: false,
-      downloadable: false,
-    });
-    expect(progress).toHaveBeenCalledWith({
-      jobId: 'opt-1',
-      point: {
-        currentBestScore: 23,
-        elapsedSeconds: 2,
-        source: 'solver',
-        solutionIndex: null,
-        commentCount: null,
-      },
-    });
+    expect(events).toEqual([
+      { type: 'optimization', activity: { jobId: 'opt-1', state: 'running', terminal: false, downloadable: false } },
+      { type: 'optimization_progress', activity: {
+        jobId: 'opt-1', point: { currentBestScore: 23, elapsedSeconds: 2, source: 'solver', solutionIndex: null, commentCount: null },
+      } },
+      { type: 'run_context', runId: 'background-1' },
+      { type: 'run_start', runId: 'background-1', trigger: 'optimizer' },
+      { type: 'delta', text: 'Score 23.' },
+      { type: 'run_context', runId: 'background-1' },
+      { type: 'done', runId: 'background-1' },
+    ]);
     expect(fetchMock).toHaveBeenCalledWith(
       'https://api.nursescheduling.org/ai/sessions/session%2Fid/events',
       {
@@ -520,17 +496,17 @@ describe('AI client', () => {
       'id: 7\nevent: delta\ndata: {"text":"Obsolete"}\n\n',
       'id: 8\nevent: stale\ndata: {"message":"The schedule changed."}\n\n',
     ])));
-    const stale = vi.fn();
+    const onEvent = vi.fn();
     const eventIds: number[] = [];
 
     await streamSessionEvents(
       'session-id',
-      { onDelta: vi.fn(), onStale: stale, onEventId: id => eventIds.push(id) },
+      { onEvent, onEventId: id => eventIds.push(id) },
       new AbortController().signal,
       null,
     );
 
-    expect(stale).toHaveBeenCalledWith('The schedule changed.');
+    expect(onEvent).toHaveBeenCalledWith({ type: 'stale', message: 'The schedule changed.' });
     expect(eventIds).toEqual([7, 8]);
   });
 
@@ -540,7 +516,7 @@ describe('AI client', () => {
 
     await streamSessionEvents(
       'session-id',
-      { lastEventId: 4, onDelta: vi.fn() },
+      { lastEventId: 4, onEvent: vi.fn() },
       new AbortController().signal,
       null,
     );
@@ -557,14 +533,15 @@ describe('AI client', () => {
       'id: 5\nevent: delta\ndata: {"text":"new","run_id":"new-turn"}\n\n',
       'id: 5\nevent: delta\ndata: {"text":"duplicate","run_id":"new-turn"}\n\n',
     ])));
-    const delta = vi.fn();
-    const context = vi.fn();
+    const onEvent = vi.fn();
     const cursor = vi.fn();
     await streamSessionEvents('session', {
-      lastEventId: 4, onDelta: delta, onRunContext: context, onEventId: cursor,
+      lastEventId: 4, onEvent, onEventId: cursor,
     }, new AbortController().signal, null);
-    expect(delta).toHaveBeenCalledExactlyOnceWith('new');
-    expect(context).toHaveBeenCalledExactlyOnceWith('new-turn');
+    expect(onEvent.mock.calls).toEqual([
+      [{ type: 'run_context', runId: 'new-turn' }],
+      [{ type: 'delta', runId: 'new-turn', text: 'new' }],
+    ]);
     expect(cursor).toHaveBeenCalledExactlyOnceWith(5);
   });
 
@@ -574,10 +551,10 @@ describe('AI client', () => {
       '\n\r\n',
       'id: 7\nevent: delta\ndata: {"text":"replay me"}\n',
     ])));
-    const delta = vi.fn();
+    const onEvent = vi.fn();
     const cursor = vi.fn();
-    await streamSessionEvents('session', { onDelta: delta, onEventId: cursor }, new AbortController().signal, null);
-    expect(delta).toHaveBeenCalledExactlyOnceWith('complete');
+    await streamSessionEvents('session', { onEvent, onEventId: cursor }, new AbortController().signal, null);
+    expect(onEvent).toHaveBeenCalledExactlyOnceWith({ type: 'delta', text: 'complete' });
     expect(cursor).toHaveBeenCalledExactlyOnceWith(6);
   });
 
@@ -690,12 +667,12 @@ describe('AI client', () => {
       'event: tool\ndata: {"name":"bash"}\n\n',
       'event: done\ndata: {"run_id":"1"}\n\n',
     ])));
-    const tools: { name: string; ok: boolean; result: string }[] = [];
+    const onEvent = vi.fn();
 
-    await streamMessage('session-id', 'Look.', { onDelta: () => {}, onTool: activity => tools.push(activity) },
+    await streamMessage('session-id', 'Look.', { onEvent },
       new AbortController().signal, null);
 
-    expect(tools).toEqual([{ name: 'bash', arguments: '', result: '', ok: true }]);
+    expect(onEvent).toHaveBeenCalledWith({ type: 'tool', activity: { name: 'bash', arguments: '', result: '', ok: true } });
   });
 
   it('rejects malformed schedule change events', async () => {
@@ -706,7 +683,7 @@ describe('AI client', () => {
     await expect(streamMessage(
       'session-id',
       'Look.',
-      { onDelta: () => {} },
+      { onEvent: vi.fn() },
       new AbortController().signal,
       null,
     )).rejects.toThrow('The AI backend returned an invalid schedule change.');
@@ -719,17 +696,15 @@ describe('AI client', () => {
     expect(isOfficialAiEndpoint('https://ai.example.test')).toBe(false);
     expect(isOfficialAiEndpoint('')).toBe(false);
   });
-  it('routes parsed events through one typed handler without also calling legacy handlers', async () => {
+  it('delivers parsed run identity and tool identity through one typed handler', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
       'id: 1\nevent: delta\ndata: {"run_id":"run","text":"Answer"}\n\n',
       'id: 2\nevent: tool_start\ndata: {"run_id":"run","tool_call_id":"call","name":"read"}\n\n',
       'id: 3\nevent: done\ndata: {"run_id":"run"}\n\n',
     ])));
     const events: SessionEvent[] = [];
-    const legacy = vi.fn();
     await streamSessionEvents('session', {
-      onDelta: legacy,
-      forRun: () => ({ onDelta: legacy, onEvent: event => events.push(event) }),
+      onEvent: event => events.push(event),
     }, new AbortController().signal, null);
     expect(events).toEqual([
       { type: 'run_context', runId: 'run' },
@@ -739,7 +714,6 @@ describe('AI client', () => {
       { type: 'run_context', runId: 'run' },
       { type: 'done', runId: 'run' },
     ]);
-    expect(legacy).not.toHaveBeenCalled();
   });
 
 });
