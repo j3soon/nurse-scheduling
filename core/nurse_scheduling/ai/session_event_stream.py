@@ -23,6 +23,7 @@ import asyncio
 import json
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
+from typing import TypedDict
 
 from .lifecycle import TERMINAL_EVENTS
 from .session_events import AgentSessionEvent
@@ -31,6 +32,21 @@ from .session_events import AgentSessionEvent
 DEFAULT_SESSION_REPLAY_BYTES = 4 * 1024 * 1024
 DEFAULT_TOTAL_REPLAY_BYTES = 64 * 1024 * 1024
 REPLACEABLE_EVENTS = frozenset({"optimization_progress", "context_usage", "schedule_change"})
+
+
+class SessionEventPayload(TypedDict):
+    """Serialized event included in a recovery snapshot."""
+
+    id: int
+    type: str
+    data: dict[str, object]
+
+
+class SessionResetData(TypedDict):
+    """Recovery fields produced by the stream before HTTP adds session state."""
+
+    events: list[SessionEventPayload]
+    incomplete: bool
 
 
 @dataclass(frozen=True)
@@ -45,7 +61,7 @@ class SessionEvent:
     def __post_init__(self) -> None:
         object.__setattr__(self, "bytes", len(json.dumps(self.payload(), ensure_ascii=False).encode()))
 
-    def payload(self) -> dict[str, object]:
+    def payload(self) -> SessionEventPayload:
         return {"id": self.id, "type": self.type, "data": self.data}
 
 
@@ -212,14 +228,11 @@ class SessionEventStream:
                 replay = self._sessions.get(session_id)
                 if replay is not None and (after_id < replay.lost_through or after_id > replay.last_id):
                     after_id = replay.last_id
-                    yield SessionEvent(
-                        after_id,
-                        "session_reset",
-                        {
-                            "events": [event.payload() for event in replay.recovery],
-                            "incomplete": replay.incomplete,
-                        },
-                    )
+                    reset: SessionResetData = {
+                        "events": [event.payload() for event in replay.recovery],
+                        "incomplete": replay.incomplete,
+                    }
+                    yield SessionEvent(after_id, "session_reset", dict(reset))
                     continue
                 event = next((event for event in replay.events if event.id > after_id), None) if replay else None
                 if event is not None:

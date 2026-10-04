@@ -26,7 +26,7 @@ import sys
 from collections.abc import AsyncIterator
 from contextlib import aclosing, asynccontextmanager
 from dataclasses import replace
-from typing import Literal
+from typing import Literal, cast
 from uuid import UUID, uuid4
 
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response, status
@@ -53,7 +53,7 @@ from .optimizer_http import HttpOptimizerBackend
 from .provider import OpenAiCompatibleProvider, ToolCapableChatProvider
 from .sandbox import SandboxFactory, managed_sandbox_factory
 from .sandbox.factory import create_sandbox_factory
-from .session_event_stream import SessionEventStream
+from .session_event_stream import SessionEventStream, SessionResetData
 from .session_events import OptimizerUpdate
 from .sessions import SessionStore, schedule_revision
 from .transcript import ProposalDecision
@@ -194,7 +194,8 @@ async def _session_sse(
                 yield ": keepalive\n\n"
                 continue
             data = event.data
-            if event.type == "session_reset":
+            reset = cast(SessionResetData, data) if event.type == "session_reset" else None
+            if reset is not None:
                 data = {
                     **data,
                     "proposal_diff": session.pending_proposal.diff if session.pending_proposal else "",
@@ -204,12 +205,12 @@ async def _session_sse(
             if until_run is not None and (
                 (data.get("run_id") == until_run.id and event.type in TERMINAL_EVENTS)
                 or (
-                    event.type == "session_reset"
+                    reset is not None
                     and (
                         until_run.done.done()
                         or any(
                             item["type"] in TERMINAL_EVENTS and item["data"].get("run_id") == until_run.id
-                            for item in data["events"]
+                            for item in reset["events"]
                         )
                     )
                 )
@@ -289,11 +290,13 @@ async def _parse_message_request(
             message_values = form.getlist("message")
             if len(message_values) != 1 or not isinstance(message_values[0], str):
                 raise HTTPException(status_code=422, detail="Multipart request requires one message field.")
-            file_values = form.getlist("files")
-            if any(not isinstance(value, UploadFile) for value in file_values):
-                raise HTTPException(status_code=422, detail="Attachments must be uploaded as files.")
+            uploads: list[UploadFile] = []
+            for value in form.getlist("files"):
+                if not isinstance(value, UploadFile):
+                    raise HTTPException(status_code=422, detail="Attachments must be uploaded as files.")
+                uploads.append(value)
             question = _validate_question(message_values[0], settings)
-            files = await _read_files(file_values, settings)
+            files = await _read_files(uploads, settings)
     except StarletteHTTPException as exc:
         if exc.status_code == 400 and str(exc.detail).startswith("Too many files"):
             raise HTTPException(status_code=413, detail="Too many file attachments.") from exc
@@ -333,8 +336,10 @@ def create_app(
     auth_registry = create_auth_registry(settings.auth_token, settings.auth_tokens)
     require_auth = create_auth_dependency(auth_registry)
 
-    def refresh_owner_cookie(response: Response, owner: str) -> None:
+    def refresh_owner_cookie(response: Response, owner: str | None) -> None:
         """Keep browser ownership available for the session's sliding lifetime."""
+        if owner is None:
+            return
         try:
             normalized_owner = str(UUID(owner))
         except ValueError:
