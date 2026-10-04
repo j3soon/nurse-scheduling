@@ -123,13 +123,40 @@ def test_factory_creates_a_secure_internet_disabled_auto_pause_sandbox():
     assert "envs" not in captured
 
 
-def test_factory_redacts_provider_creation_failures():
+def test_factory_accepts_a_future_returned_by_the_creation_hook():
+    async def exercise() -> E2BSandboxBackend:
+        sandbox = FakeE2BSandbox()
+        result = asyncio.get_running_loop().create_future()
+        result.set_result(sandbox)
+
+        def create_sandbox(**_kwargs):
+            return result
+
+        factory = E2BSandboxFactory(
+            api_key="secret-key",
+            template="template-name",
+            turn_timeout_seconds=10,
+            command_timeout_seconds=3,
+            create_sandbox=create_sandbox,
+        )
+        return await factory.create()
+
+    assert asyncio.run(exercise()).sandbox_id == "sandbox-123"
+
+
+@pytest.mark.parametrize("synchronous_failure", [False, True], ids=["async-failure", "sync-failure"])
+def test_factory_redacts_provider_creation_failures(synchronous_failure: bool):
     attempts = 0
 
-    async def create_sandbox(**_kwargs):
+    async def failed_creation():
+        raise RuntimeError("request contained secret-key")
+
+    def create_sandbox(**_kwargs):
         nonlocal attempts
         attempts += 1
-        raise RuntimeError("request contained secret-key")
+        if synchronous_failure:
+            raise RuntimeError("request contained secret-key")
+        return failed_creation()
 
     async def exercise() -> None:
         factory = E2BSandboxFactory(
@@ -147,7 +174,8 @@ def test_factory_redacts_provider_creation_failures():
     assert attempts == 1
 
 
-def test_factory_cancellation_kills_a_sandbox_created_by_the_in_flight_request():
+@pytest.mark.parametrize("schedule_creation", [False, True], ids=["coroutine", "task"])
+def test_factory_cancellation_kills_a_sandbox_created_by_the_in_flight_request(schedule_creation: bool):
     async def exercise() -> FakeE2BSandbox:
         entered = asyncio.Event()
         release = asyncio.Event()
@@ -158,12 +186,16 @@ def test_factory_cancellation_kills_a_sandbox_created_by_the_in_flight_request()
             await release.wait()
             return sandbox
 
+        def creation_hook(**kwargs):
+            request = create_sandbox(**kwargs)
+            return asyncio.create_task(request) if schedule_creation else request
+
         factory = E2BSandboxFactory(
             api_key="secret-key",
             template="template-name",
             turn_timeout_seconds=10,
             command_timeout_seconds=3,
-            create_sandbox=create_sandbox,
+            create_sandbox=creation_hook,
         )
         task = asyncio.create_task(factory.create())
         await entered.wait()

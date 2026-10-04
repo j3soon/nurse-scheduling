@@ -200,8 +200,9 @@ class E2BSandboxFactory:
 
     async def create(self) -> "E2BSandboxBackend":
         started = time.perf_counter()
-        creation = asyncio.create_task(
-            self._create_sandbox(
+
+        async def request_sandbox() -> Any:
+            return await self._create_sandbox(
                 template=self._template,
                 timeout=math.ceil(self._turn_timeout_seconds),
                 secure=True,
@@ -214,7 +215,8 @@ class E2BSandboxFactory:
                 },
                 api_key=self._api_key,
             )
-        )
+
+        creation = asyncio.create_task(request_sandbox())
         try:
             sandbox = await asyncio.shield(creation)
         except asyncio.CancelledError:
