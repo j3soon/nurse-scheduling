@@ -1766,3 +1766,35 @@ preferences:
     changed["preferences"][3]["weight"] = float("inf")
     mandatory = grade(case, RunOutcome(answer="", initial=initial, proposed=changed, activity=[]))
     assert not mandatory.passed
+
+
+def test_history_import_case_checks_every_source_history():
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    from .ai_eval.attachment_fixtures import load_attachment_fixtures
+
+    case = CASE_BY_ID["workbook-preserve-previous-history"]
+    book = load_workbook(BytesIO(load_attachment_fixtures(case.attachments)[0].data))
+    people = []
+    for row in book.active.iter_rows(min_row=4, max_col=3, values_only=True):
+        _, code, person = row
+        if not person:
+            continue
+        if code.lower() == "off":
+            history = ["OFF"]
+        else:
+            history = [code[-1]] * int(code[:-1] or 1)
+        people.append({"id": person, "description": "", "history": history})
+    book.close()
+    initial = _load_yaml(fixture_text(case.fixture).encode())
+    proposal = deepcopy(initial)
+    proposal["people"]["items"] = people
+    correct = grade(case, RunOutcome(answer="", initial=initial, proposed=proposal, activity=[]))
+    assert correct.passed, correct.failures()
+    for person in proposal["people"]["items"]:
+        if person["history"] == ["OFF"]:
+            person["history"] = []
+    wrong = grade(case, RunOutcome(answer="", initial=initial, proposed=proposal, activity=[]))
+    assert len(wrong.failures()) == 31

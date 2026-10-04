@@ -1,0 +1,640 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "id": "workbook-preserve-previous-history",
+  "fixture": "new-schedule",
+  "attachments": [
+    "ward87-intake-xlsx"
+  ],
+  "question": "Import the workbook\u2019s people and previous-shift history into a new scheduling YAML for November 2025. In History, off means OFF and a code such as 2D means two consecutive D shifts immediately before November 1. Use D, E, N and the built-in OFF. Keep all 87 people and their supplied history exactly. Only import the roster and histories now. Do not import requests, staffing or rest rules yet. Roles and colors are descriptive only. Propose the complete YAML without optimizing.",
+  "expect_proposal": true,
+  "changes": [
+    "description",
+    "dates",
+    "people",
+    "shiftTypes",
+    "preferences",
+    "export"
+  ],
+  "tool_usage": {
+    "forbidden": [
+      "optimizer"
+    ]
+  },
+  "tags": [
+    "history-preservation"
+  ],
+  "assert": [
+    {
+      "path": "people.items",
+      "count": 87
+    },
+    {
+      "path": "people.items[?id=P1].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=P2].history",
+      "equals": [
+        "D",
+        "D"
+      ]
+    },
+    {
+      "path": "people.items[?id=P3].history",
+      "equals": [
+        "D",
+        "D"
+      ]
+    },
+    {
+      "path": "people.items[?id=P4].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=P5].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=P6].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=P7].history",
+      "equals": [
+        "D"
+      ]
+    },
+    {
+      "path": "people.items[?id=P8].history",
+      "equals": [
+        "N",
+        "N",
+        "N",
+        "N"
+      ]
+    },
+    {
+      "path": "people.items[?id=P9].history",
+      "equals": [
+        "E"
+      ]
+    },
+    {
+      "path": "people.items[?id=P10].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=P11].history",
+      "equals": [
+        "N",
+        "N"
+      ]
+    },
+    {
+      "path": "people.items[?id=P12].history",
+      "equals": [
+        "D",
+        "D",
+        "D",
+        "D",
+        "D"
+      ]
+    },
+    {
+      "path": "people.items[?id=P13].history",
+      "equals": [
+        "D",
+        "D",
+        "D",
+        "D"
+      ]
+    },
+    {
+      "path": "people.items[?id=P14].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=P15].history",
+      "equals": [
+        "E"
+      ]
+    },
+    {
+      "path": "people.items[?id=P16].history",
+      "equals": [
+        "E",
+        "E",
+        "E"
+      ]
+    },
+    {
+      "path": "people.items[?id=P17].history",
+      "equals": [
+        "D",
+        "D",
+        "D"
+      ]
+    },
+    {
+      "path": "people.items[?id=P18].history",
+      "equals": [
+        "D",
+        "D",
+        "D"
+      ]
+    },
+    {
+      "path": "people.items[?id=P19].history",
+      "equals": [
+        "D",
+        "D",
+        "D"
+      ]
+    },
+    {
+      "path": "people.items[?id=P20].history",
+      "equals": [
+        "D",
+        "D",
+        "D",
+        "D"
+      ]
+    },
+    {
+      "path": "people.items[?id=P21].history",
+      "equals": [
+        "D",
+        "D",
+        "D"
+      ]
+    },
+    {
+      "path": "people.items[?id=P22].history",
+      "equals": [
+        "N",
+        "N",
+        "N",
+        "N"
+      ]
+    },
+    {
+      "path": "people.items[?id=P23].history",
+      "equals": [
+        "D",
+        "D"
+      ]
+    },
+    {
+      "path": "people.items[?id=P24].history",
+      "equals": [
+        "D",
+        "D"
+      ]
+    },
+    {
+      "path": "people.items[?id=P25].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=P26].history",
+      "equals": [
+        "D",
+        "D"
+      ]
+    },
+    {
+      "path": "people.items[?id=P27].history",
+      "equals": [
+        "D"
+      ]
+    },
+    {
+      "path": "people.items[?id=P28].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=P29].history",
+      "equals": [
+        "E",
+        "E",
+        "E",
+        "E"
+      ]
+    },
+    {
+      "path": "people.items[?id=P30].history",
+      "equals": [
+        "N"
+      ]
+    },
+    {
+      "path": "people.items[?id=P31].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=P32].history",
+      "equals": [
+        "D",
+        "D",
+        "D",
+        "D"
+      ]
+    },
+    {
+      "path": "people.items[?id=P33].history",
+      "equals": [
+        "D",
+        "D"
+      ]
+    },
+    {
+      "path": "people.items[?id=P34].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=P35].history",
+      "equals": [
+        "E",
+        "E",
+        "E"
+      ]
+    },
+    {
+      "path": "people.items[?id=P36].history",
+      "equals": [
+        "E",
+        "E",
+        "E",
+        "E"
+      ]
+    },
+    {
+      "path": "people.items[?id=P37].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=P38].history",
+      "equals": [
+        "E",
+        "E"
+      ]
+    },
+    {
+      "path": "people.items[?id=P39].history",
+      "equals": [
+        "D",
+        "D"
+      ]
+    },
+    {
+      "path": "people.items[?id=P40].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=P41].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=P42].history",
+      "equals": [
+        "D",
+        "D",
+        "D",
+        "D"
+      ]
+    },
+    {
+      "path": "people.items[?id=P43].history",
+      "equals": [
+        "D",
+        "D"
+      ]
+    },
+    {
+      "path": "people.items[?id=P44].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=P45].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=P46].history",
+      "equals": [
+        "E"
+      ]
+    },
+    {
+      "path": "people.items[?id=P47].history",
+      "equals": [
+        "E",
+        "E",
+        "E"
+      ]
+    },
+    {
+      "path": "people.items[?id=P48].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=P49].history",
+      "equals": [
+        "N",
+        "N"
+      ]
+    },
+    {
+      "path": "people.items[?id=P50].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=P51].history",
+      "equals": [
+        "N"
+      ]
+    },
+    {
+      "path": "people.items[?id=P52].history",
+      "equals": [
+        "E",
+        "E",
+        "E"
+      ]
+    },
+    {
+      "path": "people.items[?id=P53].history",
+      "equals": [
+        "E",
+        "E",
+        "E"
+      ]
+    },
+    {
+      "path": "people.items[?id=P54].history",
+      "equals": [
+        "E",
+        "E",
+        "E",
+        "E"
+      ]
+    },
+    {
+      "path": "people.items[?id=P55].history",
+      "equals": [
+        "E",
+        "E"
+      ]
+    },
+    {
+      "path": "people.items[?id=P56].history",
+      "equals": [
+        "D"
+      ]
+    },
+    {
+      "path": "people.items[?id=P57].history",
+      "equals": [
+        "D"
+      ]
+    },
+    {
+      "path": "people.items[?id=P58].history",
+      "equals": [
+        "E",
+        "E"
+      ]
+    },
+    {
+      "path": "people.items[?id=P59].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=P60].history",
+      "equals": [
+        "D"
+      ]
+    },
+    {
+      "path": "people.items[?id=P61].history",
+      "equals": [
+        "N",
+        "N"
+      ]
+    },
+    {
+      "path": "people.items[?id=P62].history",
+      "equals": [
+        "D",
+        "D"
+      ]
+    },
+    {
+      "path": "people.items[?id=P63].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=P64].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=P65].history",
+      "equals": [
+        "N",
+        "N"
+      ]
+    },
+    {
+      "path": "people.items[?id=P66].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=P67].history",
+      "equals": [
+        "N",
+        "N",
+        "N"
+      ]
+    },
+    {
+      "path": "people.items[?id=P68].history",
+      "equals": [
+        "N",
+        "N",
+        "N"
+      ]
+    },
+    {
+      "path": "people.items[?id=P69].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=P70].history",
+      "equals": [
+        "N"
+      ]
+    },
+    {
+      "path": "people.items[?id=P71].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=P72].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=P73].history",
+      "equals": [
+        "N",
+        "N",
+        "N"
+      ]
+    },
+    {
+      "path": "people.items[?id=P74].history",
+      "equals": [
+        "N",
+        "N"
+      ]
+    },
+    {
+      "path": "people.items[?id=P75].history",
+      "equals": [
+        "N",
+        "N",
+        "N",
+        "N"
+      ]
+    },
+    {
+      "path": "people.items[?id=P76].history",
+      "equals": [
+        "D",
+        "D"
+      ]
+    },
+    {
+      "path": "people.items[?id=P77].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=P78].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=P79].history",
+      "equals": [
+        "E",
+        "E",
+        "E",
+        "E"
+      ]
+    },
+    {
+      "path": "people.items[?id=P80].history",
+      "equals": [
+        "D",
+        "D",
+        "D"
+      ]
+    },
+    {
+      "path": "people.items[?id=P81].history",
+      "equals": [
+        "N",
+        "N",
+        "N",
+        "N"
+      ]
+    },
+    {
+      "path": "people.items[?id=P82].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=P83].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=P84].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=P85].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=P86].history",
+      "equals": [
+        "N",
+        "N"
+      ]
+    },
+    {
+      "path": "people.items[?id=P87].history",
+      "equals": [
+        "OFF"
+      ]
+    }
+  ]
+}

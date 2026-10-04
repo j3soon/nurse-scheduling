@@ -1,0 +1,29 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "id": "clear-unavailable-history",
+  "fixture": "ward87",
+  "question": "No previous shift history is available for P1. Set P1.history to an empty list. Leave P2\u2019s history unchanged.",
+  "expect_proposal": true,
+  "changes": [
+    "people"
+  ],
+  "tool_usage": {
+    "forbidden": [
+      "optimizer"
+    ]
+  },
+  "assert": [
+    {
+      "path": "people.items[?id=P1].history",
+      "equals": []
+    },
+    {
+      "path": "people.items[?id=P2].history",
+      "equals": [
+        "D",
+        "D"
+      ]
+    }
+  ]
+}
