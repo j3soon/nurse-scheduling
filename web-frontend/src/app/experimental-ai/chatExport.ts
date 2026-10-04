@@ -350,7 +350,7 @@ export function buildHtmlChatExport(
           : `<div class="content">${escapeHtml(message.content || '[No message text]')}</div>`;
     return `
       <article class="message ${message.role}${message.source ? ` ${message.source}` : ''}">
-        <div class="label">${messageLabel(message)}</div>
+        <div class="label">${escapeHtml(messageLabel(message))}</div>
         ${timeline}
         ${renderHtmlMessageDetails(message)}
       </article>`;

@@ -50,6 +50,17 @@ const metadata = {
 };
 
 describe('chat export', () => {
+  it('keeps event titles as text in HTML exports', () => {
+    const title = '<img src=x onerror=alert(1)> & "uploaded"';
+    const output = buildHtmlChatExport([
+      { role: 'user', source: 'app', title, content: 'Files uploaded.' },
+    ], metadata);
+    const document = new DOMParser().parseFromString(output, 'text/html');
+
+    expect(document.querySelector('.label')?.textContent).toBe(`User · App - ${title}`);
+    expect(document.querySelector('img')).toBeNull();
+  });
+
   it('exports provider messages in request order with role labels', () => {
     const turns: ChatExportMessage[] = [
       { role: 'system', content: 'System with ``` fence' },
