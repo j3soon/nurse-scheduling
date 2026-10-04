@@ -22,7 +22,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ExperimentalAiPage from './page';
-import type { UploadedFile } from './aiClient';
+import type { ModelInput, UploadedFile } from './aiClient';
 
 const mockCreateSession = vi.hoisted(() => vi.fn());
 const mockGetUploads = vi.hoisted(() => vi.fn());
@@ -224,7 +224,7 @@ describe('ExperimentalAiPage', () => {
       expect.any(Object),
       expect.any(AbortSignal),
       null,
-      { files: [], uploadIds: [] },
+      { files: [] },
       '/ai',
     );
     expect(mockUseTabSwitchWarning).toHaveBeenCalledWith(true);
@@ -422,10 +422,52 @@ describe('ExperimentalAiPage', () => {
     await act(async () => finishStream?.());
   });
 
+  it('shows request messages as role bubbles in the order the model receives them', async () => {
+    let turn = 0;
+    mockStreamMessage.mockImplementation(async (
+      _sessionId: string,
+      message: string,
+      callbacks: { onModelInput?: (input: ModelInput) => void; onDelta: (text: string) => void },
+    ) => {
+      turn += 1;
+      callbacks.onModelInput?.({
+        system: 'Shared system prompt',
+        messages: [
+          // The second turn repeats the event, as after a failed turn. The page shows it once.
+          { kind: 'app', index: 0, content: '[App event] The user uploaded files: ward.csv' },
+          { kind: 'question', content: message },
+          { kind: 'status', content: `[Current status]\nTurn ${turn}` },
+        ],
+      });
+      callbacks.onDelta(`Answer to ${message}`);
+    });
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+
+    await user.type(composer, 'First');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Answer to First');
+    await user.type(composer, 'Second');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Answer to Second');
+
+    const cards = Array.from(screen.getByLabelText('Chat messages').querySelectorAll('article'));
+    expect(cards.map(card => card.querySelector('p')?.textContent)).toEqual([
+      'System', 'User · App', 'User', 'User · Status', 'Assistant', 'User', 'User · Status', 'Assistant',
+    ]);
+    expect(cards[1]).toHaveTextContent('[App event] The user uploaded files: ward.csv');
+    expect(cards[3]).toHaveTextContent('Turn 1');
+    const systemPrompt = cards[0].querySelector('details');
+    expect(systemPrompt).not.toHaveAttribute('open');
+    expect(systemPrompt).toHaveTextContent('Shared system prompt');
+  });
+
   it('renders an assistant turn when background optimization wakes the agent', async () => {
     const user = userEvent.setup();
     let backgroundCallbacks: {
       onTurnStart?: (messageId: string, trigger: string) => void;
+      onModelInput?: (input: ModelInput) => void;
       onDelta: (text: string) => void;
       onToolStart?: (activity: { name: string; arguments: string }) => void;
       onTool?: (activity: { name: string; arguments: string; result: string; ok: boolean }) => void;
@@ -481,8 +523,19 @@ describe('ExperimentalAiPage', () => {
         downloadable: true,
       });
       backgroundCallbacks?.onTurnStart?.('optimizer-turn', 'optimizer');
+      backgroundCallbacks?.onModelInput?.({
+        system: 'Background system prompt',
+        messages: [
+          { kind: 'optimizer', content: 'Optimizer result with score 23.' },
+          { kind: 'status', content: '[Current status]\nOptimization result: result.xlsx.' },
+        ],
+      });
       backgroundCallbacks?.onToolStart?.({ name: 'bash', arguments: '{"command":"echo ready"}' });
     });
+    const optimizerInput = screen.getByText('Optimizer result with score 23.').closest('article');
+    expect(optimizerInput?.querySelector('p')).toHaveTextContent('User · Optimizer');
+    expect(optimizerInput?.previousElementSibling).toHaveTextContent('Background system prompt');
+    expect(optimizerInput?.nextElementSibling).toHaveTextContent('Optimization result: result.xlsx.');
     expect(screen.getByText('Background tool running · bash')).toBeInTheDocument();
     expect(screen.getByText('bash · running')).toBeInTheDocument();
     await user.click(screen.getByRole('checkbox', { name: 'Show tool activity' }));
@@ -499,7 +552,8 @@ describe('ExperimentalAiPage', () => {
     expect(screen.queryByText('Background tool running · bash')).not.toBeInTheDocument();
     expect(screen.queryByText(/Optimizer running in the background/)).not.toBeInTheDocument();
     expect(screen.queryByRole('img', { name: 'Optimization score trend' })).not.toBeInTheDocument();
-    expect(screen.getByText('Optimization finished. Download the optimized schedule to review it.')).toBeInTheDocument();
+    // The optimizer notice became the message that the model received, and it keeps its download button.
+    expect(screen.queryByText('Optimization finished. Download the optimized schedule to review it.')).not.toBeInTheDocument();
     const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:optimizer-result');
     const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
     const clickDownload = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
@@ -1164,10 +1218,10 @@ describe('ExperimentalAiPage', () => {
     expect(screen.getByText('Also compare P3.')).toBeInTheDocument();
     const messageCards = screen.getByLabelText('Chat messages').querySelectorAll('article');
     expect(Array.from(messageCards, card => card.querySelector('p')?.textContent)).toEqual([
-      'You',
+      'User',
       'Assistant',
-      'You',
-      'You',
+      'User',
+      'User',
       'Assistant',
     ]);
     const stopButton = screen.getByRole('button', { name: 'Stop' });
@@ -1615,10 +1669,9 @@ describe('ExperimentalAiPage', () => {
       expect.any(Object),
       expect.any(AbortSignal),
       null,
-      { files: [image], uploadIds: [] },
+      { files: [image] },
       '/ai',
     );
-    expect(screen.getByText('Attached: ward.png')).toBeInTheDocument();
     expect(createObjectUrl).toHaveBeenCalledWith(image);
     expect(revokeObjectUrl).toHaveBeenCalledWith('blob:image-preview');
   });
@@ -1667,10 +1720,9 @@ describe('ExperimentalAiPage', () => {
       expect.any(Object),
       expect.any(AbortSignal),
       null,
-      { files: [expect.objectContaining({ name: 'staff.custom', type: 'application/x-custom' })], uploadIds: [] },
+      { files: [expect.objectContaining({ name: 'staff.custom', type: 'application/x-custom' })] },
       '/ai',
     );
-    expect(screen.getByText('Attached: staff.custom')).toBeInTheDocument();
   });
 
   it('sends PDF and XLSX files without rewriting their media types', async () => {
@@ -1696,7 +1748,6 @@ describe('ExperimentalAiPage', () => {
           expect.objectContaining({ name: 'notes.pdf', type: '' }),
           expect.objectContaining({ name: 'coverage.xlsx', type: '' }),
         ],
-        uploadIds: [],
       },
       '/ai',
     );
@@ -1809,7 +1860,7 @@ describe('ExperimentalAiPage', () => {
     expect(mockStreamMessage).toHaveBeenCalledTimes(1);
   });
 
-  it('retries an attachment request with the files it already uploaded', async () => {
+  it('retries only the question after its files uploaded', async () => {
     mockStreamMessage.mockImplementationOnce(async (_sessionId, _message, callbacks: { onUploaded?: (files: UploadedFile[]) => void }) => {
       callbacks.onUploaded?.([{ id: 'file-1', filename: 'ward.png', media_type: 'image/png', bytes: 3 }]);
       throw new Error('The temporary AI sandbox failed.');
@@ -1822,16 +1873,16 @@ describe('ExperimentalAiPage', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await user.click(await screen.findByRole('button', { name: 'Retry' }));
 
+    // The backend recorded the upload as its own history message, so the retry sends no files.
     expect(mockStreamMessage).toHaveBeenLastCalledWith(
       'session-id',
       'Check this image.',
       expect.any(Object),
       expect.any(AbortSignal),
       null,
-      { files: [], uploadIds: ['file-1'] },
+      { files: [] },
       '/ai',
     );
-    expect(await screen.findByText('Attached: ward.png')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Prepare retry' })).not.toBeInTheDocument();
   });
 

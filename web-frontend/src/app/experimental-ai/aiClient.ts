@@ -49,6 +49,7 @@ export interface OptimizationProgressActivity {
 
 export interface StreamCallbacks {
   onUploaded?: (files: UploadedFile[]) => void;
+  onModelInput?: (input: ModelInput) => void;
   onAccepted?: () => void;
   lastEventId?: number;
   onEventId?: (id: number) => void;
@@ -90,7 +91,29 @@ export interface UploadedFile {
 
 export interface MessageAttachments {
   files?: File[];
-  uploadIds?: string[];
+}
+
+// The request messages added since the last assistant reply, in the order the model receives them.
+export interface ModelInputMessage {
+  kind: 'app' | 'question' | 'optimizer' | 'status';
+  content: string;
+  // Absolute history position of an app event, so a retried turn does not show it twice.
+  index?: number;
+}
+
+export interface ModelInput {
+  system: string;
+  messages: ModelInputMessage[];
+}
+
+const MODEL_INPUT_KINDS = new Set(['app', 'question', 'optimizer', 'status']);
+
+function isModelInputMessage(value: unknown): value is ModelInputMessage {
+  if (typeof value !== 'object' || value === null) return false;
+  const message = value as Partial<ModelInputMessage>;
+  return typeof message.kind === 'string' && MODEL_INPUT_KINDS.has(message.kind)
+    && typeof message.content === 'string'
+    && (message.kind === 'app' ? Number.isSafeInteger(message.index) : message.index === undefined);
 }
 
 interface SessionResponse {
@@ -111,6 +134,8 @@ interface SsePayload {
   result?: unknown;
   ok?: unknown;
   schedule_yaml?: unknown;
+  system?: unknown;
+  messages?: unknown;
   message_id?: unknown;
   trigger?: unknown;
   job_id?: unknown;
@@ -338,6 +363,12 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
         },
       });
     }
+  } else if (eventType === 'model_input') {
+    if (typeof payload.system !== 'string' || !Array.isArray(payload.messages)
+      || !payload.messages.every(isModelInputMessage)) {
+      throw new Error('The AI backend returned an invalid model input.');
+    }
+    callbacks.onModelInput?.({ system: payload.system, messages: payload.messages });
   } else if (eventType === 'done') {
     callbacks.onDone?.(typeof payload.message_id === 'string' ? payload.message_id : undefined);
   } else if (eventType === 'stopped') {
@@ -369,15 +400,14 @@ export async function streamMessage(
 ): Promise<void> {
   const files = attachments.files ?? [];
   const uploaded = files.length > 0 ? await uploadFiles(sessionId, files, authToken, endpoint, signal) : [];
+  // The backend records the upload as its own history message, so the question stays as typed.
   if (uploaded.length > 0) callbacks.onUploaded?.(uploaded);
-  const uploadIds = [...(attachments.uploadIds ?? []), ...uploaded.map(file => file.id)];
-  const body = uploadIds.length > 0 ? { message, upload_ids: uploadIds } : { message };
 
   const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/messages`, {
     method: 'POST',
     credentials: 'include',
     headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
-    body: JSON.stringify(body),
+    body: JSON.stringify({ message }),
     signal,
   });
   if (!response.ok) throw await responseError(response);

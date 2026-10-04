@@ -26,7 +26,6 @@ const messages: ChatExportMessage[] = [
   {
     role: 'user',
     content: 'Show <script>alert(1)</script> coverage.',
-    attachmentNames: ['ward.xlsx'],
   },
   {
     role: 'assistant',
@@ -49,13 +48,43 @@ const metadata = {
 };
 
 describe('chat export', () => {
+  it('exports provider messages in request order with role labels', () => {
+    const turns: ChatExportMessage[] = [
+      { role: 'system', content: 'System with ``` fence' },
+      { role: 'user', source: 'app', content: '[App event] The user uploaded files: [<b>]' },
+      { role: 'user', content: 'Question' },
+      { role: 'user', source: 'status', content: '[Current status]\nOptimization result: result.xlsx.' },
+      { role: 'assistant', content: 'Answer' },
+      { role: 'optimizer', sentToModel: true, content: 'Optimizer job finished.' },
+    ];
+
+    const markdown = buildMarkdownChatExport(turns, metadata);
+    const html = buildHtmlChatExport(turns, metadata);
+
+    expect(markdown.match(/^## .+$/gm)).toEqual([
+      '## System', '## User · App', '## User', '## User · Status', '## Assistant', '## User · Optimizer',
+    ]);
+    expect(markdown).toContain('````text\nSystem with ``` fence\n````');
+    expect(html.match(/<div class="label">[^<]+<\/div>/g)).toEqual([
+      '<div class="label">System</div>',
+      '<div class="label">User · App</div>',
+      '<div class="label">User</div>',
+      '<div class="label">User · Status</div>',
+      '<div class="label">Assistant</div>',
+      '<div class="label">User · Optimizer</div>',
+    ]);
+    expect(html).toContain('<details class="system-prompt"><summary>21 characters</summary>');
+    expect(html).not.toMatch(/<details class="system-prompt" open/);
+    expect(html).toContain('class="message user app"');
+    expect(html).toContain('uploaded files: [&lt;b&gt;]');
+  });
+
   it('exports the complete conversation and activity as Markdown without duplicating response text', () => {
     const output = buildMarkdownChatExport(messages, metadata);
 
     expect(output).toContain('# Schedule AI Chat');
     expect(output).toContain('- Frontend version: v0.4.2-3-gabc1234');
     expect(output).toContain('Show <script>alert(1)</script> coverage.');
-    expect(output).toContain('Attachments: ward.xlsx');
     expect(output).toContain('Response time: 1.25s');
     expect(output).toContain('### Reasoning');
     expect(output).toContain('### read');
@@ -86,7 +115,6 @@ describe('chat export', () => {
     expect(output).toContain('<span class="removed">- description: old</span>');
     expect(output).toContain('<span class="added">+ description: new</span>');
     expect(output).not.toContain('Before:');
-    expect(output).toContain('<p class="attachments">Attached: ward.xlsx</p>');
     expect(output).toContain('<time datetime="2026-09-18T01:00:01.250Z">');
   });
 
@@ -103,7 +131,7 @@ describe('chat export', () => {
     expect(markdown).toContain('Optimization finished. Download the optimized schedule to review it.');
     expect(html).toContain('class="message optimizer"');
     expect(html).toContain('<div class="label">Optimizer</div>');
-    expect(html).toContain('.optimizer { align-self: flex-start;');
+    expect(html).toContain('.optimizer { align-self: flex-end;');
   });
 
   it('places activity separators only at response boundaries', () => {

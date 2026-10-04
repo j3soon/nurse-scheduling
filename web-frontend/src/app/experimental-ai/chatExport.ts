@@ -26,10 +26,13 @@ import remarkGfm from 'remark-gfm';
 import { CURRENT_APP_VERSION } from '@/utils/version';
 import type { ActivityEntry } from './AssistantActivity';
 
+// Bubbles follow the provider request roles. A user-role message that the app wrote has a source.
 export interface ChatExportMessage {
-  role: 'user' | 'assistant' | 'optimizer';
+  role: 'system' | 'user' | 'assistant' | 'optimizer';
+  source?: 'app' | 'status';
+  // An optimizer notice becomes a user-role message once its result is sent to the model.
+  sentToModel?: boolean;
   content: string;
-  attachmentNames?: string[];
   activity?: ActivityEntry[];
   status?: 'pending' | 'failed';
   responseStartedAt?: number;
@@ -167,9 +170,24 @@ function renderActivityDetailsHtml(entry: Exclude<ActivityEntry, { kind: 'respon
           </details>`;
 }
 
+export function messageLabel(message: ChatExportMessage): string {
+  if (message.role === 'system') return 'System';
+  if (message.role === 'assistant') return 'Assistant';
+  if (message.role === 'optimizer') return message.sentToModel ? 'User · Optimizer' : 'Optimizer';
+  if (message.source === 'app') return 'User · App';
+  if (message.source === 'status') return 'User · Status';
+  return 'User';
+}
+
+// A fence longer than any backtick run in the text keeps the block intact.
+function fencedText(text: string): string[] {
+  const longestRun = Math.max(0, ...(text.match(/`+/g) ?? []).map(run => run.length));
+  const fence = '`'.repeat(Math.max(3, longestRun + 1));
+  return [`${fence}text`, text, fence];
+}
+
 function messageDetails(message: ChatExportMessage): string[] {
   const details: string[] = [];
-  if (message.attachmentNames?.length) details.push(`Attachments: ${message.attachmentNames.join(', ')}`);
   if (message.status === 'failed') details.push('Status: failed');
   if (message.status === 'pending') details.push('Status: pending');
   if (message.responseCompletedAt !== undefined) {
@@ -214,9 +232,6 @@ function renderAssistantTimelineHtml(message: ChatExportMessage): string {
 }
 
 function renderHtmlMessageDetails(message: ChatExportMessage): string {
-  const attachments = message.attachmentNames?.length
-    ? `<p class="attachments">Attached: ${escapeHtml(message.attachmentNames.join(', '))}</p>`
-    : '';
   const status = message.status === 'pending' && !message.content
     ? '<p class="message-status" role="status">Thinking</p>'
     : message.status === 'failed'
@@ -225,7 +240,7 @@ function renderHtmlMessageDetails(message: ChatExportMessage): string {
   const timing = message.responseStartedAt !== undefined && message.responseCompletedAt !== undefined
     ? `<time datetime="${new Date(message.responseCompletedAt).toISOString()}">${escapeHtml(new Date(message.responseCompletedAt).toLocaleString())} · ${formatResponseDuration(message.responseStartedAt, message.responseCompletedAt)}</time>`
     : '';
-  return `${attachments}${status}${timing}`;
+  return `${status}${timing}`;
 }
 
 export function buildMarkdownChatExport(
@@ -240,8 +255,10 @@ export function buildMarkdownChatExport(
     `- AI server: ${metadata.endpoint}`,
   ];
   messages.forEach(message => {
-    lines.push('', `## ${message.role === 'user' ? 'You' : message.role === 'optimizer' ? 'Optimizer' : 'Assistant'}`);
-    if (message.role !== 'assistant') {
+    lines.push('', `## ${messageLabel(message)}`);
+    if (message.role === 'system' || message.source !== undefined) {
+      lines.push('', ...fencedText(message.content));
+    } else if (message.role !== 'assistant') {
       lines.push('', message.content || '[No message text]');
     } else {
       assistantTimeline(message).forEach(entry => {
@@ -265,10 +282,12 @@ export function buildHtmlChatExport(
   const renderedMessages = messages.map(message => {
     const timeline = message.role === 'assistant'
       ? renderAssistantTimelineHtml(message)
-      : `<div class="content">${escapeHtml(message.content || '[No message text]')}</div>`;
+      : message.role === 'system'
+        ? `<details class="system-prompt"><summary>${formatCount(message.content.length)} characters</summary><pre>${escapeHtml(message.content)}</pre></details>`
+        : `<div class="content">${escapeHtml(message.content || '[No message text]')}</div>`;
     return `
-      <article class="message ${message.role}">
-        <div class="label">${message.role === 'user' ? 'You' : message.role === 'optimizer' ? 'Optimizer' : 'Assistant'}</div>
+      <article class="message ${message.role}${message.source ? ` ${message.source}` : ''}">
+        <div class="label">${messageLabel(message)}</div>
         ${timeline}
         ${renderHtmlMessageDetails(message)}
       </article>`;
@@ -289,10 +308,13 @@ export function buildHtmlChatExport(
     .message { box-sizing: border-box; width: fit-content; max-width: 85%; padding: 12px 16px; border-radius: 12px; }
     .user { align-self: flex-end; background: #2563eb; color: white; }
     .assistant { align-self: flex-start; border: 1px solid #e5e7eb; background: white; }
-    .optimizer { align-self: flex-start; border: 1px solid #a7f3d0; background: #ecfdf5; color: #022c22; }
+    .optimizer { align-self: flex-end; border: 1px solid #a7f3d0; background: #ecfdf5; color: #022c22; }
+    .system { align-self: stretch; max-width: none; border: 1px dashed #d1d5db; background: #f9fafb; color: #374151; }
+    .user.app, .user.status { border: 1px solid #bfdbfe; background: #eff6ff; color: #1e3a8a; font: 12px/1.625 ui-monospace, monospace; }
     .label { margin-bottom: 4px; font-size: 12px; font-weight: 600; letter-spacing: .025em; text-transform: uppercase; opacity: .7; }
     .content { overflow-wrap: anywhere; line-height: 1.5rem; }
     .user .content, .optimizer .content { white-space: pre-wrap; }
+    .user.app .content, .user.status .content { line-height: 1.625; }
     .content > :first-child { margin-top: 0; }
     .content > :last-child { margin-bottom: 0; }
     .content h1, .content h2 { margin: 16px 0 8px; line-height: 1.25; font-weight: 600; }
@@ -316,6 +338,9 @@ export function buildHtmlChatExport(
     .activity-separator { margin: 12px 0; border: 0; border-top: 1px solid #e5e7eb; }
     .activity-details { color: #6b7280; font-size: 12px; }
     .activity-details summary { cursor: pointer; padding: 2px 0; }
+    .system-prompt { color: #4b5563; font-size: 12px; }
+    .system-prompt summary { cursor: pointer; }
+    .system-prompt pre { max-height: 288px; overflow: auto; margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.625 ui-monospace, monospace; }
     .activity-body { margin-top: 4px; border-radius: 4px; background: #f9fafb; padding: 8px; }
     .activity-output, .schedule-diff { max-height: 288px; overflow: auto; margin: 0; color: #4b5563; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.625 ui-monospace, monospace; }
     .tool-body { display: flex; flex-direction: column; gap: 8px; }

@@ -42,7 +42,8 @@ import { CURRENT_APP_VERSION } from '@/utils/version';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
 import yaml from 'js-yaml';
 import { ActivityEntry, AssistantActivity } from './AssistantActivity';
-import { ChatExportMessage, downloadChatExport } from './chatExport';
+import CollapsedText from './CollapsedText';
+import { ChatExportMessage, downloadChatExport, messageLabel } from './chatExport';
 import {
   AiCapabilities,
   AiHttpError,
@@ -58,6 +59,7 @@ import {
   downloadGeneratedZip,
   getUploads,
   removeUpload,
+  type ModelInput,
   type UploadedFile,
   getAiBaseUrl,
   getCapabilities,
@@ -72,16 +74,14 @@ import {
   updateSessionSchedule,
 } from './aiClient';
 
-// A failed turn keeps the files it already uploaded, so a retry can send them without reattaching.
-type RetryUpload = Pick<UploadedFile, 'id' | 'filename'>;
-
 interface ChatMessage extends ChatExportMessage {
   id: string;
   downloadId?: string;
+  // Absolute history position of an app event, so a retried turn does not show it twice.
+  historyIndex?: number;
   retry?: {
     question: string;
     requiresAttachments: boolean;
-    uploads?: RetryUpload[];
   };
   optimizerJob?: Pick<OptimizationActivity, 'jobId' | 'downloadable'>;
 }
@@ -262,10 +262,11 @@ function isChatMessage(value: unknown): value is ChatMessage {
   if (typeof value !== 'object' || value === null) return false;
   const message = value as Partial<ChatMessage>;
   return typeof message.id === 'string'
-    && (message.role === 'user' || message.role === 'assistant' || message.role === 'optimizer')
+    && (message.role === 'system' || message.role === 'user' || message.role === 'assistant' || message.role === 'optimizer')
     && typeof message.content === 'string'
-    && (message.attachmentNames === undefined
-      || (Array.isArray(message.attachmentNames) && message.attachmentNames.every(name => typeof name === 'string')))
+    && (message.source === undefined || message.source === 'app' || message.source === 'status')
+    && (message.sentToModel === undefined || typeof message.sentToModel === 'boolean')
+    && (message.historyIndex === undefined || Number.isSafeInteger(message.historyIndex))
     && (message.activity === undefined
       || (Array.isArray(message.activity) && message.activity.every(isActivityEntry)))
     && (message.status === undefined || message.status === 'pending' || message.status === 'failed')
@@ -276,8 +277,6 @@ function isChatMessage(value: unknown): value is ChatMessage {
       && message.retry !== null
       && typeof message.retry.question === 'string'
       && typeof message.retry.requiresAttachments === 'boolean'
-      && (message.retry.uploads === undefined || (Array.isArray(message.retry.uploads)
-        && message.retry.uploads.every(upload => typeof upload?.id === 'string' && typeof upload.filename === 'string')))
     ))
     && (message.downloadId === undefined || typeof message.downloadId === 'string')
     && (message.optimizerJob === undefined || (message.optimizerJob !== null
@@ -386,6 +385,58 @@ function finishToolActivity(entries: ActivityEntry[], result: ToolActivity): Act
   const completed = { kind: 'tool' as const, ...result };
   if (runningIndex < 0) return [...entries, completed];
   return entries.map((entry, index) => (index === runningIndex ? completed : entry));
+}
+
+// Show the request messages added since the last reply, in the order the model receives them:
+// a changed system prompt, app events, the question, and a status message just before the reply.
+function applyModelInput(
+  messages: ChatMessage[],
+  input: ModelInput,
+  turn: { questionId: string | null; assistantId: string },
+): ChatMessage[] {
+  const statusId = `status-${turn.assistantId}`;
+  const result = messages.filter(message => message.id !== statusId);
+  const known = new Set(result.map(message => message.historyIndex));
+  const lastSystem = [...result].reverse().find(message => message.role === 'system');
+  const before: ChatMessage[] = lastSystem?.content === input.system
+    ? []
+    : [{ id: messageId(), role: 'system', content: input.system }];
+  let status: ChatMessage | null = null;
+  let questionText: string | null = null;
+  let optimizerText: string | null = null;
+  input.messages.forEach(entry => {
+    if (entry.kind === 'app' && !known.has(entry.index)) {
+      before.push({ id: `history-${entry.index}`, role: 'user', source: 'app', historyIndex: entry.index, content: entry.content });
+    } else if (entry.kind === 'status') {
+      status = { id: statusId, role: 'user', source: 'status', content: entry.content };
+    } else if (entry.kind === 'question') {
+      questionText = entry.content;
+    } else if (entry.kind === 'optimizer') {
+      optimizerText = entry.content;
+    }
+  });
+  let assistantIndex = result.findIndex(message => message.id === turn.assistantId);
+  if (assistantIndex < 0) return messages;
+  let questionIndex = turn.questionId === null ? -1 : result.findIndex(message => message.id === turn.questionId);
+  if (questionIndex >= 0 && questionText !== null) {
+    result[questionIndex] = { ...result[questionIndex], content: questionText };
+  }
+  if (optimizerText !== null) {
+    // The optimizer notice for this result becomes the user-role message that the model received.
+    questionIndex = result.slice(0, assistantIndex).findLastIndex(message => message.role === 'optimizer' && !message.sentToModel);
+    if (questionIndex >= 0) {
+      result[questionIndex] = { ...result[questionIndex], content: optimizerText, sentToModel: true };
+    } else {
+      result.splice(assistantIndex, 0, { id: `optimizer-input-${turn.assistantId}`, role: 'optimizer', sentToModel: true, content: optimizerText });
+      questionIndex = assistantIndex;
+      assistantIndex += 1;
+    }
+  }
+  const insertAt = questionIndex >= 0 ? questionIndex : assistantIndex;
+  result.splice(insertAt, 0, ...before);
+  assistantIndex += before.length;
+  if (status !== null) result.splice(assistantIndex, 0, status);
+  return result;
 }
 
 function interruptRunningTools(entries: ActivityEntry[]): ActivityEntry[] {
@@ -1192,6 +1243,13 @@ export default function ExperimentalAiPage() {
           sessionEventsRetryRef.current = 0;
         },
         onTurnStart: beginBackgroundMessage,
+        onModelInput: input => {
+          resumeBackgroundMessage();
+          const assistantId = backgroundAssistantIdRef.current;
+          if (assistantId !== null) {
+            setMessages(previous => applyModelInput(previous, input, { questionId: null, assistantId }));
+          }
+        },
         onDelta: text => {
           resumeBackgroundMessage();
           updateBackgroundMessage(message => ({
@@ -1372,7 +1430,6 @@ export default function ExperimentalAiPage() {
     question: string,
     attachmentsForMessage: SelectedAttachment[],
     clearComposer: boolean,
-    retainedUploads: RetryUpload[] = [],
   ) => {
     if (!question || isStreaming || conversationUnavailable || (authRequired && authToken === null)) return;
 
@@ -1380,16 +1437,11 @@ export default function ExperimentalAiPage() {
       id: messageId(),
       role: 'user',
       content: question,
-      attachmentNames: [
-        ...retainedUploads.map(upload => upload.filename),
-        ...attachmentsForMessage.map(attachment => attachment.file.name),
-      ],
     };
     let activeAssistantId = messageId();
     let activeAssistantHasOutput = false;
     let activeQuestion = question;
     let activeQuestionRequiresAttachments = attachmentsForMessage.length > 0;
-    let activeUploads = retainedUploads;
     const responseStartedAt = Date.now();
     followPageBottomRef.current = true;
     setShowScrollToBottom(false);
@@ -1435,8 +1487,12 @@ export default function ExperimentalAiPage() {
         sessionId,
         question,
         {
+          onModelInput: input => {
+            const assistantId = activeAssistantId;
+            setMessages(previous => applyModelInput(previous, input, { questionId: userMessage.id, assistantId }));
+          },
           onUploaded: files => {
-            activeUploads = [...activeUploads, ...files.map(({ id, filename }) => ({ id, filename }))];
+            // The upload is now its own history message, so a retry needs only the question.
             activeQuestionRequiresAttachments = false;
             if (fileCapability.retained) setUploadedFiles(previous => [...previous, ...files]);
           },
@@ -1542,7 +1598,6 @@ export default function ExperimentalAiPage() {
             }
             activeQuestion = queuedMessage;
             activeQuestionRequiresAttachments = false;
-            activeUploads = [];
           },
           onDownload: downloadId => setMessages(previous => previous.map(message => (
             message.id === activeAssistantId ? { ...message, downloadId } : message
@@ -1569,7 +1624,6 @@ export default function ExperimentalAiPage() {
         authToken,
         {
           files: attachmentsForMessage.map(attachment => attachment.file),
-          uploadIds: retainedUploads.map(upload => upload.id),
         },
         sessionEndpoint,
       );
@@ -1604,7 +1658,6 @@ export default function ExperimentalAiPage() {
           retry: {
             question: activeQuestion,
             requiresAttachments: activeQuestionRequiresAttachments,
-            ...(activeUploads.length > 0 ? { uploads: activeUploads } : {}),
           },
         };
       }));
@@ -1660,16 +1713,18 @@ export default function ExperimentalAiPage() {
     await sendRequest(question, selectedAttachments, true);
   };
 
-  const retryMessage = (failedId: string, question: string, uploads: RetryUpload[] = []) => {
+  const retryMessage = (failedId: string, question: string) => {
     if (!question || isStreaming || (authRequired && authToken === null)) return;
-    // The retried turn replaces the failed pair, so the question is not repeated.
+    // The retried turn replaces the failed question, status, and reply. App events stay in history.
     setMessages(previous => {
       const failedIndex = previous.findIndex(message => message.id === failedId);
       if (failedIndex < 0) return previous;
-      const start = previous[failedIndex - 1]?.role === 'user' ? failedIndex - 1 : failedIndex;
+      let start = failedIndex;
+      if (previous[start - 1]?.source === 'status') start -= 1;
+      if (previous[start - 1]?.role === 'user' && previous[start - 1]?.source === undefined) start -= 1;
       return [...previous.slice(0, start), ...previous.slice(failedIndex + 1)];
     });
-    void sendRequest(question, [], false, uploads);
+    void sendRequest(question, [], false);
   };
 
   const prepareAttachmentRetry = (question: string) => {
@@ -2103,17 +2158,19 @@ export default function ExperimentalAiPage() {
         {messages.map(message => (
           <article
             key={message.id}
-            className={`max-w-[85%] rounded-xl px-4 py-3 ${
-              message.role === 'user'
-                ? 'ml-auto bg-blue-600 text-white'
-                : message.role === 'optimizer'
-                  ? 'mr-auto border border-emerald-200 bg-emerald-50 text-emerald-950'
-                  : 'mr-auto border border-gray-200 bg-white text-gray-900'
+            className={`rounded-xl px-4 py-3 ${
+              message.role === 'system'
+                ? 'border border-dashed border-gray-300 bg-gray-50 text-gray-700'
+                : message.role === 'user' && message.source === undefined
+                  ? 'ml-auto max-w-[85%] bg-blue-600 text-white'
+                  : message.role === 'user'
+                    ? 'ml-auto max-w-[85%] border border-blue-200 bg-blue-50 text-blue-950'
+                    : message.role === 'optimizer'
+                      ? 'ml-auto max-w-[85%] border border-emerald-200 bg-emerald-50 text-emerald-950'
+                      : 'mr-auto max-w-[85%] border border-gray-200 bg-white text-gray-900'
             }`}
           >
-            <p className="mb-1 text-xs font-semibold uppercase tracking-wide opacity-70">
-              {message.role === 'user' ? 'You' : message.role === 'optimizer' ? 'Optimizer' : 'Assistant'}
-            </p>
+            <p className="mb-1 text-xs font-semibold uppercase tracking-wide opacity-70">{messageLabel(message)}</p>
             {message.activity && (
               <AssistantActivity
                 entries={message.activity.filter(entry => (
@@ -2123,6 +2180,10 @@ export default function ExperimentalAiPage() {
             )}
             {message.role === 'assistant' && !message.content && message.status === 'pending' ? (
               steeringAssistantId === message.id ? <p className="text-xs text-gray-500">Steering…</p> : <ThinkingIndicator />
+            ) : message.role === 'system' ? (
+              <CollapsedText summary={`${message.content.length.toLocaleString('en-US')} characters`} text={message.content} />
+            ) : message.source !== undefined ? (
+              <p className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed">{message.content}</p>
             ) : message.role !== 'assistant' ? (
               <p className="whitespace-pre-wrap break-words">{message.content}</p>
             ) : null}
@@ -2142,11 +2203,6 @@ export default function ExperimentalAiPage() {
                 className="mt-3 rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700">
                 Download files (ZIP)
               </button>
-            )}
-            {message.attachmentNames && message.attachmentNames.length > 0 && (
-              <p className="mt-2 text-xs opacity-80">
-                Attached: {message.attachmentNames.join(', ')}
-              </p>
             )}
             {message.role === 'assistant'
               && message.responseStartedAt !== undefined
@@ -2177,7 +2233,7 @@ export default function ExperimentalAiPage() {
                 ) : (
                   <button
                     type="button"
-                    onClick={() => retryMessage(message.id, message.retry?.question ?? '', message.retry?.uploads)}
+                    onClick={() => retryMessage(message.id, message.retry?.question ?? '')}
                     disabled={isStreaming}
                     className="mt-2 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
                   >

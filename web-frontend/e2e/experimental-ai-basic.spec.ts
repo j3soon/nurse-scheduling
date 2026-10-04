@@ -138,6 +138,9 @@ async function mockAiBackend(
     authorizationHeaders: [] as string[],
   };
   const allowedOrigin = frontendOrigin();
+  // Like the backend, record each upload as an app event that the next request sends before the question.
+  const pendingAppEvents: string[] = [];
+  let historyLength = 0;
 
   await page.route('**/ai/**', async route => {
     const request = route.request();
@@ -206,6 +209,7 @@ async function mockAiBackend(
       captured.uploadBody = request.postDataBuffer()?.toString('latin1') ?? '';
       captured.uploadContentType = request.headers()['content-type'] ?? '';
       const filenames = [...captured.uploadBody.matchAll(/filename="([^"]+)"/g)].map(match => match[1]);
+      pendingAppEvents.push(`[App event] The user uploaded files: ${JSON.stringify(filenames)}`);
       await route.fulfill({
         status: 201,
         contentType: 'application/json',
@@ -221,11 +225,18 @@ async function mockAiBackend(
     captured.messageBodies.push(captured.messageBody);
     captured.messageContentType = request.headers()['content-type'] ?? '';
     const firstMessageFailed = failFirstMessage && captured.messageBodies.length === 1;
+    const sent = JSON.parse(captured.messageBody || '{}') as { message?: string };
+    const appEvents = pendingAppEvents.splice(0).map(content => ({ kind: 'app', index: historyLength++, content }));
+    historyLength += 2;
+    const modelInput = `event: model_input\ndata: ${JSON.stringify({
+      system: 'Mock system prompt',
+      messages: [...appEvents, { kind: 'question', content: sent.message }],
+    })}\n\n`;
     await route.fulfill({
       status: 200,
       contentType: 'text/event-stream',
       headers: corsHeaders,
-      body: firstMessageFailed
+      body: modelInput + (firstMessageFailed
         ? [
           `event: tool_start\ndata: ${JSON.stringify({ name: 'bash', arguments: '{"command":"sleep 30"}' })}\n\n`,
           'event: delta\ndata: {"text":"Provisional response."}\n\n',
@@ -234,7 +245,7 @@ async function mockAiBackend(
         : [
           ...answerDeltas.map(text => `event: delta\ndata: ${JSON.stringify({ text })}\n\n`),
           'event: done\ndata: {"message_id":"answer-id"}\n\n',
-        ].join(''),
+        ].join('')),
     });
   });
 
@@ -406,7 +417,7 @@ test('renders assistant Markdown with safe images and copyable code', async ({ p
   await expect(page.getByText('[Remote image omitted: tracker]')).toBeVisible();
   await expect(page.locator('article img')).toHaveCount(0);
 
-  const codeBlock = page.locator('article pre');
+  const codeBlock = page.locator('article pre', { hasText: 'people: []' });
   const copyButton = page.getByRole('button', { name: 'Copy code' });
   await expect(codeBlock).toContainText('people: []');
   await expect(copyButton).toBeVisible();
@@ -469,11 +480,19 @@ test('previews and sends an image attachment', async ({ page }) => {
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   await expect(page.getByText('The image and schedule were received.')).toBeVisible();
-  await expect(page.getByText('Attached: ward.png')).toBeVisible();
   expect(captured.uploadContentType).toContain('multipart/form-data');
   expect(captured.uploadBody).toContain('filename="ward.png"');
   expect(captured.messageContentType).toBe('application/json');
-  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'What is shown?', upload_ids: ['file-1'] });
+  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'What is shown?' });
+  // The bubbles follow the provider request: system prompt, upload event, then the question as typed.
+  const cards = page.getByLabel('Chat messages').locator('article');
+  await expect(cards.locator('> p:first-child')).toHaveText(['System', 'User · App', 'User', 'Assistant']);
+  await expect(cards.nth(1)).toContainText('[App event] The user uploaded files: ["ward.png"]');
+  await expect(cards.nth(2)).toContainText('What is shown?');
+  const systemPrompt = cards.nth(0).locator('details');
+  await expect(systemPrompt.locator('pre')).toBeHidden();
+  await systemPrompt.locator('summary').click();
+  await expect(systemPrompt.locator('pre')).toHaveText('Mock system prompt');
 });
 
 test('previews and sends arbitrary file attachments', async ({ page }) => {
@@ -504,16 +523,14 @@ test('previews and sends arbitrary file attachments', async ({ page }) => {
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   await expect(page.getByText('The image and schedule were received.')).toBeVisible();
-  await expect(page.getByText('Attached: staff.csv, notes.pdf, coverage.custom')).toBeVisible();
+  await expect(page.getByText('[App event] The user uploaded files: ["staff.csv","notes.pdf","coverage.custom"]')).toBeVisible();
   expect(captured.uploadContentType).toContain('multipart/form-data');
   expect(captured.uploadBody).toContain('name="files"');
   expect(captured.uploadBody).toContain('staff.csv');
   expect(captured.uploadBody).toContain('notes.pdf');
   expect(captured.uploadBody).toContain('coverage.custom');
   expect(captured.uploadBody).toContain('Alice,day');
-  expect(JSON.parse(captured.messageBody)).toEqual({
-    message: 'Check the documents.', upload_ids: ['file-1', 'file-2', 'file-3'],
-  });
+  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Check the documents.' });
 });
 
 
@@ -581,7 +598,7 @@ test('places uploads beside desktop chat and below mobile controls and allows re
     return route.fulfill({ status: 204 });
   });
   await page.route('**/ai/sessions/*/messages', route => {
-    expect(route.request().postDataJSON()).toEqual({ message: 'Read this file', upload_ids: ['file-1'] });
+    expect(route.request().postDataJSON()).toEqual({ message: 'Read this file' });
     return route.fulfill({ contentType: 'text/event-stream', body: 'event: delta\ndata: {"text":"Workbook inspected."}\n\nevent: done\ndata: {}\n\n' });
   });
   await page.setViewportSize({ width: 1440, height: 900 });

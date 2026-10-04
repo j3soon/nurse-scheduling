@@ -249,7 +249,7 @@ describe('AI client', () => {
     )).rejects.toEqual(new AiStaleTurnError('The schedule changed.'));
   });
 
-  it('uploads files before sending a message that references them', async () => {
+  it('uploads files before sending the question as typed', async () => {
     const uploaded = { id: 'file-1', filename: 'ward.png', media_type: 'image/png', bytes: 11 };
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify([uploaded]), { status: 201 }))
@@ -262,7 +262,7 @@ describe('AI client', () => {
 
     await streamMessage(
       'session-id', 'What is shown?', { onDelta: vi.fn(), onUploaded }, signal, 'stream-token',
-      { files: [image], uploadIds: ['file-0'] },
+      { files: [image] },
     );
 
     const [uploadUrl, uploadRequest] = fetchMock.mock.calls[0] as [string, RequestInit];
@@ -275,10 +275,44 @@ describe('AI client', () => {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer stream-token' },
-      body: JSON.stringify({ message: 'What is shown?', upload_ids: ['file-0', 'file-1'] }),
+      body: JSON.stringify({ message: 'What is shown?' }),
       signal,
     });
     expect(onUploaded).toHaveBeenCalledWith([uploaded]);
+  });
+
+  it('forwards the model input and rejects a malformed one', async () => {
+    const onModelInput = vi.fn();
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(streamedResponse([
+        `event: model_input\ndata: ${JSON.stringify({
+          system: 'System',
+          messages: [
+            { kind: 'app', index: 3, content: '[App event] Upload' },
+            { kind: 'question', content: 'Question' },
+            { kind: 'status', content: '[Current status]' },
+          ],
+        })}\n\n`,
+        'event: done\ndata: {"message_id":"1"}\n\n',
+      ]))
+      .mockResolvedValueOnce(streamedResponse([
+        'event: model_input\ndata: {"system":"System","messages":[{"kind":"app","content":"No index"}]}\n\n',
+      ])));
+
+    await streamMessage('session-id', 'Question', { onDelta: vi.fn(), onModelInput }, new AbortController().signal, null);
+    await expect(streamMessage(
+      'session-id', 'Question', { onDelta: vi.fn(), onModelInput }, new AbortController().signal, null,
+    )).rejects.toThrow('The AI backend returned an invalid model input.');
+
+    expect(onModelInput).toHaveBeenCalledOnce();
+    expect(onModelInput).toHaveBeenCalledWith({
+      system: 'System',
+      messages: [
+        { kind: 'app', index: 3, content: '[App event] Upload' },
+        { kind: 'question', content: 'Question' },
+        { kind: 'status', content: '[Current status]' },
+      ],
+    });
   });
 
   it('does not send a message when its upload is rejected', async () => {
