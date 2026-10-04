@@ -198,7 +198,7 @@ async def _session_sse(
             if event.type == "session_reset":
                 data = {
                     **data,
-                    "proposal_diff": session.proposal_diff,
+                    "proposal_diff": session.pending_proposal.diff if session.pending_proposal else "",
                     "active_run_id": session.snapshot.run_id if session.snapshot else None,
                 }
             yield f"id: {event.id}\nevent: {event.type}\ndata: {json.dumps(data)}\n\n"

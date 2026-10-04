@@ -189,6 +189,7 @@ relative to `web-frontend/src/app/experimental-ai/`.
 | `SessionStore`<br/>`sessions.py` | Enforce session ownership, expiry, retained text budgets, and versioned conversation commits. |
 | `SessionRuns` / `AgentRun` / `RunSnapshot`<br/>`lifecycle.py` | Execute one run per session, queue background follow-ups, and keep ownership through cancellation and cleanup. Carry the conversation version used to authorize a commit. |
 | `AgentSession` / `RunOutcome`<br/>`agent_session.py` | Prepare context, execute the agent, await cleanup, save the run, queue optimizer reviews, and publish public session events. |
+| `PendingProposal`<br/>`candidate.py` | Keep pending YAML, its rendered diff, and the originating run ID together. `AgentSession` owns the value and each run snapshot captures it. |
 | `RunOutput` / `RunEvents`<br/>`session_event_projection.py` | Project agent output and track partial responses. Attach run identity, batch text, and defer the terminal event until session finalization. |
 | `Agent` / `AgentState`<br/>`agent.py`<br/>`agent_types.py` | Hold in-run messages, streaming state, pending tool call IDs, and queued steering. |
 | `agent_loop`<br/>`agent_loop.py` | Repeat model responses and tool batches until the agent finishes. Record executed and refused calls through one result path. `AgentLoopConfig` groups steering, request projection, batch hooks, and tool budgets. |

@@ -28,6 +28,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from .agent_session import AgentSession, RunCompletion, schedule_revision
+from .candidate import PendingProposal
 from .config import AiSettings
 from .context import project_history, projected_history
 from .lifecycle import RunSnapshot
@@ -48,9 +49,13 @@ def _text_bytes(value: object) -> int:
     return 0
 
 
+def _proposal_bytes(proposal: PendingProposal | None) -> int:
+    return 0 if proposal is None else _text_bytes(proposal.schedule_yaml) + _text_bytes(proposal.diff)
+
+
 def _session_bytes(session: "AgentSession") -> int:
     """Return the chat text one session retains."""
-    total = _text_bytes(session.schedule_yaml) + _text_bytes(session.proposal_yaml) + _text_bytes(session.proposal_diff)
+    total = _text_bytes(session.schedule_yaml) + _proposal_bytes(session.pending_proposal)
     total += sum(_text_bytes(entry_text(entry)) for entry in session.transcript)
     total += sum(_text_bytes(text) for text in session.queued_steering)
     return total
@@ -260,10 +265,7 @@ class SessionStore:
         if session.schedule_yaml == schedule_yaml:
             return
         additional_bytes = (
-            _text_bytes(schedule_yaml)
-            - _text_bytes(session.schedule_yaml)
-            - _text_bytes(session.proposal_yaml)
-            - _text_bytes(session.proposal_diff)
+            _text_bytes(schedule_yaml) - _text_bytes(session.schedule_yaml) - _proposal_bytes(session.pending_proposal)
         )
         if additional_bytes > 0:
             self._require_capacity(additional_bytes)
@@ -272,29 +274,31 @@ class SessionStore:
 
     def peek_proposal(self, session_id: str, owner_token: str | None, base_sha256: str) -> tuple[str, str]:
         """Return the pending proposal and the schedule it would replace, without adopting it."""
-        session = self._require_approvable(session_id, owner_token, base_sha256)
-        return session.proposal_yaml, session.schedule_yaml
+        session, proposal = self._require_approvable(session_id, owner_token, base_sha256)
+        return proposal.schedule_yaml, session.schedule_yaml
 
     def adopt_proposal(self, session_id: str, owner_token: str | None, base_sha256: str) -> tuple[str, str | None]:
         """Adopt a revalidated proposal through its owner and apply retention limits.
 
         Returns the approved YAML and the run that proposed it.
         """
-        session = self._require_approvable(session_id, owner_token, base_sha256)
+        session, _proposal = self._require_approvable(session_id, owner_token, base_sha256)
         approved = session.adopt_proposal(base_sha256)
         self._cap_history(session)
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
         self._recount(session)
         return approved
 
-    def _require_approvable(self, session_id: str, owner_token: str | None, base_sha256: str) -> AgentSession:
+    def _require_approvable(
+        self, session_id: str, owner_token: str | None, base_sha256: str
+    ) -> tuple[AgentSession, PendingProposal]:
         """Resolve an owned proposal and account for invalidation on a stale revision."""
         session = self._get_owned(session_id, owner_token)
         try:
-            session.require_proposal(base_sha256)
+            proposal = session.require_proposal(base_sha256)
         finally:
             self._recount(session)
-        return session
+        return session, proposal
 
     def discard_proposal(
         self,

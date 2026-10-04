@@ -47,6 +47,16 @@ class ScheduleProposal:
 
 
 @dataclass(frozen=True)
+class PendingProposal:
+    """Session-owned YAML and rendered diff, with the run that proposed them."""
+
+    schedule_yaml: str
+    diff: str
+    # Approval and rejection decisions are logged under the proposing run.
+    run_id: str | None
+
+
+@dataclass(frozen=True)
 class ScheduleCandidateReview:
     """Trusted validation and proposal result for one complete candidate."""
 

@@ -27,6 +27,7 @@ import pytest
 from fastapi import HTTPException
 
 from nurse_scheduling.ai.app import OWNER_COOKIE, SessionStore
+from nurse_scheduling.ai.candidate import PendingProposal
 from nurse_scheduling.ai.history import ChatHistory
 from nurse_scheduling.ai.lifecycle import SessionRuns
 from nurse_scheduling.ai.provider import ProviderError, TextDelta
@@ -226,12 +227,14 @@ def test_schedule_round_trip_invalidates_an_in_flight_snapshot():
 def test_discarding_a_proposal_revokes_a_turn_that_was_using_it(decision):
     store = SessionStore(make_settings())
     session = store.create("owner", schedule_yaml())
-    first = store.begin(session.id, "owner")
+    first = store.begin(session.id, "owner", run_id="proposal-run")
     proposal = (schedule_yaml() + "\n", "proposal diff")
     assert store.finish(
         session.id, [UserMessage("Edit"), AssistantMessage("Proposal")], proposal, snapshot=first
     ).proposal_saved
     revising = store.begin(session.id, "owner")
+    captured = PendingProposal(proposal[0], proposal[1], "proposal-run")
+    assert revising.pending_proposal == captured
     if decision == "reject":
         store.discard_proposal(session.id, "owner")
     else:
@@ -241,7 +244,8 @@ def test_discarding_a_proposal_revokes_a_turn_that_was_using_it(decision):
     assert not store.finish(
         session.id, [UserMessage("Revise"), AssistantMessage("Revised")], proposal, snapshot=revising
     ).run_saved
-    assert session.proposal_yaml == ""
+    assert session.pending_proposal is None
+    assert revising.pending_proposal == captured
 
 
 @pytest.mark.parametrize("background", [False, True], ids=["foreground", "background"])
@@ -465,7 +469,7 @@ def test_message_ack_and_get_replay_keep_execution_independent_of_readers():
             # A missed required event restores a compact snapshot, not a silently
             # truncated stream. Current proposal ownership accompanies that snapshot.
             app.state.session_event_stream._max_events = 1
-            session.proposal_diff = "Pending schedule changes"
+            session.pending_proposal = PendingProposal(schedule_yaml(), "Pending schedule changes", run_id)
             session.publish(
                 {
                     "type": "tool",

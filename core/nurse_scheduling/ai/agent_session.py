@@ -31,6 +31,7 @@ from typing import Literal, Protocol
 from fastapi import HTTPException
 
 from .agent import Agent
+from .candidate import PendingProposal
 from .config import AiSettings
 from .context import build_provider_messages, project_history, retained_entries
 from .history import ChatHistory
@@ -156,10 +157,7 @@ class AgentSession:
     version: int = 0
     snapshot: RunSnapshot | None = None
     agent: Agent = field(default_factory=Agent)
-    proposal_yaml: str = ""
-    proposal_diff: str = ""
-    # The run that produced the pending proposal, so its decision joins that run's history.
-    proposal_run_id: str | None = None
+    pending_proposal: PendingProposal | None = None
     event_stream: SessionEventStream | None = field(default=None, repr=False)
     _listeners: list[Callable[[AgentSessionEvent], None]] = field(default_factory=list, repr=False)
     _events_closed: bool = False
@@ -240,8 +238,7 @@ class AgentSession:
             list(self.transcript),
             self.schedule_yaml,
             self.version,
-            self.proposal_yaml,
-            self.proposal_diff,
+            self.pending_proposal,
             previously_dropped=self.dropped_history_messages,
             run_id=run_id,
         )
@@ -260,8 +257,7 @@ class AgentSession:
             return RunCompletion(False, False)
         self.transcript.extend(entries)
         if proposal is not None:
-            self.proposal_yaml, self.proposal_diff = proposal
-            self.proposal_run_id = snapshot.run_id
+            self.pending_proposal = PendingProposal(proposal[0], proposal[1], snapshot.run_id)
         return RunCompletion(True, proposal is not None)
 
     def abort_run(self, snapshot: RunSnapshot) -> bool:
@@ -301,54 +297,47 @@ class AgentSession:
         self.version += 1
         self.schedule_yaml = schedule_yaml
         self.revision = schedule_revision(schedule_yaml)
-        self._clear_proposal()
+        self.pending_proposal = None
 
-    def _clear_proposal(self) -> str | None:
-        """Drop the pending proposal and return the run that produced it."""
-        run_id = self.proposal_run_id
-        self.proposal_yaml = ""
-        self.proposal_diff = ""
-        self.proposal_run_id = None
-        return run_id
-
-    def require_proposal(self, base_sha256: str) -> None:
+    def require_proposal(self, base_sha256: str) -> PendingProposal:
         """Reject a missing or stale proposal before it can be applied."""
-        if not self.proposal_yaml:
+        if self.pending_proposal is None:
             raise HTTPException(status_code=404, detail="No proposal is waiting for approval.")
         if self.revision != base_sha256:
             self.version += 1
-            self._clear_proposal()
+            self.pending_proposal = None
             raise HTTPException(
                 status_code=409,
                 detail="The schedule changed after this proposal was created, so it was discarded.",
             )
+        return self.pending_proposal
 
     def adopt_proposal(self, base_sha256: str) -> tuple[str, str | None]:
         """Adopt a revalidated proposal and record the user's decision.
 
         Returns the approved YAML and the run that proposed it.
         """
-        self.require_proposal(base_sha256)
-        approved = self.proposal_yaml
-        run_id = self._clear_proposal()
+        proposal = self.require_proposal(base_sha256)
+        approved = proposal.schedule_yaml
+        self.pending_proposal = None
         self.version += 1
         self.schedule_yaml = approved
         self.revision = schedule_revision(approved)
         self.transcript.append(ProposalDecisionEntry("approved"))
-        return approved, run_id
+        return approved, proposal.run_id
 
     def discard_proposal(self, decision: ProposalDecision = "rejected") -> str | None:
         """Record a proposal decision once and invalidate results based on it.
 
         Returns the run that proposed the discarded proposal, if one was pending.
         """
-        had_proposal = bool(self.proposal_yaml)
-        run_id = self._clear_proposal()
-        if not had_proposal:
+        proposal = self.pending_proposal
+        if proposal is None:
             return None
+        self.pending_proposal = None
         self.version += 1
         self.transcript.append(ProposalDecisionEntry(decision))
-        return run_id
+        return proposal.run_id
 
     def _prepare_run(
         self,
@@ -376,7 +365,7 @@ class AgentSession:
             snapshot.schedule_yaml,
             question,
             attachments,
-            pending_proposal=bool(snapshot.proposal_yaml),
+            pending_proposal=snapshot.pending_proposal is not None,
             optimizer_result_available=artifact is not None,
         )
         return messages, dropped_history
@@ -401,8 +390,8 @@ class AgentSession:
                 messages,
                 WorkspaceLimits.from_settings(runtime.settings),
                 take_steering=None if background else lambda close: runtime.store.take_steering(self.id, close),
-                pending_proposal_yaml=snapshot.proposal_yaml,
-                pending_proposal_diff=snapshot.proposal_diff,
+                pending_proposal_yaml=snapshot.pending_proposal.schedule_yaml if snapshot.pending_proposal else "",
+                pending_proposal_diff=snapshot.pending_proposal.diff if snapshot.pending_proposal else "",
                 execute_optimizer=lambda current_yaml, arguments: execute_optimizer_tool(
                     runtime.session_optimizer, self.id, current_yaml, arguments
                 ),

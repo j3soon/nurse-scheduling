@@ -53,6 +53,7 @@ from nurse_scheduling.ai.app import (
     request_logger,
 )
 from nurse_scheduling.ai.app import create_app as create_ai_app
+from nurse_scheduling.ai.candidate import PendingProposal
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.context import (
     ABORTED_RESPONSE_HISTORY,
@@ -478,8 +479,7 @@ def test_compatibility_reader_recovers_current_session_proposal_after_a_replay_g
     client = AuthenticatedTestClient(app)
     session_id = create_session(client)
     session = app.state.session_store._sessions[session_id]
-    session.proposal_yaml = schedule_yaml()
-    session.proposal_diff = "Pending schedule changes"
+    session.pending_proposal = PendingProposal(schedule_yaml(), "Pending schedule changes", None)
 
     response = client.post(f"/sessions/{session_id}/messages", json={"message": "Explain"})
 
@@ -2573,7 +2573,7 @@ def test_discarding_a_stale_proposal_returns_its_share_of_the_budget() -> None:
 
     assert exc_info.value.status_code == 409
     assert store.retained_bytes == retained_with_proposal - 500
-    assert not store._sessions[session.id].proposal_yaml
+    assert store._sessions[session.id].pending_proposal is None
 
 
 def test_replacing_a_schedule_credits_the_proposal_it_drops() -> None:
@@ -2588,7 +2588,7 @@ def test_replacing_a_schedule_credits_the_proposal_it_drops() -> None:
     store.update_schedule(session.id, "browser-owner", "b" * 300)
 
     assert store._sessions[session.id].schedule_yaml == "b" * 300
-    assert not store._sessions[session.id].proposal_yaml
+    assert store._sessions[session.id].pending_proposal is None
     # The new schedule and the two one-character turn messages are all that remain.
     assert store.retained_bytes == 302
 

@@ -26,6 +26,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
+from .candidate import PendingProposal
 from .transcript import AgentMessage
 
 # Each run publishes exactly one of these, after its cleanup, whichever transport carries it.
@@ -39,8 +40,7 @@ class RunSnapshot:
     transcript: list[AgentMessage]
     schedule_yaml: str
     version: int
-    proposal_yaml: str
-    proposal_diff: str
+    pending_proposal: PendingProposal | None
     previously_dropped: int = 0
     run_id: str | None = None
 
