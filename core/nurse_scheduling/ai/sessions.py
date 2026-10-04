@@ -37,16 +37,12 @@ from .transcript import AgentMessage, ProposalDecision, UserMessage, entry_text
 
 __all__ = ["SessionStore", "schedule_revision"]
 
-SESSION_MEMORY_LIMIT_MESSAGE = "The AI service has reached its memory limit."
+SESSION_TEXT_LIMIT_MESSAGE = "The AI service has reached its session text retention limit."
 
 
-def _text_bytes(value: object) -> int:
-    """Return the UTF-8 size of one chat content value, ignoring inline image data."""
-    if isinstance(value, str):
-        return len(value.encode("utf-8"))
-    if isinstance(value, list):
-        return sum(len(part.get("text", "").encode("utf-8")) for part in value if part.get("type") == "text")
-    return 0
+def _text_bytes(value: str) -> int:
+    """Return the UTF-8 byte count of retained text, excluding inline image data."""
+    return len(value.encode("utf-8"))
 
 
 def _proposal_bytes(proposal: PendingProposal | None) -> int:
@@ -112,7 +108,7 @@ class SessionStore:
             HTTPException: With status 429 when the budget is exhausted.
         """
         if self._retained_bytes + additional_bytes > self._settings.max_session_bytes:
-            raise HTTPException(status_code=429, detail=SESSION_MEMORY_LIMIT_MESSAGE)
+            raise HTTPException(status_code=429, detail=SESSION_TEXT_LIMIT_MESSAGE)
 
     def _trim_history_to_budget(self, session: AgentSession, protected_messages: int) -> None:
         """Drop this session's oldest context until retained text fits the budget.

@@ -2463,6 +2463,7 @@ def test_session_store_bounds_retained_chat_text_across_sessions() -> None:
     with pytest.raises(HTTPException) as exc_info:
         store.create("browser-owner", "c" * 400)
     assert exc_info.value.status_code == 429
+    assert exc_info.value.detail == "The AI service has reached its session text retention limit."
 
     # Replacing a schedule with a smaller one returns its budget.
     store.update_schedule(first.id, "browser-owner", "a" * 100)
