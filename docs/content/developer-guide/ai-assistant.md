@@ -191,7 +191,7 @@ relative to `web-frontend/src/app/experimental-ai/`.
 | `AgentSession` / `RunOutcome`<br/>`agent_session.py` | Prepare context, execute the agent, await cleanup, save the run, queue optimizer reviews, and publish public session events. |
 | `RunOutput` / `RunEvents`<br/>`session_event_projection.py` | Project agent output and track partial responses. Attach run identity, batch text, and defer the terminal event until session finalization. |
 | `Agent` / `AgentState`<br/>`agent.py`<br/>`agent_types.py` | Hold in-run messages, streaming state, pending tool call IDs, and queued steering. |
-| `agent_loop`<br/>`agent_loop.py` | Repeat model responses and tool batches until the agent finishes. `AgentLoopConfig` groups steering, request projection, batch hooks, and tool budgets. |
+| `agent_loop`<br/>`agent_loop.py` | Repeat model responses and tool batches until the agent finishes. Record executed and refused calls through one result path. `AgentLoopConfig` groups steering, request projection, batch hooks, and tool budgets. |
 | Transcript and context<br/>`transcript.py`<br/>`context.py` | Define ordered entries and retention. Select prior model messages once with their character usage and dropped count, then build provider input. |
 | `WorkspaceTools` / `SandboxWorkspace`<br/>`workspace_tools.py`<br/>`workspace.py`<br/>`sandbox/` | Bind model tools to file operations, validate working YAML, and manage VM hydration, pause, resume, and teardown. |
 | Optimizer tool adapter<br/>`optimizer_tool.py` | Define and validate model arguments, dispatch job operations, and format `AgentToolResult` content. |

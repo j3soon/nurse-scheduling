@@ -22,8 +22,9 @@
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Coroutine, Sequence
 from contextlib import asynccontextmanager
+from typing import Any
 
 from .agent_types import (
     AgentEvent,
@@ -117,8 +118,7 @@ async def agent_loop(
             tool_rounds += 1
             for call in calls:
                 yield ToolExecutionStart(call.name, call.arguments, call.id)
-                conversation.append(ToolResultMessage(call.id, call.name, TRUNCATED_TOOL_CALL_RESULT, False))
-                yield ToolExecutionEnd(call.name, call.arguments, TRUNCATED_TOOL_CALL_RESULT, False, call.id)
+                yield _record_tool_result(conversation, call, AgentToolResult(TRUNCATED_TOOL_CALL_RESULT, False))
             # A refused batch still spends a round, so repeated truncation ends in an answer.
             final_answer_only = config.max_tool_rounds is not None and tool_rounds >= config.max_tool_rounds
             continue
@@ -142,8 +142,7 @@ async def agent_loop(
                     False,
                 )
                 yield ToolExecutionStart(call.name, call.arguments, call.id)
-                conversation.append(ToolResultMessage(call.id, call.name, outcome.text, outcome.ok))
-                yield ToolExecutionEnd(call.name, call.arguments, outcome.text, outcome.ok, call.id, outcome.details)
+                yield _record_tool_result(conversation, call, outcome)
             final_answer_only = True
             continue
 
@@ -162,11 +161,7 @@ async def agent_loop(
                 execution_seconds = time.perf_counter() - started
                 completed = zip(calls, outcomes, strict=True)
                 for call, outcome in completed:
-                    _log_tool_outcome(call.name, outcome)
-                    conversation.append(ToolResultMessage(call.id, call.name, outcome.text, outcome.ok, outcome.image))
-                    yield ToolExecutionEnd(
-                        call.name, call.arguments, outcome.text, outcome.ok, call.id, outcome.details
-                    )
+                    yield _record_tool_result(conversation, call, outcome)
             else:
                 execution_seconds = 0.0
                 for call in calls:
@@ -174,11 +169,7 @@ async def agent_loop(
                     started = time.perf_counter()
                     outcome = await execute(call.name, call.arguments)
                     execution_seconds += time.perf_counter() - started
-                    _log_tool_outcome(call.name, outcome)
-                    conversation.append(ToolResultMessage(call.id, call.name, outcome.text, outcome.ok, outcome.image))
-                    yield ToolExecutionEnd(
-                        call.name, call.arguments, outcome.text, outcome.ok, call.id, outcome.details
-                    )
+                    yield _record_tool_result(conversation, call, outcome)
             if config.observe_tool_batch is not None:
                 config.observe_tool_batch(AgentToolBatchMetrics(len(calls), parallel, execution_seconds))
         if config.take_steering is not None:
@@ -187,9 +178,16 @@ async def agent_loop(
                 yield AgentSteering(message_id, text)
 
 
+def _record_tool_result(conversation: list[AgentMessage], call: ToolCall, outcome: AgentToolResult) -> ToolExecutionEnd:
+    """Record one finalized call for model replay and its public completion event."""
+    _log_tool_outcome(call.name, outcome)
+    conversation.append(ToolResultMessage(call.id, call.name, outcome.text, outcome.ok, outcome.image))
+    return ToolExecutionEnd(call.name, call.arguments, outcome.text, outcome.ok, call.id, outcome.details)
+
+
 async def _execute_parallel_tool_calls(
     calls: Sequence[ToolCall],
-    execute: Callable[[str, str], Awaitable[AgentToolResult]],
+    execute: Callable[[str, str], Coroutine[Any, Any, AgentToolResult]],
 ) -> list[AgentToolResult]:
     tasks = [asyncio.create_task(execute(call.name, call.arguments)) for call in calls]
     try:
