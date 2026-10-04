@@ -44,7 +44,7 @@ from nurse_scheduling.ai.agent_types import (
     ToolExecutionStart,
 )
 from nurse_scheduling.ai.config import AiSettings
-from nurse_scheduling.ai.context import build_provider_messages
+from nurse_scheduling.ai.context import build_provider_messages, project_history
 from nurse_scheduling.ai.provider import (
     ChatMessage,
     ChatStreamEvent,
@@ -241,7 +241,7 @@ async def run_case(
         for turn_index, question in enumerate(case.user_turns):
             attachments = case_attachments if turn_index == 0 else ()
             messages = build_provider_messages(
-                history,
+                project_history(history),
                 text,
                 question,
                 attachments,

@@ -42,7 +42,7 @@ from .agent_types import (
     ToolExecutionStart,
 )
 from .config import AiSettings
-from .context import build_provider_messages, history_context_chars, projected_history, recent_history, retained_entries
+from .context import build_provider_messages, project_history, retained_entries
 from .history import ChatHistory
 from .lifecycle import AgentRun, RunSnapshot, SessionRuns
 from .optimizer import OptimizerArtifact, SessionOptimizer
@@ -484,27 +484,24 @@ class AgentSession:
         events: _RunEvents,
     ) -> tuple[list[ChatMessage], int]:
         """Project the reserved transcript and report its context usage."""
-        retained_history = recent_history(snapshot.transcript, settings.max_history_chars)
+        history = project_history(snapshot.transcript, settings.max_history_chars)
         events.emit(
             {
                 "type": "context_usage",
-                "used_chars": history_context_chars(snapshot.transcript, settings.max_history_chars),
+                "used_chars": history.used_chars,
                 "max_chars": settings.max_history_chars,
             },
         )
-        dropped_history = (
-            snapshot.previously_dropped + len(projected_history(snapshot.transcript)) - len(retained_history)
-        )
+        dropped_history = snapshot.previously_dropped + history.dropped_messages
         if dropped_history:
             events.emit({"type": "history_trimmed", "dropped": dropped_history})
         messages = build_provider_messages(
-            snapshot.transcript,
+            history,
             snapshot.schedule_yaml,
             question,
             attachments,
             pending_proposal=bool(snapshot.proposal_yaml),
             optimizer_result_available=artifact is not None,
-            max_history_chars=settings.max_history_chars,
         )
         return messages, dropped_history
 

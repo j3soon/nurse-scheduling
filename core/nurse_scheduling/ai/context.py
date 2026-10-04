@@ -21,6 +21,7 @@
 
 import json
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from .config import DEFAULT_MAX_HISTORY_CHARS
 from .optimizer import WORKSPACE_OPTIMIZER_RESULT
@@ -114,30 +115,40 @@ def projected_history(transcript: Sequence[AgentMessage]) -> list[ChatMessage]:
     return [message for _prompt, message in _projected_messages(transcript)]
 
 
-def history_context_chars(transcript: Sequence[AgentMessage], max_chars: int) -> int:
-    """Measure the serialized history selected for the next run's context budget."""
-    return sum(len(json.dumps(message, ensure_ascii=False)) for message in recent_history(transcript, max_chars))
+@dataclass(frozen=True)
+class HistoryContext:
+    """Selected prior-run messages and their serialized JSON character budget."""
+
+    messages: list[ChatMessage]
+    used_chars: int
+    dropped_messages: int
 
 
-def recent_history(transcript: Sequence[AgentMessage], max_chars: int) -> list[ChatMessage]:
+def project_history(transcript: Sequence[AgentMessage], max_chars: int = DEFAULT_MAX_HISTORY_CHARS) -> HistoryContext:
     """Project the newest transcript messages that fit the prompt budget, oldest first.
 
     Retention bounds how much of a conversation the session holds, not how much a
     provider can accept. A long session would otherwise grow every later prompt past
     the model context window and fail the request outright.
     """
-    kept: list[tuple[bool, ChatMessage]] = []
+    projected = _projected_messages(transcript)
+    kept: list[tuple[bool, ChatMessage, int]] = []
     remaining = max_chars
-    for prompt, message in reversed(_projected_messages(transcript)):
-        remaining -= len(json.dumps(message, ensure_ascii=False))
+    for prompt, message in reversed(projected):
+        size = len(json.dumps(message, ensure_ascii=False))
+        remaining -= size
         if remaining < 0:
             break
-        kept.append((prompt, message))
+        kept.append((prompt, message, size))
     # Start at a prompt. An answer or proposal decision whose prompt did not fit
     # refers to an exchange the model can no longer see.
     while kept and not kept[-1][0]:
         kept.pop()
-    return [message for _prompt, message in reversed(kept)]
+    return HistoryContext(
+        messages=[message for _prompt, message, _size in reversed(kept)],
+        used_chars=sum(size for _prompt, _message, size in kept),
+        dropped_messages=len(projected) - len(kept),
+    )
 
 
 def prepare_provider_request(prefix: Sequence[ChatMessage], entries: Sequence[AgentMessage]) -> list[ChatMessage]:
@@ -175,7 +186,7 @@ def prepare_provider_request(prefix: Sequence[ChatMessage], entries: Sequence[Ag
 
 
 def build_provider_messages(
-    transcript: Sequence[AgentMessage],
+    history: HistoryContext,
     schedule_yaml: str,
     question: str,
     attachments: Sequence[SandboxAttachment] = (),
@@ -183,9 +194,8 @@ def build_provider_messages(
     system_prompt: str = SANDBOX_SYSTEM_PROMPT,
     pending_proposal: bool = False,
     optimizer_result_available: bool = False,
-    max_history_chars: int = DEFAULT_MAX_HISTORY_CHARS,
 ) -> list[ChatMessage]:
-    """Build a provider prompt that keeps schedule data separate from instructions."""
+    """Combine selected history and workspace notes, keeping data separate from instructions."""
     system_content = f"{system_prompt}\n\nCurrent schedule summary:\n{describe_schedule(schedule_yaml)}"
     if pending_proposal:
         system_content += (
@@ -198,6 +208,6 @@ def build_provider_messages(
         system_content += f"\nOptimization result: {WORKSPACE_OPTIMIZER_RESULT}."
     return [
         ChatMessage(role="system", content=system_content),
-        *recent_history(transcript, max_history_chars),
+        *history.messages,
         ChatMessage(role="user", content=question),
     ]

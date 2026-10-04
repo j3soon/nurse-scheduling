@@ -60,6 +60,7 @@ from nurse_scheduling.ai.context import (
     PROPOSAL_INVALID_HISTORY,
     PROPOSAL_REJECTED_HISTORY,
     build_provider_messages,
+    project_history,
 )
 from nurse_scheduling.ai.history import ChatHistory
 from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL, OptimizerArtifact, OptimizerJobPayload
@@ -1568,7 +1569,8 @@ def test_history_prompt_budget_default(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_a_long_history_is_trimmed_to_the_newest_messages_that_fit_the_prompt() -> None:
     history = [UserMessage(f"{index:03d} {'x' * 200}") for index in range(50)]
 
-    messages = build_provider_messages(history, "description: schedule\n", "Latest question.", max_history_chars=1000)
+    context = project_history(history, max_chars=1000)
+    messages = build_provider_messages(context, "description: schedule\n", "Latest question.")
 
     assert messages[0]["role"] == "system"
     assert messages[-1]["content"] == "Latest question."
@@ -1577,13 +1579,15 @@ def test_a_long_history_is_trimmed_to_the_newest_messages_that_fit_the_prompt() 
     # The newest messages survive so the model keeps the most relevant context.
     assert retained[-1]["content"] == history[-1].text
     assert retained[0]["content"] == history[len(history) - len(retained)].text
-    assert sum(len(json.dumps(message, ensure_ascii=False)) for message in retained) <= 1000
+    assert context.used_chars == sum(len(json.dumps(message, ensure_ascii=False)) for message in retained)
+    assert context.used_chars <= 1000
+    assert context.dropped_messages == len(history) - len(retained)
 
 
 def test_a_short_history_reaches_the_prompt_unchanged() -> None:
     history = exchange("Who works Monday?", "Alice.")
 
-    messages = build_provider_messages(history, "description: schedule\n", "And Tuesday?")
+    messages = build_provider_messages(project_history(history), "description: schedule\n", "And Tuesday?")
 
     assert messages[1:-1] == [
         ChatMessage(role="user", content="Who works Monday?"),
@@ -1601,7 +1605,7 @@ def test_context_merges_one_exchange_into_the_answer_the_user_saw() -> None:
         AssistantMessage("", "aborted"),
     ]
 
-    messages = build_provider_messages(history, "description: schedule\n", "Try again.")
+    messages = build_provider_messages(project_history(history), "description: schedule\n", "Try again.")
 
     assert messages[1:-1] == [
         ChatMessage(role="user", content="Rename P1."),
@@ -1618,7 +1622,7 @@ def test_context_projects_typed_entries_without_replaying_aborted_output() -> No
         ProposalDecisionEntry("rejected"),
     ]
 
-    messages = build_provider_messages(history, "description: schedule\n", "Rename P2 instead.")
+    messages = build_provider_messages(project_history(history), "description: schedule\n", "Rename P2 instead.")
 
     assert messages[1:-1] == [
         ChatMessage(role="user", content="Rename P1."),
@@ -2489,12 +2493,15 @@ def test_prompt_budget_projection_starts_at_a_prompt() -> None:
         AssistantMessage("Next answer."),
     ]
 
-    messages = build_provider_messages(history, "description: schedule\n", "Latest.", max_history_chars=300)
+    context = project_history(history, max_chars=300)
+    messages = build_provider_messages(context, "description: schedule\n", "Latest.")
 
     assert messages[1:-1] == [
         ChatMessage(role="user", content="Next question."),
         ChatMessage(role="assistant", content="Next answer."),
     ]
+    assert context.used_chars == sum(len(json.dumps(message, ensure_ascii=False)) for message in messages[1:-1])
+    assert context.dropped_messages == 3
 
 
 @pytest.mark.parametrize("message_cap", [1, 3], ids=["below-exchange-size", "odd-overflow"])

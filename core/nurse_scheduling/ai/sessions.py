@@ -29,7 +29,7 @@ from fastapi import HTTPException
 
 from .agent_session import AgentSession, RunCompletion, schedule_revision
 from .config import AiSettings
-from .context import history_context_chars, projected_history, recent_history
+from .context import project_history, projected_history
 from .lifecycle import RunSnapshot
 from .session_event_stream import SessionEventStream
 from .transcript import AgentMessage, ProposalDecision, UserMessage, entry_text
@@ -143,14 +143,6 @@ class SessionStore:
         session.dropped_history_messages += len(projected_history(removed))
         return removed
 
-    def _effective_trimmed_count(self, session: AgentSession) -> int:
-        """Count retained-history and prompt-budget omissions visible to a client, in messages."""
-        return (
-            session.dropped_history_messages
-            + len(projected_history(session.transcript))
-            - len(recent_history(session.transcript, self._settings.max_history_chars))
-        )
-
     def _cap_history(self, session: AgentSession) -> None:
         """Limit retained history to the configured message count, one whole exchange at a time."""
         limit = max(2, self._settings.max_history_messages)
@@ -227,10 +219,12 @@ class SessionStore:
         if not completion.run_saved:
             return completion
         self._trim_history_to_budget(session, min(len(entries), len(session.transcript)))
+        history = project_history(session.transcript, self._settings.max_history_chars)
         return replace(
             completion,
-            history_trimmed_count=self._effective_trimmed_count(session),
-            context_used_chars=history_context_chars(session.transcript, self._settings.max_history_chars),
+            # Count retained-history and prompt-budget omissions together, in messages.
+            history_trimmed_count=session.dropped_history_messages + history.dropped_messages,
+            context_used_chars=history.used_chars,
         )
 
     def queue_steering(

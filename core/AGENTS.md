@@ -91,6 +91,8 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   `transcript.py`. Chat history stores them all. Put the session retention
   projection and the model-facing projection and wording in `context.py`, so
   retention, model context, and audit remain separate decisions.
+  Reuse one selected history projection for provider input, context usage, and
+  dropped-message reporting. Recompute it after committed history changes.
 - Keep model argument parsing and tool result formatting in `optimizer_tool.py`.
   `SessionOptimizer` returns job data or domain errors. Keep submission ownership,
   monitoring, and cleanup independent of model-facing tool contracts.
