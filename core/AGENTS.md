@@ -110,12 +110,12 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   start separate process groups and exercise a different cleanup path.
 - Sandbox allocation is lazy. Tests that verify attachment hydration must make
   the agent call a tool, since a text-only turn never creates a sandbox.
-- Keep canonical schedule invariants in `NurseSchedulingData`. Implement
+- Keep backend schedule format invariants in `NurseSchedulingData`. Implement
   consumer-specific subsets through explicit Pydantic entry points rather than
   input-controlled or global validation flags.
 - The assistant is reachable only from the web frontend, so its schedule tools
   target the frontend subset alone. Validate through
-  `ai/validation.py`, and do not expose the canonical backend flavor, which
+  `ai/validation.py`, and do not expose the full backend schedule format, which
   accepts shapes the editor cannot represent.
 - Frontend validation checks normalized frontend state, not raw import
   compatibility. Do not broaden it merely because an import path can convert

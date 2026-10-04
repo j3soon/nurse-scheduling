@@ -96,7 +96,7 @@ schedule to `/workspace/schedule.yaml` and searchable schema documentation to
 prefixed with their upload IDs. The backend then runs every command for that
 user message in the same sandbox,
 reads the candidate, and destroys the sandbox. A later message always starts a
-new sandbox. Only conversation history, the canonical schedule revision, and a
+new sandbox. Only conversation history, the current schedule revision, and a
 pending validated proposal remain in application state.
 
 When a turn fails, its provisional activity remains visible but is not added to
@@ -316,7 +316,7 @@ This follows the minimalism philosophy of the [Pi coding agent](https://pi.dev/)
 prefer a small set of general file and shell capabilities with discoverable
 documentation over a growing set of domain-specific tools. Nurse Scheduling
 retains stricter service boundaries than a local coding agent. The workspace is
-disposable, tool output is bounded, secrets and canonical storage stay outside
+disposable, tool output is bounded, secrets and the stored schedule stay outside
 it, and a trusted application validates every possible schedule change and the
 final candidate.
 
@@ -351,17 +351,17 @@ elsewhere in the app, which also drops any pending proposal.
 
 Approval and rejection add a backend-only user-action note to model history.
 The rejection note says that every schedule change from the proposed turn was
-discarded and that the next turn starts from a fresh copy of the canonical
+discarded and that the next turn starts from a fresh copy of the current
 schedule. It never includes the discarded YAML.
 
 A run that fails, is cancelled, or is abandoned does not commit its user
 message, assistant response, or candidate proposal. Its provisional activity
 may remain visible in the browser, but the next turn starts from the last
-successfully committed history and canonical schedule. A successful run that
+successfully committed history and current schedule. A successful run that
 only answers a question never creates a proposal.
 
 If the final candidate fails trusted validation, the UI reports that every
-schedule change from the turn was discarded and that the canonical schedule
+schedule change from the turn was discarded and that the current schedule
 was not changed. The failed turn does not add a history note.
 
 After a Bash command changes the candidate, the trusted application returns an
@@ -695,10 +695,10 @@ curl -H "Authorization: Bearer ${AI_AUTH_TOKEN}" \
   backend does not require changing model logic.
 - The trusted application creates E2B sandboxes with outbound Internet access
   disabled. It does not pass the E2B key, model provider key, database
-  credentials, host paths, or canonical storage into the sandbox.
+  credentials, host paths, or the stored schedule into the sandbox.
 - Treat shell commands and every sandbox file as untrusted. A sandbox can only
   return a candidate schedule. Trusted validation, proposal storage, revision
-  checks, user approval, and canonical updates remain outside it.
+  checks, user approval, and updates to the current schedule remain outside it.
 - Use `AI_COOKIE_SECURE=0` only for local HTTP. Set it to `1` when the public
   browser route uses HTTPS, even if NGINX uses internal HTTP to the container.
   Secure deployments set the owner cookie to `SameSite=None`; the CORS origin
