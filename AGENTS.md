@@ -17,6 +17,9 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   `python`, `pytest`, and `ruff` directly. In the cuOpt image, `python3` is the
   base 3.10 interpreter without project packages, so use `python`.
 - Keep edits scoped to the requested module. Preserve existing patterns.
+- When resuming another agent's session, verify compatibility claims and pending
+  check results against current code, configuration, and saved outputs. Treat
+  the handoff summary as a lead to investigate.
 - Run affected tests and lint checks before finishing.
 - Avoid trailing spaces. End files with a newline.
 - Store screenshots and other disposable review output in the Git-ignored
@@ -111,8 +114,10 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   `git log -1 --format=fuller`. Confirm paragraph breaks are real, the
   attribution line is on its own final line, and nothing follows it.
 - When folding a validated code change into an earlier commit, check that the
-  final rewritten tree matches the tested candidate. Preserve unrelated working
-  changes and remote refs unless their modification is explicitly authorized.
+  final rewritten tree matches the tested candidate. Also inspect the amended
+  commit against its parent to confirm that abandoned configuration changes are
+  absent. Preserve unrelated working changes and remote refs unless their
+  modification is explicitly authorized.
 - Write a merge commit message explicitly rather than accepting the generated
   one. Describe what the merge takes and how conflicts were resolved.
 

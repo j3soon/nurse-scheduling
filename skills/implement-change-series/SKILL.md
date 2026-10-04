@@ -72,6 +72,10 @@ commit that series includes these minor local rewrites. Keep independent behavio
 changes as separate commits. Require explicit rewrite authorization for published
 history or commits outside the active series.
 
+When the user requests an amendment, fold the validated correction into the named
+commit and update its description. Replay later commits in their original order.
+Do not leave the correction as a separate follow-up commit.
+
 For an authorized local history rewrite:
 
 1. Immediately before rewriting, enumerate the complete commit path from the
@@ -82,6 +86,9 @@ For an authorized local history rewrite:
    original order. If the correction was authored against the later tree,
    resolve it at the target to the behavior appropriate at that point and let
    descendants reapply their own changes.
+   Inspect the target's net diff against its parent. Confirm that discarded
+   settings or other abandoned changes are absent. Final tree equality alone
+   does not show that each change belongs to the intended commit.
 4. Once the recovery reference contains the intended final content, compare the
    rewritten final tree with it and require no content difference. If the
    rewrite intentionally changes content, inspect and validate that difference.

@@ -266,6 +266,11 @@ and environment snapshots in ignored repository-root `artifacts/`. Preserve
 credentials outside artifacts. Follow existing prompt provenance-header stripping
 and evidence-fingerprint rules.
 
+Before refreshing a receipt, compare saved run metadata with the current clause,
+testcase, fixture, and control inputs. Recomputing a receipt fingerprint from
+changed files does not validate old results. Rerun mismatched comparisons and
+retain the original reports.
+
 When committing is authorized, combine the fix, representative case, tests, and
 minimal evidence in one self-contained commit. Fold minor corrections into that
 commit. Follow the repository's Git and plain-English rules. Name the relevant

@@ -80,6 +80,9 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
 ## Experimental AI
 - Use provider metadata for model limits instead of duplicate environment
   settings. Verify the configured endpoint before adding a provider workaround.
+  Check metadata discovery and streamed usage separately. For a protected route,
+  verify that missing and invalid credentials are rejected. Keep reported usage
+  visible when the provider omits its model limit.
 - Keep attachment limits server-configured and report them through
   `/capabilities`. Attachments and the optimizer tool are always offered.
   Keep schedules and attachments separate from model instructions.
