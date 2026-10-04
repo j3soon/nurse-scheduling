@@ -1,0 +1,19 @@
+# This file is mostly AI generated.
+name: Lint Terminology
+
+on:
+  - push
+  - pull_request
+
+permissions:
+  contents: read
+
+jobs:
+  lint-terminology:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Reject vague jargon
+        run: ./scripts/check_terminology.sh

@@ -16,7 +16,7 @@
   an anonymized real-scenario example and matching screenshot after the
   introduction.
 - Use `core/tests/testcases/real/large-ward-with-87-people-2025-11.yaml` as the
-  canonical real-scenario example unless another committed fixture better fits
+  committed real-scenario example unless another committed fixture better fits
   the page.
 - Keep Quick Start screenshots separate from app-page screenshots so a
   deep-dive update cannot change the minimal walkthrough.
@@ -37,7 +37,7 @@
   solver linearization details.
 - Keep tightly coupled schema and behavior on one page unless each topic has a
   clear independent purpose.
-- Keep `docs/PRIVACY.md` as a symlink to the canonical root `PRIVACY.md`.
+- Keep `docs/PRIVACY.md` as a symlink to the root `PRIVACY.md`.
 
 ### Wording and terminology
 
@@ -119,7 +119,7 @@
 - For walkthroughs that claim a GUI can reproduce a bundled schedule, start
   the frontend with `cd web-frontend && bun run dev`, follow the steps in a
   Playwright browser, and download the resulting YAML from Save and Load.
-  Compare its scheduling values with the canonical fixture using
+  Compare its scheduling values with the committed fixture using
   `cd web-frontend && bun scripts/compare-schedule-yaml.mjs ../core/tests/testcases/real/large-ward-with-87-people-2025-11.yaml ../artifacts/exported-schedule.yaml`.
   Keep browser downloads and review captures under the ignored `artifacts/`.
 - Do not load JavaScript from `polyfill.io`. Prefer a checked-in asset or the

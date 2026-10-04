@@ -65,6 +65,7 @@ if ((${#test_paths[@]} > 0)); then
 fi
 
 if [[ "$affected_list" == true ]]; then
+  echo "lint: scripts/check_terminology.sh"
   echo "lint: ruff format --check nurse_scheduling tests"
   echo "lint: ruff check nurse_scheduling tests"
   if [[ "$run_full_suite" == true ]]; then
@@ -77,6 +78,7 @@ if [[ "$affected_list" == true ]]; then
   exit 0
 fi
 
+"$SCRIPT_DIR/check_terminology.sh"
 cd "$CORE_DIR"
 ruff format --check nurse_scheduling tests
 ruff check nurse_scheduling tests

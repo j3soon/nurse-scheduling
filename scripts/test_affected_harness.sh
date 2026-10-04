@@ -28,7 +28,7 @@ write_fixture() {
 mkdir -p -- "$fixture_root/scripts"
 cp -- "$script_dir/affected_test_common.sh" "$script_dir/test_core_affected.sh" \
   "$script_dir/test_frontend_affected.sh" "$script_dir/test_frontend_e2e_affected.sh" \
-  "$fixture_root/scripts/"
+  "$script_dir/check_terminology.sh" "$fixture_root/scripts/"
 for path in \
   core/nurse_scheduling/ai/pi/read.py \
   core/nurse_scheduling/ai/prompts/steps/role-and-truthfulness.md \

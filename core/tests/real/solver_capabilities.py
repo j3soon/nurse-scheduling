@@ -735,7 +735,7 @@ def _run_round_subprocess(name: str, solver: str, config: ProbeConfig) -> RoundR
 
 def probe_solver(solver: str, config: ProbeConfig) -> SolverReport:
     """Run the advertised capability rounds for one solver in fixed order."""
-    selector = normalize_solver_selector(solver).canonical
+    selector = normalize_solver_selector(solver).normalized
     capabilities = get_solver_capabilities(selector)
     if capabilities is None:
         raise ValueError(f"No capability configuration for solver: {selector}")

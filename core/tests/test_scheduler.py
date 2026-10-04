@@ -60,7 +60,7 @@ def test_scheduler_rejects_normalized_selector_without_backend(monkeypatch):
         backend="unsupported",
         api=None,
         engine="unsupported",
-        canonical="unsupported",
+        normalized="unsupported",
     )
     monkeypatch.setattr(scheduler, "normalize_solver_selector", lambda _solver: unsupported)
 
@@ -69,7 +69,7 @@ def test_scheduler_rejects_normalized_selector_without_backend(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("raw_selector", "canonical", "api", "engine"),
+    ("raw_selector", "normalized", "api", "engine"),
     [
         ("ortools/cp-sat", "ortools/cp-sat", "cp-sat", "cp-sat"),
         ("ortools/mpsolver/cbc", "ortools/mpsolver/cbc", "mpsolver", "cbc"),
@@ -86,10 +86,10 @@ def test_scheduler_rejects_normalized_selector_without_backend(monkeypatch):
         ("pulp/scip", "pulp/scip", None, "scip"),
     ],
 )
-def test_normalize_solver_selector(raw_selector, canonical, api, engine):
+def test_normalize_solver_selector(raw_selector, normalized, api, engine):
     selector = scheduler.normalize_solver_selector(raw_selector)
 
-    assert selector.canonical == canonical
+    assert selector.normalized == normalized
     assert selector.api == api
     assert selector.engine == engine
 

@@ -87,7 +87,7 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   coding-agent subscription. Committing that address publishes it. If no
   identity is configured, ask the user.
 - Agent-created commits need a descriptive body ending with a `by <Harness> (<Model>)` line using the actual harness and model names, e.g. `by Codex (gpt-5.6-sol)` or `by Claude Code (Opus 5)`.
-- For Codex attribution, use the full canonical lowercase model slug, such as `gpt-5.6-sol`. Never substitute a shortened family name such as `GPT-5`.
+- For Codex attribution, use the full lowercase model slug, such as `gpt-5.6-sol`. Never substitute a shortened family name such as `GPT-5`.
 - Keep commit bodies short, at most two brief paragraphs covering why the change was needed and what it does. Document mechanism, investigation notes, and third-party behavior in Markdown instead.
 - Make commit descriptions understandable without the chat history. Name the
   previous scripts or behavior when comparing implementations. Avoid phrases
@@ -130,7 +130,9 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   and check that the problem, action, and result are clear.
 - Name the schedule's role or format directly, such as "current schedule,"
   "original schedule," "validated schedule," or "backend schedule format."
-  Avoid "canonical schedule" when the reader must guess which property it means.
+  Name the specific property of other values too, such as "normalized
+  selector" or "compiled selector." `scripts/check_terminology.sh` rejects
+  vague jargon that hides it, and CI runs the check.
 - When reporting validation, lead with what passed. Separate correctness checks
   from performance measurements, and limit each caveat to the claim it affects.
   If test input changed, say which checks were repeated and which measurements

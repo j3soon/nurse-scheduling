@@ -1,4 +1,4 @@
-"""Check canonical staffing and succession audits against fixed optimizer assignments."""
+"""Check compiled staffing and succession audits against fixed optimizer assignments."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #

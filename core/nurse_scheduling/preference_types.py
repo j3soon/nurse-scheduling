@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 def staffing_expression(shift_at, n_people, compiled_preference, day, group):
-    """Build one staffing equation from canonical eligibility and coefficients."""
+    """Build one staffing equation from compiled eligibility and coefficients."""
     coefficients = dict(compiled_preference.coefficients)
     people = compiled_preference.qualified_people
     if people is None:

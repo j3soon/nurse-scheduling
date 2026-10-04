@@ -127,7 +127,7 @@ def test_reader_does_not_count_lower_weight_markers_as_strong_misses(audit):
     assert [(row["total"], row["unmet"]) for row in result["summary"]] == [(4, 0), (1, 1), (3, 0)]
 
 
-def test_compiled_context_uses_canonical_groups_and_reserved_selectors():
+def test_compiled_context_uses_compiled_groups_and_reserved_selectors():
     source = (
         FIXTURE.read_text()
         .replace("groups: []\nshiftTypes:", "groups: [{id: Team, members: [Kai]}]\nshiftTypes:")

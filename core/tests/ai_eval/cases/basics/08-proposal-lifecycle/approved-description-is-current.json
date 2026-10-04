@@ -32,7 +32,7 @@
     "Approved training clinic"
   ],
   "answer_matches": [
-    "\\b(?:current|canonical|now adopted)\\b"
+    "\\b(?:current|now adopted)\\b"
   ],
   "note": "This testcase is mostly AI generated. The frontend approves between turns. The agent must identify the adopted value as current and must not make a new proposal.",
   "tags": [

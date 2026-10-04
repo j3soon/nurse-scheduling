@@ -1,4 +1,4 @@
-"""Canonical request selectors for sandbox optimizer-result inspection."""
+"""Compiled request selectors for sandbox optimizer-result inspection."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 
 def build_result_context(schedule_yaml: str, *, workbook: bytes | None = None) -> dict[str, Any]:
-    """Project canonical selectors into a portable result-reader context."""
+    """Project compiled selectors into a portable result-reader context."""
     data = load_data(schedule_yaml.encode())
     context = _project_context(data, schedule_yaml)
     if workbook is not None:

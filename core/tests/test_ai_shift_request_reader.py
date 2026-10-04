@@ -1,4 +1,4 @@
-"""Canonical selectors and freshness checks for current request inspection."""
+"""Compiled selectors and freshness checks for current request inspection."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #

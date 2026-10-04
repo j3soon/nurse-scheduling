@@ -253,9 +253,7 @@ def load_context(source_sha256: str, path: Path | None = None) -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Audit an optimizer workbook using canonical compiled request selectors."
-    )
+    parser = argparse.ArgumentParser(description="Audit an optimizer workbook using compiled request selectors.")
     parser.add_argument("workbook", nargs="?", type=Path, default=Path(RESULT))
     parser.add_argument("--context", type=Path)
     parser.add_argument("--source-sha256", required=True, help="source_sha256 from the optimizer completion")

@@ -53,11 +53,11 @@ describe('Home', () => {
     vi.unstubAllGlobals();
   });
 
-  it('bundles the canonical 87-person testcase without modification', () => {
+  it('bundles the committed 87-person testcase without modification', () => {
     const bundled = readFileSync(resolve('public/examples/large-ward-with-87-people-2025-11.yaml'));
-    const canonical = readFileSync(resolve('../core/tests/testcases/real/large-ward-with-87-people-2025-11.yaml'));
+    const committed = readFileSync(resolve('../core/tests/testcases/real/large-ward-with-87-people-2025-11.yaml'));
 
-    expect(bundled).toEqual(canonical);
+    expect(bundled).toEqual(committed);
   });
 
   it('keeps the primary new schedule action empty', async () => {

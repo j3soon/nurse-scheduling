@@ -1,4 +1,4 @@
-"""Replay a real assignment and verify its canonical objective score."""
+"""Replay a real assignment and verify its exact objective score."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #

@@ -21,8 +21,8 @@
     "\\bapprov(?:e|ed|al|ing)\\b"
   ],
   "answer_not_matches": [
-    "\\byes\\b[^.!?\\n]{0,100}\\b(?:saved|canonical|current|already)\\b",
-    "\\b(?:saved|canonical|current) (?:schedule|roster)(?:'?s description)? (?:has(?: been)?(?: now| already)?|was(?: already)?|is (?:now|already)) (?:changed|updated|set)\\b"
+    "\\byes\\b[^.!?\\n]{0,100}\\b(?:saved|current|already)\\b",
+    "\\b(?:saved|current) (?:schedule|roster)(?:'?s description)? (?:has(?: been)?(?: now| already)?|was(?: already)?|is (?:now|already)) (?:changed|updated|set)\\b"
   ],
   "note": "This testcase is mostly AI generated. A workspace edit is a proposal awaiting user approval. The answer patterns check an explicit denial and approval requirement, not every possible misleading paraphrase.",
   "tags": [

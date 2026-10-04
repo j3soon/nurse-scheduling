@@ -195,14 +195,14 @@ It is not part of ordinary prompt comparisons or CI.
 `optimizer-start-preserves-ward` checks the submitted YAML retains every original
 constraint and weight. `optimizer-edit-before-start` checks requested changes
 reach that snapshot before startup, using the `optimizer-start-source` oracle.
-Result sandboxes include a canonical compiled request context and `/reference/tools/inspect_optimizer_result.py`.
+Result sandboxes include a compiled request context and `/reference/tools/inspect_optimizer_result.py`.
 Use its repeatable `--person` and `--date` filters to query assigned shifts by
 exact person ID and ISO date. The reader separates export annotations from
 assignments, verifies the completion source hash, and reports truncated output.
 The same helpers are available in both arms of prompt comparisons. Their scripts, catalog, and context projector
 are fingerprinted so changes cannot silently reuse a result-reading receipt.
 Completions include bounded `request_audit` counts computed by the production reader.
-When space permits, `policy` adds canonical staffing shortfalls and signed
+When space permits, `policy` adds compiled staffing shortfalls and signed
 succession-window counts, including history. Its scope excludes other preference
 types. The reader also exposes these counts when the compiled context's source
 and workbook hashes match. `result-policy-misses`, `result-policy-clean`, and

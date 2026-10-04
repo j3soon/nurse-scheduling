@@ -307,15 +307,15 @@
     "evidence": [
       {
         "case": "proposal-is-not-saved-yet",
-        "input_sha256": "691c26a7acd75207d9de4f5aec8c33b8b1334fb1e6b7704b6686f51970083cdf",
-        "before": "0/3",
+        "input_sha256": "bb8378ee766bce666f56d3ff846cf7c3169978844825fc6e693a0b0768438ae4",
+        "before": "1/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
         "controls": [
           {
             "case": "approved-description-is-current",
-            "input_sha256": "137ae1933aa87f6a918862c0eaea0d908e3afdc0740f967fac8a95e8a4709454",
+            "input_sha256": "3b3c57d25f5949be87f886397cff1e63f9e23e949101ef213daad1541a06ebe0",
             "before": "3/3",
             "after": "3/3"
           }
@@ -417,30 +417,27 @@
     "sha256": "4f5d2848c7d54d73b30f549da312c21b8344adc5a1ad5c379503344102a8eb85",
     "evidence": [
       {
-        "case": "result-single-tier-summary",
-        "before": "3/3",
+        "case": "result-stale-summary-control",
+        "input_sha256": "1f2b90a90045b160e17960d255fbf16df1086cb7055396a6728c66212c85ffb3",
+        "before": "0/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
-        "cost_metric": "total-tokens",
-        "cost_ratio": 0.2756287543732259,
-        "cost_target": 0.8,
         "controls": [
           {
             "case": "result-grouped-cross-month",
+            "input_sha256": "9bf1c383273562b723d79e34c8d09d743176ed3b7efdc437f5b1f21432d6afc2",
             "before": "3/3",
-            "after": "3/3",
-            "input_sha256": "d78d041b0afd3744ddc4b9792c2f1a2519fd13a73a48446d0c1bdb9a60ea302b"
+            "after": "3/3"
           },
           {
-            "case": "result-stale-summary-control",
-            "before": "0/3",
-            "after": "3/3",
-            "input_sha256": "f135e39ecaa30673242092fabda2739345f3677a0a0710e84354a152f725d2fe"
+            "case": "result-single-tier-summary",
+            "input_sha256": "bcbf6ffbe36985c573623f310ac5c45b3b9dff57955cc340da16aedd6e419343",
+            "before": "3/3",
+            "after": "3/3"
           }
         ],
-        "note": "Adjacent prefix comparison after consolidating XLSX inspection. Single-tier counts provide the cost witness and stale-summary answers improve from 0/3 to 3/3. Zero-target output remains unreliable at 2/3 in each arm and is not a passing control. Full attempts remain in ignored artifacts.",
-        "input_sha256": "019086d4b2be8e81b68efb4ed0cfbafd55c5e3d4c739dacd5c0100d76b601614"
+        "note": "Full-prompt ablation. The stale-summary witness verifies the current result instead of repeating earlier incumbent counts, improving from 0/3 to 3/3. Both controls pass in both arms. The total-token cost target of 0.80 failed: grouped counts cost 1.73 times baseline and single-tier counts cost 0.90 times baseline. Retain this clause for correctness, with no token-saving claim. Zero-target output was not rerun and remains outside this receipt."
       }
     ],
     "comparison_mode": "ablation"
