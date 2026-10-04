@@ -109,6 +109,8 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   Publish typed `AgentSessionEvent` values through `AgentSession` and keep HTTP
   serialization in the API adapter. In-process subscribers receive one event
   value, following Pi's session event interface.
+  Keep agent event projection and text batching in `session_event_projection.py`.
+  `AgentSession` owns cleanup, commits, and when the terminal outcome is published.
   POST `/messages` acknowledges the accepted message. GET `/events` delivers all
   runs and job updates. Reader disconnect never cancels work. Explicit Stop does.
   Test output arriving before acknowledgement, lost required replay history,
