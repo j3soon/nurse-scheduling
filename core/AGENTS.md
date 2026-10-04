@@ -368,6 +368,9 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   and suppresses the full schedule output.
 - Core tests run on Linux, macOS, and Windows in CI. Keep tests platform
   neutral, including paths, line endings, and environment limits.
+- Write hash-bound fixture inputs as exact encoded bytes to avoid platform
+  newline translation. Fix ZIP creator metadata as well as timestamps when
+  generated archive bytes must match across platforms.
 - Give `pytest.mark.parametrize` explicit `ids` when a parameter is a large
   binary or text payload. Pytest derives the node ID from the parameter value
   and exports it through `PYTEST_CURRENT_TEST`, which fails on Windows once the

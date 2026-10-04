@@ -57,6 +57,26 @@ def test_xlsx_fixture_requires_reading_the_non_first_sheet(tmp_path: Path):
     assert "NIGHT OWL 7429" in str(workbook["sheets"][1]["rows"])
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "workbook-intake-xlsx",
+        "month-end-history-forward-xlsx",
+        "month-end-history-reverse-xlsx",
+        "inventory-xlsx",
+        "formula-xlsx",
+        "styled-requests-xlsx",
+        "colored-xlsx",
+    ],
+)
+def test_xlsx_evidence_fixture_bytes_match_across_platforms(name, monkeypatch):
+    monkeypatch.setattr(sys, "platform", "linux")
+    original = load_attachment_fixtures([name])[0]
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    assert load_attachment_fixtures([name])[0] == original
+
+
 @pytest.mark.parametrize("order", ["forward", "reverse"])
 def test_history_import_oracles_match_calendar_order_and_final_runs(order):
     attachment = load_attachment_fixtures([f"month-end-history-{order}-xlsx"])[0]

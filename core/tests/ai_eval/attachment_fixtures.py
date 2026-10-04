@@ -138,7 +138,7 @@ def _inventory_workbook() -> bytes:
 
 
 def _stable_workbook(workbook: Workbook, caches: dict[str, dict[str, int]] | None = None) -> bytes:
-    """Fix ZIP and document timestamps so receipts bind reproducible attachment bytes."""
+    """Fix ZIP metadata and document timestamps so receipts bind reproducible attachment bytes."""
     source, output = BytesIO(), BytesIO()
     workbook.properties.created = datetime(2020, 1, 1, tzinfo=UTC)
     workbook.save(source)
@@ -160,6 +160,8 @@ def _stable_workbook(workbook: Workbook, caches: dict[str, dict[str, int]] | Non
                         cell.find("s:v", namespace).text = str(caches[name][cell.attrib["r"]])
                 content = ElementTree.tostring(document)
             entry = ZipInfo(name, date_time=(2020, 1, 1, 0, 0, 0))
+            # Preserve the recorded Unix ZIP creator metadata on every platform.
+            entry.create_system = 3
             entry.compress_type = ZIP_DEFLATED
             stable.writestr(entry, content)
     return output.getvalue()

@@ -87,11 +87,12 @@ def test_edited_source_rejects_compiled_context():
         inspect_requests(build_result_context(source.decode()), source + b"\n")
 
 
-def test_standalone_cli_uses_only_hydrated_helpers(tmp_path):
+@pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
+def test_standalone_cli_uses_only_hydrated_helpers(tmp_path, newline):
     for path in REFERENCE_ATTACHMENT_TOOLS.values():
         (tmp_path / path.name).write_bytes(path.read_bytes())
-    source = fixture_text("ward87")
-    (tmp_path / "schedule.yaml").write_text(source, encoding="utf-8")
+    source = fixture_text("ward87").replace("\n", newline)
+    (tmp_path / "schedule.yaml").write_bytes(source.encode("utf-8"))
     (tmp_path / "context.json").write_text(json.dumps(build_result_context(source)))
     process = subprocess.run(
         [
@@ -107,8 +108,9 @@ def test_standalone_cli_uses_only_hydrated_helpers(tmp_path):
         ],
         capture_output=True,
         text=True,
-        check=True,
+        check=False,
     )
+    assert process.returncode == 0, process.stderr
     assert json.loads(process.stdout)["person_date_targets"] == 5130
 
 
@@ -155,11 +157,12 @@ def test_tier_limit_preserves_complete_totals_and_source_guard():
     assert not empty["tiers_truncated"]
 
 
-def test_tier_inventory_standalone_cli(tmp_path):
+@pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
+def test_tier_inventory_standalone_cli(tmp_path, newline):
     for path in REFERENCE_ATTACHMENT_TOOLS.values():
         (tmp_path / path.name).write_bytes(path.read_bytes())
-    source = fixture_text("ward87")
-    (tmp_path / "source.yaml").write_text(source, encoding="utf-8")
+    source = fixture_text("ward87").replace("\n", newline)
+    (tmp_path / "source.yaml").write_bytes(source.encode("utf-8"))
     (tmp_path / "context.json").write_text(json.dumps(build_result_context(source)))
     process = subprocess.run(
         [
@@ -174,8 +177,9 @@ def test_tier_inventory_standalone_cli(tmp_path):
         ],
         capture_output=True,
         text=True,
-        check=True,
+        check=False,
     )
+    assert process.returncode == 0, process.stderr
     result = json.loads(process.stdout)
     assert result["tier_count"] == 10
     assert result["tiers"] == [{"weight": "-.inf", "request_entries": 8, "person_date_targets": 5130}]
