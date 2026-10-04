@@ -22,6 +22,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ExperimentalAiPage from './page';
+import type { UploadedFile } from './aiClient';
 
 const mockCreateSession = vi.hoisted(() => vi.fn());
 const mockGetUploads = vi.hoisted(() => vi.fn());
@@ -223,7 +224,7 @@ describe('ExperimentalAiPage', () => {
       expect.any(Object),
       expect.any(AbortSignal),
       null,
-      { files: [] },
+      { files: [], uploadIds: [] },
       '/ai',
     );
     expect(mockUseTabSwitchWarning).toHaveBeenCalledWith(true);
@@ -1614,7 +1615,7 @@ describe('ExperimentalAiPage', () => {
       expect.any(Object),
       expect.any(AbortSignal),
       null,
-      { files: [image] },
+      { files: [image], uploadIds: [] },
       '/ai',
     );
     expect(screen.getByText('Attached: ward.png')).toBeInTheDocument();
@@ -1666,7 +1667,7 @@ describe('ExperimentalAiPage', () => {
       expect.any(Object),
       expect.any(AbortSignal),
       null,
-      { files: [expect.objectContaining({ name: 'staff.custom', type: 'application/x-custom' })] },
+      { files: [expect.objectContaining({ name: 'staff.custom', type: 'application/x-custom' })], uploadIds: [] },
       '/ai',
     );
     expect(screen.getByText('Attached: staff.custom')).toBeInTheDocument();
@@ -1695,6 +1696,7 @@ describe('ExperimentalAiPage', () => {
           expect.objectContaining({ name: 'notes.pdf', type: '' }),
           expect.objectContaining({ name: 'coverage.xlsx', type: '' }),
         ],
+        uploadIds: [],
       },
       '/ai',
     );
@@ -1805,6 +1807,32 @@ describe('ExperimentalAiPage', () => {
     expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toHaveValue('Check this image.');
     expect(screen.getByText('Prepare the question, then reattach its files before sending.')).toBeInTheDocument();
     expect(mockStreamMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries an attachment request with the files it already uploaded', async () => {
+    mockStreamMessage.mockImplementationOnce(async (_sessionId, _message, callbacks: { onUploaded?: (files: UploadedFile[]) => void }) => {
+      callbacks.onUploaded?.([{ id: 'file-1', filename: 'ward.png', media_type: 'image/png', bytes: 3 }]);
+      throw new Error('The temporary AI sandbox failed.');
+    });
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+
+    await user.upload(await screen.findByLabelText('Attach files'), new File(['png'], 'ward.png', { type: 'image/png' }));
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Check this image.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await user.click(await screen.findByRole('button', { name: 'Retry' }));
+
+    expect(mockStreamMessage).toHaveBeenLastCalledWith(
+      'session-id',
+      'Check this image.',
+      expect.any(Object),
+      expect.any(AbortSignal),
+      null,
+      { files: [], uploadIds: ['file-1'] },
+      '/ai',
+    );
+    expect(await screen.findByText('Attached: ward.png')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Prepare retry' })).not.toBeInTheDocument();
   });
 
   describe('proposals', () => {

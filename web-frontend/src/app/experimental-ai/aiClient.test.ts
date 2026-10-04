@@ -258,7 +258,12 @@ describe('AI client', () => {
     const image = new File(['image bytes'], 'ward.png', { type: 'image/png' });
     const signal = new AbortController().signal;
 
-    await streamMessage('session-id', 'What is shown?', { onDelta: vi.fn() }, signal, 'stream-token', { files: [image] });
+    const onUploaded = vi.fn();
+
+    await streamMessage(
+      'session-id', 'What is shown?', { onDelta: vi.fn(), onUploaded }, signal, 'stream-token',
+      { files: [image], uploadIds: ['file-0'] },
+    );
 
     const [uploadUrl, uploadRequest] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(uploadUrl).toBe('https://api.nursescheduling.org/ai/sessions/session-id/uploads');
@@ -270,9 +275,10 @@ describe('AI client', () => {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer stream-token' },
-      body: JSON.stringify({ message: 'What is shown?', upload_ids: ['file-1'] }),
+      body: JSON.stringify({ message: 'What is shown?', upload_ids: ['file-0', 'file-1'] }),
       signal,
     });
+    expect(onUploaded).toHaveBeenCalledWith([uploaded]);
   });
 
   it('does not send a message when its upload is rejected', async () => {

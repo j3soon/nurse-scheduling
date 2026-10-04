@@ -48,6 +48,7 @@ export interface OptimizationProgressActivity {
 }
 
 export interface StreamCallbacks {
+  onUploaded?: (files: UploadedFile[]) => void;
   onAccepted?: () => void;
   lastEventId?: number;
   onEventId?: (id: number) => void;
@@ -89,6 +90,7 @@ export interface UploadedFile {
 
 export interface MessageAttachments {
   files?: File[];
+  uploadIds?: string[];
 }
 
 interface SessionResponse {
@@ -367,7 +369,9 @@ export async function streamMessage(
 ): Promise<void> {
   const files = attachments.files ?? [];
   const uploaded = files.length > 0 ? await uploadFiles(sessionId, files, authToken, endpoint, signal) : [];
-  const body = uploaded.length > 0 ? { message, upload_ids: uploaded.map(file => file.id) } : { message };
+  if (uploaded.length > 0) callbacks.onUploaded?.(uploaded);
+  const uploadIds = [...(attachments.uploadIds ?? []), ...uploaded.map(file => file.id)];
+  const body = uploadIds.length > 0 ? { message, upload_ids: uploadIds } : { message };
 
   const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/messages`, {
     method: 'POST',

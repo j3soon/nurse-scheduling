@@ -72,12 +72,16 @@ import {
   updateSessionSchedule,
 } from './aiClient';
 
+// A failed turn keeps the files it already uploaded, so a retry can send them without reattaching.
+type RetryUpload = Pick<UploadedFile, 'id' | 'filename'>;
+
 interface ChatMessage extends ChatExportMessage {
   id: string;
   downloadId?: string;
   retry?: {
     question: string;
     requiresAttachments: boolean;
+    uploads?: RetryUpload[];
   };
   optimizerJob?: Pick<OptimizationActivity, 'jobId' | 'downloadable'>;
 }
@@ -272,6 +276,8 @@ function isChatMessage(value: unknown): value is ChatMessage {
       && message.retry !== null
       && typeof message.retry.question === 'string'
       && typeof message.retry.requiresAttachments === 'boolean'
+      && (message.retry.uploads === undefined || (Array.isArray(message.retry.uploads)
+        && message.retry.uploads.every(upload => typeof upload?.id === 'string' && typeof upload.filename === 'string')))
     ))
     && (message.downloadId === undefined || typeof message.downloadId === 'string')
     && (message.optimizerJob === undefined || (message.optimizerJob !== null
@@ -1366,6 +1372,7 @@ export default function ExperimentalAiPage() {
     question: string,
     attachmentsForMessage: SelectedAttachment[],
     clearComposer: boolean,
+    retainedUploads: RetryUpload[] = [],
   ) => {
     if (!question || isStreaming || conversationUnavailable || (authRequired && authToken === null)) return;
 
@@ -1373,12 +1380,16 @@ export default function ExperimentalAiPage() {
       id: messageId(),
       role: 'user',
       content: question,
-      attachmentNames: attachmentsForMessage.map(attachment => attachment.file.name),
+      attachmentNames: [
+        ...retainedUploads.map(upload => upload.filename),
+        ...attachmentsForMessage.map(attachment => attachment.file.name),
+      ],
     };
     let activeAssistantId = messageId();
     let activeAssistantHasOutput = false;
     let activeQuestion = question;
     let activeQuestionRequiresAttachments = attachmentsForMessage.length > 0;
+    let activeUploads = retainedUploads;
     const responseStartedAt = Date.now();
     followPageBottomRef.current = true;
     setShowScrollToBottom(false);
@@ -1424,6 +1435,11 @@ export default function ExperimentalAiPage() {
         sessionId,
         question,
         {
+          onUploaded: files => {
+            activeUploads = [...activeUploads, ...files.map(({ id, filename }) => ({ id, filename }))];
+            activeQuestionRequiresAttachments = false;
+            if (fileCapability.retained) setUploadedFiles(previous => [...previous, ...files]);
+          },
           onAccepted: () => {
             if (!fileCapability.retained) return;
             getUploads(sessionId, authToken, sessionEndpoint, controller.signal)
@@ -1526,6 +1542,7 @@ export default function ExperimentalAiPage() {
             }
             activeQuestion = queuedMessage;
             activeQuestionRequiresAttachments = false;
+            activeUploads = [];
           },
           onDownload: downloadId => setMessages(previous => previous.map(message => (
             message.id === activeAssistantId ? { ...message, downloadId } : message
@@ -1552,6 +1569,7 @@ export default function ExperimentalAiPage() {
         authToken,
         {
           files: attachmentsForMessage.map(attachment => attachment.file),
+          uploadIds: retainedUploads.map(upload => upload.id),
         },
         sessionEndpoint,
       );
@@ -1586,6 +1604,7 @@ export default function ExperimentalAiPage() {
           retry: {
             question: activeQuestion,
             requiresAttachments: activeQuestionRequiresAttachments,
+            ...(activeUploads.length > 0 ? { uploads: activeUploads } : {}),
           },
         };
       }));
@@ -1641,7 +1660,7 @@ export default function ExperimentalAiPage() {
     await sendRequest(question, selectedAttachments, true);
   };
 
-  const retryMessage = (failedId: string, question: string) => {
+  const retryMessage = (failedId: string, question: string, uploads: RetryUpload[] = []) => {
     if (!question || isStreaming || (authRequired && authToken === null)) return;
     // The retried turn replaces the failed pair, so the question is not repeated.
     setMessages(previous => {
@@ -1650,7 +1669,7 @@ export default function ExperimentalAiPage() {
       const start = previous[failedIndex - 1]?.role === 'user' ? failedIndex - 1 : failedIndex;
       return [...previous.slice(0, start), ...previous.slice(failedIndex + 1)];
     });
-    void sendRequest(question, [], false);
+    void sendRequest(question, [], false, uploads);
   };
 
   const prepareAttachmentRetry = (question: string) => {
@@ -2156,7 +2175,7 @@ export default function ExperimentalAiPage() {
                 ) : (
                   <button
                     type="button"
-                    onClick={() => retryMessage(message.id, message.retry?.question ?? '')}
+                    onClick={() => retryMessage(message.id, message.retry?.question ?? '', message.retry?.uploads)}
                     disabled={isStreaming}
                     className="mt-2 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
                   >
