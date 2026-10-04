@@ -42,6 +42,7 @@ from .sandbox import (
     SandboxError,
     SandboxFactory,
     SandboxFileNotFoundError,
+    SandboxFileSizeError,
     SandboxLifecycleMetrics,
     managed_sandbox,
 )
@@ -104,6 +105,10 @@ class AgentDownload:
 
 class SandboxDownloadError(SandboxError):
     """The generated ZIP could not be captured safely."""
+
+
+class SandboxDownloadValidationError(SandboxDownloadError):
+    """The agent generated a ZIP that violates the download contract."""
 
 
 class SandboxCandidateError(SandboxError):
@@ -465,13 +470,15 @@ async def run_sandbox_agent(
                     download = await sandbox.read_file(WORKSPACE_DOWNLOAD, max_bytes=limits.max_download_bytes)
                 except SandboxFileNotFoundError:
                     download = None
+                except SandboxFileSizeError as exc:
+                    raise SandboxDownloadValidationError(str(exc)) from exc
                 except SandboxError as exc:
                     raise SandboxDownloadError(str(exc)) from exc
                 if download is not None:
                     try:
                         await asyncio.to_thread(validate_download_zip, download, limits.max_download_bytes)
                     except ValueError as exc:
-                        raise SandboxDownloadError(str(exc)) from exc
+                        raise SandboxDownloadValidationError(str(exc)) from exc
                     yield AgentDownload(download)
                 if review.proposal is not None:
                     yield AgentProposal(review.proposal.text, review.proposal.diff.render())

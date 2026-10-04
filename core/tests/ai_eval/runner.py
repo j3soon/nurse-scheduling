@@ -72,6 +72,7 @@ from nurse_scheduling.ai.sandbox_agent import (
     AgentDownload,
     SandboxAgentLimits,
     SandboxCommandTimeoutError,
+    SandboxDownloadValidationError,
     SandboxTurnMetrics,
     inspection_helper_catalog,
     run_sandbox_agent,
@@ -488,7 +489,9 @@ async def run_case(
             if action is not None:
                 text, pending_proposal = _apply_turn_action(action, text, pending_proposal, history, events)
     except (ProviderError, SandboxError) as error:
-        behavior_failure = isinstance(error, (SandboxCommandTimeoutError, ProviderResponseLimitError))
+        behavior_failure = isinstance(
+            error, (SandboxCommandTimeoutError, SandboxDownloadValidationError, ProviderResponseLimitError)
+        )
         failure = (
             str(error)
             if behavior_failure

@@ -31,7 +31,7 @@ from e2b.sandbox.commands.command_handle import CommandExitException
 
 from nurse_scheduling.ai.agent import AgentToolOutcome, AgentToolUse, run_tool_agent
 from nurse_scheduling.ai.provider import ChatMessage, TextDelta, ToolCall, ToolCallRequest
-from nurse_scheduling.ai.sandbox import SandboxError, SandboxFileNotFoundError, managed_sandbox
+from nurse_scheduling.ai.sandbox import SandboxError, SandboxFileNotFoundError, SandboxFileSizeError, managed_sandbox
 from nurse_scheduling.ai.sandbox import e2b as e2b_module
 from nurse_scheduling.ai.sandbox.e2b import (
     COMMAND_TIMEOUT_EXIT_CODE,
@@ -998,7 +998,7 @@ def test_bounded_file_read_stops_and_closes_the_stream():
         sandbox.files.read.return_value = stream
         backend = make_backend(sandbox)
         try:
-            with pytest.raises(SandboxError, match="download size limit"):
+            with pytest.raises(SandboxFileSizeError, match="download size limit"):
                 await backend.read_file("/workspace/download.zip", max_bytes=4)
             assert stream.closed
             sandbox.files.read.assert_awaited_once_with("/workspace/download.zip", format="stream", user="user")

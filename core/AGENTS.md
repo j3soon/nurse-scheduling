@@ -148,7 +148,8 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   reveals a neighboring risk. A bare evaluation command exits without running
   cases. Use `--tuning` to opt into the default tuning set.
 - Count exceeded model-output limits as behavior failures, not infrastructure
-  outages. Keep the limit reason and partial trace. Keep provider connection and
+  outages. Count invalid or oversized generated downloads as behavior failures
+  too. Keep the limit reason and partial trace. Keep provider connection and
   sandbox availability failures separate.
 - Before live import comparisons, check an independent correct proposal against
   both frontend validation and the case grader. Check cell-to-format associations

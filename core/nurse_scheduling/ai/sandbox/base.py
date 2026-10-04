@@ -42,6 +42,10 @@ class SandboxFileNotFoundError(SandboxError):
     """A requested path does not exist inside an otherwise healthy sandbox."""
 
 
+class SandboxFileSizeError(SandboxError):
+    """A readable sandbox file exceeds its configured byte limit."""
+
+
 @dataclass(frozen=True)
 class CommandResult:
     """Provider-independent result from one foreground shell command."""

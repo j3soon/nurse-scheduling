@@ -33,6 +33,7 @@ import pytest
 from ruamel.yaml import YAML
 
 from nurse_scheduling.ai.config import AiSettings
+from nurse_scheduling.ai.downloads import WORKSPACE_DOWNLOAD
 from nurse_scheduling.ai.optimizer import optimizer_start_message
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.pi.edit import EDIT_TOOL
@@ -87,6 +88,7 @@ from .ai_eval.runner import (
     summarize,
     write_report,
 )
+from .test_ai_downloads import archive_bytes
 
 CASE_BY_ID = {case.id: case for case in load_cases(CASES)}
 FIXTURE_DIGESTS = {
@@ -1711,6 +1713,42 @@ def test_response_limit_is_a_behavior_failure_and_outages_remain_infrastructure(
         assert run.trajectory["events"][-1] == {"kind": "evaluation_stop", "reason": str(error)}
     else:
         assert run.failures == ["the provider failed"]
+
+
+@pytest.mark.parametrize("failure", ["invalid-zip", "expanded-limit", "compressed-limit", "read-outage"])
+def test_generated_download_validation_is_behavior_and_read_outages_are_infrastructure(failure):
+    content = b"invalid ZIP" if failure == "invalid-zip" else archive_bytes(b"x" * 2000)
+
+    def generate(_command, _timeout, sandbox):
+        sandbox.files[WORKSPACE_DOWNLOAD] = content
+        return CommandResult("created", "", 0)
+
+    class DownloadBackend(FakeSandboxBackend):
+        async def read_file(self, path, *, max_bytes=None):
+            if path == WORKSPACE_DOWNLOAD and failure == "read-outage":
+                raise SandboxError("download transport unavailable")
+            return await super().read_file(path, max_bytes=max_bytes)
+
+    factory = FakeSandboxFactory(lambda sid: DownloadBackend(sid, command_handler=generate))
+    provider = ScriptedProvider(
+        [ToolCallRequest((ToolCall("zip", BASH_TOOL, '{"command":"create ZIP"}'),))],
+        [TextDelta("Your files are ready.")],
+    )
+    run = asyncio.run(
+        run_case(
+            provider,
+            settings(max_download_bytes=10 if failure == "compressed-limit" else 1000),
+            CASE_BY_ID["download-generated-zip"],
+            factory,
+        )
+    )
+
+    assert not run.passed
+    assert bool(run.error) is (failure == "read-outage")
+    assert factory.created[0].closed
+    if failure != "read-outage":
+        assert run.trajectory["events"][-1]["kind"] == "evaluation_stop"
+        assert "ZIP" in run.failures[0] or "download size limit" in run.failures[0]
 
 
 def test_explained_workbook_case_accepts_valid_import_and_rejects_changed_weights():

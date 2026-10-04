@@ -47,7 +47,7 @@ from e2b.sandbox.commands.command_handle import CommandExitException
 from e2b.sandbox.filesystem.filesystem import WriteEntry
 
 from ..config import AiSettings
-from .base import CommandResult, SandboxError, SandboxFileNotFoundError, SandboxLifecycleMetrics
+from .base import CommandResult, SandboxError, SandboxFileNotFoundError, SandboxFileSizeError, SandboxLifecycleMetrics
 from .e2b_cleanup import E2BSandboxCleanupManager
 from .e2b_commands import isolated_command, stop_command_group
 
@@ -421,7 +421,7 @@ class E2BSandboxBackend:
                     async with stream_reader as stream:
                         async for chunk in stream:
                             if len(content) + len(chunk) > max_bytes:
-                                raise SandboxError("The generated file exceeds the download size limit.")
+                                raise SandboxFileSizeError("The generated file exceeds the download size limit.")
                             content.extend(chunk)
             except FileNotFoundException as exc:
                 raise SandboxFileNotFoundError(f"Sandbox file not found: {path}") from exc
