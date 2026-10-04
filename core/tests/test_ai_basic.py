@@ -49,6 +49,7 @@ from nurse_scheduling.ai.agent_session import (
 from nurse_scheduling.ai.app import (
     OWNER_COOKIE,
     SERVICE_NAME,
+    SessionStore,
     configure_request_logging,
     request_logger,
 )
@@ -2350,6 +2351,27 @@ def test_a_newer_schedule_replaces_the_snapshot_and_the_proposal() -> None:
     assert approved.status_code == 404
 
 
+def test_session_approval_refuses_invalid_yaml_and_releases_proposal_text() -> None:
+    store = SessionStore(make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT))
+    original = schedule_yaml()
+    session = store.create("owner", original)
+    broken = base_schedule_payload()
+    broken["preferences"][1]["person"] = ["P9"]
+    snapshot = store.begin(session.id, "owner", run_id="proposing-run")
+    store.finish(session.id, exchange("Edit", "Proposal"), (schedule_yaml(broken), "diff"), snapshot=snapshot)
+    retained = store.retained_bytes
+
+    approval = store.approve_proposal(session.id, "owner", session.revision)
+
+    assert approval.schedule_yaml is None
+    assert approval.decision == "invalid"
+    assert approval.run_id == "proposing-run"
+    assert session.schedule_yaml == original
+    assert session.pending_proposal is None
+    assert session.transcript[-1] == ProposalDecisionEntry("invalid")
+    assert store.retained_bytes < retained
+
+
 def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved() -> None:
     app = create_test_app(settings=make_settings(), provider=FakeProvider())
     store = app.state.session_store
@@ -2366,7 +2388,7 @@ def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved()
     ).proposal_saved
     active_turn_revision = store.begin(session.id, "browser-owner")
 
-    store.adopt_proposal(session.id, "browser-owner", session.revision)
+    store.approve_proposal(session.id, "browser-owner", session.revision)
     completion = store.finish(
         session.id,
         exchange("Stale edit", "Stale proposal"),
@@ -2381,7 +2403,7 @@ def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved()
         ProposalDecisionEntry("approved"),
     ]
     with pytest.raises(HTTPException) as exc_info:
-        store.adopt_proposal(session.id, "browser-owner", active_turn_revision)
+        store.approve_proposal(session.id, "browser-owner", active_turn_revision)
     assert exc_info.value.status_code == 404
 
 
@@ -2571,7 +2593,7 @@ def test_discarding_a_stale_proposal_returns_its_share_of_the_budget() -> None:
 
     # A browser holding a different revision cannot approve, which discards the proposal.
     with pytest.raises(HTTPException) as exc_info:
-        store.peek_proposal(session.id, "browser-owner", "a" * 64)
+        store.approve_proposal(session.id, "browser-owner", "a" * 64)
 
     assert exc_info.value.status_code == 409
     assert store.retained_bytes == retained_with_proposal - 500

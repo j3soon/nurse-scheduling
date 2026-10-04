@@ -88,7 +88,9 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   `AgentSession` methods. Keep steering queue cleanup separate from transcript
   cleanup. Reset idle agent state explicitly at session run boundaries.
   Keep pending proposal YAML, rendered diff, and originating run ID together in
-  one immutable value. Capture that value in the run snapshot.
+  one immutable value. Capture that value in the run snapshot. Revalidate and
+  adopt or discard a proposal in one synchronous session operation. Keep audit
+  writes and HTTP response mapping in the API adapter.
 - Record each run as ordered entries shaped like Pi's messages in
   `transcript.py`. Chat history stores them all. Put the session retention
   projection and the model-facing projection and wording in `context.py`, so

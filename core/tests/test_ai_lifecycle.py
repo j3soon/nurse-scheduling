@@ -240,7 +240,7 @@ def test_discarding_a_proposal_revokes_a_turn_that_was_using_it(decision):
         store.discard_proposal(session.id, "owner")
     else:
         with pytest.raises(HTTPException) as stale:
-            store.adopt_proposal(session.id, "owner", "0" * 64)
+            store.approve_proposal(session.id, "owner", "0" * 64)
         assert stale.value.status_code == 409
     assert not store.finish(
         session.id, [UserMessage("Revise"), AssistantMessage("Revised")], proposal, snapshot=revising

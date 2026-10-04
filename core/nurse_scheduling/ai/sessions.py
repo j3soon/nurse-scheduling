@@ -28,7 +28,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from .agent_session import AgentSession, RunCompletion, schedule_revision
-from .candidate import PendingProposal
+from .candidate import PendingProposal, ProposalApproval
 from .config import AiSettings
 from .context import project_history, projected_history
 from .lifecycle import RunSnapshot
@@ -272,33 +272,17 @@ class SessionStore:
         session.update_schedule(schedule_yaml)
         self._recount(session)
 
-    def peek_proposal(self, session_id: str, owner_token: str | None, base_sha256: str) -> tuple[str, str]:
-        """Return the pending proposal and the schedule it would replace, without adopting it."""
-        session, proposal = self._require_approvable(session_id, owner_token, base_sha256)
-        return proposal.schedule_yaml, session.schedule_yaml
-
-    def adopt_proposal(self, session_id: str, owner_token: str | None, base_sha256: str) -> tuple[str, str | None]:
-        """Adopt a revalidated proposal through its owner and apply retention limits.
-
-        Returns the approved YAML and the run that proposed it.
-        """
-        session, _proposal = self._require_approvable(session_id, owner_token, base_sha256)
-        approved = session.adopt_proposal(base_sha256)
-        self._cap_history(session)
-        session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
-        self._recount(session)
-        return approved
-
-    def _require_approvable(
-        self, session_id: str, owner_token: str | None, base_sha256: str
-    ) -> tuple[AgentSession, PendingProposal]:
-        """Resolve an owned proposal and account for invalidation on a stale revision."""
+    def approve_proposal(self, session_id: str, owner_token: str | None, base_sha256: str) -> ProposalApproval:
+        """Check ownership, decide the proposal, and account for every mutation."""
         session = self._get_owned(session_id, owner_token)
         try:
-            proposal = session.require_proposal(base_sha256)
+            approval = session.approve_proposal(base_sha256, self._settings.max_schedule_bytes)
+            self._cap_history(session)
+            session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
+            return approval
         finally:
+            # A stale revision discards the proposal before raising HTTP 409.
             self._recount(session)
-        return session, proposal
 
     def discard_proposal(
         self,

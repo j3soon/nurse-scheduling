@@ -31,7 +31,7 @@ from typing import Literal, Protocol
 from fastapi import HTTPException
 
 from .agent import Agent
-from .candidate import PendingProposal
+from .candidate import PendingProposal, ProposalApproval
 from .config import AiSettings
 from .context import build_provider_messages, optimizer_review_prompt, project_history, retained_entries
 from .history import ChatHistory
@@ -56,6 +56,7 @@ from .transcript import (
     ProposalDecisionEntry,
     UserMessage,
 )
+from .validation import new_schedule_issues, validate_frontend_schedule_yaml
 from .workspace import (
     SandboxAttachment,
     SandboxCandidateError,
@@ -312,19 +313,26 @@ class AgentSession:
             )
         return self.pending_proposal
 
-    def adopt_proposal(self, base_sha256: str) -> tuple[str, str | None]:
-        """Adopt a revalidated proposal and record the user's decision.
-
-        Returns the approved YAML and the run that proposed it.
-        """
+    def approve_proposal(self, base_sha256: str, max_schedule_bytes: int) -> ProposalApproval:
+        """Revalidate, then adopt or discard the proposal in one synchronous operation."""
         proposal = self.require_proposal(base_sha256)
         approved = proposal.schedule_yaml
+        # Revalidate before adopting, so a refused proposal never becomes the
+        # session schedule that later runs are hydrated from.
+        validation = validate_frontend_schedule_yaml(approved, max_schedule_bytes)
+        if not validation.valid:
+            # A user can approve while their schedule is still incomplete, so only
+            # a problem this proposal introduces blocks it.
+            replaced_validation = validate_frontend_schedule_yaml(self.schedule_yaml, max_schedule_bytes)
+            if new_schedule_issues(replaced_validation, validation):
+                logger.error("Approved proposal failed revalidation session_id=%s", self.id)
+                return ProposalApproval(None, self.discard_proposal("invalid"))
         self.pending_proposal = None
         self.version += 1
         self.schedule_yaml = approved
         self.revision = schedule_revision(approved)
         self.transcript.append(ProposalDecisionEntry("approved"))
-        return approved, proposal.run_id
+        return ProposalApproval(approved, proposal.run_id)
 
     def discard_proposal(self, decision: ProposalDecision = "rejected") -> str | None:
         """Record a proposal decision once and invalidate results based on it.

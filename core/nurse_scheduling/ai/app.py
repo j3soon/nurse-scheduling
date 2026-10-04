@@ -57,7 +57,6 @@ from .session_event_stream import SessionEventStream
 from .session_events import OptimizerUpdate
 from .sessions import SessionStore, schedule_revision
 from .transcript import ProposalDecision
-from .validation import new_schedule_issues, validate_frontend_schedule_yaml
 from .workspace import SandboxAttachment
 
 SERVICE_NAME = "nurse-scheduling-ai-api"
@@ -661,22 +660,12 @@ def create_app(
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> ProposalResponse:
         """Return the proposed schedule once the browser proves it holds the base revision."""
-        # Revalidate before adopting, so a refused proposal never becomes the
-        # session schedule that later runs are hydrated from.
-        approved, replaced = store.peek_proposal(session_id, owner, request.base_sha256)
-        validation = validate_frontend_schedule_yaml(approved, settings.max_schedule_bytes)
-        if not validation.valid:
-            # A user can approve while their schedule is still incomplete, so only
-            # a problem this proposal introduces blocks it.
-            replaced_validation = validate_frontend_schedule_yaml(replaced, settings.max_schedule_bytes)
-            if new_schedule_issues(replaced_validation, validation):
-                logger.error("Approved proposal failed revalidation session_id=%s", session_id)
-                await record_decision(store.discard_proposal(session_id, owner, "invalid"), "invalid")
-                raise HTTPException(status_code=409, detail="The proposed schedule is no longer valid.")
-        schedule_yaml, run_id = store.adopt_proposal(session_id, owner, request.base_sha256)
-        await record_decision(run_id, "approved")
+        approval = store.approve_proposal(session_id, owner, request.base_sha256)
+        await record_decision(approval.run_id, approval.decision)
+        if approval.schedule_yaml is None:
+            raise HTTPException(status_code=409, detail="The proposed schedule is no longer valid.")
         refresh_owner_cookie(response, owner)
-        return ProposalResponse(schedule_yaml=schedule_yaml)
+        return ProposalResponse(schedule_yaml=approval.schedule_yaml)
 
     @app.post(
         "/sessions/{session_id}/proposal/reject",
