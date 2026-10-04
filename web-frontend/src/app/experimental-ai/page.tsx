@@ -440,7 +440,8 @@ function applyModelInput(
   turn: { questionId: string | null; assistantId: string },
 ): ChatMessage[] {
   const statusId = `status-${turn.assistantId}`;
-  const result = messages.filter(message => message.id !== statusId);
+  // History never keeps a status message, so only the latest request's status stays visible.
+  const result = messages.filter(message => message.source !== 'status');
   const known = new Set(result.map(message => message.historyIndex));
   const lastSystem = [...result].reverse().find(message => message.role === 'system');
   const before: ChatMessage[] = lastSystem?.content === input.system

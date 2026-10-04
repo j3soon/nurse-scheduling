@@ -514,11 +514,12 @@ describe('ExperimentalAiPage', () => {
     await screen.findByText('Answer to Second');
 
     const cards = Array.from(screen.getByLabelText('Chat messages').querySelectorAll('article'));
+    // History never keeps a status message, so only the latest request's status is shown.
     expect(cards.map(card => card.querySelector('p')?.textContent)).toEqual([
-      'System', 'User · App', 'User', 'User · Status', 'Assistant', 'User', 'User · Status', 'Assistant',
+      'System', 'User · App', 'User', 'Assistant', 'User', 'User · Status', 'Assistant',
     ]);
     expect(cards[1]).toHaveTextContent('[App event] The user uploaded files: ward.csv');
-    expect(cards[3]).toHaveTextContent('Turn 1');
+    expect(cards[5]).toHaveTextContent('Turn 2');
     const systemPrompt = cards[0].querySelector('details');
     expect(systemPrompt).not.toHaveAttribute('open');
     expect(systemPrompt).toHaveTextContent('Shared system prompt');
