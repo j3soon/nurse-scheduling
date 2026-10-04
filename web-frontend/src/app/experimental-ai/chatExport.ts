@@ -25,14 +25,15 @@ import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { CURRENT_APP_VERSION } from '@/utils/version';
 import type { ActivityEntry } from './AssistantActivity';
+import { parseOptimizerMessage } from './optimizerMessage';
 
 // Bubbles follow the provider request roles. A user-role message that the app wrote has a source.
+// The optimizer role is an app notice with the run summary. The model receives its own optimizer message.
 export interface ChatExportMessage {
   role: 'system' | 'user' | 'assistant' | 'optimizer';
-  source?: 'app' | 'status';
-  // An optimizer notice becomes a user-role message once its result is sent to the model.
-  sentToModel?: boolean;
+  source?: 'app' | 'status' | 'optimizer';
   content: string;
+  createdAt?: number;
   activity?: ActivityEntry[];
   status?: 'pending' | 'failed';
   responseStartedAt?: number;
@@ -43,6 +44,7 @@ interface ChatExportMetadata {
   endpoint: string;
   exportedAt: Date;
   frontendVersion: string;
+  backendVersion?: string;
 }
 
 export type ChatExportFormat = 'html' | 'markdown';
@@ -173,9 +175,10 @@ function renderActivityDetailsHtml(entry: Exclude<ActivityEntry, { kind: 'respon
 export function messageLabel(message: ChatExportMessage): string {
   if (message.role === 'system') return 'System';
   if (message.role === 'assistant') return 'Assistant';
-  if (message.role === 'optimizer') return message.sentToModel ? 'User · Optimizer' : 'Optimizer';
+  if (message.role === 'optimizer') return 'Optimizer';
   if (message.source === 'app') return 'User · App';
   if (message.source === 'status') return 'User · Status';
+  if (message.source === 'optimizer') return 'User · Optimizer';
   return 'User';
 }
 
@@ -188,6 +191,7 @@ function fencedText(text: string): string[] {
 
 function messageDetails(message: ChatExportMessage): string[] {
   const details: string[] = [];
+  if (message.createdAt !== undefined) details.push(`Sent: ${new Date(message.createdAt).toISOString()}`);
   if (message.status === 'failed') details.push('Status: failed');
   if (message.status === 'pending') details.push('Status: pending');
   if (message.responseCompletedAt !== undefined) {
@@ -237,10 +241,20 @@ function renderHtmlMessageDetails(message: ChatExportMessage): string {
     : message.status === 'failed'
       ? '<p class="failure">This turn failed and was not saved to AI history.</p>'
       : '';
-  const timing = message.responseStartedAt !== undefined && message.responseCompletedAt !== undefined
-    ? `<time datetime="${new Date(message.responseCompletedAt).toISOString()}">${escapeHtml(new Date(message.responseCompletedAt).toLocaleString())} · ${formatResponseDuration(message.responseStartedAt, message.responseCompletedAt)}</time>`
+  const timestamp = message.responseCompletedAt ?? message.createdAt;
+  const duration = message.responseStartedAt !== undefined && message.responseCompletedAt !== undefined
+    ? ` · ${formatResponseDuration(message.responseStartedAt, message.responseCompletedAt)}`
+    : '';
+  const timing = timestamp !== undefined
+    ? `<time datetime="${new Date(timestamp).toISOString()}" title="${escapeHtml(new Date(timestamp).toLocaleString())}">${escapeHtml(new Date(timestamp).toLocaleString())}${duration}</time>`
     : '';
   return `${status}${timing}`;
+}
+
+function renderOptimizerHtml(content: string): string {
+  const { summary, details } = parseOptimizerMessage(content);
+  const rows = details.map(({ label, value }) => `<div><dt>${escapeHtml(label)}:</dt> <dd>${escapeHtml(value)}</dd></div>`).join('');
+  return `<div class="content">${escapeHtml(summary || '[No message text]')}</div>${rows ? `<dl class="optimizer-details">${rows}</dl>` : ''}`;
 }
 
 export function buildMarkdownChatExport(
@@ -252,13 +266,18 @@ export function buildMarkdownChatExport(
     '',
     `- Exported: ${metadata.exportedAt.toISOString()}`,
     `- Frontend version: ${metadata.frontendVersion}`,
+    `- Backend version: ${metadata.backendVersion ?? 'unknown'}`,
     `- AI server: ${metadata.endpoint}`,
   ];
   messages.forEach(message => {
     lines.push('', `## ${messageLabel(message)}`);
-    if (message.role === 'system' || message.source !== undefined) {
+    if (message.role === 'optimizer') {
+      const { summary, details } = parseOptimizerMessage(message.content);
+      lines.push('', summary || '[No message text]');
+      if (details.length) lines.push('', ...details.map(({ label, value }) => `- **${label}:** ${value.replaceAll('\n', '\n  ')}`));
+    } else if (message.role === 'system' || message.source !== undefined) {
       lines.push('', ...fencedText(message.content));
-    } else if (message.role !== 'assistant') {
+    } else if (message.role === 'user') {
       lines.push('', message.content || '[No message text]');
     } else {
       assistantTimeline(message).forEach(entry => {
@@ -284,7 +303,9 @@ export function buildHtmlChatExport(
       ? renderAssistantTimelineHtml(message)
       : message.role === 'system'
         ? `<details class="system-prompt"><summary>${formatCount(message.content.length)} characters</summary><pre>${escapeHtml(message.content)}</pre></details>`
-        : `<div class="content">${escapeHtml(message.content || '[No message text]')}</div>`;
+        : message.role === 'optimizer'
+          ? renderOptimizerHtml(message.content)
+          : `<div class="content">${escapeHtml(message.content || '[No message text]')}</div>`;
     return `
       <article class="message ${message.role}${message.source ? ` ${message.source}` : ''}">
         <div class="label">${messageLabel(message)}</div>
@@ -299,18 +320,22 @@ export function buildHtmlChatExport(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Schedule AI Chat</title>
   <style>
-    :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #111827; }
+    :root { color-scheme: light; font-family: ui-sans-serif, -apple-system, system-ui, Segoe UI, Helvetica, Apple Color Emoji, Arial, sans-serif, Segoe UI Emoji, Segoe UI Symbol; color: #111827; }
     body { margin: 0; background: white; }
-    main { box-sizing: border-box; max-width: 960px; margin: 0 auto; padding: 40px 24px; }
-    main > h1 { margin: 0 0 8px; font-size: 28px; }
+    main { box-sizing: border-box; max-width: 1024px; margin: 0 auto; padding: 32px 16px; }
+    main > h1 { margin: 0 0 8px; font-size: 30px; line-height: 36px; font-weight: 700; }
     .metadata { margin: 0 0 32px; color: #6b7280; font-size: 13px; }
     .chat { display: flex; flex-direction: column; gap: 16px; border: 1px solid #e5e7eb; border-radius: 12px; background: #f9fafb; padding: 16px; }
-    .message { box-sizing: border-box; width: fit-content; max-width: 85%; padding: 12px 16px; border-radius: 12px; }
-    .user { align-self: flex-end; background: #2563eb; color: white; }
+    .message { box-sizing: border-box; width: 85%; min-width: 0; max-width: 85%; padding: 12px 16px; border-radius: 12px; }
+    .user { align-self: flex-end; background: #155dfc; color: white; }
     .assistant { align-self: flex-start; border: 1px solid #e5e7eb; background: white; }
-    .optimizer { align-self: flex-end; border: 1px solid #a7f3d0; background: #ecfdf5; color: #022c22; }
-    .system { align-self: stretch; max-width: none; border: 1px dashed #d1d5db; background: #f9fafb; color: #374151; }
-    .user.app, .user.status { border: 1px solid #bfdbfe; background: #eff6ff; color: #1e3a8a; font: 12px/1.625 ui-monospace, monospace; }
+    .optimizer { align-self: flex-start; border: 1px solid #a7f3d0; background: #ecfdf5; color: #022c22; }
+    .optimizer-details { display: grid; gap: 6px; margin: 12px 0 0; font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }
+    .optimizer-details dt { display: inline; font-weight: 600; }
+    .optimizer-details dd { display: inline; margin: 0; white-space: pre-wrap; }
+    .system { align-self: stretch; width: auto; max-width: none; border: 1px dashed #d1d5db; background: #f9fafb; color: #374151; }
+    .user.app, .user.status, .user.optimizer { border: 1px solid #bfdbfe; background: #eff6ff; color: #1e3a8a; font: 12px/1.625 ui-monospace, monospace; }
+    .user.optimizer { border-color: #a7f3d0; background: #ecfdf5; color: #022c22; }
     .label { margin-bottom: 4px; font-size: 12px; font-weight: 600; letter-spacing: .025em; text-transform: uppercase; opacity: .7; }
     .content { overflow-wrap: anywhere; line-height: 1.5rem; }
     .user .content, .optimizer .content { white-space: pre-wrap; }
@@ -351,14 +376,16 @@ export function buildHtmlChatExport(
     .attachments { margin: 8px 0 0; font-size: 12px; opacity: .8; }
     .message-status { margin: 0; color: #4b5563; }
     .failure { margin: 12px 0 0; border-top: 1px solid #fecaca; padding-top: 12px; color: #b91c1c; font-size: 14px; }
-    time { display: block; margin-top: 8px; color: #9ca3af; font-size: 11px; }
+    time { display: block; margin-top: 8px; color: #6b7280; font-size: 11px; line-height: 1rem; }
+    .user time { color: #eff6ff; }
+    @media (min-width: 640px) { main { padding-right: 24px; padding-left: 24px; } }
     @media print { body { background: white; } main { padding: 0; } .message { break-inside: avoid; } }
   </style>
 </head>
 <body>
   <main>
     <h1>Schedule AI Chat</h1>
-    <p class="metadata">Exported ${escapeHtml(metadata.exportedAt.toISOString())}<br>Frontend version: ${escapeHtml(metadata.frontendVersion)}<br>AI server: ${escapeHtml(metadata.endpoint)}</p>
+    <p class="metadata">Exported ${escapeHtml(metadata.exportedAt.toISOString())}<br>Frontend version: ${escapeHtml(metadata.frontendVersion)}<br>Backend version: ${escapeHtml(metadata.backendVersion ?? 'unknown')}<br>AI server: ${escapeHtml(metadata.endpoint)}</p>
     <section class="chat" aria-label="Chat transcript">${renderedMessages}
     </section>
   </main>
@@ -372,8 +399,9 @@ export function downloadChatExport(
   messages: ChatExportMessage[],
   endpoint: string,
   exportedAt = new Date(),
-): void {
-  const metadata = { endpoint, exportedAt, frontendVersion: CURRENT_APP_VERSION };
+  backendVersion?: string,
+): string {
+  const metadata = { endpoint, exportedAt, frontendVersion: CURRENT_APP_VERSION, backendVersion };
   const content = format === 'html'
     ? buildHtmlChatExport(messages, metadata)
     : buildMarkdownChatExport(messages, metadata);
@@ -384,5 +412,5 @@ export function downloadChatExport(
   link.href = url;
   link.download = `schedule-ai-chat-${exportedAt.toISOString().slice(0, 10)}.${extension}`;
   link.click();
-  URL.revokeObjectURL(url);
+  return url;
 }

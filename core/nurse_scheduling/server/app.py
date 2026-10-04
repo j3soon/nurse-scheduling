@@ -253,6 +253,7 @@ def create_app(
     app.state.instance_id = instance_id
     app.state.started_at = started_at
     app.state.runtime_identity = runtime_identity
+    app.state.claimed_performance = claimed_performance
     app.state.suspicion_tracker = suspicion_tracker
 
     @app.exception_handler(ServerApplicationError)

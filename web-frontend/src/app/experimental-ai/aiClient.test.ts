@@ -30,6 +30,7 @@ import {
   removeUpload,
   getAiBaseUrl,
   getCapabilities,
+  getBackendVersion,
   getSessionStatus,
   isOfficialAiEndpoint,
   queueMessage,
@@ -96,6 +97,31 @@ describe('AI client', () => {
         max_bytes_per_file: 5000000,
       },
     });
+  });
+
+  it.each([
+    ['https://api.nursescheduling.org/ai', 'https://api.nursescheduling.org/info'],
+    ['https://api.example.test/prefix/ai/', 'https://api.example.test/prefix/info'],
+    ['/ai', '/info'],
+  ])('reads the shared backend version for %s', async (endpoint, infoUrl) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ app_version: 'v0.2.0-production' })));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(getBackendVersion(undefined, endpoint)).resolves.toBe('v0.2.0-production');
+    expect(fetchMock).toHaveBeenCalledWith(infoUrl, { credentials: 'omit', signal: expect.any(AbortSignal) });
+  });
+
+  it.each([new Response('offline', { status: 503 }), new Response('{}'), new Response('invalid JSON')])(
+    'tolerates unavailable optimizer identity', async response => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response));
+      await expect(getBackendVersion(undefined, '/ai')).resolves.toBeUndefined();
+    },
+  );
+
+  it('keeps standalone AI endpoints independent of an assumed optimizer address', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(getBackendVersion(undefined, 'http://localhost:8001')).resolves.toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('checks a stored session without sending a keepalive request', async () => {
@@ -375,6 +401,19 @@ describe('AI client', () => {
     expect(diffs).toEqual(['- people.items[0].id']);
   });
 
+  it('receives context usage and ignores invalid budgets', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      'event: context_usage\ndata: {"used_chars":250,"max_chars":1000}\n\n',
+      'event: context_usage\ndata: {"used_chars":10,"max_chars":0}\n\n',
+      'event: context_usage\ndata: {"used_chars":-1,"max_chars":100}\n\n',
+      'event: context_usage\ndata: {"used_chars":101,"max_chars":100}\n\n',
+      'event: context_usage\ndata: {"used_chars":"25","max_chars":100}\n\n',
+    ])));
+    const onContextUsage = vi.fn();
+    await streamSessionEvents('session', { onDelta: vi.fn(), onContextUsage }, new AbortController().signal, null);
+    expect(onContextUsage).toHaveBeenCalledExactlyOnceWith({ usedChars: 250, maxChars: 1000 });
+  });
+
   it('reports a trimmed prompt history and ignores a meaningless count', async () => {
     const fetchMock = vi.fn().mockResolvedValue(streamedResponse([
       'id: 1\nevent: history_trimmed\ndata: {"dropped":0}\n\n',
@@ -394,6 +433,27 @@ describe('AI client', () => {
 
     expect(trimmed).toHaveBeenCalledTimes(1);
     expect(trimmed).toHaveBeenCalledWith(6);
+  });
+
+  it('decodes optimizer provenance and preserves a zero final score', async () => {
+    const payload = {
+      job_id: 'opt-1', state: 'completed', terminal: true, downloadable: true,
+      result: { outcome: 'optimal', score: 0, solver_status: 'OPTIMAL', termination_reason: 'completed' },
+      request: { solver: 'ortools/cp-sat', timeout_seconds: 300 },
+      backend: { url: 'http://optimizer:8000', app_version: 'v0.4.3', request_timeout_seconds: 30,
+        claimed_performance: { score: 125, app_version: 'v0.4.2', measured_at: '2026-09-18T01:00:00Z' } },
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      `event: optimization\ndata: ${JSON.stringify(payload)}\n\n`,
+    ])));
+    const onOptimization = vi.fn();
+    await streamSessionEvents('session', { onDelta: vi.fn(), onOptimization }, new AbortController().signal, null);
+    expect(onOptimization).toHaveBeenCalledWith(expect.objectContaining({
+      result: { outcome: 'optimal', score: 0, solverStatus: 'OPTIMAL', terminationReason: 'completed' },
+      request: { solver: 'ortools/cp-sat', timeoutSeconds: 300 },
+      backend: expect.objectContaining({ url: 'http://optimizer:8000', appVersion: 'v0.4.3', requestTimeoutSeconds: 30,
+        claimedPerformance: { score: 125, appVersion: 'v0.4.2', measuredAt: '2026-09-18T01:00:00Z' } }),
+    }));
   });
 
   it('streams optimizer-triggered turns with authentication', async () => {

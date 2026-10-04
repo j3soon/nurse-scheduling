@@ -50,7 +50,9 @@ you can continue chatting while it solves.
   running.
 - A background assistant command also shows a running indicator there, even
   when tool details are hidden.
-- When the run ends, the chat offers the result workbook as a download. The
+- When the run ends, the chat records its outcome, score, solver and timeout,
+  backend URL and version, and any claimed performance. It offers the result
+  workbook as a download. The
   assistant receives the score and a copy of the workbook in its workspace. It
   can inspect relevant spreadsheet sections to answer questions about the result,
   including in later chat turns while the result remains available.
@@ -85,6 +87,12 @@ assistant proposes one instead of changing the schedule itself.
    <kbd>Ctrl</kbd>+<kbd>Z</kbd> reverts the whole change.
 
 ## See what the assistant did
+
+**Chat history context** below the message box shows the portion of the server's
+conversation history budget selected for the next turn. It excludes instructions,
+schedule data, tools, and attachments, and does not measure the model token window.
+If the server does not report usage, the chat displays **unavailable**. Update the
+AI server to enable the percentage.
 
 Small grey rows under an answer record how it was produced. They stay collapsed
 until you select one.

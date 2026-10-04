@@ -68,6 +68,7 @@ class TurnCompletion(Protocol):
     turn_saved: bool
     proposal_saved: bool
     history_trimmed_count: int
+    context_used_chars: int
 
 
 class BackgroundSessionStore(Protocol):
@@ -258,6 +259,11 @@ def status_message(
     return f"{STATUS_PREFIX}\n" + "\n".join(lines) if lines else ""
 
 
+def history_context_chars(history: list[ChatMessage], max_chars: int) -> int:
+    """Measure the serialized conversation selected for the next turn's history budget."""
+    return history_chars(recent_history(history, max_chars))
+
+
 def build_provider_messages(
     history: list[ChatMessage],
     schedule_yaml: str,
@@ -359,6 +365,14 @@ async def run_background_turn(
                     {"message": "AI chat history is unavailable, so the optimizer result was not reviewed."},
                 )
                 return
+        event_broker.publish(
+            session_id,
+            "context_usage",
+            {
+                "used_chars": history_context_chars(history, settings.max_history_chars),
+                "max_chars": settings.max_history_chars,
+            },
+        )
         retained_history = recent_history(history, settings.max_history_chars)
         dropped_history = previously_dropped + len(history) - len(retained_history)
         if dropped_history:
@@ -475,6 +489,14 @@ async def run_background_turn(
                             "message": "The generated ZIP could not be retained because the service memory limit was reached."
                         },
                     )
+            event_broker.publish(
+                session_id,
+                "context_usage",
+                {
+                    "used_chars": completion.context_used_chars,
+                    "max_chars": settings.max_history_chars,
+                },
+            )
             event_broker.publish(session_id, "done", {"message_id": turn_id})
         except asyncio.CancelledError:
             outcome, error_code = "cancelled", None
