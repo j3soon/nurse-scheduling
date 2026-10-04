@@ -16,6 +16,11 @@ the test, fix, and validation. Commit only when the user has authorized it.
 
 ## Read the chat and tool calls
 
+Treat traces and their attachments as potentially sensitive. Keep raw traces
+local and out of Git. Do not copy sensitive data into testcases, fixtures,
+expected outputs, documentation, or commit messages. This includes personal
+identifiers, credentials, private URLs, and confidential business details.
+
 Read repository guidance and locate the active prompt, tool contracts, helper
 scripts, and evaluation runner. Summarize tool calls and failures across the
 supplied chats, then read the relevant turns in detail. Preserve message
@@ -51,6 +56,12 @@ Locate existing cases and reuse their test input or grader when appropriate. Use
 the smallest test input that reproduces the problem. Remove incidental names,
 dates, and roster size unless they cause the failure. Preserve the production
 tool contract and relevant turn boundaries.
+
+Build a synthetic, non-sensitive testcase instead of copying trace data.
+Preserve the structure, ambiguity, formatting, and value relationships that
+cause the failure. Replacing names alone may leave sensitive data elsewhere.
+Confirm that this testcase reproduces the same issue before testing a fix.
+Before staging, inspect the testcase and supporting files for sensitive remnants.
 
 Define pass/fail criteria before tuning. Check the actual output and any required
 tool actions independently of the assistant's explanation or parser.
