@@ -350,6 +350,7 @@ async def run_case(
                 )
                 continue
             optimizer_result = None
+            optimizer_context = None
             if completion:
                 if not optimizer_started:
                     events.append({"kind": "evaluation_stop", "reason": "optimizer was not started"})
@@ -364,6 +365,8 @@ async def run_case(
                 except ValueError as error:
                     events.append({"kind": "evaluation_stop", "reason": str(error)})
                     break
+                context = await asyncio.to_thread(build_result_context, optimizer_source, workbook=optimizer_result)
+                optimizer_context = json.dumps(context, ensure_ascii=False, allow_nan=False).encode()
                 question = optimizer_completion_message(result_data)
                 optimizer_started = False
             attachments = case_attachments
@@ -396,6 +399,7 @@ async def run_case(
                 execute_optimizer=execute_optimizer,
                 attachments=attachments,
                 optimizer_result=optimizer_result,
+                optimizer_context=optimizer_context,
             )
             async with aclosing(agent_events):
                 async for event in agent_events:

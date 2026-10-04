@@ -30,7 +30,7 @@ from openpyxl import load_workbook
 
 from nurse_scheduling.ai.optimizer import WORKSPACE_OPTIMIZER_RESULT, optimizer_completion_message
 from nurse_scheduling.ai.provider import TextDelta, ToolCall, ToolCallRequest
-from nurse_scheduling.ai.sandbox_agent import WORKSPACE_SCHEDULE
+from nurse_scheduling.ai.sandbox_agent import WORKSPACE_RESULT_CONTEXT, WORKSPACE_SCHEDULE
 from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
 
 from .ai_eval.grading import EvalCase, RunOutcome, grade
@@ -304,6 +304,32 @@ def test_multi_turn_completion_prewarms_the_expected_snapshot():
     )
     runs = asyncio.run(run_all([case], settings(), provider, 4, _factory()))
     assert len(runs) == 1 and runs[0].passed, runs[0].failures
+
+
+def test_completion_context_matches_the_submitted_proposal():
+    from .ai_eval.optimizer_fixtures import RESULT_SOURCES
+
+    case = CASE_BY_ID["optimizer-result-from-pending-proposal"]
+    submitted = RESULT_SOURCES[case.optimizer_completion].read_text()
+    provider = ScriptedProvider(
+        [
+            ToolCallRequest(
+                (ToolCall("write", "write", json.dumps({"path": WORKSPACE_SCHEDULE, "content": submitted})),)
+            )
+        ],
+        [ToolCallRequest((ToolCall("start", "optimizer", '{"action":"start","timeout_seconds":60}'),))],
+        [TextDelta("Running with the proposed input.")],
+        [ToolCallRequest((ToolCall("context", "read", json.dumps({"path": WORKSPACE_RESULT_CONTEXT})),))],
+        [TextDelta(json.dumps(case.answer_json))],
+    )
+    factory = _factory()
+    run = asyncio.run(run_case(provider, settings(), case, factory))
+
+    assert run.passed, run.failures
+    result_context = json.loads(factory.created[-1].files[WORKSPACE_RESULT_CONTEXT])
+    assert result_context["source_sha256"] == hashlib.sha256(submitted.encode()).hexdigest()
+    promoted = [request for request in result_context["requests"] if request["preference_index"] == 4]
+    assert promoted[0]["weight"] == 11_000_000_000
 
 
 @pytest.mark.parametrize("review_changes_workspace", [False, True])
