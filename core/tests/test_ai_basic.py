@@ -69,7 +69,7 @@ from nurse_scheduling.ai.history import ChatHistory
 from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL, OptimizerArtifact, OptimizerJobPayload
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.pi.read import READ_TOOL
-from nurse_scheduling.ai.provider import ChatMessage, ProviderError, TextDelta, ToolCall, ToolCallRequest
+from nurse_scheduling.ai.provider import ChatMessage, ProviderError, TextDelta, TokenUsage, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
 from nurse_scheduling.ai.sandbox_agent import (
@@ -1544,6 +1544,28 @@ def test_schedule_edit_is_recorded_only_when_its_data_changes() -> None:
     assert store._sessions[session.id].history == []
     store.update_schedule(session.id, "owner", "description: new\n")
     assert store._sessions[session.id].history == [{"role": "user", "content": SCHEDULE_CHANGED_EVENT}]
+
+
+@pytest.mark.parametrize("window_tokens", [None, 1000], ids=["unknown-limit", "provider-limit"])
+def test_context_usage_reports_the_latest_request_tokens_and_provider_limit(window_tokens: int | None) -> None:
+    class Provider:
+        context_tokens = window_tokens
+
+        async def stream_events(self, messages, tools=None):
+            yield TextDelta("Answer")
+            yield TokenUsage(100, 20, 120)
+            yield TokenUsage(150, 30, 180)
+
+    app = create_test_app(settings=make_settings(), provider=Provider())
+    client = AuthenticatedTestClient(app)
+    session_id = create_session(client)
+
+    response = client.post(f"/sessions/{session_id}/messages", json={"message": "Question"})
+
+    usage = [payload for event, payload in parse_sse(response.text) if event == "context_usage"]
+    assert [payload.get("used_tokens") for payload in usage] == [None, 120, 180, 180]
+    assert usage[-1].get("max_tokens") == window_tokens
+    assert usage[-1]["used_chars"] > usage[0]["used_chars"] == 0
 
 
 def test_context_usage_reports_selected_history_before_and_after_each_turn() -> None:

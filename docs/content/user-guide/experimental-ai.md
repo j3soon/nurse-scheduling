@@ -90,9 +90,15 @@ assistant proposes one instead of changing the schedule itself.
 
 **Chat history context** below the message box shows the portion of the server's
 conversation history budget selected for the next turn. It excludes instructions,
-schedule data, tools, and attachments, and does not measure the model token window.
-If the server does not report usage, the chat displays **unavailable**. Update the
-AI server to enable the percentage.
+schedule data, tools, and attachments. If the server does not report usage, the
+chat displays **unavailable**. Update the AI server to enable the percentage.
+
+When the provider reports token usage, the line also shows **Tokens:
+used / limit**. It counts the tokens of the latest model request, including
+instructions, tool output, and the reply. A turn with long tool output can
+therefore use many more tokens than its history percentage suggests.
+The server reads the limit from the provider's model metadata. If the provider
+does not report a limit, the chat shows **unavailable** for the limit.
 
 Small grey rows under an answer record how it was produced. They stay collapsed
 until you select one.

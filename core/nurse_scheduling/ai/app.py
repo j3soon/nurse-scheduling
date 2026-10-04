@@ -61,6 +61,7 @@ from .background import (
     STALE_TURN_ERROR,
     SessionEventBroker,
     build_provider_messages,
+    context_usage,
     history_chars,
     history_context_chars,
     model_input,
@@ -843,7 +844,7 @@ def create_app(
     )
     settings = replace(settings, auth_token=auth_token, auth_tokens=auth_tokens)
     configure_request_logging(settings.request_log_enabled)
-    provider = provider or OpenAiCompatibleProvider(settings, include_usage=bool(settings.history_postgres_url))
+    provider = provider or OpenAiCompatibleProvider(settings, include_usage=True)
     history_log = (
         ChatHistory(settings.history_postgres_url, settings.history_retention_days)
         if settings.history_postgres_url
@@ -1296,19 +1297,15 @@ def create_app(
             outcome = "cancelled"
             error_code = None
             usage = None
+            last_call: TokenUsage | None = None
             turn_messages = [ChatMessage(role="user", content=history_question)]
             assistant_segment: list[str] = []
             try:
                 yield _sse_event(
                     "model_input", model_input(messages, len(retained_history), dropped_history, "question")
                 )
-                yield _sse_event(
-                    "context_usage",
-                    {
-                        "used_chars": history_context_chars(history, settings.max_history_chars),
-                        "max_chars": settings.max_history_chars,
-                    },
-                )
+                context_chars = history_context_chars(history, settings.max_history_chars)
+                yield _sse_event("context_usage", context_usage(context_chars, settings))
                 if dropped_history:
                     yield _sse_event("history_trimmed", {"dropped": dropped_history})
                 if stopped_before_stream:
@@ -1340,6 +1337,10 @@ def create_app(
                             yield _sse_event("reasoning", {"text": event.text})
                         elif isinstance(event, TokenUsage):
                             usage = event if usage is None else usage + event
+                            last_call = event
+                            yield _sse_event(
+                                "context_usage", context_usage(context_chars, settings, last_call, provider)
+                            )
                         elif isinstance(event, AgentToolStart):
                             yield _sse_event(
                                 "tool_start",
@@ -1424,11 +1425,7 @@ def create_app(
                 if history_saved is not None:
                     done["history_saved"] = history_saved
                 yield _sse_event(
-                    "context_usage",
-                    {
-                        "used_chars": completion.context_used_chars,
-                        "max_chars": settings.max_history_chars,
-                    },
+                    "context_usage", context_usage(completion.context_used_chars, settings, last_call, provider)
                 )
                 yield _sse_event("done", done)
             except asyncio.CancelledError:

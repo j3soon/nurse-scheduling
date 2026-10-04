@@ -157,6 +157,8 @@ def _streaming_provider(
     requests: list[httpx.Request] | None = None,
     *,
     include_usage: bool = False,
+    model_metadata: dict | None = None,
+    models_status: int = 200,
 ) -> OpenAiCompatibleProvider:
     """Build a provider whose endpoint replies with one prepared stream."""
     real_async_client = httpx.AsyncClient
@@ -164,6 +166,8 @@ def _streaming_provider(
     def handle(request: httpx.Request) -> httpx.Response:
         if requests is not None:
             requests.append(request)
+        if request.url.path.endswith("/models"):
+            return httpx.Response(models_status, json=model_metadata if model_metadata is not None else {"data": []})
         return httpx.Response(200, headers={"Content-Type": "text/event-stream"}, text=body)
 
     monkeypatch.setattr(
@@ -386,8 +390,52 @@ def test_requests_and_streams_token_usage_when_enabled(monkeypatch: pytest.Monke
 
     events = _events(_streaming_provider(monkeypatch, body, requests, include_usage=True))
 
-    assert json.loads(requests[0].content)["stream_options"] == {"include_usage": True}
+    assert json.loads(requests[-1].content)["stream_options"] == {"include_usage": True}
     assert events == [TextDelta("Answer"), TokenUsage(120, 30, 150, 80, 12)]
+
+
+@pytest.mark.parametrize(
+    ("model_metadata", "expected"),
+    [
+        ({"data": [{"id": "other-model", "max_model_len": 9999}, {"id": "test-model", "max_model_len": 4096}]}, 4096),
+        ({"data": [{"id": "test-model", "context_length": 8192}]}, 8192),
+        ({"data": [{"id": "other-model", "max_model_len": 9999}]}, None),
+        ({"data": [{"id": "test-model", "max_model_len": -1}]}, None),
+        ({"data": [{"id": "test-model", "max_model_len": True}]}, None),
+        ({"data": None}, None),
+    ],
+    ids=["configured-model", "context-length", "other-model", "invalid-limit", "boolean-limit", "invalid-model-list"],
+)
+def test_discovers_and_caches_the_configured_model_context_limit(monkeypatch, model_metadata, expected) -> None:
+    requests: list[httpx.Request] = []
+    provider = _streaming_provider(
+        monkeypatch,
+        _sse_body(_delta_chunk({"content": "Answer"})),
+        requests,
+        include_usage=True,
+        model_metadata=model_metadata,
+    )
+
+    assert _events(provider) == _events(provider) == [TextDelta("Answer")]
+
+    assert provider.context_tokens == expected
+    assert [request.method for request in requests] == ["GET", "POST", "POST"]
+    assert str(requests[0].url) == "https://provider.example/v1/models"
+    assert requests[0].headers["Authorization"] == "Bearer test-token"
+
+
+@pytest.mark.parametrize("status", [403, 404, 503])
+def test_missing_model_metadata_does_not_prevent_chat_or_usage(monkeypatch, status) -> None:
+    usage = {"prompt_tokens": 120, "completion_tokens": 30, "total_tokens": 150}
+    provider = _streaming_provider(
+        monkeypatch,
+        _sse_body(_delta_chunk({"content": "Answer"}), {"choices": [], "usage": usage}),
+        include_usage=True,
+        models_status=status,
+    )
+
+    assert _events(provider) == [TextDelta("Answer"), TokenUsage(120, 30, 150)]
+    assert provider.context_tokens is None
 
 
 def test_skips_a_choiceless_chunk_that_carries_no_usage(monkeypatch: pytest.MonkeyPatch) -> None:

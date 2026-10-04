@@ -259,6 +259,37 @@ class OpenAiCompatibleProvider:
         self._settings = settings
         self._include_usage = include_usage
         self._include_attempts = include_attempts
+        self.context_tokens: int | None = None
+        self._context_tokens_loaded = False
+        self._context_tokens_lock = asyncio.Lock()
+
+    async def _load_context_tokens(self) -> None:
+        """Read and cache the configured model's context limit when metadata is available."""
+        async with self._context_tokens_lock:
+            if self._context_tokens_loaded:
+                return
+            self._context_tokens_loaded = True
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    response = await client.get(
+                        f"{self._settings.provider_base_url}/models",
+                        headers={"Authorization": f"Bearer {self._settings.provider_api_key}"},
+                    )
+                    response.raise_for_status()
+                    metadata = response.json()
+            except (httpx.HTTPError, ValueError):
+                return
+            models = metadata.get("data") if isinstance(metadata, dict) else None
+            if not isinstance(models, list):
+                return
+            for model in models:
+                if not isinstance(model, dict) or model.get("id") != self._settings.provider_model:
+                    continue
+                for field in ("max_model_len", "context_length"):
+                    limit = model.get(field)
+                    if type(limit) is int and limit > 0:
+                        self.context_tokens = limit
+                        return
 
     async def stream_chat(self, messages: Sequence[ChatMessage]) -> AsyncIterator[str]:
         """Translate provider SSE chunks into plain text deltas."""
@@ -272,6 +303,8 @@ class OpenAiCompatibleProvider:
         tools: Sequence[dict[str, Any]] | None = None,
     ) -> AsyncIterator[ChatStreamEvent]:
         """Translate provider SSE chunks and retry safe pre-stream timeouts."""
+        if self._include_usage:
+            await self._load_context_tokens()
         timeout = httpx.Timeout(self._settings.provider_timeout_seconds, connect=10.0)
         headers = {"Authorization": f"Bearer {self._settings.provider_api_key}"}
         payload: dict[str, Any] = {

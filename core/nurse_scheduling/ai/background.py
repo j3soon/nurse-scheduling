@@ -292,6 +292,27 @@ def status_message(
     return f"{STATUS_PREFIX}\n" + "\n".join(lines) if lines else ""
 
 
+def context_usage(
+    used_chars: int,
+    settings: AiSettings,
+    last_call: TokenUsage | None = None,
+    provider: ToolCapableChatProvider | None = None,
+) -> dict[str, int]:
+    """Report retained history size and the latest request's tokens with the provider's context limit.
+
+    The latest provider call holds the whole conversation that the model saw, so its prompt and
+    completion tokens show how full the context window is. A sum over a turn's calls would count
+    the same prompt several times.
+    """
+    usage = {"used_chars": used_chars, "max_chars": settings.max_history_chars}
+    if last_call is not None:
+        usage["used_tokens"] = last_call.prompt_tokens + last_call.completion_tokens
+        limit = getattr(provider, "context_tokens", None)
+        if type(limit) is int and limit > 0:
+            usage["max_tokens"] = limit
+    return usage
+
+
 def history_context_chars(history: list[ChatMessage], max_chars: int) -> int:
     """Measure the serialized conversation selected for the next turn's history budget."""
     return history_chars(recent_history(history, max_chars))
@@ -412,14 +433,8 @@ async def run_background_turn(
                     {"message": "AI chat history is unavailable, so the optimizer result was not reviewed."},
                 )
                 return
-        event_broker.publish(
-            session_id,
-            "context_usage",
-            {
-                "used_chars": history_context_chars(history, settings.max_history_chars),
-                "max_chars": settings.max_history_chars,
-            },
-        )
+        context_chars = history_context_chars(history, settings.max_history_chars)
+        event_broker.publish(session_id, "context_usage", context_usage(context_chars, settings))
         retained_history = recent_history(history, settings.max_history_chars)
         dropped_history = previously_dropped + len(history) - len(retained_history)
         if dropped_history:
@@ -450,6 +465,7 @@ async def run_background_turn(
         outcome = "failed"
         error_code: str | None = "internal_error"
         usage: TokenUsage | None = None
+        last_call: TokenUsage | None = None
         try:
             async with concurrency_limit:
                 agent_events = run_sandbox_agent(
@@ -474,6 +490,10 @@ async def run_background_turn(
                         event_broker.publish(session_id, "reasoning", {"text": event.text})
                     elif isinstance(event, TokenUsage):
                         usage = event if usage is None else usage + event
+                        last_call = event
+                        event_broker.publish(
+                            session_id, "context_usage", context_usage(context_chars, settings, last_call, provider)
+                        )
                     elif isinstance(event, AgentToolStart):
                         event_broker.publish(
                             session_id,
@@ -537,12 +557,7 @@ async def run_background_turn(
                         },
                     )
             event_broker.publish(
-                session_id,
-                "context_usage",
-                {
-                    "used_chars": completion.context_used_chars,
-                    "max_chars": settings.max_history_chars,
-                },
+                session_id, "context_usage", context_usage(completion.context_used_chars, settings, last_call, provider)
             )
             event_broker.publish(session_id, "done", {"message_id": turn_id})
         except asyncio.CancelledError:

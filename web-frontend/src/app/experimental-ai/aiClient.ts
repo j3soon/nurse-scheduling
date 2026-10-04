@@ -63,6 +63,9 @@ export interface OptimizationProgressActivity {
 export interface ContextUsage {
   usedChars: number;
   maxChars: number;
+  // Tokens of the latest provider request. The limit is optional when model metadata is unavailable.
+  usedTokens?: number;
+  maxTokens?: number;
 }
 
 export interface StreamCallbacks {
@@ -159,6 +162,8 @@ interface SsePayload {
   schedule_yaml?: unknown;
   system?: unknown;
   messages?: unknown;
+  used_tokens?: unknown;
+  max_tokens?: unknown;
   message_id?: unknown;
   trigger?: unknown;
   job_id?: unknown;
@@ -477,7 +482,14 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
     if (Number.isSafeInteger(payload.used_chars) && (payload.used_chars as number) >= 0
       && Number.isSafeInteger(payload.max_chars) && (payload.max_chars as number) > 0
       && (payload.used_chars as number) <= (payload.max_chars as number)) {
-      callbacks.onContextUsage?.({ usedChars: payload.used_chars as number, maxChars: payload.max_chars as number });
+      const tokens: Pick<ContextUsage, 'usedTokens' | 'maxTokens'> = {};
+      if (Number.isSafeInteger(payload.used_tokens) && (payload.used_tokens as number) >= 0) {
+        tokens.usedTokens = payload.used_tokens as number;
+        if (Number.isSafeInteger(payload.max_tokens) && (payload.max_tokens as number) > 0) {
+          tokens.maxTokens = payload.max_tokens as number;
+        }
+      }
+      callbacks.onContextUsage?.({ usedChars: payload.used_chars as number, maxChars: payload.max_chars as number, ...tokens });
     }
   } else if (eventType === 'history_trimmed') {
     const dropped = payload.dropped;

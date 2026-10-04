@@ -310,7 +310,9 @@ function readStoredConversation(): StoredChatConversation | null {
       || (value.backendVersion !== undefined && typeof value.backendVersion !== 'string')
       || (value.contextUsage != null && (!Number.isSafeInteger(value.contextUsage.usedChars)
         || value.contextUsage.usedChars < 0 || !Number.isSafeInteger(value.contextUsage.maxChars)
-        || value.contextUsage.maxChars <= 0 || value.contextUsage.usedChars > value.contextUsage.maxChars))
+        || value.contextUsage.maxChars <= 0 || value.contextUsage.usedChars > value.contextUsage.maxChars
+        || (value.contextUsage.usedTokens !== undefined && !Number.isSafeInteger(value.contextUsage.usedTokens))
+        || (value.contextUsage.maxTokens !== undefined && !Number.isSafeInteger(value.contextUsage.maxTokens))))
       || (value.sessionEventId !== undefined
         && (!Number.isSafeInteger(value.sessionEventId) || value.sessionEventId < 0))
       || (value.trimmedHistoryCount !== undefined
@@ -580,6 +582,12 @@ export default function ExperimentalAiPage() {
   const [removingUploadId, setRemovingUploadId] = useState<string | null>(null);
   const [backendVersion, setBackendVersion] = useState<string | undefined>();
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
+  // A turn's first report has no provider call yet, so keep the latest token figures until a new call reports.
+  const updateContextUsage = useCallback((usage: ContextUsage) => setContextUsage(previous => (
+    usage.usedTokens === undefined && previous?.usedTokens !== undefined
+      ? { ...usage, usedTokens: previous.usedTokens, maxTokens: previous.maxTokens }
+      : usage
+  )), []);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sessionExpiresAt, setSessionExpiresAt] = useState<number | null>(null);
   const [sessionRetentionSeconds, setSessionRetentionSeconds] = useState(DEFAULT_SESSION_RETENTION_SECONDS);
@@ -1450,7 +1458,7 @@ export default function ExperimentalAiPage() {
           setIsStopping(false);
           setError(message);
         },
-        onContextUsage: setContextUsage,
+        onContextUsage: updateContextUsage,
         onHistoryTrimmed: setTrimmedHistoryCount,
         onError: failBackgroundTurn,
       },
@@ -1475,7 +1483,7 @@ export default function ExperimentalAiPage() {
       }
       reconnect();
     });
-  }, [authToken, reportRequestError, sessionRetentionSeconds]);
+  }, [authToken, reportRequestError, sessionRetentionSeconds, updateContextUsage]);
 
   useEffect(() => {
     if (!isClientReady || activeSessionId === null || conversationUnavailable) return;
@@ -1688,7 +1696,7 @@ export default function ExperimentalAiPage() {
             )));
           },
           onProposal: diff => setProposalDiff(diff),
-          onContextUsage: setContextUsage,
+          onContextUsage: updateContextUsage,
           onHistoryTrimmed: setTrimmedHistoryCount,
         },
         controller.signal,
@@ -2644,12 +2652,19 @@ export default function ExperimentalAiPage() {
           <p
             className="mt-2 text-center text-[0.6875rem] text-gray-500"
             title={contextUsage !== null
-              ? `${contextUsage.usedChars.toLocaleString()} of ${contextUsage.maxChars.toLocaleString()} characters in retained chat history. Excludes instructions, schedule, tools, and attachments. This is not the model token window.`
+              ? `${contextUsage.usedChars.toLocaleString()} of ${contextUsage.maxChars.toLocaleString()} characters in retained chat history. Excludes instructions, schedule, tools, and attachments.${
+                contextUsage.usedTokens !== undefined
+                  ? ' Tokens count the latest model request, including instructions, tool output, and the reply.'
+                  : ' The AI server does not report model tokens.'
+              }`
               : 'The AI server has not reported context usage. Update the AI server to a version that reports its chat history budget.'}
           >
             Chat history context: {contextUsage !== null
               ? `${(100 * contextUsage.usedChars / contextUsage.maxChars).toFixed(1)}%`
               : 'unavailable'}
+            {contextUsage?.usedTokens !== undefined && (
+              <> · Tokens: {contextUsage.usedTokens.toLocaleString('en-US')} / {contextUsage.maxTokens?.toLocaleString('en-US') ?? 'unavailable'}</>
+            )}
           </p>
         )}
       </form>

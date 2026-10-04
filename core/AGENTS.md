@@ -78,6 +78,8 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   Continue only after cleanup succeeds, otherwise stop the claim loop.
 
 ## Experimental AI
+- Use provider metadata for model limits instead of duplicate environment
+  settings. Verify the configured endpoint before adding a provider workaround.
 - Keep attachment limits server-configured and report them through
   `/capabilities`. Attachments and the optimizer tool are always offered.
   Keep schedules and attachments separate from model instructions.

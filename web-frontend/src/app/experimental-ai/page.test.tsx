@@ -292,6 +292,23 @@ describe('ExperimentalAiPage', () => {
     expect(screen.queryByText(/Chat history context:/)).not.toBeInTheDocument();
   });
 
+  it.each([131072, undefined])('shows request tokens beside the history budget with limit %s', async maxTokens => {
+    const user = userEvent.setup();
+    mockStreamMessage.mockImplementationOnce(async (_id, _message, callbacks) => {
+      callbacks.onContextUsage({ usedChars: 500, maxChars: 2000, usedTokens: 4321, maxTokens });
+      // A report without tokens, such as the next turn's first one, keeps the latest token figures.
+      callbacks.onContextUsage({ usedChars: 600, maxChars: 2000 });
+      callbacks.onDelta('Done.');
+    });
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    const usage = await screen.findByText(/Chat history context: 30\.0%/);
+    expect(usage).toHaveTextContent(`Chat history context: 30.0% · Tokens: 4,321 / ${maxTokens ? '131,072' : 'unavailable'}`);
+    expect(usage).toHaveAttribute('title', expect.stringContaining('latest model request'));
+  });
+
   it('restores the transcript and live session after navigating away', async () => {
     const user = userEvent.setup();
     const firstRender = render(<ExperimentalAiPage />);
