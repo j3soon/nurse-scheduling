@@ -1991,6 +1991,23 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
     assert optimizer.deleted == ["remote-background"]
 
 
+@pytest.mark.parametrize(
+    "source,replacement",
+    [
+        ("description: draft\nloop: &a [*a]\n", "description: draft\nloop: &b [*b]\n"),
+        ("%YAML 1.3\n---\ndescription: draft\n", "description: repaired\n"),
+        ("loop: " + "[" * 100 + "0" + "]" * 100, "description: repaired\n"),
+    ],
+)
+def test_schedule_updates_can_replace_unusual_drafts(source, replacement):
+    app = create_test_app(settings=make_settings(), provider=ScriptedToolProvider())
+    with AuthenticatedTestClient(app) as client:
+        session_id = create_session(client, source)
+        response = client.put(f"/sessions/{session_id}/schedule", json={"schedule_yaml": replacement})
+        assert response.status_code == 204
+        assert app.state.session_store._sessions[session_id].schedule_yaml == replacement
+
+
 def test_optimizer_inspection_keeps_submitted_context_after_editor_changes():
     context_path = "/workspace/optimizer-results/schedule-context.json"
     read_context = [ToolCallRequest((ToolCall("read-context", READ_TOOL, json.dumps({"path": context_path})),))]

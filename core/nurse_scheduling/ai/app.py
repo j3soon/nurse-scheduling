@@ -38,12 +38,12 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
-from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 from starlette.background import BackgroundTask
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from ..loader import _load_yaml
 from ..sentry import init_sentry
 from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry
 from ..version import get_app_version
@@ -220,8 +220,8 @@ class CapabilitiesResponse(BaseModel):
 def _schedule_data(schedule_yaml: str) -> object:
     """Parse a schedule for comparison, so a formatting-only change is not reported as an edit."""
     try:
-        return YAML(typ="safe").load(schedule_yaml)
-    except YAMLError:
+        return _load_yaml(schedule_yaml.encode(), reject_aliases=True)
+    except (ValueError, YAMLError):
         return schedule_yaml
 
 

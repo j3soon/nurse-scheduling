@@ -118,6 +118,9 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
 - Keep backend schedule format invariants in `NurseSchedulingData`. Implement
   consumer-specific subsets through explicit Pydantic entry points rather than
   input-controlled or global validation flags.
+- Parse schedules through `loader._load_yaml`, including comparisons of draft
+  schedules. It bounds nesting and alias expansion before constructing data.
+  Direct `YAML.load` calls bypass those bounds.
 - The assistant is reachable only from the web frontend, so its schedule tools
   target the frontend subset alone. Validate through
   `ai/validation.py`, and do not expose the full backend schedule format, which
