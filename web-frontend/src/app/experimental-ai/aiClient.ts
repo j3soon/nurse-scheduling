@@ -119,6 +119,8 @@ export interface ModelInputMessage {
   content: string;
   // Absolute history position of an app event, so a retried turn does not show it twice.
   index?: number;
+  // Topic of an app event or status message, such as Proposal Rejected.
+  title?: string;
 }
 
 export interface ModelInput {
@@ -133,6 +135,7 @@ function isModelInputMessage(value: unknown): value is ModelInputMessage {
   const message = value as Partial<ModelInputMessage>;
   return typeof message.kind === 'string' && MODEL_INPUT_KINDS.has(message.kind)
     && typeof message.content === 'string'
+    && (message.title === undefined || typeof message.title === 'string')
     && (message.kind === 'app' ? Number.isSafeInteger(message.index) : message.index === undefined);
 }
 

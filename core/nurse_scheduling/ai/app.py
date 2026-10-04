@@ -49,8 +49,10 @@ from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_regis
 from ..version import get_app_version
 from .agent import AgentProposal, AgentReasoning, AgentSteering, AgentText, AgentToolStart, AgentToolUse
 from .background import (
-    APP_EVENT_PREFIX,
     CANDIDATE_VALIDATION_ERROR,
+    PROPOSAL_APPROVED_HISTORY,
+    PROPOSAL_INVALID_HISTORY,
+    PROPOSAL_REJECTED_HISTORY,
     PROVIDER_ERROR,
     SANDBOX_COMMAND_TIMEOUT_ERROR,
     SANDBOX_TURN_TIMEOUT_ERROR,
@@ -102,16 +104,6 @@ from .validation import new_schedule_issues, validate_frontend_schedule_yaml
 SERVICE_NAME = "nurse-scheduling-ai-api"
 API_VERSION = "0.2.0"
 OWNER_COOKIE = "nurse_scheduling_ai_owner"
-PROPOSAL_APPROVED_HISTORY = f"{APP_EVENT_PREFIX} The user approved the previous schedule proposal. Its changes are now part of the current schedule."
-PROPOSAL_REJECTED_HISTORY = (
-    f"{APP_EVENT_PREFIX} The user rejected the previous schedule proposal. All schedule changes made during that agent turn were "
-    "discarded. This turn starts with a fresh workspace containing the current schedule."
-)
-PROPOSAL_INVALID_HISTORY = (
-    f"{APP_EVENT_PREFIX} The previous schedule proposal failed trusted validation when the user approved it, so it was discarded. All "
-    "schedule changes made during that agent turn were dropped. This turn starts with a fresh workspace containing "
-    "the current schedule."
-)
 ORIGIN_REGEX = (
     r"^(http://(localhost|127\.0\.0\.1|host\.docker\.internal|10(?:\.[0-9]{1,3}){3}|"
     r"192\.168(?:\.[0-9]{1,3}){2}|172\.(1[6-9]|2[0-9]|3[01])(?:\.[0-9]{1,3}){2}):[0-9]+|"

@@ -495,9 +495,9 @@ describe('ExperimentalAiPage', () => {
         system: 'Shared system prompt',
         messages: [
           // The second turn repeats the event, as after a failed turn. The page shows it once.
-          { kind: 'app', index: 0, content: '[App event] The user uploaded files: ward.csv' },
+          { kind: 'app', index: 0, content: '[App event] The user uploaded files: ward.csv', title: 'Files Uploaded' },
           { kind: 'question', content: message },
-          { kind: 'status', content: `[Current status]\nTurn ${turn}` },
+          { kind: 'status', content: `[Current status]\nTurn ${turn}`, title: 'Pending Proposal' },
         ],
       });
       callbacks.onDelta(`Answer to ${message}`);
@@ -516,10 +516,13 @@ describe('ExperimentalAiPage', () => {
     const cards = Array.from(screen.getByLabelText('Chat messages').querySelectorAll('article'));
     // History never keeps a status message, so only the latest request's status is shown.
     expect(cards.map(card => card.querySelector('p')?.textContent)).toEqual([
-      'System', 'User · App', 'User', 'Assistant', 'User', 'User · Status', 'Assistant',
+      'System', 'User · App - Files Uploaded', 'User', 'Assistant', 'User', 'User · Status - Pending Proposal', 'Assistant',
     ]);
-    expect(cards[1]).toHaveTextContent('[App event] The user uploaded files: ward.csv');
-    expect(cards[5]).toHaveTextContent('Turn 2');
+    // The label names the topic, so the exact text of app and status messages starts collapsed.
+    for (const [card, text] of [[cards[1], '[App event] The user uploaded files: ward.csv'], [cards[5], 'Turn 2']] as const) {
+      expect(card.querySelector('details')).not.toHaveAttribute('open');
+      expect(card.querySelector('details pre')).toHaveTextContent(text);
+    }
     const systemPrompt = cards[0].querySelector('details');
     expect(systemPrompt).not.toHaveAttribute('open');
     expect(systemPrompt).toHaveTextContent('Shared system prompt');

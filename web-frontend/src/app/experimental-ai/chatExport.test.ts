@@ -53,9 +53,9 @@ describe('chat export', () => {
   it('exports provider messages in request order with role labels', () => {
     const turns: ChatExportMessage[] = [
       { role: 'system', content: 'System with ``` fence' },
-      { role: 'user', source: 'app', content: '[App event] The user uploaded files: [<b>]' },
+      { role: 'user', source: 'app', title: 'Files Uploaded', content: '[App event] The user uploaded files: [<b>]' },
       { role: 'user', content: 'Question' },
-      { role: 'user', source: 'status', content: '[Current status]\nOptimization result: result.xlsx.' },
+      { role: 'user', source: 'status', title: 'Optimizer Result', content: '[Current status]\nOptimization result: result.xlsx.' },
       { role: 'assistant', content: 'Answer' },
       { role: 'user', source: 'optimizer', content: 'Optimizer job finished.' },
     ];
@@ -64,14 +64,15 @@ describe('chat export', () => {
     const html = buildHtmlChatExport(turns, metadata);
 
     expect(markdown.match(/^## .+$/gm)).toEqual([
-      '## System', '## User · App', '## User', '## User · Status', '## Assistant', '## User · Optimizer',
+      '## System', '## User · App - Files Uploaded', '## User', '## User · Status - Optimizer Result', '## Assistant',
+      '## User · Optimizer',
     ]);
     expect(markdown).toContain('````text\nSystem with ``` fence\n````');
     expect(html.match(/<div class="label">[^<]+<\/div>/g)).toEqual([
       '<div class="label">System</div>',
-      '<div class="label">User · App</div>',
+      '<div class="label">User · App - Files Uploaded</div>',
       '<div class="label">User</div>',
-      '<div class="label">User · Status</div>',
+      '<div class="label">User · Status - Optimizer Result</div>',
       '<div class="label">Assistant</div>',
       '<div class="label">User · Optimizer</div>',
     ]);

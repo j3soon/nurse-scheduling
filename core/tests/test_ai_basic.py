@@ -60,6 +60,8 @@ from nurse_scheduling.ai.background import (
     SCHEDULE_CHANGED_EVENT,
     STATUS_PREFIX,
     build_provider_messages,
+    message_title,
+    removal_event,
     upload_event,
 )
 from nurse_scheduling.ai.config import AiSettings
@@ -1001,8 +1003,8 @@ def test_uploads_and_removals_are_history_messages_before_the_question() -> None
         {
             "system": provider.calls[0][0]["content"],
             "messages": [
-                {"kind": "app", "index": 0, "content": uploaded},
-                {"kind": "app", "index": 1, "content": removed},
+                {"kind": "app", "index": 0, "content": uploaded, "title": "Files Uploaded"},
+                {"kind": "app", "index": 1, "content": removed, "title": "File Removed"},
                 {"kind": "question", "content": "Read"},
             ],
         },
@@ -1036,6 +1038,25 @@ def test_status_lists_only_uploads_that_the_sent_history_does_not_show() -> None
         "role": "user",
         "content": "Question",
     }
+
+
+def test_every_app_event_and_status_line_has_a_chat_title() -> None:
+    attachment = SandboxAttachment("ward.csv", "text/csv", b"a", id="file")
+    events = {
+        upload_event([attachment]): "Files Uploaded",
+        removal_event(attachment, 1): "File Removed",
+        SCHEDULE_CHANGED_EVENT: "Schedule Changed",
+        SCHEDULE_CHANGED_DISCARDED_EVENT: "Schedule Changed, Proposal Discarded",
+        PROPOSAL_APPROVED_HISTORY: "Proposal Approved",
+        PROPOSAL_REJECTED_HISTORY: "Proposal Rejected",
+        PROPOSAL_INVALID_HISTORY: "Proposal Invalid",
+    }
+    status = build_provider_messages([], "description: test", "Q", (attachment,), pending_proposal=True)[-1]["content"]
+
+    assert {message_title("app", content) for content in events} == set(events.values())
+    assert all(message_title("app", content) == title for content, title in events.items())
+    assert message_title("status", status) == "Pending Proposal, Unlisted Uploads"
+    assert message_title("question", "[App event] typed by a user") is None
 
 
 def test_arbitrary_file_is_available_in_the_disposable_sandbox() -> None:
@@ -1901,7 +1922,7 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
             "system": provider.calls[3][0]["content"],
             "messages": [
                 {"kind": "optimizer", "content": provider.calls[3][-2]["content"]},
-                {"kind": "status", "content": provider.calls[3][-1]["content"]},
+                {"kind": "status", "content": provider.calls[3][-1]["content"], "title": "Optimizer Result"},
             ],
         }
         assert provider.calls[3][0] == provider.calls[0][0]

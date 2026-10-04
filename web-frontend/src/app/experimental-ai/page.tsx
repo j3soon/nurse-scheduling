@@ -272,6 +272,7 @@ function isChatMessage(value: unknown): value is ChatMessage {
     && typeof message.content === 'string'
     && (message.source === undefined || message.source === 'app' || message.source === 'status' || message.source === 'optimizer')
     && (message.historyIndex === undefined || Number.isSafeInteger(message.historyIndex))
+    && (message.title === undefined || typeof message.title === 'string')
     && (message.activity === undefined
       || (Array.isArray(message.activity) && message.activity.every(isActivityEntry)))
     && (message.status === undefined || message.status === 'pending' || message.status === 'failed')
@@ -452,9 +453,11 @@ function applyModelInput(
   let optimizerText: string | null = null;
   input.messages.forEach(entry => {
     if (entry.kind === 'app' && !known.has(entry.index)) {
-      before.push({ id: `history-${entry.index}`, role: 'user', source: 'app', historyIndex: entry.index, content: entry.content });
+      before.push({
+        id: `history-${entry.index}`, role: 'user', source: 'app', title: entry.title, historyIndex: entry.index, content: entry.content,
+      });
     } else if (entry.kind === 'status') {
-      status = { id: statusId, role: 'user', source: 'status', content: entry.content };
+      status = { id: statusId, role: 'user', source: 'status', title: entry.title, content: entry.content };
     } else if (entry.kind === 'question') {
       questionText = entry.content;
     } else if (entry.kind === 'optimizer') {
@@ -2274,7 +2277,8 @@ export default function ExperimentalAiPage() {
               ) : message.role === 'system' ? (
                 <CollapsedText summary={`${message.content.length.toLocaleString('en-US')} characters`} text={message.content} />
               ) : message.source !== undefined ? (
-                <p className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed">{message.content}</p>
+                // The label names the topic, so the exact text starts collapsed.
+                <CollapsedText summary={`${message.content.length.toLocaleString('en-US')} characters`} text={message.content} />
               ) : message.role === 'user' ? (
                 <p className="whitespace-pre-wrap break-words">{message.content}</p>
               ) : optimizer ? (

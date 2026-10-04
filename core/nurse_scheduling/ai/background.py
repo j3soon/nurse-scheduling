@@ -200,6 +200,42 @@ SCHEDULE_CHANGED_EVENT = (
 SCHEDULE_CHANGED_DISCARDED_EVENT = (
     f"{SCHEDULE_CHANGED_EVENT} The pending proposal was discarded because it was made for the previous schedule."
 )
+PROPOSAL_APPROVED_HISTORY = (
+    f"{APP_EVENT_PREFIX} The user approved the previous schedule proposal. Its changes are now part of the current "
+    "schedule."
+)
+PROPOSAL_REJECTED_HISTORY = (
+    f"{APP_EVENT_PREFIX} The user rejected the previous schedule proposal. All schedule changes made during that agent "
+    "turn were discarded. This turn starts with a fresh workspace containing the current schedule."
+)
+PROPOSAL_INVALID_HISTORY = (
+    f"{APP_EVENT_PREFIX} The previous schedule proposal failed trusted validation when the user approved it, so it was "
+    "discarded. All schedule changes made during that agent turn were dropped. This turn starts with a fresh "
+    "workspace containing the current schedule."
+)
+UPLOAD_EVENT_PREFIX = f"{APP_EVENT_PREFIX} The user uploaded files."
+REMOVAL_EVENT_PREFIX = f"{APP_EVENT_PREFIX} The user removed a file from the workspace:"
+PENDING_PROPOSAL_STATUS = (
+    "A validated proposal is pending. Its exact candidate and diff are available in the trusted workspace files that "
+    "the instructions describe."
+)
+OPTIMIZER_RESULT_STATUS = "Optimization result:"
+UNLISTED_UPLOADS_STATUS = "Uploaded files not listed in this conversation:"
+# Short titles let the chat label each app-written message without parsing its text.
+_APP_EVENT_TITLES = (
+    (UPLOAD_EVENT_PREFIX, "Files Uploaded"),
+    (REMOVAL_EVENT_PREFIX, "File Removed"),
+    (SCHEDULE_CHANGED_DISCARDED_EVENT, "Schedule Changed, Proposal Discarded"),
+    (SCHEDULE_CHANGED_EVENT, "Schedule Changed"),
+    (PROPOSAL_APPROVED_HISTORY, "Proposal Approved"),
+    (PROPOSAL_REJECTED_HISTORY, "Proposal Rejected"),
+    (PROPOSAL_INVALID_HISTORY, "Proposal Invalid"),
+)
+_STATUS_TITLES = (
+    (PENDING_PROPOSAL_STATUS, "Pending Proposal"),
+    (OPTIMIZER_RESULT_STATUS, "Optimizer Result"),
+    (UNLISTED_UPLOADS_STATUS, "Unlisted Uploads"),
+)
 
 
 def history_chars(messages: Sequence[ChatMessage]) -> int:
@@ -220,7 +256,7 @@ def upload_event(attachments: Sequence[SandboxAttachment], first_index: int = 1)
     """Describe uploaded files once in history, so later requests keep the same prefix."""
     files = [_file_entry(attachment, index) for index, attachment in enumerate(attachments, start=first_index)]
     return (
-        f"{APP_EVENT_PREFIX} The user uploaded files. They stay in the workspace until the user removes them: "
+        f"{UPLOAD_EVENT_PREFIX} They stay in the workspace until the user removes them: "
         f"{json.dumps(files, ensure_ascii=False)}"
     )
 
@@ -228,7 +264,7 @@ def upload_event(attachments: Sequence[SandboxAttachment], first_index: int = 1)
 def removal_event(attachment: SandboxAttachment, index: int) -> str:
     """Describe one removed file in history."""
     removed = {"filename": attachment.filename, "path": attachment_path(attachment, index)}
-    return f"{APP_EVENT_PREFIX} The user removed a file from the workspace: {json.dumps(removed, ensure_ascii=False)}"
+    return f"{REMOVAL_EVENT_PREFIX} {json.dumps(removed, ensure_ascii=False)}"
 
 
 def status_message(
@@ -241,12 +277,9 @@ def status_message(
     """Describe request-specific state that would otherwise change the cached prompt prefix."""
     lines = []
     if pending_proposal:
-        lines.append(
-            "A validated proposal is pending. Its exact candidate and diff are available in the trusted workspace "
-            "files that the instructions describe."
-        )
+        lines.append(PENDING_PROPOSAL_STATUS)
     if optimizer_result_available:
-        lines.append(f"Optimization result: {WORKSPACE_OPTIMIZER_RESULT}.")
+        lines.append(f"{OPTIMIZER_RESULT_STATUS} {WORKSPACE_OPTIMIZER_RESULT}.")
     # Trimmed history or a failed turn can hide an upload event, so list only the files the request cannot show.
     sent = "\n".join(str(message["content"]) for message in history)
     unlisted = [
@@ -255,7 +288,7 @@ def status_message(
         if (entry := _file_entry(attachment, index))["path"] not in sent
     ]
     if unlisted:
-        lines.append(f"Uploaded files not listed in this conversation: {json.dumps(unlisted, ensure_ascii=False)}")
+        lines.append(f"{UNLISTED_UPLOADS_STATUS} {json.dumps(unlisted, ensure_ascii=False)}")
     return f"{STATUS_PREFIX}\n" + "\n".join(lines) if lines else ""
 
 
@@ -298,6 +331,17 @@ def build_provider_messages(
     ]
 
 
+def message_title(kind: str, content: str) -> str | None:
+    """Name the topic of an app event or status message for its chat label."""
+    if kind == "app":
+        return next((title for prefix, title in _APP_EVENT_TITLES if content.startswith(prefix)), None)
+    if kind == "status":
+        lines = content.split("\n")[1:]
+        titles = [title for prefix, title in _STATUS_TITLES if any(line.startswith(prefix) for line in lines)]
+        return ", ".join(titles) or None
+    return None
+
+
 def model_input(
     messages: Sequence[ChatMessage], history_count: int, history_offset: int, question_kind: str
 ) -> dict[str, object]:
@@ -315,6 +359,9 @@ def model_input(
     ]
     added.append({"kind": question_kind, "content": messages[1 + history_count]["content"]})
     added.extend({"kind": "status", "content": message["content"]} for message in messages[2 + history_count :])
+    for entry in added:
+        if title := message_title(str(entry["kind"]), str(entry["content"])):
+            entry["title"] = title
     return {"system": messages[0]["content"], "messages": added}
 
 

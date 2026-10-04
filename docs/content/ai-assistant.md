@@ -658,7 +658,9 @@ contains the system message. Its `messages` field lists the request messages
 added since the last assistant reply, in order. Each entry has a `kind` of
 `app`, `question`, `optimizer`, or `status`. An `app` entry also has its
 absolute history `index`, so a client shows it once when a failed turn is
-retried. A foreground turn sends this event first in the message stream. A
+retried. App events and status messages also have a short `title`, such as
+`Proposal Rejected` or `Pending Proposal`. The chat shows it after the role
+label and keeps the exact text collapsed. A foreground turn sends this event first in the message stream. A
 background turn publishes it on the session event stream after `turn_start`.
 
 `GET /health`, `GET /ready`, and `GET /capabilities` stay public so deployment

@@ -32,6 +32,8 @@ import { parseOptimizerMessage } from './optimizerMessage';
 export interface ChatExportMessage {
   role: 'system' | 'user' | 'assistant' | 'optimizer';
   source?: 'app' | 'status' | 'optimizer';
+  // Topic of an app event or status message, shown after its role label.
+  title?: string;
   content: string;
   createdAt?: number;
   activity?: ActivityEntry[];
@@ -180,8 +182,9 @@ export function messageLabel(message: ChatExportMessage): string {
   if (message.role === 'system') return 'System';
   if (message.role === 'assistant') return 'Assistant';
   if (message.role === 'optimizer') return 'Optimizer';
-  if (message.source === 'app') return 'User · App';
-  if (message.source === 'status') return 'User · Status';
+  const topic = message.title ? ` - ${message.title}` : '';
+  if (message.source === 'app') return `User · App${topic}`;
+  if (message.source === 'status') return `User · Status${topic}`;
   if (message.source === 'optimizer') return 'User · Optimizer';
   return 'User';
 }
@@ -308,7 +311,7 @@ export function buildHtmlChatExport(
   const renderedMessages = messages.map(message => {
     const timeline = message.role === 'assistant'
       ? renderAssistantTimelineHtml(message)
-      : message.role === 'system'
+      : message.role === 'system' || message.source !== undefined
         ? `<details class="system-prompt"><summary>${formatCount(message.content.length)} characters</summary><pre>${escapeHtml(message.content)}</pre></details>`
         : message.role === 'optimizer'
           ? renderOptimizerHtml(message.content)
