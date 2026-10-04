@@ -25,6 +25,27 @@ if [[ -x "${CORE_DIR}/.venv/bin/python" && -f "${CORE_DIR}/.venv/bin/activate" ]
   source "${CORE_DIR}/.venv/bin/activate"
 fi
 
+# The runner starts in core/, so resolve relative path options from the caller.
+args=()
+resolve_next=false
+for arg in "$@"; do
+  if [[ "$resolve_next" == true ]]; then
+    [[ "$arg" == /* ]] || arg="${PWD}/${arg}"
+    resolve_next=false
+  else
+    case "$arg" in
+      --output-dir | --cases-dir | --baseline-report)
+        resolve_next=true
+        ;;
+      --output-dir=[!/]* | --cases-dir=[!/]* | --baseline-report=[!/]*)
+        arg="${arg%%=*}=${PWD}/${arg#*=}"
+        ;;
+    esac
+  fi
+  args+=("$arg")
+done
+set -- "${args[@]}"
+
 cd "${CORE_DIR}"
 for arg in "$@"; do
   if [[ "$arg" == --help || "$arg" == -h ]]; then
