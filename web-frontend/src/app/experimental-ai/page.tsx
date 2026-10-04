@@ -1424,6 +1424,18 @@ export default function ExperimentalAiPage() {
         sessionId,
         question,
         {
+          onAccepted: () => {
+            if (!fileCapability.retained) return;
+            getUploads(sessionId, authToken, sessionEndpoint, controller.signal)
+              .then(files => {
+                if (!controller.signal.aborted && abortControllerRef.current === controller) setUploadedFiles(files);
+              })
+              .catch(uploadError => {
+                if (!controller.signal.aborted && abortControllerRef.current === controller) {
+                  reportRequestError(uploadError, 'Uploaded files could not be listed.');
+                }
+              });
+          },
           onDelta: text => {
             if (text) {
               activeAssistantHasOutput = true;
@@ -1829,25 +1841,6 @@ export default function ExperimentalAiPage() {
 
   return (
     <main className={`mx-auto flex min-h-[calc(100dvh-3.5rem)] max-w-5xl flex-col px-4 pb-36 pt-8 sm:px-6 ${fileCapability.retained ? 'xl:mr-72' : ''}`}>
-      {fileCapability.retained && (
-        <aside aria-label="Session files" className="mb-4 rounded-xl border border-gray-200 bg-white p-4 xl:fixed xl:right-4 xl:top-24 xl:z-10 xl:max-h-[calc(100dvh-8rem)] xl:w-64 xl:overflow-y-auto">
-          <details open>
-            <summary className="cursor-pointer font-semibold">Uploaded files ({uploadedFiles.length})</summary>
-            <p className="mt-2 text-xs text-gray-600">Available for later questions until removed or this chat expires. Uploading the same filename replaces its contents.</p>
-            {uploadedFiles.length === 0 ? <p className="mt-3 text-sm text-gray-500">No uploaded files.</p> : (
-              <ul className="mt-3 space-y-3">
-                {uploadedFiles.map(file => (
-                  <li key={file.id} className="flex items-start gap-2">
-                    <span className="min-w-0 flex-1 break-words text-sm">{file.filename}<span className="block text-xs text-gray-500">{(file.bytes / 1000).toLocaleString()} KB</span></span>
-                    <button type="button" aria-label={`Remove ${file.filename}`} disabled={isStreaming || removingUploadId !== null}
-                      onClick={() => void removeUploadedFile(file.id)} className="rounded px-2 py-1 text-xs text-red-700 hover:bg-red-50 disabled:opacity-50">Remove</button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </details>
-        </aside>
-      )}
       <div className="mb-6">
         <div className="mb-2 flex items-center gap-3">
           <h1 className="text-3xl font-bold text-gray-900">Schedule AI Chat</h1>
@@ -2055,6 +2048,26 @@ export default function ExperimentalAiPage() {
           </div>
         )}
       </div>
+
+      {fileCapability.retained && (
+        <aside aria-label="Session files" className="mb-4 rounded-xl border border-gray-200 bg-white p-4 xl:fixed xl:right-4 xl:top-24 xl:z-10 xl:max-h-[calc(100dvh-8rem)] xl:w-64 xl:overflow-y-auto">
+          <details open>
+            <summary className="cursor-pointer font-semibold">Uploaded files ({uploadedFiles.length})</summary>
+            <p className="mt-2 text-xs text-gray-600">Available for later questions until removed or this chat expires. Uploading the same filename replaces its contents.</p>
+            {uploadedFiles.length === 0 ? <p className="mt-3 text-sm text-gray-500">No uploaded files.</p> : (
+              <ul className="mt-3 space-y-3">
+                {uploadedFiles.map(file => (
+                  <li key={file.id} className="flex items-start gap-2">
+                    <span className="min-w-0 flex-1 break-words text-sm">{file.filename}<span className="block text-xs text-gray-500">{(file.bytes / 1000).toLocaleString()} KB</span></span>
+                    <button type="button" aria-label={`Remove ${file.filename}`} disabled={isStreaming || removingUploadId !== null}
+                      onClick={() => void removeUploadedFile(file.id)} className="rounded px-2 py-1 text-xs text-red-700 hover:bg-red-50 disabled:opacity-50">Remove</button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </details>
+        </aside>
+      )}
 
       <section
         aria-label="Chat messages"

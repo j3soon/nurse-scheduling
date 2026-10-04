@@ -48,6 +48,7 @@ export interface OptimizationProgressActivity {
 }
 
 export interface StreamCallbacks {
+  onAccepted?: () => void;
   lastEventId?: number;
   onEventId?: (id: number) => void;
   onTurnStart?: (messageId: string, trigger: string) => void;
@@ -385,6 +386,7 @@ export async function streamMessage(
     signal,
   });
   if (!response.ok) throw await responseError(response);
+  callbacks.onAccepted?.();
   await consumeStream(response, callbacks);
 }
 

@@ -143,16 +143,25 @@ describe('ExperimentalAiPage', () => {
     window.sessionStorage.clear();
   });
 
-  it('lists retained session uploads and removes an unused file', async () => {
+  it('lists uploads before the assistant responds and removes an unused file', async () => {
     mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, file_attachments: { ...defaultCapabilities.file_attachments, retained: true } });
     mockRemoveUpload.mockImplementation(async () => { mockGetUploads.mockResolvedValue([]); });
     mockGetUploads.mockResolvedValue([{ id: 'upload-1', filename: 'ward.xlsx', media_type: 'application/xlsx', bytes: 5000 }]);
+    let finishResponse: () => void = () => {};
+    mockStreamMessage.mockImplementation((_id: string, _question: string, callbacks: { onAccepted: () => void }) => {
+      callbacks.onAccepted();
+      return new Promise<void>(resolve => { finishResponse = resolve; });
+    });
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
+    await user.upload(await screen.findByLabelText('Attach files'), new File(['workbook'], 'ward.xlsx'));
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Read the workbook');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     const panel = await screen.findByRole('complementary', { name: 'Session files' });
     expect(await within(panel).findByText('ward.xlsx')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: 'Remove ward.xlsx' })).toBeDisabled();
+    await act(async () => { finishResponse(); });
     await user.click(within(panel).getByRole('button', { name: 'Remove ward.xlsx' }));
     await waitFor(() => expect(mockRemoveUpload).toHaveBeenCalledWith('session-id', 'upload-1', null, '/ai'));
     expect(await within(panel).findByText('No uploaded files.')).toBeInTheDocument();

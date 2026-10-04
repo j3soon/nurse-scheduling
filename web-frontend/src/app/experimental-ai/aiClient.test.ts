@@ -184,14 +184,18 @@ describe('AI client', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response));
     const deltas: string[] = [];
     const onDone = vi.fn();
+    const onAccepted = vi.fn();
 
     const streaming = streamMessage(
       'session-id',
       'Question',
-      { onDelta: delta => deltas.push(delta), onDone },
+      { onDelta: delta => deltas.push(delta), onDone, onAccepted },
       new AbortController().signal,
       null,
     );
+    await vi.waitFor(() => expect(onAccepted).toHaveBeenCalledOnce());
+    expect(deltas).toEqual([]);
+    expect(onDone).not.toHaveBeenCalled();
     streamController?.enqueue(encoder.encode('event: delta\ndata: {"text":"First"}\n\n'));
 
     await vi.waitFor(() => expect(deltas).toEqual(['First']));
@@ -201,6 +205,18 @@ describe('AI client', () => {
     streamController?.close();
     await streaming;
     expect(onDone).toHaveBeenCalledOnce();
+  });
+
+  it('does not accept a rejected message', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ detail: 'Too many retained files.' }),
+      { status: 413, headers: { 'Content-Type': 'application/json' } },
+    )));
+    const onAccepted = vi.fn();
+    await expect(streamMessage(
+      'session-id', 'Question', { onDelta: vi.fn(), onAccepted }, new AbortController().signal, null,
+    )).rejects.toThrow('Too many retained files.');
+    expect(onAccepted).not.toHaveBeenCalled();
   });
 
   it('surfaces a provider status with its backend error ID', async () => {
