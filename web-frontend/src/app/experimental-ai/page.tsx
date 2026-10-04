@@ -44,20 +44,17 @@ import yaml from 'js-yaml';
 import { ActivityEntry, AssistantActivity } from './AssistantActivity';
 import { downloadChatExport, type ChatExportFormat } from './chatExport';
 import { parseOptimizerMessage } from './optimizerMessage';
-import { interruptRunningTools, messageId } from './assistantEvents';
-import { useAiChat, type ChatMessage, type ActiveOptimization } from './useAiChat';
+import { messageId } from './assistantEvents';
+import { useAiChat, retentionLabel, type ChatConversation, type ChatMessage } from './useAiChat';
 import {
   AiCapabilities,
-  AiHttpError,
   DEFAULT_SESSION_RETENTION_SECONDS,
   LOCAL_AI_API_URL,
-  type ContextUsage,
   PRODUCTION_AI_API_URL,
   downloadOptimization,
   getAiBaseUrl,
   getCapabilities,
   getBackendVersion,
-  getSessionStatus,
   isAuthenticationError,
   isOfficialAiEndpoint,
   normalizeAiEndpoint,
@@ -173,20 +170,8 @@ interface SelectedAttachment {
   previewUrl?: string;
 }
 
-interface StoredChatConversation {
-  sessionId: string;
-  endpoint: string;
-  expiresAt: number;
-  retentionSeconds: number;
-  messages: ChatMessage[];
-  syncedSchedule: string;
-  proposalDiff: string | null;
-  sessionEventId?: number;
-  activeOptimization?: ActiveOptimization | null;
+interface StoredChatConversation extends ChatConversation {
   backendVersion?: string;
-  contextUsage?: ContextUsage | null;
-  backgroundAssistantId?: string | null;
-  trimmedHistoryCount?: number;
 }
 
 const DISABLED_FILE_CAPABILITY: AiCapabilities['file_attachments'] = {
@@ -294,13 +279,7 @@ function readStoredConversation(): StoredChatConversation | null {
   }
 }
 
-function retentionLabel(seconds: number): string {
-  if (seconds % 3600 === 0) {
-    const hours = seconds / 3600;
-    return `${hours} ${hours === 1 ? 'hour' : 'hours'}`;
-  }
-  return `${seconds.toLocaleString()} seconds`;
-}
+
 
 function formatSessionExpiration(timestamp: number): string {
   return new Date(timestamp).toLocaleString([], {
@@ -441,7 +420,6 @@ export default function ExperimentalAiPage() {
   const chatExportUrlRef = useRef<string | null>(null);
   const conversationStorageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const persistConversationRef = useRef<(() => void) | null>(null);
-  const checkedSessionRef = useRef<string | null>(null);
   const reportRequestError = useCallback((requestError: unknown, fallback: string) => {
     if (isAuthenticationError(requestError)) {
       setAuthRequired(true);
@@ -452,46 +430,40 @@ export default function ExperimentalAiPage() {
     }
     setError(requestError instanceof Error ? requestError.message : fallback);
   }, []);
+  const handleUnavailable = useCallback(() => {
+    setDownloadingOptimizationId(null);
+    window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
+  }, []);
   const {
     messages,
-    setMessages,
     contextUsage,
-    setContextUsage,
     activeSessionId,
-    setActiveSessionId,
     sessionExpiresAt,
-    setSessionExpiresAt,
     sessionRetentionSeconds,
-    setSessionRetentionSeconds,
     conversationUnavailable,
-    setConversationUnavailable,
     sessionNotice,
-    setSessionNotice,
     trimmedHistoryCount,
-    setTrimmedHistoryCount,
-    lifecycle,
     isStreaming,
     isStopping,
     activeOptimization,
-    setActiveOptimization,
     queuedMessages,
     steeringAssistantId,
     proposalDiff,
-    setProposalDiff,
     proposalNotice,
-    setProposalNotice,
     isApplyingProposal,
-    syncedScheduleRef,
-    sessionIdRef,
-    sessionEndpointRef,
     sendRequest,
     queue,
     retryMessage,
     stop,
     applyProposal,
     discardProposal,
-    reset: resetChat,
-    eventCursor,
+    configureRetention,
+    sessionEndpoint,
+    backgroundAssistantId,
+    snapshot,
+    restore,
+    clearConversation,
+    captureConversation,
   } = useAiChat({
     scheduleYaml, aiEndpoint, authRequired, authToken, isClientReady,
     setError, reportRequestError,
@@ -506,15 +478,9 @@ export default function ExperimentalAiPage() {
         setSelectedAttachments([]);
       }
     },
-    onSessionCreated: id => { checkedSessionRef.current = id; },
-    onUnavailable: () => window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY),
+    onUnavailable: handleUnavailable,
     onApplySchedule: schedule => loadFromYaml(yaml.load(schedule)),
   });
-  const resetRuntime = useCallback(() => {
-    resetChat();
-    checkedSessionRef.current = null;
-    setDownloadingOptimizationId(null);
-  }, [resetChat]);
   hasMessagesRef.current = messages.length > 0;
   useTabSwitchWarning(isStreaming || draft.trim().length > 0 || selectedAttachments.length > 0);
 
@@ -541,41 +507,8 @@ export default function ExperimentalAiPage() {
     const storedConversation = readStoredConversation();
     if (storedConversation !== null) {
       endpoint = storedConversation.endpoint;
-      // Replayed events reconcile onto the unfinished background message by ID, so
-      // restore it before the stream opens. Its tools stopped with the old page.
-      if (storedConversation.backgroundAssistantId) {
-        lifecycle.begin('background', storedConversation.backgroundAssistantId, 'interrupted');
-      }
-      setMessages(storedConversation.messages.map(message => (
-        message.status === 'pending'
-          ? { ...message, status: 'failed' as const, activity: interruptRunningTools(message.activity ?? []) }
-          : message
-      )));
-      setProposalDiff(storedConversation.proposalDiff);
-      setSessionRetentionSeconds(storedConversation.retentionSeconds);
-      eventCursor.current = storedConversation.sessionEventId ?? 0;
+      restore(storedConversation);
       setBackendVersion(storedConversation.backendVersion);
-      setContextUsage(storedConversation.contextUsage ?? null);
-      setActiveOptimization(storedConversation.activeOptimization
-        ? { ...storedConversation.activeOptimization, points: storedConversation.activeOptimization.points ?? [] }
-        : null);
-      syncedScheduleRef.current = storedConversation.syncedSchedule;
-      sessionEndpointRef.current = storedConversation.endpoint;
-      if (storedConversation.expiresAt <= Date.now()) {
-        window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
-        setConversationUnavailable(true);
-        setSessionNotice(
-          `This chat expired after ${retentionLabel(storedConversation.retentionSeconds)} of inactivity. Start a new chat to continue.`,
-        );
-      } else {
-        sessionIdRef.current = storedConversation.sessionId;
-        setActiveSessionId(storedConversation.sessionId);
-        setSessionExpiresAt(storedConversation.expiresAt);
-        // The trim lasts as long as the conversation, but the event announcing it sits
-        // behind the stored cursor and never replays, so restore the warning directly.
-        // An expired chat sends nothing at all, so it keeps the transcript without it.
-        setTrimmedHistoryCount(storedConversation.trimmedHistoryCount ?? 0);
-      }
     }
     const storedTokens = readStoredAuthTokens();
     const storedToken = storedTokens[endpoint] ?? null;
@@ -593,10 +526,7 @@ export default function ExperimentalAiPage() {
     setSpeechSupported(hasSpeechRecognition && (
       detectedFirefoxVersion === null || detectedFirefoxVersion >= FIREFOX_ON_DEVICE_SPEECH_VERSION
     ));
-  }, [lifecycle, eventCursor, sessionEndpointRef, sessionIdRef, syncedScheduleRef,
-    setActiveOptimization, setActiveSessionId, setContextUsage, setConversationUnavailable,
-    setMessages, setProposalDiff, setSessionExpiresAt, setSessionNotice,
-    setSessionRetentionSeconds, setTrimmedHistoryCount]);
+  }, [restore]);
 
   const rememberPreferences = (preferences: AiPreferences) => {
     setShowReasoning(preferences.showReasoning);
@@ -619,7 +549,7 @@ export default function ExperimentalAiPage() {
         setServerStatus('online');
         setAuthRequired(capabilities.auth?.required ?? false);
         setFileCapability(capabilities.file_attachments);
-        setSessionRetentionSeconds(
+        configureRetention(
           capabilities.session_retention_seconds ?? DEFAULT_SESSION_RETENTION_SECONDS,
         );
         const version = await getBackendVersion(capabilitiesController.signal, aiEndpoint);
@@ -636,7 +566,7 @@ export default function ExperimentalAiPage() {
         }
       });
     return () => capabilitiesController.abort();
-  }, [aiEndpoint, isClientReady, setSessionRetentionSeconds]);
+  }, [aiEndpoint, isClientReady, configureRetention]);
 
   useEffect(() => {
     if (!isClientReady) return;
@@ -645,29 +575,12 @@ export default function ExperimentalAiPage() {
     }
     const persistConversation = () => {
       try {
-        if (
-          activeSessionId === null
-          || sessionExpiresAt === null
-          || sessionIdRef.current !== activeSessionId
-        ) {
+        const conversation = snapshot();
+        if (conversation === null) {
           window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
           return;
         }
-        const stored: StoredChatConversation = {
-          sessionId: activeSessionId,
-          endpoint: sessionEndpointRef.current ?? aiEndpoint,
-          expiresAt: sessionExpiresAt,
-          retentionSeconds: sessionRetentionSeconds,
-          messages,
-          syncedSchedule: syncedScheduleRef.current ?? scheduleYaml,
-          proposalDiff,
-          sessionEventId: eventCursor.current,
-          activeOptimization,
-          backendVersion,
-          contextUsage,
-          backgroundAssistantId: lifecycle.current('background')?.id,
-          trimmedHistoryCount,
-        };
+        const stored: StoredChatConversation = { ...conversation, backendVersion };
         window.sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify(stored));
       } catch {
         // The live conversation remains usable when tab storage is unavailable or full.
@@ -682,23 +595,7 @@ export default function ExperimentalAiPage() {
         conversationStorageTimerRef.current = null;
       }
     };
-  }, [
-    activeSessionId,
-    activeOptimization,
-    backendVersion,
-    contextUsage,
-    aiEndpoint,
-    isClientReady,
-    lifecycle,
-    messages,
-    proposalDiff,
-    scheduleYaml,
-    sessionExpiresAt,
-    sessionRetentionSeconds,
-    trimmedHistoryCount,
-    eventCursor,
-    sessionEndpointRef, sessionIdRef, syncedScheduleRef,
-  ]);
+  }, [isClientReady, snapshot, backendVersion]);
 
   useEffect(() => {
     const flushConversation = () => {
@@ -715,50 +612,6 @@ export default function ExperimentalAiPage() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!isClientReady || activeSessionId === null || checkedSessionRef.current === activeSessionId) return;
-    checkedSessionRef.current = activeSessionId;
-    const endpoint = sessionEndpointRef.current ?? aiEndpoint;
-    getSessionStatus(activeSessionId, authToken, endpoint)
-      .then(expiresInSeconds => {
-        if (sessionIdRef.current !== activeSessionId) return;
-        setSessionExpiresAt(Date.now() + expiresInSeconds * 1000);
-      })
-      .catch((statusError: unknown) => {
-        if (sessionIdRef.current !== activeSessionId) return;
-        if (statusError instanceof AiHttpError && statusError.status === 404) {
-          resetRuntime();
-          setConversationUnavailable(true);
-          setSessionNotice('This chat is no longer available on the AI server. Start a new chat to continue.');
-          window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
-        } else {
-          checkedSessionRef.current = null;
-          reportRequestError(statusError, 'The stored AI chat could not be checked.');
-        }
-      });
-  }, [activeSessionId, aiEndpoint, authToken, isClientReady, reportRequestError, resetRuntime,
-    sessionEndpointRef, sessionIdRef, setConversationUnavailable, setSessionExpiresAt, setSessionNotice]);
-
-  useEffect(() => {
-    if (activeSessionId === null || sessionExpiresAt === null) return;
-    const expire = () => {
-      resetRuntime();
-      setConversationUnavailable(true);
-      setSessionNotice(
-        `This chat expired after ${retentionLabel(sessionRetentionSeconds)} of inactivity. Start a new chat to continue.`,
-      );
-      window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
-    };
-    const delay = sessionExpiresAt - Date.now();
-    if (delay <= 0) {
-      expire();
-      return;
-    }
-    const timeout = window.setTimeout(expire, delay);
-    return () => window.clearTimeout(timeout);
-  }, [activeSessionId, resetRuntime, sessionExpiresAt, sessionRetentionSeconds,
-    setConversationUnavailable, setSessionNotice]);
-
   useEffect(() => () => {
     speechRecognitionRef.current?.stop();
     selectedAttachmentsRef.current.forEach(attachment => {
@@ -766,7 +619,7 @@ export default function ExperimentalAiPage() {
     });
     if (optimizationDownloadUrlRef.current) URL.revokeObjectURL(optimizationDownloadUrlRef.current);
     if (chatExportUrlRef.current) URL.revokeObjectURL(chatExportUrlRef.current);
-  }, [lifecycle]);
+  }, []);
 
   useEffect(() => {
     selectedAttachmentsRef.current = selectedAttachments;
@@ -907,7 +760,7 @@ export default function ExperimentalAiPage() {
   };
 
   const selectAiEndpoint = (requestedEndpoint: string) => {
-    if (sessionIdRef.current !== null || messages.length > 0 || isStreaming) return;
+    if (activeSessionId !== null || messages.length > 0 || isStreaming) return;
     const endpoint = requestedEndpoint === '/ai' ? requestedEndpoint : normalizeAiEndpoint(requestedEndpoint);
     if (!endpoint) {
       setServerError('Enter a valid HTTP or HTTPS AI server URL.');
@@ -947,16 +800,10 @@ export default function ExperimentalAiPage() {
     optimizationDownloadUrlRef.current = null;
     if (chatExportUrlRef.current) URL.revokeObjectURL(chatExportUrlRef.current);
     chatExportUrlRef.current = null;
-    resetRuntime();
-    setMessages([]);
-    setContextUsage(null);
+    clearConversation();
+    setDownloadingOptimizationId(null);
     setDraft('');
     setSelectedAttachments([]);
-    // A new chat sends its whole history again.
-    setTrimmedHistoryCount(0);
-    setProposalNotice(null);
-    setConversationUnavailable(false);
-    setSessionNotice(null);
     setError(null);
     window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
   };
@@ -1025,22 +872,22 @@ export default function ExperimentalAiPage() {
   const exportChat = (format: ChatExportFormat) => {
     const previousUrl = chatExportUrlRef.current;
     chatExportUrlRef.current = downloadChatExport(
-      format, messages, sessionEndpointRef.current ?? aiEndpoint, new Date(), backendVersion,
+      format, messages, sessionEndpoint, new Date(), backendVersion,
     );
     if (previousUrl) URL.revokeObjectURL(previousUrl);
   };
 
   const downloadOptimizationResult = async (jobId: string) => {
-    const sessionId = sessionIdRef.current;
+    const sessionId = activeSessionId;
     if (sessionId === null || downloadingOptimizationId !== null) return;
-    const ownsConversation = lifecycle.capture();
+    const ownsConversation = captureConversation();
     setDownloadingOptimizationId(jobId);
     try {
       const blob = await downloadOptimization(
         sessionId,
         jobId,
         authToken,
-        sessionEndpointRef.current ?? aiEndpoint,
+        sessionEndpoint,
       );
       if (!ownsConversation()) return;
       const downloadUrl = URL.createObjectURL(blob);
@@ -1131,8 +978,8 @@ export default function ExperimentalAiPage() {
     setIsDraggingFiles(false);
     if (!attachmentPickerDisabled) addAttachments(Array.from(event.dataTransfer.files));
   };
-  const serverLocked = sessionIdRef.current !== null || messages.length > 0;
-  const backgroundRunningTool = messages.find(message => message.id === lifecycle.current('background')?.id)
+  const serverLocked = activeSessionId !== null || messages.length > 0;
+  const backgroundRunningTool = messages.find(message => message.id === backgroundAssistantId)
     ?.activity?.find(entry => entry.kind === 'tool' && entry.state === 'running');
 
 

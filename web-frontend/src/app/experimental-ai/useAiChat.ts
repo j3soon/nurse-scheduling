@@ -26,11 +26,11 @@ import type { ChatExportMessage } from './chatExport';
 import {
   AiHttpError, AiStaleRunError, DEFAULT_SESSION_RETENTION_SECONDS,
   type ContextUsage, type OptimizationActivity,
-  approveProposal, createSession, isAuthenticationError, queueMessage,
+  approveProposal, createSession, getSessionStatus, isAuthenticationError, queueMessage,
   rejectProposal, sendMessage, stopSession, updateSessionSchedule,
 } from './aiClient';
 import {
-  type AssistantEvent, applyAssistantEvent, messageId, resumeResponse, steerResponse, toAssistantEvent,
+  type AssistantEvent, applyAssistantEvent, interruptRunningTools, messageId, resumeResponse, steerResponse, toAssistantEvent,
 } from './assistantEvents';
 import { ChatLifecycle, scopedEventHandler } from './chatLifecycle';
 import { SessionEventRouter } from './sessionEventRouter';
@@ -49,6 +49,34 @@ export interface ChatMessage extends ChatExportMessage {
 
 export interface ActiveOptimization extends OptimizationActivity {
   points: OptimizationProgressPoint[];
+}
+
+/** Conversation data for tab storage. Browser I/O stays in the page. */
+export interface ChatConversation {
+  sessionId: string;
+  endpoint: string;
+  expiresAt: number;
+  retentionSeconds: number;
+  messages: ChatMessage[];
+  syncedSchedule: string;
+  proposalDiff: string | null;
+  sessionEventId?: number;
+  activeOptimization?: ActiveOptimization | null;
+  contextUsage?: ContextUsage | null;
+  backgroundAssistantId?: string | null;
+  trimmedHistoryCount?: number;
+}
+
+export function retentionLabel(seconds: number): string {
+  if (seconds % 3600 === 0) {
+    const hours = seconds / 3600;
+    return `${hours} ${hours === 1 ? 'hour' : 'hours'}`;
+  }
+  return `${seconds.toLocaleString()} seconds`;
+}
+
+function expiryNotice(seconds: number): string {
+  return `This chat expired after ${retentionLabel(seconds)} of inactivity. Start a new chat to continue.`;
 }
 
 interface QueuedChatMessage {
@@ -112,7 +140,6 @@ interface AiChatOptions {
   setError: Dispatch<SetStateAction<string | null>>;
   reportRequestError: (error: unknown, fallback: string) => void;
   onSendStart: (clearComposer: boolean) => void;
-  onSessionCreated: (id: string) => void;
   onUnavailable: () => void;
   onApplySchedule: (scheduleYaml: string) => void;
 }
@@ -120,7 +147,7 @@ interface AiChatOptions {
 /** Chat control over the existing run lifecycle and session event router. */
 export function useAiChat({
   scheduleYaml, aiEndpoint, authRequired, authToken, isClientReady,
-  setError, reportRequestError, onSendStart, onSessionCreated, onUnavailable, onApplySchedule,
+  setError, reportRequestError, onSendStart, onUnavailable, onApplySchedule,
 }: AiChatOptions) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
@@ -143,6 +170,7 @@ export function useAiChat({
   const syncedScheduleRef = useRef<string | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const sessionEndpointRef = useRef<string | null>(null);
+  const checkedSessionRef = useRef<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const eventRouterRef = useRef(new SessionEventRouter());
   const scheduleYamlRef = useRef(scheduleYaml);
@@ -156,6 +184,7 @@ export function useAiChat({
     sessionEvents.reset();
     sessionIdRef.current = null;
     sessionEndpointRef.current = null;
+    checkedSessionRef.current = null;
     syncedScheduleRef.current = null;
     sandboxScheduleRef.current = null;
     queuedMessagesRef.current = [];
@@ -176,12 +205,114 @@ export function useAiChat({
     setSessionExpiresAt(Date.now() + sessionRetentionSeconds * 1000);
   };
 
-  const markConversationUnavailable = (notice: string) => {
+  const markConversationUnavailable = useCallback((notice: string) => {
     reset();
     setConversationUnavailable(true);
     setSessionNotice(notice);
     onUnavailable();
-  };
+  }, [reset, onUnavailable]);
+
+  const restore = useCallback((conversation: ChatConversation) => {
+    reset();
+    // Replayed events reconcile onto the unfinished background message by ID, so
+    // restore it before the stream opens. Its tools stopped with the old page.
+    if (conversation.backgroundAssistantId) {
+      lifecycle.begin('background', conversation.backgroundAssistantId, 'interrupted');
+    }
+    setMessages(conversation.messages.map(message => (
+      message.status === 'pending'
+        ? { ...message, status: 'failed' as const, activity: interruptRunningTools(message.activity ?? []) }
+        : message
+    )));
+    setProposalDiff(conversation.proposalDiff);
+    setSessionRetentionSeconds(conversation.retentionSeconds);
+    sessionEvents.cursor.current = conversation.sessionEventId ?? 0;
+    setContextUsage(conversation.contextUsage ?? null);
+    setActiveOptimization(conversation.activeOptimization
+      ? { ...conversation.activeOptimization, points: conversation.activeOptimization.points ?? [] }
+      : null);
+    syncedScheduleRef.current = conversation.syncedSchedule;
+    sessionEndpointRef.current = conversation.endpoint;
+    if (conversation.expiresAt <= Date.now()) {
+      setConversationUnavailable(true);
+      setSessionNotice(expiryNotice(conversation.retentionSeconds));
+      onUnavailable();
+    } else {
+      sessionIdRef.current = conversation.sessionId;
+      setActiveSessionId(conversation.sessionId);
+      setSessionExpiresAt(conversation.expiresAt);
+      setConversationUnavailable(false);
+      setSessionNotice(null);
+      // The trim lasts as long as the conversation, but its event sits behind the
+      // stored cursor. An expired chat keeps the transcript without this warning.
+      setTrimmedHistoryCount(conversation.trimmedHistoryCount ?? 0);
+    }
+  }, [reset, lifecycle, sessionEvents, onUnavailable]);
+
+  const snapshot = useCallback((): ChatConversation | null => {
+    if (activeSessionId === null || sessionExpiresAt === null || sessionIdRef.current !== activeSessionId) return null;
+    return {
+      sessionId: activeSessionId,
+      endpoint: sessionEndpointRef.current ?? aiEndpoint,
+      expiresAt: sessionExpiresAt,
+      retentionSeconds: sessionRetentionSeconds,
+      messages,
+      syncedSchedule: syncedScheduleRef.current ?? scheduleYaml,
+      proposalDiff,
+      sessionEventId: sessionEvents.cursor.current,
+      activeOptimization,
+      contextUsage,
+      backgroundAssistantId: operations.background?.token.id,
+      trimmedHistoryCount,
+    };
+  }, [activeSessionId, sessionExpiresAt, aiEndpoint, sessionRetentionSeconds, messages,
+    scheduleYaml, proposalDiff, sessionEvents, activeOptimization, contextUsage,
+    operations.background, trimmedHistoryCount]);
+
+  const clearConversation = useCallback(() => {
+    reset();
+    setMessages([]);
+    setContextUsage(null);
+    setTrimmedHistoryCount(0);
+    setProposalNotice(null);
+    setConversationUnavailable(false);
+    setSessionNotice(null);
+  }, [reset]);
+
+  const captureConversation = useCallback(() => lifecycle.capture(), [lifecycle]);
+
+  useEffect(() => {
+    if (!isClientReady || activeSessionId === null || checkedSessionRef.current === activeSessionId) return;
+    checkedSessionRef.current = activeSessionId;
+    const ownsConversation = lifecycle.capture();
+    getSessionStatus(activeSessionId, authToken, sessionEndpointRef.current ?? aiEndpoint)
+      .then(expiresInSeconds => {
+        if (!ownsConversation() || sessionIdRef.current !== activeSessionId) return;
+        setSessionExpiresAt(Date.now() + expiresInSeconds * 1000);
+      })
+      .catch((statusError: unknown) => {
+        if (!ownsConversation() || sessionIdRef.current !== activeSessionId) return;
+        if (statusError instanceof AiHttpError && statusError.status === 404) {
+          markConversationUnavailable('This chat is no longer available on the AI server. Start a new chat to continue.');
+        } else {
+          checkedSessionRef.current = null;
+          reportRequestError(statusError, 'The stored AI chat could not be checked.');
+        }
+      });
+  }, [activeSessionId, aiEndpoint, authToken, isClientReady, lifecycle,
+    reportRequestError, markConversationUnavailable]);
+
+  useEffect(() => {
+    if (activeSessionId === null || sessionExpiresAt === null) return;
+    const expire = () => markConversationUnavailable(expiryNotice(sessionRetentionSeconds));
+    const delay = sessionExpiresAt - Date.now();
+    if (delay <= 0) {
+      expire();
+      return;
+    }
+    const timeout = window.setTimeout(expire, delay);
+    return () => window.clearTimeout(timeout);
+  }, [activeSessionId, sessionExpiresAt, sessionRetentionSeconds, markConversationUnavailable]);
 
   const projectSessionState = useCallback((event: SessionEvent): boolean => {
     switch (event.type) {
@@ -389,7 +520,7 @@ export function useAiChat({
         sessionIdRef.current = sessionId;
         sessionEndpointRef.current = sessionEndpoint;
         startSessionEventStream(sessionId, sessionEndpoint);
-        onSessionCreated(sessionId);
+        checkedSessionRef.current = sessionId;
         setActiveSessionId(sessionId);
         setConversationUnavailable(false);
         setSessionNotice(null);
@@ -672,43 +803,33 @@ export function useAiChat({
 
   return {
     messages,
-    setMessages,
     contextUsage,
-    setContextUsage,
     activeSessionId,
-    setActiveSessionId,
     sessionExpiresAt,
-    setSessionExpiresAt,
     sessionRetentionSeconds,
-    setSessionRetentionSeconds,
+    configureRetention: setSessionRetentionSeconds,
     conversationUnavailable,
-    setConversationUnavailable,
     sessionNotice,
-    setSessionNotice,
     trimmedHistoryCount,
-    setTrimmedHistoryCount,
-    lifecycle,
     isStreaming,
     isStopping,
     activeOptimization,
-    setActiveOptimization,
     queuedMessages,
     steeringAssistantId,
+    backgroundAssistantId: operations.background?.token.id,
     proposalDiff,
-    setProposalDiff,
     proposalNotice,
-    setProposalNotice,
     isApplyingProposal,
-    syncedScheduleRef,
-    sessionIdRef,
-    sessionEndpointRef,
+    sessionEndpoint: sessionEndpointRef.current ?? aiEndpoint,
+    snapshot,
+    restore,
+    clearConversation,
+    captureConversation,
     sendRequest,
     queue,
     retryMessage,
     stop,
     applyProposal,
     discardProposal,
-    reset,
-    eventCursor: sessionEvents.cursor,
   };
 }

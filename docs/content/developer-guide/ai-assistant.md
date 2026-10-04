@@ -197,7 +197,7 @@ relative to `web-frontend/src/app/experimental-ai/`.
 | `SessionOptimizer`<br/>`optimizer.py` | Own remote jobs, progress, artifacts, late-submission cleanup, and result-review wake-ups. |
 | `AgentSessionEvent` / `SessionEventStream`<br/>`session_events.py`, `session_event_stream.py` | Define public run and optimizer events, then retain bounded journal and recovery projections. The API frames them as SSE. |
 | Browser `ChatLifecycle`<br/>`chatLifecycle.ts` | Track operation ownership and derive busy and Stop state. |
-| Browser `useAiChat`<br/>`useAiChat.ts` | Own chat control and projection: send, queue, Stop, replayed answers, optimizer updates, and proposal decisions. The page owns rendering and browser storage. |
+| Browser `useAiChat`<br/>`useAiChat.ts` | Own chat control and projection: send, queue, Stop, replayed answers, optimizer updates, and proposal decisions. Expose conversation snapshots and restore operations. The page owns rendering and browser storage. |
 | Browser `useSessionEventStream`<br/>`useSessionEventStream.ts` | Own the SSE reader, replay cursor, reconnect delay, and teardown. Reader disconnect leaves server work running. |
 | Browser `SessionEventRouter`<br/>`sessionEventRouter.ts` | Deliver typed `SessionEvent` values directly to chat handlers. Route by run ID and buffer early output until the POST acknowledgement identifies its answer. |
 | Browser event reducer<br/>`assistantEvents.ts` | Apply assistant events from the session stream. |

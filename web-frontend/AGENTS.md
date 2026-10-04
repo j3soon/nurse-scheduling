@@ -83,7 +83,9 @@ Replayable AI session events use `Last-Event-ID`, so include it in backend CORS
 preflight coverage. Keep object URLs for chat and workbook downloads alive until the
 download is replaced or the page unmounts.
 AI chat control belongs to `useAiChat`. Keep rendering, speech, file selection,
-scrolling, exports, and browser storage in the page.
+scrolling, exports, and browser storage in the page. Restore and persist chat
+data through the hook's conversation interface instead of exposing its setters
+and ownership refs. Session status checks and expiry belong to the hook.
 AI operation state belongs to `ChatLifecycle`. Finish only the operation that
 owns a callback and derive busy/Stop state from its phases. Scope stream callbacks
 to their connection, and scope other async completions to their conversation.
