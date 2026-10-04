@@ -162,7 +162,10 @@ Assistant answers render Markdown, including headings, lists, links, code, and
 tables. Use the copy icon at the top-right of a code block to copy its contents.
 Raw HTML is ignored. Remote images written in an answer are not loaded.
 Use **HTML** under **Export chat** for a styled, standalone transcript, or
-**Markdown** for a plain-text transcript. Export runs in the browser.
+**Markdown** for a plain-text transcript. Export runs in the browser. The export
+also lists the uploaded files by name and size, includes a proposal that is
+waiting for approval, and notes an optimization that is still running without
+its changing score.
 
 When the assistant creates files for download, it puts them in one ZIP archive.
 Use **Download files (ZIP)** below its answer. The archive and its uncompressed

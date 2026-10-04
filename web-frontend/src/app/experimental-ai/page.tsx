@@ -1852,9 +1852,19 @@ export default function ExperimentalAiPage() {
 
   const exportChat = (format: ChatExportFormat) => {
     const previousUrl = chatExportUrlRef.current;
-    chatExportUrlRef.current = downloadChatExport(
-      format, messages, sessionEndpointRef.current ?? aiEndpoint, new Date(), backendVersion, proposalDiff ?? undefined,
-    );
+    chatExportUrlRef.current = downloadChatExport(format, messages, sessionEndpointRef.current ?? aiEndpoint, new Date(), {
+      backendVersion,
+      pendingProposalDiff: proposalDiff ?? undefined,
+      runningOptimization: activeOptimization !== null && !activeOptimization.terminal
+        ? {
+          jobId: activeOptimization.jobId,
+          state: activeOptimization.state,
+          solver: activeOptimization.request?.solver,
+          timeoutSeconds: activeOptimization.request?.timeoutSeconds,
+        }
+        : undefined,
+      uploadedFiles: fileCapability.retained ? uploadedFiles : undefined,
+    });
     if (previousUrl) URL.revokeObjectURL(previousUrl);
   };
 
@@ -2264,7 +2274,8 @@ export default function ExperimentalAiPage() {
                   : message.role === 'user' && message.source === undefined
                     ? 'ml-auto max-w-[85%] bg-blue-600 text-white'
                     : message.source === 'optimizer'
-                      ? 'ml-auto max-w-[85%] border border-emerald-200 bg-emerald-50 text-emerald-950'
+                      // Optimizer messages align left like the optimizer notice, in the chat and in exports.
+                      ? 'mr-auto max-w-[85%] border border-emerald-200 bg-emerald-50 text-emerald-950'
                       : message.role === 'user'
                         ? 'ml-auto max-w-[85%] border border-blue-200 bg-blue-50 text-blue-950'
                         : message.role === 'optimizer'

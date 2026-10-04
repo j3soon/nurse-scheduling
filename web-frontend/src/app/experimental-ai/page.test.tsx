@@ -616,6 +616,7 @@ describe('ExperimentalAiPage', () => {
     });
     const optimizerInput = screen.getByText('Optimizer result with score 23.').closest('article');
     expect(optimizerInput?.querySelector('p')).toHaveTextContent('User · Optimizer');
+    expect(optimizerInput).toHaveClass('mr-auto');
     expect(optimizerInput?.previousElementSibling).toHaveTextContent('Background system prompt');
     expect(optimizerInput?.nextElementSibling).toHaveTextContent('Optimization result: result.xlsx.');
     expect(screen.getByText('Background tool running · bash')).toBeInTheDocument();

@@ -79,6 +79,7 @@ describe('chat export', () => {
     expect(html).toContain('<details class="system-prompt"><summary>21 characters</summary>');
     expect(html).not.toMatch(/<details class="system-prompt" open/);
     expect(html).toContain('class="message user app"');
+    expect(html).toContain('.user.optimizer { align-self: flex-start;');
     expect(html).toContain('uploaded files: [&lt;b&gt;]');
   });
 
@@ -97,6 +98,31 @@ describe('chat export', () => {
     expect(html.indexOf('aria-label="Chat transcript"')).toBeLessThan(html.indexOf('aria-label="Pending proposal"'));
     expect(buildMarkdownChatExport(messages, metadata)).not.toContain('Pending proposal');
     expect(buildHtmlChatExport(messages, metadata)).not.toContain('class="proposal"');
+  });
+
+  it('mentions an optimization that is still running without its score', () => {
+    const running = { ...metadata, runningOptimization: { jobId: 'job-<1>', state: 'running', solver: 'ortools/cp-sat', timeoutSeconds: 300 } };
+
+    const markdown = buildMarkdownChatExport(messages, running);
+    const html = buildHtmlChatExport(messages, running);
+
+    expect(markdown).toContain('## Optimization running\n\nAn optimization was still running when this chat was exported.');
+    expect(markdown).toContain('- Job: job-<1>\n- State: running\n- Solver: ortools/cp-sat\n- Solver timeout: 300s');
+    expect(html).toContain('<section class="proposal" aria-label="Optimization running">');
+    expect(html).toContain('<li>Job: job-&lt;1&gt;</li>');
+    expect(markdown).not.toContain('score');
+    expect(buildMarkdownChatExport(messages, metadata)).not.toContain('Optimization running');
+  });
+
+  it('lists uploaded session files without their contents', () => {
+    const withFiles = { ...metadata, uploadedFiles: [{ filename: 'ward <1>.csv', bytes: 26 }, { filename: 'roster.xlsx', bytes: 18234 }] };
+
+    const markdown = buildMarkdownChatExport(messages, withFiles);
+    const html = buildHtmlChatExport(messages, withFiles);
+
+    expect(markdown).toContain('## Uploaded files\n\n- ward <1>.csv (0.026 KB)\n- roster.xlsx (18.234 KB)');
+    expect(html).toContain('<li>ward &lt;1&gt;.csv (0.026 KB)</li>');
+    expect(buildMarkdownChatExport(messages, { ...metadata, uploadedFiles: [] })).not.toContain('Uploaded files');
   });
 
   it('marks an unavailable backend version as unknown', () => {

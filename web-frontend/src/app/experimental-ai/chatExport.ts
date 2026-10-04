@@ -49,6 +49,29 @@ interface ChatExportMetadata {
   backendVersion?: string;
   // A proposal waiting for approval is not part of the transcript, so exports add it separately.
   pendingProposalDiff?: string;
+  // A background optimization still running at export time. Its score changes, so exports omit it.
+  runningOptimization?: { jobId: string; state: string; solver?: string; timeoutSeconds?: number };
+  // Files kept in the chat session at export time. The export lists them without their contents.
+  uploadedFiles?: { filename: string; bytes: number }[];
+}
+
+type ChatExportSessionState = Pick<
+  ChatExportMetadata, 'backendVersion' | 'pendingProposalDiff' | 'runningOptimization' | 'uploadedFiles'
+>;
+
+function uploadedFileLines(files: NonNullable<ChatExportMetadata['uploadedFiles']>): string[] {
+  return files.map(file => `${file.filename} (${(file.bytes / 1000).toLocaleString('en-US')} KB)`);
+}
+
+const RUNNING_OPTIMIZATION_NOTE = 'An optimization was still running when this chat was exported. Its result is not included.';
+
+function runningOptimizationDetails(running: NonNullable<ChatExportMetadata['runningOptimization']>): string[] {
+  return [
+    `Job: ${running.jobId}`,
+    `State: ${running.state}`,
+    ...(running.solver ? [`Solver: ${running.solver}`] : []),
+    ...(running.timeoutSeconds !== undefined ? [`Solver timeout: ${running.timeoutSeconds}s`] : []),
+  ];
 }
 
 const PENDING_PROPOSAL_NOTE = 'This change is waiting for approval in the app. The current schedule has not changed.';
@@ -298,6 +321,15 @@ export function buildMarkdownChatExport(
     const details = messageDetails(message);
     if (details.length) lines.push('', ...details.map(detail => `- ${detail}`));
   });
+  if (metadata.uploadedFiles?.length) {
+    lines.push('', '## Uploaded files', '', ...uploadedFileLines(metadata.uploadedFiles).map(line => `- ${line}`));
+  }
+  if (metadata.runningOptimization !== undefined) {
+    lines.push(
+      '', '## Optimization running', '', RUNNING_OPTIMIZATION_NOTE, '',
+      ...runningOptimizationDetails(metadata.runningOptimization).map(detail => `- ${detail}`),
+    );
+  }
   if (metadata.pendingProposalDiff !== undefined) {
     lines.push('', '## Pending proposal', '', PENDING_PROPOSAL_NOTE, '', ...fencedText(metadata.pendingProposalDiff));
   }
@@ -338,6 +370,7 @@ export function buildHtmlChatExport(
     .proposal { margin-top: 24px; border: 1px solid #bfdbfe; border-radius: 12px; background: #eff6ff; padding: 16px; color: #1e3a8a; }
     .proposal h2 { margin: 0 0 8px; font-size: 16px; }
     .proposal p { margin: 0 0 8px; font-size: 13px; }
+    .proposal ul { margin: 0; padding-left: 20px; font-size: 13px; }
     .proposal pre { max-height: 480px; overflow: auto; margin: 0; border-radius: 8px; background: white; padding: 12px; color: #1f2937; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.625 ui-monospace, monospace; }
     .chat { display: flex; flex-direction: column; gap: 16px; border: 1px solid #e5e7eb; border-radius: 12px; background: #f9fafb; padding: 16px; }
     .message { box-sizing: border-box; width: 85%; min-width: 0; max-width: 85%; padding: 12px 16px; border-radius: 12px; }
@@ -349,7 +382,7 @@ export function buildHtmlChatExport(
     .optimizer-details dd { display: inline; margin: 0; white-space: pre-wrap; }
     .system { align-self: stretch; width: auto; max-width: none; border: 1px dashed #d1d5db; background: #f9fafb; color: #374151; }
     .user.app, .user.status, .user.optimizer { border: 1px solid #bfdbfe; background: #eff6ff; color: #1e3a8a; font: 12px/1.625 ui-monospace, monospace; }
-    .user.optimizer { border-color: #a7f3d0; background: #ecfdf5; color: #022c22; }
+    .user.optimizer { align-self: flex-start; border-color: #a7f3d0; background: #ecfdf5; color: #022c22; }
     .label { margin-bottom: 4px; font-size: 12px; font-weight: 600; letter-spacing: .025em; text-transform: uppercase; opacity: .7; }
     .content { overflow-wrap: anywhere; line-height: 1.5rem; }
     .user .content, .optimizer .content { white-space: pre-wrap; }
@@ -401,7 +434,16 @@ export function buildHtmlChatExport(
     <h1>Schedule AI Chat</h1>
     <p class="metadata">Exported ${escapeHtml(metadata.exportedAt.toISOString())}<br>Frontend version: ${escapeHtml(metadata.frontendVersion)}<br>Backend version: ${escapeHtml(metadata.backendVersion ?? 'unknown')}<br>AI server: ${escapeHtml(metadata.endpoint)}</p>
     <section class="chat" aria-label="Chat transcript">${renderedMessages}
-    </section>${metadata.pendingProposalDiff === undefined ? '' : `
+    </section>${!metadata.uploadedFiles?.length ? '' : `
+    <section class="proposal" aria-label="Uploaded files">
+      <h2>Uploaded files</h2>
+      <ul>${uploadedFileLines(metadata.uploadedFiles).map(line => `<li>${escapeHtml(line)}</li>`).join('')}</ul>
+    </section>`}${metadata.runningOptimization === undefined ? '' : `
+    <section class="proposal" aria-label="Optimization running">
+      <h2>Optimization running</h2>
+      <p>${RUNNING_OPTIMIZATION_NOTE}</p>
+      <ul>${runningOptimizationDetails(metadata.runningOptimization).map(detail => `<li>${escapeHtml(detail)}</li>`).join('')}</ul>
+    </section>`}${metadata.pendingProposalDiff === undefined ? '' : `
     <section class="proposal" aria-label="Pending proposal">
       <h2>Pending proposal</h2>
       <p>${PENDING_PROPOSAL_NOTE}</p>
@@ -418,10 +460,9 @@ export function downloadChatExport(
   messages: ChatExportMessage[],
   endpoint: string,
   exportedAt = new Date(),
-  backendVersion?: string,
-  pendingProposalDiff?: string,
+  sessionState: ChatExportSessionState = {},
 ): string {
-  const metadata = { endpoint, exportedAt, frontendVersion: CURRENT_APP_VERSION, backendVersion, pendingProposalDiff };
+  const metadata = { endpoint, exportedAt, frontendVersion: CURRENT_APP_VERSION, ...sessionState };
   const content = format === 'html'
     ? buildHtmlChatExport(messages, metadata)
     : buildMarkdownChatExport(messages, metadata);
