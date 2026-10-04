@@ -451,7 +451,7 @@ def test_a_correct_answer_passes_and_records_its_cost():
     assert run.seconds >= 0
 
 
-def test_attachment_case_hydrates_generated_file_and_lists_it_in_the_question():
+def test_attachment_case_hydrates_generated_file_and_records_an_upload_event():
     factory = _factory()
     run = _run(
         "read-second-xlsx-sheet",
@@ -465,11 +465,10 @@ def test_attachment_case_hydrates_generated_file_and_lists_it_in_the_question():
     assert run.passed
     backend = factory.created[0]
     assert backend.files["/workspace/attachments/01-ward-notes.xlsx"].startswith(b"PK")
-    question = run.trajectory["prompt"][-1]["content"]
-    assert (
-        '[Files attached to this message: [{"filename": "ward-notes.xlsx", "path": "/workspace/attachments/01-ward-notes.xlsx"'
-        in question
-    )
+    prompt = run.trajectory["prompt"]
+    assert prompt[1]["content"].startswith("[App event] The user uploaded files.")
+    assert '"path": "/workspace/attachments/01-ward-notes.xlsx"' in prompt[1]["content"]
+    assert prompt[-1] == {"role": "user", "content": CASE_BY_ID["read-second-xlsx-sheet"].question}
 
 
 def test_optimizer_case_uses_controlled_production_tool_contract():
@@ -942,9 +941,10 @@ def test_completion_only_case_seeds_history_without_counting_a_model_tool_call()
     assert run.turns == 1
     assert run.tools == []
     assert len(provider.messages) == 1
-    assert provider.messages[0][-3]["content"] == case.question
-    assert "Optimization is running in the background" in provider.messages[0][-2]["content"]
-    assert '"request_audit"' in provider.messages[0][-1]["content"]
+    assert provider.messages[0][-4]["content"] == case.question
+    assert "Optimization is running in the background" in provider.messages[0][-3]["content"]
+    assert '"request_audit"' in provider.messages[0][-2]["content"]
+    assert provider.messages[0][-1]["content"].startswith("[Current status]")
     assert not factory.created
 
 

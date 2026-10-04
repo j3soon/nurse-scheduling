@@ -25,6 +25,7 @@ import pytest
 from fastapi import HTTPException
 
 from nurse_scheduling.ai.app import SessionStore, _unique_filename
+from nurse_scheduling.ai.background import removal_event, upload_event
 from nurse_scheduling.ai.provider import TextDelta, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxFactory
 from nurse_scheduling.ai.sandbox_agent import SandboxAttachment
@@ -51,14 +52,14 @@ def test_followup_hydrates_retained_upload_and_removal_stops_hydration():
         files = client.get(f"/sessions/{session}/uploads").json()
         assert files == uploaded.json()
         assert len(files) == 1 and files[0]["filename"] == "notes.txt" and files[0]["bytes"] == 13
-        client.post(f"/sessions/{session}/messages", json={"message": "Read", "upload_ids": [files[0]["id"]]})
+        client.post(f"/sessions/{session}/messages", json={"message": "Read"})
         client.post(f"/sessions/{session}/messages", json={"message": "Read again"})
         path = f"/workspace/attachments/{files[0]['id']}-notes.txt"
-        entry = json.dumps([{"filename": "notes.txt", "path": path, "media_type": "text/plain", "bytes": 13}])
-        attached_question = f"Read\n[Files attached to this message: {entry}]"
-        assert provider.calls[0][-1]["content"] == attached_question
-        assert provider.calls[2][1]["content"] == attached_question
-        assert provider.calls[2][-1]["content"] == f"Read again\n[Files uploaded earlier: {entry}]"
+        upload = provider.calls[0][1]
+        assert path in upload["content"]
+        assert provider.calls[0][-1]["content"] == "Read"
+        assert provider.calls[2][1] == upload
+        assert provider.calls[2][-1]["content"] == "Read again"
         assert factory.created[0].files[path] == factory.created[1].files[path] == b"ward handover"
         assert factory.created[0].closed and factory.created[1].closed
         with AuthenticatedTestClient(app) as other:
@@ -66,6 +67,8 @@ def test_followup_hydrates_retained_upload_and_removal_stops_hydration():
         assert client.delete(f"/sessions/{session}/uploads/{files[0]['id']}").status_code == 204
         assert client.get(f"/sessions/{session}/uploads").json() == []
         client.post(f"/sessions/{session}/messages", json={"message": "Check removed file"})
+        assert provider.calls[4][-2]["content"].startswith("[App event] The user removed a file")
+        assert path in provider.calls[4][-2]["content"]
         assert provider.calls[4][-1]["content"] == "Check removed file"
         assert not any(name.startswith("/workspace/attachments/") for name in factory.created[2].files)
         preflight = client.options(
@@ -85,7 +88,7 @@ def test_duplicate_filename_is_numbered_instead_of_replaced():
 
 
 def test_upload_limits_removal_and_expiry_reclaim_bytes():
-    store = SessionStore(make_settings(max_attachment_files=3, max_session_bytes=1000))
+    store = SessionStore(make_settings(max_attachment_files=3, max_session_bytes=2000))
     session = store.create("owner", "description: test")
     original = store.retained_bytes
     first = store.retain_uploads(session.id, "owner", [SandboxAttachment("ward.csv", "text/csv", b"abc")])[0]
@@ -97,13 +100,15 @@ def test_upload_limits_removal_and_expiry_reclaim_bytes():
     assert [first.filename, second.filename, third.filename] == ["ward.csv", "ward (1).csv", "ward (2).csv"]
     assert len({first.id, second.id, third.id}) == 3
     assert store.attachments(session.id) == (first, second, third)
-    assert store.retained_bytes == original + 9
+    events = store._sessions[session.id].history
+    assert [event["content"] for event in events] == [upload_event([first]), upload_event([second, third], 2)]
+    assert store.retained_bytes == original + 9 + sum(len(event["content"]) for event in events)
     with pytest.raises(HTTPException) as error:
         store.retain_uploads(session.id, "owner", [SandboxAttachment("other", "text/plain", b"x")])
     assert error.value.status_code == 413
     store.remove_upload(session.id, "owner", second.id)
     with pytest.raises(HTTPException) as error:
-        store.retain_uploads(session.id, "owner", [SandboxAttachment("note", "text/plain", b"x" * 1000)])
+        store.retain_uploads(session.id, "owner", [SandboxAttachment("note", "text/plain", b"x" * 2000)])
     assert error.value.status_code == 429
     assert store.attachments(session.id) == (first, third)
     store.begin(session.id, "owner")
@@ -120,7 +125,10 @@ def test_upload_limits_removal_and_expiry_reclaim_bytes():
     store.remove_upload(session.id, "owner", first.id)
     store.remove_upload(session.id, "owner", third.id)
     store.remove_upload(session.id, "owner", reused.id)
-    assert store.retained_bytes == original
+    # File bytes are reclaimed. The upload and removal events stay in history.
+    history_bytes = sum(len(event["content"]) for event in store._sessions[session.id].history)
+    assert store.retained_bytes == original + history_bytes
+    assert store._sessions[session.id].history[-1]["content"] == removal_event(reused, 3)
     store.retain_uploads(session.id, "owner", [first])
     session.expires_at = 0
     assert store.attachments(session.id) == ()

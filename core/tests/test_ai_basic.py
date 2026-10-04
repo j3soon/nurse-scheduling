@@ -55,7 +55,13 @@ from nurse_scheduling.ai.app import (
     request_logger,
 )
 from nurse_scheduling.ai.app import create_app as create_ai_app
-from nurse_scheduling.ai.background import build_provider_messages
+from nurse_scheduling.ai.background import (
+    SCHEDULE_CHANGED_DISCARDED_EVENT,
+    SCHEDULE_CHANGED_EVENT,
+    STATUS_PREFIX,
+    build_provider_messages,
+    upload_event,
+)
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.history import ChatHistory
 from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL, OptimizerArtifact, OptimizerJobPayload
@@ -69,6 +75,7 @@ from nurse_scheduling.ai.sandbox_agent import (
     WORKSPACE_PENDING_DIFF,
     WORKSPACE_PENDING_PROPOSAL,
     WORKSPACE_SCHEDULE,
+    SandboxAttachment,
     SandboxCommandTimeoutError,
     SandboxTurnTimeoutError,
 )
@@ -449,15 +456,21 @@ def test_insecure_local_ai_owner_cookie_stays_same_site() -> None:
     assert "Secure" not in cookie
 
 
-def parse_sse(response_text: str) -> list[tuple[str, dict[str, str]]]:
-    """Parse the small SSE subset emitted by the service."""
+def parse_sse(response_text: str, *, include_model_input: bool = False) -> list[tuple[str, dict[str, str]]]:
+    """Parse the small SSE subset emitted by the service.
+
+    Every turn stream starts with `model_input`. It is checked and dropped unless a test asks for it.
+    """
     events: list[tuple[str, dict[str, str]]] = []
     for block in response_text.strip().split("\n\n"):
         lines = block.splitlines()
         event_type = next(line.removeprefix("event: ") for line in lines if line.startswith("event: "))
         data = next(json.loads(line.removeprefix("data: ")) for line in lines if line.startswith("data: "))
         events.append((event_type, data))
-    return events
+    if include_model_input:
+        return events
+    assert events[0][0] == "model_input"
+    return events[1:]
 
 
 @pytest.mark.parametrize("wait_stage", ["provider", "command"])
@@ -948,37 +961,75 @@ def test_schema_errors_do_not_echo_binary_request_input() -> None:
         ]
 
 
-def test_message_rejects_unknown_upload_ids_and_records_attached_files() -> None:
-    provider = FakeProvider([["Answer"]])
+def test_uploads_and_removals_are_history_messages_before_the_question() -> None:
+    provider = FakeProvider([["Answer"], ["Again"]])
     app = create_test_app(settings=make_settings(), provider=provider)
     client = AuthenticatedTestClient(app)
     session_id = create_session(client)
     upload_id, other_id = upload_files(
         client, session_id, ("notes.txt", b"notes", "text/plain"), ("other.txt", b"other", "text/plain")
     )
+    assert client.delete(f"/sessions/{session_id}/uploads/{other_id}").status_code == 204
 
-    unknown = client.post(f"/sessions/{session_id}/messages", json={"message": "Read", "upload_ids": ["missing"]})
-    invalid = client.post(f"/sessions/{session_id}/messages", json={"message": "Read", "upload_ids": "notes"})
-    accepted = client.post(
-        f"/sessions/{session_id}/messages", json={"message": "Read", "upload_ids": [upload_id, upload_id]}
+    first = client.post(f"/sessions/{session_id}/messages", json={"message": "Read"})
+    second = client.post(f"/sessions/{session_id}/messages", json={"message": "Read again"})
+
+    notes = {"filename": "notes.txt", "path": f"/workspace/attachments/{upload_id}-notes.txt"}
+    other = {"filename": "other.txt", "path": f"/workspace/attachments/{other_id}-other.txt"}
+    uploaded = (
+        "[App event] The user uploaded files. They stay in the workspace until the user removes them: "
+        + json.dumps(
+            [{**notes, "media_type": "text/plain", "bytes": 5}, {**other, "media_type": "text/plain", "bytes": 5}]
+        )
     )
+    removed = f"[App event] The user removed a file from the workspace: {json.dumps(other)}"
+    # The question is sent as typed. The file is listed by its upload event, so no status message is needed.
+    assert provider.calls[0][1:] == [
+        {"role": "user", "content": uploaded},
+        {"role": "user", "content": removed},
+        {"role": "user", "content": "Read"},
+    ]
+    assert provider.calls[1][1:4] == provider.calls[0][1:4]
+    assert parse_sse(first.text, include_model_input=True)[0] == (
+        "model_input",
+        {
+            "system": provider.calls[0][0]["content"],
+            "messages": [
+                {"kind": "app", "index": 0, "content": uploaded},
+                {"kind": "app", "index": 1, "content": removed},
+                {"kind": "question", "content": "Read"},
+            ],
+        },
+    )
+    assert parse_sse(second.text, include_model_input=True)[0][1]["messages"] == [
+        {"kind": "question", "content": "Read again"}
+    ]
 
-    assert unknown.status_code == 422
-    assert unknown.json()["detail"] == "An attached file is no longer available."
-    assert invalid.status_code == 422
-    assert accepted.status_code == 200
-    history = app.state.session_store._sessions[session_id].history
-    entry = {
-        "filename": "notes.txt",
-        "path": f"/workspace/attachments/{upload_id}-notes.txt",
-        "media_type": "text/plain",
-        "bytes": 5,
+
+def test_status_lists_only_uploads_that_the_sent_history_does_not_show() -> None:
+    hidden = SandboxAttachment("hidden.csv", "text/csv", b"a,b", id="hidden")
+    listed = SandboxAttachment("listed.csv", "text/csv", b"c,d", id="listed")
+    history = [ChatMessage(role="user", content=upload_event([listed], 2))]
+
+    messages = build_provider_messages(history, "description: test", "Question", (hidden, listed))
+
+    assert messages[-1]["content"] == (
+        f"{STATUS_PREFIX}\nUploaded files not listed in this conversation: "
+        + json.dumps(
+            [
+                {
+                    "filename": "hidden.csv",
+                    "path": "/workspace/attachments/hidden-hidden.csv",
+                    "media_type": "text/csv",
+                    "bytes": 3,
+                }
+            ]
+        )
+    )
+    assert build_provider_messages(history, "description: test", "Question", (listed,))[-1] == {
+        "role": "user",
+        "content": "Question",
     }
-    other = {**entry, "filename": "other.txt", "path": f"/workspace/attachments/{other_id}-other.txt"}
-    assert history[0]["content"] == f"Read\n[Files attached to this message: {json.dumps([entry])}]"
-    assert (
-        provider.calls[0][-1]["content"] == f"{history[0]['content']}\n[Files uploaded earlier: {json.dumps([other])}]"
-    )
 
 
 def test_arbitrary_file_is_available_in_the_disposable_sandbox() -> None:
@@ -991,20 +1042,13 @@ def test_arbitrary_file_is_available_in_the_disposable_sandbox() -> None:
     session_id = create_session(client)
     upload_ids = upload_files(client, session_id, ("archive.custom", b"arbitrary bytes", "application/x-custom"))
 
-    response = client.post(
-        f"/sessions/{session_id}/messages",
-        json={"message": "Inspect this custom file.", "upload_ids": upload_ids},
-    )
+    response = client.post(f"/sessions/{session_id}/messages", json={"message": "Inspect this custom file."})
 
     assert response.status_code == 200
     assert "I inspected the custom file." in response.text
-    backend = factory.created[0]
     path = f"/workspace/attachments/{upload_ids[0]}-archive.custom"
-    assert backend.files[path] == b"arbitrary bytes"
-    entry = {"filename": "archive.custom", "path": path, "media_type": "application/x-custom", "bytes": 15}
-    assert provider.calls[0][-1]["content"] == (
-        f"Inspect this custom file.\n[Files attached to this message: {json.dumps([entry])}]"
-    )
+    assert factory.created[0].files[path] == b"arbitrary bytes"
+    assert path in provider.calls[0][1]["content"]
     assert "archive.custom" not in provider.calls[0][0]["content"]
 
 
@@ -1439,6 +1483,37 @@ def test_a_trimmed_prompt_history_is_reported_to_the_client() -> None:
     assert second.status_code == 200
 
 
+def test_history_is_trimmed_in_steps_so_most_requests_extend_the_previous_prefix() -> None:
+    provider = FakeProvider([["Answer " + "x" * 40] for _ in range(10)])
+    settings = make_settings(max_history_chars=1000, max_history_messages=100, max_session_bytes=1_000_000)
+    client = AuthenticatedTestClient(create_test_app(settings=settings, provider=provider))
+    session_id = create_session(client)
+
+    for turn in range(10):
+        assert (
+            client.post(f"/sessions/{session_id}/messages", json={"message": f"Q{turn} " + "y" * 40}).status_code == 200
+        )
+
+    # A request that extends the previous one lets the provider reuse its cached prefix.
+    prefix_changes = [
+        turn
+        for turn in range(1, 10)
+        if provider.calls[turn][: len(provider.calls[turn - 1])] != provider.calls[turn - 1]
+    ]
+    assert len(prefix_changes) == 1
+    assert "Q0" not in json.dumps(provider.calls[-1])
+
+
+def test_schedule_edit_is_recorded_only_when_its_data_changes() -> None:
+    store = create_test_app(settings=make_settings(), provider=FakeProvider()).state.session_store
+    session = store.create("owner", "description: old\n")
+
+    store.update_schedule(session.id, "owner", "description:   old\n")
+    assert store._sessions[session.id].history == []
+    store.update_schedule(session.id, "owner", "description: new\n")
+    assert store._sessions[session.id].history == [{"role": "user", "content": SCHEDULE_CHANGED_EVENT}]
+
+
 def test_session_budget_keeps_the_latest_exchange_and_reports_all_dropped_messages() -> None:
     provider = FakeProvider([["X" * 20], ["Y" * 20], ["Z" * 20]])
     settings = make_settings(max_session_bytes=65, max_history_chars=10_000)
@@ -1750,7 +1825,7 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         source_path = f"/workspace/attachments/{source_ids[0]}-source.txt"
         started = client.post(
             f"/sessions/{session_id}/messages",
-            json={"message": "Optimize this schedule.", "upload_ids": source_ids},
+            json={"message": "Optimize this schedule."},
         )
         follow_up = client.post(f"/sessions/{session_id}/messages", json={"message": "Can we still talk?"})
 
@@ -1775,6 +1850,7 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
             "optimization_progress",
             "optimization",
             "turn_start",
+            "model_input",
             "tool_start",
             "tool",
             "delta",
@@ -1785,21 +1861,29 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         assert events[1].data["progress"] == {"currentBestScore": 23, "elapsedSeconds": 2}
         assert events[2].data["state"] == "completed"
         assert events[2].data["downloadable"] is True
-        assert events[6].data == {"text": "The optimizer returned score 23."}
+        assert events[4].data == {
+            "system": provider.calls[3][0]["content"],
+            "messages": [
+                {"kind": "optimizer", "content": provider.calls[3][-2]["content"]},
+                {"kind": "status", "content": provider.calls[3][-1]["content"]},
+            ],
+        }
+        assert provider.calls[3][0] == provider.calls[0][0]
+        assert events[7].data == {"text": "The optimizer returned score 23."}
         if history_enabled:
             assert len(history_starts) == 3
             assert history_starts[-1][1] == session_id
             assert history_starts[-1][4:] == ("test-model", 0)
-        assert '"score": 23' in str(provider.calls[3][-1]["content"])
-        assert "/workspace/optimizer-results/optimized-schedule.xlsx" in str(provider.calls[3][-1]["content"])
+        assert '"score": 23' in str(provider.calls[3][-2]["content"])
+        assert provider.calls[3][-1]["content"] == (
+            f"{STATUS_PREFIX}\nOptimization result: /workspace/optimizer-results/optimized-schedule.xlsx."
+        )
         background_sandbox = next(
             backend
             for backend in factory.created
             if "/workspace/optimizer-results/optimized-schedule.xlsx" in backend.files
         )
-        assert f'[Files uploaded earlier: [{{"filename": "source.txt", "path": "{source_path}"' in str(
-            provider.calls[3][-1]["content"]
-        )
+        assert source_path in provider.calls[3][1]["content"]
         assert background_sandbox.files[source_path] == b"original input"
         assert background_sandbox.files["/workspace/optimizer-results/optimized-schedule.xlsx"].startswith(
             b"PK\x03\x04"
@@ -1814,7 +1898,7 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         note_ids = upload_files(client, session_id, ("note.txt", b"note", "text/plain"))
         later = client.post(
             f"/sessions/{session_id}/messages",
-            json={"message": "Can you inspect the workbook again?", "upload_ids": note_ids},
+            json={"message": "Can you inspect the workbook again?"},
         )
         assert later.status_code == 200
         assert "I can still inspect" in later.text
@@ -2107,7 +2191,11 @@ def test_pending_proposal_is_available_to_the_next_fresh_turn() -> None:
     follow_up = client.post(f"/sessions/{session_id}/messages", json={"message": "What is pending?"})
 
     assert follow_up.status_code == 200
-    assert "A validated proposal is pending" in provider.calls[2][0]["content"]
+    # The status message carries the pending proposal, so the system message stays identical for caching.
+    assert provider.calls[2][-1]["content"].startswith(STATUS_PREFIX)
+    assert "A validated proposal is pending" in provider.calls[2][-1]["content"]
+    assert provider.calls[2][-2] == {"role": "user", "content": "What is pending?"}
+    assert provider.calls[2][0] == provider.calls[0][0]
     assert b"description: Head" in factory.created[1].files[WORKSPACE_PENDING_PROPOSAL]
     assert b"people.items[0].description" in factory.created[1].files[WORKSPACE_PENDING_DIFF]
     assert factory.created[1].files[WORKSPACE_SCHEDULE] == schedule_yaml().encode()
@@ -2282,7 +2370,7 @@ def test_session_store_bounds_steering_across_a_whole_turn_not_the_drained_queue
 
 
 def test_session_store_bounds_retained_chat_text_across_sessions() -> None:
-    settings = make_settings(max_session_bytes=900, max_schedule_bytes=1000)
+    settings = make_settings(max_session_bytes=1000, max_schedule_bytes=1000)
     app = create_test_app(settings=settings, provider=FakeProvider())
     store = app.state.session_store
     first = store.create("browser-owner", "a" * 400)
@@ -2293,15 +2381,15 @@ def test_session_store_bounds_retained_chat_text_across_sessions() -> None:
         store.create("browser-owner", "c" * 400)
     assert exc_info.value.status_code == 429
 
-    # Replacing a schedule with a smaller one returns its budget.
-    store.update_schedule(first.id, "browser-owner", "a" * 100)
-    assert store.retained_bytes == 500
+    # Replacing a schedule with a smaller one returns its budget. The edit is recorded as an app event.
+    store.update_schedule(first.id, "browser-owner", "a" * 50)
+    assert store.retained_bytes == 450 + len(SCHEDULE_CHANGED_EVENT)
     store.create("browser-owner", "c" * 400)
 
     # Expiry releases the budget along with the session.
     store._sessions[second.id].expires_at = time.monotonic() - 1
     store.create("browser-owner", "d" * 100)
-    assert store.retained_bytes == 600
+    assert store.retained_bytes == 550 + len(SCHEDULE_CHANGED_EVENT)
 
 
 def test_proposal_history_event_counts_the_exchange_removed_by_the_cap() -> None:
@@ -2409,8 +2497,9 @@ def test_replacing_a_schedule_credits_the_proposal_it_drops() -> None:
 
     assert store._sessions[session.id].schedule_yaml == "b" * 300
     assert not store._sessions[session.id].proposal_yaml
-    # The new schedule and the two one-character turn messages are all that remain.
-    assert store.retained_bytes == 302
+    # The new schedule, the two one-character turn messages, and the edit event are all that remain.
+    assert store.retained_bytes == 302 + len(SCHEDULE_CHANGED_DISCARDED_EVENT)
+    assert store._sessions[session.id].history[-1]["content"] == SCHEDULE_CHANGED_DISCARDED_EVENT
 
 
 def test_session_store_rejects_steering_after_the_final_boundary() -> None:

@@ -38,6 +38,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
+from ruamel.yaml import YAML
+from ruamel.yaml.error import YAMLError
 from starlette.background import BackgroundTask
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -46,16 +48,22 @@ from ..sentry import init_sentry
 from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry
 from .agent import AgentProposal, AgentReasoning, AgentSteering, AgentText, AgentToolStart, AgentToolUse
 from .background import (
+    APP_EVENT_PREFIX,
     CANDIDATE_VALIDATION_ERROR,
     PROVIDER_ERROR,
     SANDBOX_COMMAND_TIMEOUT_ERROR,
     SANDBOX_TURN_TIMEOUT_ERROR,
+    SCHEDULE_CHANGED_DISCARDED_EVENT,
+    SCHEDULE_CHANGED_EVENT,
     STALE_TURN_ERROR,
     SessionEventBroker,
-    attachment_notes,
     build_provider_messages,
+    history_chars,
+    model_input,
     recent_history,
+    removal_event,
     run_background_turn,
+    upload_event,
 )
 from .config import AiSettings, validate_ai_auth_credentials
 from .history import ChatHistory, stop_maintenance
@@ -92,15 +100,13 @@ from .validation import new_schedule_issues, validate_frontend_schedule_yaml
 SERVICE_NAME = "nurse-scheduling-ai-api"
 API_VERSION = "0.2.0"
 OWNER_COOKIE = "nurse_scheduling_ai_owner"
-PROPOSAL_APPROVED_HISTORY = (
-    "The user approved the previous schedule proposal. Its changes are now part of the current canonical schedule."
-)
+PROPOSAL_APPROVED_HISTORY = f"{APP_EVENT_PREFIX} The user approved the previous schedule proposal. Its changes are now part of the current canonical schedule."
 PROPOSAL_REJECTED_HISTORY = (
-    "The user rejected the previous schedule proposal. All schedule changes made during that agent turn were "
+    f"{APP_EVENT_PREFIX} The user rejected the previous schedule proposal. All schedule changes made during that agent turn were "
     "discarded. This turn starts with a fresh workspace containing the current canonical schedule."
 )
 PROPOSAL_INVALID_HISTORY = (
-    "The previous schedule proposal failed trusted validation when the user approved it, so it was discarded. All "
+    f"{APP_EVENT_PREFIX} The previous schedule proposal failed trusted validation when the user approved it, so it was discarded. All "
     "schedule changes made during that agent turn were dropped. This turn starts with a fresh workspace containing "
     "the current canonical schedule."
 )
@@ -184,12 +190,6 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=100_000)
 
 
-class MessageChatRequest(ChatRequest):
-    """One user question and the IDs of session uploads attached to it."""
-
-    upload_ids: list[str] = Field(default_factory=list)
-
-
 class QueueChatRequest(ChatRequest):
     """One user message queued while the assistant is working."""
 
@@ -219,6 +219,14 @@ class CapabilitiesResponse(BaseModel):
     file_attachments: FileAttachmentCapability
     session_retention_seconds: int
     auth: dict[str, bool | str]
+
+
+def _schedule_data(schedule_yaml: str) -> object:
+    """Parse a schedule for comparison, so a formatting-only change is not reported as an edit."""
+    try:
+        return YAML(typ="safe").load(schedule_yaml)
+    except YAMLError:
+        return schedule_yaml
 
 
 def schedule_revision(schedule_yaml: str) -> str:
@@ -390,8 +398,27 @@ class SessionStore:
         )
 
     def _cap_history(self, session: ChatSession) -> None:
-        """Limit retained messages without leaving an assistant reply at the front."""
+        """Limit retained messages without leaving an assistant reply at the front.
+
+        Past the prompt history budget, drop the oldest messages until half the budget remains.
+        Cutting in large steps keeps the prompt prefix unchanged for many turns, so the provider
+        can reuse its cache. Cutting one message per turn would change the prefix every time.
+        """
         overflow = max(0, len(session.history) - max(2, self._settings.max_history_messages))
+        if history_chars(session.history) > self._settings.max_history_chars:
+            # Never cut into the newest completed exchange. Per-request trimming covers what still overflows.
+            last_reply = max(
+                (index for index, message in enumerate(session.history) if message["role"] == "assistant"), default=0
+            )
+            newest_exchange = max(
+                (index for index in range(last_reply) if session.history[index]["role"] == "user"), default=0
+            )
+            remaining = history_chars(session.history[overflow:])
+            while overflow < newest_exchange and remaining > self._settings.max_history_chars // 2:
+                remaining -= history_chars(session.history[overflow : overflow + 1])
+                overflow += 1
+            while overflow < newest_exchange and session.history[overflow]["role"] != "user":
+                overflow += 1
         if overflow:
             while overflow < len(session.history) and session.history[overflow]["role"] != "user":
                 overflow += 1
@@ -478,8 +505,10 @@ class SessionStore:
                 filename = _unique_filename(upload.filename, filenames)
                 filenames.add(filename)
                 retained_uploads.append(replace(upload, filename=filename, id=str(uuid4())))
+            first_index = len(session.uploads) + 1
             session.uploads.update((item.id, item) for item in retained_uploads)
-            self._charge(session, delta)
+            self._append_history_event(session, upload_event(retained_uploads, first_index))
+            self._recount(session)
             session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
             return tuple(retained_uploads)
 
@@ -496,10 +525,12 @@ class SessionStore:
             session = self._get_owned(session_id, owner_token)
             if session.active:
                 raise HTTPException(status_code=409, detail="Wait for the active response before removing files.")
-            upload = session.uploads.pop(upload_id, None)
-            if upload is None:
+            if upload_id not in session.uploads:
                 raise HTTPException(status_code=404, detail="The uploaded file is no longer available.")
-            self._charge(session, -len(upload.data))
+            index = list(session.uploads).index(upload_id) + 1
+            upload = session.uploads.pop(upload_id)
+            self._append_history_event(session, removal_event(upload, index))
+            self._recount(session)
             session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
 
     def save_download(self, session_id: str, download_id: str, content: bytes) -> bool:
@@ -634,10 +665,16 @@ class SessionStore:
             )
             if additional_bytes > 0:
                 self._require_capacity(additional_bytes)
+            data_changed = _schedule_data(session.schedule_yaml) != _schedule_data(schedule_yaml)
+            had_proposal = bool(session.proposal_yaml)
             session.schedule_yaml = schedule_yaml
             session.revision = schedule_revision(schedule_yaml)
             session.proposal_yaml = ""
             session.proposal_diff = ""
+            if data_changed or had_proposal:
+                self._append_history_event(
+                    session, SCHEDULE_CHANGED_DISCARDED_EVENT if had_proposal else SCHEDULE_CHANGED_EVENT
+                )
             self._recount(session)
 
     def peek_proposal(self, session_id: str, owner_token: str | None, base_sha256: str) -> tuple[str, str]:
@@ -1173,13 +1210,12 @@ def create_app(
     @app.post("/sessions/{session_id}/messages", dependencies=[Depends(require_auth)])
     async def stream_message(
         session_id: str,
-        body: MessageChatRequest,
+        body: ChatRequest,
         request: Request,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> StreamingResponse:
         """Stream one answer and retain only text after successful completion."""
         question = _validate_question(body.message, settings)
-        upload_ids = list(dict.fromkeys(body.upload_ids))
         store.require_owned(session_id, owner)
         turn_lock = turn_locks.setdefault(session_id, asyncio.Lock())
         if turn_lock.locked():
@@ -1199,9 +1235,6 @@ def create_app(
             )
             # Uploads cannot change while the turn is active, so this snapshot stays valid for the whole turn.
             hydrated_attachments = store.attachments(session_id)
-            if not set(upload_ids) <= {item.id for item in hydrated_attachments}:
-                store.abort(session_id)
-                raise HTTPException(status_code=422, detail="An attached file is no longer available.")
         except BaseException:
             pending_turn_stops.discard(session_id)
             release_turn()
@@ -1216,7 +1249,7 @@ def create_app(
                     request.state.auth_credential_id,
                     question,
                     settings.provider_model,
-                    len(upload_ids),
+                    len(hydrated_attachments),
                 )
                 if not logged:
                     raise HTTPException(status_code=503, detail="AI chat history is temporarily unavailable.")
@@ -1230,7 +1263,7 @@ def create_app(
             session_id,
             len(question),
             json.dumps(_question_log_preview(question), ensure_ascii=False),
-            len(upload_ids),
+            len(hydrated_attachments),
         )
         stream_started = threading.Event()
         latest_artifact = await session_optimizer.latest_result_artifact(session_id)
@@ -1241,15 +1274,14 @@ def create_app(
             schedule_yaml,
             question,
             hydrated_attachments,
-            new_upload_ids=upload_ids,
             system_prompt=SANDBOX_SYSTEM_PROMPT,
             pending_proposal=bool(proposal_yaml),
             optimizer_result_available=latest_artifact is not None,
             max_history_chars=settings.max_history_chars,
             max_download_bytes=settings.max_download_bytes,
         )
-        # Later turns list retained files again, so history keeps only the files this message attached.
-        history_question = question + attachment_notes(hydrated_attachments, upload_ids)[0]
+        # History keeps the question as typed. Upload and removal events are separate history messages.
+        history_question = question
 
         async def generate_events():
             stream_started.set()
@@ -1268,6 +1300,9 @@ def create_app(
             turn_messages = [ChatMessage(role="user", content=history_question)]
             assistant_segment: list[str] = []
             try:
+                yield _sse_event(
+                    "model_input", model_input(messages, len(retained_history), dropped_history, "question")
+                )
                 if dropped_history:
                     yield _sse_event("history_trimmed", {"dropped": dropped_history})
                 if stopped_before_stream:

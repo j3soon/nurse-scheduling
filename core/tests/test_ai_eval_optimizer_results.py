@@ -77,9 +77,10 @@ def test_completion_uses_the_production_message_and_mounts_a_fresh_result():
     workbook, metadata = completion_result(case.optimizer_completion, source)
     assert WORKSPACE_OPTIMIZER_RESULT not in factory.created[0].files
     assert factory.created[1].files[WORKSPACE_OPTIMIZER_RESULT] == workbook
-    completion = run.trajectory["prompts"][1][-1]
+    completion = run.trajectory["prompts"][1][-2]
     assert completion == {"role": "user", "content": optimizer_completion_message(metadata)}
-    assert run.trajectory["prompts"][1][-2]["content"] == "Running in the background."
+    assert run.trajectory["prompts"][1][-1]["content"].startswith("[Current status]")
+    assert run.trajectory["prompts"][1][-3]["content"] == "Running in the background."
     assert all(backend.closed for backend in factory.created)
     assert any(e["kind"] == "optimizer" for e in run.trajectory["events"])
 

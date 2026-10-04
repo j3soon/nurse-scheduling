@@ -151,8 +151,9 @@ one a stable ID, hypothesis, and targeted case set. The production and evaluatio
 Leading SPDX license blocks and AI provenance comments are excluded from model-facing text.
 Run `python3 scripts/print_ai_system_prompt.py` from the repository root to print the assembled prompt to stdout.
 The script uses the production assembler and needs only Python's standard library. The app appends request-specific
-context, such as the schedule pointer, pending-proposal state, and download size limit, when building a request.
-The user message lists attached and earlier uploaded files with their sandbox paths.
+context, such as the schedule pointer and download size limit, when building a request. Changing state, such as a
+pending proposal, goes into a final status message. Case attachments enter history as an upload event before the first
+question, as production uploads do.
 Section hashes make the evaluation fail fast if prompt text changes without updating the manifest.
 Keep section filenames stable and change their order in the manifest. Linked cases are candidates for evidence, not
 proof that a section helps. A step's `evidence` records a clean repeated comparison only after inspecting its

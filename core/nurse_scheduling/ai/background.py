@@ -22,7 +22,7 @@
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator, Callable, Collection, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import Protocol
@@ -191,22 +191,71 @@ def recent_history(history: list[ChatMessage], max_chars: int) -> list[ChatMessa
     return kept
 
 
-def attachment_notes(attachments: Sequence[SandboxAttachment], new_upload_ids: Collection[str] = ()) -> tuple[str, str]:
-    """Describe this message's new uploads and the earlier uploads, with the sandbox path of each file."""
-    new_files: list[dict[str, str | int]] = []
-    earlier_files: list[dict[str, str | int]] = []
-    for index, attachment in enumerate(attachments, start=1):
-        entry: dict[str, str | int] = {
-            "filename": attachment.filename,
-            "path": attachment_path(attachment, index),
-            "media_type": attachment.media_type,
-            "bytes": len(attachment.data),
-        }
-        (new_files if attachment.id in new_upload_ids else earlier_files).append(entry)
+APP_EVENT_PREFIX = "[App event]"
+STATUS_PREFIX = "[Current status]"
+SCHEDULE_CHANGED_EVENT = (
+    f"{APP_EVENT_PREFIX} The schedule changed in the app. /workspace/schedule.yaml contains the current version."
+)
+SCHEDULE_CHANGED_DISCARDED_EVENT = (
+    f"{SCHEDULE_CHANGED_EVENT} The pending proposal was discarded because it was made for the previous schedule."
+)
+
+
+def history_chars(messages: Sequence[ChatMessage]) -> int:
+    """Measure messages the same way the prompt history budget does."""
+    return sum(len(json.dumps(message, ensure_ascii=False)) for message in messages)
+
+
+def _file_entry(attachment: SandboxAttachment, index: int) -> dict[str, str | int]:
+    return {
+        "filename": attachment.filename,
+        "path": attachment_path(attachment, index),
+        "media_type": attachment.media_type,
+        "bytes": len(attachment.data),
+    }
+
+
+def upload_event(attachments: Sequence[SandboxAttachment], first_index: int = 1) -> str:
+    """Describe uploaded files once in history, so later requests keep the same prefix."""
+    files = [_file_entry(attachment, index) for index, attachment in enumerate(attachments, start=first_index)]
     return (
-        f"\n[Files attached to this message: {json.dumps(new_files, ensure_ascii=False)}]" if new_files else "",
-        f"\n[Files uploaded earlier: {json.dumps(earlier_files, ensure_ascii=False)}]" if earlier_files else "",
+        f"{APP_EVENT_PREFIX} The user uploaded files. They stay in the workspace until the user removes them: "
+        f"{json.dumps(files, ensure_ascii=False)}"
     )
+
+
+def removal_event(attachment: SandboxAttachment, index: int) -> str:
+    """Describe one removed file in history."""
+    removed = {"filename": attachment.filename, "path": attachment_path(attachment, index)}
+    return f"{APP_EVENT_PREFIX} The user removed a file from the workspace: {json.dumps(removed, ensure_ascii=False)}"
+
+
+def status_message(
+    history: Sequence[ChatMessage],
+    attachments: Sequence[SandboxAttachment],
+    *,
+    pending_proposal: bool,
+    optimizer_result_available: bool,
+) -> str:
+    """Describe request-specific state that would otherwise change the cached prompt prefix."""
+    lines = []
+    if pending_proposal:
+        lines.append(
+            "A validated proposal is pending. Its exact candidate and diff are available in the trusted workspace "
+            "files that the instructions describe."
+        )
+    if optimizer_result_available:
+        lines.append(f"Optimization result: {WORKSPACE_OPTIMIZER_RESULT}.")
+    # Trimmed history or a failed turn can hide an upload event, so list only the files the request cannot show.
+    sent = "\n".join(str(message["content"]) for message in history)
+    unlisted = [
+        entry
+        for index, attachment in enumerate(attachments, start=1)
+        if (entry := _file_entry(attachment, index))["path"] not in sent
+    ]
+    if unlisted:
+        lines.append(f"Uploaded files not listed in this conversation: {json.dumps(unlisted, ensure_ascii=False)}")
+    return f"{STATUS_PREFIX}\n" + "\n".join(lines) if lines else ""
 
 
 def build_provider_messages(
@@ -215,28 +264,52 @@ def build_provider_messages(
     question: str,
     attachments: Sequence[SandboxAttachment] = (),
     *,
-    new_upload_ids: Collection[str] = (),
     system_prompt: str = SANDBOX_SYSTEM_PROMPT,
     pending_proposal: bool = False,
     optimizer_result_available: bool = False,
     max_history_chars: int = DEFAULT_MAX_HISTORY_CHARS,
     max_download_bytes: int = 50_000_000,
 ) -> list[ChatMessage]:
-    """Build a provider prompt that keeps schedule data and untrusted filenames separate from instructions."""
+    """Build a provider prompt whose system message and history stay unchanged between requests.
+
+    Providers reuse cached work only for an identical prefix. Request-specific state therefore goes
+    into a final status message that history never keeps.
+    """
     system_content = f"{system_prompt}\n\nCurrent schedule summary:\n{describe_schedule(schedule_yaml)}"
     system_content += f"\nDownload size limit: {max_download_bytes} bytes.\n"
-    if pending_proposal:
-        system_content += (
-            "\nA validated proposal is pending. Its exact candidate and diff are available in the trusted workspace "
-            "files described above."
-        )
-    if optimizer_result_available:
-        system_content += f"\nOptimization result: {WORKSPACE_OPTIMIZER_RESULT}."
+    retained = recent_history(history, max_history_chars)
+    status = status_message(
+        retained,
+        attachments,
+        pending_proposal=pending_proposal,
+        optimizer_result_available=optimizer_result_available,
+    )
     return [
         ChatMessage(role="system", content=system_content),
-        *recent_history(history, max_history_chars),
-        ChatMessage(role="user", content=question + "".join(attachment_notes(attachments, new_upload_ids))),
+        *retained,
+        ChatMessage(role="user", content=question),
+        *([ChatMessage(role="user", content=status)] if status else []),
     ]
+
+
+def model_input(
+    messages: Sequence[ChatMessage], history_count: int, history_offset: int, question_kind: str
+) -> dict[str, object]:
+    """Describe a provider request for the chat: its system message and the messages added since the last reply.
+
+    History messages after the last assistant reply are app events. Each one carries its absolute history
+    index, so the chat shows it once even when a failed turn is retried.
+    """
+    history = messages[1 : 1 + history_count]
+    last_reply = max((index for index, message in enumerate(history) if message["role"] == "assistant"), default=-1)
+    added: list[dict[str, object]] = [
+        {"kind": "app", "index": history_offset + index, "content": message["content"]}
+        for index, message in enumerate(history)
+        if index > last_reply
+    ]
+    added.append({"kind": question_kind, "content": messages[1 + history_count]["content"]})
+    added.extend({"kind": "status", "content": message["content"]} for message in messages[2 + history_count :])
+    return {"system": messages[0]["content"], "messages": added}
 
 
 async def run_background_turn(
@@ -305,6 +378,9 @@ async def run_background_turn(
             optimizer_result_available=artifact is not None,
             max_history_chars=settings.max_history_chars,
             max_download_bytes=settings.max_download_bytes,
+        )
+        event_broker.publish(
+            session_id, "model_input", model_input(messages, len(retained_history), dropped_history, "optimizer")
         )
         assistant_parts: list[str] = []
         pending_proposal: AgentProposal | None = None

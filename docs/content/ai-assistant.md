@@ -93,11 +93,8 @@ background assistant turn. It does not cancel the independent optimizer run.
 Sandbox and conversation state are separate. The backend copies the current
 schedule to `/workspace/schedule.yaml` and searchable schema documentation to
 `/reference`. It writes uploads below `/workspace/attachments` under safe paths
-prefixed with their upload IDs. The user message lists the files attached to
-it and the files uploaded earlier, with the original name, sandbox path, media
-type, and size of each file. Filenames stay out of the system prompt because
-they are untrusted input. The backend then runs every command for that user
-message in the same sandbox,
+prefixed with their upload IDs. The backend then runs every command for that
+user message in the same sandbox,
 reads the candidate, and destroys the sandbox. A later message always starts a
 new sandbox. Only conversation history, the canonical schedule revision, and a
 pending validated proposal remain in application state.
@@ -625,10 +622,44 @@ FastAPI.
 | `POST /sessions/{id}/messages` | Stream one answer to a JSON `message`. |
 
 Upload requests contain only repeated `files` fields. Other field names are
-rejected. Uploads are refused while a response is active. A message can name
-the files attached to it in an optional `upload_ids` list. The chat history
-keeps the list of those files. Every turn can read all retained files. Sessions are
-process-local. Use one AI backend instance until shared AI storage is added.
+rejected. Uploads are refused while a response is active. Every turn can read
+all retained files. Sessions are process-local. Use one AI backend instance
+until shared AI storage is added.
+
+### Provider request layout
+
+Providers reuse cached prompt work only for an identical request prefix. Each
+request therefore keeps earlier content unchanged and puts changing state last:
+
+1. The system message. It does not change during a chat.
+2. The chat history. Each entry stays unchanged once it is stored.
+3. The user's question, exactly as typed.
+4. A status message, only when needed. History never keeps it.
+
+The backend stores app events as separate `user` messages in history when they
+happen. Each event starts with `[App event]`. Events record uploads, removals,
+proposal approvals and rejections, and schedule changes made in the app. An
+upload event lists the original name, sandbox path, media type, and size of
+each file. A schedule change is recorded only when the parsed schedule data
+changes. Filenames stay out of the system prompt because they are untrusted
+input.
+
+The status message starts with `[Current status]`. It reports a pending
+proposal, the optimizer result path, and retained files whose upload event the
+request does not contain. That happens when history was trimmed or when a
+failed turn followed the upload.
+
+When history passes `AI_MAX_HISTORY_CHARS`, the backend drops the oldest
+messages until about half the budget remains. It keeps the newest completed
+exchange. This keeps the request prefix unchanged for many turns between cuts.
+
+Each assistant turn starts with a `model_input` event. Its `system` field
+contains the system message. Its `messages` field lists the request messages
+added since the last assistant reply, in order. Each entry has a `kind` of
+`app`, `question`, `optimizer`, or `status`. An `app` entry also has its
+absolute history `index`, so a client shows it once when a failed turn is
+retried. A foreground turn sends this event first in the message stream. A
+background turn publishes it on the session event stream after `turn_start`.
 
 `GET /health`, `GET /ready`, and `GET /capabilities` stay public so deployment
 probes work and the frontend can discover authentication and attachment limits.
