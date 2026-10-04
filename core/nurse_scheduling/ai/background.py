@@ -552,7 +552,7 @@ async def run_background_turn(
                 else:
                     event_broker.publish(
                         session_id,
-                        "error",
+                        "warning",
                         {
                             "message": "The generated ZIP could not be retained because the service memory limit was reached."
                         },

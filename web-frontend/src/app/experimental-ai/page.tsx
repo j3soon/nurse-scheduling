@@ -1374,6 +1374,7 @@ export default function ExperimentalAiPage() {
           }));
         },
         onDownload: downloadId => updateBackgroundMessage(message => ({ ...message, downloadId })),
+        onWarning: setError,
         onProposal: diff => setProposalDiff(diff),
         onOptimization: activity => {
           if (!activity.terminal) {
@@ -1680,6 +1681,7 @@ export default function ExperimentalAiPage() {
           onDownload: downloadId => setMessages(previous => previous.map(message => (
             message.id === activeAssistantId ? { ...message, downloadId } : message
           ))),
+          onWarning: setError,
           onScheduleChange: candidate => {
             const before = sandboxScheduleRef.current ?? scheduleYaml;
             sandboxScheduleRef.current = candidate;

@@ -83,6 +83,7 @@ export interface StreamCallbacks {
   onScheduleChange?: (scheduleYaml: string) => void;
   onProposal?: (diff: string) => void;
   onDownload?: (downloadId: string) => void;
+  onWarning?: (message: string) => void;
   onOptimization?: (activity: OptimizationActivity) => void;
   onOptimizationProgress?: (activity: OptimizationProgressActivity) => void;
   onDone?: (messageId?: string) => void;
@@ -496,6 +497,8 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
     if (typeof dropped === 'number' && Number.isInteger(dropped) && dropped > 0) {
       callbacks.onHistoryTrimmed?.(dropped);
     }
+  } else if (eventType === 'warning' && typeof payload.message === 'string') {
+    callbacks.onWarning?.(payload.message);
   } else if (eventType === 'error') {
     const message = typeof payload.message === 'string' ? payload.message : 'The AI response failed.';
     if (callbacks.onError) callbacks.onError(message);

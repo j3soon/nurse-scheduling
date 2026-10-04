@@ -1417,7 +1417,7 @@ def create_app(
                         yield _sse_event("download", {"download_id": turn_id})
                     else:
                         yield _sse_event(
-                            "error",
+                            "warning",
                             {
                                 "message": "The generated ZIP could not be retained because the service memory limit was reached."
                             },

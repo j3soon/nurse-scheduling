@@ -233,6 +233,24 @@ describe('AI client', () => {
     expect(onDone).toHaveBeenCalledOnce();
   });
 
+  it('reports a download warning without failing the completed turn', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      'event: delta\ndata: {"text":"Your files are ready."}\n\n',
+      'event: warning\ndata: {"message":"The generated ZIP could not be retained."}\n\n',
+      'event: done\ndata: {"message_id":"completed-turn"}\n\n',
+    ])));
+    const onWarning = vi.fn();
+    const onDone = vi.fn();
+
+    await expect(streamMessage(
+      'session-id', 'Download the CSV.', { onDelta: vi.fn(), onWarning, onDone },
+      new AbortController().signal, null,
+    )).resolves.toBeUndefined();
+
+    expect(onWarning).toHaveBeenCalledWith('The generated ZIP could not be retained.');
+    expect(onDone).toHaveBeenCalledWith('completed-turn');
+  });
+
   it('does not accept a rejected message', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(
       JSON.stringify({ detail: 'Too many retained files.' }),

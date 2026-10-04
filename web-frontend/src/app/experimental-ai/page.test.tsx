@@ -188,6 +188,24 @@ describe('ExperimentalAiPage', () => {
     expect(click).toHaveBeenCalled();
   });
 
+  it('shows a download warning without offering to retry a completed answer', async () => {
+    mockStreamMessage.mockImplementation(async (_id: string, _question: string, callbacks: {
+      onDelta: (text: string) => void;
+      onWarning: (message: string) => void;
+    }) => {
+      callbacks.onDelta('Your files are ready.');
+      callbacks.onWarning('The generated ZIP could not be retained.');
+    });
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Make a CSV');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('The generated ZIP could not be retained.');
+    expect(screen.getByText('Your files are ready.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+  });
+
   it('sends a question with the current schedule and renders streamed text', async () => {
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
