@@ -831,15 +831,16 @@
     "file": "steps/workspace-lifecycle.md",
     "cases": [
       "keep-generated-file-for-next-message",
+      "earlier-download-availability",
       "temporary-output-lifetime",
       "download-generated-zip"
     ],
-    "hypothesis": "Knows that workspace files other than the proposal and download ZIP are deleted after each reply.",
-    "sha256": "7a1031dff303059fab2d7d926305166a849b613c542c194b29a64f08b1143493",
+    "hypothesis": "Knows that only the proposal and download ZIP outlive each VM, and that earlier downloads stay available although the next VM lacks them.",
+    "sha256": "1ce9c7dd80b3b716869250b2884b22b55dc24c2f4531ea7c6eed90414919c36d",
     "evidence": [
       {
         "case": "keep-generated-file-for-next-message",
-        "input_sha256": "fff831da0e0e15d34bdfd8b6cec453707b90b66438adc020f9b147b3fdf4388f",
+        "input_sha256": "973ee96d8218b63c18749bb214759ba10e8c94bb5a3f26df644029f928c8a8da",
         "before": "0/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
@@ -847,18 +848,27 @@
         "controls": [
           {
             "case": "temporary-output-lifetime",
-            "input_sha256": "6bfa3e6427792754e7c6180cb0b4dfc7e9ad83a0209766a9c835f929f97b1138",
-            "before": "3/3",
+            "input_sha256": "5d6e2a97fd7b8156caa6131417e8fa3fbcf847d4c872f8b9c4b6a55e92d5f91f",
+            "before": "2/3",
             "after": "3/3"
           },
           {
             "case": "download-generated-zip",
-            "input_sha256": "641bf89b66478321cfe17ab88f98c7d6c7497b13f039ad805bd2f55ed7d1bfc8",
+            "input_sha256": "2d666c34936e630b0dd5cf0322cfa88695d42baa04c1ac9d2890e36101991117",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Adjacent full-prompt prefixes. Without the section, every attempt promised to keep an ordinary workspace file for the next message. With it, every attempt said the file is deleted and offered to recreate it or include it in the download ZIP. The existing lifetime check and download delivery stay correct."
+        "note": "Adjacent full-prompt prefixes. Without the section, every attempt promised to keep an ordinary workspace file for the next message. With it, every attempt said the file is lost. The lifetime check and download delivery stay correct."
+      },
+      {
+        "case": "earlier-download-availability",
+        "input_sha256": "877e82e02b1221d1051331c492d9df2f5aabf70d36d08ff507948297f88a2e5f",
+        "before": "0/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "note": "Adjacent full-prompt prefixes. Without the section, every attempt treated the earlier download as lost after finding no ZIP in the new VM. An earlier wording that only said the ZIP is kept also failed 0/3. Stating that the button stays available while the next VM lacks the ZIP passes 3/3."
       }
     ]
   }
