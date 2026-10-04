@@ -43,13 +43,16 @@ def test_followup_hydrates_retained_upload_and_removal_stops_hydration():
     app = create_test_app(settings=make_settings(), provider=provider, sandbox_factory=factory)
     with AuthenticatedTestClient(app) as client:
         session = create_session(client)
-        client.post(
-            f"/sessions/{session}/messages",
-            data={"message": "Read"},
-            files={"files": ("notes.txt", b"ward handover", "text/plain")},
+        uploaded = client.post(
+            f"/sessions/{session}/uploads", files={"files": ("notes.txt", b"ward handover", "text/plain")}
         )
+        assert uploaded.status_code == 201
+        with AuthenticatedTestClient(app) as other:
+            assert other.post(f"/sessions/{session}/uploads", files={"files": ("x.txt", b"x")}).status_code == 404
         files = client.get(f"/sessions/{session}/uploads").json()
-        assert len(files) == 1 and files[0]["filename"] == "notes.txt"
+        assert files == uploaded.json()
+        assert len(files) == 1 and files[0]["filename"] == "notes.txt" and files[0]["bytes"] == 13
+        client.post(f"/sessions/{session}/messages", json={"message": "Read", "upload_ids": [files[0]["id"]]})
         client.post(f"/sessions/{session}/messages", json={"message": "Read again"})
         first = json.loads(factory.created[0].files[MANIFEST])["attachments"][0]
         second = json.loads(factory.created[1].files[MANIFEST])["attachments"][0]
@@ -89,6 +92,10 @@ def test_upload_replacement_limits_removal_and_expiry_reclaim_bytes():
     with pytest.raises(HTTPException) as error:
         store.remove_upload(session.id, "owner", second.id)
     assert error.value.status_code == 409
+    with pytest.raises(HTTPException) as error:
+        store.retain_uploads(session.id, "owner", [SandboxAttachment("note", "text/plain", b"x")])
+    assert error.value.status_code == 409
+    assert store.attachments(session.id) == (second,)
     store.abort(session.id)
     store.remove_upload(session.id, "owner", second.id)
     assert store.retained_bytes == original

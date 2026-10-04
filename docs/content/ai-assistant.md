@@ -616,11 +616,16 @@ FastAPI.
 | `GET /capabilities` | Public attachment limits, session lifetime, and authentication requirement. |
 | `POST /sessions` | Store a YAML snapshot and create a browser-owned session. |
 | `GET /sessions/{id}` | Check the remaining session lifetime without renewing it. |
-| `POST /sessions/{id}/messages` | Stream one answer. Accepts JSON text or multipart text and attachments. |
+| `POST /sessions/{id}/uploads` | Retain multipart files for later messages and return their IDs. |
+| `GET /sessions/{id}/uploads` | List retained file metadata. |
+| `DELETE /sessions/{id}/uploads/{upload_id}` | Remove one retained file. |
+| `POST /sessions/{id}/messages` | Stream one answer to a JSON `message`. |
 
-Multipart requests use one `message` field and repeated `files` fields. Other
-attachment field names are rejected. Sessions are process-local. Use one AI
-backend instance until shared AI storage is added.
+Upload requests contain only repeated `files` fields. Other field names are
+rejected. Uploads are refused while a response is active. A message can name
+the files attached to it in an optional `upload_ids` list. The chat history
+records those filenames. Every turn can read all retained files. Sessions are
+process-local. Use one AI backend instance until shared AI storage is added.
 
 `GET /health`, `GET /ready`, and `GET /capabilities` stay public so deployment
 probes work and the frontend can discover authentication and attachment limits.

@@ -183,6 +183,12 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=100_000)
 
 
+class MessageChatRequest(ChatRequest):
+    """One user question and the IDs of session uploads attached to it."""
+
+    upload_ids: list[str] = Field(default_factory=list)
+
+
 class QueueChatRequest(ChatRequest):
     """One user message queued while the assistant is working."""
 
@@ -443,14 +449,18 @@ class SessionStore:
     def retain_uploads(
         self, session_id: str, owner_token: str | None, uploads: Sequence[SandboxAttachment]
     ) -> tuple[SandboxAttachment, ...]:
-        """Retain uploads by filename and hydrate their latest versions on later turns."""
+        """Retain uploads by filename between turns and return their retained versions."""
         with self._lock:
             session = self._get_owned(session_id, owner_token)
+            if session.active:
+                raise HTTPException(status_code=409, detail="Wait for the active response before uploading files.")
             updated = dict(session.uploads)
+            retained_uploads: dict[str, SandboxAttachment] = {}
             for upload in uploads:
                 existing = next((item for item in updated.values() if item.filename == upload.filename), None)
                 retained = replace(upload, id=existing.id if existing else str(uuid4()))
                 updated[retained.id] = retained
+                retained_uploads[retained.id] = retained
             if len(updated) > self._settings.max_attachment_files:
                 raise HTTPException(status_code=413, detail="Too many retained files. Remove unused uploads first.")
             delta = sum(len(item.data) for item in updated.values()) - sum(
@@ -459,7 +469,8 @@ class SessionStore:
             self._require_capacity(delta)
             session.uploads = updated
             self._charge(session, delta)
-            return tuple(updated.values())
+            session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
+            return tuple(retained_uploads.values())
 
     def attachments(self, session_id: str) -> tuple[SandboxAttachment, ...]:
         """Snapshot retained source files for a foreground or background turn."""
@@ -710,11 +721,6 @@ def _sse_event(event_type: str, data: dict[str, object]) -> str:
 
 async def _read_files(uploads: list[UploadFile], settings: AiSettings) -> list[SandboxAttachment]:
     """Read arbitrary bounded files without interpreting or executing them."""
-    if not uploads:
-        return []
-    if len(uploads) > settings.max_attachment_files:
-        raise HTTPException(status_code=413, detail="Too many file attachments.")
-
     attachments = []
     for index, upload in enumerate(uploads, start=1):
         data = await upload.read(settings.max_attachment_bytes + 1)
@@ -727,7 +733,7 @@ async def _read_files(uploads: list[UploadFile], settings: AiSettings) -> list[S
 
 
 def _validate_question(raw_message: object, settings: AiSettings) -> str:
-    """Validate one question consistently across JSON and multipart requests."""
+    """Validate one question consistently across message and steering requests."""
     try:
         request = ChatRequest.model_validate({"message": raw_message})
     except ValidationError as exc:
@@ -740,28 +746,13 @@ def _validate_question(raw_message: object, settings: AiSettings) -> str:
     return question
 
 
-# FastAPI cannot declaratively combine a JSON body with multipart files on one route.
-# Ref: https://fastapi.tiangolo.com/tutorial/request-files/#what-is-form-data
-async def _parse_message_request(
-    request: Request,
-    settings: AiSettings,
-) -> tuple[str, list[SandboxAttachment]]:
-    """Accept a JSON question or multipart input with arbitrary files."""
-    content_type = request.headers.get("content-type", "").lower()
-    if content_type.startswith("application/json"):
-        try:
-            body = await request.json()
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            raise HTTPException(status_code=422, detail="Request body is not valid JSON.") from exc
-        if not isinstance(body, dict):
-            raise HTTPException(status_code=422, detail="Request body must be an object.")
-        return _validate_question(body.get("message"), settings), []
-
-    if not content_type.startswith("multipart/form-data"):
-        raise HTTPException(status_code=415, detail="Use JSON or multipart form data.")
+async def _parse_upload_request(request: Request, settings: AiSettings) -> list[SandboxAttachment]:
+    """Accept multipart input with one or more arbitrary files and no other fields."""
+    if not request.headers.get("content-type", "").lower().startswith("multipart/form-data"):
+        raise HTTPException(status_code=415, detail="Upload files as multipart form data.")
 
     content_length = request.headers.get("content-length")
-    max_body_bytes = settings.max_attachment_files * settings.max_attachment_bytes + 100_000 + 65_536
+    max_body_bytes = settings.max_attachment_files * settings.max_attachment_bytes + 65_536
     if content_length is not None:
         try:
             if int(content_length) > max_body_bytes:
@@ -770,26 +761,24 @@ async def _parse_message_request(
             raise HTTPException(status_code=400, detail="Invalid Content-Length header.") from None
 
     try:
-        async with request.form(
-            max_files=settings.max_attachment_files,
-            max_fields=1,
-            max_part_size=100_000,
-        ) as form:
-            if any(key not in {"message", "files"} for key in form):
+        async with request.form(max_files=settings.max_attachment_files, max_fields=0) as form:
+            if any(key != "files" for key in form):
                 raise HTTPException(status_code=422, detail="Unexpected multipart field.")
-            message_values = form.getlist("message")
-            if len(message_values) != 1 or not isinstance(message_values[0], str):
-                raise HTTPException(status_code=422, detail="Multipart request requires one message field.")
             file_values = form.getlist("files")
-            if any(not isinstance(value, UploadFile) for value in file_values):
-                raise HTTPException(status_code=422, detail="Attachments must be uploaded as files.")
-            question = _validate_question(message_values[0], settings)
-            files = await _read_files(file_values, settings)
+            if not file_values:
+                raise HTTPException(status_code=422, detail="Upload at least one file.")
+            return await _read_files(file_values, settings)
     except StarletteHTTPException as exc:
         if exc.status_code == 400 and str(exc.detail).startswith("Too many files"):
             raise HTTPException(status_code=413, detail="Too many file attachments.") from exc
+        if exc.status_code == 400 and str(exc.detail).startswith("Too many fields"):
+            raise HTTPException(status_code=422, detail="Unexpected multipart field.") from exc
         raise
-    return question, files
+
+
+def _upload_metadata(upload: SandboxAttachment) -> dict[str, str | int]:
+    """Describe one retained source file without its contents."""
+    return {"id": upload.id, "filename": upload.filename, "media_type": upload.media_type, "bytes": len(upload.data)}
 
 
 def create_app(
@@ -1062,14 +1051,29 @@ def create_app(
                 background_task.cancel()
         return Response(status_code=status.HTTP_202_ACCEPTED)
 
+    @app.post(
+        "/sessions/{session_id}/uploads",
+        dependencies=[Depends(require_auth)],
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def add_uploads(
+        session_id: str,
+        request: Request,
+        response: Response,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ):
+        """Retain source files for later messages and return their metadata."""
+        store.require_owned(session_id, owner)
+        uploads = await _parse_upload_request(request, settings)
+        retained = store.retain_uploads(session_id, owner, uploads)
+        refresh_owner_cookie(response, owner)
+        return [_upload_metadata(item) for item in retained]
+
     @app.get("/sessions/{session_id}/uploads", dependencies=[Depends(require_auth)])
     async def list_uploads(session_id: str, owner: str | None = Cookie(default=None, alias=OWNER_COOKIE)):
         """List source-file metadata without returning file contents."""
         store.require_owned(session_id, owner)
-        return [
-            {"id": item.id, "filename": item.filename, "media_type": item.media_type, "bytes": len(item.data)}
-            for item in store.attachments(session_id)
-        ]
+        return [_upload_metadata(item) for item in store.attachments(session_id)]
 
     @app.delete("/sessions/{session_id}/uploads/{upload_id}", dependencies=[Depends(require_auth)], status_code=204)
     async def remove_upload(
@@ -1158,11 +1162,13 @@ def create_app(
     @app.post("/sessions/{session_id}/messages", dependencies=[Depends(require_auth)])
     async def stream_message(
         session_id: str,
+        body: MessageChatRequest,
         request: Request,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> StreamingResponse:
         """Stream one answer and retain only text after successful completion."""
-        question, attachments = await _parse_message_request(request, settings)
+        question = _validate_question(body.message, settings)
+        upload_ids = list(dict.fromkeys(body.upload_ids))
         store.require_owned(session_id, owner)
         turn_lock = turn_locks.setdefault(session_id, asyncio.Lock())
         if turn_lock.locked():
@@ -1180,11 +1186,13 @@ def create_app(
             history, schedule_yaml, base_revision, proposal_yaml, proposal_diff, previously_dropped = store.begin(
                 session_id, owner
             )
-            try:
-                hydrated_attachments = store.retain_uploads(session_id, owner, attachments)
-            except BaseException:
+            # Uploads cannot change while the turn is active, so this snapshot stays valid for the whole turn.
+            hydrated_attachments = store.attachments(session_id)
+            retained = {item.id: item for item in hydrated_attachments}
+            if any(upload_id not in retained for upload_id in upload_ids):
                 store.abort(session_id)
-                raise
+                raise HTTPException(status_code=422, detail="An attached file is no longer available.")
+            attachments = tuple(retained[upload_id] for upload_id in upload_ids)
         except BaseException:
             pending_turn_stops.discard(session_id)
             release_turn()

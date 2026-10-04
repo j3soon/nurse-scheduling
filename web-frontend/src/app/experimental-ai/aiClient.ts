@@ -366,23 +366,14 @@ export async function streamMessage(
   endpoint = getAiBaseUrl(),
 ): Promise<void> {
   const files = attachments.files ?? [];
-  let body: BodyInit;
-  let headers: Record<string, string> | undefined;
-  if (files.length > 0) {
-    const form = new FormData();
-    form.append('message', message);
-    files.forEach(file => form.append('files', file, file.name));
-    body = form;
-  } else {
-    headers = { 'Content-Type': 'application/json' };
-    body = JSON.stringify({ message });
-  }
+  const uploaded = files.length > 0 ? await uploadFiles(sessionId, files, authToken, endpoint, signal) : [];
+  const body = uploaded.length > 0 ? { message, upload_ids: uploaded.map(file => file.id) } : { message };
 
   const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/messages`, {
     method: 'POST',
     credentials: 'include',
-    headers: authorizedHeaders(authToken, headers),
-    body,
+    headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body),
     signal,
   });
   if (!response.ok) throw await responseError(response);
@@ -486,7 +477,26 @@ export async function getUploads(sessionId: string, authToken: string | null, en
     credentials: 'include', headers: authorizedHeaders(authToken), signal,
   });
   if (!response.ok) throw await responseError(response);
-  const files = await response.json();
+  return parseUploadList(await response.json());
+}
+
+export async function uploadFiles(
+  sessionId: string,
+  files: File[],
+  authToken: string | null,
+  endpoint = getAiBaseUrl(),
+  signal?: AbortSignal,
+): Promise<UploadedFile[]> {
+  const form = new FormData();
+  files.forEach(file => form.append('files', file, file.name));
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/uploads`, {
+    method: 'POST', credentials: 'include', headers: authorizedHeaders(authToken), body: form, signal,
+  });
+  if (!response.ok) throw await responseError(response);
+  return parseUploadList(await response.json());
+}
+
+function parseUploadList(files: unknown): UploadedFile[] {
   if (!Array.isArray(files) || files.some(file => typeof file.id !== 'string' || typeof file.filename !== 'string' || typeof file.media_type !== 'string' || !Number.isSafeInteger(file.bytes) || file.bytes < 0)) {
     throw new Error('The AI backend returned an invalid upload list.');
   }

@@ -29,6 +29,8 @@ interface CapturedRequests {
   messageBody: string;
   messageBodies: string[];
   messageContentType: string;
+  uploadBody: string;
+  uploadContentType: string;
   authorizationHeaders: string[];
 }
 
@@ -77,13 +79,13 @@ async function startCancelableAiBackend(retainUploads = false) {
       return;
     }
     if (request.url === '/ai/sessions/cancel-session/uploads') {
-      response.writeHead(200, { ...headers, 'Content-Type': 'application/json' }).end(JSON.stringify(
+      if (request.method === 'POST') hasUpload = retainUploads;
+      response.writeHead(request.method === 'POST' ? 201 : 200, { ...headers, 'Content-Type': 'application/json' }).end(JSON.stringify(
         hasUpload ? [{ id: 'file-1', filename: 'ward.csv', media_type: 'text/csv', bytes: 26 }] : [],
       ));
       return;
     }
     if (request.url === '/ai/sessions/cancel-session/messages') {
-      hasUpload = retainUploads;
       response.writeHead(200, {
         ...headers,
         'Cache-Control': 'no-cache',
@@ -131,6 +133,8 @@ async function mockAiBackend(
     messageBody: '',
     messageBodies: [] as string[],
     messageContentType: '',
+    uploadBody: '',
+    uploadContentType: '',
     authorizationHeaders: [] as string[],
   };
   const allowedOrigin = frontendOrigin();
@@ -194,6 +198,21 @@ async function mockAiBackend(
         contentType: 'application/json',
         headers: corsHeaders,
         body: JSON.stringify({ expires_in_seconds: 172800 }),
+      });
+      return;
+    }
+
+    if (request.url().endsWith('/sessions/browser-session/uploads') && request.method() === 'POST') {
+      captured.uploadBody = request.postDataBuffer()?.toString('latin1') ?? '';
+      captured.uploadContentType = request.headers()['content-type'] ?? '';
+      const filenames = [...captured.uploadBody.matchAll(/filename="([^"]+)"/g)].map(match => match[1]);
+      await route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        headers: corsHeaders,
+        body: JSON.stringify(filenames.map((filename, index) => ({
+          id: `file-${index + 1}`, filename, media_type: 'application/octet-stream', bytes: 1,
+        }))),
       });
       return;
     }
@@ -451,9 +470,10 @@ test('previews and sends an image attachment', async ({ page }) => {
 
   await expect(page.getByText('The image and schedule were received.')).toBeVisible();
   await expect(page.getByText('Attached: ward.png')).toBeVisible();
-  expect(captured.messageContentType).toContain('multipart/form-data');
-  expect(captured.messageBody).toContain('What is shown?');
-  expect(captured.messageBody).toContain('ward.png');
+  expect(captured.uploadContentType).toContain('multipart/form-data');
+  expect(captured.uploadBody).toContain('filename="ward.png"');
+  expect(captured.messageContentType).toBe('application/json');
+  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'What is shown?', upload_ids: ['file-1'] });
 });
 
 test('previews and sends arbitrary file attachments', async ({ page }) => {
@@ -485,12 +505,15 @@ test('previews and sends arbitrary file attachments', async ({ page }) => {
 
   await expect(page.getByText('The image and schedule were received.')).toBeVisible();
   await expect(page.getByText('Attached: staff.csv, notes.pdf, coverage.custom')).toBeVisible();
-  expect(captured.messageContentType).toContain('multipart/form-data');
-  expect(captured.messageBody).toContain('name="files"');
-  expect(captured.messageBody).toContain('staff.csv');
-  expect(captured.messageBody).toContain('notes.pdf');
-  expect(captured.messageBody).toContain('coverage.custom');
-  expect(captured.messageBody).toContain('Alice,day');
+  expect(captured.uploadContentType).toContain('multipart/form-data');
+  expect(captured.uploadBody).toContain('name="files"');
+  expect(captured.uploadBody).toContain('staff.csv');
+  expect(captured.uploadBody).toContain('notes.pdf');
+  expect(captured.uploadBody).toContain('coverage.custom');
+  expect(captured.uploadBody).toContain('Alice,day');
+  expect(JSON.parse(captured.messageBody)).toEqual({
+    message: 'Check the documents.', upload_ids: ['file-1', 'file-2', 'file-3'],
+  });
 });
 
 
@@ -546,16 +569,19 @@ test('places uploads beside desktop chat and below mobile controls and allows re
     contentType: 'application/json',
     body: JSON.stringify({ auth: { required: true, scheme: 'bearer' }, file_attachments: { enabled: true, retained: true, max_files: 8, max_bytes_per_file: 5000000 } }),
   }));
-  await page.route('**/ai/sessions/*/uploads', route => route.fulfill({
-    contentType: 'application/json', body: JSON.stringify(retained ? [{ id: 'file-1', filename: 'ward.csv', media_type: 'text/csv', bytes: 26 }] : []),
-  }));
+  await page.route('**/ai/sessions/*/uploads', route => {
+    if (route.request().method() === 'POST') retained = true;
+    return route.fulfill({
+      contentType: 'application/json', body: JSON.stringify(retained ? [{ id: 'file-1', filename: 'ward.csv', media_type: 'text/csv', bytes: 26 }] : []),
+    });
+  });
   await page.route('**/ai/sessions/*/uploads/file-1', route => {
     expect(route.request().method()).toBe('DELETE');
     retained = false;
     return route.fulfill({ status: 204 });
   });
   await page.route('**/ai/sessions/*/messages', route => {
-    if (route.request().postData()?.includes('ward.csv')) retained = true;
+    expect(route.request().postDataJSON()).toEqual({ message: 'Read this file', upload_ids: ['file-1'] });
     return route.fulfill({ contentType: 'text/event-stream', body: 'event: delta\ndata: {"text":"Workbook inspected."}\n\nevent: done\ndata: {}\n\n' });
   });
   await page.setViewportSize({ width: 1440, height: 900 });

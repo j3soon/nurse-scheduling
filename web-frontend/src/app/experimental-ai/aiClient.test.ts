@@ -249,28 +249,46 @@ describe('AI client', () => {
     )).rejects.toEqual(new AiStaleTurnError('The schedule changed.'));
   });
 
-  it('sends arbitrary files as multipart form data', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(streamedResponse([
-      'event: done\ndata: {"message_id":"message-id"}\n\n',
-    ]));
+  it('uploads files before sending a message that references them', async () => {
+    const uploaded = { id: 'file-1', filename: 'ward.png', media_type: 'image/png', bytes: 11 };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([uploaded]), { status: 201 }))
+      .mockResolvedValueOnce(streamedResponse(['event: done\ndata: {"message_id":"message-id"}\n\n']));
     vi.stubGlobal('fetch', fetchMock);
     const image = new File(['image bytes'], 'ward.png', { type: 'image/png' });
+    const signal = new AbortController().signal;
 
-    await streamMessage(
-      'session-id',
-      'What is shown?',
-      { onDelta: vi.fn() },
-      new AbortController().signal,
-      null,
-      { files: [image] },
-    );
+    await streamMessage('session-id', 'What is shown?', { onDelta: vi.fn() }, signal, 'stream-token', { files: [image] });
 
-    const request = fetchMock.mock.calls[0][1] as RequestInit;
-    expect(request.headers).toBeUndefined();
-    expect(request.body).toBeInstanceOf(FormData);
-    const form = request.body as FormData;
-    expect(form.get('message')).toBe('What is shown?');
-    expect(form.getAll('files')).toEqual([image]);
+    const [uploadUrl, uploadRequest] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(uploadUrl).toBe('https://api.nursescheduling.org/ai/sessions/session-id/uploads');
+    expect(uploadRequest).toMatchObject({
+      method: 'POST', credentials: 'include', headers: { Authorization: 'Bearer stream-token' }, signal,
+    });
+    expect((uploadRequest.body as FormData).getAll('files')).toEqual([image]);
+    expect(fetchMock).toHaveBeenLastCalledWith('https://api.nursescheduling.org/ai/sessions/session-id/messages', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer stream-token' },
+      body: JSON.stringify({ message: 'What is shown?', upload_ids: ['file-1'] }),
+      signal,
+    });
+  });
+
+  it('does not send a message when its upload is rejected', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ detail: 'File attachment is too large.' }),
+      { status: 413, headers: { 'Content-Type': 'application/json' } },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+    const onAccepted = vi.fn();
+
+    await expect(streamMessage(
+      'session-id', 'Question', { onDelta: vi.fn(), onAccepted }, new AbortController().signal, null,
+      { files: [new File(['data'], 'large.bin')] },
+    )).rejects.toThrow('File attachment is too large.');
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(onAccepted).not.toHaveBeenCalled();
   });
 
   it('forwards tool use and a proposal to the caller', async () => {

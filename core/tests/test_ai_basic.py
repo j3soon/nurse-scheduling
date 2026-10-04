@@ -329,6 +329,13 @@ def create_session(client: TestClient, schedule_yaml: str = "description: test")
     return response.json()["id"]
 
 
+def upload_files(client: TestClient, session_id: str, *files: tuple[str, bytes, str]) -> list[str]:
+    """Upload files to a session and return their retained IDs."""
+    response = client.post(f"/sessions/{session_id}/uploads", files=[("files", file) for file in files])
+    assert response.status_code == 201
+    return [item["id"] for item in response.json()]
+
+
 def test_active_session_drains_all_queued_steering_messages() -> None:
     app = create_test_app(settings=make_settings(), provider=FakeProvider())
     client = AuthenticatedTestClient(app)
@@ -900,36 +907,68 @@ def test_unchanged_schedule_renews_session_with_owner_cookie(monkeypatch: pytest
     assert app.state.session_store.status(session_id, client.cookies.get(OWNER_COOKIE)) == 20
 
 
-def test_legacy_attachment_fields_are_rejected() -> None:
+def test_upload_rejects_fields_other_than_files() -> None:
     client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
     session_id = create_session(client)
 
-    response = client.post(
-        f"/sessions/{session_id}/messages",
-        data={"message": "Question"},
+    other_file_field = client.post(
+        f"/sessions/{session_id}/uploads",
         files={"images": ("ward.png", PNG_BYTES, "image/png")},
     )
+    text_field = client.post(
+        f"/sessions/{session_id}/uploads",
+        data={"message": "Question"},
+        files={"files": ("ward.png", PNG_BYTES, "image/png")},
+    )
 
-    assert response.status_code == 422
-    assert response.json()["detail"] == "Unexpected multipart field."
+    assert other_file_field.status_code == 422
+    assert other_file_field.json()["detail"] == "Unexpected multipart field."
+    assert text_field.status_code == 422
+    assert text_field.json()["detail"] == "Unexpected multipart field."
+    assert client.get(f"/sessions/{session_id}/uploads").json() == []
 
 
 def test_schema_errors_do_not_echo_binary_request_input() -> None:
     client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
     session_id = create_session(client)
 
-    response = client.post(
-        f"/sessions/{session_id}/messages/queue", files={"files": ("ward.png", PNG_BYTES, "image/png")}
+    responses = [
+        client.post(f"/sessions/{session_id}/{route}", files={"files": ("ward.png", PNG_BYTES, "image/png")})
+        for route in ("messages", "messages/queue")
+    ]
+
+    for response in responses:
+        assert response.status_code == 422
+        assert response.json()["detail"] == [
+            {
+                "type": "model_attributes_type",
+                "loc": ["body"],
+                "msg": "Input should be a valid dictionary or object to extract fields from",
+            }
+        ]
+
+
+def test_message_rejects_unknown_upload_ids_and_records_attached_files() -> None:
+    provider = FakeProvider([["Answer"]])
+    app = create_test_app(settings=make_settings(), provider=provider)
+    client = AuthenticatedTestClient(app)
+    session_id = create_session(client)
+    upload_id, _unused_id = upload_files(
+        client, session_id, ("notes.txt", b"notes", "text/plain"), ("other.txt", b"other", "text/plain")
     )
 
-    assert response.status_code == 422
-    assert response.json()["detail"] == [
-        {
-            "type": "model_attributes_type",
-            "loc": ["body"],
-            "msg": "Input should be a valid dictionary or object to extract fields from",
-        }
-    ]
+    unknown = client.post(f"/sessions/{session_id}/messages", json={"message": "Read", "upload_ids": ["missing"]})
+    invalid = client.post(f"/sessions/{session_id}/messages", json={"message": "Read", "upload_ids": "notes"})
+    accepted = client.post(
+        f"/sessions/{session_id}/messages", json={"message": "Read", "upload_ids": [upload_id, upload_id]}
+    )
+
+    assert unknown.status_code == 422
+    assert unknown.json()["detail"] == "An attached file is no longer available."
+    assert invalid.status_code == 422
+    assert accepted.status_code == 200
+    history = app.state.session_store._sessions[session_id].history
+    assert history[0]["content"] == 'Read\n[Files were attached: ["notes.txt"].]'
 
 
 def test_arbitrary_file_is_available_in_the_disposable_sandbox() -> None:
@@ -942,11 +981,11 @@ def test_arbitrary_file_is_available_in_the_disposable_sandbox() -> None:
         create_test_app(settings=make_settings(), provider=provider, sandbox_factory=factory)
     )
     session_id = create_session(client)
+    upload_ids = upload_files(client, session_id, ("archive.custom", b"arbitrary bytes", "application/x-custom"))
 
     response = client.post(
         f"/sessions/{session_id}/messages",
-        data={"message": "Inspect this custom file."},
-        files={"files": ("archive.custom", b"arbitrary bytes", "application/x-custom")},
+        json={"message": "Inspect this custom file.", "upload_ids": upload_ids},
     )
 
     assert response.status_code == 200
@@ -987,14 +1026,11 @@ def test_arbitrary_file_limits(
     client = AuthenticatedTestClient(create_test_app(settings=make_settings(**settings), provider=FakeProvider()))
     session_id = create_session(client)
 
-    response = client.post(
-        f"/sessions/{session_id}/messages",
-        data={"message": "Inspect these files."},
-        files=files,
-    )
+    response = client.post(f"/sessions/{session_id}/uploads", files=files)
 
     assert response.status_code == 413
     assert response.json()["detail"] == expected_detail
+    assert client.get(f"/sessions/{session_id}/uploads").json() == []
 
 
 def test_second_turn_keeps_only_system_message_at_beginning() -> None:
@@ -1703,8 +1739,10 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         assert "optimizer" not in client.get("/capabilities").json()
         started = client.post(
             f"/sessions/{session_id}/messages",
-            data={"message": "Optimize this schedule."},
-            files={"files": ("source.txt", b"original input", "text/plain")},
+            json={
+                "message": "Optimize this schedule.",
+                "upload_ids": upload_files(client, session_id, ("source.txt", b"original input", "text/plain")),
+            },
         )
         follow_up = client.post(f"/sessions/{session_id}/messages", json={"message": "Can we still talk?"})
 
@@ -1767,8 +1805,10 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
 
         later = client.post(
             f"/sessions/{session_id}/messages",
-            data={"message": "Can you inspect the workbook again?"},
-            files={"files": ("note.txt", b"note", "text/plain")},
+            json={
+                "message": "Can you inspect the workbook again?",
+                "upload_ids": upload_files(client, session_id, ("note.txt", b"note", "text/plain")),
+            },
         )
         assert later.status_code == 200
         assert "I can still inspect" in later.text
