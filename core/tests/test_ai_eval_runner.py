@@ -129,6 +129,28 @@ def test_every_shipped_prompt_clause_has_current_repeated_benefit_evidence():
     validate_prompt_evidence(load_prompt_steps(), CASE_BY_ID, FIXTURE_DIGESTS)
 
 
+def test_optimizer_goal_and_background_start_have_separate_ladder_comparisons():
+    steps = load_prompt_steps()
+    sections = load_system_prompt_sections()
+    expected = {
+        "optimizer-goal": {
+            "optimizer-goal-preserves-policy",
+            "optimizer-authorized-policy-change",
+            "optimizer-independent-request-check",
+        },
+        "optimizer-start": {"tool-optimizer-start-without-chat-hint"},
+    }
+    for identifier, targeted_cases in expected.items():
+        index = next(index for index, step in enumerate(steps, 1) if step.id == identifier)
+        arguments, cases = _selected_cases(["--prompt-compare-step", str(index)])
+        assert arguments.repeat == 3 and arguments.jobs == 4
+        assert steps[index - 1].comparison_mode == "adjacent"
+        assert {case.id for case in cases} == targeted_cases
+        assert prompt_at_step(index) == prompt_at_step(index - 1) + "\n\n" + sections[index - 1]
+    identifiers = [step.id for step in steps]
+    assert identifiers.index("optimizer-start") < identifiers.index("optimizer-goal")
+
+
 @pytest.mark.parametrize(
     ("change", "message"),
     [

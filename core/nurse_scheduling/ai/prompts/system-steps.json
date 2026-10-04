@@ -199,48 +199,21 @@
     "id": "optimizer-start",
     "file": "steps/optimizer-start.md",
     "cases": [
-      "optimizer-goal-preserves-policy",
-      "optimizer-authorized-policy-change",
-      "optimizer-independent-request-check",
       "tool-optimizer-start-without-chat-hint"
     ],
-    "hypothesis": "Starts optimization goals with unchanged policy directly, handles explicit edits and independent checks first, then reports a background start without further tool calls.",
-    "sha256": "71af38513577d958d3f1a926bd78187d831fb7bbc68d853fe6998e28528795e9",
+    "hypothesis": "Reports a background start without unnecessary follow-up tool calls.",
+    "sha256": "8bf39c5c2668fbd019ec4924bac9a664cb2050ead612e2a98f7c3826eb415558",
     "evidence": [
       {
-        "case": "optimizer-goal-preserves-policy",
-        "input_sha256": "26391ed3ce3bba68f4cc9eab43b998652e1f36a9aa7eab189d8f5c236ecbb890",
-        "before": "5/5",
-        "after": "5/5",
+        "case": "tool-optimizer-start-without-chat-hint",
+        "input_sha256": "c70e1caccfc1175af4e399fa1d3edee1cb3f5c034370e4476f4c54f73ac9207e",
+        "before": "0/3",
+        "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
-        "cost_metric": "total-tokens",
-        "cost_ratio": 0.23684505487873225,
-        "cost_target": 0.8,
-        "controls": [
-          {
-            "case": "optimizer-authorized-policy-change",
-            "input_sha256": "9f0af8cd96b484245b65e9e61333b77232c5618a21404a6ba3c2ff24fa356797",
-            "before": "3/3",
-            "after": "3/3"
-          },
-          {
-            "case": "optimizer-independent-request-check",
-            "input_sha256": "629eca36cfa8af7aea22a8d93379034a9c81625f9204c8c9291c44c8539b8378",
-            "before": "3/3",
-            "after": "3/3"
-          },
-          {
-            "case": "tool-optimizer-start-without-chat-hint",
-            "input_sha256": "0d0618d094443754393899bd9c8ec017d4a18b643f6be7271163a67ce8349087",
-            "before": "2/3",
-            "after": "3/3"
-          }
-        ],
-        "note": "Goal witness adds startup wording to the previous paragraph in the full prompt, five unchanged pairs. Edit and independent-check controls use three pairs. Original background-start control uses full-section ablation, three pairs. Actual submitted YAML must preserve all unrequested policy. Controlled starts do not evaluate solve quality. Baseline token variance is high."
+        "note": "Adjacent prefix comparison. Controlled startup verifies the background explanation and no optimizer polling. Solver quality and completion callbacks are not graded."
       }
-    ],
-    "comparison_mode": "ablation"
+    ]
   },
   {
     "id": "optimizer-lifecycle",
@@ -791,6 +764,45 @@
           }
         ],
         "note": "Adjacent full-prompt comparison. Unexplained workbooks require clarification. Explained colors, histories and requests produce complete proposals with exact finite weights. Costs are not compared for the failing baseline. The 87-person case is linked for additional coverage, not included in this clean receipt."
+      }
+    ]
+  },
+  {
+    "id": "optimizer-goal",
+    "file": "steps/optimizer-goal.md",
+    "cases": [
+      "optimizer-goal-preserves-policy",
+      "optimizer-authorized-policy-change",
+      "optimizer-independent-request-check"
+    ],
+    "hypothesis": "Starts optimization goals with unchanged policy directly, while handling explicit edits and independent checks first.",
+    "sha256": "ef108b52850ee85e05e28427bcac9e28b7dbce0a2a04afd70691b15f0c0b9ece",
+    "evidence": [
+      {
+        "case": "optimizer-goal-preserves-policy",
+        "input_sha256": "adb555246db145d92787378bdc211de4e768ea73a0b779ed0f1d98b42051e7c5",
+        "before": "3/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "cost_metric": "total-tokens",
+        "cost_ratio": 0.31278434281673984,
+        "cost_target": 0.8,
+        "controls": [
+          {
+            "case": "optimizer-authorized-policy-change",
+            "input_sha256": "4fee349955bdb45efe16da671cf40b452ac619fcbced1d85dd6cdf728ad77ee3",
+            "before": "3/3",
+            "after": "3/3"
+          },
+          {
+            "case": "optimizer-independent-request-check",
+            "input_sha256": "0ebfcc2a151d96f1d27555c75aaf80f39a7e184045db9e4b09e57d5ceacbbcb1",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Adjacent full-prompt prefixes. Goal witness preserves submitted policy with 69% fewer mean tokens. Two of three starts are direct. Edit and independent-check controls stay correct. Authorized edits use 38% more tokens, so the combined cost gate fails. Baseline token variance is high. Controlled starts do not grade solver quality."
       }
     ]
   }

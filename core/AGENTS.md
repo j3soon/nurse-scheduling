@@ -165,12 +165,23 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   unique ID. Keep structurally different fixtures under a `holdout` tag. Do not
   tune prompts directly against one held-out trajectory.
 - Keep `nurse_scheduling/ai/prompts/system-steps.json` aligned with the ordered
-  production prompt sections. Compare a changed step against its immediately
+  production prompt sections. Give independently evaluated policies separate
+  prompt fragments and targeted cases. Keep each receipt tied to that policy's
+  comparison. Compare a changed step against its immediately
   previous prefix on its targeted cases, repeating three to five times. Treat linked
   cases as hypotheses until a clean comparison shows better outcomes or an
   explicit relative cost gain. Run full-prompt ablation only when requested or
   when a suspected interaction needs investigation. Extend selected cases up
   to ten paired trials only for an explicitly requested deeper investigation.
+- Order ladder fragments so each tested prefix includes the policies its cases
+  need. For example, a case that starts optimization needs the background-start
+  rule before a separate goal-policy rule. If later guidance competes with a
+  policy, test that policy after the competing guidance. Rerun its adjacent
+  comparison after moving it. Do not reuse evidence from a different prefix.
+- Separate final correctness from the tool-call behavior a prompt claims to
+  improve. Preserving optimizer input does not prove a direct start or solver
+  quality. Inspect every repetition before describing its trajectory. Add a
+  tool-usage assertion when that behavior is a required outcome.
 - Ship a prompt clause only with a reviewed, clean repeated benefit witness.
   Bind the receipt to the clause, parsed testcase, and fixture with one input
   fingerprint. Keep tracked receipts to aggregate counts, model, and concise
@@ -186,6 +197,9 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   a whole prompt section does not isolate a sentence added to it. Report failed
   controls even when the main witness passes. Retain their testcases and failed
   attempts instead of carrying forward an old clean-control receipt.
+  Separate correctness controls from cost targets. If a witness reduces cost
+  but a control increases it, report both and the combined gate result. A
+  passing witness does not make the whole comparison pass.
 - Include the SPDX license header and AI marker in generated Markdown prompt
   fragments. Strip their leading provenance comments during assembly, preserving
   instruction comments and the model-facing clause hashes.
