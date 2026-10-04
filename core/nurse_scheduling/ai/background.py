@@ -275,7 +275,7 @@ def build_provider_messages(
     Providers reuse cached work only for an identical prefix. Request-specific state therefore goes
     into a final status message that history never keeps.
     """
-    system_content = f"{system_prompt}\n\nCurrent schedule summary:\n{describe_schedule(schedule_yaml)}"
+    system_content = f"{system_prompt}\n\n{describe_schedule(schedule_yaml)}"
     system_content += f"\nDownload size limit: {max_download_bytes} bytes.\n"
     retained = recent_history(history, max_history_chars)
     status = status_message(

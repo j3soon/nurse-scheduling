@@ -1,5 +1,35 @@
 [
   {
+    "id": "assistant-identity",
+    "file": "steps/assistant-identity.md",
+    "cases": [
+      "current-chat-identity",
+      "colleague-open-ai-chat"
+    ],
+    "hypothesis": "Identifies the current chat as the Experimental AI chat instead of sending the user to another chat.",
+    "sha256": "9515e51b586aa567276143bc36d0335e9b53eba50903bced9358cc956c1d2774",
+    "evidence": [
+      {
+        "case": "current-chat-identity",
+        "input_sha256": "3d0d49b16f94e3f9cf6f052fdd6284f6124eb0719e301ac2749fd4196541b7ff",
+        "before": "0/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "colleague-open-ai-chat",
+            "input_sha256": "0e7c9899573e4f4021ea540b87f7588b40f26ff979bd3fd72c10e9fb2e089208",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Full-prompt ablation over three user turns. Without the clause, the agent answers that it cannot tell whether this is the Experimental AI chat. Navigation advice for a colleague on another page stays correct."
+      }
+    ],
+    "comparison_mode": "ablation"
+  },
+  {
     "id": "tools-and-schema",
     "file": "steps/tools-and-schema.md",
     "cases": [
@@ -330,26 +360,6 @@
     "comparison_mode": "ablation"
   },
   {
-    "id": "offline-yaml",
-    "file": "steps/offline-yaml.md",
-    "cases": [
-      "tool-yaml-generator-repair"
-    ],
-    "hypothesis": "Repairs YAML generators using installed libraries instead of attempting offline package installation.",
-    "sha256": "a35f72fbe2b599b1864026b08f30f3a7339f289ac8685f6c38a07e33c50be21d",
-    "evidence": [
-      {
-        "case": "tool-yaml-generator-repair",
-        "input_sha256": "bb5686b84062be425cbd2ecacfd19c2cd2918d5cb1764d4e5d26d1d518859b3c",
-        "before": "0/3",
-        "after": "3/3",
-        "model": "unsloth/Qwen3.8-27B-NVFP4",
-        "infrastructure_errors": 0,
-        "note": "Historical comparison used a template without PyYAML. Stops before forbidden install commands execute. All after proposals pass independent host solves."
-      }
-    ]
-  },
-  {
     "id": "weight-notation",
     "file": "steps/weight-notation.md",
     "cases": [
@@ -667,36 +677,6 @@
           }
         ],
         "note": "Full-prompt ablation. The complete uploaded schedule stays intact. Mean total tokens fall 67%, with fewer full-file reads. Partial updates preserve the current schedule."
-      }
-    ],
-    "comparison_mode": "ablation"
-  },
-  {
-    "id": "app-identity",
-    "file": "steps/app-identity.md",
-    "cases": [
-      "current-chat-identity",
-      "colleague-open-ai-chat"
-    ],
-    "hypothesis": "Identifies the current chat without sending the user to another chat, while preserving navigation advice for other users.",
-    "sha256": "638ee74a28f48ed6570c100f546637eb601f68f21544deab93089c51507de340",
-    "evidence": [
-      {
-        "case": "current-chat-identity",
-        "input_sha256": "7d71f60471387980cebe70106b2fda3a6867401cde445e4450731f54e8b748c0",
-        "before": "0/5",
-        "after": "5/5",
-        "model": "unsloth/Qwen3.8-27B-NVFP4",
-        "infrastructure_errors": 0,
-        "controls": [
-          {
-            "case": "colleague-open-ai-chat",
-            "input_sha256": "cf3d092b764084c006b88417a4838959dd215884596238245acbc3c1398c8006",
-            "before": "5/5",
-            "after": "5/5"
-          }
-        ],
-        "note": "Full-prompt ablation over three user turns. Correctly identifies the current chat and upload control. Navigation from another page stays correct. Costs are not compared because the baseline answers fail."
       }
     ],
     "comparison_mode": "ablation"

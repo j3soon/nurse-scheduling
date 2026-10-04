@@ -99,9 +99,9 @@ def test_ai_eval_defaults_to_four_concurrent_cases():
     assert DEFAULT_CASE_JOBS == 4
 
 
-def test_offline_yaml_clause_can_be_omitted_for_comparison():
+def test_a_clause_can_be_omitted_for_comparison():
     steps = load_prompt_steps()
-    index = next(index for index, step in enumerate(steps, 1) if step.id == "offline-yaml")
+    index = next(index for index, step in enumerate(steps, 1) if step.id == "assistant-identity")
     before = compose_system_prompt(omit=index)
     after = compose_system_prompt()
     assert before == prompt_at_step(len(steps), omit=index)
@@ -1497,7 +1497,7 @@ def test_run_all_injects_each_prompt_variant_into_every_repetition():
     for run in runs:
         actual = run.trajectory["prompt"][0]["content"]
         assert actual.startswith(dict(variants)[run.prompt_variant])
-        assert "Current schedule summary:" in actual
+        assert "schedule.yaml is available at /workspace/schedule.yaml" in actual
 
 
 def test_reference_digests_cover_every_file_hydrated_into_the_sandbox():

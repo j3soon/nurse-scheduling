@@ -1104,7 +1104,7 @@ def test_second_turn_keeps_only_system_message_at_beginning() -> None:
     assert second.status_code == 200
     assert {"role": "user", "content": "First question"} in provider.calls[1]
     assert {"role": "assistant", "content": "First answer"} in provider.calls[1]
-    assert "Current schedule summary:" in provider.calls[1][0]["content"]
+    assert "schedule.yaml is available at /workspace/schedule.yaml" in provider.calls[1][0]["content"]
     assert provider.calls[1][0]["role"] == "system"
     assert all(message["role"] != "system" for message in provider.calls[1][1:])
 
@@ -2564,7 +2564,7 @@ def test_the_prompt_points_to_the_schedule_without_disclosing_its_facts() -> Non
     assert "2 people" not in normalized_prompt
     assert "PEOPLE" not in normalized_prompt
     assert "2026-01-01" not in normalized_prompt
-    summary = system_prompt.split("Current schedule summary:\n")[1]
+    summary = system_prompt.removeprefix(SANDBOX_SYSTEM_PROMPT)
     assert len(summary) < len(schedule) / 2
 
 
