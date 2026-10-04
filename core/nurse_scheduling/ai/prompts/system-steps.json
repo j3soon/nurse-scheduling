@@ -30,6 +30,36 @@
     "comparison_mode": "ablation"
   },
   {
+    "id": "app-guide",
+    "file": "steps/app-guide.md",
+    "cases": [
+      "guide-start-from-empty-schedule",
+      "guide-run-optimization"
+    ],
+    "hypothesis": "Answers how-to questions from the bundled user guide with its page and button names.",
+    "sha256": "29880956e7f09b4ec6a9c858a1bba2196bfe1ebe406677395e35b8c7747a0988",
+    "evidence": [
+      {
+        "case": "guide-start-from-empty-schedule",
+        "input_sha256": "deb5714a70bac131535a564baafc35b508611987d34321991773dc00c945c8c0",
+        "before": "1/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "guide-run-optimization",
+            "input_sha256": "9bdd048261b36be0ed53fe1efb9a7f71d9183f825da6dd155508ded275b87de0",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Full-prompt ablation with the final testcase inputs. Without the clause, the agent omits the setup pages and controls. Reading both the setup and chat guides supplies the manual path, Attach files, and user approval. The earlier one-page clause passed this witness only 2/3. A separate earlier guide-add-person exploration failed 0/3 in both arms and remains outside this receipt."
+      }
+    ],
+    "comparison_mode": "ablation"
+  },
+  {
     "id": "tools-and-schema",
     "file": "steps/tools-and-schema.md",
     "cases": [
