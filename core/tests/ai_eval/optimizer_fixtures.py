@@ -83,7 +83,7 @@ def fixture_digest(name: str) -> str:
     if name not in RESULT_ASSIGNMENTS:
         raise ValueError(f"Unknown optimizer result fixture: {name}")
     return hashlib.sha256(
-        RESULT_SOURCES[name].read_bytes()
+        RESULT_SOURCES[name].read_text(encoding="utf-8").encode()
         + json.dumps(RESULT_ASSIGNMENTS[name], sort_keys=True).encode()
         + (
             json.dumps(RESULT_ASSIGNMENTS["policy-audit-clean"], sort_keys=True).encode() + b"Archived input snapshot"

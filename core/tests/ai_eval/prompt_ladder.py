@@ -129,10 +129,10 @@ def case_digest(case: EvalCase) -> str:
             )
 
             fields["policy_context_sha256"] = hashlib.sha256(
-                Path(build_result_context.__code__.co_filename).read_bytes()
+                Path(build_result_context.__code__.co_filename).read_text(encoding="utf-8").encode()
             ).hexdigest()
             fields["policy_audit_sha256"] = hashlib.sha256(
-                Path(audit_staffing_and_successions.__code__.co_filename).read_bytes()
+                Path(audit_staffing_and_successions.__code__.co_filename).read_text(encoding="utf-8").encode()
                 + inspect.getsource(iter_succession_patterns).encode()
                 + inspect.getsource(staffing_expression).encode()
             ).hexdigest()
@@ -180,7 +180,9 @@ def case_digest(case: EvalCase) -> str:
         )
 
         fields["inspection_helpers_sha256"] = {
-            name: hashlib.sha256(REFERENCE_ATTACHMENT_TOOLS[f"/reference/tools/{name}"].read_bytes()).hexdigest()
+            name: hashlib.sha256(
+                REFERENCE_ATTACHMENT_TOOLS[f"/reference/tools/{name}"].read_text(encoding="utf-8").encode()
+            ).hexdigest()
             for name in sorted(helper_names)
         }
         fields["helper_catalog_sha256"] = hashlib.sha256(

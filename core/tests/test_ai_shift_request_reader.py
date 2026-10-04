@@ -91,7 +91,7 @@ def test_standalone_cli_uses_only_hydrated_helpers(tmp_path):
     for path in REFERENCE_ATTACHMENT_TOOLS.values():
         (tmp_path / path.name).write_bytes(path.read_bytes())
     source = fixture_text("ward87")
-    (tmp_path / "schedule.yaml").write_text(source)
+    (tmp_path / "schedule.yaml").write_text(source, encoding="utf-8")
     (tmp_path / "context.json").write_text(json.dumps(build_result_context(source)))
     process = subprocess.run(
         [
@@ -159,7 +159,7 @@ def test_tier_inventory_standalone_cli(tmp_path):
     for path in REFERENCE_ATTACHMENT_TOOLS.values():
         (tmp_path / path.name).write_bytes(path.read_bytes())
     source = fixture_text("ward87")
-    (tmp_path / "source.yaml").write_text(source)
+    (tmp_path / "source.yaml").write_text(source, encoding="utf-8")
     (tmp_path / "context.json").write_text(json.dumps(build_result_context(source)))
     process = subprocess.run(
         [
