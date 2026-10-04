@@ -200,10 +200,11 @@ relative to `web-frontend/src/app/experimental-ai/`.
 | `HttpOptimizerBackend`<br/>`optimizer_http.py` | Call the optimizer API, parse reconnectable progress SSE, and download bounded result workbooks. Keep credentials inside the HTTP adapter. |
 | `AgentSessionEvent` / `SessionEventStream`<br/>`session_events.py`, `session_event_stream.py` | Define public run and optimizer events, then retain bounded journal and recovery projections. The API frames them as SSE. |
 | Browser `ChatLifecycle`<br/>`chatLifecycle.ts` | Track operation ownership and derive busy and Stop state. |
-| Browser `useAiChat`<br/>`useAiChat.ts` | Own chat control and projection: send, queue, Stop, replayed answers, optimizer updates, and proposal decisions. Expose conversation snapshots and restore operations. The page owns rendering and browser storage. |
+| Browser `useAiChat`<br/>`useAiChat.ts` | Own chat control and projection: send, queue, Stop, replayed answers, optimizer updates, and proposal decisions. Expose conversation snapshots and restore operations. The page owns browser storage and supplies data and callbacks to the transcript view. |
 | Browser `useSessionEventStream`<br/>`useSessionEventStream.ts` | Own the SSE reader, replay cursor, reconnect delay, and teardown. Reader disconnect leaves server work running. |
 | Browser `SessionEventRouter`<br/>`sessionEventRouter.ts` | Deliver typed `SessionEvent` values directly to chat handlers. Route by run ID and buffer early output until the POST acknowledgement identifies its answer. |
 | Browser HTTP client<br/>`aiClient.ts` | Parse GET and compatibility POST SSE into the same typed `SessionEvent` values. Preserve run IDs, recovery snapshots, and replay cursors. |
+| Browser chat view<br/>`ChatTranscript.tsx` | Render messages, activity, timestamps, retry controls, and workbook downloads from data and callbacks supplied by the page. |
 | Browser optimizer projection<br/>`optimizerEvents.ts`, `optimizerMessage.ts` | Apply job status, bound progress history, and append completion messages once. Share optimizer-message formatting and parsing for the page and exports. |
 | Browser transcript projection<br/>`chatTranscript.ts`, `assistantEvents.ts` | Create and resume responses, insert steering, replace replayed runs, and apply assistant output. The hook supplies IDs, timestamps, and operation ownership. |
 
