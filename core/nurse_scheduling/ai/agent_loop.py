@@ -22,7 +22,7 @@
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Callable, Coroutine, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Coroutine, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -71,7 +71,7 @@ async def agent_loop(
     config: AgentLoopConfig | None = None,
     *,
     run_messages: list[AgentMessage] | None = None,
-) -> AsyncIterator[AgentEvent]:
+) -> AsyncGenerator[AgentEvent]:
     """Run the model/tool loop shared by agent capability layers.
 
     `run_messages` is the shared in-run record. Each provider request is a

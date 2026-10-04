@@ -43,6 +43,7 @@ from nurse_scheduling.ai.agent_types import (
     ToolExecutionEnd,
     ToolExecutionStart,
 )
+from nurse_scheduling.ai.candidate import PendingProposal
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.context import build_provider_messages, project_history
 from nurse_scheduling.ai.provider import (
@@ -64,7 +65,7 @@ from nurse_scheduling.ai.schema import (
     load_user_guide_references,
 )
 from nurse_scheduling.ai.transcript import AgentMessage, AssistantMessage, ProposalDecisionEntry, UserMessage
-from nurse_scheduling.ai.workspace import SANDBOX_SYSTEM_PROMPT, SandboxRunMetrics, WorkspaceLimits
+from nurse_scheduling.ai.workspace import SANDBOX_SYSTEM_PROMPT, SandboxRunMetrics, WorkspaceInputs, WorkspaceLimits
 from nurse_scheduling.ai.workspace_tools import run_workspace
 from nurse_scheduling.loader import _load_yaml
 
@@ -255,14 +256,19 @@ async def run_case(
             agent_events = run_workspace(
                 counting,
                 sandbox_factory,
-                text,
+                WorkspaceInputs(
+                    schedule_yaml=text,
+                    pending_proposal=(
+                        PendingProposal(pending_proposal.text, pending_proposal.diff, None)
+                        if pending_proposal
+                        else None
+                    ),
+                    attachments=tuple(attachments),
+                ),
                 messages,
                 WorkspaceLimits.from_settings(settings),
                 sandbox_metrics,
                 tool_batch_metrics.append,
-                pending_proposal_yaml=pending_proposal.text if pending_proposal else "",
-                pending_proposal_diff=pending_proposal.diff if pending_proposal else "",
-                attachments=attachments,
             )
             async for event in agent_events:
                 if isinstance(event, MessageTextDelta):

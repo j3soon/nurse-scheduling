@@ -134,6 +134,9 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
 - Keep bundled attachment helpers general and optional. Preserve meaningful
   source data such as spreadsheet formulas and cached values, report truncation,
   and let the agent write a focused sandbox parser when a helper is insufficient.
+- Capture schedule YAML, the pending proposal, attachments, and optimizer workbook
+  in one immutable `WorkspaceInputs` value. Reuse it through lazy allocation and
+  hydration instead of passing independent file arguments.
 - Sandbox allocation is lazy. Tests that verify attachment hydration must make
   the agent call a tool, since a text-only run never creates a sandbox.
 - Keep shared schedule validation rules in `NurseSchedulingData`. Implement

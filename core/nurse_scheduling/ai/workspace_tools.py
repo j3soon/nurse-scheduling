@@ -46,11 +46,11 @@ from .transcript import ToolCall
 from .workspace import (
     WORKSPACE_SCHEDULE,
     AgentScheduleChange,
-    SandboxAttachment,
     SandboxCandidateError,
     SandboxRunMetrics,
     SandboxRunTimeoutError,
     SandboxWorkspace,
+    WorkspaceInputs,
     WorkspaceLimits,
     _read_candidate,
     _ScheduleCandidateTracker,
@@ -129,17 +129,13 @@ class WorkspaceTools:
 async def run_workspace(
     provider: ToolCapableChatProvider,
     factory: SandboxFactory,
-    schedule_yaml: str,
+    inputs: WorkspaceInputs,
     messages: Sequence[ChatMessage],
     limits: WorkspaceLimits,
     metrics: SandboxRunMetrics | None = None,
     observe_tool_batch: Callable[[AgentToolBatchMetrics], None] | None = None,
     take_steering: Callable[[bool], Sequence[tuple[str, str]]] | None = None,
-    pending_proposal_yaml: str = "",
-    pending_proposal_diff: str = "",
     execute_optimizer: Callable[[str, str], Awaitable[AgentToolResult]] | None = None,
-    attachments: Sequence[SandboxAttachment] = (),
-    optimizer_result: bytes | None = None,
     agent: Agent | None = None,
 ) -> AsyncGenerator[AgentEvent | AgentScheduleChange]:
     """Hydrate, run, read, validate, and destroy one fresh workspace run."""
@@ -151,13 +147,9 @@ async def run_workspace(
                 factory,
                 limits.cleanup_timeout_seconds,
                 metrics,
-                schedule_yaml,
-                pending_proposal_yaml,
-                pending_proposal_diff,
-                attachments,
-                optimizer_result,
+                inputs,
             ) as sandbox:
-                toolset = WorkspaceTools(sandbox, schedule_yaml, limits, execute_optimizer)
+                toolset = WorkspaceTools(sandbox, inputs.schedule_yaml, limits, execute_optimizer)
 
                 @asynccontextmanager
                 async def tool_batch(calls: Sequence[ToolCall]) -> AsyncGenerator[None]:
@@ -189,7 +181,7 @@ async def run_workspace(
                 if not sandbox.started:
                     return
                 candidate = await _read_candidate(sandbox, limits.max_schedule_bytes)
-                review = review_schedule_candidate(schedule_yaml, candidate, limits.max_schedule_bytes)
+                review = review_schedule_candidate(inputs.schedule_yaml, candidate, limits.max_schedule_bytes)
                 logger.info(
                     "sandbox candidate validated sandbox_id=%s valid=%s proposal=%s",
                     sandbox.sandbox_id,

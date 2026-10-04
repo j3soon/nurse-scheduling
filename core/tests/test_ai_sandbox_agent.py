@@ -33,6 +33,7 @@ from nurse_scheduling.ai.agent_types import (
     ToolExecutionEnd,
     ToolExecutionStart,
 )
+from nurse_scheduling.ai.candidate import PendingProposal
 from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL, WORKSPACE_OPTIMIZER_RESULT
 from nurse_scheduling.ai.optimizer_tool import execute_optimizer_tool
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
@@ -55,6 +56,7 @@ from nurse_scheduling.ai.workspace import (
     SandboxAttachment,
     SandboxCandidateError,
     SandboxRunTimeoutError,
+    WorkspaceInputs,
     WorkspaceLimits,
 )
 from nurse_scheduling.ai.workspace_tools import run_workspace
@@ -109,8 +111,7 @@ def _collect(
     provider,
     factory,
     *,
-    pending_proposal_yaml: str = "",
-    pending_proposal_diff: str = "",
+    pending_proposal: PendingProposal | None = None,
     attachments: Sequence[SandboxAttachment] = (),
     optimizer_result: bytes | None = None,
     **limit_overrides,
@@ -121,13 +122,9 @@ def _collect(
             async for event in run_workspace(
                 provider,
                 factory,
-                schedule_yaml(),
+                WorkspaceInputs(schedule_yaml(), pending_proposal, tuple(attachments), optimizer_result),
                 MESSAGES,
                 _limits(**limit_overrides),
-                pending_proposal_yaml=pending_proposal_yaml,
-                pending_proposal_diff=pending_proposal_diff,
-                attachments=attachments,
-                optimizer_result=optimizer_result,
             )
         ]
 
@@ -194,7 +191,7 @@ def test_optimizer_tool_receives_the_current_working_schedule() -> None:
             async for event in run_workspace(
                 provider,
                 factory,
-                schedule_yaml(),
+                WorkspaceInputs(schedule_yaml()),
                 MESSAGES,
                 _limits(optimizer_default_timeout_seconds=420),
                 execute_optimizer=execute_optimizer,
@@ -239,7 +236,7 @@ def test_optimizer_rejects_an_invalid_working_schedule_before_submission() -> No
         async for _event in run_workspace(
             provider,
             FakeSandboxFactory(),
-            schedule_yaml(),
+            WorkspaceInputs(schedule_yaml()),
             MESSAGES,
             _limits(),
             execute_optimizer=execute_optimizer,
@@ -281,7 +278,7 @@ def test_optimizer_job_controls_work_with_an_invalid_working_schedule(action: st
         async for event in run_workspace(
             provider,
             FakeSandboxFactory(),
-            schedule_yaml(),
+            WorkspaceInputs(schedule_yaml()),
             MESSAGES,
             _limits(),
             execute_optimizer=execute_optimizer,
@@ -318,7 +315,7 @@ def test_optimizer_job_controls_do_not_start_a_sandbox(action: str) -> None:
             async for event in run_workspace(
                 provider,
                 factory,
-                schedule_yaml(),
+                WorkspaceInputs(schedule_yaml()),
                 MESSAGES,
                 _limits(),
                 execute_optimizer=execute_optimizer,
@@ -351,7 +348,7 @@ def test_invalid_optimizer_start_timeout_does_not_start_a_sandbox(timeout: objec
             async for event in run_workspace(
                 provider,
                 factory,
-                schedule_yaml(),
+                WorkspaceInputs(schedule_yaml()),
                 MESSAGES,
                 _limits(),
                 execute_optimizer=execute_optimizer,
@@ -375,8 +372,9 @@ def test_pending_proposal_is_hydrated_as_trusted_read_only_context():
             [TextDelta("The pending description is Ready.")],
         ),
         factory,
-        pending_proposal_yaml="apiVersion: alpha\ndescription: Ready\n",
-        pending_proposal_diff='- description: "" -> "Ready"',
+        pending_proposal=PendingProposal(
+            "apiVersion: alpha\ndescription: Ready\n", '- description: "" -> "Ready"', "proposal-run"
+        ),
     )
 
     backend = factory.created[0]
@@ -711,7 +709,7 @@ def test_cancelling_before_a_tool_call_does_not_start_a_sandbox():
             async for _ in run_workspace(
                 WaitingProvider(),
                 factory,
-                schedule_yaml(),
+                WorkspaceInputs(schedule_yaml()),
                 MESSAGES,
                 _limits(run_timeout_seconds=30),
             ):
@@ -769,7 +767,7 @@ def test_every_offered_tool_refuses_malformed_arguments_before_acting(tool: str,
                 async for event in run_workspace(
                     provider,
                     factory,
-                    schedule_yaml(),
+                    WorkspaceInputs(schedule_yaml()),
                     MESSAGES,
                     _limits(),
                     execute_optimizer=lambda current, raw: execute_optimizer_tool(optimizer, "session", current, raw),

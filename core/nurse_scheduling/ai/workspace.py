@@ -23,13 +23,13 @@ import json
 import logging
 import re
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
 from .agent_types import AgentToolResult
-from .candidate import SCHEDULE_FILENAME, review_schedule_candidate
+from .candidate import SCHEDULE_FILENAME, PendingProposal, review_schedule_candidate
 from .config import AiSettings
 from .optimizer import WORKSPACE_OPTIMIZER_RESULT
 from .sandbox import (
@@ -91,6 +91,16 @@ class SandboxAttachment:
 
 
 @dataclass(frozen=True)
+class WorkspaceInputs:
+    """Immutable session schedule and optional files captured for one run."""
+
+    schedule_yaml: str
+    pending_proposal: PendingProposal | None = None
+    attachments: tuple[SandboxAttachment, ...] = ()
+    optimizer_result: bytes | None = None
+
+
+@dataclass(frozen=True)
 class WorkspaceLimits:
     """Trusted orchestration and AI-context limits for one workspace run."""
 
@@ -139,12 +149,8 @@ async def sandbox_workspace(
     factory: SandboxFactory,
     cleanup_timeout_seconds: float,
     metrics: SandboxRunMetrics,
-    schedule_yaml: str,
-    pending_proposal_yaml: str,
-    pending_proposal_diff: str,
-    attachments: Sequence[SandboxAttachment],
-    optimizer_result: bytes | None,
-) -> AsyncIterator[SandboxBackend]:
+    inputs: WorkspaceInputs,
+) -> AsyncIterator["SandboxWorkspace"]:
     """Create, hydrate, and measure a sandbox only when its first tool batch begins."""
     stack = AsyncExitStack()
     sandbox = SandboxWorkspace(
@@ -152,11 +158,7 @@ async def sandbox_workspace(
         cleanup_timeout_seconds,
         metrics,
         stack,
-        schedule_yaml,
-        pending_proposal_yaml,
-        pending_proposal_diff,
-        attachments,
-        optimizer_result,
+        inputs,
     )
     try:
         async with stack:
@@ -177,21 +179,13 @@ class SandboxWorkspace:
         cleanup_timeout_seconds: float,
         metrics: SandboxRunMetrics,
         stack: AsyncExitStack,
-        schedule_yaml: str,
-        pending_proposal_yaml: str,
-        pending_proposal_diff: str,
-        attachments: Sequence[SandboxAttachment],
-        optimizer_result: bytes | None,
+        inputs: WorkspaceInputs,
     ) -> None:
         self._factory = factory
         self._cleanup_timeout_seconds = cleanup_timeout_seconds
         self._metrics = metrics
         self._stack = stack
-        self._schedule_yaml = schedule_yaml
-        self._pending_proposal_yaml = pending_proposal_yaml
-        self._pending_proposal_diff = pending_proposal_diff
-        self._attachments = tuple(attachments)
-        self._optimizer_result = optimizer_result
+        self._inputs = inputs
         self._sandbox: SandboxBackend | None = None
         self._lifecycle_started: float | None = None
         self._cleanup_started: float | None = None
@@ -214,14 +208,7 @@ class SandboxWorkspace:
             )
         finally:
             self._metrics.provisioning_seconds = time.perf_counter() - self._lifecycle_started
-        await hydrate_sandbox(
-            self._sandbox,
-            self._schedule_yaml,
-            self._pending_proposal_yaml,
-            self._pending_proposal_diff,
-            self._attachments,
-            self._optimizer_result,
-        )
+        await hydrate_sandbox(self._sandbox, self._inputs)
         return self._sandbox
 
     def _require_sandbox(self) -> SandboxBackend:
@@ -237,6 +224,9 @@ class SandboxWorkspace:
 
     async def write_file(self, path: str, content: str | bytes) -> None:
         await (await self._start()).write_file(path, content)
+
+    async def write_files(self, files: Mapping[str, str | bytes]) -> None:
+        await (await self._start()).write_files(files)
 
     async def read_file(self, path: str) -> bytes:
         return await (await self._start()).read_file(path)
@@ -283,18 +273,14 @@ class SandboxWorkspace:
 
 async def hydrate_sandbox(
     sandbox: SandboxBackend,
-    schedule_yaml: str,
-    pending_proposal_yaml: str = "",
-    pending_proposal_diff: str = "",
-    attachments: Sequence[SandboxAttachment] = (),
-    optimizer_result: bytes | None = None,
+    inputs: WorkspaceInputs,
 ) -> None:
     """Copy trusted application state and searchable references into one run."""
     started = time.perf_counter()
-    files: dict[str, str | bytes] = {WORKSPACE_SCHEDULE: schedule_yaml}
-    if pending_proposal_yaml:
-        files[WORKSPACE_PENDING_PROPOSAL] = pending_proposal_yaml
-        files[WORKSPACE_PENDING_DIFF] = pending_proposal_diff
+    files: dict[str, str | bytes] = {WORKSPACE_SCHEDULE: inputs.schedule_yaml}
+    if inputs.pending_proposal is not None:
+        files[WORKSPACE_PENDING_PROPOSAL] = inputs.pending_proposal.schedule_yaml
+        files[WORKSPACE_PENDING_DIFF] = inputs.pending_proposal.diff
     for group, path in REFERENCE_SCHEMAS.items():
         reference = load_taiwan_holidays_reference() if group == "taiwan-holidays" else load_schedule_reference(group)
         if reference is None:  # pragma: no cover - constants are defined together
@@ -304,9 +290,9 @@ async def hydrate_sandbox(
         files[f"{REFERENCE_USER_GUIDE}/{relative_path}"] = reference
     for destination, source in REFERENCE_ATTACHMENT_TOOLS.items():
         files[destination] = source.read_text(encoding="utf-8")
-    if attachments:
+    if inputs.attachments:
         manifest = []
-        for index, attachment in enumerate(attachments, start=1):
+        for index, attachment in enumerate(inputs.attachments, start=1):
             safe_name = _safe_attachment_name(attachment.filename, index)
             path = f"{WORKSPACE_ATTACHMENTS}/{safe_name}"
             files[path] = attachment.data
@@ -324,15 +310,15 @@ async def hydrate_sandbox(
             ensure_ascii=False,
             indent=2,
         )
-    if optimizer_result is not None:
-        files[WORKSPACE_OPTIMIZER_RESULT] = optimizer_result
+    if inputs.optimizer_result is not None:
+        files[WORKSPACE_OPTIMIZER_RESULT] = inputs.optimizer_result
     # One request, because hydration now precedes the first tool result rather than the run.
     await sandbox.write_files(files)
     logger.info(
         "sandbox hydrated sandbox_id=%s files=%s schedule_bytes=%s latency_seconds=%.3f",
         sandbox.sandbox_id,
         len(files),
-        len(schedule_yaml.encode("utf-8")),
+        len(inputs.schedule_yaml.encode("utf-8")),
         time.perf_counter() - started,
     )
 

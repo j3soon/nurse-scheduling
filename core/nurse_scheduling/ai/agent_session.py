@@ -61,6 +61,7 @@ from .workspace import (
     SandboxAttachment,
     SandboxCandidateError,
     SandboxRunTimeoutError,
+    WorkspaceInputs,
     WorkspaceLimits,
 )
 from .workspace_tools import run_workspace
@@ -394,17 +395,18 @@ class AgentSession:
             agent_events = run_workspace(
                 runtime.provider,
                 runtime.sandbox_factory,
-                snapshot.schedule_yaml,
+                WorkspaceInputs(
+                    schedule_yaml=snapshot.schedule_yaml,
+                    pending_proposal=snapshot.pending_proposal,
+                    attachments=tuple(attachments),
+                    optimizer_result=artifact.content if artifact is not None else None,
+                ),
                 messages,
                 WorkspaceLimits.from_settings(runtime.settings),
                 take_steering=None if background else lambda close: runtime.store.take_steering(self.id, close),
-                pending_proposal_yaml=snapshot.pending_proposal.schedule_yaml if snapshot.pending_proposal else "",
-                pending_proposal_diff=snapshot.pending_proposal.diff if snapshot.pending_proposal else "",
                 execute_optimizer=lambda current_yaml, arguments: execute_optimizer_tool(
                     runtime.session_optimizer, self.id, current_yaml, arguments
                 ),
-                attachments=attachments,
-                optimizer_result=artifact.content if artifact is not None else None,
                 agent=self.agent,
             )
             async with aclosing(agent_events):

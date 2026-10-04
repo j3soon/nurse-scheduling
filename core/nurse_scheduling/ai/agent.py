@@ -19,7 +19,7 @@
 
 # This file is mostly AI generated.
 
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass, field, replace
 
@@ -115,7 +115,7 @@ class Agent:
         tools: Sequence[AgentTool],
         *,
         config: AgentLoopConfig | None = None,
-    ) -> AsyncIterator[AgentEvent]:
+    ) -> AsyncGenerator[AgentEvent]:
         if self.state.is_streaming:
             raise RuntimeError("Agent is already running. Queue steering instead.")
         config = config or AgentLoopConfig()
