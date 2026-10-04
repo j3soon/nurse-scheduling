@@ -65,6 +65,9 @@ The optimizer runs for up to 300 seconds (five minutes) by default. Ask the
 assistant for a different timeout when needed. A deployment may set another
 default. One chat may start 50 optimizer runs by default.
 
+Optimizer completion reports explain when an automatic request audit is unavailable.
+Custom export text outside bracketed annotations can prevent the audit.
+
 Before submission to the optimizer, the AI service applies the same basic
 anonymization as **Optimize and Export**: it replaces person IDs and removes
 description fields. It restores person IDs in the downloaded workbook. Dates,

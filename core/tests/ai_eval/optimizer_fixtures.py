@@ -133,7 +133,7 @@ def completion_result(name: str, source: str) -> tuple[bytes, dict]:
     exporter.export_to_excel(dataframe, output, result.cell_export_info)
     workbook = output.getvalue()
     audit = build_request_audit(source, workbook)
-    if audit is None:
+    if "summary" not in audit:
         raise ValueError("The controlled optimizer workbook cannot be audited")
     return workbook, {
         "job_id": "eval-job",

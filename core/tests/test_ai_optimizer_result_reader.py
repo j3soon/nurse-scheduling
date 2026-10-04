@@ -75,21 +75,24 @@ def test_completion_summary_has_bounded_counts_and_explicit_scope(audit):
     assert len(json.dumps(result).encode()) <= MAX_REQUEST_AUDIT_BYTES
 
 
-def test_summary_omits_whole_audit_when_weight_tiers_exceed_limit(audit):
+def test_summary_reports_when_weight_tiers_exceed_limit(audit):
     path, _ = audit
     payload = parse_schedule(FIXTURE.read_text())
-    request = payload["preferences"][0]
-    payload["preferences"] = [{**request, "weight": weight} for weight in range(1, 101)]
-    assert build_request_audit(schedule_yaml(payload), path.read_bytes()) is None
+    request = next(pref for pref in payload["preferences"] if pref["type"] == "shift request")
+    required = [pref for pref in payload["preferences"] if pref["type"] != "shift request"]
+    payload["preferences"] = required + [{**request, "weight": weight} for weight in range(1, 101)]
+    assert build_request_audit(schedule_yaml(payload), path.read_bytes()) == {
+        "unavailable": "The automatic request audit exceeds the summary size limit."
+    }
 
 
 def test_summary_falls_back_for_invalid_and_unsupported_workbooks(audit):
     path, _ = audit
-    assert build_request_audit(FIXTURE.read_text(), b"not a workbook") is None
+    assert "could not be read" in build_request_audit(FIXTURE.read_text(), b"not a workbook")["unavailable"]
     workbook = load_workbook(path)
     workbook.active.cell(1, 5).value = "unsupported date header"
     workbook.save(path)
-    assert build_request_audit(FIXTURE.read_text(), path.read_bytes()) is None
+    assert "could not be read" in build_request_audit(FIXTURE.read_text(), path.read_bytes())["unavailable"]
 
 
 def test_stale_summary_control_disagrees_with_current_verified_incumbent():

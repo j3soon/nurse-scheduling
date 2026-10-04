@@ -61,11 +61,15 @@ def test_completion_reports_score_direction_without_mutating_input(score) -> Non
     assert "score_direction" not in result
 
 
-def test_completion_audits_restored_workbook_against_submitted_snapshot() -> None:
+@pytest.mark.parametrize("custom_export_text", [False, True], ids=["bracketed-annotations", "custom-export-text"])
+def test_completion_audits_restored_workbook_against_submitted_snapshot(custom_export_text) -> None:
     async def scenario() -> None:
         source = FIXTURE.read_text()
         content, _ = completion_result("request-audit", source)
         workbook = load_workbook(BytesIO(content))
+        if custom_export_text:
+            # appendText can add an arbitrary suffix to an otherwise valid assignment.
+            workbook.active.cell(3, 5).value = "D requested: OFF"
         for index in range(1, 4):
             workbook.active.cell(index + 2, 1).value = f"P{index}"
         output = BytesIO()
@@ -89,13 +93,19 @@ def test_completion_audits_restored_workbook_against_submitted_snapshot() -> Non
             backend.release.set()
             await asyncio.wait_for(completed.wait(), timeout=5)
             assert result["source_sha256"] == hashlib.sha256(source.encode()).hexdigest()
-            assert result["request_audit"]["source_sha256"] == result["source_sha256"]
-            assert result["request_audit"]["summary"][0] == {
-                "weight": 11_000_000_000,
-                "total": 4,
-                "satisfied": 3,
-                "unmet": 1,
-            }
+            if custom_export_text:
+                assert "Custom export appendText" in result["request_audit"]["unavailable"]
+                assert "summary" not in result["request_audit"]
+                artifact = await optimizer.result_artifact("session", result["job_id"])
+                assert load_workbook(BytesIO(artifact.content)).active.cell(3, 5).value == "D requested: OFF"
+            else:
+                assert result["request_audit"]["source_sha256"] == result["source_sha256"]
+                assert result["request_audit"]["summary"][0] == {
+                    "weight": 11_000_000_000,
+                    "total": 4,
+                    "satisfied": 3,
+                    "unmet": 1,
+                }
             assert result["download_available"]
             assert not optimizer._jobs[result["job_id"]].schedule_yaml
         finally:
@@ -546,7 +556,8 @@ def test_start_returns_immediately_and_completion_wakes_the_agent() -> None:
         assert completions[0][0] == "session-1"
         assert '"score": 17' in completions[0][1]
         result_data = json.loads(completions[0][1].split("Optimizer result JSON:\n", 1)[1])
-        assert "request_audit" not in result_data  # This mock workbook lacks the complete date range.
+        # This mock workbook lacks the complete date range, so counts must not be inferred.
+        assert "could not be read" in result_data["request_audit"]["unavailable"]
         assert result_data["artifact_error"] is None
         assert "/workspace/optimizer-results/optimized-schedule.xlsx" in completions[0][1]
         assert repr(WORKBOOK_BYTES) not in completions[0][1]

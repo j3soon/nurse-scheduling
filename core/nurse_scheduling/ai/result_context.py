@@ -114,8 +114,8 @@ def _policy_audit(data, context, path):
     return None
 
 
-def build_request_audit(schedule_yaml: str, workbook: bytes) -> dict[str, Any] | None:
-    """Return bounded counts from the submitted snapshot, or leave inspection to the agent."""
+def build_request_audit(schedule_yaml: str, workbook: bytes) -> dict[str, Any]:
+    """Return bounded counts from the submitted snapshot or explain why they are unavailable."""
     try:
         data = load_data(schedule_yaml.encode())
         context = _project_context(data, schedule_yaml)
@@ -140,7 +140,16 @@ def build_request_audit(schedule_yaml: str, workbook: bytes) -> dict[str, Any] |
                 if len(json.dumps(extended, ensure_ascii=False, allow_nan=False).encode()) <= MAX_REQUEST_AUDIT_BYTES:
                     return extended
             return summary
-    except Exception:
+        return {"unavailable": "The automatic request audit exceeds the summary size limit."}
+    except Exception as error:
         # Optional reporting must not suppress an otherwise downloadable result.
         logger.debug("Optimizer request summary unavailable", exc_info=True)
-    return None
+        if isinstance(error, ValueError) and str(error).startswith("Assignment is unknown or ambiguous:"):
+            return {
+                "unavailable": (
+                    "The workbook contains unknown or ambiguous assignment text. "
+                    "The automatic request audit supports exact shift IDs and bracketed annotations only. "
+                    "Custom export appendText can prevent this audit."
+                )
+            }
+    return {"unavailable": "The optimizer workbook could not be read for an automatic request audit."}

@@ -47,7 +47,7 @@ def solve(source: str, output_dir: Path, timeout: int) -> dict:
     workbook = output.artifact.content
     (output_dir / "result.xlsx").write_bytes(workbook)
     audit = build_request_audit(source, workbook)
-    if audit is None:
+    if "summary" not in audit:
         raise ValueError("Real optimizer workbook could not be audited")
     metadata = {
         "job_id": job.id,
