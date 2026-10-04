@@ -93,8 +93,10 @@ design cost, and keep related rendering together.
 AI operation state belongs to `ChatLifecycle`. Finish only the operation that
 owns a callback and derive busy/Stop state from its phases. Scope stream callbacks
 to their connection, and scope other async completions to their conversation.
-Replayable events carry run identity and advance the cursor only after a complete
-SSE frame. Test overlapping foreground completion and background replay explicitly.
+Replayable events carry run identity. Validate complete SSE frames and all recovery
+entries before changing the cursor or transcript. Acknowledge validated frames
+before consumer callbacks so a throwing callback cannot cause a replay loop.
+Test overlapping foreground completion and background replay explicitly.
 Keep connection ownership, cursors, reconnection, and teardown in
 `useSessionEventStream`. Keep run routing and pre-acknowledgement buffering in
 `SessionEventRouter`. Route normalized `SessionEvent` values through one handler.

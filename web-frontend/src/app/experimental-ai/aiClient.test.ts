@@ -211,6 +211,108 @@ describe('AI client', () => {
     expect(cursor.mock.calls.map(([id]) => id)).toEqual([8, 9]);
   });
 
+  it.each([null, [], 42, true, 'text'])(
+    'rejects a non-object stream payload without acknowledging it (%j)',
+    async payload => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+        `id: 8\nevent: delta\ndata: ${JSON.stringify(payload)}\n\n`,
+      ])));
+      const onEvent = vi.fn();
+      const cursor = vi.fn();
+
+      await expect(streamSessionEvents('s', {
+        lastEventId: 5, onEvent, onEventId: cursor,
+      }, new AbortController().signal, null)).rejects.toThrow('The AI backend returned an invalid stream.');
+
+      expect(onEvent).not.toHaveBeenCalled();
+      expect(cursor).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ['null entry', null],
+    ['array entry', []],
+    ['missing type', { data: {} }],
+    ['invalid type', { type: 1, data: {} }],
+    ['missing data', { type: 'delta' }],
+    ['null data', { type: 'delta', data: null }],
+    ['array data', { type: 'delta', data: [] }],
+  ])('rejects a recovery snapshot before applying any entries (%s)', async (_label, entry) => {
+    const recovery = {
+      events: [{ type: 'delta', data: { run_id: 'r', text: 'Do not apply this.' } }, entry],
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      `id: 8\nevent: session_reset\ndata: ${JSON.stringify(recovery)}\n\n`,
+    ])));
+    const onEvent = vi.fn();
+    const cursor = vi.fn();
+
+    await expect(streamSessionEvents('s', {
+      lastEventId: 5, onEvent, onEventId: cursor,
+    }, new AbortController().signal, null)).rejects.toThrow('The AI backend returned an invalid recovery snapshot.');
+
+    expect(onEvent).not.toHaveBeenCalled();
+    expect(cursor).not.toHaveBeenCalled();
+  });
+
+  it('validates recovered event content before applying the snapshot', async () => {
+    const recovery = {
+      events: [
+        { type: 'delta', data: { run_id: 'r', text: 'Do not apply this.' } },
+        { type: 'schedule_change', data: { run_id: 'r', schedule_yaml: 42 } },
+      ],
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      `id: 8\nevent: session_reset\ndata: ${JSON.stringify(recovery)}\n\n`,
+    ])));
+    const onEvent = vi.fn();
+    const cursor = vi.fn();
+
+    await expect(streamSessionEvents('s', {
+      lastEventId: 5, onEvent, onEventId: cursor,
+    }, new AbortController().signal, null)).rejects.toThrow('The AI backend returned an invalid schedule change.');
+
+    expect(onEvent).not.toHaveBeenCalled();
+    expect(cursor).not.toHaveBeenCalled();
+  });
+
+  it('accepts recovery entries with unknown event types', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      'id: 8\nevent: session_reset\ndata: {"events":[{"type":"future_event","data":{"extra":true}}]}\n\n',
+    ])));
+    const onEvent = vi.fn();
+    const cursor = vi.fn();
+
+    await streamSessionEvents('s', {
+      lastEventId: 5, onEvent, onEventId: cursor,
+    }, new AbortController().signal, null);
+
+    expect(onEvent.mock.calls).toEqual([
+      [{ type: 'session_reset', reset: {
+        runIds: [], terminalRunIds: [], activeRunId: null, incomplete: false, proposalDiff: null,
+      } }],
+      [{ type: 'proposal', diff: '' }],
+    ]);
+    expect(cursor).toHaveBeenCalledExactlyOnceWith(8);
+  });
+
+  it('acknowledges a validated event before invoking a failing handler', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      'id: 8\nevent: delta\ndata: {"text":"Answer"}\n\n',
+    ])));
+    const cursor = vi.fn();
+    const onEvent = vi.fn(() => {
+      expect(cursor).toHaveBeenCalledExactlyOnceWith(8);
+      throw new Error('Handler failed.');
+    });
+
+    await expect(streamSessionEvents('s', {
+      onEvent, onEventId: cursor,
+    }, new AbortController().signal, null)).rejects.toThrow('Handler failed.');
+
+    expect(onEvent).toHaveBeenCalledExactlyOnceWith({ type: 'delta', text: 'Answer' });
+  });
+
   it('parses deltas split across network chunks', async () => {
     const fetchMock = vi.fn().mockResolvedValue(streamedResponse([
       'event: delta\ndata: {"text":"Hel',

@@ -122,10 +122,10 @@ interface SsePayload {
   used_chars?: unknown;
   max_chars?: unknown;
   dropped?: unknown;
-  events?: { type: string; data: SsePayload }[];
-  incomplete?: boolean;
-  active_run_id?: string | null;
-  proposal_diff?: string;
+  events?: unknown;
+  incomplete?: unknown;
+  active_run_id?: unknown;
+  proposal_diff?: unknown;
 }
 
 // Older backends omit the ID, so callers fall back to matching by tool name.
@@ -291,6 +291,10 @@ export async function getSessionStatus(
   return body.expires_in_seconds as number;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 function record(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null ? value as Record<string, unknown> : {};
 }
@@ -350,42 +354,57 @@ function consumeEvent(block: string, callbacks: SessionStreamOptions): void {
 
   let payload: SsePayload;
   try {
-    payload = JSON.parse(rawData) as SsePayload;
+    const parsed: unknown = JSON.parse(rawData);
+    if (!isRecord(parsed)) throw new Error();
+    payload = parsed;
   } catch {
     throw new Error('The AI backend returned an invalid stream.');
   }
 
-  // Acknowledge before dispatching, so a handler that throws cannot make a
-  // replayed stream repeat the same event after every reconnect.
-  if (Number.isSafeInteger(eventId) && eventId >= 0) {
-    callbacks.lastEventId = eventId;
-    callbacks.onEventId?.(eventId);
-  }
+  let events: SessionEvent[];
   if (eventType === 'session_reset') {
     if (!Array.isArray(payload.events)) throw new Error('The AI backend returned an invalid recovery snapshot.');
-    const runIds = [...new Set(payload.events.flatMap(event =>
-      typeof event.data?.run_id === 'string' ? [event.data.run_id] : []))];
+    const recovery = payload.events.map((entry: unknown) => {
+      if (!isRecord(entry) || typeof entry.type !== 'string' || !isRecord(entry.data)) {
+        throw new Error('The AI backend returned an invalid recovery snapshot.');
+      }
+      return { type: entry.type, data: entry.data };
+    });
+    const recoveredEvents = recovery.flatMap(event => decodeEvent(event.type, event.data));
+    const runIds = [...new Set(recovery.flatMap(event =>
+      typeof event.data.run_id === 'string' ? [event.data.run_id] : []))];
     const reset = {
       runIds,
-      terminalRunIds: payload.events.flatMap(event =>
-        ['done', 'stopped', 'stale', 'error'].includes(event.type) && typeof event.data?.run_id === 'string'
+      terminalRunIds: recovery.flatMap(event =>
+        ['done', 'stopped', 'stale', 'error'].includes(event.type) && typeof event.data.run_id === 'string'
           ? [event.data.run_id] : []),
       activeRunId: typeof payload.active_run_id === 'string' ? payload.active_run_id : null,
       incomplete: payload.incomplete === true,
       proposalDiff: typeof payload.proposal_diff === 'string' && payload.proposal_diff ? payload.proposal_diff : null,
     };
-    callbacks.onEvent({ type: 'session_reset', reset });
-    for (const event of payload.events) dispatchEvent(event.type, event.data, callbacks);
-    // Proposal ownership may have changed since the retained run produced it.
-    callbacks.onEvent({ type: 'proposal', diff: reset.proposalDiff ?? '' });
-    return;
+    events = [
+      { type: 'session_reset', reset },
+      ...recoveredEvents,
+      // Proposal ownership may have changed since the retained run produced it.
+      { type: 'proposal', diff: reset.proposalDiff ?? '' },
+    ];
+  } else {
+    events = decodeEvent(eventType, payload);
   }
-  dispatchEvent(eventType, payload, callbacks);
+
+  // Validate the whole frame before acknowledging or applying it. Acknowledge
+  // before handlers so a failing handler cannot repeat an event on every reconnect.
+  if (Number.isSafeInteger(eventId) && eventId >= 0) {
+    callbacks.lastEventId = eventId;
+    callbacks.onEventId?.(eventId);
+  }
+  for (const event of events) callbacks.onEvent(event);
 }
 
-function dispatchEvent(eventType: string, payload: SsePayload, streamCallbacks: SessionStreamOptions): void {
+function decodeEvent(eventType: string, payload: SsePayload): SessionEvent[] {
+  const events: SessionEvent[] = [];
   const runId = typeof payload.run_id === 'string' ? payload.run_id : undefined;
-  const emit = (event: SessionEvent) => streamCallbacks.onEvent(runId === undefined ? event : { ...event, runId });
+  const emit = (event: SessionEvent) => events.push(runId === undefined ? event : { ...event, runId });
   if (runId) emit({ type: 'run_context', runId });
 
   if (eventType === 'run_start' && typeof payload.run_id === 'string') {
@@ -496,6 +515,7 @@ function dispatchEvent(eventType: string, payload: SsePayload, streamCallbacks: 
     const message = typeof payload.message === 'string' ? payload.message : 'The AI response failed.';
     emit({ type: 'error', message });
   }
+  return events;
 }
 
 async function postMessage(
