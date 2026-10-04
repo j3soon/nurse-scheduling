@@ -40,6 +40,10 @@ errors, evaluator defects, and infrastructure failures. A nonzero shell exit
 can report a normal condition, such as a diff or a missing-file check, rather
 than a broken command. Grade that condition instead of requiring a zero exit.
 Separate assistant overhead from solver time and backend latency.
+Check numerical claims against the source data. Distinguish container fields
+from item counts, exclusive outcomes from overlapping categories, and missing
+values from successful results. A plausible summary can contain wrong totals
+even when every tool call succeeds.
 Treat exceeded model-output limits as behavior failures. A limit on generated
 reasoning or tool arguments is not a provider outage. Preserve the partial trace
 and keep unavailable token usage unavailable.
@@ -124,6 +128,15 @@ to reconcile state manually. Compare implementations with the same prompt and
 help text to isolate the code change from wording changes.
 When a boundary input skips existing logic, check whether that logic belongs
 outside the loop or behind a different condition before adding a duplicate branch.
+
+For repeated missing-library errors in an offline sandbox, consider preinstalling
+the library instead of adding more instructions to use another one. Check the
+rebuilt image with synthetic input. Mark comparisons that relied on its absence
+as historical and recheck the affected guidance before changing it.
+
+For read-only attachment questions, check whether inspecting the current
+schedule helps answer the user's request. Test a focused attachment question
+alongside an explicit comparison request before changing source-selection guidance.
 
 Use a focused prompt instruction for a decision or interpretation the model
 needs to learn. Extend an existing segment when it covers that behavior. Keep the

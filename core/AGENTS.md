@@ -44,6 +44,10 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   tool ships under `nurse_scheduling/`. Those scripts are uploaded and run
   inside the E2B image, which installs its own pinned copies, and only the
   tests import them here. Keep the two pin sets in step.
+- Verify sandbox dependency changes in a rebuilt image with a synthetic script.
+  A successful host import or fake-backend test does not prove availability in
+  the deployed template. State which template was tested and whether production
+  still needs a rebuild.
 - Keep an optional solver reachable through a lazy import and let
   `server/solver_options.py` report it unavailable. It already treats
   `ImportError` as unavailable, so a missing optional backend must degrade
