@@ -92,6 +92,35 @@ def _history_workbook(reverse: bool = False) -> bytes:
     return _stable_workbook(workbook)
 
 
+def _intake_workbook() -> bytes:
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "Roster"
+    sheet.append(["November 2025"])
+    sheet.append(
+        [
+            "Role",
+            "History",
+            "Name",
+            datetime(2025, 11, 1, tzinfo=UTC).replace(tzinfo=None),
+            datetime(2025, 11, 2, tzinfo=UTC).replace(tzinfo=None),
+            datetime(2025, 11, 3, tzinfo=UTC).replace(tzinfo=None),
+        ]
+    )
+    sheet.append([None, None, None, "Sat", "Sun", "Mon"])
+    sheet.append(["HN", "off", "Ada", 1, None, "D"])
+    sheet.append(["N", "2E", "Bela", 1, "E", None])
+    sheet["C4"].fill = PatternFill("solid", fgColor="FFFF00")
+    for col in ["D", "E"]:
+        sheet[f"{col}2"].fill = PatternFill("solid", fgColor="9FC5E8")
+    for cell in ["D4", "F4", "E5"]:
+        sheet[cell].font = Font(color="FF0000")
+    sheet["D5"].font = Font(color="000000")
+    for cell in sheet[2][3:]:
+        cell.number_format = "yyyy-mm-dd"
+    return _stable_workbook(book)
+
+
 def _inventory_workbook() -> bytes:
     """Keep content-heavy and hidden tabs outside the ordinary first-sheet window."""
     workbook = Workbook()
@@ -324,6 +353,19 @@ def _pptx() -> bytes:
 
 
 _FIXTURES: dict[str, tuple[str, str, Callable[[], bytes]]] = {
+    "workbook-intake-xlsx": (
+        "roster.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        _intake_workbook,
+    ),
+    "ward87-intake-xlsx": (
+        "unfilled-ward-schedule-2025-11.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        (
+            Path(__file__).resolve().parents[3]
+            / "docs/content/user-guide/build-a-real-schedule/unfilled-ward-schedule-2025-11.xlsx"
+        ).read_bytes,
+    ),
     "month-end-history-forward-xlsx": (
         "october-forward.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

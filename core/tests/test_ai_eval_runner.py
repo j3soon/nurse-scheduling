@@ -25,10 +25,12 @@ import json
 import subprocess
 import sys
 from collections.abc import AsyncIterator, Sequence
+from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from ruamel.yaml import YAML
 
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.optimizer import optimizer_start_message
@@ -62,9 +64,10 @@ from nurse_scheduling.ai.schema import (
 )
 from nurse_scheduling.ai.system_prompt import PROMPT_DIRECTORY, compose_system_prompt, load_system_prompt_sections
 from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
+from nurse_scheduling.loader import _load_yaml
 
 from .ai_eval.comparison import comparison_metrics_markdown, comparison_statistics
-from .ai_eval.grading import EvalCase, ExpectedDiff, ToolUsageExpectation, TurnAction, load_cases
+from .ai_eval.grading import EvalCase, ExpectedDiff, RunOutcome, ToolUsageExpectation, TurnAction, grade, load_cases
 from .ai_eval.prompt_ladder import STEPS_PATH, case_digest, load_prompt_steps, prompt_at_step, validate_prompt_evidence
 from .ai_eval.runner import (
     CASES,
@@ -1685,3 +1688,81 @@ def test_response_limit_is_a_behavior_failure_and_outages_remain_infrastructure(
         assert run.trajectory["events"][-1] == {"kind": "evaluation_stop", "reason": str(error)}
     else:
         assert run.failures == ["the provider failed"]
+
+
+def test_explained_workbook_case_accepts_valid_import_and_rejects_changed_weights():
+    source = """apiVersion: alpha
+description: November 2025
+dates:
+  range:
+    startDate: '2025-11-01'
+    endDate: '2025-11-03'
+  items: []
+  groups: []
+people:
+  items:
+  - id: Ada
+    description: HN
+    history:
+    - OFF
+  - id: Bela
+    description: N
+    history:
+    - E
+    - E
+  groups: []
+shiftTypes:
+  items:
+  - id: D
+    description: Day
+  - id: E
+    description: Evening
+  groups: []
+preferences:
+- type: at most one shift per day
+- type: shift request
+  person:
+  - Ada
+  date:
+  - '01'
+  shiftType:
+  - OFF
+  weight: 11000000000
+- type: shift request
+  person:
+  - Ada
+  date:
+  - '03'
+  shiftType:
+  - D
+  weight: 11000000000
+- type: shift request
+  person:
+  - Bela
+  date:
+  - '01'
+  shiftType:
+  - OFF
+  weight: 11000000
+- type: shift request
+  person:
+  - Bela
+  date:
+  - '02'
+  shiftType:
+  - E
+  weight: 11000000000
+"""
+    assert validate_frontend_schedule_yaml(source, max_bytes=2_000_000).valid
+    case = CASE_BY_ID["workbook-explained-policy"]
+    initial = _load_yaml(fixture_text(case.fixture).encode())
+    proposal = YAML(typ="safe").load(source)
+    correct = grade(case, RunOutcome(answer="", initial=initial, proposed=proposal, activity=[]))
+    assert correct.passed, correct.failures()
+    changed = deepcopy(proposal)
+    changed["preferences"][3]["weight"] = 11_000_000_000
+    wrong = grade(case, RunOutcome(answer="", initial=initial, proposed=changed, activity=[]))
+    assert not wrong.passed
+    changed["preferences"][3]["weight"] = float("inf")
+    mandatory = grade(case, RunOutcome(answer="", initial=initial, proposed=changed, activity=[]))
+    assert not mandatory.passed

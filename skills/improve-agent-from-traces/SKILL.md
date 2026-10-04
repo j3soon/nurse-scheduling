@@ -96,6 +96,12 @@ and counting units before provider calls. For example, request entries and
 person/date pairs are different counts, and overlapping entries can count the
 same pair more than once.
 
+For workbook imports, validate an independent correct proposal with both the
+frontend validator and the grader before live runs. Check that each format
+belongs to the correct cell and that finite weights stay finite. Grade
+clarification, construction, solving and delivery separately. A run that fails
+clarification does not establish anything about optimizer behavior.
+
 Run deterministic input and grader checks first. Run the selected case with
 the current prompt to confirm the baseline rather than relying on an old trace.
 

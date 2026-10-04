@@ -763,5 +763,35 @@
         "note": "Compare the previous full prompt with this final step. Grade captured CSV downloads. Both date orders improved. Full daily history stayed correct. The reversed-date receipt uses a clean paired recheck after an earlier E2B failure."
       }
     ]
+  },
+  {
+    "id": "workbook-policy-clarification",
+    "file": "steps/workbook-policy-clarification.md",
+    "cases": [
+      "workbook-unexplained-policy",
+      "workbook-explained-policy",
+      "workbook-unexplained-policy-ward87"
+    ],
+    "hypothesis": "Asks about unexplained workbook codes, formatting and scheduling rules before proposing YAML. Imports explained data without unnecessary clarification.",
+    "sha256": "56e615e10cb2fc57c13028d6eeab4c2652ccb922015c32ff479627a09c5f7130",
+    "evidence": [
+      {
+        "case": "workbook-unexplained-policy",
+        "input_sha256": "7c292dae40cb431cff440f1cbf83edcd1f2f436202b375b7cd2f14e7a60ec166",
+        "before": "0/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "workbook-explained-policy",
+            "input_sha256": "3d96a7865a2f793a29860d4327d5fff64437b57a092763a6bb9f9f3e70c5056d",
+            "before": "2/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Adjacent full-prompt comparison. Unexplained workbooks require clarification. Explained colors, histories and requests produce complete proposals with exact finite weights. Costs are not compared for the failing baseline. The 87-person case is linked for additional coverage, not included in this clean receipt."
+      }
+    ]
   }
 ]

@@ -1,0 +1,40 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "fixture": "new-schedule",
+  "attachments": [
+    "ward87-intake-xlsx"
+  ],
+  "tags": [
+    "workbook-intake",
+    "large-roster"
+  ],
+  "tool_usage": {
+    "forbidden": [
+      "optimizer"
+    ],
+    "max_validation_errors": 0
+  },
+  "id": "workbook-unexplained-policy-ward87",
+  "question": "Build a scheduling YAML from scratch using the attached workbook.",
+  "expect_proposal": false,
+  "answer_contains": [
+    [
+      "color",
+      "colour",
+      "red",
+      "format"
+    ],
+    [
+      "staffing",
+      "coverage",
+      "minimum"
+    ],
+    [
+      "rest",
+      "succession",
+      "consecutive",
+      "transition"
+    ]
+  ]
+}

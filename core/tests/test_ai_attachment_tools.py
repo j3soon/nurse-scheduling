@@ -395,3 +395,20 @@ def test_pdf_search_reports_scanned_pages_and_rejects_empty_terms(tmp_path):
 def test_pdf_search_rejects_conflicting_page_modes(tmp_path, options):
     with pytest.raises(ValueError, match="separately"):
         inspect_pdf(tmp_path / "missing.pdf", find="text", **options)
+
+
+def test_workbook_intake_fixture_preserves_ambiguous_codes_and_cell_colors():
+    from openpyxl import load_workbook
+
+    attachment = load_attachment_fixtures(("workbook-intake-xlsx",))[0]
+    assert attachment.data == load_attachment_fixtures(("workbook-intake-xlsx",))[0].data
+    workbook = load_workbook(BytesIO(attachment.data))
+    sheet = workbook.active
+    assert sheet["D4"].value == sheet["D5"].value == 1
+    assert sheet["D4"].font.color.rgb == "00FF0000"
+    assert sheet["D5"].font.color.rgb == "00000000"
+    assert sheet["E5"].value == "E"
+    assert sheet["E5"].font.color.rgb == "00FF0000"
+    assert sheet["C4"].fill.fgColor.rgb == "00FFFF00"
+    assert sheet["D2"].fill.fgColor.rgb == "009FC5E8"
+    workbook.close()

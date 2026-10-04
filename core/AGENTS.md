@@ -133,6 +133,9 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
 - Count exceeded model-output limits as behavior failures, not infrastructure
   outages. Keep the limit reason and partial trace. Keep provider connection and
   sandbox availability failures separate.
+- Before live import comparisons, check an independent correct proposal against
+  both frontend validation and the case grader. Check cell-to-format associations
+  and finite weights, not just whether the inspector reports colors.
 - Reuse production response formatters in controlled evaluations. Shortened mock
   replies can change the agent's decisions.
 - Treat one provider pass as a smoke check. Before claiming a tuning improvement,
