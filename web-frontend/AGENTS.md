@@ -99,7 +99,9 @@ Both GET and compatibility POST SSE readers emit the same typed event interface.
 Page test fixtures should emit typed `SessionEvent` values directly, without
 converting them through legacy callback bundles.
 Apply assistant output from the single session GET stream through
-`applyAssistantEvent`. Route foreground and review events by `run_id`, including
+`applyAssistantEvent`. Keep transcript creation, steering segments, and recovery
+in the pure `chatTranscript` functions, with IDs and timestamps supplied by callers.
+Route foreground and review events by `run_id`, including
 output that arrives before POST message acceptance is acknowledged. Keep run identity on
 answer segments so recovery replaces matching output without duplicating text or
 consumed steering. Stop keeps the stream open until a terminal event confirms

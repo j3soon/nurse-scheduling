@@ -22,7 +22,6 @@
 import { useCallback, useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { OptimizationProgressPoint } from '@/components/OptimizationProgressChart';
-import type { ChatExportMessage } from './chatExport';
 import {
   AiHttpError, AiStaleRunError, DEFAULT_SESSION_RETENTION_SECONDS,
   type ContextUsage, type OptimizationActivity,
@@ -30,22 +29,15 @@ import {
   rejectProposal, sendMessage, stopSession, updateSessionSchedule,
 } from './aiClient';
 import {
-  type AssistantEvent, applyAssistantEvent, interruptRunningTools, messageId, resumeResponse, steerResponse, toAssistantEvent,
+  type AssistantEvent, applyAssistantEvent, messageId, toAssistantEvent,
 } from './assistantEvents';
+import { type ChatMessage, applyResponseEvent, beginResponse, createResponse, resetRunMessages, restoreTranscript, steerResponse } from './chatTranscript';
 import { ChatLifecycle, scopedEventHandler } from './chatLifecycle';
 import { SessionEventRouter } from './sessionEventRouter';
 import type { SessionEvent, SessionEventHandler } from './sessionEvents';
 import { useSessionEventStream } from './useSessionEventStream';
 
-export interface ChatMessage extends ChatExportMessage {
-  id: string;
-  runId?: string;
-  retry?: {
-    question: string;
-    requiresAttachments: boolean;
-  };
-  optimizerJob?: Pick<OptimizationActivity, 'jobId' | 'downloadable'>;
-}
+export type { ChatMessage } from './chatTranscript';
 
 export interface ActiveOptimization extends OptimizationActivity {
   points: OptimizationProgressPoint[];
@@ -219,11 +211,7 @@ export function useAiChat({
     if (conversation.backgroundAssistantId) {
       lifecycle.begin('background', conversation.backgroundAssistantId, 'interrupted');
     }
-    setMessages(conversation.messages.map(message => (
-      message.status === 'pending'
-        ? { ...message, status: 'failed' as const, activity: interruptRunningTools(message.activity ?? []) }
-        : message
-    )));
+    setMessages(restoreTranscript(conversation.messages));
     setProposalDiff(conversation.proposalDiff);
     setSessionRetentionSeconds(conversation.retentionSeconds);
     sessionEvents.cursor.current = conversation.sessionEventId ?? 0;
@@ -331,23 +319,7 @@ export function useAiChat({
       // The server renews the session when it starts this run.
       setSessionExpiresAt(Date.now() + sessionRetentionSeconds * 1000);
       sandboxScheduleRef.current = scheduleYamlRef.current;
-      setMessages(previous => previous.some(message => message.id === runId)
-        // A restored or reconnected run resumes its own message, so clear the
-        // interrupted state rather than stacking a second response beside it.
-        ? previous.map(message => message.id === runId
-          ? resumeResponse(message)
-          : message)
-        : [
-          ...previous,
-          {
-            id: runId,
-            runId,
-            role: 'assistant',
-            content: '',
-            status: 'pending',
-            responseStartedAt: Date.now(),
-          },
-        ]);
+      setMessages(previous => beginResponse(previous, createResponse(runId, Date.now(), runId)));
     };
     // A reconnect replays only retained events, so a long run can lose its own
     // run_start. Adopt the remaining output instead of discarding the answer.
@@ -355,10 +327,10 @@ export function useAiChat({
       if (lifecycle.getSnapshot().background?.phase !== 'interrupted' && lifecycle.current('background')) return;
       beginBackgroundMessage(lifecycle.current('background')?.id ?? messageId());
     };
-    const updateBackgroundMessage = (update: (message: ChatMessage) => ChatMessage, messageId?: string) => {
+    const updateBackgroundMessage = (event: AssistantEvent, messageId?: string) => {
       const activeId = lifecycle.current('background')?.id ?? messageId;
       if (activeId === undefined) return;
-      setMessages(previous => previous.map(message => message.id === activeId ? update(message) : message));
+      setMessages(previous => applyResponseEvent(previous, activeId, event, Date.now()));
     };
     const ownsConversation = lifecycle.capture();
     const handleBackground: SessionEventHandler = event => {
@@ -366,13 +338,13 @@ export function useAiChat({
       const output = toAssistantEvent(event, sandboxScheduleRef, scheduleYamlRef);
       if (output) {
         resumeBackgroundMessage();
-        updateBackgroundMessage(message => applyAssistantEvent(message, output));
+        updateBackgroundMessage(output);
         return;
       }
       switch (event.type) {
         case 'session_reset': {
           const { reset } = event;
-          setMessages(previous => previous.filter(message => !reset.runIds.includes(message.runId ?? message.id)));
+          setMessages(previous => resetRunMessages(previous, reset.runIds));
           setProposalDiff(reset.proposalDiff);
           setActiveOptimization(null);
           lifecycle.finish(lifecycle.current('background'));
@@ -398,10 +370,8 @@ export function useAiChat({
             const answer = previous.find(message => message.id === runId);
             const now = Date.now();
             const user: ChatMessage = { id: queuedId, runId, role: 'user', content, createdAt: now };
-            const continuation: ChatMessage | undefined = answer && (answer.content || answer.activity?.length)
-              ? { id: runId, runId, role: 'assistant', content: '', status: 'pending', responseStartedAt: now }
-              : undefined;
-            return steerResponse(previous, runId, user, continuation, `${runId}:${queuedId}`);
+            const continuationId = answer && (answer.content || answer.activity?.length) ? runId : undefined;
+            return steerResponse(previous, runId, user, now, continuationId, `${runId}:${queuedId}`);
           });
           break;
         }
@@ -453,7 +423,7 @@ export function useAiChat({
           break;
         }
         case 'done': case 'stopped': case 'stale': case 'error': {
-          updateBackgroundMessage(message => applyAssistantEvent(message, event), event.runId);
+          updateBackgroundMessage(event, event.runId);
           lifecycle.finish(lifecycle.current('background'));
           if (event.type === 'stale' || event.type === 'error') setError(event.message);
           break;
@@ -499,7 +469,7 @@ export function useAiChat({
     setMessages(previous => [
       ...previous,
       userMessage,
-      { id: activeAssistantId, role: 'assistant', content: '', status: 'pending', responseStartedAt },
+      createResponse(activeAssistantId, responseStartedAt),
     ]);
     onSendStart(clearComposer);
     setError(null);
@@ -551,9 +521,7 @@ export function useAiChat({
             setSteeringAssistantId(null);
           }
           const assistantId = activeAssistantId;
-          setMessages(previous => previous.map(message => (
-            message.id === assistantId ? applyAssistantEvent(message, output) : message
-          )));
+          setMessages(previous => applyResponseEvent(previous, assistantId, output, Date.now()));
           return;
         }
         switch (event.type) {
@@ -578,10 +546,10 @@ export function useAiChat({
             activeAssistantId = initialAssistantId;
             activeAssistantHasOutput = false;
             activeQuestion = question;
-            setMessages(previous => [
-              ...previous.filter(message => !runMessageIds.has(message.id)),
-              { id: initialAssistantId, runId, role: 'assistant', content: '', status: 'pending', responseStartedAt },
-            ]);
+            const recoveredMessageIds = new Set(runMessageIds);
+            setMessages(previous => resetRunMessages(
+              previous, [], createResponse(initialAssistantId, responseStartedAt, runId), recoveredMessageIds,
+            ));
             runMessageIds.clear();
             runMessageIds.add(initialAssistantId);
             break;
@@ -601,10 +569,8 @@ export function useAiChat({
               previous,
               previousAssistantId,
               { id: queuedId, runId, role: 'user', content: queuedMessage, createdAt },
-              nextAssistantId ? {
-                id: nextAssistantId, runId, role: 'assistant', content: '', status: 'pending',
-                responseStartedAt: steeringStartedAt,
-              } : undefined,
+              steeringStartedAt,
+              nextAssistantId,
             ));
             activeAssistantId = nextAssistantId ?? previousAssistantId;
             setSteeringAssistantId(activeAssistantId);
@@ -647,11 +613,9 @@ export function useAiChat({
         eventRouterRef.current.finish(foreground);
       }
       if (!lifecycle.owns(operation)) return;
-      setMessages(previous => previous.map(message => (
-        message.id === activeAssistantId
-          ? applyAssistantEvent(message, { type: controller.signal.aborted ? 'stopped' : 'done' })
-          : message
-      )));
+      setMessages(previous => applyResponseEvent(
+        previous, activeAssistantId, { type: controller.signal.aborted ? 'stopped' : 'done' }, Date.now(),
+      ));
     } catch (streamError) {
       if (!lifecycle.owns(operation)) return;
       const staleRunMessage = streamError instanceof AiStaleRunError ? streamError.message : null;

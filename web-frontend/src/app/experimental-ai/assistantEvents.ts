@@ -71,7 +71,7 @@ function finishToolActivity(entries: ActivityEntry[], result: ToolActivity): Act
   return entries.map((entry, index) => (index === runningIndex ? completed : entry));
 }
 
-export function applyAssistantEvent<T extends ChatExportMessage>(message: T, event: AssistantEvent): T {
+export function applyAssistantEvent<T extends ChatExportMessage>(message: T, event: AssistantEvent, occurredAt = Date.now()): T {
   const activity = message.activity ?? [];
   switch (event.type) {
     case 'delta':
@@ -85,13 +85,13 @@ export function applyAssistantEvent<T extends ChatExportMessage>(message: T, eve
     case 'truncated':
       return { ...message, truncated: true };
     case 'done':
-      return completeResponse(message);
+      return completeResponse(message, occurredAt);
     case 'stopped':
-      return stopResponse(message);
+      return stopResponse(message, occurredAt);
     case 'error':
-      return failResponse(message, event.message);
+      return failResponse(message, event.message, occurredAt);
     case 'stale':
-      return staleResponse(message, event.message);
+      return staleResponse(message, event.message, occurredAt);
     case 'tool_start':
       return {
         ...message,
@@ -123,49 +123,26 @@ export function completeResponse<T extends ChatExportMessage>(message: T, comple
   return { ...message, status: undefined, responseCompletedAt: completedAt };
 }
 
-export function failResponse<T extends ChatExportMessage>(message: T, fallbackText = ''): T {
+export function failResponse<T extends ChatExportMessage>(message: T, fallbackText = '', completedAt = Date.now()): T {
   return {
     ...message,
     content: message.content || fallbackText,
     status: 'failed',
-    responseCompletedAt: Date.now(),
+    responseCompletedAt: completedAt,
     activity: interruptRunningTools(message.activity ?? []),
   };
 }
 
-export function staleResponse<T extends ChatExportMessage>(message: T, text: string): T {
-  return { ...failResponse(message), content: text, activity: [{ kind: 'response', text }] };
-}
-
-// Insert steering before an empty answer. If output has already started, finish
-// that segment and append the caller's new answer, preserving its run identity.
-export function steerResponse<T extends ChatExportMessage & { id: string; runId?: string }>(
-  messages: T[],
-  assistantId: string,
-  user: T,
-  continuation?: T,
-  completedId = assistantId,
-): T[] {
-  if (messages.some(message => message.id === user.id)) return messages;
-  if (continuation) {
-    return [
-      ...messages.map(message => message.id === assistantId
-        ? { ...completeResponse(message, continuation.responseStartedAt), id: completedId, runId: user.runId }
-        : message),
-      user,
-      continuation,
-    ];
-  }
-  const index = messages.findIndex(message => message.id === assistantId);
-  return index < 0 ? [...messages, user] : [...messages.slice(0, index), user, ...messages.slice(index)];
+export function staleResponse<T extends ChatExportMessage>(message: T, text: string, completedAt = Date.now()): T {
+  return { ...failResponse(message, '', completedAt), content: text, activity: [{ kind: 'response', text }] };
 }
 
 // A stopped response keeps its partial output instead of gaining synthetic answer text.
-export function stopResponse<T extends ChatExportMessage>(message: T): T {
+export function stopResponse<T extends ChatExportMessage>(message: T, completedAt = Date.now()): T {
   return {
     ...message,
     status: 'stopped',
-    responseCompletedAt: Date.now(),
+    responseCompletedAt: completedAt,
     activity: interruptRunningTools(message.activity ?? []),
   };
 }

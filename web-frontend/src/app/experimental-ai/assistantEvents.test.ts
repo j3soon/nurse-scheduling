@@ -30,7 +30,7 @@ import type { ChatExportMessage } from './chatExport';
 const empty: ChatExportMessage = { role: 'assistant', content: '', status: 'pending' };
 
 function reduce(events: AssistantEvent[]): ChatExportMessage {
-  return events.reduce(applyAssistantEvent, empty);
+  return events.reduce((message, event) => applyAssistantEvent(message, event), empty);
 }
 
 describe('assistant events', () => {
