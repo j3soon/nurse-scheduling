@@ -87,6 +87,9 @@ AI chat control belongs to `useAiChat`. Keep transcript rendering in
 selection, scrolling, exports, and browser storage in the page. Restore and persist chat
 data through the hook's conversation interface instead of exposing its setters
 and ownership refs. Session status checks and expiry belong to the hook.
+Extract views and reducers when they isolate a cohesive responsibility or remove
+duplicated policy. Include prop plumbing and navigation between files in the
+design cost, and keep related rendering together.
 AI operation state belongs to `ChatLifecycle`. Finish only the operation that
 owns a callback and derive busy/Stop state from its phases. Scope stream callbacks
 to their connection, and scope other async completions to their conversation.

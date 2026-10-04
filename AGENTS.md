@@ -15,6 +15,13 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   environments or running host setup. For a fresh Linux host, run
   `./scripts/setup_env.sh`.
 - Keep edits scoped to the requested module. Preserve existing patterns.
+- Justify refactors with a current problem: duplicated policy, an unprotected
+  invariant, obsolete machinery, or a workflow that is hard to follow. Account
+  for added files, interfaces, state, and callback or prop plumbing.
+- Distinguish organizational extraction from substantive simplification.
+  Smaller files and passing tests alone do not establish a simpler design.
+  Recommend fewer changes when benefits diminish. Do not fill a fixed-size
+  improvement list with speculative cleanup.
 - Run affected tests and lint checks before finishing.
 - Avoid trailing spaces. End files with a newline.
 - Store screenshots and other disposable review output in the Git-ignored

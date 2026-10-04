@@ -73,6 +73,9 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   for agent/session boundaries, terminology, and the selected default tool ports.
   Keep scheduling, sandbox, and HTTP-specific differences explicit in the
   developer guide's Mapping to Pi section.
+  Use Pi alignment to clarify ownership and interfaces. Keep cohesive policy
+  within `Agent` and `AgentSession`. Port additional Pi mechanisms when an
+  existing product requirement needs them.
 - Session transitions are synchronous and owned by the service event loop.
   Start agent runs through `SessionRuns` and keep foreground and background
   execution in `AgentSession.run`. Await owned cleanup before starting the next
