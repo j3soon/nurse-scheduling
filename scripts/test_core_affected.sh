@@ -11,6 +11,7 @@ affected_parse_args "$ROOT_DIR" "$@"
 test_paths=()
 run_full_suite="$affected_full"
 ai_changed=false
+ai_eval_changed=false
 
 if ((${#affected_paths[@]} > 0)); then
   for path in "${affected_paths[@]}"; do
@@ -27,6 +28,10 @@ elif [[ "$run_full_suite" == false ]]; then
         ;;
       nurse_scheduling/ai/* | nurse_scheduling/ai_serve.py)
         ai_changed=true
+        ;;
+      tests/ai_eval/*)
+        ai_changed=true
+        ai_eval_changed=true
         ;;
       nurse_scheduling/* | tests/* | requirements*.txt | pyproject.toml)
         run_full_suite=true
@@ -48,6 +53,10 @@ elif [[ "$run_full_suite" == false ]]; then
     for path in "$CORE_DIR"/tests/test_ai_*.py; do
       [[ -f "$path" ]] && test_paths+=("tests/${path##*/}")
     done
+    # The preference audit also imports the evaluation package.
+    if [[ "$ai_eval_changed" == true && -f "$CORE_DIR/tests/test_preference_audit.py" ]]; then
+      test_paths+=(tests/test_preference_audit.py)
+    fi
   fi
 fi
 
