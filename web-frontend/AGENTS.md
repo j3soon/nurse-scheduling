@@ -96,6 +96,8 @@ Keep connection ownership, cursors, reconnection, and teardown in
 `SessionEventRouter`. Route normalized `SessionEvent` values through one handler.
 Use `SessionEventHandler` directly in browser consumers. Keep callback adaptation
 in the HTTP client boundary for compatibility consumers.
+Page test fixtures should emit typed `SessionEvent` values directly, without
+converting them through legacy callback bundles.
 Apply assistant output from the single session GET stream through
 `applyAssistantEvent`. Route foreground and review events by `run_id`, including
 output that arrives before POST message acceptance is acknowledged. Keep run identity on

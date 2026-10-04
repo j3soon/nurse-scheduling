@@ -22,14 +22,14 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ExperimentalAiPage from './page';
-import type { StreamCallbacks } from './aiClient';
+import type { SessionEvent, SessionEventHandler, SessionStreamOptions } from './sessionEvents';
 
 const mockCreateSession = vi.hoisted(() => vi.fn());
 const mockDownloadOptimization = vi.hoisted(() => vi.fn());
 const mockGetBackendVersion = vi.hoisted(() => vi.fn());
 const mockGetCapabilities = vi.hoisted(() => vi.fn());
 const mockGetSessionStatus = vi.hoisted(() => vi.fn());
-const mockStreamMessage = vi.hoisted(() => vi.fn());
+const mockRunEvents = vi.hoisted(() => vi.fn());
 const mockSendMessage = vi.hoisted(() => vi.fn());
 const mockStreamSessionEvents = vi.hoisted(() => vi.fn());
 const mockStopSession = vi.hoisted(() => vi.fn());
@@ -73,15 +73,7 @@ vi.mock('./aiClient', async importOriginal => {
   ),
   queueMessage: mockQueueMessage,
   sendMessage: mockSendMessage,
-  streamSessionEvents: (id: string, options: import('./sessionEvents').SessionStreamOptions, ...args: unknown[]) => {
-    const { sessionEventCallbacks } = awaitClient;
-    return mockStreamSessionEvents(id, {
-      ...sessionEventCallbacks(options.onEvent),
-      lastEventId: options.lastEventId,
-      onEventId: options.onEventId,
-      forRun: (runId: string) => sessionEventCallbacks(options.onEvent, runId),
-    }, ...args);
-  },
+  streamSessionEvents: mockStreamSessionEvents,
   stopSession: mockStopSession,
   approveProposal: mockApproveProposal,
   rejectProposal: mockRejectProposal,
@@ -122,6 +114,16 @@ const defaultCapabilities = {
   },
 };
 
+function runEvents(stream: SessionStreamOptions | undefined, runId: string): SessionStreamOptions | undefined {
+  if (!stream) return undefined;
+  return {
+    onEvent: (event: SessionEvent) => {
+      if (event.type !== 'session_reset') stream.onEvent({ type: 'run_context', runId });
+      stream.onEvent({ ...event, runId });
+    },
+  };
+}
+
 describe('ExperimentalAiPage', () => {
   let pendingForegroundRunId: string | null = null;
   beforeEach(() => {
@@ -133,36 +135,35 @@ describe('ExperimentalAiPage', () => {
     mockGetCapabilities.mockReset().mockResolvedValue(defaultCapabilities);
     mockGetBackendVersion.mockReset().mockResolvedValue('v0.4.3');
     mockGetSessionStatus.mockReset().mockResolvedValue(172800);
-    mockStreamMessage.mockReset().mockImplementation(async (
+    mockRunEvents.mockReset().mockImplementation(async (
       _sessionId: string,
       _message: string,
-      callbacks: { onDelta: (text: string) => void },
+      callbacks: SessionStreamOptions,
     ) => {
-      callbacks.onDelta('Alice');
-      callbacks.onDelta(' works Monday.');
+      callbacks.onEvent({ type: 'delta', text: 'Alice' });
+      callbacks.onEvent({ type: 'delta', text: ' works Monday.' });
     });
     mockStreamSessionEvents.mockReset().mockImplementation(() => new Promise<void>(() => {}));
-    // Existing UI scenarios describe run callbacks. Deliver them through the
-    // session stream while the POST returns only its message acknowledgement.
+    // Run fixtures publish normalized events while POST returns only its acknowledgement.
     mockSendMessage.mockReset().mockImplementation(async (id, message, signal, token, attachments, endpoint) => {
-      const stream = mockStreamSessionEvents.mock.calls.at(-1)?.[1] as StreamCallbacks;
+      const stream = mockStreamSessionEvents.mock.calls.at(-1)?.[1] as SessionStreamOptions;
       const runId = `user-run-${mockSendMessage.mock.calls.length}`;
       pendingForegroundRunId = runId;
-      const callbacks = stream.forRun!(runId, 'user')!;
-      void Promise.resolve(mockStreamMessage(id, message, callbacks, signal, token, attachments, endpoint))
+      const callbacks = runEvents(stream, runId)!;
+      void Promise.resolve(mockRunEvents(id, message, callbacks, signal, token, attachments, endpoint))
         .then(() => {
           if (pendingForegroundRunId === runId) pendingForegroundRunId = null;
-          callbacks.onDone?.(runId);
+          callbacks.onEvent({ type: 'done', runId });
         }, (error: Error) => {
           if (pendingForegroundRunId === runId) pendingForegroundRunId = null;
-          if (error instanceof MockAiStaleRunError) callbacks.onStale?.(error.message);
-          else callbacks.onError?.(error.message);
+          if (error instanceof MockAiStaleRunError) callbacks.onEvent({ type: 'stale', message: error.message });
+          else callbacks.onEvent({ type: 'error', message: error.message });
         });
       return runId;
     });
     mockStopSession.mockReset().mockImplementation(async () => {
-      const stream = mockStreamSessionEvents.mock.calls.at(-1)?.[1] as StreamCallbacks | undefined;
-      if (pendingForegroundRunId) stream?.forRun?.(pendingForegroundRunId)?.onStopped?.();
+      const stream = mockStreamSessionEvents.mock.calls.at(-1)?.[1] as SessionStreamOptions | undefined;
+      if (pendingForegroundRunId) runEvents(stream, pendingForegroundRunId)?.onEvent({ type: 'stopped' });
     });
     mockGenerateYaml.mockClear();
     mockApproveProposal.mockReset().mockResolvedValue('description: proposed schedule\n');
@@ -213,7 +214,7 @@ describe('ExperimentalAiPage', () => {
     const userTime = screen.getByText('Who works Monday?').closest('article')?.querySelector('time');
     expect(userTime).toHaveAttribute('title', new Date(userTime!.dateTime).toLocaleString());
     expect(mockCreateSession).toHaveBeenCalledWith('description: current schedule\n', null, '/ai');
-    expect(mockStreamMessage).toHaveBeenCalledWith(
+    expect(mockRunEvents).toHaveBeenCalledWith(
       'session-id',
       'Who works Monday?',
       expect.any(Object),
@@ -263,9 +264,9 @@ describe('ExperimentalAiPage', () => {
 
   it('shows the server history budget below the composer and clears it for a new chat', async () => {
     const user = userEvent.setup();
-    mockStreamMessage.mockImplementationOnce(async (_id, _message, callbacks) => {
-      callbacks.onContextUsage({ usedChars: 500, maxChars: 2000 });
-      callbacks.onDelta('Done.');
+    mockRunEvents.mockImplementationOnce(async (_id, _message, callbacks) => {
+      callbacks.onEvent({ type: 'context_usage', usage: { usedChars: 500, maxChars: 2000 } });
+      callbacks.onEvent({ type: 'delta', text: 'Done.' });
     });
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     render(<ExperimentalAiPage />);
@@ -441,14 +442,14 @@ describe('ExperimentalAiPage', () => {
 
   it('debounces streamed transcript writes and flushes the latest text on page hide', async () => {
     const user = userEvent.setup();
-    let onDelta: ((text: string) => void) | undefined;
+    let emit: SessionEventHandler | undefined;
     let finishStream: (() => void) | undefined;
-    mockStreamMessage.mockImplementationOnce(async (
+    mockRunEvents.mockImplementationOnce(async (
       _sessionId: string,
       _message: string,
-      callbacks: { onDelta: (text: string) => void },
+      callbacks: SessionStreamOptions,
     ) => {
-      onDelta = callbacks.onDelta;
+      emit = callbacks.onEvent;
       await new Promise<void>(resolve => {
         finishStream = resolve;
       });
@@ -456,11 +457,11 @@ describe('ExperimentalAiPage', () => {
     render(<ExperimentalAiPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
-    await waitFor(() => expect(onDelta).toBeDefined());
+    await waitFor(() => expect(emit).toBeDefined());
     const writeConversation = vi.spyOn(Storage.prototype, 'setItem');
 
-    act(() => onDelta?.('First'));
-    act(() => onDelta?.(' second'));
+    act(() => emit?.({ type: 'delta', text: 'First' }));
+    act(() => emit?.({ type: 'delta', text: ' second' }));
     expect(writeConversation).not.toHaveBeenCalled();
 
     act(() => window.dispatchEvent(new Event('pagehide')));
@@ -472,19 +473,7 @@ describe('ExperimentalAiPage', () => {
 
   it('renders an assistant turn when background optimization wakes the agent', async () => {
     const user = userEvent.setup();
-    let backgroundCallbacks: {
-      onRunStart?: (messageId: string, trigger: string) => void;
-      onDelta: (text: string) => void;
-      onToolStart?: (activity: { name: string; arguments: string }) => void;
-      onTool?: (activity: { name: string; arguments: string; result: string; ok: boolean }) => void;
-      onOptimization?: (activity: import('./aiClient').OptimizationActivity) => void;
-      onOptimizationProgress?: (activity: {
-        jobId: string;
-        point: { currentBestScore: number; elapsedSeconds: number };
-      }) => void;
-      onDone?: () => void;
-      onEventId?: (id: number) => void;
-    } | undefined;
+    let backgroundCallbacks: SessionStreamOptions | undefined;
     mockStreamSessionEvents.mockImplementation(async (
       _sessionId: string,
       callbacks: typeof backgroundCallbacks,
@@ -498,27 +487,27 @@ describe('ExperimentalAiPage', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
 
-    act(() => backgroundCallbacks?.onOptimization?.({
+    act(() => backgroundCallbacks?.onEvent({ type: 'optimization', activity: {
       jobId: 'opt-result-1',
       state: 'running',
       terminal: false,
       downloadable: false,
-    }));
+    } }));
     expect(screen.getByRole('status')).toHaveTextContent('Optimizer running in the background · running');
 
     act(() => {
-      backgroundCallbacks?.onOptimizationProgress?.({
+      backgroundCallbacks?.onEvent({ type: 'optimization_progress', activity: {
         jobId: 'opt-result-1', point: { currentBestScore: 12, elapsedSeconds: 1 },
-      });
-      backgroundCallbacks?.onOptimizationProgress?.({
+      } });
+      backgroundCallbacks?.onEvent({ type: 'optimization_progress', activity: {
         jobId: 'opt-result-1', point: { currentBestScore: 23, elapsedSeconds: 2 },
-      });
+      } });
     });
     expect(screen.getByText('Score 23')).toBeInTheDocument();
     expect(screen.getByRole('img', { name: 'Optimization score trend' })).toBeInTheDocument();
 
     act(() => {
-      backgroundCallbacks?.onOptimization?.({
+      backgroundCallbacks?.onEvent({ type: 'optimization', activity: {
         jobId: 'opt-result-1',
         state: 'completed',
         terminal: true,
@@ -528,9 +517,9 @@ describe('ExperimentalAiPage', () => {
         request: { solver: 'ortools/cp-sat', timeoutSeconds: 300 },
         backend: { url: 'http://optimizer:8000', appVersion: 'v0.4.3', requestTimeoutSeconds: 30,
           claimedPerformance: { score: 125, appVersion: 'v0.4.2', measuredAt: '2026-09-18T01:00:00Z' } },
-      });
-      backgroundCallbacks?.onRunStart?.('optimizer-turn', 'optimizer');
-      backgroundCallbacks?.onToolStart?.({ name: 'bash', arguments: '{"command":"echo ready"}' });
+      } });
+      backgroundCallbacks?.onEvent({ type: 'run_start', runId: 'optimizer-turn', trigger: 'optimizer' });
+      backgroundCallbacks?.onEvent({ type: 'tool_start', activity: { name: 'bash', arguments: '{"command":"echo ready"}' } });
     });
     expect(screen.getByText('Background tool running · bash')).toBeInTheDocument();
     expect(screen.getByText('bash · running')).toBeInTheDocument();
@@ -539,9 +528,9 @@ describe('ExperimentalAiPage', () => {
     expect(screen.queryByText('bash · running')).not.toBeInTheDocument();
 
     act(() => {
-      backgroundCallbacks?.onTool?.({ name: 'bash', arguments: '{"command":"echo ready"}', result: 'ready', ok: true });
-      backgroundCallbacks?.onDelta('The optimizer returned score 23.');
-      backgroundCallbacks?.onDone?.();
+      backgroundCallbacks?.onEvent({ type: 'tool', activity: { name: 'bash', arguments: '{"command":"echo ready"}', result: 'ready', ok: true } });
+      backgroundCallbacks?.onEvent({ type: 'delta', text: 'The optimizer returned score 23.' });
+      backgroundCallbacks?.onEvent({ type: 'done' });
       backgroundCallbacks?.onEventId?.(4);
     });
 
@@ -623,10 +612,7 @@ describe('ExperimentalAiPage', () => {
 
   it('renders a replayed background turn that lost its start event', async () => {
     const user = userEvent.setup();
-    let backgroundCallbacks: {
-      onDelta: (text: string) => void;
-      onDone?: () => void;
-    } | undefined;
+    let backgroundCallbacks: SessionStreamOptions | undefined;
     mockStreamSessionEvents.mockImplementation(async (
       _sessionId: string,
       callbacks: typeof backgroundCallbacks,
@@ -642,8 +628,8 @@ describe('ExperimentalAiPage', () => {
 
     // The bounded replay buffer dropped run_start before this reconnect.
     act(() => {
-      backgroundCallbacks?.onDelta('The optimizer returned score 23.');
-      backgroundCallbacks?.onDone?.();
+      backgroundCallbacks?.onEvent({ type: 'delta', text: 'The optimizer returned score 23.' });
+      backgroundCallbacks?.onEvent({ type: 'done' });
     });
 
     expect(screen.getByText('The optimizer returned score 23.')).toBeInTheDocument();
@@ -652,11 +638,7 @@ describe('ExperimentalAiPage', () => {
 
   it('ends a stale background turn instead of leaving it pending', async () => {
     const user = userEvent.setup();
-    let backgroundCallbacks: {
-      onRunStart?: (messageId: string, trigger: string) => void;
-      onDelta: (text: string) => void;
-      onStale?: (message: string) => void;
-    } | undefined;
+    let backgroundCallbacks: SessionStreamOptions | undefined;
     mockStreamSessionEvents.mockImplementation(async (
       _sessionId: string,
       callbacks: typeof backgroundCallbacks,
@@ -671,9 +653,9 @@ describe('ExperimentalAiPage', () => {
     await screen.findByText('Alice works Monday.');
 
     act(() => {
-      backgroundCallbacks?.onRunStart?.('optimizer-turn', 'optimizer');
-      backgroundCallbacks?.onDelta('Obsolete partial answer.');
-      backgroundCallbacks?.onStale?.('The schedule changed while this response was generated.');
+      backgroundCallbacks?.onEvent({ type: 'run_start', runId: 'optimizer-turn', trigger: 'optimizer' });
+      backgroundCallbacks?.onEvent({ type: 'delta', text: 'Obsolete partial answer.' });
+      backgroundCallbacks?.onEvent({ type: 'stale', message: 'The schedule changed while this response was generated.' });
     });
 
     expect(screen.getByRole('alert')).toHaveTextContent('The schedule changed while this response was generated.');
@@ -682,11 +664,7 @@ describe('ExperimentalAiPage', () => {
   });
 
   it.each(['done', 'stopped'] as const)('reconciles a replayed %s event with a restored background message', async event => {
-    let backgroundCallbacks: {
-      onDelta: (text: string) => void;
-      onDone?: (messageId?: string) => void;
-      onStopped?: (messageId?: string) => void;
-    } | undefined;
+    let backgroundCallbacks: SessionStreamOptions | undefined;
     mockStreamSessionEvents.mockImplementation(async (
       _sessionId: string,
       callbacks: typeof backgroundCallbacks,
@@ -708,8 +686,8 @@ describe('ExperimentalAiPage', () => {
     render(<ExperimentalAiPage />);
     await waitFor(() => expect(backgroundCallbacks).toBeDefined());
     act(() => {
-      if (event === 'done') backgroundCallbacks?.onDone?.('optimizer-turn');
-      else backgroundCallbacks?.onStopped?.('optimizer-turn');
+      if (event === 'done') backgroundCallbacks?.onEvent({ type: 'done', runId: 'optimizer-turn' });
+      else backgroundCallbacks?.onEvent({ type: 'stopped', runId: 'optimizer-turn' });
     });
     act(() => window.dispatchEvent(new Event('pagehide')));
 
@@ -732,7 +710,7 @@ describe('ExperimentalAiPage', () => {
 
   it('warns once the assistant stops receiving the oldest messages', async () => {
     const user = userEvent.setup();
-    let backgroundCallbacks: { onHistoryTrimmed?: (dropped: number) => void } | undefined;
+    let backgroundCallbacks: SessionStreamOptions | undefined;
     mockStreamSessionEvents.mockImplementation(async (
       _sessionId: string,
       callbacks: typeof backgroundCallbacks,
@@ -747,7 +725,7 @@ describe('ExperimentalAiPage', () => {
     await screen.findByText('Alice works Monday.');
     expect(screen.queryByText(/no longer sent to the assistant/)).not.toBeInTheDocument();
 
-    act(() => backgroundCallbacks?.onHistoryTrimmed?.(4));
+    act(() => backgroundCallbacks?.onEvent({ type: 'history_trimmed', dropped: 4 }));
 
     expect(screen.getByText(/4 oldest messages are/)).toBeInTheDocument();
     expect(screen.getByText(/no longer sent to the assistant/)).toBeInTheDocument();
@@ -800,18 +778,7 @@ describe('ExperimentalAiPage', () => {
 
   it('bounds the persisted optimizer progress history during a long run', async () => {
     const user = userEvent.setup();
-    let backgroundCallbacks: {
-      onOptimization?: (activity: {
-        jobId: string;
-        state: string;
-        terminal: boolean;
-        downloadable: boolean;
-      }) => void;
-      onOptimizationProgress?: (activity: {
-        jobId: string;
-        point: { currentBestScore: number; elapsedSeconds: number };
-      }) => void;
-    } | undefined;
+    let backgroundCallbacks: SessionStreamOptions | undefined;
     mockStreamSessionEvents.mockImplementation(async (
       _sessionId: string,
       callbacks: typeof backgroundCallbacks,
@@ -826,16 +793,16 @@ describe('ExperimentalAiPage', () => {
     await screen.findByText('Alice works Monday.');
 
     act(() => {
-      backgroundCallbacks?.onOptimization?.({
+      backgroundCallbacks?.onEvent({ type: 'optimization', activity: {
         jobId: 'opt-long-run',
         state: 'running',
         terminal: false,
         downloadable: false,
-      });
+      } });
       for (let index = 0; index < 1200; index += 1) {
-        backgroundCallbacks?.onOptimizationProgress?.({
+        backgroundCallbacks?.onEvent({ type: 'optimization_progress', activity: {
           jobId: 'opt-long-run', point: { currentBestScore: index, elapsedSeconds: index },
-        });
+        } });
       }
     });
     act(() => window.dispatchEvent(new Event('pagehide')));
@@ -849,10 +816,7 @@ describe('ExperimentalAiPage', () => {
   });
 
   it('continues a restored background message when replay resumes without a turn start', async () => {
-    let backgroundCallbacks: {
-      onDelta: (text: string) => void;
-      onDone?: (messageId?: string) => void;
-    } | undefined;
+    let backgroundCallbacks: SessionStreamOptions | undefined;
     mockStreamSessionEvents.mockImplementation(async (
       _sessionId: string,
       callbacks: typeof backgroundCallbacks,
@@ -874,8 +838,8 @@ describe('ExperimentalAiPage', () => {
 
     render(<ExperimentalAiPage />);
     await waitFor(() => expect(backgroundCallbacks).toBeDefined());
-    act(() => backgroundCallbacks?.onDelta?.('answer.'));
-    act(() => backgroundCallbacks?.onDone?.('optimizer-turn'));
+    act(() => backgroundCallbacks?.onEvent({ type: 'delta', text: 'answer.' }));
+    act(() => backgroundCallbacks?.onEvent({ type: 'done', runId: 'optimizer-turn' }));
     act(() => window.dispatchEvent(new Event('pagehide')));
 
     const stored = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
@@ -902,8 +866,8 @@ describe('ExperimentalAiPage', () => {
     expect(signal.aborted).toBe(false);
     await act(async () => accept?.('accepted'));
     await waitFor(() => expect(mockStopSession).toHaveBeenCalledTimes(2));
-    const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as StreamCallbacks;
-    act(() => stream.forRun?.('accepted')?.onStopped?.('accepted'));
+    const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
+    act(() => runEvents(stream, 'accepted')?.onEvent({ type: 'stopped', runId: 'accepted' }));
     expect(await screen.findByText('Stopped before completion.')).toBeInTheDocument();
   });
 
@@ -917,22 +881,22 @@ describe('ExperimentalAiPage', () => {
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Wait');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(accept).toBeDefined());
-    const stream = mockStreamSessionEvents.mock.calls[0][1] as StreamCallbacks;
+    const stream = mockStreamSessionEvents.mock.calls[0][1] as SessionStreamOptions;
     act(() => {
-      const review = stream.forRun?.('review', 'optimizer');
-      review?.onRunStart?.('review', 'optimizer');
-      review?.onDelta('Earlier review.');
-      review?.onDone?.('review');
+      const review = runEvents(stream, 'review');
+      review?.onEvent({ type: 'run_start', runId: 'review', trigger: 'optimizer' });
+      review?.onEvent({ type: 'delta', text: 'Earlier review.' });
+      review?.onEvent({ type: 'done', runId: 'review' });
       stream.onEventId?.(3);
       disconnect?.();
     });
     await waitFor(() => expect(mockStreamSessionEvents).toHaveBeenCalledTimes(2), { timeout: 4000 });
     await act(async () => accept?.('accepted'));
     expect(screen.getByText('Earlier review.')).toBeInTheDocument();
-    const next = mockStreamSessionEvents.mock.calls[1][1] as StreamCallbacks;
+    const next = mockStreamSessionEvents.mock.calls[1][1] as SessionStreamOptions;
     act(() => {
-      next.forRun?.('accepted')?.onDelta('Current answer.');
-      next.forRun?.('accepted')?.onDone?.('accepted');
+      runEvents(next, 'accepted')?.onEvent({ type: 'delta', text: 'Current answer.' });
+      runEvents(next, 'accepted')?.onEvent({ type: 'done', runId: 'accepted' });
     });
     expect(await screen.findByText('Current answer.')).toBeInTheDocument();
   });
@@ -940,14 +904,14 @@ describe('ExperimentalAiPage', () => {
   it('routes a terminal event received before the message acknowledgement to its foreground answer', async () => {
     const user = userEvent.setup();
     mockSendMessage.mockImplementationOnce(async () => {
-      const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as StreamCallbacks;
-      const previous = stream.forRun!('previous', 'optimizer')!;
-      previous.onRunStart?.('previous', 'optimizer');
-      previous.onDelta('Previous review.');
-      previous.onDone?.('previous');
-      const foreground = stream.forRun!('accepted', 'user')!;
-      foreground.onDelta('Fast answer.');
-      foreground.onDone?.('accepted');
+      const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
+      const previous = runEvents(stream, 'previous')!;
+      previous.onEvent({ type: 'run_start', runId: 'previous', trigger: 'optimizer' });
+      previous.onEvent({ type: 'delta', text: 'Previous review.' });
+      previous.onEvent({ type: 'done', runId: 'previous' });
+      const foreground = runEvents(stream, 'accepted')!;
+      foreground.onEvent({ type: 'delta', text: 'Fast answer.' });
+      foreground.onEvent({ type: 'done', runId: 'accepted' });
       return 'accepted';
     });
     render(<ExperimentalAiPage />);
@@ -961,25 +925,24 @@ describe('ExperimentalAiPage', () => {
 
   it('rebuilds matching foreground output from recovery without repeating its partial answer', async () => {
     const user = userEvent.setup();
-    let callbacks: StreamCallbacks | undefined;
-    mockStreamMessage.mockImplementationOnce(async (_id, _message, target) => {
+    let callbacks: SessionStreamOptions | undefined;
+    mockRunEvents.mockImplementationOnce(async (_id, _message, target) => {
       callbacks = target;
-      target.onDelta('Partial');
+      target.onEvent({ type: 'delta', text: 'Partial' });
       await new Promise<void>(() => {});
     });
     render(<ExperimentalAiPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Explain');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Partial');
-    const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as StreamCallbacks;
+    const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
     const reset = { runIds: ['user-run-1'], activeRunId: 'user-run-1', terminalRunIds: [], incomplete: false, proposalDiff: null };
     act(() => {
-      stream.onReset?.(reset);
-      callbacks?.onReset?.(reset);
-      callbacks?.onDelta('Partial answer recovered.');
-      callbacks?.onSteering?.('recovered-input', 'Focus on Tuesday.');
-      callbacks?.onDelta('Tuesday recovered.');
-      callbacks?.onDone?.('user-run-1');
+      stream.onEvent({ type: 'session_reset', reset });
+      callbacks?.onEvent({ type: 'delta', text: 'Partial answer recovered.' });
+      callbacks?.onEvent({ type: 'steering', messageId: 'recovered-input', message: 'Focus on Tuesday.' });
+      callbacks?.onEvent({ type: 'delta', text: 'Tuesday recovered.' });
+      callbacks?.onEvent({ type: 'done', runId: 'user-run-1' });
     });
     expect(await screen.findByText('Partial answer recovered.')).toBeInTheDocument();
     expect(screen.queryByText('Partial')).not.toBeInTheDocument();
@@ -994,14 +957,14 @@ describe('ExperimentalAiPage', () => {
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Explain');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
-    const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as StreamCallbacks;
+    const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
     act(() => {
-      stream.onReset?.({ runIds: ['user-run-1'], activeRunId: null, terminalRunIds: ['user-run-1'], incomplete: false, proposalDiff: null });
-      stream.onRunStart?.('user-run-1', 'user');
-      stream.onDelta('Alice works Monday.');
-      stream.onSteering?.('queued', 'Compare Tuesday.');
-      stream.onDelta('Tuesday is free.');
-      stream.onDone?.('user-run-1');
+      stream.onEvent({ type: 'session_reset', reset: { runIds: ['user-run-1'], activeRunId: null, terminalRunIds: ['user-run-1'], incomplete: false, proposalDiff: null } });
+      stream.onEvent({ type: 'run_start', runId: 'user-run-1', trigger: 'user' });
+      stream.onEvent({ type: 'delta', text: 'Alice works Monday.' });
+      stream.onEvent({ type: 'steering', messageId: 'queued', message: 'Compare Tuesday.' });
+      stream.onEvent({ type: 'delta', text: 'Tuesday is free.' });
+      stream.onEvent({ type: 'done', runId: 'user-run-1' });
     });
     expect(screen.getAllByText('Alice works Monday.')).toHaveLength(1);
     expect(screen.getByText('Compare Tuesday.')).toBeInTheDocument();
@@ -1010,20 +973,20 @@ describe('ExperimentalAiPage', () => {
 
   it('keeps a foreground response active when an older background completion is replayed', async () => {
     const user = userEvent.setup();
-    let background: StreamCallbacks | undefined;
+    let background: SessionStreamOptions | undefined;
     let finishForeground: (() => void) | undefined;
     mockStreamSessionEvents.mockImplementation(async (_id, callbacks) => {
       background = callbacks;
       await new Promise<void>(() => {});
     });
-    mockStreamMessage.mockImplementation(async () => {
+    mockRunEvents.mockImplementation(async () => {
       await new Promise<void>(resolve => { finishForeground = resolve; });
     });
     render(<ExperimentalAiPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Keep working');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(finishForeground).toBeDefined());
-    act(() => background?.onDone?.('previous-turn'));
+    act(() => background?.onEvent({ type: 'done', runId: 'previous-turn' }));
     expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled();
     await act(async () => finishForeground?.());
     expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
@@ -1031,7 +994,7 @@ describe('ExperimentalAiPage', () => {
 
   it('sends queued input after a background review finishes', async () => {
     const user = userEvent.setup();
-    let background: StreamCallbacks | undefined;
+    let background: SessionStreamOptions | undefined;
     mockStreamSessionEvents.mockImplementation(async (_id, callbacks) => {
       background = callbacks;
       await new Promise<void>(() => {});
@@ -1042,19 +1005,19 @@ describe('ExperimentalAiPage', () => {
     await user.type(input, 'Optimize');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
-    act(() => background?.onRunStart?.('review', 'optimizer'));
+    act(() => background?.onEvent({ type: 'run_start', runId: 'review', trigger: 'optimizer' }));
     await user.type(input, 'Explain the result');
     fireEvent.submit(input.closest('form')!);
     await waitFor(() => expect(mockQueueMessage).toHaveBeenCalledOnce());
-    expect(mockStreamMessage).toHaveBeenCalledOnce();
-    act(() => background?.onDone?.('review'));
-    await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(2));
-    expect(mockStreamMessage.mock.calls[1][1]).toBe('Explain the result');
+    expect(mockRunEvents).toHaveBeenCalledOnce();
+    act(() => background?.onEvent({ type: 'done', runId: 'review' }));
+    await waitFor(() => expect(mockRunEvents).toHaveBeenCalledTimes(2));
+    expect(mockRunEvents.mock.calls[1][1]).toBe('Explain the result');
   });
 
   it('ignores output and proposals from the previous conversation stream', async () => {
     const user = userEvent.setup();
-    let background: StreamCallbacks | undefined;
+    let background: SessionStreamOptions | undefined;
     mockStreamSessionEvents.mockImplementation(async (_id, callbacks) => {
       background = callbacks;
       await new Promise<void>(() => {});
@@ -1066,9 +1029,9 @@ describe('ExperimentalAiPage', () => {
     await screen.findByText('Alice works Monday.');
     await user.click(screen.getByRole('button', { name: 'Start new chat' }));
     act(() => {
-      background?.onRunStart?.('old', 'optimizer');
-      background?.onDelta('Leaked old answer');
-      background?.onProposal?.('Old proposal');
+      background?.onEvent({ type: 'run_start', runId: 'old', trigger: 'optimizer' });
+      background?.onEvent({ type: 'delta', text: 'Leaked old answer' });
+      background?.onEvent({ type: 'proposal', diff: 'Old proposal' });
       background?.onEventId?.(900);
     });
     expect(screen.queryByText('Leaked old answer')).not.toBeInTheDocument();
@@ -1078,11 +1041,7 @@ describe('ExperimentalAiPage', () => {
 
   it('stops a background assistant turn through the session endpoint', async () => {
     const user = userEvent.setup();
-    let backgroundCallbacks: {
-      onRunStart?: (messageId: string, trigger: string) => void;
-      onDelta: (text: string) => void;
-      onStopped?: () => void;
-    } | undefined;
+    let backgroundCallbacks: SessionStreamOptions | undefined;
     mockStreamSessionEvents.mockImplementation(async (
       _sessionId: string,
       callbacks: typeof backgroundCallbacks,
@@ -1095,11 +1054,11 @@ describe('ExperimentalAiPage', () => {
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
-    act(() => backgroundCallbacks?.onRunStart?.('optimizer-turn', 'optimizer'));
+    act(() => backgroundCallbacks?.onEvent({ type: 'run_start', runId: 'optimizer-turn', trigger: 'optimizer' }));
 
     await user.click(screen.getByRole('button', { name: 'Stop' }));
     expect(mockStopSession).toHaveBeenCalledWith('session-id', null, '/ai');
-    act(() => backgroundCallbacks?.onStopped?.());
+    act(() => backgroundCallbacks?.onEvent({ type: 'stopped' }));
 
     expect(screen.getByText('Stopped before completion.')).toBeInTheDocument();
     expect(screen.queryByText('Stopped.')).not.toBeInTheDocument();
@@ -1110,13 +1069,7 @@ describe('ExperimentalAiPage', () => {
     'keeps Stop pending until a background turn reports %s',
     async outcome => {
       const user = userEvent.setup();
-      let backgroundCallbacks: {
-        onRunStart?: (messageId: string, trigger: string) => void;
-        onDelta: (text: string) => void;
-        onDone?: (messageId?: string) => void;
-        onStale?: (message: string) => void;
-        onError?: (message: string) => void;
-      } | undefined;
+      let backgroundCallbacks: SessionStreamOptions | undefined;
       mockStreamSessionEvents.mockImplementation(async (
         _sessionId: string,
         callbacks: typeof backgroundCallbacks,
@@ -1129,7 +1082,7 @@ describe('ExperimentalAiPage', () => {
       await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
       await user.click(screen.getByRole('button', { name: 'Send' }));
       await screen.findByText('Alice works Monday.');
-      act(() => backgroundCallbacks?.onRunStart?.('optimizer-turn', 'optimizer'));
+      act(() => backgroundCallbacks?.onEvent({ type: 'run_start', runId: 'optimizer-turn', trigger: 'optimizer' }));
 
       await user.click(screen.getByRole('button', { name: 'Stop' }));
       expect(mockStopSession).toHaveBeenCalledWith('session-id', null, '/ai');
@@ -1138,15 +1091,15 @@ describe('ExperimentalAiPage', () => {
       expect(screen.getByRole('button', { name: 'Stop' })).toBeDisabled();
 
       act(() => {
-        if (outcome === 'done') backgroundCallbacks?.onDone?.('optimizer-turn');
-        else if (outcome === 'stale') backgroundCallbacks?.onStale?.('This chat became stale.');
-        else backgroundCallbacks?.onError?.('The AI response failed.');
+        if (outcome === 'done') backgroundCallbacks?.onEvent({ type: 'done', runId: 'optimizer-turn' });
+        else if (outcome === 'stale') backgroundCallbacks?.onEvent({ type: 'stale', message: 'This chat became stale.' });
+        else backgroundCallbacks?.onEvent({ type: 'error', message: 'The AI response failed.' });
       });
 
       expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
 
       // A run that ended any other way must not leave the next one unable to stop.
-      act(() => backgroundCallbacks?.onRunStart?.('optimizer-turn-2', 'optimizer'));
+      act(() => backgroundCallbacks?.onEvent({ type: 'run_start', runId: 'optimizer-turn-2', trigger: 'optimizer' }));
       expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled();
     },
   );
@@ -1154,10 +1107,7 @@ describe('ExperimentalAiPage', () => {
   it('re-enables Stop when the stop request itself fails', async () => {
     const user = userEvent.setup();
     mockStopSession.mockRejectedValue(new Error('network down'));
-    let backgroundCallbacks: {
-      onRunStart?: (messageId: string, trigger: string) => void;
-      onDelta: (text: string) => void;
-    } | undefined;
+    let backgroundCallbacks: SessionStreamOptions | undefined;
     mockStreamSessionEvents.mockImplementation(async (
       _sessionId: string,
       callbacks: typeof backgroundCallbacks,
@@ -1170,7 +1120,7 @@ describe('ExperimentalAiPage', () => {
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
-    act(() => backgroundCallbacks?.onRunStart?.('optimizer-turn', 'optimizer'));
+    act(() => backgroundCallbacks?.onEvent({ type: 'run_start', runId: 'optimizer-turn', trigger: 'optimizer' }));
 
     await user.click(screen.getByRole('button', { name: 'Stop' }));
     await act(async () => {});
@@ -1377,21 +1327,15 @@ describe('ExperimentalAiPage', () => {
 
   it('shows all steering messages before one assistant response without empty turns', async () => {
     const user = userEvent.setup();
-    let callbacks: {
-      onSteering?: (messageId: string, message: string) => void;
-      onToolStart?: (activity: { name: string; arguments: string }) => void;
-    } | undefined;
+    let callbacks: SessionStreamOptions | undefined;
     let finishStream: (() => void) | undefined;
-    mockStreamMessage.mockImplementationOnce(async (
+    mockRunEvents.mockImplementationOnce(async (
       _sessionId: string,
       _message: string,
-      streamCallbacks: {
-        onSteering?: (messageId: string, message: string) => void;
-        onToolStart?: (activity: { name: string; arguments: string }) => void;
-      },
+      streamCallbacks: SessionStreamOptions,
     ) => {
       callbacks = streamCallbacks;
-      streamCallbacks.onToolStart?.({ name: 'read', arguments: '{}' });
+      streamCallbacks.onEvent({ type: 'tool_start', activity: { name: 'read', arguments: '{}' } });
       await new Promise<void>(resolve => {
         finishStream = resolve;
       });
@@ -1402,7 +1346,7 @@ describe('ExperimentalAiPage', () => {
     await user.type(draft, 'Inspect P1.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(callbacks).toBeDefined());
-    const activeSignal = mockStreamMessage.mock.calls[0][3] as AbortSignal;
+    const activeSignal = mockRunEvents.mock.calls[0][3] as AbortSignal;
     await user.type(draft, 'Focus on P2 instead.');
     const queueButton = screen.getByRole('button', { name: 'Queue message' });
     expect(queueButton).toHaveTextContent('');
@@ -1417,8 +1361,8 @@ describe('ExperimentalAiPage', () => {
     const firstQueuedId = mockQueueMessage.mock.calls[0][1] as string;
     const secondQueuedId = mockQueueMessage.mock.calls[1][1] as string;
     act(() => {
-      callbacks?.onSteering?.(firstQueuedId, 'Focus on P2 instead.');
-      callbacks?.onSteering?.(secondQueuedId, 'Also compare P3.');
+      callbacks?.onEvent({ type: 'steering', messageId: firstQueuedId, message: 'Focus on P2 instead.' });
+      callbacks?.onEvent({ type: 'steering', messageId: secondQueuedId, message: 'Also compare P3.' });
     });
 
     expect(screen.queryByText('Queued for steering')).not.toBeInTheDocument();
@@ -1443,12 +1387,12 @@ describe('ExperimentalAiPage', () => {
     const user = userEvent.setup();
     let sendDelta: ((text: string) => void) | undefined;
     let finishStream: (() => void) | undefined;
-    mockStreamMessage.mockImplementationOnce(async (
+    mockRunEvents.mockImplementationOnce(async (
       _sessionId: string,
       _message: string,
-      callbacks: { onDelta: (text: string) => void },
+      callbacks: SessionStreamOptions,
     ) => {
-      sendDelta = callbacks.onDelta;
+      sendDelta = text => callbacks.onEvent({ type: 'delta', text });
       await new Promise<void>(resolve => {
         finishStream = resolve;
       });
@@ -1489,12 +1433,12 @@ describe('ExperimentalAiPage', () => {
     const user = userEvent.setup();
     let sendDelta: ((text: string) => void) | undefined;
     let finishStream: (() => void) | undefined;
-    mockStreamMessage.mockImplementationOnce(async (
+    mockRunEvents.mockImplementationOnce(async (
       _sessionId: string,
       _message: string,
-      callbacks: { onDelta: (text: string) => void },
+      callbacks: SessionStreamOptions,
     ) => {
-      sendDelta = callbacks.onDelta;
+      sendDelta = text => callbacks.onEvent({ type: 'delta', text });
       await new Promise<void>(resolve => {
         finishStream = resolve;
       });
@@ -1535,12 +1479,12 @@ describe('ExperimentalAiPage', () => {
     const user = userEvent.setup();
     let sendDelta: ((text: string) => void) | undefined;
     let finishStream: (() => void) | undefined;
-    mockStreamMessage.mockImplementationOnce(async (
+    mockRunEvents.mockImplementationOnce(async (
       _sessionId: string,
       _message: string,
-      callbacks: { onDelta: (text: string) => void },
+      callbacks: SessionStreamOptions,
     ) => {
-      sendDelta = callbacks.onDelta;
+      sendDelta = text => callbacks.onEvent({ type: 'delta', text });
       await new Promise<void>(resolve => {
         finishStream = resolve;
       });
@@ -1592,16 +1536,13 @@ describe('ExperimentalAiPage', () => {
     let startTool: ((activity: { name: string; arguments: string }) => void) | undefined;
     let finishTool: ((activity: { name: string; arguments: string; result: string; ok: boolean }) => void) | undefined;
     let finishStream: (() => void) | undefined;
-    mockStreamMessage.mockImplementationOnce(async (
+    mockRunEvents.mockImplementationOnce(async (
       _sessionId: string,
       _message: string,
-      callbacks: {
-        onToolStart?: (activity: { name: string; arguments: string }) => void;
-        onTool?: (activity: { name: string; arguments: string; result: string; ok: boolean }) => void;
-      },
+      callbacks: SessionStreamOptions,
     ) => {
-      startTool = callbacks.onToolStart;
-      finishTool = callbacks.onTool;
+      startTool = activity => callbacks.onEvent({ type: 'tool_start', activity });
+      finishTool = activity => callbacks.onEvent({ type: 'tool', activity });
       await new Promise<void>(resolve => {
         finishStream = resolve;
       });
@@ -1643,25 +1584,20 @@ describe('ExperimentalAiPage', () => {
   });
 
   it('keeps alternating response and tool events in stream order', async () => {
-    mockStreamMessage.mockImplementationOnce(async (
+    mockRunEvents.mockImplementationOnce(async (
       _sessionId: string,
       _message: string,
-      callbacks: {
-        onDelta: (text: string) => void;
-        onReasoning?: (text: string) => void;
-        onToolStart?: (activity: { name: string; arguments: string }) => void;
-        onTool?: (activity: { name: string; arguments: string; result: string; ok: boolean }) => void;
-      },
+      callbacks: SessionStreamOptions,
     ) => {
-      callbacks.onReasoning?.('First thought.');
-      callbacks.onDelta('First response.');
-      callbacks.onDelta(' Continued.');
-      callbacks.onToolStart?.({ name: 'lookup', arguments: '{}' });
-      callbacks.onTool?.({ name: 'lookup', arguments: '{}', result: 'found', ok: true });
-      callbacks.onDelta('Second response.');
-      callbacks.onToolStart?.({ name: 'calculate', arguments: '{}' });
-      callbacks.onTool?.({ name: 'calculate', arguments: '{}', result: '42', ok: true });
-      callbacks.onDelta('Final response.');
+      callbacks.onEvent({ type: 'reasoning', text: 'First thought.' });
+      callbacks.onEvent({ type: 'delta', text: 'First response.' });
+      callbacks.onEvent({ type: 'delta', text: ' Continued.' });
+      callbacks.onEvent({ type: 'tool_start', activity: { name: 'lookup', arguments: '{}' } });
+      callbacks.onEvent({ type: 'tool', activity: { name: 'lookup', arguments: '{}', result: 'found', ok: true } });
+      callbacks.onEvent({ type: 'delta', text: 'Second response.' });
+      callbacks.onEvent({ type: 'tool_start', activity: { name: 'calculate', arguments: '{}' } });
+      callbacks.onEvent({ type: 'tool', activity: { name: 'calculate', arguments: '{}', result: '42', ok: true } });
+      callbacks.onEvent({ type: 'delta', text: 'Final response.' });
     });
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
@@ -1685,23 +1621,18 @@ describe('ExperimentalAiPage', () => {
   });
 
   it('completes each concurrent tool call on the row that shares its ID', async () => {
-    mockStreamMessage.mockImplementationOnce(async (
+    mockRunEvents.mockImplementationOnce(async (
       _sessionId: string,
       _message: string,
-      callbacks: {
-        onToolStart?: (activity: { toolCallId?: string; name: string; arguments: string }) => void;
-        onTool?: (activity: {
-          toolCallId?: string; name: string; arguments: string; result: string; ok: boolean;
-        }) => void;
-      },
+      callbacks: SessionStreamOptions,
     ) => {
       const first = { toolCallId: 'call-a', name: 'read', arguments: '{"path":"a.txt"}' };
       const second = { toolCallId: 'call-b', name: 'read', arguments: '{"path":"b.txt"}' };
-      callbacks.onToolStart?.(first);
-      callbacks.onToolStart?.(second);
+      callbacks.onEvent({ type: 'tool_start', activity: first });
+      callbacks.onEvent({ type: 'tool_start', activity: second });
       // A parallel batch reports its results in call order after starting every call.
-      callbacks.onTool?.({ ...first, result: 'contents of a', ok: false });
-      callbacks.onTool?.({ ...second, result: 'contents of b', ok: true });
+      callbacks.onEvent({ type: 'tool', activity: { ...first, result: 'contents of a', ok: false } });
+      callbacks.onEvent({ type: 'tool', activity: { ...second, result: 'contents of b', ok: true } });
     });
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
@@ -1721,17 +1652,14 @@ describe('ExperimentalAiPage', () => {
 
   it('stops the active response through the session endpoint and keeps its partial output', async () => {
     const user = userEvent.setup();
-    mockStreamMessage.mockImplementationOnce(async (
+    mockRunEvents.mockImplementationOnce(async (
       _sessionId: string,
       _message: string,
-      callbacks: {
-        onDelta: (text: string) => void;
-        onToolStart?: (activity: { toolCallId?: string; name: string; arguments: string }) => void;
-      },
+      callbacks: SessionStreamOptions,
       signal: AbortSignal,
     ) => {
-      callbacks.onDelta('Partial answer.');
-      callbacks.onToolStart?.({ toolCallId: 'call-1', name: 'bash', arguments: '{"command":"sleep 60"}' });
+      callbacks.onEvent({ type: 'delta', text: 'Partial answer.' });
+      callbacks.onEvent({ type: 'tool_start', activity: { toolCallId: 'call-1', name: 'bash', arguments: '{"command":"sleep 60"}' } });
       await new Promise<void>((_resolve, reject) => {
         signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
       });
@@ -1753,7 +1681,7 @@ describe('ExperimentalAiPage', () => {
   it('queues a drafted question while a response is streaming', async () => {
     const user = userEvent.setup();
     let finishStream: (() => void) | undefined;
-    mockStreamMessage.mockImplementationOnce(async () => {
+    mockRunEvents.mockImplementationOnce(async () => {
       await new Promise<void>(resolve => {
         finishStream = resolve;
       });
@@ -1768,7 +1696,7 @@ describe('ExperimentalAiPage', () => {
     expect(composer).toBeEnabled();
     await user.type(composer, 'Next question.');
     await user.keyboard('{Enter}');
-    expect(mockStreamMessage).toHaveBeenCalledTimes(1);
+    expect(mockRunEvents).toHaveBeenCalledTimes(1);
     expect(composer).toHaveValue('');
     expect(screen.getByText('Queued for steering')).toBeInTheDocument();
     expect(mockQueueMessage).toHaveBeenCalledWith(
@@ -1781,7 +1709,7 @@ describe('ExperimentalAiPage', () => {
 
     finishStream?.();
     await screen.findByRole('button', { name: 'Send' });
-    await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(mockRunEvents).toHaveBeenCalledTimes(2));
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
   });
 
@@ -1834,7 +1762,7 @@ describe('ExperimentalAiPage', () => {
       'ai-session-token',
       '/ai',
     ));
-    expect(mockStreamMessage.mock.calls[0][4]).toBe('ai-session-token');
+    expect(mockRunEvents.mock.calls[0][4]).toBe('ai-session-token');
   });
 
   it('remembers the AI token only when requested', async () => {
@@ -1915,7 +1843,7 @@ describe('ExperimentalAiPage', () => {
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'What is shown?');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
-    expect(mockStreamMessage).toHaveBeenCalledWith(
+    expect(mockRunEvents).toHaveBeenCalledWith(
       'session-id',
       'What is shown?',
       expect.any(Object),
@@ -1967,7 +1895,7 @@ describe('ExperimentalAiPage', () => {
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Check the file.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
-    expect(mockStreamMessage).toHaveBeenCalledWith(
+    expect(mockRunEvents).toHaveBeenCalledWith(
       'session-id',
       'Check the file.',
       expect.any(Object),
@@ -1991,7 +1919,7 @@ describe('ExperimentalAiPage', () => {
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Read both files.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
-    expect(mockStreamMessage).toHaveBeenCalledWith(
+    expect(mockRunEvents).toHaveBeenCalledWith(
       'session-id',
       'Read both files.',
       expect.any(Object),
@@ -2021,7 +1949,7 @@ describe('ExperimentalAiPage', () => {
 
   it('animates the thinking indicator while awaiting the first response token', async () => {
     let finishStream: (() => void) | undefined;
-    mockStreamMessage.mockImplementationOnce(() => new Promise<void>(resolve => {
+    mockRunEvents.mockImplementationOnce(() => new Promise<void>(resolve => {
       finishStream = resolve;
     }));
     const user = userEvent.setup();
@@ -2039,12 +1967,12 @@ describe('ExperimentalAiPage', () => {
 
   it('shows backend failures without discarding the user question', async () => {
     const providerError = 'The AI provider returned HTTP 525. Error ID: 72dc8f31-45af-410d-9fc2-41bdf1fc718f.';
-    mockStreamMessage.mockImplementationOnce(async (
+    mockRunEvents.mockImplementationOnce(async (
       _sessionId: string,
       _message: string,
-      callbacks: { onDelta: (text: string) => void },
+      callbacks: SessionStreamOptions,
     ) => {
-      callbacks.onDelta('Provisional response.');
+      callbacks.onEvent({ type: 'delta', text: 'Provisional response.' });
       throw new Error(providerError);
     });
     const user = userEvent.setup();
@@ -2062,24 +1990,21 @@ describe('ExperimentalAiPage', () => {
     await user.click(screen.getByRole('button', { name: 'Retry' }));
 
     expect(await screen.findByText('Alice works Monday.')).toBeInTheDocument();
-    expect(mockStreamMessage).toHaveBeenCalledTimes(2);
-    expect(mockStreamMessage.mock.calls[1][1]).toBe('Can you help?');
+    expect(mockRunEvents).toHaveBeenCalledTimes(2);
+    expect(mockRunEvents.mock.calls[1][1]).toBe('Can you help?');
     expect(screen.getAllByText('Can you help?')).toHaveLength(1);
     expect(screen.queryByText('Provisional response.')).not.toBeInTheDocument();
     expect(screen.queryByText('This response failed and will not be used as context for future messages.')).not.toBeInTheDocument();
   });
 
   it('removes provisional output when the backend discards a stale turn', async () => {
-    mockStreamMessage.mockImplementationOnce(async (
+    mockRunEvents.mockImplementationOnce(async (
       _sessionId: string,
       _message: string,
-      callbacks: {
-        onDelta: (text: string) => void;
-        onScheduleChange?: (scheduleYaml: string) => void;
-      },
+      callbacks: SessionStreamOptions,
     ) => {
-      callbacks.onScheduleChange?.('description: obsolete proposal');
-      callbacks.onDelta('Obsolete response.');
+      callbacks.onEvent({ type: 'schedule_change', scheduleYaml: 'description: obsolete proposal' });
+      callbacks.onEvent({ type: 'delta', text: 'Obsolete response.' });
       throw new MockAiStaleRunError('The schedule changed.');
     });
     const user = userEvent.setup();
@@ -2099,7 +2024,7 @@ describe('ExperimentalAiPage', () => {
     mockGetCapabilities.mockResolvedValueOnce(defaultCapabilities);
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:image-preview');
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
-    mockStreamMessage.mockRejectedValueOnce(new Error('The temporary AI sandbox failed.'));
+    mockRunEvents.mockRejectedValueOnce(new Error('The temporary AI sandbox failed.'));
     const user = userEvent.setup();
     const image = new File(['png'], 'ward.png', { type: 'image/png' });
     render(<ExperimentalAiPage />);
@@ -2111,36 +2036,29 @@ describe('ExperimentalAiPage', () => {
 
     expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toHaveValue('Check this image.');
     expect(screen.getByText('Prepare the question, then reattach its files before sending.')).toBeInTheDocument();
-    expect(mockStreamMessage).toHaveBeenCalledTimes(1);
+    expect(mockRunEvents).toHaveBeenCalledTimes(1);
   });
 
   describe('proposals', () => {
     const proposingStream = (
       _sessionId: string,
       _message: string,
-      callbacks: {
-        onDelta: (text: string) => void;
-        onReasoning?: (text: string) => void;
-        onToolStart?: (activity: { name: string; arguments: string }) => void;
-        onTool?: (activity: { name: string; arguments: string; result: string; ok: boolean }) => void;
-        onScheduleChange?: (scheduleYaml: string) => void;
-        onProposal?: (diff: string) => void;
-      },
+      callbacks: SessionStreamOptions,
     ) => {
-      callbacks.onReasoning?.('Looking at P1. ');
-      callbacks.onToolStart?.({
+      callbacks.onEvent({ type: 'reasoning', text: 'Looking at P1. ' });
+      callbacks.onEvent({ type: 'tool_start', activity: {
         name: 'bash',
         arguments: JSON.stringify({ command: "sed -i 's/old/new/' schedule.yaml" }),
-      });
-      callbacks.onTool?.({
+      } });
+      callbacks.onEvent({ type: 'tool', activity: {
         name: 'bash',
         arguments: JSON.stringify({ command: "sed -i 's/old/new/' schedule.yaml" }),
         result: 'exit_code: 0',
         ok: true,
-      });
-      callbacks.onScheduleChange?.('description: Head');
-      callbacks.onDelta('I propose renaming P1.');
-      callbacks.onProposal?.('- people.items[0].description: "" -> "Head"');
+      } });
+      callbacks.onEvent({ type: 'schedule_change', scheduleYaml: 'description: Head' });
+      callbacks.onEvent({ type: 'delta', text: 'I propose renaming P1.' });
+      callbacks.onEvent({ type: 'proposal', diff: '- people.items[0].description: "" -> "Head"' });
     };
 
     const ask = async (user: ReturnType<typeof userEvent.setup>) => {
@@ -2149,7 +2067,7 @@ describe('ExperimentalAiPage', () => {
     };
 
     beforeEach(() => {
-      mockStreamMessage.mockReset().mockImplementation(proposingStream);
+      mockRunEvents.mockReset().mockImplementation(proposingStream);
     });
 
     it('shows the proposed change and what the assistant did', async () => {
