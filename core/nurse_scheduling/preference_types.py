@@ -53,7 +53,8 @@ def iter_succession_patterns(compiled_preference, histories, n_days):
         # Note that the succession patterns are not applied to windows entirely inside history.
         if history:
             for suffix_len in range(1, min(len(pattern) - 1, len(history)) + 1):
-                remaining = pattern[suffix_len:]  # The remaining patterns (excluding history matches) for scheduled date range matching
+                # The remaining patterns (excluding history matches) for scheduled date range matching
+                remaining = pattern[suffix_len:]
                 if len(remaining) > n_days or not all(d in compiled_preference.date_set for d in range(len(remaining))):
                     # Ignore non-valid windows with dates outside the preference's specified date set
                     continue
