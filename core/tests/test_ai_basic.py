@@ -1991,6 +1991,52 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
     assert optimizer.deleted == ["remote-background"]
 
 
+def test_optimizer_inspection_keeps_submitted_context_after_editor_changes():
+    context_path = "/workspace/optimizer-results/schedule-context.json"
+    read_context = [ToolCallRequest((ToolCall("read-context", READ_TOOL, json.dumps({"path": context_path})),))]
+    provider = ScriptedToolProvider(
+        [ToolCallRequest((ToolCall("start", OPTIMIZER_TOOL, '{"action":"start"}'),))],
+        [TextDelta("Started.")],
+        read_context,
+        [TextDelta("Reviewed.")],
+        read_context,
+        [TextDelta("Reviewed again.")],
+    )
+    optimizer = BackgroundTestOptimizer()
+    factory = FakeSandboxFactory()
+    app = create_test_app(
+        settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT, optimizer_poll_interval_seconds=0.001),
+        provider=provider,
+        sandbox_factory=factory,
+        optimizer_backend=optimizer,
+    )
+    source = schedule_yaml()
+    changed = source.replace("weight: 1", "weight: 9", 1)
+    with AuthenticatedTestClient(app) as client:
+        session_id = create_session(client, source)
+        client.post(f"/sessions/{session_id}/messages", json={"message": "Optimize."})
+        assert client.put(f"/sessions/{session_id}/schedule", json={"schedule_yaml": changed}).status_code == 204
+        optimizer.release.set()
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            events = app.state.session_event_broker.events_after(session_id)
+            if any(event.type in {"done", "error"} for event in events):
+                break
+            time.sleep(0.01)
+        assert any(event.type == "done" for event in events)
+        assert (
+            "Reviewed again."
+            in client.post(f"/sessions/{session_id}/messages", json={"message": "Inspect the earlier result."}).text
+        )
+        result_sandboxes = [sandbox for sandbox in factory.created if context_path in sandbox.files]
+        assert len(result_sandboxes) == 2
+        for sandbox in result_sandboxes:
+            assert sandbox.files[WORKSPACE_SCHEDULE] == changed.encode()
+            context = json.loads(sandbox.files[context_path])
+            assert context["source_sha256"] == hashlib.sha256(source.encode()).hexdigest()
+            assert context["requests"][0]["weight"] == 1
+
+
 def rename_factory() -> FakeSandboxFactory:
     """Return a fake sandbox that applies the scripted description change."""
 

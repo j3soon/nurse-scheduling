@@ -1327,6 +1327,7 @@ def create_app(
                         ),
                         attachments=hydrated_attachments,
                         optimizer_result=latest_artifact.content if latest_artifact is not None else None,
+                        optimizer_context=latest_artifact.schedule_context if latest_artifact is not None else None,
                     )
                     async for event in agent_events:
                         if isinstance(event, AgentText):

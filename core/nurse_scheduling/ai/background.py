@@ -480,6 +480,7 @@ async def run_background_turn(
                         lambda current_yaml, arguments: session_optimizer.execute(session_id, current_yaml, arguments)
                     ),
                     optimizer_result=artifact.content if artifact is not None else None,
+                    optimizer_context=artifact.schedule_context if artifact is not None else None,
                     attachments=attachments,
                 )
                 async for event in agent_events:

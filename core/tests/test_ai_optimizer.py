@@ -40,6 +40,7 @@ from nurse_scheduling.ai.optimizer import (
     optimizer_completion_message,
     optimizer_tool_definition,
 )
+from nurse_scheduling.ai.result_context import build_result_context
 
 from .ai_eval.optimizer_fixtures import FIXTURE, completion_result
 from .ai_test_helper import base_schedule_payload, optimizer_workbook_bytes, parse_schedule, schedule_yaml
@@ -709,18 +710,27 @@ def test_completed_artifacts_are_evicted_to_bound_process_memory() -> None:
             backend,
             poll_interval_seconds=0.001,
             on_completion=on_completion,
-            max_cached_result_bytes=len(WORKBOOK_BYTES),
+            max_cached_result_bytes=len(WORKBOOK_BYTES)
+            + len(json.dumps(build_result_context(TEST_SCHEDULE, workbook=WORKBOOK_BYTES), ensure_ascii=False).encode())
+            + 100,
         )
         first = await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')
         backend.release.set()
         await asyncio.wait_for(completions.get(), timeout=1)
         first_id = first.text.split("job ", 1)[1].split(" ", 1)[0]
+        first_artifact = await optimizer.result_artifact("session-1", first_id)
+        assert first_artifact.schedule_context
+        assert optimizer._cached_artifact_bytes == first_artifact.retained_bytes
 
         await optimizer.execute("session-2", TEST_SCHEDULE, '{"action":"start"}')
         await asyncio.wait_for(completions.get(), timeout=1)
 
         with pytest.raises(OptimizerResultUnavailable):
             await optimizer.result_artifact("session-1", first_id)
+        latest = await optimizer.latest_result_artifact("session-2")
+        assert latest is not None
+        assert optimizer._cached_artifact_bytes == latest.retained_bytes
+        assert optimizer._cached_artifact_bytes <= optimizer._max_cached_result_bytes
         await optimizer.close()
 
     asyncio.run(scenario())

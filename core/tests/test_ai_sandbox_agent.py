@@ -748,8 +748,16 @@ def test_recovered_command_timeout_keeps_files_and_allows_the_agent_to_continue(
     assert not any(isinstance(event, AgentProposal) for event in events)
 
 
-def test_uncompilable_draft_keeps_yaml_without_a_source_context():
+@pytest.mark.parametrize("has_result", [False, True])
+def test_uncompilable_draft_keeps_yaml_without_a_source_context(has_result):
     backend = FakeSandboxBackend("draft")
-    asyncio.run(hydrate_sandbox(backend, "not a schedule"))
+    context = json.dumps({"schema_version": 1, "source_sha256": "submitted"}).encode() if has_result else None
+    asyncio.run(
+        hydrate_sandbox(
+            backend, "not a schedule", optimizer_result=b"workbook" if has_result else None, optimizer_context=context
+        )
+    )
     assert backend.files[WORKSPACE_SCHEDULE] == b"not a schedule"
     assert WORKSPACE_SOURCE_CONTEXT not in backend.files
+    if has_result:
+        assert backend.files[WORKSPACE_RESULT_CONTEXT] == context

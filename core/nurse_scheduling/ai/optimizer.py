@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from .agent import AgentToolOutcome
 from .optimizer_privacy import OptimizerResultError, prepare_optimizer_schedule, restore_people_ids
-from .result_context import build_request_audit
+from .result_context import build_request_audit, build_result_context
 
 OPTIMIZER_TOOL = "optimizer"
 WORKSPACE_OPTIMIZER_RESULT = "/workspace/optimizer-results/optimized-schedule.xlsx"
@@ -303,6 +303,12 @@ class OptimizerArtifact:
     content: bytes
     filename: str
     media_type: str
+    schedule_context: bytes | None = None
+
+    @property
+    def retained_bytes(self) -> int:
+        """Include compiled selectors in the result cache budget."""
+        return len(self.content) + len(self.schedule_context or b"")
 
 
 CompletionCallback = Callable[[str, str, OptimizerArtifact | None], Awaitable[None]]
@@ -609,7 +615,13 @@ class SessionOptimizer:
                 )
                 if len(restored_content) > self._max_result_bytes:
                     raise OptimizerResultError("The restored workbook exceeded the assistant download limit.")
-                artifact = OptimizerArtifact(restored_content, artifact.filename, artifact.media_type)
+                context = await asyncio.to_thread(build_result_context, job.schedule_yaml, workbook=restored_content)
+                artifact = OptimizerArtifact(
+                    restored_content,
+                    artifact.filename,
+                    artifact.media_type,
+                    json.dumps(context, ensure_ascii=False, allow_nan=False).encode(),
+                )
                 await self._retain_artifact(job, artifact)
                 if job.artifact is not None:
                     request_audit = await asyncio.to_thread(build_request_audit, job.schedule_yaml, restored_content)
@@ -645,17 +657,17 @@ class SessionOptimizer:
             if self._jobs.get(job.id) is not job:
                 return
             while self._artifact_order and (
-                self._cached_artifact_bytes + len(artifact.content) > self._max_cached_result_bytes
+                self._cached_artifact_bytes + artifact.retained_bytes > self._max_cached_result_bytes
             ):
                 expired_id = self._artifact_order.pop(0)
                 expired = self._jobs.get(expired_id)
                 if expired is not None and expired.artifact is not None:
-                    self._cached_artifact_bytes -= len(expired.artifact.content)
+                    self._cached_artifact_bytes -= expired.artifact.retained_bytes
                     expired.artifact = None
-            if len(artifact.content) <= self._max_cached_result_bytes:
+            if artifact.retained_bytes <= self._max_cached_result_bytes:
                 job.artifact = artifact
                 self._artifact_order.append(job.id)
-                self._cached_artifact_bytes += len(artifact.content)
+                self._cached_artifact_bytes += artifact.retained_bytes
 
     async def _notify_update(self, job: SessionOptimization) -> None:
         if self._on_update is None or self._jobs.get(job.id) is not job:
@@ -700,7 +712,7 @@ class SessionOptimizer:
         for job_id in [job_id for job_id, job in self._jobs.items() if job.session_id == session_id]:
             job = self._jobs.pop(job_id)
             if job.artifact is not None:
-                self._cached_artifact_bytes -= len(job.artifact.content)
+                self._cached_artifact_bytes -= job.artifact.retained_bytes
                 self._artifact_order.remove(job_id)
 
     def _start_task(self, coroutine: Awaitable[None]) -> asyncio.Task[None]:
