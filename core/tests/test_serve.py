@@ -438,6 +438,21 @@ def test_default_memory_store_uses_the_process_instance_identity():
     assert app.state.job_store.store_id == app.state.instance_id
 
 
+def test_application_initializes_sentry_with_build_and_api_versions(monkeypatch):
+    calls = []
+    monkeypatch.setattr("nurse_scheduling.server.app.get_app_version", lambda: "v0.2.0-572-gbecfc27f")
+    monkeypatch.setattr(
+        "nurse_scheduling.server.app.init_sentry",
+        lambda version, *, api_version: calls.append((version, api_version)),
+    )
+
+    app = create_app(settings=_settings(), start_background=False)
+
+    assert calls == [(app.state.app_version, app.version)]
+    assert app.state.app_version == "v0.2.0-572-gbecfc27f"
+    assert app.version == "0.2.0"
+
+
 def test_app_version_prefers_generated_build_artifact(tmp_path, monkeypatch):
     from nurse_scheduling.server import app as server_app
 

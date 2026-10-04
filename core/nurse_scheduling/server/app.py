@@ -201,7 +201,7 @@ def create_app(
     )
     maintenance = JobMaintenance(controller, interval_seconds=settings.maintenance_interval_seconds)
     suspicion_tracker = create_suspicion_tracker(settings, salt=suspicion_salt(settings, deployment_id))
-    init_sentry(app_version)
+    init_sentry(app_version, api_version=API_VERSION)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):

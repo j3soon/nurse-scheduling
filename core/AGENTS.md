@@ -62,7 +62,8 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
 ## Service Monitoring
 - Initialize Sentry with the application build version, not the API version.
   Standalone services use `version.get_app_version()` and keep a distinct `app`
-  tag. Use `configure_service_logging` for the shared service logging defaults.
+  tag. API services also pass their API version for event tags and log attributes.
+  Use `configure_service_logging` for the shared service logging defaults.
   Short-lived services flush Sentry in a `finally` block before exit.
 
 ## Server Job Processes
