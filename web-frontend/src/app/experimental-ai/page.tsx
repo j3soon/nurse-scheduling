@@ -1522,7 +1522,7 @@ export default function ExperimentalAiPage() {
       setSelectedAttachments([]);
     }
     setError(null);
-    setProposalDiff(null);
+    // A pending proposal stays approvable across messages until it is approved, rejected, or replaced.
     setProposalNotice(null);
     setIsStreaming(true);
     sandboxScheduleRef.current = scheduleYaml;
@@ -1542,8 +1542,10 @@ export default function ExperimentalAiPage() {
         setConversationUnavailable(false);
         setSessionNotice(null);
       } else if (syncedScheduleRef.current !== scheduleYaml) {
-        // The schedule can change elsewhere in the app between questions.
+        // The schedule can change elsewhere in the app between questions. The backend then
+        // discards a proposal made for the previous schedule.
         await updateSessionSchedule(sessionId, scheduleYaml, authToken, sessionEndpoint);
+        setProposalDiff(null);
       }
       syncedScheduleRef.current = scheduleYaml;
       renewSessionExpiration();

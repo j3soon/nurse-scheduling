@@ -137,7 +137,7 @@ describe('ExperimentalAiPage', () => {
     });
     mockStreamSessionEvents.mockReset().mockResolvedValue(undefined);
     mockStopSession.mockReset().mockResolvedValue(undefined);
-    mockGenerateYaml.mockClear();
+    mockGenerateYaml.mockClear().mockReturnValue('description: current schedule\n');
     mockApproveProposal.mockReset().mockResolvedValue('description: proposed schedule\n');
     mockRejectProposal.mockReset().mockResolvedValue(undefined);
     mockQueueMessage.mockReset().mockResolvedValue(undefined);
@@ -2052,6 +2052,28 @@ describe('ExperimentalAiPage', () => {
       await waitFor(() => expect(mockRejectProposal).toHaveBeenCalledWith('session-id', null, '/ai'));
       expect(screen.queryByRole('region', { name: 'Proposed schedule change' })).not.toBeInTheDocument();
       expect(mockLoadFromYaml).not.toHaveBeenCalled();
+    });
+
+    it('keeps a pending proposal approvable across messages until the schedule changes', async () => {
+      const user = userEvent.setup();
+      render(<ExperimentalAiPage />);
+      const reply = (text: string) => async (_sessionId: string, _message: string, callbacks: { onDelta: (text: string) => void }) => {
+        callbacks.onDelta(text);
+      };
+      await ask(user);
+      expect(await screen.findByRole('region', { name: 'Proposed schedule change' })).toBeInTheDocument();
+
+      mockStreamMessage.mockImplementationOnce(reply('It is still waiting for your approval.'));
+      await ask(user);
+      await screen.findByText('It is still waiting for your approval.');
+      expect(screen.getByRole('region', { name: 'Proposed schedule change' })).toBeInTheDocument();
+
+      // Replacing the session schedule makes the backend discard the proposal.
+      mockGenerateYaml.mockReturnValue('description: edited elsewhere\n');
+      mockStreamMessage.mockImplementationOnce(reply('The schedule changed.'));
+      await ask(user);
+      await screen.findByText('The schedule changed.');
+      expect(screen.queryByRole('region', { name: 'Proposed schedule change' })).not.toBeInTheDocument();
     });
 
     it('sends a changed schedule to an existing session before the next question', async () => {
