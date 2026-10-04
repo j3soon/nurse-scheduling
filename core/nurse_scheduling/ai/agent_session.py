@@ -21,7 +21,6 @@
 
 import asyncio
 import hashlib
-import json
 import logging
 from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import aclosing
@@ -29,16 +28,28 @@ from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
 from fastapi import HTTPException
+from ruamel.yaml.error import YAMLError
 
+from ..loader import _load_yaml
 from .agent import Agent
 from .candidate import PendingProposal, ProposalApproval
 from .config import AiSettings
-from .context import build_provider_messages, optimizer_review_prompt, project_history, retained_entries
+from .context import (
+    SCHEDULE_CHANGED_DISCARDED_EVENT,
+    SCHEDULE_CHANGED_EVENT,
+    build_provider_messages,
+    context_usage,
+    model_input,
+    optimizer_review_prompt,
+    project_history,
+    removal_event,
+    retained_entries,
+)
 from .history import ChatHistory
 from .lifecycle import AgentRun, RunSnapshot, SessionRuns
 from .optimizer import OptimizerArtifact, OptimizerCompletion, SessionOptimizer
 from .optimizer_tool import execute_optimizer_tool
-from .provider import ChatMessage, ProviderError, ToolCapableChatProvider
+from .provider import ChatMessage, ProviderError, TokenUsage, ToolCapableChatProvider
 from .sandbox import SandboxError, SandboxFactory
 from .session_event_projection import RunEvents, RunOutput
 from .session_event_stream import SessionEvent, SessionEventStream
@@ -52,6 +63,7 @@ from .session_events import (
 )
 from .transcript import (
     AgentMessage,
+    AppEventEntry,
     ProposalDecision,
     ProposalDecisionEntry,
     UserMessage,
@@ -60,6 +72,8 @@ from .validation import new_schedule_issues, validate_frontend_schedule_yaml
 from .workspace import (
     SandboxAttachment,
     SandboxCandidateError,
+    SandboxCommandTimeoutError,
+    SandboxDownloadError,
     SandboxRunTimeoutError,
     WorkspaceInputs,
     WorkspaceLimits,
@@ -71,6 +85,10 @@ CANDIDATE_VALIDATION_ERROR = (
     "discarded. The current schedule was not changed."
 )
 PROVIDER_ERROR = "The AI provider failed. Please try again."
+SANDBOX_COMMAND_TIMEOUT_ERROR = (
+    "An AI shell command timed out. The temporary workspace was discarded. Please try again."
+)
+DOWNLOAD_RETENTION_WARNING = "The generated ZIP could not be retained because the service memory limit was reached."
 SANDBOX_RUN_TIMEOUT_ERROR = "The AI response timed out. Please try again."
 STALE_RUN_ERROR = "The schedule changed while this response was generated, so the response was discarded."
 logger = logging.getLogger("nurse_scheduling.ai")
@@ -79,6 +97,14 @@ logger = logging.getLogger("nurse_scheduling.ai")
 def schedule_revision(schedule_yaml: str) -> str:
     """Identify one exact schedule snapshot, so a stale proposal cannot be applied."""
     return hashlib.sha256(schedule_yaml.encode("utf-8")).hexdigest()
+
+
+def _schedule_data(schedule_yaml: str) -> object:
+    """Parse a schedule for comparison, so a formatting-only change is not reported as an edit."""
+    try:
+        return _load_yaml(schedule_yaml.encode(), reject_aliases=True)
+    except (ValueError, YAMLError):
+        return schedule_yaml
 
 
 @dataclass(frozen=True)
@@ -121,6 +147,8 @@ class SessionPersistence(Protocol):
 
     def abort(self, session_id: str, snapshot: RunSnapshot) -> None: ...
 
+    def save_download(self, session_id: str, download_id: str, content: bytes) -> bool: ...
+
 
 @dataclass(frozen=True)
 class SessionRuntime:
@@ -160,6 +188,9 @@ class AgentSession:
     snapshot: RunSnapshot | None = None
     agent: Agent = field(default_factory=Agent)
     pending_proposal: PendingProposal | None = None
+    # Retained source files keyed by upload ID, in upload order, and generated ZIPs keyed by run ID.
+    uploads: dict[str, SandboxAttachment] = field(default_factory=dict)
+    downloads: dict[str, bytes] = field(default_factory=dict)
     event_stream: SessionEventStream | None = field(default=None, repr=False)
     _listeners: list[Callable[[AgentSessionEvent], None]] = field(default_factory=list, repr=False)
     _events_closed: bool = False
@@ -243,6 +274,7 @@ class AgentSession:
             self.pending_proposal,
             previously_dropped=self.dropped_history_messages,
             run_id=run_id,
+            uploads=tuple(self.uploads.values()),
         )
         return self.snapshot
 
@@ -293,13 +325,38 @@ class AgentSession:
         return self.agent.queued_steering if self.active else ()
 
     def update_schedule(self, schedule_yaml: str) -> None:
-        """Replace the session schedule and invalidate proposals and in-flight results."""
+        """Replace the session schedule, invalidate proposals and in-flight results, and record the change."""
         if self.schedule_yaml == schedule_yaml:
             return
+        data_changed = _schedule_data(self.schedule_yaml) != _schedule_data(schedule_yaml)
+        had_proposal = self.pending_proposal is not None
         self.version += 1
         self.schedule_yaml = schedule_yaml
         self.revision = schedule_revision(schedule_yaml)
         self.pending_proposal = None
+        if data_changed or had_proposal:
+            self.transcript.append(
+                AppEventEntry(SCHEDULE_CHANGED_DISCARDED_EVENT if had_proposal else SCHEDULE_CHANGED_EVENT)
+            )
+
+    def require_idle(self, action: str) -> None:
+        """Refuse a file change while a run may still read the session files."""
+        if self.active:
+            raise HTTPException(status_code=409, detail=f"Wait for the active response before {action}.")
+
+    def add_uploads(self, uploads: Sequence[SandboxAttachment], event: str) -> None:
+        """Retain uploads with their IDs assigned and record their `upload_event` once in history."""
+        self.uploads.update((upload.id, upload) for upload in uploads)
+        self.transcript.append(AppEventEntry(event))
+
+    def remove_upload(self, upload_id: str) -> SandboxAttachment:
+        """Drop one retained source file and record its removal in history."""
+        if upload_id not in self.uploads:
+            raise HTTPException(status_code=404, detail="The uploaded file is no longer available.")
+        index = list(self.uploads).index(upload_id) + 1
+        upload = self.uploads.pop(upload_id)
+        self.transcript.append(AppEventEntry(removal_event(upload, index)))
+        return upload
 
     def require_proposal(self, base_sha256: str) -> PendingProposal:
         """Reject a missing or stale proposal before it can be applied."""
@@ -352,43 +409,46 @@ class AgentSession:
         self,
         snapshot: RunSnapshot,
         question: str,
-        attachments: Sequence[SandboxAttachment],
         artifact: OptimizerArtifact | None,
         settings: AiSettings,
         events: RunEvents,
-    ) -> tuple[list[ChatMessage], int]:
-        """Project the reserved transcript and report its context usage."""
+        background: bool,
+    ) -> tuple[list[ChatMessage], int, int]:
+        """Project the reserved transcript and report the model input and its context usage."""
         history = project_history(snapshot.transcript, settings.max_history_chars)
-        events.emit(
-            {
-                "type": "context_usage",
-                "used_chars": history.used_chars,
-                "max_chars": settings.max_history_chars,
-            },
-        )
         dropped_history = snapshot.previously_dropped + history.dropped_messages
-        if dropped_history:
-            events.emit({"type": "history_trimmed", "dropped": dropped_history})
         messages = build_provider_messages(
             history,
             snapshot.schedule_yaml,
             question,
-            attachments,
+            snapshot.uploads,
             pending_proposal=snapshot.pending_proposal is not None,
             optimizer_result_available=artifact is not None,
+            max_download_bytes=settings.max_download_bytes,
         )
-        return messages, dropped_history
+        events.emit(
+            {
+                "type": "model_input",
+                **model_input(
+                    messages, len(history.messages), dropped_history, "optimizer" if background else "question"
+                ),
+            }
+        )
+        events.emit(context_usage(history.used_chars, settings.max_history_chars))
+        if dropped_history:
+            events.emit({"type": "history_trimmed", "dropped": dropped_history})
+        return messages, dropped_history, history.used_chars
 
     async def _execute_run(
         self,
         snapshot: RunSnapshot,
         messages: Sequence[ChatMessage],
-        attachments: Sequence[SandboxAttachment],
         artifact: OptimizerArtifact | None,
         runtime: SessionRuntime,
         background: bool,
         output: RunOutput,
         events: RunEvents,
+        context_chars: int,
     ) -> None:
         """Execute the agent and await workspace cleanup before returning."""
         async with runtime.concurrency_limit:
@@ -398,8 +458,9 @@ class AgentSession:
                 WorkspaceInputs(
                     schedule_yaml=snapshot.schedule_yaml,
                     pending_proposal=snapshot.pending_proposal,
-                    attachments=tuple(attachments),
+                    attachments=snapshot.uploads,
                     optimizer_result=artifact.content if artifact is not None else None,
+                    optimizer_context=artifact.schedule_context if artifact is not None else None,
                 ),
                 messages,
                 WorkspaceLimits.from_settings(runtime.settings),
@@ -414,6 +475,15 @@ class AgentSession:
                     wire_event = output.consume(event)
                     if wire_event is not None:
                         events.emit(wire_event)
+                    elif isinstance(event, TokenUsage):
+                        events.emit(
+                            context_usage(
+                                context_chars,
+                                runtime.settings.max_history_chars,
+                                event,
+                                getattr(runtime.provider, "context_tokens", None),
+                            )
+                        )
 
     def _commit_run(
         self,
@@ -437,10 +507,11 @@ class AgentSession:
 
     def _publish_completion(
         self,
+        run: AgentRun,
         completion: RunCompletion,
         output: RunOutput,
         events: RunEvents,
-        settings: AiSettings,
+        runtime: SessionRuntime,
         dropped_history: int,
         history_saved: bool | None,
         background: bool,
@@ -453,15 +524,22 @@ class AgentSession:
             events.emit({"type": "history_trimmed", "dropped": completion.history_trimmed_count})
         if completion.proposal_saved and output.proposal is not None:
             events.emit({"type": "proposal", "diff": output.proposal.diff})
+        if output.download is not None:
+            # A ZIP that does not fit the session memory budget leaves the answer intact.
+            if runtime.store.save_download(self.id, run.id, output.download.content):
+                events.emit({"type": "download", "download_id": run.id})
+            else:
+                events.emit({"type": "warning", "message": DOWNLOAD_RETENTION_WARNING})
         done: RunDoneEvent = {"type": "done"}
         if history_saved is not None and not background:
             done["history_saved"] = history_saved
         events.emit(
-            {
-                "type": "context_usage",
-                "used_chars": completion.context_used_chars,
-                "max_chars": settings.max_history_chars,
-            },
+            context_usage(
+                completion.context_used_chars,
+                runtime.settings.max_history_chars,
+                output.last_call,
+                getattr(runtime.provider, "context_tokens", None),
+            )
         )
         events.emit(done)
 
@@ -495,7 +573,7 @@ class AgentSession:
             history_saved = None
             if history_started:
                 assert runtime.history_log is not None
-                # The prompt entry, including attachment filenames, was written at run start.
+                # The prompt entry was written at run start.
                 history_saved = await _write_history(
                     runtime.history_log,
                     "finish_run",
@@ -507,7 +585,7 @@ class AgentSession:
                 )
             if outcome.completion is not None:
                 self._publish_completion(
-                    outcome.completion, output, events, runtime.settings, dropped_history, history_saved, background
+                    run, outcome.completion, output, events, runtime, dropped_history, history_saved, background
                 )
         finally:
             events.finish()
@@ -521,7 +599,6 @@ class AgentSession:
         background: bool = False,
         owner: str | None = None,
         credential_id: str | None = None,
-        attachments: Sequence[SandboxAttachment] = (),
         artifact: OptimizerArtifact | None = None,
     ) -> None:
         """Own every run phase and finalize once, regardless of trigger or transport."""
@@ -535,12 +612,9 @@ class AgentSession:
         )
         if snapshot is None:
             return
-        history_question = question
-        if attachments:
-            filenames = json.dumps([attachment.filename for attachment in attachments], ensure_ascii=False)
-            history_question += f"\n[Files were attached: {filenames}.]"
+        # History keeps the question as typed. Upload and removal events are separate history entries.
         output = RunOutput()
-        run_entries: list[AgentMessage] = [UserMessage(history_question)]
+        run_entries: list[AgentMessage] = [UserMessage(question)]
         history_started = False
         outcome = RunOutcome()
         dropped_history = 0
@@ -556,9 +630,9 @@ class AgentSession:
                     run.id,
                     session_id,
                     credential_id,
-                    history_question,
+                    question,
                     settings.provider_model,
-                    len(attachments),
+                    len(snapshot.uploads),
                 )
                 if not history_started:
                     raise HTTPException(status_code=503, detail="AI chat history is temporarily unavailable.")
@@ -566,8 +640,10 @@ class AgentSession:
             run.ready.set_result(True)
             if not background:
                 artifact = await runtime.session_optimizer.latest_result_artifact(session_id)
-            messages, dropped_history = self._prepare_run(snapshot, question, attachments, artifact, settings, events)
-            await self._execute_run(snapshot, messages, attachments, artifact, runtime, background, output, events)
+            messages, dropped_history, context_chars = self._prepare_run(
+                snapshot, question, artifact, settings, events, background
+            )
+            await self._execute_run(snapshot, messages, artifact, runtime, background, output, events, context_chars)
             run_entries = [run_entries[0], *self.agent.state.messages]
             completion = self._commit_run(run, snapshot, run_entries, output, store)
             outcome = RunOutcome("completed" if completion.run_saved else "stale", completion=completion)
@@ -585,13 +661,18 @@ class AgentSession:
                     "message": "AI chat history is unavailable, so the optimizer result was not reviewed.",
                 },
             )
-        except (ProviderError, SandboxRunTimeoutError, SandboxCandidateError, SandboxError) as exc:
+        except (ProviderError, SandboxError) as exc:
             if isinstance(exc, ProviderError):
-                error_code, message = "provider_error", PROVIDER_ERROR
+                error_code, message = "provider_error", exc.user_message or PROVIDER_ERROR
+            elif isinstance(exc, SandboxDownloadError):
+                error_code, message = "download_error", str(exc)
+            elif isinstance(exc, SandboxCommandTimeoutError):
+                error_code, message = "sandbox_command_timeout", SANDBOX_COMMAND_TIMEOUT_ERROR
             elif isinstance(exc, SandboxRunTimeoutError):
                 error_code, message = "sandbox_timeout", SANDBOX_RUN_TIMEOUT_ERROR
             elif isinstance(exc, SandboxCandidateError):
-                error_code, message = "candidate_validation", CANDIDATE_VALIDATION_ERROR
+                error_code = "candidate_validation"
+                message = CANDIDATE_VALIDATION_ERROR + (f"\n\n{exc.user_message}" if exc.user_message else "")
             else:
                 error_code, message = "sandbox_error", "The temporary AI sandbox failed. Please try again."
                 logger.exception("AI sandbox run failed session_id=%s", session_id)

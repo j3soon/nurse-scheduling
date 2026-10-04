@@ -6,10 +6,12 @@ template, hydrates `/workspace`, and destroys the sandbox after the turn.
 
 The template uses one vCPU and 512 MiB of memory. It runs as the unprivileged
 `user` account and provides Bash, ripgrep, sed, grep, diff, and Python with
-`ruamel.yaml`, `openpyxl`, `defusedxml`, Pillow, `pypdf`, and `pypdfium2`. The
+`ruamel.yaml`, PyYAML, `openpyxl`, `defusedxml`, Pillow, `pypdf`, and `pypdfium2`. The
 template pins these itself. The backend keeps `pypdf` and `pypdfium2` out of
 `core/requirements.txt` because only the sandbox and the core tests need them,
 so keep the pins here in step with `core/requirements-optional.txt`.
+PyYAML is preinstalled so scripts that use `import yaml` run without downloading
+packages in the offline sandbox. The app continues to use `ruamel.yaml`.
 Runtime code writes only under `/workspace`. The application hydrates task-sized
 schema documents and trusted attachment helpers under `/reference` so they stay
 synchronized with the backend.
@@ -65,6 +67,10 @@ sandboxes in either running or paused state. The scan is metadata-filtered and
 does not touch unrelated E2B sandboxes.
 
 ## Test
+
+The live template check parses and writes synthetic YAML with both libraries.
+The `tool-yaml-generator-repair` evaluation accepts either library. Its original
+prompt comparison used a template without PyYAML.
 
 Most tests use the in-memory fake backend and need no E2B account:
 

@@ -37,7 +37,7 @@ from .agent_types import (
 from .provider import TokenUsage
 from .session_events import AgentSessionEvent, AgentSessionRunEvent, AgentSessionTerminalEvent, TextEvent
 from .transcript import AgentMessage, AssistantMessage
-from .workspace import AgentScheduleChange
+from .workspace import AgentDownload, AgentScheduleChange
 
 
 @dataclass
@@ -48,7 +48,10 @@ class RunOutput:
     pending_text: list[str] = field(default_factory=list)
     pending_reasoning: list[str] = field(default_factory=list)
     proposal: AgentProposal | None = None
+    download: AgentDownload | None = None
     usage: TokenUsage | None = None
+    # The latest provider call holds the whole request, so it shows how full the context window is.
+    last_call: TokenUsage | None = None
 
     def interrupted_entries(
         self, entries: Sequence[AgentMessage], stop_reason: Literal["aborted", "error"]
@@ -57,7 +60,7 @@ class RunOutput:
         interrupted = AssistantMessage("".join(self.pending_text), stop_reason, "".join(self.pending_reasoning))
         return [*entries, interrupted]
 
-    def consume(self, event: AgentEvent | AgentScheduleChange) -> AgentSessionRunEvent | None:
+    def consume(self, event: AgentEvent | AgentScheduleChange | AgentDownload) -> AgentSessionRunEvent | None:
         if isinstance(event, MessageTextDelta):
             self.pending_text.append(event.text)
             return {"type": "delta", "text": event.text}
@@ -70,6 +73,7 @@ class RunOutput:
             return {"type": "truncated"} if event.message.stop_reason == "length" else None
         if isinstance(event, TokenUsage):
             self.usage = event if self.usage is None else self.usage + event
+            self.last_call = event
         elif isinstance(event, ToolExecutionStart):
             return {
                 "type": "tool_start",
@@ -90,6 +94,8 @@ class RunOutput:
             return {"type": "steering", "message_id": event.message_id, "message": event.text}
         elif isinstance(event, AgentScheduleChange):
             return {"type": "schedule_change", "schedule_yaml": event.schedule_yaml}
+        elif isinstance(event, AgentDownload):
+            self.download = event
         elif isinstance(event, AgentProposal):
             self.proposal = event
         return None

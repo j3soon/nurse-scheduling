@@ -52,6 +52,7 @@ import {
   LOCAL_AI_API_URL,
   PRODUCTION_AI_API_URL,
   downloadOptimization,
+  downloadGeneratedZip,
   getAiBaseUrl,
   getCapabilities,
   getBackendVersion,
@@ -206,10 +207,11 @@ function isChatMessage(value: unknown): value is ChatMessage {
   if (typeof value !== 'object' || value === null) return false;
   const message = value as Partial<ChatMessage>;
   return typeof message.id === 'string'
-    && (message.role === 'user' || message.role === 'assistant' || message.role === 'optimizer')
+    && (message.role === 'system' || message.role === 'user' || message.role === 'assistant' || message.role === 'optimizer')
     && typeof message.content === 'string'
-    && (message.attachmentNames === undefined
-      || (Array.isArray(message.attachmentNames) && message.attachmentNames.every(name => typeof name === 'string')))
+    && (message.source === undefined || message.source === 'app' || message.source === 'status' || message.source === 'optimizer')
+    && (message.historyIndex === undefined || Number.isSafeInteger(message.historyIndex))
+    && (message.title === undefined || typeof message.title === 'string')
     && (message.activity === undefined
       || (Array.isArray(message.activity) && message.activity.every(isActivityEntry)))
     && (message.status === undefined || ['pending', 'failed', 'stopped'].includes(message.status))
@@ -223,6 +225,7 @@ function isChatMessage(value: unknown): value is ChatMessage {
       && typeof message.retry.question === 'string'
       && typeof message.retry.requiresAttachments === 'boolean'
     ))
+    && (message.downloadId === undefined || typeof message.downloadId === 'string')
     && (message.optimizerJob === undefined || (message.optimizerJob !== null
       && typeof message.optimizerJob.jobId === 'string'
       && typeof message.optimizerJob.downloadable === 'boolean'
@@ -247,7 +250,9 @@ function readStoredConversation(): StoredChatConversation | null {
       || (value.backendVersion !== undefined && typeof value.backendVersion !== 'string')
       || (value.contextUsage != null && (!Number.isSafeInteger(value.contextUsage.usedChars)
         || value.contextUsage.usedChars < 0 || !Number.isSafeInteger(value.contextUsage.maxChars)
-        || value.contextUsage.maxChars <= 0 || value.contextUsage.usedChars > value.contextUsage.maxChars))
+        || value.contextUsage.maxChars <= 0 || value.contextUsage.usedChars > value.contextUsage.maxChars
+        || (value.contextUsage.usedTokens !== undefined && !Number.isSafeInteger(value.contextUsage.usedTokens))
+        || (value.contextUsage.maxTokens !== undefined && !Number.isSafeInteger(value.contextUsage.maxTokens))))
       || (value.sessionEventId !== undefined
         && (!Number.isSafeInteger(value.sessionEventId) || value.sessionEventId < 0))
       || (value.trimmedHistoryCount !== undefined
@@ -388,6 +393,9 @@ export default function ExperimentalAiPage() {
   }, []);
   const {
     messages,
+    uploadedFiles,
+    removingUploadId,
+    removingDownloadId,
     contextUsage,
     activeSessionId,
     sessionExpiresAt,
@@ -406,6 +414,8 @@ export default function ExperimentalAiPage() {
     sendRequest,
     queue,
     retryMessage,
+    removeUploadedFile,
+    removeGeneratedFiles,
     stop,
     applyProposal,
     discardProposal,
@@ -418,6 +428,7 @@ export default function ExperimentalAiPage() {
     captureConversation,
   } = useAiChat({
     scheduleYaml, aiEndpoint, authRequired, authToken, isClientReady,
+    retainsUploads: fileCapability.retained === true,
     setError, reportRequestError,
     onSendStart: clearComposer => {
       followPageBottomRef.current = true;
@@ -821,11 +832,42 @@ export default function ExperimentalAiPage() {
     setError(null);
   };
 
+  const downloadGeneratedFiles = async (downloadId: string) => {
+    const sessionId = activeSessionId;
+    if (sessionId === null) return;
+    const ownsConversation = captureConversation();
+    try {
+      const blob = await downloadGeneratedZip(sessionId, downloadId, authToken, sessionEndpoint);
+      if (!ownsConversation()) return;
+      const url = URL.createObjectURL(blob);
+      if (optimizationDownloadUrlRef.current) URL.revokeObjectURL(optimizationDownloadUrlRef.current);
+      optimizationDownloadUrlRef.current = url;
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'download.zip';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (downloadError) {
+      if (ownsConversation()) reportRequestError(downloadError, 'The generated files could not be downloaded.');
+    }
+  };
+
   const exportChat = (format: ChatExportFormat) => {
     const previousUrl = chatExportUrlRef.current;
-    chatExportUrlRef.current = downloadChatExport(
-      format, messages, sessionEndpoint, new Date(), backendVersion,
-    );
+    chatExportUrlRef.current = downloadChatExport(format, messages, sessionEndpoint, new Date(), {
+      backendVersion,
+      pendingProposalDiff: proposalDiff ?? undefined,
+      runningOptimization: activeOptimization !== null && !activeOptimization.terminal
+        ? {
+          jobId: activeOptimization.jobId,
+          state: activeOptimization.state,
+          solver: activeOptimization.request?.solver,
+          timeoutSeconds: activeOptimization.request?.timeoutSeconds,
+        }
+        : undefined,
+      uploadedFiles: fileCapability.retained ? uploadedFiles : undefined,
+    });
     if (previousUrl) URL.revokeObjectURL(previousUrl);
   };
 
@@ -935,8 +977,10 @@ export default function ExperimentalAiPage() {
     ?.activity?.find(entry => entry.kind === 'tool' && entry.state === 'running');
 
 
+  // The Session files panel is fixed on the right at xl, so the chat and composer reserve
+  // equal space on both sides to stay centered without overlapping it.
   return (
-    <main className="mx-auto flex min-h-[calc(100dvh-3.5rem)] max-w-5xl flex-col px-4 pb-36 pt-8 sm:px-6">
+    <main className={`mx-auto flex min-h-[calc(100dvh-3.5rem)] max-w-5xl flex-col px-4 pb-36 pt-8 sm:px-6 ${fileCapability.retained ? 'xl:max-w-[min(64rem,calc(100vw-36rem))]' : ''}`}>
       <div className="mb-6">
         <div className="mb-2 flex flex-wrap items-center gap-3">
           <h1 className="text-3xl font-bold text-gray-900">Schedule AI Chat</h1>
@@ -1154,6 +1198,26 @@ export default function ExperimentalAiPage() {
         )}
       </div>
 
+      {fileCapability.retained && (
+        <aside aria-label="Session files" className="mb-4 rounded-xl border border-gray-200 bg-white p-4 xl:fixed xl:right-4 xl:top-24 xl:z-10 xl:max-h-[calc(100dvh-8rem)] xl:w-64 xl:overflow-y-auto">
+          <details open>
+            <summary className="cursor-pointer font-semibold">Uploaded files ({uploadedFiles.length})</summary>
+            <p className="mt-2 text-xs text-gray-600">Available for later questions until removed or this chat expires. A repeated filename gets a number, such as ward (1).csv.</p>
+            {uploadedFiles.length === 0 ? <p className="mt-3 text-sm text-gray-500">No uploaded files.</p> : (
+              <ul className="mt-3 space-y-3">
+                {uploadedFiles.map(file => (
+                  <li key={file.id} className="flex items-start gap-2">
+                    <span className="min-w-0 flex-1 break-words text-sm">{file.filename}<span className="block text-xs text-gray-500">{(file.bytes / 1000).toLocaleString()} KB</span></span>
+                    <button type="button" aria-label={`Remove ${file.filename}`} disabled={isStreaming || removingUploadId !== null}
+                      onClick={() => void removeUploadedFile(file.id)} className="rounded px-2 py-1 text-xs text-red-700 hover:bg-red-50 disabled:opacity-50">Remove</button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </details>
+        </aside>
+      )}
+
       <ChatTranscript
         messages={messages}
         showReasoning={showReasoning}
@@ -1162,6 +1226,10 @@ export default function ExperimentalAiPage() {
         steeringAssistantId={steeringAssistantId}
         downloadingOptimizationId={downloadingOptimizationId}
         onDownloadResult={downloadOptimizationResult}
+        removingDownloadId={removingDownloadId}
+        canRemoveDownloads={!conversationUnavailable}
+        onDownloadFiles={downloadGeneratedFiles}
+        onRemoveFiles={removeGeneratedFiles}
         onRetry={retryMessage}
         onPrepareRetry={prepareAttachmentRetry}
         sessionExpiresAt={activeSessionId !== null ? sessionExpiresAt : null}
@@ -1227,7 +1295,7 @@ export default function ExperimentalAiPage() {
         onDragLeave={leaveAttachmentDropZone}
         onDrop={dropAttachments}
         aria-label="Message composer"
-        className={`fixed inset-x-10 bottom-0 z-30 mx-auto max-w-5xl space-y-3 bg-gradient-to-t from-white via-white to-white/90 px-4 pb-4 pt-3 sm:px-6 ${
+        className={`fixed inset-x-10 bottom-0 z-30 mx-auto max-w-5xl space-y-3 ${fileCapability.retained ? 'xl:inset-x-72' : ''} bg-gradient-to-t from-white via-white to-white/90 px-4 pb-4 pt-3 sm:px-6 ${
           isDraggingFiles ? 'rounded-xl ring-2 ring-blue-400 ring-offset-2' : ''
         }`}
       >
@@ -1442,12 +1510,19 @@ export default function ExperimentalAiPage() {
           <p
             className="mt-2 text-center text-[0.6875rem] text-gray-500"
             title={contextUsage !== null
-              ? `${contextUsage.usedChars.toLocaleString()} of ${contextUsage.maxChars.toLocaleString()} characters in retained chat history. Excludes instructions, schedule, tools, and attachments. This is not the model token window.`
+              ? `${contextUsage.usedChars.toLocaleString()} of ${contextUsage.maxChars.toLocaleString()} characters in retained chat history. Excludes instructions, schedule, tools, and attachments.${
+                contextUsage.usedTokens !== undefined
+                  ? ' Tokens count the latest model request, including instructions, tool output, and the reply.'
+                  : ' The AI server does not report model tokens.'
+              }`
               : 'The AI server has not reported context usage. Update the AI server to a version that reports its chat history budget.'}
           >
             Chat history context: {contextUsage !== null
               ? `${(100 * contextUsage.usedChars / contextUsage.maxChars).toFixed(1)}%`
               : 'unavailable'}
+            {contextUsage?.usedTokens !== undefined && (
+              <> · Tokens: {contextUsage.usedTokens.toLocaleString('en-US')} / {contextUsage.maxTokens?.toLocaleString('en-US') ?? 'unavailable'}</>
+            )}
           </p>
         )}
       </form>

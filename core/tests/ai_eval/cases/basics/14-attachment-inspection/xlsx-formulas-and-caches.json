@@ -1,0 +1,25 @@
+{
+  "id": "xlsx-formulas-and-caches",
+  "fixture": "new-schedule",
+  "question": "Inspect the attached workbook. On Staffing checks, report the last-saved cached values of C3, C4, and C5, and how many of these three cells contain formulas. Do not recalculate them. Reply only as JSON with keys C3, C4, C5, and formulaCount. Use null if no cached value was saved.",
+  "expect_proposal": false,
+  "attachments": [
+    "formula-xlsx"
+  ],
+  "answer_json": {
+    "C3": 11,
+    "C4": 10,
+    "C5": null,
+    "formulaCount": 3
+  },
+  "tool_usage": {
+    "required": [
+      "bash"
+    ]
+  },
+  "tags": [
+    "attachment",
+    "xlsx-inspection"
+  ],
+  "note": "This testcase is mostly AI generated. Saved formula caches deliberately differ from recomputed values. Correct custom readers are accepted."
+}

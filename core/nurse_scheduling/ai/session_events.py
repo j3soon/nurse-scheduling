@@ -87,10 +87,39 @@ class ProposalEvent(RunFields):
     diff: str
 
 
+class DownloadEvent(RunFields):
+    type: Literal["download"]
+    download_id: str
+
+
+class WarningEvent(RunFields):
+    type: Literal["warning"]
+    message: str
+
+
+class ModelInputMessage(TypedDict):
+    kind: Literal["app", "question", "optimizer", "status"]
+    content: str
+    # Absolute history position of an app event, so a retried run does not show it twice.
+    index: NotRequired[int]
+    title: NotRequired[str]
+
+
+class ModelInputEvent(RunFields):
+    """The system message and the request messages added since the last assistant reply."""
+
+    type: Literal["model_input"]
+    system: str
+    messages: list[ModelInputMessage]
+
+
 class ContextUsageEvent(RunFields):
     type: Literal["context_usage"]
     used_chars: int
     max_chars: int
+    # Tokens of the latest provider request. The limit is absent without model metadata.
+    used_tokens: NotRequired[int]
+    max_tokens: NotRequired[int]
 
 
 class HistoryTrimmedEvent(RunFields):
@@ -140,6 +169,9 @@ AgentSessionRunEvent = (
     | SteeringEvent
     | ScheduleChangeEvent
     | ProposalEvent
+    | DownloadEvent
+    | WarningEvent
+    | ModelInputEvent
     | ContextUsageEvent
     | HistoryTrimmedEvent
 )

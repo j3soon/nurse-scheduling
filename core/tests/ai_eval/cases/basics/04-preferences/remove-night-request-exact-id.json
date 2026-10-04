@@ -1,0 +1,34 @@
+{
+  "id": "remove-night-request-exact-id",
+  "fixture": "small-clinic",
+  "question": "Remove the night (`N`) shift request on the 6th for the person with exact ID `Ana`. Keep every other request, including anything with the `Night` group selector.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "removed": [
+        {
+          "type": "shift request",
+          "person": [
+            "Ana"
+          ],
+          "date": [
+            "06"
+          ],
+          "shiftType": [
+            "N"
+          ],
+          "weight": -1
+        }
+      ]
+    }
+  ],
+  "changes": [
+    "preferences"
+  ],
+  "tags": [
+    "prompt-evidence",
+    "exact-target"
+  ],
+  "note": "This testcase is mostly AI generated. The natural word night is explicitly resolved to N. The mandatory night clarification example must not override that selector or remove the distinct Night group request."
+}

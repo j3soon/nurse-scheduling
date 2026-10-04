@@ -20,14 +20,17 @@
 # This test is mostly AI generated.
 
 import asyncio
+import hashlib
 import json
 import threading
 from collections.abc import AsyncIterator
+from io import BytesIO
 
 import httpx
 import pytest
+from openpyxl import load_workbook
 
-from nurse_scheduling.ai.context import optimizer_review_prompt
+from nurse_scheduling.ai.context import optimizer_completion_message, optimizer_review_prompt
 from nurse_scheduling.ai.optimizer import (
     OptimizerArtifact,
     OptimizerCompletion,
@@ -38,12 +41,80 @@ from nurse_scheduling.ai.optimizer import (
 )
 from nurse_scheduling.ai.optimizer_http import HttpOptimizerBackend
 from nurse_scheduling.ai.optimizer_tool import execute_optimizer_tool, optimizer_tool_definition
+from nurse_scheduling.ai.result_context import build_result_context
 from nurse_scheduling.ai.session_event_stream import SessionEventStream
 
+from .ai_eval.optimizer_fixtures import FIXTURE, completion_result
 from .ai_test_helper import base_schedule_payload, optimizer_workbook_bytes, parse_schedule, schedule_yaml
 
 TEST_SCHEDULE = schedule_yaml()
 WORKBOOK_BYTES = optimizer_workbook_bytes()
+
+
+@pytest.mark.parametrize("score", [0, -20, 20, None])
+def test_completion_reports_score_direction_without_mutating_input(score) -> None:
+    result = {"download_available": False, "result": {"score": score}}
+
+    message = optimizer_completion_message(result)
+    metadata = json.loads(message.split("Optimizer result JSON:\n", 1)[1])
+
+    assert metadata.get("score_direction") == ("maximize" if score is not None else None)
+    assert ("score_comparison_scope" in metadata) == (score is not None)
+    assert "score_direction" not in result
+
+
+@pytest.mark.parametrize("custom_export_text", [False, True], ids=["bracketed-annotations", "custom-export-text"])
+def test_completion_audits_restored_workbook_against_submitted_snapshot(custom_export_text) -> None:
+    async def scenario() -> None:
+        source = FIXTURE.read_text()
+        content, _ = completion_result("request-audit", source)
+        workbook = load_workbook(BytesIO(content))
+        if custom_export_text:
+            # appendText can add an arbitrary suffix to an otherwise valid assignment.
+            workbook.active.cell(3, 5).value = "D requested: OFF"
+        for index in range(1, 4):
+            workbook.active.cell(index + 2, 1).value = f"P{index}"
+        output = BytesIO()
+        workbook.save(output)
+        workbook.close()
+        backend = FakeOptimizerBackend(output.getvalue())
+        completed = asyncio.Event()
+        result = {}
+
+        async def on_completion(_session_id, completion: OptimizerCompletion):
+            prompt = optimizer_review_prompt(completion)
+            result.update(json.loads(prompt.split("Optimizer result JSON:\n", 1)[1]))
+            assert completion.artifact is not None
+            completed.set()
+
+        optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
+        try:
+            assert (await execute_optimizer_tool(optimizer, "session", source, '{"action":"start"}')).ok
+            # The editor can change while optimization is running.
+            changed = source.replace("weight: 11000000000", "weight: 12000000000") + "\n# New editor snapshot\n"
+            assert (await execute_optimizer_tool(optimizer, "session", changed, '{"action":"status"}')).ok
+            backend.release.set()
+            await asyncio.wait_for(completed.wait(), timeout=5)
+            assert result["source_sha256"] == hashlib.sha256(source.encode()).hexdigest()
+            if custom_export_text:
+                assert "Custom export appendText" in result["request_audit"]["unavailable"]
+                assert "summary" not in result["request_audit"]
+                artifact = await optimizer.result_artifact("session", result["job_id"])
+                assert load_workbook(BytesIO(artifact.content)).active.cell(3, 5).value == "D requested: OFF"
+            else:
+                assert result["request_audit"]["source_sha256"] == result["source_sha256"]
+                assert result["request_audit"]["summary"][0] == {
+                    "weight": 11_000_000_000,
+                    "total": 4,
+                    "satisfied": 3,
+                    "unmet": 1,
+                }
+            assert result["download_available"]
+            assert not optimizer._jobs[result["job_id"]].schedule_yaml
+        finally:
+            await optimizer.close()
+
+    asyncio.run(scenario())
 
 
 def test_tool_description_explains_the_default_timeout() -> None:
@@ -518,6 +589,10 @@ def test_start_returns_immediately_and_completion_wakes_the_agent() -> None:
         assert completion.artifact.content == WORKBOOK_BYTES
         prompt = optimizer_review_prompt(completion)
         assert '"score": 17' in prompt
+        result_data = json.loads(prompt.split("Optimizer result JSON:\n", 1)[1])
+        # This mock workbook lacks the complete date range, so counts must not be inferred.
+        assert "could not be read" in result_data["request_audit"]["unavailable"]
+        assert result_data["artifact_error"] is None
         assert "/workspace/optimizer-results/optimized-schedule.xlsx" in prompt
         assert repr(WORKBOOK_BYTES) not in prompt
         assert [update[1]["state"] for update in updates] == ["running", "completed"]
@@ -682,18 +757,27 @@ def test_completed_artifacts_are_evicted_to_bound_process_memory() -> None:
             backend,
             poll_interval_seconds=0.001,
             on_completion=on_completion,
-            max_cached_result_bytes=len(WORKBOOK_BYTES),
+            max_cached_result_bytes=len(WORKBOOK_BYTES)
+            + len(json.dumps(build_result_context(TEST_SCHEDULE, workbook=WORKBOOK_BYTES), ensure_ascii=False).encode())
+            + 100,
         )
         first = await optimizer.start("session-1", TEST_SCHEDULE)
         backend.release.set()
         await asyncio.wait_for(completions.get(), timeout=1)
         first_id = first.id
+        first_artifact = await optimizer.result_artifact("session-1", first_id)
+        assert first_artifact.schedule_context
+        assert optimizer._cached_artifact_bytes == first_artifact.retained_bytes
 
         await optimizer.start("session-2", TEST_SCHEDULE)
         await asyncio.wait_for(completions.get(), timeout=1)
 
         with pytest.raises(OptimizerResultUnavailable):
             await optimizer.result_artifact("session-1", first_id)
+        latest = await optimizer.latest_result_artifact("session-2")
+        assert latest is not None
+        assert optimizer._cached_artifact_bytes == latest.retained_bytes
+        assert optimizer._cached_artifact_bytes <= optimizer._max_cached_result_bytes
         await optimizer.close()
 
     asyncio.run(scenario())

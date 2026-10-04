@@ -1,0 +1,13 @@
+{
+  "id": "optimizer-start-preserves-ward",
+  "fixture": "ward87",
+  "question": "Please optimize this 87-person November roster for 60 seconds. Keep its current constraints and weights.",
+  "expect_proposal": false,
+  "semantic_check": "optimizer-start-source",
+  "tool_usage": {
+    "required_calls": [{"name": "optimizer", "arguments": {"action": "start", "timeout_seconds": 60}}],
+    "max_per_tool": {"optimizer": 1}
+  },
+  "tags": ["optimizer-goal"],
+  "note": "This testcase is mostly AI generated. Optimization alone requires the original source, without weakening staffing, rest or requests. Grade the submitted optimizer input independently of the final proposal state. The large fixture makes unnecessary schedule reads costly."
+}

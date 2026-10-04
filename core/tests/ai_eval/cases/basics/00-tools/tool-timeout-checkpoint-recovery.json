@@ -1,0 +1,28 @@
+{
+  "id": "tool-timeout-checkpoint-recovery",
+  "fixture": "small-clinic",
+  "question": "Run the attached diagnostic exactly once by calling the bash tool with command `python3 /workspace/attachments/01-timeout-checkpoint.txt` and its timeout parameter set to 2 seconds. Do not wrap the command in a shell timer. The diagnostic saves /workspace/timeout-checkpoint.json before slow optional work. After the tool times out, use the saved checkpoint without rerunning or modifying the diagnostic. Set the schedule description to the description in that checkpoint and propose the change. Preserve everything else.",
+  "attachments": [
+    "timeout-checkpoint"
+  ],
+  "expect_proposal": true,
+  "changes": [
+    "description"
+  ],
+  "expected_diff": [
+    {
+      "path": "description",
+      "before": "Small pediatric clinic",
+      "after": "Recovered clinic checkpoint"
+    }
+  ],
+  "tags": [
+    "sandbox-runtime"
+  ],
+  "note": "This testcase is mostly AI generated. A real command writes a checkpoint and execution marker before timing out. The timeout benchmark independently verifies one execution, preserved checkpoint bytes, unchanged sandbox ID, and absence of a delayed descendant write before teardown. Cost comparisons require matched successful runs.",
+  "tool_usage": {
+    "required_errors": [
+      "bash"
+    ]
+  }
+}

@@ -83,12 +83,24 @@ class ProposalDecisionEntry:
     decision: ProposalDecision
 
 
-AgentMessage = UserMessage | AssistantMessage | ToolResultMessage | ProposalDecisionEntry
+@dataclass(frozen=True)
+class AppEventEntry:
+    """A trusted app event between runs, such as an upload or schedule change, specific to this service."""
+
+    text: str
+
+
+AgentMessage = UserMessage | AssistantMessage | ToolResultMessage | ProposalDecisionEntry | AppEventEntry
+
+
+def starts_exchange(entry: AgentMessage) -> bool:
+    """Whether model context may start at this entry without an earlier answer it refers to."""
+    return isinstance(entry, UserMessage | AppEventEntry)
 
 
 def entry_text(entry: AgentMessage) -> str:
     """Return the text an entry holds, which bounds its share of session memory."""
-    if isinstance(entry, UserMessage | ToolResultMessage):
+    if isinstance(entry, UserMessage | ToolResultMessage | AppEventEntry):
         return entry.text
     if isinstance(entry, AssistantMessage):
         return entry.text + entry.reasoning + "".join(call.arguments for call in entry.tool_calls)

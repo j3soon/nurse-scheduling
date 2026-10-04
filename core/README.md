@@ -436,7 +436,7 @@ from session text and model context limits.
 | `AI_SANDBOX_BACKEND` | Required | Sandbox provider. Currently `e2b`. |
 | `E2B_API_KEY` | Required for E2B | E2B Cloud credential used only by the trusted application. |
 | `E2B_TEMPLATE` | `nurse-scheduling-ai-sandbox` | Prebuilt E2B template alias. |
-| `AI_SANDBOX_COMMAND_TIMEOUT_SECONDS` | `30` | Default and maximum deadline for one shell command. |
+| `AI_SANDBOX_COMMAND_TIMEOUT_SECONDS` | `60` | Default and maximum deadline for one shell command. |
 | `AI_SANDBOX_TURN_TIMEOUT_SECONDS` | `3600` | Deadline for the complete sandbox-backed user message. |
 | `AI_AGENT_MAX_TOOL_ROUNDS` | `200` | Maximum model tool-call rounds before the agent must answer from verified results. |
 | `AI_AGENT_MAX_TOOL_CALLS` | `400` | Maximum total tool calls in one sandbox-backed user message. |
@@ -450,14 +450,15 @@ from session text and model context limits.
 | `AI_COOKIE_SECURE` | `0` in the launcher | Use `0` for local HTTP and `1` for public HTTPS. Secure deployments use `SameSite=None` so approved cross-site frontends can retain session ownership. |
 | `AI_SESSION_TTL_SECONDS` | `172800` | Idle session lifetime. Session activity renews it. |
 | `AI_MAX_SESSIONS` | `1000` | Maximum process-local sessions. |
-| `AI_MAX_SESSION_BYTES` | `268435456` | Chat text budget across live sessions. New sessions, schedule updates, and queued steering that exceed it return HTTP 429. Completed turns trim the oldest complete exchanges while retaining the newest turn. |
+| `AI_MAX_SESSION_BYTES` | `268435456` | Text and file budget across live sessions, including retained uploads and generated ZIPs. New sessions, schedule updates, uploads, and queued steering that exceed it return HTTP 429. Completed runs trim the oldest complete exchanges while retaining the newest run. A generated ZIP that does not fit is not retained. |
 | `AI_MAX_HISTORY_MESSAGES` | `1000` | Conversation messages retained per session, with an effective minimum of two to preserve the newest exchange. |
-| `AI_MAX_HISTORY_CHARS` | `200000` | Prompt budget for retained history. The newest messages that fit are sent, so a long session cannot outgrow the model context window. |
+| `AI_MAX_HISTORY_CHARS` | `200000` | Prompt budget for retained history. The newest messages that fit are sent, so a long session cannot outgrow the model context window. Past this budget, the session drops its oldest exchanges until about half remains, so the request prefix stays unchanged between cuts. |
 | `AI_MAX_MESSAGE_CHARS` | `8000` | Maximum question length. |
 | `AI_MAX_SCHEDULE_BYTES` | `1000000` | Maximum UTF-8 YAML snapshot size. |
 | `AI_MAX_CONCURRENT_REQUESTS` | `4` | Maximum simultaneous provider streams. |
-| `AI_MAX_ATTACHMENT_FILES` | `8` | Maximum files attached to one question. |
-| `AI_MAX_ATTACHMENT_BYTES` | `5000000` | Maximum bytes per attached file. |
+| `AI_MAX_ATTACHMENT_FILES` | `8` | Maximum files retained in one session. |
+| `AI_MAX_ATTACHMENT_BYTES` | `5000000` | Maximum bytes per uploaded file. |
+| `AI_MAX_DOWNLOAD_BYTES` | `50000000` | Maximum compressed and uncompressed bytes of the ZIP an assistant run generates at `/workspace/download.zip`. |
 
 Attachments are always enabled. Every upload is copied unchanged into the
 disposable sandbox, where the agent can inspect it with Pi-compatible tools.

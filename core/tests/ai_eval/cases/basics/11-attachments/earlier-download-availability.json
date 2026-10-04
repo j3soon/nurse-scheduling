@@ -1,0 +1,16 @@
+{
+  "id": "earlier-download-availability",
+  "fixture": "small-clinic",
+  "user_turns": [
+    "Give me a downloadable CSV file named sample.csv containing exactly these two lines, with a final newline: name,date\nAlex,2026-10-01. Do not edit the schedule or start optimization.",
+    "Can I still download sample.csv from your previous reply, or do you need to create it again? Also check whether /workspace/download.zip from that reply is in your current workspace. Do not create a new download or modify the schedule. Reply only with JSON: earlier_download_available (boolean, whether I can still download it from your previous reply), zip_in_current_workspace (boolean from the actual check)."
+  ],
+  "expect_proposal": false,
+  "download_files": {"sample.csv": "name,date\nAlex,2026-10-01\n"},
+  "answer_json": {
+    "earlier_download_available": true,
+    "zip_in_current_workspace": false
+  },
+  "tags": ["attachment", "downloads", "workspace-lifetime-investigation"],
+  "note": "This testcase is mostly AI generated. The server keeps each reply's ZIP for its download button, but the next VM does not receive it. Grade that the agent neither treats the earlier download as lost nor expects the ZIP in the new VM. One captured ZIP also shows that the second turn did not recreate it."
+}

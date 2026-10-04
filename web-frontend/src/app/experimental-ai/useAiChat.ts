@@ -23,14 +23,17 @@ import { useCallback, useEffect, useEffectEvent, useRef, useState, useSyncExtern
 import type { Dispatch, SetStateAction } from 'react';
 import {
   AiHttpError, AiStaleRunError, DEFAULT_SESSION_RETENTION_SECONDS,
-  type ContextUsage,
-  approveProposal, createSession, getSessionStatus, isAuthenticationError, queueMessage,
-  rejectProposal, sendMessage, stopSession, updateSessionSchedule,
+  type ContextUsage, type UploadedFile,
+  approveProposal, createSession, getSessionStatus, getUploads, isAuthenticationError, queueMessage,
+  rejectProposal, removeGeneratedZip, removeUpload, sendMessage, stopSession, updateSessionSchedule, uploadFiles,
 } from './aiClient';
 import {
   type AssistantEvent, applyAssistantEvent, messageId, toAssistantEvent,
 } from './assistantEvents';
-import { type ChatMessage, applyResponseEvent, beginResponse, createResponse, resetRunMessages, restoreTranscript, steerResponse } from './chatTranscript';
+import {
+  type ChatMessage, applyModelInput, applyResponseEvent, beginResponse, createResponse, removeFailedRun,
+  resetRunMessages, restoreTranscript, steerResponse,
+} from './chatTranscript';
 import { ChatLifecycle, scopedEventHandler } from './chatLifecycle';
 import { type ActiveOptimization, applyOptimizationEvent, appendOptimizationResult } from './optimizerEvents';
 import { SessionEventRouter } from './sessionEventRouter';
@@ -86,6 +89,8 @@ interface AiChatOptions {
   authRequired: boolean;
   authToken: string | null;
   isClientReady: boolean;
+  // The backend keeps uploads in the session until the user removes them.
+  retainsUploads: boolean;
   setError: Dispatch<SetStateAction<string | null>>;
   reportRequestError: (error: unknown, fallback: string) => void;
   onSendStart: (clearComposer: boolean) => void;
@@ -95,10 +100,13 @@ interface AiChatOptions {
 
 /** Chat control over the existing run lifecycle and session event router. */
 export function useAiChat({
-  scheduleYaml, aiEndpoint, authRequired, authToken, isClientReady,
+  scheduleYaml, aiEndpoint, authRequired, authToken, isClientReady, retainsUploads,
   setError, reportRequestError, onSendStart, onUnavailable, onApplySchedule,
 }: AiChatOptions) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
+  const [removingUploadId, setRemovingUploadId] = useState<string | null>(null);
+  const [removingDownloadId, setRemovingDownloadId] = useState<string | null>(null);
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sessionExpiresAt, setSessionExpiresAt] = useState<number | null>(null);
@@ -144,6 +152,8 @@ export function useAiChat({
     setActiveOptimization(null);
     setProposalDiff(null);
     setIsApplyingProposal(false);
+    setRemovingUploadId(null);
+    setRemovingDownloadId(null);
   }, [lifecycle, sessionEvents]);
   useEffect(() => () => {
     lifecycle.reset();
@@ -262,11 +272,21 @@ export function useAiChat({
   const projectSessionState = useCallback((event: SessionEvent): boolean => {
     switch (event.type) {
       case 'proposal': setProposalDiff(event.diff); return true;
-      case 'context_usage': setContextUsage(event.usage); return true;
+      case 'context_usage': {
+        const { usage } = event;
+        // A run's first report precedes its provider call, so keep the latest token figures until one reports.
+        setContextUsage(previous => (
+          usage.usedTokens === undefined && previous?.usedTokens !== undefined
+            ? { ...usage, usedTokens: previous.usedTokens, maxTokens: previous.maxTokens }
+            : usage
+        ));
+        return true;
+      }
       case 'history_trimmed': setTrimmedHistoryCount(event.dropped); return true;
+      case 'warning': setError(event.message); return true;
       default: return false;
     }
-  }, []);
+  }, [setError]);
 
   const startSessionEventStream = useCallback((sessionId: string, endpoint: string) => {
     if (sessionEvents.connected()) return;
@@ -316,6 +336,22 @@ export function useAiChat({
         }
         case 'run_start': {
           beginBackgroundMessage(event.runId);
+          break;
+        }
+        case 'model_input': {
+          resumeBackgroundMessage();
+          const assistantId = lifecycle.current('background')?.id;
+          if (assistantId !== undefined) {
+            const systemId = messageId();
+            setMessages(previous => applyModelInput(previous, event.input, { questionId: null, assistantId }, systemId));
+          }
+          break;
+        }
+        case 'download': {
+          const assistantId = lifecycle.current('background')?.id ?? event.runId;
+          setMessages(previous => previous.map(message => (
+            message.id === assistantId ? { ...message, downloadId: event.downloadId } : message
+          )));
           break;
         }
         case 'steering': {
@@ -374,7 +410,6 @@ export function useAiChat({
       role: 'user',
       createdAt,
       content: question,
-      attachmentNames: files.map(file => file.name),
     };
     const initialAssistantId = messageId();
     let activeAssistantId = initialAssistantId;
@@ -390,7 +425,7 @@ export function useAiChat({
     ]);
     onSendStart(clearComposer);
     setError(null);
-    setProposalDiff(null);
+    // A pending proposal stays approvable across messages until it is approved, rejected, or replaced.
     setProposalNotice(null);
     const operation = lifecycle.begin('foreground', activeAssistantId);
     sandboxScheduleRef.current = scheduleYaml;
@@ -412,13 +447,22 @@ export function useAiChat({
         setConversationUnavailable(false);
         setSessionNotice(null);
       } else if (syncedScheduleRef.current !== scheduleYaml) {
-        // The schedule can change elsewhere in the app between questions.
+        // The schedule can change elsewhere in the app between questions. The backend then
+        // discards a proposal made for the previous schedule.
         await updateSessionSchedule(sessionId, scheduleYaml, authToken, sessionEndpoint);
+        if (lifecycle.owns(operation)) setProposalDiff(null);
       }
       if (!lifecycle.owns(operation)) return;
       controller.signal.throwIfAborted();
       syncedScheduleRef.current = scheduleYaml;
       renewSessionExpiration();
+      if (files.length > 0) {
+        const uploaded = await uploadFiles(sessionId, files, authToken, sessionEndpoint, controller.signal);
+        if (!lifecycle.owns(operation)) return;
+        // The upload is now its own history message, so a retry needs only the question.
+        activeQuestionRequiresAttachments = false;
+        if (retainsUploads) setUploadedFiles(previous => [...previous, ...uploaded]);
+      }
       let runFinished = false;
       let finishRun!: () => void;
       let rejectRun!: (error: Error) => void;
@@ -442,6 +486,19 @@ export function useAiChat({
           return;
         }
         switch (event.type) {
+          case 'model_input': {
+            const systemId = messageId();
+            const run = { questionId: userMessage.id, assistantId: activeAssistantId };
+            setMessages(previous => applyModelInput(previous, event.input, run, systemId));
+            break;
+          }
+          case 'download': {
+            const assistantId = activeAssistantId;
+            setMessages(previous => previous.map(message => (
+              message.id === assistantId ? { ...message, downloadId: event.downloadId } : message
+            )));
+            break;
+          }
           case 'done': {
             finishRun();
             break;
@@ -502,20 +559,20 @@ export function useAiChat({
       const aborted = () => finishRun();
       controller.signal.addEventListener('abort', aborted, { once: true });
       try {
-        const runId = await sendMessage(
-          sessionId,
-          question,
-          controller.signal,
-          authToken,
-          {
-            files,
-          },
-          sessionEndpoint,
-        );
+        const runId = await sendMessage(sessionId, question, controller.signal, authToken, sessionEndpoint);
         eventRouterRef.current.acknowledge(foreground, runId, acceptedId => {
           setMessages(previous => previous.map(message => runMessageIds.has(message.id)
             ? { ...message, runId: acceptedId } : message));
         });
+        if (retainsUploads) {
+          getUploads(sessionId, authToken, sessionEndpoint, controller.signal)
+            .then(files => { if (lifecycle.owns(operation) && !controller.signal.aborted) setUploadedFiles(files); })
+            .catch(uploadError => {
+              if (lifecycle.owns(operation) && !controller.signal.aborted) {
+                reportRequestError(uploadError, 'Uploaded files could not be listed.');
+              }
+            });
+        }
         if (!runFinished && lifecycle.getSnapshot().foreground?.phase === 'stopping') {
           // Stop may have reached the server before the message was accepted.
           await stopSession(sessionId, authToken, sessionEndpoint).catch(stopError => {
@@ -602,14 +659,60 @@ export function useAiChat({
 
   const retryMessage = (failedId: string, question: string) => {
     if (!question || isStreaming || (authRequired && authToken === null)) return;
-    // The retried run replaces the failed pair, so the question is not repeated.
-    setMessages(previous => {
-      const failedIndex = previous.findIndex(message => message.id === failedId);
-      if (failedIndex < 0) return previous;
-      const start = previous[failedIndex - 1]?.role === 'user' ? failedIndex - 1 : failedIndex;
-      return [...previous.slice(0, start), ...previous.slice(failedIndex + 1)];
-    });
+    setMessages(previous => removeFailedRun(previous, failedId));
     void sendRequest(question, [], false);
+  };
+
+  useEffect(() => {
+    if (!activeSessionId || !retainsUploads || conversationUnavailable) {
+      setUploadedFiles([]);
+      return;
+    }
+    if (isStreaming || removingUploadId !== null || (authRequired && authToken === null)) return;
+    const controller = new AbortController();
+    getUploads(activeSessionId, authToken, sessionEndpointRef.current ?? aiEndpoint, controller.signal)
+      .then(files => { if (!controller.signal.aborted) setUploadedFiles(files); })
+      .catch(uploadError => {
+        if (!controller.signal.aborted) reportRequestError(uploadError, 'Uploaded files could not be listed.');
+      });
+    return () => controller.abort();
+  }, [activeSessionId, retainsUploads, isStreaming, removingUploadId, aiEndpoint, authToken, authRequired,
+    conversationUnavailable, reportRequestError]);
+
+  const removeUploadedFile = async (uploadId: string) => {
+    const sessionId = sessionIdRef.current;
+    if (!sessionId) return;
+    const ownsConversation = lifecycle.capture();
+    setRemovingUploadId(uploadId);
+    try {
+      await removeUpload(sessionId, uploadId, authToken, sessionEndpointRef.current ?? aiEndpoint);
+      if (!ownsConversation()) return;
+      setUploadedFiles(files => files.filter(file => file.id !== uploadId));
+      renewSessionExpiration();
+    } catch (uploadError) {
+      if (ownsConversation()) reportRequestError(uploadError, 'The uploaded file could not be removed.');
+    } finally {
+      if (ownsConversation()) setRemovingUploadId(null);
+    }
+  };
+
+  const removeGeneratedFiles = async (downloadId: string) => {
+    const sessionId = sessionIdRef.current;
+    if (!sessionId || removingDownloadId !== null) return;
+    const ownsConversation = lifecycle.capture();
+    setRemovingDownloadId(downloadId);
+    try {
+      await removeGeneratedZip(sessionId, downloadId, authToken, sessionEndpointRef.current ?? aiEndpoint);
+      if (!ownsConversation()) return;
+      setMessages(previous => previous.map(message => (
+        message.downloadId === downloadId ? { ...message, downloadId: undefined } : message
+      )));
+      renewSessionExpiration();
+    } catch (downloadError) {
+      if (ownsConversation()) reportRequestError(downloadError, 'The generated ZIP could not be removed.');
+    } finally {
+      if (ownsConversation()) setRemovingDownloadId(null);
+    }
   };
 
   const stop = () => {
@@ -684,6 +787,9 @@ export function useAiChat({
 
   return {
     messages,
+    uploadedFiles,
+    removingUploadId,
+    removingDownloadId,
     contextUsage,
     activeSessionId,
     sessionExpiresAt,
@@ -709,6 +815,8 @@ export function useAiChat({
     sendRequest,
     queue,
     retryMessage,
+    removeUploadedFile,
+    removeGeneratedFiles,
     stop,
     applyProposal,
     discardProposal,

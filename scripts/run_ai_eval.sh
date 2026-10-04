@@ -25,23 +25,26 @@ if [[ -x "${CORE_DIR}/.venv/bin/python" && -f "${CORE_DIR}/.venv/bin/activate" ]
   source "${CORE_DIR}/.venv/bin/activate"
 fi
 
-# The runner starts in core/, so resolve path options against the caller's directory.
-arguments=()
-path_option=""
+# The runner starts in core/, so resolve relative path options from the caller.
+args=()
+resolve_next=false
 for arg in "$@"; do
-  if [[ -n "$path_option" ]]; then
+  if [[ "$resolve_next" == true ]]; then
     [[ "$arg" == /* ]] || arg="${PWD}/${arg}"
-    path_option=""
-  elif [[ "$arg" =~ ^(--output-dir|--baseline-report|--cases-dir)=(.*)$ ]]; then
-    value="${BASH_REMATCH[2]}"
-    [[ "$value" == /* ]] || value="${PWD}/${value}"
-    arg="${BASH_REMATCH[1]}=${value}"
-  elif [[ "$arg" == --output-dir || "$arg" == --baseline-report || "$arg" == --cases-dir ]]; then
-    path_option="$arg"
+    resolve_next=false
+  else
+    case "$arg" in
+      --output-dir | --cases-dir | --baseline-report)
+        resolve_next=true
+        ;;
+      --output-dir=[!/]* | --cases-dir=[!/]* | --baseline-report=[!/]*)
+        arg="${arg%%=*}=${PWD}/${arg#*=}"
+        ;;
+    esac
   fi
-  arguments+=("$arg")
+  args+=("$arg")
 done
-set -- "${arguments[@]}"
+set -- "${args[@]}"
 
 cd "${CORE_DIR}"
 for arg in "$@"; do
@@ -50,6 +53,11 @@ for arg in "$@"; do
   fi
 done
 python -c 'import sys; from tests.ai_eval.runner import _selected_cases; _selected_cases(sys.argv[1:])' "$@"
+for arg in "$@"; do
+  if [[ "$arg" == --plan-only ]]; then
+    exec python -m tests.ai_eval.runner "$@"
+  fi
+done
 
 for required in AI_PROVIDER_BASE_URL AI_PROVIDER_API_KEY; do
   if [[ -z "${!required:-}" ]]; then

@@ -40,13 +40,12 @@ ORTOOLS_MATHOPT_MIP_ENGINES = ("gscip", "cp-sat", "highs")
 ORTOOLS_MATHOPT_SOLVERS = tuple(f"ortools/{ORTOOLS_MATHOPT_API}/{engine}" for engine in ORTOOLS_MATHOPT_MIP_ENGINES)
 PULP_ENGINES = ("cbc", "cuopt", "glpk", "highs", "scip")
 PULP_SOLVERS = tuple(f"pulp/{engine}" for engine in PULP_ENGINES)
-NORMALIZED_SOLVER_CHOICES = (
+SUPPORTED_SOLVER_CHOICES = (
     ORTOOLS_CP_SAT_SOLVER,
     *ORTOOLS_MPSOLVER_SOLVERS,
     *ORTOOLS_MATHOPT_SOLVERS,
     *PULP_SOLVERS,
 )
-SUPPORTED_SOLVER_CHOICES = NORMALIZED_SOLVER_CHOICES
 SOLVER_SELECTOR_HELP = (
     "Solver selector (ortools/cp-sat, ortools/mpsolver/cbc, ortools/mpsolver/scip, "
     "ortools/mpsolver/cp-sat, ortools/mpsolver/bop, ortools/mathopt/gscip, "
@@ -176,7 +175,7 @@ def schedule(
         from .solver_ortools_linear import ORToolsLinearSolver
 
         logger.info(
-            "Using solver backend=%s api=%s engine=%s normalized=%s",
+            "Using solver backend=%s api=%s engine=%s selector=%s",
             solver_selector.backend,
             solver_selector.api,
             solver_selector.engine,
@@ -187,7 +186,7 @@ def schedule(
         from .solver_ortools_mathopt import ORToolsMathOptSolver
 
         logger.info(
-            "Using solver backend=%s api=%s engine=%s normalized=%s",
+            "Using solver backend=%s api=%s engine=%s selector=%s",
             solver_selector.backend,
             solver_selector.api,
             solver_selector.engine,

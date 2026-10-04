@@ -218,7 +218,7 @@ export default function ShiftCountsPage() {
       description: formData.description,
       person: formData.person,
       countDates: formData.count_dates,
-      // updatePreferencesByType normalizes this and countShiftTypeCoefficients to normalized entry order.
+      // updatePreferencesByType normalizes this and countShiftTypeCoefficients to the stored entry order.
       countShiftTypes: formData.count_shift_types,
       ...(countShiftTypeCoefficients.length > 0 ? { countShiftTypeCoefficients } : {}),
       expression: formData.expression,

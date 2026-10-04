@@ -25,14 +25,18 @@ import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { CURRENT_APP_VERSION } from '@/utils/version';
 import type { ActivityEntry } from './AssistantActivity';
-import { activitySummary, formatResponseDuration, scheduleChangeLines } from './chatPresentation';
+import { activitySummary, formatCharacterCount, formatResponseDuration, scheduleChangeLines } from './chatPresentation';
 import { parseOptimizerMessage } from './optimizerMessage';
 
+// Bubbles follow the provider request roles. A user-role message that the app wrote has a source.
+// The optimizer role is an app notice with the run summary. The model receives its own optimizer message.
 export interface ChatExportMessage {
-  role: 'user' | 'assistant' | 'optimizer';
+  role: 'system' | 'user' | 'assistant' | 'optimizer';
+  source?: 'app' | 'status' | 'optimizer';
+  // Topic of an app event or status message, shown after its role label.
+  title?: string;
   content: string;
   createdAt?: number;
-  attachmentNames?: string[];
   activity?: ActivityEntry[];
   status?: 'pending' | 'failed' | 'stopped';
   // The answer stopped at the model's output limit and may be incomplete.
@@ -46,7 +50,34 @@ interface ChatExportMetadata {
   exportedAt: Date;
   frontendVersion: string;
   backendVersion?: string;
+  // A proposal waiting for approval is not part of the transcript, so exports add it separately.
+  pendingProposalDiff?: string;
+  // A background optimization still running at export time. Its score changes, so exports omit it.
+  runningOptimization?: { jobId: string; state: string; solver?: string; timeoutSeconds?: number };
+  // Files kept in the chat session at export time. The export lists them without their contents.
+  uploadedFiles?: { filename: string; bytes: number }[];
 }
+
+type ChatExportSessionState = Pick<
+  ChatExportMetadata, 'backendVersion' | 'pendingProposalDiff' | 'runningOptimization' | 'uploadedFiles'
+>;
+
+function uploadedFileLines(files: NonNullable<ChatExportMetadata['uploadedFiles']>): string[] {
+  return files.map(file => `${file.filename} (${(file.bytes / 1000).toLocaleString('en-US')} KB)`);
+}
+
+const RUNNING_OPTIMIZATION_NOTE = 'An optimization was still running when this chat was exported. Its result is not included.';
+
+function runningOptimizationDetails(running: NonNullable<ChatExportMetadata['runningOptimization']>): string[] {
+  return [
+    `Job: ${running.jobId}`,
+    `State: ${running.state}`,
+    ...(running.solver ? [`Solver: ${running.solver}`] : []),
+    ...(running.timeoutSeconds !== undefined ? [`Solver timeout: ${running.timeoutSeconds}s`] : []),
+  ];
+}
+
+const PENDING_PROPOSAL_NOTE = 'This change is waiting for approval in the app. The current schedule has not changed.';
 
 export type ChatExportFormat = 'html' | 'markdown';
 
@@ -148,10 +179,27 @@ function renderActivityDetailsHtml(entry: Exclude<ActivityEntry, { kind: 'respon
           </details>`;
 }
 
+export function messageLabel(message: ChatExportMessage): string {
+  if (message.role === 'system') return 'System';
+  if (message.role === 'assistant') return 'Assistant';
+  if (message.role === 'optimizer') return 'Optimizer';
+  const topic = message.title ? ` - ${message.title}` : '';
+  if (message.source === 'app') return `User · App${topic}`;
+  if (message.source === 'status') return `User · Status${topic}`;
+  if (message.source === 'optimizer') return 'User · Optimizer';
+  return 'User';
+}
+
+// A fence longer than any backtick run in the text keeps the block intact.
+function fencedText(text: string): string[] {
+  const longestRun = Math.max(0, ...(text.match(/`+/g) ?? []).map(run => run.length));
+  const fence = '`'.repeat(Math.max(3, longestRun + 1));
+  return [`${fence}text`, text, fence];
+}
+
 function messageDetails(message: ChatExportMessage): string[] {
   const details: string[] = [];
   if (message.createdAt !== undefined) details.push(`Sent: ${new Date(message.createdAt).toISOString()}`);
-  if (message.attachmentNames?.length) details.push(`Attachments: ${message.attachmentNames.join(', ')}`);
   if (message.status) details.push(`Status: ${message.status}`);
   if (message.status === 'failed') {
     details.push('This response failed and will not be used as context for future messages.');
@@ -200,9 +248,6 @@ function renderAssistantTimelineHtml(message: ChatExportMessage): string {
 }
 
 function renderHtmlMessageDetails(message: ChatExportMessage): string {
-  const attachments = message.attachmentNames?.length
-    ? `<p class="attachments">Attached: ${escapeHtml(message.attachmentNames.join(', '))}</p>`
-    : '';
   const status = message.status === 'pending' && !message.content
     ? '<p class="message-status" role="status">Thinking</p>'
     : message.status === 'failed'
@@ -220,7 +265,7 @@ function renderHtmlMessageDetails(message: ChatExportMessage): string {
   const timing = timestamp !== undefined
     ? `<time datetime="${new Date(timestamp).toISOString()}" title="${escapeHtml(new Date(timestamp).toLocaleString())}">${escapeHtml(new Date(timestamp).toLocaleString())}${duration}</time>`
     : '';
-  return `${attachments}${status}${truncated}${timing}`;
+  return `${status}${truncated}${timing}`;
 }
 
 function renderOptimizerHtml(content: string): string {
@@ -242,11 +287,13 @@ export function buildMarkdownChatExport(
     `- AI server: ${metadata.endpoint}`,
   ];
   messages.forEach(message => {
-    lines.push('', `## ${message.role === 'user' ? 'You' : message.role === 'optimizer' ? 'Optimizer' : 'Assistant'}`);
+    lines.push('', `## ${messageLabel(message)}`);
     if (message.role === 'optimizer') {
       const { summary, details } = parseOptimizerMessage(message.content);
       lines.push('', summary || '[No message text]');
       if (details.length) lines.push('', ...details.map(({ label, value }) => `- **${label}:** ${value.replaceAll('\n', '\n  ')}`));
+    } else if (message.role === 'system' || message.source !== undefined) {
+      lines.push('', ...fencedText(message.content));
     } else if (message.role === 'user') {
       lines.push('', message.content || '[No message text]');
     } else {
@@ -261,6 +308,18 @@ export function buildMarkdownChatExport(
     const details = messageDetails(message);
     if (details.length) lines.push('', ...details.map(detail => `- ${detail}`));
   });
+  if (metadata.uploadedFiles?.length) {
+    lines.push('', '## Uploaded files', '', ...uploadedFileLines(metadata.uploadedFiles).map(line => `- ${line}`));
+  }
+  if (metadata.runningOptimization !== undefined) {
+    lines.push(
+      '', '## Optimization running', '', RUNNING_OPTIMIZATION_NOTE, '',
+      ...runningOptimizationDetails(metadata.runningOptimization).map(detail => `- ${detail}`),
+    );
+  }
+  if (metadata.pendingProposalDiff !== undefined) {
+    lines.push('', '## Pending proposal', '', PENDING_PROPOSAL_NOTE, '', ...fencedText(metadata.pendingProposalDiff));
+  }
   return `${lines.join('\n')}\n`;
 }
 
@@ -271,12 +330,14 @@ export function buildHtmlChatExport(
   const renderedMessages = messages.map(message => {
     const timeline = message.role === 'assistant'
       ? renderAssistantTimelineHtml(message)
-      : message.role === 'optimizer'
-        ? renderOptimizerHtml(message.content)
-        : `<div class="content">${escapeHtml(message.content || '[No message text]')}</div>`;
+      : message.role === 'system' || message.source !== undefined
+        ? `<details class="system-prompt"><summary>${formatCharacterCount(message.content.length)} characters</summary><pre>${escapeHtml(message.content)}</pre></details>`
+        : message.role === 'optimizer'
+          ? renderOptimizerHtml(message.content)
+          : `<div class="content">${escapeHtml(message.content || '[No message text]')}</div>`;
     return `
-      <article class="message ${message.role}">
-        <div class="label">${message.role === 'user' ? 'You' : message.role === 'optimizer' ? 'Optimizer' : 'Assistant'}</div>
+      <article class="message ${message.role}${message.source ? ` ${message.source}` : ''}">
+        <div class="label">${escapeHtml(messageLabel(message))}</div>
         ${timeline}
         ${renderHtmlMessageDetails(message)}
       </article>`;
@@ -293,6 +354,11 @@ export function buildHtmlChatExport(
     main { box-sizing: border-box; max-width: 1024px; margin: 0 auto; padding: 32px 16px; }
     main > h1 { margin: 0 0 8px; font-size: 30px; line-height: 36px; font-weight: 700; }
     .metadata { margin: 0 0 32px; color: #6b7280; font-size: 13px; }
+    .proposal { margin-top: 24px; border: 1px solid #bfdbfe; border-radius: 12px; background: #eff6ff; padding: 16px; color: #1e3a8a; }
+    .proposal h2 { margin: 0 0 8px; font-size: 16px; }
+    .proposal p { margin: 0 0 8px; font-size: 13px; }
+    .proposal ul { margin: 0; padding-left: 20px; font-size: 13px; }
+    .proposal pre { max-height: 480px; overflow: auto; margin: 0; border-radius: 8px; background: white; padding: 12px; color: #1f2937; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.625 ui-monospace, monospace; }
     .chat { display: flex; flex-direction: column; gap: 16px; border: 1px solid #e5e7eb; border-radius: 12px; background: #f9fafb; padding: 16px; }
     .message { box-sizing: border-box; width: 85%; min-width: 0; max-width: 85%; padding: 12px 16px; border-radius: 12px; }
     .user { align-self: flex-end; background: #155dfc; color: white; }
@@ -301,9 +367,13 @@ export function buildHtmlChatExport(
     .optimizer-details { display: grid; gap: 6px; margin: 12px 0 0; font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }
     .optimizer-details dt { display: inline; font-weight: 600; }
     .optimizer-details dd { display: inline; margin: 0; white-space: pre-wrap; }
+    .system { align-self: stretch; width: auto; max-width: none; border: 1px dashed #d1d5db; background: #f9fafb; color: #374151; }
+    .user.app, .user.status, .user.optimizer { border: 1px solid #bfdbfe; background: #eff6ff; color: #1e3a8a; font: 12px/1.625 ui-monospace, monospace; }
+    .user.optimizer { align-self: flex-start; border-color: #a7f3d0; background: #ecfdf5; color: #022c22; }
     .label { margin-bottom: 4px; font-size: 12px; font-weight: 600; letter-spacing: .025em; text-transform: uppercase; opacity: .7; }
     .content { overflow-wrap: anywhere; line-height: 1.5rem; }
     .user .content, .optimizer .content { white-space: pre-wrap; }
+    .user.app .content, .user.status .content { line-height: 1.625; }
     .content > :first-child { margin-top: 0; }
     .content > :last-child { margin-bottom: 0; }
     .content h1, .content h2 { margin: 16px 0 8px; line-height: 1.25; font-weight: 600; }
@@ -327,6 +397,9 @@ export function buildHtmlChatExport(
     .activity-separator { margin: 12px 0; border: 0; border-top: 1px solid #e5e7eb; }
     .activity-details { color: #6b7280; font-size: 12px; }
     .activity-details summary { cursor: pointer; padding: 2px 0; }
+    .system-prompt { color: #4b5563; font-size: 12px; }
+    .system-prompt summary { cursor: pointer; }
+    .system-prompt pre { max-height: 288px; overflow: auto; margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.625 ui-monospace, monospace; }
     .activity-body { margin-top: 4px; border-radius: 4px; background: #f9fafb; padding: 8px; }
     .activity-output, .schedule-diff { max-height: 288px; overflow: auto; margin: 0; color: #4b5563; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.625 ui-monospace, monospace; }
     .tool-body { display: flex; flex-direction: column; gap: 8px; }
@@ -335,7 +408,6 @@ export function buildHtmlChatExport(
     .schedule-diff .added { color: #15803d; }
     .interrupted { margin: 0; color: #b91c1c; font-size: 12px; }
     .tool-call-id { margin: 0; color: #6b7280; font-size: 11px; }
-    .attachments { margin: 8px 0 0; font-size: 12px; opacity: .8; }
     .message-status { margin: 0; color: #4b5563; }
     .failure { margin: 12px 0 0; border-top: 1px solid #fecaca; padding-top: 12px; color: #b91c1c; font-size: 14px; }
     time { display: block; margin-top: 8px; color: #6b7280; font-size: 11px; line-height: 1rem; }
@@ -349,7 +421,21 @@ export function buildHtmlChatExport(
     <h1>Schedule AI Chat</h1>
     <p class="metadata">Exported ${escapeHtml(metadata.exportedAt.toISOString())}<br>Frontend version: ${escapeHtml(metadata.frontendVersion)}<br>Backend version: ${escapeHtml(metadata.backendVersion ?? 'unknown')}<br>AI server: ${escapeHtml(metadata.endpoint)}</p>
     <section class="chat" aria-label="Chat transcript">${renderedMessages}
-    </section>
+    </section>${!metadata.uploadedFiles?.length ? '' : `
+    <section class="proposal" aria-label="Uploaded files">
+      <h2>Uploaded files</h2>
+      <ul>${uploadedFileLines(metadata.uploadedFiles).map(line => `<li>${escapeHtml(line)}</li>`).join('')}</ul>
+    </section>`}${metadata.runningOptimization === undefined ? '' : `
+    <section class="proposal" aria-label="Optimization running">
+      <h2>Optimization running</h2>
+      <p>${RUNNING_OPTIMIZATION_NOTE}</p>
+      <ul>${runningOptimizationDetails(metadata.runningOptimization).map(detail => `<li>${escapeHtml(detail)}</li>`).join('')}</ul>
+    </section>`}${metadata.pendingProposalDiff === undefined ? '' : `
+    <section class="proposal" aria-label="Pending proposal">
+      <h2>Pending proposal</h2>
+      <p>${PENDING_PROPOSAL_NOTE}</p>
+      <pre>${escapeHtml(metadata.pendingProposalDiff)}</pre>
+    </section>`}
   </main>
 </body>
 </html>
@@ -361,9 +447,9 @@ export function downloadChatExport(
   messages: ChatExportMessage[],
   endpoint: string,
   exportedAt = new Date(),
-  backendVersion?: string,
+  sessionState: ChatExportSessionState = {},
 ): string {
-  const metadata = { endpoint, exportedAt, frontendVersion: CURRENT_APP_VERSION, backendVersion };
+  const metadata = { endpoint, exportedAt, frontendVersion: CURRENT_APP_VERSION, ...sessionState };
   const content = format === 'html'
     ? buildHtmlChatExport(messages, metadata)
     : buildMarkdownChatExport(messages, metadata);

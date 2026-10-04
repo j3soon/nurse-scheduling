@@ -35,6 +35,7 @@ from nurse_scheduling.ai.provider import (
     OpenAiCompatibleProvider,
     ProviderAttempt,
     ProviderError,
+    ProviderResponseLimitError,
     ReasoningDelta,
     ResponseEnd,
     TextDelta,
@@ -157,6 +158,8 @@ def _streaming_provider(
     requests: list[httpx.Request] | None = None,
     *,
     include_usage: bool = False,
+    model_metadata: dict | None = None,
+    models_status: int = 200,
 ) -> OpenAiCompatibleProvider:
     """Build a provider whose endpoint replies with one prepared stream."""
     real_async_client = httpx.AsyncClient
@@ -164,6 +167,8 @@ def _streaming_provider(
     def handle(request: httpx.Request) -> httpx.Response:
         if requests is not None:
             requests.append(request)
+        if request.url.path.endswith("/models"):
+            return httpx.Response(models_status, json=model_metadata if model_metadata is not None else {"data": []})
         return httpx.Response(200, headers={"Content-Type": "text/event-stream"}, text=body)
 
     monkeypatch.setattr(
@@ -395,8 +400,52 @@ def test_requests_and_streams_token_usage_when_enabled(monkeypatch: pytest.Monke
 
     events = _events(_streaming_provider(monkeypatch, body, requests, include_usage=True))
 
-    assert json.loads(requests[0].content)["stream_options"] == {"include_usage": True}
+    assert json.loads(requests[-1].content)["stream_options"] == {"include_usage": True}
     assert events == [TextDelta("Answer"), TokenUsage(120, 30, 150, 80, 12), ResponseEnd(None)]
+
+
+@pytest.mark.parametrize(
+    ("model_metadata", "expected"),
+    [
+        ({"data": [{"id": "other-model", "max_model_len": 9999}, {"id": "test-model", "max_model_len": 4096}]}, 4096),
+        ({"data": [{"id": "test-model", "context_length": 8192}]}, 8192),
+        ({"data": [{"id": "other-model", "max_model_len": 9999}]}, None),
+        ({"data": [{"id": "test-model", "max_model_len": -1}]}, None),
+        ({"data": [{"id": "test-model", "max_model_len": True}]}, None),
+        ({"data": None}, None),
+    ],
+    ids=["configured-model", "context-length", "other-model", "invalid-limit", "boolean-limit", "invalid-model-list"],
+)
+def test_discovers_and_caches_the_configured_model_context_limit(monkeypatch, model_metadata, expected) -> None:
+    requests: list[httpx.Request] = []
+    provider = _streaming_provider(
+        monkeypatch,
+        _sse_body(_delta_chunk({"content": "Answer"})),
+        requests,
+        include_usage=True,
+        model_metadata=model_metadata,
+    )
+
+    assert _events(provider) == _events(provider) == [TextDelta("Answer"), ResponseEnd(None)]
+
+    assert provider.context_tokens == expected
+    assert [request.method for request in requests] == ["GET", "POST", "POST"]
+    assert str(requests[0].url) == "https://provider.example/v1/models"
+    assert requests[0].headers["Authorization"] == "Bearer test-token"
+
+
+@pytest.mark.parametrize("status", [403, 404, 503])
+def test_missing_model_metadata_does_not_prevent_chat_or_usage(monkeypatch, status) -> None:
+    usage = {"prompt_tokens": 120, "completion_tokens": 30, "total_tokens": 150}
+    provider = _streaming_provider(
+        monkeypatch,
+        _sse_body(_delta_chunk({"content": "Answer"}), {"choices": [], "usage": usage}),
+        include_usage=True,
+        models_status=status,
+    )
+
+    assert _events(provider) == [TextDelta("Answer"), TokenUsage(120, 30, 150), ResponseEnd(None)]
+    assert provider.context_tokens is None
 
 
 def test_skips_a_choiceless_chunk_that_carries_no_usage(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -522,6 +571,23 @@ def test_accepts_supported_finish_reasons_without_a_done_marker(
     assert events == expected
 
 
+@pytest.mark.parametrize("details", [None, {}, {"cached_tokens": None}, {"cached_tokens": 0}])
+def test_distinguishes_missing_cache_usage_from_zero(monkeypatch: pytest.MonkeyPatch, details) -> None:
+    usage = {"prompt_tokens": 120, "completion_tokens": 30, "total_tokens": 150, "prompt_tokens_details": details}
+    events = _events(_streaming_provider(monkeypatch, _sse_body({"choices": [], "usage": usage}), include_usage=True))
+
+    assert events == [TokenUsage(120, 30, 150, 0 if details == {"cached_tokens": 0} else None), ResponseEnd(None)]
+
+
+def test_missing_cache_usage_propagates_across_provider_turns() -> None:
+    reported = TokenUsage(120, 30, 150, 80)
+    missing = TokenUsage(120, 30, 150)
+
+    assert (reported + reported).cached_prompt_tokens == 160
+    assert (reported + missing).cached_prompt_tokens is None
+    assert (missing + reported).cached_prompt_tokens is None
+
+
 def test_does_not_request_token_usage_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     requests: list[httpx.Request] = []
 
@@ -542,7 +608,7 @@ def test_rejects_more_tool_calls_than_the_limit(monkeypatch: pytest.MonkeyPatch)
         )
     )
 
-    with pytest.raises(ProviderError, match="more than"):
+    with pytest.raises(ProviderResponseLimitError, match="more than"):
         _events(_streaming_provider(monkeypatch, body), TOOLS)
 
 
@@ -552,7 +618,7 @@ def test_rejects_oversized_tool_arguments(monkeypatch: pytest.MonkeyPatch) -> No
         _delta_chunk({"tool_calls": [{"index": 0, "id": "call_1", "function": {"name": "a", "arguments": oversized}}]})
     )
 
-    with pytest.raises(ProviderError, match="too large"):
+    with pytest.raises(ProviderResponseLimitError, match="too large"):
         _events(_streaming_provider(monkeypatch, body), TOOLS)
 
 
@@ -584,12 +650,12 @@ def test_streams_reasoning_separately_from_the_answer(monkeypatch: pytest.Monkey
 def test_rejects_an_answer_longer_than_the_limit(monkeypatch: pytest.MonkeyPatch) -> None:
     body = _sse_body(_delta_chunk({"content": "x" * (provider_module.MAX_RESPONSE_TEXT_CHARS + 1)}))
 
-    with pytest.raises(ProviderError, match="more text than"):
+    with pytest.raises(ProviderResponseLimitError, match="more text than"):
         _events(_streaming_provider(monkeypatch, body))
 
 
 def test_rejects_reasoning_longer_than_the_limit(monkeypatch: pytest.MonkeyPatch) -> None:
     body = _sse_body(_delta_chunk({"reasoning_content": "x" * (provider_module.MAX_RESPONSE_REASONING_CHARS + 1)}))
 
-    with pytest.raises(ProviderError, match="more reasoning than"):
+    with pytest.raises(ProviderResponseLimitError, match="more reasoning than"):
         _events(_streaming_provider(monkeypatch, body))

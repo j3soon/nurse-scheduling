@@ -186,27 +186,27 @@ relative to `web-frontend/src/app/experimental-ai/`.
 | Component and source | Responsibility |
 | --- | --- |
 | API routes<br/>`app.py` | Authenticate requests, invoke session operations, and serve HTTP and SSE responses. |
-| `SessionStore`<br/>`sessions.py` | Enforce session ownership, expiry, retained text budgets, and versioned conversation commits. |
+| `SessionStore`<br/>`sessions.py` | Enforce session ownership, expiry, retained text and file budgets, and versioned conversation commits. Retain uploads and generated ZIPs between runs. |
 | `SessionRuns` / `AgentRun` / `RunSnapshot`<br/>`lifecycle.py` | Execute one run per session, queue background follow-ups, and keep ownership through cancellation and cleanup. Carry the conversation version used to authorize a commit. |
 | `AgentSession` / `RunOutcome`<br/>`agent_session.py` | Prepare context, execute the agent, await cleanup, save the run, queue optimizer reviews, and publish public session events. |
 | `PendingProposal`<br/>`candidate.py` | Keep pending YAML, its rendered diff, and the originating run ID together. `AgentSession` owns the value, captures it in each run snapshot, and revalidates before adopting or discarding it in one operation. |
 | `RunOutput` / `RunEvents`<br/>`session_event_projection.py` | Project agent output and track partial responses. Attach run identity, batch text, and defer the terminal event until session finalization. |
 | `Agent` / `AgentState`<br/>`agent.py`<br/>`agent_types.py` | Hold in-run messages, streaming state, pending tool call IDs, and queued steering. |
 | `agent_loop`<br/>`agent_loop.py` | Repeat model responses and tool batches until the agent finishes. Record executed and refused calls through one result path. `AgentLoopConfig` groups steering, request projection, batch hooks, and tool budgets. |
-| Transcript and context<br/>`transcript.py`<br/>`context.py` | Define ordered entries and retention. Select prior model messages once with their character usage and dropped count, then build provider input. |
-| `WorkspaceTools` / `SandboxWorkspace`<br/>`workspace_tools.py`<br/>`workspace.py`<br/>`sandbox/` | Bind model tools to file operations, validate working YAML, and manage VM hydration, pause, resume, and teardown. One immutable `WorkspaceInputs` value captures the schedule, pending proposal, attachments, and optimizer workbook for hydration. |
+| Transcript and context<br/>`transcript.py`<br/>`context.py` | Define ordered entries, app events, and retention. Select prior model messages once with their character usage and dropped count, then build provider input with a stable prefix and a final status message. |
+| `WorkspaceTools` / `SandboxWorkspace`<br/>`workspace_tools.py`<br/>`workspace.py`<br/>`sandbox/` | Bind model tools to file operations, validate working YAML, and manage VM hydration, pause, resume, and teardown. One immutable `WorkspaceInputs` value captures the schedule, pending proposal, retained uploads, and optimizer workbook and context for hydration. Capture and validate a generated ZIP before teardown. |
 | Optimizer tool adapter<br/>`optimizer_tool.py` | Define and validate model arguments, dispatch job operations, and format `AgentToolResult` content. |
 | `SessionOptimizer`<br/>`optimizer.py` | Own remote jobs, progress, artifacts, and late-submission cleanup. Pass typed completion data to `AgentSession`, which builds the review prompt and queues a new run. |
 | `HttpOptimizerBackend`<br/>`optimizer_http.py` | Call the optimizer API, parse reconnectable progress SSE, and download bounded result workbooks. Keep credentials inside the HTTP adapter. |
 | `AgentSessionEvent` / `SessionEventStream`<br/>`session_events.py`, `session_event_stream.py` | Define public run and optimizer events, then retain bounded journal and recovery projections. The API frames them as SSE. |
 | Browser `ChatLifecycle`<br/>`chatLifecycle.ts` | Track operation ownership and derive busy and Stop state. |
-| Browser `useAiChat`<br/>`useAiChat.ts` | Own chat control and projection: send, queue, Stop, replayed answers, optimizer updates, and proposal decisions. Expose conversation snapshots and restore operations. The page owns browser storage and supplies data and callbacks to the transcript view. |
+| Browser `useAiChat`<br/>`useAiChat.ts` | Own chat control and projection: uploads, send, queue, Stop, replayed answers, model input, optimizer updates, generated ZIP removal, and proposal decisions. Expose conversation snapshots and restore operations. The page owns browser storage and supplies data and callbacks to the transcript view. |
 | Browser `useSessionEventStream`<br/>`useSessionEventStream.ts` | Own the SSE reader, replay cursor, reconnect delay, and teardown. Reader disconnect leaves server work running. |
 | Browser `SessionEventRouter`<br/>`sessionEventRouter.ts` | Deliver typed `SessionEvent` values directly to chat handlers. Route by run ID and buffer early output until the POST acknowledgement identifies its answer. |
 | Browser HTTP client<br/>`aiClient.ts` | Parse GET and compatibility POST SSE into the same typed `SessionEvent` values. Preserve run IDs, recovery snapshots, and replay cursors. |
-| Browser chat view<br/>`ChatTranscript.tsx` | Render messages, activity, timestamps, retry controls, and workbook downloads from data and callbacks supplied by the page. |
+| Browser chat view<br/>`ChatTranscript.tsx` | Render request messages by role, activity, timestamps, retry controls, workbook downloads, and generated ZIP controls from data and callbacks supplied by the page. |
 | Browser optimizer projection<br/>`optimizerEvents.ts`, `optimizerMessage.ts` | Apply job status, bound progress history, and append completion messages once. Share optimizer-message formatting and parsing for the page and exports. |
-| Browser transcript projection<br/>`chatTranscript.ts`, `assistantEvents.ts` | Create and resume responses, insert steering, replace replayed runs, and apply assistant output. The hook supplies IDs, timestamps, and operation ownership. |
+| Browser transcript projection<br/>`chatTranscript.ts`, `assistantEvents.ts` | Create and resume responses, insert steering, place model input messages, replace replayed runs, and apply assistant output. The hook supplies IDs, timestamps, and operation ownership. |
 
 ## One Run at a Glance {#one-turn-at-a-glance}
 
@@ -521,11 +521,13 @@ them with the four basic tools, and runs the inspect helpers through `bash`.
 | --- | --- |
 | `/workspace/schedule.yaml` | The session schedule snapshot. |
 | `/workspace/pending-proposal.yaml`, `/workspace/pending-proposal.diff` | The pending proposal's full candidate YAML and its frozen diff against the schedule snapshot used to create it, if any. Read-only reference, and the new diff is computed by the server at run end. |
-| `/workspace/attachments/` | Uploaded files plus a `manifest.json` with safe paths and original filenames. |
-| `/workspace/optimizer-results/optimized-schedule.xlsx` | A retained optimizer workbook, if any. |
-| `/reference/` | Schema and guide references, plus `tools/inspect_xlsx.py` and `tools/inspect_pdf.py`. |
+| `/workspace/attachments/` | Retained uploads under safe paths prefixed with their upload IDs. Their app events list the original names. |
+| `/workspace/optimizer-results/optimized-schedule.xlsx` | A retained optimizer workbook, if any, with the compiled selectors of the schedule the optimizer received. |
+| `/reference/` | Schema and guide references, plus the inspection helpers that `tools/README.md` lists. |
+| `/workspace/download.zip` | Output only. The server validates and retains this ZIP after the run, within `AI_MAX_DOWNLOAD_BYTES`. |
 
-Uploads are available only in the run that received them. The sandbox has no
+Uploads stay in the session until the user removes them or the session expires,
+and every run loads all of them. The sandbox has no
 repository, retrieval access, outbound Internet access, browser storage access,
 or provider, optimizer, or database credentials. Uploads and shell output remain
 untrusted throughout validation and review.
@@ -785,11 +787,13 @@ Trimming for retained text, the message cap, or the prompt budget removes whole
 exchanges, so an answer or proposal decision is never left without its prompt.
 
 `SessionStore` counts UTF-8 bytes in schedule snapshots, pending proposal YAML
-and diffs, transcript text, and queued steering across live sessions.
-`AI_MAX_SESSION_BYTES` defaults to 256 MiB. Client text that exceeds the budget
-is refused with HTTP `429`. Completed runs instead trim older exchanges while
-preserving the latest run and pending proposal, so retained text can exceed
-the budget. This accounting does not measure total process RAM.
+and diffs, transcript text, and queued steering across live sessions. It also
+counts retained uploads and generated ZIPs. `AI_MAX_SESSION_BYTES` defaults to
+256 MiB. Client text or uploads that exceed the budget are refused with HTTP
+`429`. Completed runs instead trim older exchanges while preserving the latest
+run and pending proposal, so retained text can exceed the budget. A generated
+ZIP that does not fit is not retained, and the run still completes with a
+warning. This accounting does not measure total process RAM.
 
 | Content | Later model context | Session transcript | Browser and export | Chat history log |
 | --- | --- | --- | --- | --- |
@@ -799,8 +803,44 @@ the budget. This accounting does not measure total process RAM.
 | Queued steering | Yes | Yes | Yes | Yes, in run order |
 | Stopped answer | Prompt and an interruption note | Prompt and aborted partial answer | Partial output, stopped status, unfinished tools marked interrupted | Yes, `aborted` in a `cancelled` run |
 | Failed or stale answer | No | No | Failed output with retry, or a stale notice | Yes, with run status |
-| Attachment filenames | Yes, in the prompt note | Yes | Yes | Yes, in the prompt |
-| Proposal decision | Yes | Yes | Yes | Yes, under the proposing run |
+| App events for uploads, removals, and schedule changes | Yes, within the history budget | Yes | Yes, as titled messages | No. A run records the retained upload count |
+| Proposal decision | Yes, as an app event | Yes | Yes | Yes, under the proposing run |
+
+### Provider request layout
+
+Providers reuse cached prompt work only for an identical request prefix. Each
+request therefore keeps earlier content unchanged and puts changing state last:
+
+1. The system message. It does not change during a chat.
+2. The chat history. Each entry stays unchanged once it is stored.
+3. The user's question, exactly as typed.
+4. A status message, only when needed. History never keeps it.
+
+The session stores app events as separate `AppEventEntry` values when they
+happen, and the model receives each one as a `user` message that starts with
+`[App event]`. Events record uploads, removals, proposal approvals and
+rejections, and schedule changes made in the app. An upload event lists the
+original name, sandbox path, media type, and size of each file. A schedule
+change is recorded only when the parsed schedule data changes. Filenames stay
+out of the system prompt because they are untrusted input.
+
+The status message starts with `[Current status]`. It reports a pending
+proposal, the optimizer result path, and retained files whose upload event the
+request does not contain. That happens when history was trimmed or when a
+failed run followed the upload.
+
+When history passes `AI_MAX_HISTORY_CHARS`, the session drops its oldest
+exchanges until about half the budget remains. It keeps the newest completed
+exchange. This keeps the request prefix unchanged for many runs between cuts.
+
+Each run publishes a `model_input` event right after `run_start`. Its `system`
+field contains the system message. Its `messages` field lists the request
+messages added since the last assistant reply, in order. Each entry has a
+`kind` of `app`, `question`, `optimizer`, or `status`. An `app` entry also has
+its absolute history `index`, so a client shows it once when a failed run is
+retried. App events and status messages also have a short `title`, such as
+`Proposal Rejected` or `Pending Proposal`. The chat shows it after the role
+label and keeps the exact text collapsed.
 
 ## Mapping to Pi
 
@@ -873,7 +913,10 @@ The investigated alternatives below were not adopted:
 | `GET` | `/capabilities` | Discover the app version, attachment limits, session lifetime, and authentication requirement. |
 | `POST` | `/sessions` | Create a session from `schedule_yaml`. |
 | `GET` | `/sessions/{id}` | Check a session's remaining lifetime. |
-| `POST` | `/sessions/{id}/messages` | Start a foreground run from JSON or multipart input. Return HTTP `202` with `run_id`. |
+| `POST` | `/sessions/{id}/uploads` | Retain multipart files for later messages and return their metadata and IDs. |
+| `GET` | `/sessions/{id}/uploads` | List retained file metadata. |
+| `DELETE` | `/sessions/{id}/uploads/{upload_id}` | Remove one retained file. |
+| `POST` | `/sessions/{id}/messages` | Start a foreground run from a JSON `message`. Return HTTP `202` with `run_id`. |
 | `POST` | `/sessions/{id}/messages/queue` | Queue steering text for the active run's next model boundary. |
 | `POST` | `/sessions/{id}/stop` | Cancel active and queued runs. Return HTTP `202`. |
 | `GET` | `/sessions/{id}/events` | One replayable SSE stream for every run and optimizer update. |
@@ -881,9 +924,13 @@ The investigated alternatives below were not adopted:
 | `POST` | `/sessions/{id}/proposal/approve` | Revalidate and adopt a proposal against its base revision. |
 | `POST` | `/sessions/{id}/proposal/reject` | Discard a proposal. |
 | `GET` | `/sessions/{id}/optimizations/{job_id}/xlsx` | Download a retained optimizer workbook. |
+| `GET`, `DELETE` | `/sessions/{id}/downloads/{download_id}` | Download or remove a ZIP that a run generated. Its ID is the run ID. |
 
-For multipart messages, send one `message` field and repeat the `files` field
-for attachments. The message route acknowledges the accepted message.
+Upload requests contain only repeated `files` fields. Other field names are
+rejected, and uploads are refused while a run is active. A repeated filename
+gets a numbered suffix instead of replacing the earlier file. Schema errors
+never echo request input, which can be binary file data. The message route
+acknowledges the accepted message.
 The event route returns server-sent events.
 `stop` and `messages/queue` return HTTP `202`. Creating a session sets its
 owner cookie. Later session routes require that cookie.

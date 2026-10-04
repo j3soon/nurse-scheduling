@@ -1,0 +1,29 @@
+{
+  "id": "optimizer-score-same-model",
+  "fixture": "request-audit",
+  "question": "Run optimization for 60 seconds. A previous run of this exact unchanged model scored 33000000020. When this run finishes, compare them and reply only as JSON with better (current or previous) and scoreDirection (higher or lower).",
+  "expect_proposal": false,
+  "optimizer_completion": "request-audit",
+  "answer_json": {
+    "better": "previous",
+    "scoreDirection": "higher"
+  },
+  "tool_usage": {
+    "required_calls": [
+      {
+        "name": "optimizer",
+        "arguments": {
+          "action": "start",
+          "timeout_seconds": 60
+        }
+      }
+    ],
+    "max_per_tool": {
+      "optimizer": 1
+    }
+  },
+  "tags": [
+    "optimizer-result"
+  ],
+  "note": "This testcase is mostly AI generated. A fixed feasible assignment is replayed through the production exporter. Completion metadata simulates a feasible timeout result. The final structured answer is graded independently of the agent parser."
+}

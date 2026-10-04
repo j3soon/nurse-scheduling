@@ -43,6 +43,7 @@ from fastapi.testclient import TestClient
 from nurse_scheduling.ai.agent_session import (
     CANDIDATE_VALIDATION_ERROR,
     PROVIDER_ERROR,
+    SANDBOX_COMMAND_TIMEOUT_ERROR,
     SANDBOX_RUN_TIMEOUT_ERROR,
     STALE_RUN_ERROR,
 )
@@ -61,8 +62,14 @@ from nurse_scheduling.ai.context import (
     PROPOSAL_APPROVED_HISTORY,
     PROPOSAL_INVALID_HISTORY,
     PROPOSAL_REJECTED_HISTORY,
+    SCHEDULE_CHANGED_DISCARDED_EVENT,
+    SCHEDULE_CHANGED_EVENT,
+    STATUS_PREFIX,
     build_provider_messages,
+    message_title,
     project_history,
+    removal_event,
+    upload_event,
 )
 from nurse_scheduling.ai.history import ChatHistory
 from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL, OptimizerArtifact, OptimizerCompletion, OptimizerJobPayload
@@ -73,15 +80,26 @@ from nurse_scheduling.ai.provider import (
     ProviderError,
     ResponseEnd,
     TextDelta,
+    TokenUsage,
     ToolCallRequest,
 )
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
-from nurse_scheduling.ai.transcript import AgentMessage, AssistantMessage, ProposalDecisionEntry, ToolCall, UserMessage
+from nurse_scheduling.ai.transcript import (
+    AgentMessage,
+    AppEventEntry,
+    AssistantMessage,
+    ProposalDecisionEntry,
+    ToolCall,
+    UserMessage,
+)
 from nurse_scheduling.ai.workspace import (
+    SANDBOX_SYSTEM_PROMPT,
     WORKSPACE_PENDING_DIFF,
     WORKSPACE_PENDING_PROPOSAL,
     WORKSPACE_SCHEDULE,
+    SandboxAttachment,
+    SandboxCommandTimeoutError,
     SandboxRunTimeoutError,
 )
 from nurse_scheduling.server.auth import AuthCredential
@@ -343,6 +361,13 @@ def create_session(client: TestClient, schedule_yaml: str = "description: test")
     return response.json()["id"]
 
 
+def upload_files(client: TestClient, session_id: str, *files: tuple[str, bytes, str]) -> list[str]:
+    """Upload files to a session and return their retained IDs."""
+    response = client.post(f"/sessions/{session_id}/uploads", files=[("files", file) for file in files])
+    assert response.status_code == 201
+    return [item["id"] for item in response.json()]
+
+
 def test_active_session_drains_all_queued_steering_messages() -> None:
     app = create_test_app(settings=make_settings(), provider=FakeProvider())
     client = AuthenticatedTestClient(app)
@@ -461,8 +486,11 @@ def exchange(question: str, answer: str) -> list[AgentMessage]:
     return [UserMessage(question), AssistantMessage(answer)]
 
 
-def parse_sse(response_text: str) -> list[tuple[str, dict[str, str]]]:
-    """Parse the small SSE subset emitted by the service."""
+def parse_sse(response_text: str, *, include_model_input: bool = False) -> list[tuple[str, dict[str, str]]]:
+    """Parse the small SSE subset emitted by the service.
+
+    Every run reports `model_input` right after `run_start`. It is checked and dropped unless a test asks for it.
+    """
     events: list[tuple[str, dict[str, str]]] = []
     for block in response_text.strip().split("\n\n"):
         lines = block.splitlines()
@@ -471,7 +499,12 @@ def parse_sse(response_text: str) -> list[tuple[str, dict[str, str]]]:
         event_type = next(line.removeprefix("event: ") for line in lines if line.startswith("event: "))
         data = next(json.loads(line.removeprefix("data: ")) for line in lines if line.startswith("data: "))
         events.append((event_type, data))
-    return events
+    if include_model_input:
+        return events
+    for index, (event_type, _data) in enumerate(events):
+        if event_type == "model_input":
+            assert index > 0 and events[index - 1][0] == "run_start"
+    return [event for event in events if event[0] != "model_input"]
 
 
 def test_compatibility_reader_recovers_current_session_proposal_after_a_replay_gap():
@@ -894,7 +927,6 @@ def test_health_and_streamed_schedule_question() -> None:
     system_prompt = " ".join(prompt[0]["content"].split())
     assert "Alice" not in system_prompt
     assert "schedule.yaml is available at /workspace/schedule.yaml" in system_prompt
-    assert "/workspace/optimizer-results/optimized-schedule.xlsx" in system_prompt
 
 
 def test_valid_owner_cookie_lifetime_is_refreshed() -> None:
@@ -943,6 +975,7 @@ def test_capabilities_report_configured_attachment_limits(monkeypatch: pytest.Mo
             "enabled": True,
             "max_files": 5,
             "max_bytes_per_file": 4321,
+            "retained": True,
         },
         "session_retention_seconds": 172800,
         "auth": {"required": True, "scheme": "bearer"},
@@ -1030,46 +1063,158 @@ def test_unchanged_schedule_renews_session_with_owner_cookie(monkeypatch: pytest
     assert app.state.session_store.status(session_id, client.cookies.get(OWNER_COOKIE)) == 20
 
 
-def test_legacy_attachment_fields_are_rejected() -> None:
+def test_upload_rejects_fields_other_than_files() -> None:
     client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
     session_id = create_session(client)
 
-    response = client.post(
-        f"/sessions/{session_id}/messages",
-        data={"message": "Question"},
+    other_file_field = client.post(
+        f"/sessions/{session_id}/uploads",
         files={"images": ("ward.png", PNG_BYTES, "image/png")},
     )
+    text_field = client.post(
+        f"/sessions/{session_id}/uploads",
+        data={"message": "Question"},
+        files={"files": ("ward.png", PNG_BYTES, "image/png")},
+    )
 
-    assert response.status_code == 422
-    assert response.json()["detail"] == "Unexpected multipart field."
+    assert other_file_field.status_code == 422
+    assert other_file_field.json()["detail"] == "Unexpected multipart field."
+    assert text_field.status_code == 422
+    assert text_field.json()["detail"] == "Unexpected multipart field."
+    assert client.get(f"/sessions/{session_id}/uploads").json() == []
+
+
+def test_schema_errors_do_not_echo_binary_request_input() -> None:
+    client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
+    session_id = create_session(client)
+
+    responses = [
+        client.post(f"/sessions/{session_id}/{route}", files={"files": ("ward.png", PNG_BYTES, "image/png")})
+        for route in ("messages", "messages/queue")
+    ]
+
+    for response in responses:
+        assert response.status_code == 422
+        assert response.json()["detail"] == [
+            {
+                "type": "model_attributes_type",
+                "loc": ["body"],
+                "msg": "Input should be a valid dictionary or object to extract fields from",
+            }
+        ]
+
+
+def test_uploads_and_removals_are_history_messages_before_the_question() -> None:
+    provider = FakeProvider([["Answer"], ["Again"]])
+    app = create_test_app(settings=make_settings(), provider=provider)
+    client = AuthenticatedTestClient(app)
+    session_id = create_session(client)
+    upload_id, other_id = upload_files(
+        client, session_id, ("notes.txt", b"notes", "text/plain"), ("other.txt", b"other", "text/plain")
+    )
+    assert client.delete(f"/sessions/{session_id}/uploads/{other_id}").status_code == 204
+
+    first = client.post(f"/sessions/{session_id}/messages", json={"message": "Read"})
+    second = client.post(f"/sessions/{session_id}/messages", json={"message": "Read again"})
+
+    notes = {"filename": "notes.txt", "path": f"/workspace/attachments/{upload_id}-notes.txt"}
+    other = {"filename": "other.txt", "path": f"/workspace/attachments/{other_id}-other.txt"}
+    uploaded = (
+        "[App event] The user uploaded files. They stay in the workspace until the user removes them: "
+        + json.dumps(
+            [{**notes, "media_type": "text/plain", "bytes": 5}, {**other, "media_type": "text/plain", "bytes": 5}]
+        )
+    )
+    removed = f"[App event] The user removed a file from the workspace: {json.dumps(other)}"
+    # The question is sent as typed. The file is listed by its upload event, so no status message is needed.
+    assert provider.calls[0][1:] == [
+        {"role": "user", "content": uploaded},
+        {"role": "user", "content": removed},
+        {"role": "user", "content": "Read"},
+    ]
+    assert provider.calls[1][1:4] == provider.calls[0][1:4]
+    assert parse_sse(first.text, include_model_input=True)[1] == (
+        "model_input",
+        {
+            "system": provider.calls[0][0]["content"],
+            "messages": [
+                {"kind": "app", "index": 0, "content": uploaded, "title": "Files Uploaded"},
+                {"kind": "app", "index": 1, "content": removed, "title": "File Removed"},
+                {"kind": "question", "content": "Read"},
+            ],
+            "run_id": ANY,
+        },
+    )
+    assert parse_sse(second.text, include_model_input=True)[1][1]["messages"] == [
+        {"kind": "question", "content": "Read again"}
+    ]
+
+
+def test_status_lists_only_uploads_that_the_sent_history_does_not_show() -> None:
+    hidden = SandboxAttachment("hidden.csv", "text/csv", b"a,b", id="hidden")
+    listed = SandboxAttachment("listed.csv", "text/csv", b"c,d", id="listed")
+    history = project_history([AppEventEntry(upload_event([listed], 2))])
+
+    messages = build_provider_messages(history, "description: test", "Question", (hidden, listed))
+
+    assert messages[-1]["content"] == (
+        f"{STATUS_PREFIX}\nUploaded files not listed in this conversation: "
+        + json.dumps(
+            [
+                {
+                    "filename": "hidden.csv",
+                    "path": "/workspace/attachments/hidden-hidden.csv",
+                    "media_type": "text/csv",
+                    "bytes": 3,
+                }
+            ]
+        )
+    )
+    assert build_provider_messages(history, "description: test", "Question", (listed,))[-1] == {
+        "role": "user",
+        "content": "Question",
+    }
+
+
+def test_every_app_event_and_status_line_has_a_chat_title() -> None:
+    attachment = SandboxAttachment("ward.csv", "text/csv", b"a", id="file")
+    events = {
+        upload_event([attachment]): "Files Uploaded",
+        removal_event(attachment, 1): "File Removed",
+        SCHEDULE_CHANGED_EVENT: "Schedule Changed",
+        SCHEDULE_CHANGED_DISCARDED_EVENT: "Schedule Changed, Proposal Discarded",
+        PROPOSAL_APPROVED_HISTORY: "Proposal Approved",
+        PROPOSAL_REJECTED_HISTORY: "Proposal Rejected",
+        PROPOSAL_INVALID_HISTORY: "Proposal Invalid",
+    }
+    status = build_provider_messages(
+        project_history([]), "description: test", "Q", (attachment,), pending_proposal=True
+    )[-1]["content"]
+
+    assert {message_title("app", content) for content in events} == set(events.values())
+    assert all(message_title("app", content) == title for content, title in events.items())
+    assert message_title("status", status) == "Pending Proposal, Unlisted Uploads"
+    assert message_title("question", "[App event] typed by a user") is None
 
 
 def test_arbitrary_file_is_available_in_the_disposable_sandbox() -> None:
-    read_manifest = [
-        ToolCallRequest((ToolCall("call_0", READ_TOOL, json.dumps({"path": "/workspace/attachments/manifest.json"})),))
-    ]
-    provider = ScriptedToolProvider(read_manifest, [TextDelta("I inspected the custom file.")])
+    read_schedule = [ToolCallRequest((ToolCall("call_0", READ_TOOL, json.dumps({"path": WORKSPACE_SCHEDULE})),))]
+    provider = ScriptedToolProvider(read_schedule, [TextDelta("I inspected the custom file.")])
     factory = FakeSandboxFactory()
     client = AuthenticatedTestClient(
         create_test_app(settings=make_settings(), provider=provider, sandbox_factory=factory)
     )
     session_id = create_session(client)
+    upload_ids = upload_files(client, session_id, ("archive.custom", b"arbitrary bytes", "application/x-custom"))
 
-    response = client.post(
-        f"/sessions/{session_id}/messages",
-        data={"message": "Inspect this custom file."},
-        files={"files": ("archive.custom", b"arbitrary bytes", "application/x-custom")},
-    )
+    response = client.post(f"/sessions/{session_id}/messages", json={"message": "Inspect this custom file."})
 
     assert response.status_code == 200
     assert "I inspected the custom file." in response.text
-    backend = factory.created[0]
-    manifest = json.loads(backend.files["/workspace/attachments/manifest.json"])
-    uploaded = manifest["attachments"][0]
-    assert uploaded["original_filename"] == "archive.custom"
-    assert uploaded["media_type"] == "application/x-custom"
-    assert backend.files[uploaded["path"]] == b"arbitrary bytes"
-    assert "/workspace/attachments/manifest.json" in provider.calls[0][0]["content"]
+    path = f"/workspace/attachments/{upload_ids[0]}-archive.custom"
+    assert factory.created[0].files[path] == b"arbitrary bytes"
+    assert path in provider.calls[0][1]["content"]
+    assert "archive.custom" not in provider.calls[0][0]["content"]
 
 
 @pytest.mark.parametrize(
@@ -1099,14 +1244,11 @@ def test_arbitrary_file_limits(
     client = AuthenticatedTestClient(create_test_app(settings=make_settings(**settings), provider=FakeProvider()))
     session_id = create_session(client)
 
-    response = client.post(
-        f"/sessions/{session_id}/messages",
-        data={"message": "Inspect these files."},
-        files=files,
-    )
+    response = client.post(f"/sessions/{session_id}/uploads", files=files)
 
     assert response.status_code == 413
     assert response.json()["detail"] == expected_detail
+    assert client.get(f"/sessions/{session_id}/uploads").json() == []
 
 
 def test_second_turn_keeps_only_system_message_at_beginning() -> None:
@@ -1127,7 +1269,7 @@ def test_second_turn_keeps_only_system_message_at_beginning() -> None:
     assert second.status_code == 200
     assert {"role": "user", "content": "First question"} in provider.calls[1]
     assert {"role": "assistant", "content": "First answer"} in provider.calls[1]
-    assert "Current schedule summary:" in provider.calls[1][0]["content"]
+    assert "schedule.yaml is available at /workspace/schedule.yaml" in provider.calls[1][0]["content"]
     assert provider.calls[1][0]["role"] == "system"
     assert all(message["role"] != "system" for message in provider.calls[1][1:])
 
@@ -1228,9 +1370,16 @@ def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming(monke
     assert saved[0][4] == [AssistantMessage("Obsolete answer.")]
 
 
-def test_sandbox_timeout_does_not_expose_exception_details() -> None:
+@pytest.mark.parametrize(
+    ("exception", "message"),
+    [
+        (SandboxRunTimeoutError, SANDBOX_RUN_TIMEOUT_ERROR),
+        (SandboxCommandTimeoutError, SANDBOX_COMMAND_TIMEOUT_ERROR),
+    ],
+)
+def test_sandbox_timeout_does_not_expose_exception_details(exception, message) -> None:
     private_error = "Traceback from /srv/sandbox.py: internal-host"
-    provider = FakeProvider([[SandboxRunTimeoutError(private_error)]])
+    provider = FakeProvider([[exception(private_error)]])
     client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=provider))
     session_id = create_session(client)
 
@@ -1239,7 +1388,7 @@ def test_sandbox_timeout_does_not_expose_exception_details() -> None:
     assert parse_sse(response.text) == [
         ("run_start", {"trigger": "user", "run_id": ANY}),
         ("context_usage", {"used_chars": 0, "max_chars": 200_000, "run_id": ANY}),
-        ("error", {"message": SANDBOX_RUN_TIMEOUT_ERROR, "run_id": ANY}),
+        ("error", {"message": message, "run_id": ANY}),
     ]
     assert private_error not in response.text
 
@@ -1508,6 +1657,62 @@ def test_a_trimmed_prompt_history_is_reported_to_the_client() -> None:
     assert second.status_code == 200
 
 
+def test_history_is_trimmed_in_steps_so_most_requests_extend_the_previous_prefix() -> None:
+    provider = FakeProvider([["Answer " + "x" * 40] for _ in range(10)])
+    settings = make_settings(max_history_chars=1000, max_history_messages=100, max_session_bytes=1_000_000)
+    client = AuthenticatedTestClient(create_test_app(settings=settings, provider=provider))
+    session_id = create_session(client)
+
+    for turn in range(10):
+        assert (
+            client.post(f"/sessions/{session_id}/messages", json={"message": f"Q{turn} " + "y" * 40}).status_code == 200
+        )
+
+    # A request that extends the previous one lets the provider reuse its cached prefix.
+    prefix_changes = [
+        turn
+        for turn in range(1, 10)
+        if provider.calls[turn][: len(provider.calls[turn - 1])] != provider.calls[turn - 1]
+    ]
+    assert len(prefix_changes) == 1
+    assert "Q0" not in json.dumps(provider.calls[-1])
+
+
+def test_schedule_edit_is_recorded_only_when_its_data_changes() -> None:
+    store = create_test_app(settings=make_settings(), provider=FakeProvider()).state.session_store
+    session = store.create("owner", "description: old\n")
+
+    store.update_schedule(session.id, "owner", "description:   old\n")
+    assert store._sessions[session.id].transcript == []
+    store.update_schedule(session.id, "owner", "description: new\n")
+    assert store._sessions[session.id].transcript == [AppEventEntry(SCHEDULE_CHANGED_EVENT)]
+
+
+@pytest.mark.parametrize("window_tokens", [None, 1000], ids=["unknown-limit", "provider-limit"])
+def test_context_usage_reports_the_latest_request_tokens_and_provider_limit(window_tokens: int | None) -> None:
+    class Provider:
+        context_tokens = window_tokens
+
+        async def stream_events(self, messages, tools=None):
+            yield TextDelta("Answer")
+            yield TokenUsage(100, 20, 120)
+            yield TokenUsage(150, 30, 180)
+
+    app = create_test_app(settings=make_settings(), provider=Provider())
+    client = AuthenticatedTestClient(app)
+    session_id = create_session(client)
+    # Replay keeps only the newest usage of a run, so observe every publication.
+    published = []
+    app.state.session_store._sessions[session_id].subscribe(published.append)
+
+    client.post(f"/sessions/{session_id}/messages", json={"message": "Question"})
+
+    usage = [event for event in published if event["type"] == "context_usage"]
+    assert [payload.get("used_tokens") for payload in usage] == [None, 120, 180, 180]
+    assert usage[-1].get("max_tokens") == window_tokens
+    assert usage[-1]["used_chars"] > usage[0]["used_chars"] == 0
+
+
 def test_context_usage_reports_selected_history_before_and_after_each_run() -> None:
     provider = FakeProvider([["First answer."], ["Second answer."]])
     app = create_test_app(settings=make_settings(max_history_chars=140), provider=provider)
@@ -1669,7 +1874,7 @@ def test_environment_configuration_defaults_to_extended_sandbox_turn_limits(
 
     settings = AiSettings.from_env()
     assert settings.provider_timeout_seconds == 180
-    assert settings.sandbox_command_timeout_seconds == 30
+    assert settings.sandbox_command_timeout_seconds == 60
     assert settings.sandbox_turn_timeout_seconds == 3600
     assert settings.agent_max_tool_rounds == 200
     assert settings.agent_max_tool_calls == 400
@@ -1761,6 +1966,27 @@ class ScriptedToolProvider:
             if isinstance(event, BaseException):
                 raise event
             yield event
+
+
+def review_run_events(app, session_id: str, timeout: float = 2.0) -> list:
+    """Wait for the first optimizer-triggered run to end and return its published events."""
+    deadline = time.monotonic() + timeout
+    review: list = []
+    while time.monotonic() < deadline:
+        events = app.state.session_event_stream.events_after(session_id)
+        run_id = next(
+            (
+                event.data["run_id"]
+                for event in events
+                if event.type == "run_start" and event.data["trigger"] == "optimizer"
+            ),
+            None,
+        )
+        review = [event for event in events if run_id is not None and event.data.get("run_id") == run_id]
+        if any(event.type in {"done", "stopped", "stale", "error"} for event in review):
+            break
+        time.sleep(0.01)
+    return review
 
 
 class BackgroundTestOptimizer:
@@ -1883,7 +2109,12 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
     with AuthenticatedTestClient(app) as client:
         session_id = create_session(client, schedule_yaml())
         assert "optimizer" not in client.get("/capabilities").json()
-        started = client.post(f"/sessions/{session_id}/messages", json={"message": "Optimize this schedule."})
+        source_ids = upload_files(client, session_id, ("source.txt", b"original input", "text/plain"))
+        source_path = f"/workspace/attachments/{source_ids[0]}-source.txt"
+        started = client.post(
+            f"/sessions/{session_id}/messages",
+            json={"message": "Optimize this schedule."},
+        )
         follow_up = client.post(f"/sessions/{session_id}/messages", json={"message": "Can we still talk?"})
 
         assert started.status_code == 200
@@ -1923,6 +2154,7 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
             "optimization_progress",
             "optimization",
             "run_start",
+            "model_input",
             "tool_start",
             "tool",
             "delta",
@@ -1938,21 +2170,34 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         assert events[3].data == {"trigger": "optimizer", "run_id": run_id}
         assert all(event.data["run_id"] == run_id for event in events[3:])
         assert all("message_id" not in event.data for event in events[3:])
-        assert events[6].data == {"text": "The optimizer returned score 23.", "run_id": events[3].data["run_id"]}
-        assert events[7].data["max_chars"] == 200_000
-        assert events[7].data["used_chars"] > 0
+        assert events[4].data == {
+            "system": provider.calls[3][0]["content"],
+            "messages": [
+                {"kind": "optimizer", "content": provider.calls[3][-2]["content"]},
+                {"kind": "status", "content": provider.calls[3][-1]["content"], "title": "Optimizer Result"},
+            ],
+            "run_id": run_id,
+        }
+        assert provider.calls[3][0] == provider.calls[0][0]
+        assert events[7].data == {"text": "The optimizer returned score 23.", "run_id": run_id}
+        assert events[8].data["max_chars"] == 200_000
+        assert events[8].data["used_chars"] > 0
         if history_enabled:
             assert len(history_starts) == 3
             assert history_starts[-1][1] == session_id
-            assert history_starts[-1][4:] == ("test-model", 0)
-        assert '"score": 23' in str(provider.calls[3][-1]["content"])
-        assert "/workspace/optimizer-results/optimized-schedule.xlsx" in str(provider.calls[3][-1]["content"])
+            # The review run hydrates the retained upload too.
+            assert history_starts[-1][4:] == ("test-model", 1)
+        assert '"score": 23' in str(provider.calls[3][-2]["content"])
+        assert provider.calls[3][-1]["content"] == (
+            f"{STATUS_PREFIX}\nOptimization result: /workspace/optimizer-results/optimized-schedule.xlsx."
+        )
         background_sandbox = next(
             backend
             for backend in factory.created
             if "/workspace/optimizer-results/optimized-schedule.xlsx" in backend.files
         )
-        assert "/workspace/attachments/manifest.json" not in background_sandbox.files
+        assert source_path in provider.calls[3][1]["content"]
+        assert background_sandbox.files[source_path] == b"original input"
         assert background_sandbox.files["/workspace/optimizer-results/optimized-schedule.xlsx"].startswith(
             b"PK\x03\x04"
         )
@@ -1963,27 +2208,77 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         assert download.content.startswith(b"PK\x03\x04")
         assert download.headers["content-disposition"] == 'attachment; filename="optimized-schedule.xlsx"'
 
+        note_ids = upload_files(client, session_id, ("note.txt", b"note", "text/plain"))
         later = client.post(
             f"/sessions/{session_id}/messages",
-            data={"message": "Can you inspect the workbook again?"},
-            files={"files": ("note.txt", b"note", "text/plain")},
+            json={"message": "Can you inspect the workbook again?"},
         )
         assert later.status_code == 200
         assert "I can still inspect" in later.text
-        later_sandbox = next(
-            backend
-            for backend in factory.created
-            if "/workspace/optimizer-results/optimized-schedule.xlsx" in backend.files
-            and "/workspace/attachments/manifest.json" in backend.files
-        )
-        later_manifest = json.loads(later_sandbox.files["/workspace/attachments/manifest.json"])
-        assert [entry["original_filename"] for entry in later_manifest["attachments"]] == [
-            "note.txt",
-        ]
+        later_sandbox = factory.created[-1]
+        assert later_sandbox.files[source_path] == b"original input"
+        assert later_sandbox.files[f"/workspace/attachments/{note_ids[0]}-note.txt"] == b"note"
         assert later_sandbox.files["/workspace/optimizer-results/optimized-schedule.xlsx"] == download.content
 
     assert optimizer.closed
     assert optimizer.deleted == ["remote-background"]
+
+
+@pytest.mark.parametrize(
+    "source,replacement",
+    [
+        ("description: draft\nloop: &a [*a]\n", "description: draft\nloop: &b [*b]\n"),
+        ("%YAML 1.3\n---\ndescription: draft\n", "description: repaired\n"),
+        ("loop: " + "[" * 100 + "0" + "]" * 100, "description: repaired\n"),
+    ],
+)
+def test_schedule_updates_can_replace_unusual_drafts(source, replacement):
+    app = create_test_app(settings=make_settings(), provider=ScriptedToolProvider())
+    with AuthenticatedTestClient(app) as client:
+        session_id = create_session(client, source)
+        response = client.put(f"/sessions/{session_id}/schedule", json={"schedule_yaml": replacement})
+        assert response.status_code == 204
+        assert app.state.session_store._sessions[session_id].schedule_yaml == replacement
+
+
+def test_optimizer_inspection_keeps_submitted_context_after_editor_changes():
+    context_path = "/workspace/optimizer-results/schedule-context.json"
+    read_context = [ToolCallRequest((ToolCall("read-context", READ_TOOL, json.dumps({"path": context_path})),))]
+    provider = ScriptedToolProvider(
+        [ToolCallRequest((ToolCall("start", OPTIMIZER_TOOL, '{"action":"start"}'),))],
+        [TextDelta("Started.")],
+        read_context,
+        [TextDelta("Reviewed.")],
+        read_context,
+        [TextDelta("Reviewed again.")],
+    )
+    optimizer = BackgroundTestOptimizer()
+    factory = FakeSandboxFactory()
+    app = create_test_app(
+        settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT, optimizer_poll_interval_seconds=0.001),
+        provider=provider,
+        sandbox_factory=factory,
+        optimizer_backend=optimizer,
+    )
+    source = schedule_yaml()
+    changed = source.replace("weight: 1", "weight: 9", 1)
+    with AuthenticatedTestClient(app) as client:
+        session_id = create_session(client, source)
+        client.post(f"/sessions/{session_id}/messages", json={"message": "Optimize."})
+        assert client.put(f"/sessions/{session_id}/schedule", json={"schedule_yaml": changed}).status_code == 204
+        optimizer.release.set()
+        assert review_run_events(app, session_id)[-1].type == "done"
+        assert (
+            "Reviewed again."
+            in client.post(f"/sessions/{session_id}/messages", json={"message": "Inspect the earlier result."}).text
+        )
+        result_sandboxes = [sandbox for sandbox in factory.created if context_path in sandbox.files]
+        assert len(result_sandboxes) == 2
+        for sandbox in result_sandboxes:
+            assert sandbox.files[WORKSPACE_SCHEDULE] == changed.encode()
+            context = json.loads(sandbox.files[context_path])
+            assert context["source_sha256"] == hashlib.sha256(source.encode()).hexdigest()
+            assert context["requests"][0]["weight"] == 1
 
 
 def rename_factory() -> FakeSandboxFactory:
@@ -2159,7 +2454,8 @@ def test_sandbox_command_failure_still_streams_the_requested_command() -> None:
     }
 
 
-def test_final_validation_failure_discards_the_turn_without_a_history_note() -> None:
+@pytest.mark.parametrize("invalid_kind", ["yaml", "history-list"])
+def test_final_validation_failure_discards_the_turn_without_a_history_note(invalid_kind) -> None:
     provider = ScriptedToolProvider(
         rename_call(),
         [TextDelta("Provisional invalid answer.")],
@@ -2167,7 +2463,12 @@ def test_final_validation_failure_discards_the_turn_without_a_history_note() -> 
     )
 
     def invalidate(_command: str, _timeout: float | None, backend: FakeSandboxBackend) -> CommandResult:
-        backend.files[WORKSPACE_SCHEDULE] = b"not: [valid"
+        if invalid_kind == "yaml":
+            backend.files[WORKSPACE_SCHEDULE] = b"not: [valid"
+        else:
+            payload = base_schedule_payload()
+            payload["people"]["items"][0]["history"] = "D"
+            backend.files[WORKSPACE_SCHEDULE] = schedule_yaml(payload).encode()
         return CommandResult("updated\n", "", 0)
 
     factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=invalidate))
@@ -2186,7 +2487,9 @@ def test_final_validation_failure_discards_the_turn_without_a_history_note() -> 
     events = parse_sse(failed.text)
     assert [name for name, _ in events] == ["run_start", "context_usage", "tool_start", "tool", "delta", "error"]
     assert events[3][1]["ok"] is False
-    assert events[-1][1]["message"] == CANDIDATE_VALIDATION_ERROR
+    assert events[-1][1]["message"].startswith(CANDIDATE_VALIDATION_ERROR)
+    assert "schedule.yaml introduces problems" in events[-1][1]["message"]
+    assert ("not readable YAML" if invalid_kind == "yaml" else "people.items[0].history") in events[-1][1]["message"]
 
     recovered = client.post(f"/sessions/{session_id}/messages", json={"message": "Retry"})
 
@@ -2270,7 +2573,11 @@ def test_pending_proposal_is_available_to_the_next_fresh_turn() -> None:
     follow_up = client.post(f"/sessions/{session_id}/messages", json={"message": "What is pending?"})
 
     assert follow_up.status_code == 200
-    assert "A validated proposal is pending" in provider.calls[2][0]["content"]
+    # The status message carries the pending proposal, so the system message stays identical for caching.
+    assert provider.calls[2][-1]["content"].startswith(STATUS_PREFIX)
+    assert "A validated proposal is pending" in provider.calls[2][-1]["content"]
+    assert provider.calls[2][-2] == {"role": "user", "content": "What is pending?"}
+    assert provider.calls[2][0] == provider.calls[0][0]
     assert b"description: Head" in factory.created[1].files[WORKSPACE_PENDING_PROPOSAL]
     assert b"people.items[0].description" in factory.created[1].files[WORKSPACE_PENDING_DIFF]
     assert factory.created[1].files[WORKSPACE_SCHEDULE] == schedule_yaml().encode()
@@ -2453,7 +2760,7 @@ def test_session_store_bounds_steering_across_a_whole_turn_not_the_drained_queue
 
 
 def test_session_store_bounds_retained_chat_text_across_sessions() -> None:
-    settings = make_settings(max_session_bytes=900, max_schedule_bytes=1000)
+    settings = make_settings(max_session_bytes=1000, max_schedule_bytes=1000)
     app = create_test_app(settings=settings, provider=FakeProvider())
     store = app.state.session_store
     first = store.create("browser-owner", "a" * 400)
@@ -2463,17 +2770,17 @@ def test_session_store_bounds_retained_chat_text_across_sessions() -> None:
     with pytest.raises(HTTPException) as exc_info:
         store.create("browser-owner", "c" * 400)
     assert exc_info.value.status_code == 429
-    assert exc_info.value.detail == "The AI service has reached its session text retention limit."
+    assert exc_info.value.detail == "The AI service has reached its session text and file retention limit."
 
-    # Replacing a schedule with a smaller one returns its budget.
-    store.update_schedule(first.id, "browser-owner", "a" * 100)
-    assert store.retained_bytes == 500
+    # Replacing a schedule with a smaller one returns its budget. The edit is recorded as an app event.
+    store.update_schedule(first.id, "browser-owner", "a" * 50)
+    assert store.retained_bytes == 450 + len(SCHEDULE_CHANGED_EVENT)
     store.create("browser-owner", "c" * 400)
 
     # Expiry releases the budget along with the session.
     store._sessions[second.id].expires_at = time.monotonic() - 1
     store.create("browser-owner", "d" * 100)
-    assert store.retained_bytes == 600
+    assert store.retained_bytes == 550 + len(SCHEDULE_CHANGED_EVENT)
 
 
 def test_proposal_history_event_counts_the_exchange_removed_by_the_cap() -> None:
@@ -2614,8 +2921,9 @@ def test_replacing_a_schedule_credits_the_proposal_it_drops() -> None:
 
     assert store._sessions[session.id].schedule_yaml == "b" * 300
     assert store._sessions[session.id].pending_proposal is None
-    # The new schedule and the two one-character turn messages are all that remain.
-    assert store.retained_bytes == 302
+    # The new schedule, the two one-character run messages, and the edit event are all that remain.
+    assert store.retained_bytes == 302 + len(SCHEDULE_CHANGED_DISCARDED_EVENT)
+    assert store._sessions[session.id].transcript[-1] == AppEventEntry(SCHEDULE_CHANGED_DISCARDED_EVENT)
 
 
 def test_session_store_rejects_steering_after_the_final_boundary() -> None:
@@ -2674,30 +2982,13 @@ def test_the_prompt_points_to_the_schedule_without_disclosing_its_facts() -> Non
     client.post(f"/sessions/{session_id}/messages", json={"message": "How many people?"})
 
     system_prompt = provider.calls[0][0]["content"]
+    assert system_prompt.startswith(SANDBOX_SYSTEM_PROMPT)
     normalized_prompt = " ".join(system_prompt.split())
     assert "schedule.yaml is available at /workspace/schedule.yaml" in normalized_prompt
     assert "2 people" not in normalized_prompt
     assert "PEOPLE" not in normalized_prompt
     assert "2026-01-01" not in normalized_prompt
-    assert "Your tools are `read`, `bash`, `edit`, `write`, and the server-side `optimizer`" in normalized_prompt
-    assert "Prefer `read` for files and images" in normalized_prompt
-    assert "`edit` for unique exact-text replacements" in normalized_prompt
-    assert "`write` only for new files or complete rewrites" in normalized_prompt
-    assert "`/reference/schema-core.md`" in normalized_prompt
-    assert "`/reference/schema-preferences.md`" in normalized_prompt
-    assert "Read the relevant reference before changing" in normalized_prompt
-    assert "at most one focused verification" in normalized_prompt
-    assert "`/reference/schema-export.md`" in normalized_prompt
-    assert "Python has `ruamel.yaml`, not PyYAML" in normalized_prompt
-    assert "Preserve all unrequested fields, selectors, and objects" in normalized_prompt
-    assert "/workspace/optimizer-results/optimized-schedule.xlsx" in normalized_prompt
-    assert "Repair any validation error before answering" in normalized_prompt
-    assert "user must approve it before the schedule in the browser changes" in normalized_prompt
-    assert "Update, rename, and remove only existing entities" in normalized_prompt
-    assert "Use the server-side `optimizer` tool for a finished roster" in normalized_prompt
-    assert "Use `optimizer` to start optimization" in normalized_prompt
-    assert "Do not poll repeatedly" in normalized_prompt
-    summary = system_prompt.split("Current schedule summary:\n")[1]
+    summary = system_prompt.removeprefix(SANDBOX_SYSTEM_PROMPT)
     assert len(summary) < len(schedule) / 2
 
 
@@ -2715,3 +3006,103 @@ def test_a_browser_may_send_the_newer_schedule_across_origins() -> None:
 
     assert preflight.status_code == 200
     assert "PUT" in preflight.headers["access-control-allow-methods"]
+
+
+def test_background_command_timeout_preserves_tool_result_and_reports_the_actual_cause():
+    def timeout(_command, _timeout, backend):
+        backend.closed = True
+        return CommandResult("", "", 124, timed_out=True, sandbox_terminated=True)
+
+    provider = ScriptedToolProvider(
+        [ToolCallRequest((ToolCall("start", OPTIMIZER_TOOL, '{"action":"start"}'),))],
+        [TextDelta("Optimization started.")],
+        [ToolCallRequest((ToolCall("wait", BASH_TOOL, '{"command":"sleep 30"}'),))],
+    )
+    optimizer = BackgroundTestOptimizer()
+    factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=timeout))
+    app = create_test_app(
+        settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT, optimizer_poll_interval_seconds=0.001),
+        provider=provider,
+        sandbox_factory=factory,
+        optimizer_backend=optimizer,
+    )
+    with AuthenticatedTestClient(app) as client:
+        session_id = create_session(client, schedule_yaml())
+        started = client.post(f"/sessions/{session_id}/messages", json={"message": "Optimize."})
+        assert "Optimization started" in started.text
+        optimizer.release.set()
+        events = review_run_events(app, session_id)
+        assert events[-1].type == "error"
+        assert events[-1].data == {"message": SANDBOX_COMMAND_TIMEOUT_ERROR, "run_id": ANY}
+        tool = next(event for event in events if event.type == "tool")
+        assert not tool.data["ok"]
+        assert "Command timed out" in tool.data["result"]
+        assert not any(event.type in {"proposal", "done"} for event in events)
+        assert len(provider.calls) == 3
+
+
+def test_provider_http_failure_shows_status_and_reference_without_response_body(monkeypatch):
+    from nurse_scheduling.ai import provider as provider_module
+    from nurse_scheduling.ai.provider import OpenAiCompatibleProvider
+
+    real_client = httpx.AsyncClient
+    transport = httpx.MockTransport(lambda _request: httpx.Response(503, text="private provider body secret-token"))
+    monkeypatch.setattr(
+        provider_module.httpx, "AsyncClient", lambda **kwargs: real_client(**{**kwargs, "transport": transport})
+    )
+    settings = make_settings()
+    with AuthenticatedTestClient(
+        create_test_app(settings=settings, provider=OpenAiCompatibleProvider(settings))
+    ) as client:
+        session = create_session(client)
+        response = client.post(f"/sessions/{session}/messages", json={"message": "Review the schedule"})
+        message = parse_sse(response.text)[-1][1]["message"]
+        assert "HTTP 503" in message
+        assert re.search(r"Error ID: [0-9a-f-]{36}", message)
+        assert "private provider body" not in response.text
+        assert "secret-token" not in response.text
+        assert not any(name in {"proposal", "done"} for name, _ in parse_sse(response.text))
+
+
+@pytest.mark.parametrize("failure", ["provider-public", "provider-private", "validation"])
+def test_background_review_reports_safe_reasons_and_keeps_private_errors_hidden(failure):
+    turns = [
+        [ToolCallRequest((ToolCall("start", OPTIMIZER_TOOL, '{"action":"start"}'),))],
+        [TextDelta("Optimization started.")],
+    ]
+    if failure == "validation":
+        turns.extend([rename_call(), [TextDelta("Invalid candidate.")]])
+    elif failure == "provider-public":
+        turns.append(ProviderError.for_user("The AI provider returned HTTP 503."))
+    else:
+        turns.append(ProviderError("private SDK traceback secret-token"))
+    provider = ScriptedToolProvider(*turns)
+    optimizer = BackgroundTestOptimizer()
+
+    def invalidate(_command, _timeout, backend):
+        backend.files[WORKSPACE_SCHEDULE] = b"people: [unclosed"
+        return CommandResult("updated\n", "", 0)
+
+    factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=invalidate))
+    app = create_test_app(
+        settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT, optimizer_poll_interval_seconds=0.001),
+        provider=provider,
+        sandbox_factory=factory,
+        optimizer_backend=optimizer,
+    )
+    with AuthenticatedTestClient(app) as client:
+        session = create_session(client, schedule_yaml())
+        client.post(f"/sessions/{session}/messages", json={"message": "Optimize."})
+        optimizer.release.set()
+        events = review_run_events(app, session)
+        assert events[-1].type == "error"
+        message = events[-1].data["message"]
+        if failure == "validation":
+            assert message.startswith(CANDIDATE_VALIDATION_ERROR)
+            assert "not readable YAML" in message
+        elif failure == "provider-public":
+            assert "HTTP 503" in message
+        else:
+            assert message == PROVIDER_ERROR
+        assert "secret-token" not in message
+        assert not any(event.type in {"proposal", "done"} for event in events)

@@ -1,0 +1,26 @@
+{
+  "id": "xlsx-color-fallback",
+  "fixture": "new-schedule",
+  "question": "The attached staff workbook marks senior nurses by a yellow fill on their name cell. Return their names alphabetically, only as JSON with a seniorNames array. Do not modify the schedule.",
+  "expect_proposal": false,
+  "attachments": [
+    "colored-xlsx"
+  ],
+  "answer_json": {
+    "seniorNames": [
+      "Lena",
+      "Mira"
+    ]
+  },
+  "tool_usage": {
+    "required": [
+      "bash"
+    ]
+  },
+  "tags": [
+    "attachment",
+    "xlsx-inspection",
+    "control"
+  ],
+  "note": "This testcase is mostly AI generated. Color-only meaning requires inspection beyond the generic value/formula reader."
+}

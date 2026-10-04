@@ -1,0 +1,23 @@
+{
+  "id": "pdf-find-unknown-page",
+  "fixture": "new-schedule",
+  "question": "Find the Continuity plan paragraph in the uploaded PDF. Reply only JSON with page (one-based page number) and handoffCode (the code shown in that paragraph). Do not change the schedule.",
+  "expect_proposal": false,
+  "attachments": [
+    "search-pdf"
+  ],
+  "answer_json": {
+    "page": 26,
+    "handoffCode": "BRIDGE 6842"
+  },
+  "tags": [
+    "attachment-inspection",
+    "pdf-find"
+  ],
+  "tool_usage": {
+    "forbidden": [
+      "optimizer"
+    ]
+  },
+  "note": "This testcase is mostly AI generated. The relevant text is beyond the default page window in a long document. The oracle checks the actual page and code, not helper invocation."
+}

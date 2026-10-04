@@ -110,6 +110,7 @@ class AgentToolResult:
     ok: bool
     image: ToolResultImage | None = None
     details: dict[str, Any] | None = None
+    terminal: bool = False
 
 
 @dataclass(frozen=True)

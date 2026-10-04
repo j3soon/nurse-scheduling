@@ -57,7 +57,7 @@ def load_taiwan_holidays_reference() -> str:
 
 @lru_cache(maxsize=1)
 def load_user_guide_references() -> Mapping[str, str]:
-    """Load the user-facing Markdown pages for in-app guidance.
+    """Load the published user guide Markdown pages for in-app guidance.
 
     Cached because every run hydrates the same read-only files, which do not change
     while the process runs.

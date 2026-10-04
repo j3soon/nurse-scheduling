@@ -1,0 +1,31 @@
+{
+  "id": "result-assignment-details",
+  "fixture": "request-audit",
+  "question": "Run optimization for 60 seconds. When it finishes, report the actual assigned shift for Mira on 2026-05-02 and Alex on 2026-05-03. Reply only as JSON with miraMay02 and alexMay03.",
+  "expect_proposal": false,
+  "optimizer_completion": "request-audit",
+  "optimizer_completion_only": true,
+  "answer_json": {
+    "miraMay02": "N",
+    "alexMay03": "D"
+  },
+  "tool_usage": {
+    "required_calls": [
+      {
+        "name": "optimizer",
+        "arguments": {
+          "action": "start",
+          "timeout_seconds": 60
+        }
+      }
+    ],
+    "max_per_tool": {
+      "optimizer": 1
+    }
+  },
+  "tags": [
+    "optimizer-result",
+    "control"
+  ],
+  "note": "This testcase is mostly AI generated. Completion counts do not identify assignments. Both cells contain OFF request annotations but actual working shifts. Fixed assignments are solver-verified and exported by production code."
+}

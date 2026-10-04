@@ -1,0 +1,108 @@
+{
+  "_license": "Copyright (C) 2023-2026 Johnson Sun. SPDX-License-Identifier: AGPL-3.0-or-later",
+  "_comment": "This test is mostly AI generated.",
+  "id": "dates-range-renew-custom-group-small",
+  "fixture": "small-clinic",
+  "user_turns": [
+    "Extend the roster through January 18, 2026.",
+    "Yes, renew the Taiwan holiday date groups. Also extend the custom Weekdays group to cover all weekdays in the new range."
+  ],
+  "intermediate_answer_contains": [
+    [
+      "Taiwan",
+      [
+        "holiday",
+        "holidays"
+      ],
+      [
+        "renew",
+        "update",
+        "import"
+      ]
+    ]
+  ],
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "dates.range",
+      "before": {
+        "startDate": "2026-01-05",
+        "endDate": "2026-01-11"
+      },
+      "after": {
+        "startDate": "2026-01-05",
+        "endDate": "2026-01-18"
+      }
+    },
+    {
+      "path": "dates.groups",
+      "added": [
+        {
+          "id": "WORKDAY",
+          "description": "Taiwan workdays imported from the current holiday calendar",
+          "members": [
+            "05",
+            "06",
+            "07",
+            "08",
+            "09",
+            "12",
+            "13",
+            "14",
+            "15",
+            "16"
+          ]
+        },
+        {
+          "id": "FREEDAY",
+          "description": "Taiwan freedays imported from the current holiday calendar",
+          "members": [
+            "10",
+            "11",
+            "17",
+            "18"
+          ]
+        },
+        {
+          "id": "Weekdays",
+          "description": "Clinic weekdays",
+          "members": [
+            "05",
+            "06",
+            "07",
+            "08",
+            "09",
+            "12",
+            "13",
+            "14",
+            "15",
+            "16"
+          ]
+        }
+      ],
+      "removed": [
+        {
+          "id": "Weekdays",
+          "description": "Clinic weekdays",
+          "members": [
+            "05",
+            "06",
+            "07",
+            "08",
+            "09"
+          ]
+        }
+      ]
+    }
+  ],
+  "changes": [
+    "dates.range",
+    "dates.groups"
+  ],
+  "tags": [
+    "prompt-evidence",
+    "calendar",
+    "explicit-scope"
+  ],
+  "note": "This testcase is mostly AI generated. Contrasts with dates-range-renew-small: the user explicitly authorizes extending the custom Weekdays group alongside holiday renewal."
+}

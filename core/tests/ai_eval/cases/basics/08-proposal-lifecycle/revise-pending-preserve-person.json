@@ -1,0 +1,43 @@
+{
+  "id": "revise-pending-preserve-person",
+  "fixture": "new-schedule",
+  "user_turns": [
+    "Add person P1 with description Head nurse.",
+    "Revise that pending proposal to also set the schedule description to March training roster."
+  ],
+  "intermediate_answer_contains": [
+    [
+      "P1"
+    ]
+  ],
+  "expect_proposal": true,
+  "proposal_turns": [
+    1,
+    2
+  ],
+  "expected_diff": [
+    {
+      "path": "people.items",
+      "added": [
+        {
+          "id": "P1",
+          "description": "Head nurse",
+          "history": []
+        }
+      ]
+    },
+    {
+      "path": "description",
+      "before": "",
+      "after": "March training roster"
+    }
+  ],
+  "changes": [
+    "people.items",
+    "description"
+  ],
+  "note": "This testcase is mostly AI generated. The second turn must start from the pending candidate and preserve the added person. Overwriting a single description cannot detect this error.",
+  "tags": [
+    "prompt-evidence"
+  ]
+}

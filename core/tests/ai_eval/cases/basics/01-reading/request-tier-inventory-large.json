@@ -1,0 +1,70 @@
+{
+  "id": "request-tier-inventory-large",
+  "fixture": "ward87",
+  "question": "List every nonzero shift-request weight tier in the current YAML. Return only a JSON object with one field, tiers, whose value is an array sorted by numeric weight ascending. Each item must have weight (a number, or \"-.inf\"/\".inf\" for infinity), request_entries (integer preference-entry count), and person_date_targets (integer expanded person/date target count, counted per preference entry even when targets overlap). This is a read-only inventory. Do not run optimization or change the schedule.",
+  "expect_proposal": false,
+  "answer_json": {
+    "tiers": [
+      {
+        "weight": "-.inf",
+        "request_entries": 8,
+        "person_date_targets": 5130
+      },
+      {
+        "weight": -1000000000,
+        "request_entries": 5,
+        "person_date_targets": 5688
+      },
+      {
+        "weight": -100000000,
+        "request_entries": 8,
+        "person_date_targets": 2142
+      },
+      {
+        "weight": -1000,
+        "request_entries": 6,
+        "person_date_targets": 456
+      },
+      {
+        "weight": 1,
+        "request_entries": 2,
+        "person_date_targets": 270
+      },
+      {
+        "weight": 100,
+        "request_entries": 2,
+        "person_date_targets": 60
+      },
+      {
+        "weight": 1000,
+        "request_entries": 2,
+        "person_date_targets": 60
+      },
+      {
+        "weight": 10000,
+        "request_entries": 2,
+        "person_date_targets": 60
+      },
+      {
+        "weight": 11000000,
+        "request_entries": 33,
+        "person_date_targets": 90
+      },
+      {
+        "weight": 11000000000,
+        "request_entries": 89,
+        "person_date_targets": 408
+      }
+    ]
+  },
+  "tool_usage": {
+    "forbidden": [
+      "optimizer"
+    ]
+  },
+  "tags": [
+    "request-inspection",
+    "request-tier-inventory"
+  ],
+  "note": "This testcase is mostly AI generated. Oracle counts are independently derived from compiled preference selectors. The fixture has ten signed weight tiers, overlapping targets, group selectors, and bans. Exact tier order and counts are required."
+}

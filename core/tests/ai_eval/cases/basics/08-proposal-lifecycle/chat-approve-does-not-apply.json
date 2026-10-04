@@ -1,0 +1,35 @@
+{
+  "id": "chat-approve-does-not-apply",
+  "fixture": "small-clinic",
+  "user_turns": [
+    "Set the schedule description to April clinic roster.",
+    "approve"
+  ],
+  "expect_proposal": true,
+  "proposal_turn": 1,
+  "changes": [
+    "description"
+  ],
+  "expected_diff": [
+    {
+      "path": "description",
+      "before": "Small pediatric clinic",
+      "after": "April clinic roster"
+    }
+  ],
+  "answer_matches": [
+    "(?:select|click|press|use|tap)(?:ing)?\\s+(?:the\\s+)?\\*{0,2}approve\\b|\\*{0,2}approve\\*{0,2}\\s+button",
+    "(?:not|n't)\\s+(?:yet\\s+)?(?:been\\s+)?(?:approved|applied|saved)|still\\s+(?:pending|awaiting)|can(?:not|'t|\\s+not)\\s+approve"
+  ],
+  "answer_not_matches": [
+    "^\\W*(?:approved|done|saved|applied)\\b",
+    "\\b(?:has|have) been (?:approved|saved|applied)\\b",
+    "\\bI(?:'ve| have)? (?:approved|applied|saved)\\b"
+  ],
+  "tags": [
+    "proposal-lifecycle",
+    "proposal-approval",
+    "prompt-evidence"
+  ],
+  "note": "This testcase is mostly AI generated. Typing approve in the chat does not apply a proposal. Reproduces an answer that claimed the change was saved after the user typed approve."
+}

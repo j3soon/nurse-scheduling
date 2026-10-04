@@ -21,6 +21,8 @@
 
 import { FiDownload } from 'react-icons/fi';
 import { AssistantActivity } from './AssistantActivity';
+import CollapsedText from './CollapsedText';
+import { messageLabel } from './chatExport';
 import { formatResponseDuration } from './chatPresentation';
 import type { ChatMessage } from './chatTranscript';
 import { parseOptimizerMessage } from './optimizerMessage';
@@ -33,6 +35,10 @@ interface ChatTranscriptProps {
   steeringAssistantId: string | null;
   downloadingOptimizationId: string | null;
   onDownloadResult: (jobId: string) => Promise<void>;
+  removingDownloadId: string | null;
+  canRemoveDownloads: boolean;
+  onDownloadFiles: (downloadId: string) => Promise<void>;
+  onRemoveFiles: (downloadId: string) => Promise<void>;
   onRetry: (messageId: string, question: string) => void;
   onPrepareRetry: (question: string) => void;
   sessionExpiresAt: number | null;
@@ -81,8 +87,8 @@ function ThinkingIndicator() {
 
 export function ChatTranscript({
   messages, showReasoning, showTools, isStreaming, steeringAssistantId,
-  downloadingOptimizationId, onDownloadResult, onRetry, onPrepareRetry,
-  sessionExpiresAt, sessionRetentionLabel,
+  downloadingOptimizationId, onDownloadResult, removingDownloadId, canRemoveDownloads, onDownloadFiles, onRemoveFiles,
+  onRetry, onPrepareRetry, sessionExpiresAt, sessionRetentionLabel,
 }: ChatTranscriptProps) {
   return (
     <section
@@ -101,17 +107,22 @@ export function ChatTranscript({
         return (
           <article
             key={message.id}
-            className={`max-w-[85%] rounded-xl px-4 py-3 ${
-              message.role === 'user'
-                ? 'ml-auto bg-blue-600 text-white'
-                : message.role === 'optimizer'
-                  ? 'mr-auto border border-emerald-200 bg-emerald-50 text-emerald-950'
-                  : 'mr-auto border border-gray-200 bg-white text-gray-900'
+            className={`rounded-xl px-4 py-3 ${
+              message.role === 'system'
+                ? 'border border-dashed border-gray-300 bg-gray-50 text-gray-700'
+                : message.role === 'user' && message.source === undefined
+                  ? 'ml-auto max-w-[85%] bg-blue-600 text-white'
+                  : message.source === 'optimizer'
+                    // Optimizer messages align left like the optimizer notice, in the chat and in exports.
+                    ? 'mr-auto max-w-[85%] border border-emerald-200 bg-emerald-50 text-emerald-950'
+                    : message.role === 'user'
+                      ? 'ml-auto max-w-[85%] border border-blue-200 bg-blue-50 text-blue-950'
+                      : message.role === 'optimizer'
+                        ? 'mr-auto max-w-[85%] border border-emerald-200 bg-emerald-50 text-emerald-950'
+                        : 'mr-auto max-w-[85%] border border-gray-200 bg-white text-gray-900'
             }`}
           >
-            <p className="mb-1 text-xs font-semibold uppercase tracking-wide opacity-70">
-              {message.role === 'user' ? 'You' : message.role === 'optimizer' ? 'Optimizer' : 'Assistant'}
-            </p>
+            <p className="mb-1 text-xs font-semibold uppercase tracking-wide opacity-70">{messageLabel(message)}</p>
             {message.activity && (
               <AssistantActivity
                 entries={message.activity.filter(entry => (
@@ -121,6 +132,9 @@ export function ChatTranscript({
             )}
             {message.role === 'assistant' && !message.content && message.status === 'pending' ? (
               steeringAssistantId === message.id ? <p className="text-xs text-gray-500">Steering…</p> : <ThinkingIndicator />
+            ) : message.role === 'system' || message.source !== undefined ? (
+              // The label names the topic, so the exact text starts collapsed.
+              <CollapsedText summary={`${message.content.length.toLocaleString('en-US')} characters`} text={message.content} />
             ) : message.role === 'user' ? (
               <p className="whitespace-pre-wrap break-words">{message.content}</p>
             ) : optimizer ? (
@@ -157,16 +171,34 @@ export function ChatTranscript({
                 {downloadingOptimizationId === message.optimizerJob.jobId ? 'Downloading...' : 'Download result'}
               </button>
             )}
-            {message.attachmentNames && message.attachmentNames.length > 0 && (
-              <p className="mt-2 text-xs opacity-80">
-                Attached: {message.attachmentNames.join(', ')}
-              </p>
+            {message.downloadId && (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void onDownloadFiles(message.downloadId ?? '')}
+                  disabled={removingDownloadId === message.downloadId}
+                  className="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  Download files (ZIP)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void onRemoveFiles(message.downloadId ?? '')}
+                  disabled={removingDownloadId !== null || !canRemoveDownloads}
+                  title="Remove this ZIP from the chat to free session storage."
+                  className="rounded-lg px-3 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50"
+                >
+                  {removingDownloadId === message.downloadId ? 'Removing...' : 'Remove ZIP'}
+                </button>
+              </div>
             )}
             {timestamp !== undefined && (
               <time
                 dateTime={new Date(timestamp).toISOString()}
                 title={new Date(timestamp).toLocaleString()}
-                className={`mt-2 block text-[0.6875rem] ${message.role === 'user' ? 'text-blue-100' : 'text-gray-400'}`}
+                className={`mt-2 block text-[0.6875rem] ${
+                  message.role === 'user' && message.source === undefined ? 'text-blue-100' : 'text-gray-400'
+                }`}
               >
                 {formatResponseTime(timestamp)}
                 {message.responseStartedAt !== undefined && message.responseCompletedAt !== undefined && (

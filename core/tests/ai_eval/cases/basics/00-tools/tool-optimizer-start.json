@@ -1,0 +1,17 @@
+{
+  "id": "tool-optimizer-start",
+  "fixture": "small-clinic",
+  "question": "Start optimizing the current schedule. I want the finished roster when it is ready. Can I keep chatting while it runs?",
+  "expect_proposal": false,
+  "answer_contains": [
+    ["background", "running"],
+    ["keep chatting", "continue chatting", "chat while"]
+  ],
+  "tool_usage": {
+    "required_calls": [
+      {"name": "optimizer", "arguments": {"action": "start"}}
+    ],
+    "max_per_tool": {"optimizer": 1}
+  },
+  "note": "The eval runner offers a controlled optimizer tool with the production contract. Starting it returns immediately and does not submit a real job."
+}

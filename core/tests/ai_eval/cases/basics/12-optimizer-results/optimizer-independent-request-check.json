@@ -1,0 +1,29 @@
+{
+  "id": "optimizer-independent-request-check",
+  "fixture": "request-audit",
+  "question": "Before running any optimization, independently check whether all the 11000000000 shift requests can hold together under at most one shift per person per day and the forbidden K requests. Do not start the optimizer. Return only JSON with jointlyPossible and a witness object keyed by person and then two-digit day, listing one assignment per requested date for Alex and Mira.",
+  "expect_proposal": false,
+  "answer_json": {
+    "jointlyPossible": true,
+    "witness": {
+      "Alex": {
+        "01": "OFF",
+        "02": "K"
+      },
+      "Mira": {
+        "02": "OFF",
+        "03": "OFF"
+      }
+    }
+  },
+  "tool_usage": {
+    "forbidden": [
+      "optimizer"
+    ]
+  },
+  "tags": [
+    "optimizer-goal",
+    "control"
+  ],
+  "note": "This testcase is mostly AI generated. Explicit independent reasoning is authorized and must not be replaced by an optimizer job. The witness satisfies all strong requests and the Kai training ban."
+}

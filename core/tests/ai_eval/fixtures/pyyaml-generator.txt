@@ -1,0 +1,32 @@
+# This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
+# Copyright (C) 2023-2026 Johnson Sun
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# This test fixture is mostly AI generated.
+
+import yaml
+
+schedule = {
+    "apiVersion": "alpha",
+    "description": "Minimal March schedule",
+    "dates": {
+        "range": {"startDate": "2026-03-01", "endDate": "2026-03-02"},
+        "items": [],
+        "groups": [],
+    },
+    "people": {
+        "items": [{"id": "Alex", "description": "Only nurse", "history": []}],
+        "groups": [],
+    },
+    "shiftTypes": {
+        "items": [{"id": "D", "description": "Day"}],
+        "groups": [],
+    },
+    "preferences": [
+        {"type": "at most one shift per day"},
+        {"type": "shift type requirement", "shiftType": ["D"], "date": ["ALL"], "qualifiedPeople": ["ALL"], "requiredNumPeople": 1},
+    ],
+}
+
+with open("/workspace/schedule.yaml", "w", encoding="utf-8") as output:
+    yaml.safe_dump(schedule, output, sort_keys=False)
+print("Generated Minimal March schedule from attachment")

@@ -20,7 +20,9 @@
 # This test is mostly AI generated.
 
 import asyncio
+import json
 import os
+import shlex
 
 import pytest
 from e2b import AsyncSandbox
@@ -73,12 +75,16 @@ def test_prebuilt_e2b_template_supports_the_raw_backend_lifecycle():
                 "rg -n 'P1' schedule.yaml && "
                 'python3 -c "from ruamel.yaml import YAML; '
                 "print(YAML(typ='safe').load(open('schedule.yaml'))['people'][0]['id'])\" && "
+                'python3 -c "import yaml; '
+                "data = yaml.safe_load(open('schedule.yaml')); "
+                "assert yaml.safe_load(yaml.safe_dump(data)) == data; "
+                "print(data['people'][0]['id'])\" && "
                 "cat /reference/schema-core.md && "
                 "if command -v nsctl >/dev/null; then exit 1; fi"
             )
             assert result.exit_code == 0
             assert result.stdout == (
-                "2:  - id: P1\nP1\n# Core schema\n\nPath: people.items\nPeople available for scheduling.\n"
+                "2:  - id: P1\nP1\nP1\n# Core schema\n\nPath: people.items\nPeople available for scheduling.\n"
             )
             assert await sandbox.read_file("/workspace/schedule.yaml") == b"people:\n  - id: P1\n"
 
@@ -230,5 +236,52 @@ def test_reaper_finds_and_kills_an_owned_overdue_sandbox():
         finally:
             if not killed:
                 await sandbox.kill()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("attempt", range(3))
+@pytest.mark.parametrize("escaped", [False, True], ids=["recoverable", "detached-child-fallback"])
+def test_command_timeout_recovers_only_after_process_cleanup(attempt, escaped):
+    async def exercise():
+        factory = E2BSandboxFactory(
+            api_key=E2B_API_KEY,
+            template=os.getenv("E2B_TEMPLATE", "nurse-scheduling-ai-sandbox"),
+            turn_timeout_seconds=30,
+            command_timeout_seconds=1,
+        )
+        async with managed_sandbox(factory, cleanup_timeout_seconds=10) as sandbox:
+            await sandbox.write_file("/workspace/kept.txt", b"working files survive")
+            tools = SandboxPiTools(sandbox, 1)
+            child = (
+                "import os,time,pathlib; "
+                + ("os.setsid(); " if escaped else "")
+                + "time.sleep(3); pathlib.Path('/workspace/late.txt').write_text('late')"
+            )
+            command = (
+                "printf 'once\\n' >> /workspace/executions.txt; printf 'before-timeout\\n'; "
+                + "python3 -c "
+                + shlex.quote(child)
+                + " & wait"
+            )
+            outcome = await tools.execute(BASH_TOOL, json.dumps({"command": command, "timeout": 10}))
+            assert not outcome.ok
+            assert outcome.terminal == escaped
+            assert "before-timeout" in outcome.text
+            assert "Command timed out after 1 seconds" in outcome.text
+            sandbox_id = sandbox.sandbox_id
+            if escaped:
+                assert sandbox.lifecycle_state is E2BSandboxState.CLOSED
+            else:
+                assert await sandbox.read_file("/workspace/kept.txt") == b"working files survive"
+                check = await sandbox.run(
+                    "sleep 3.2 && cat executions.txt && test ! -e late.txt && printf 'recovered\\n'",
+                    timeout_seconds=5,
+                )
+                assert check.exit_code == 0
+                assert check.stdout == "once\nrecovered\n"
+                assert sandbox.sandbox_id == sandbox_id
+        with pytest.raises(SandboxNotFoundException):
+            await AsyncSandbox.connect(sandbox_id, api_key=E2B_API_KEY)
 
     asyncio.run(exercise())

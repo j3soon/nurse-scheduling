@@ -1,0 +1,35 @@
+{
+  "id": "clarify-night-keep-only-existing-request",
+  "fixture": "ward87",
+  "user_turns": [
+    "Remove P85's night requests.",
+    "Remove only requests whose person selector is exactly P85 and shift-type selector is exactly Night. Keep every N, K and OFF request."
+  ],
+  "intermediate_answer_contains": [
+    [
+      [
+        "N",
+        "N shift"
+      ],
+      "Night"
+    ]
+  ],
+  "expect_proposal": false,
+  "answer_contains": [
+    "Night",
+    [
+      "no matching",
+      "no request",
+      "not found",
+      "unchanged",
+      "no changes",
+      "nothing",
+      "none"
+    ]
+  ],
+  "tags": [
+    "prompt-evidence",
+    "clarification"
+  ],
+  "note": "This testcase is mostly AI generated. Counterfactual to the N-only reply in clarify-night-request-scope. P85 has only an N request matching the informal word night, but the user intends the Night group selector and therefore no direct request matches. Guessing N makes an unauthorized proposal and deletes a request the user explicitly wants to keep."
+}

@@ -19,6 +19,7 @@
 
 # This file is mostly AI generated.
 
+import asyncio
 import json
 import logging
 import re
@@ -31,12 +32,15 @@ from pathlib import Path
 from .agent_types import AgentToolResult
 from .candidate import SCHEDULE_FILENAME, PendingProposal, review_schedule_candidate
 from .config import AiSettings
+from .downloads import WORKSPACE_DOWNLOAD, validate_download_zip
 from .optimizer import WORKSPACE_OPTIMIZER_RESULT
+from .result_context import build_result_context
 from .sandbox import (
     SandboxBackend,
     SandboxError,
     SandboxFactory,
     SandboxFileNotFoundError,
+    SandboxFileSizeError,
     SandboxLifecycleMetrics,
     managed_sandbox,
 )
@@ -47,27 +51,73 @@ from .schema import (
     load_taiwan_holidays_reference,
     load_user_guide_references,
 )
+from .system_prompt import compose_system_prompt
 
 logger = logging.getLogger("nurse_scheduling.ai.workspace")
 WORKSPACE_SCHEDULE = f"/workspace/{SCHEDULE_FILENAME}"
 WORKSPACE_PENDING_PROPOSAL = "/workspace/pending-proposal.yaml"
 WORKSPACE_PENDING_DIFF = "/workspace/pending-proposal.diff"
 WORKSPACE_ATTACHMENTS = "/workspace/attachments"
-WORKSPACE_ATTACHMENT_MANIFEST = f"{WORKSPACE_ATTACHMENTS}/manifest.json"
 REFERENCE_SCHEMAS = {group: f"/reference/{path.name}" for group, path in SCHEMA_REFERENCE_FILES.items()}
 REFERENCE_SCHEMAS["taiwan-holidays"] = f"/reference/{TAIWAN_HOLIDAYS_SOURCE.name}"
 REFERENCE_USER_GUIDE = "/reference/user-guide"
 ATTACHMENT_TOOL_DIRECTORY = Path(__file__).with_name("attachment_tools")
-REFERENCE_ATTACHMENT_TOOLS = {
-    f"/reference/tools/{name}": ATTACHMENT_TOOL_DIRECTORY / name for name in ("inspect_xlsx.py", "inspect_pdf.py")
+INSPECTION_HELPERS = {
+    "inspect_request_tiers.py": "Current YAML inventory of all nonzero shift-request weight tiers, with entry and expanded target counts. --max-tiers bounds returned tiers.",
+    "inspect_shift_requests.py": "Current YAML nonzero shift-request counts and resolved selectors. Repeat --weight, --person or --date to filter. --max-requests 0 returns counts only.",
+    "inspect_xlsx.py": "XLSX inspection. Use --overview for up to 100 sheet names, visibility states, and reported sizes without reading cells. Otherwise inspect bounded cells, formulas, and saved caches. Add --styles for stored font/fill colors, borders, alignment, and number formats.",
+    "inspect_pdf.py": "PDF page text and rendered page images. Use --find TEXT for bounded literal search with matching page numbers and excerpts. Reports search truncation and pages without text. No OCR.",
+    "inspect_optimizer_result.py": "Optimizer assignments, signed request counts and available staffing/succession audits using a compiled schedule context.",
 }
+REFERENCE_ATTACHMENT_TOOLS = {
+    f"/reference/tools/{name}": ATTACHMENT_TOOL_DIRECTORY / name for name in INSPECTION_HELPERS
+}
+WORKSPACE_SOURCE_CONTEXT = "/workspace/schedule-context.json"
+WORKSPACE_RESULT_CONTEXT = "/workspace/optimizer-results/schedule-context.json"
+WORKSPACE_PENDING_RESULT_CONTEXT = "/workspace/optimizer-results/pending-schedule-context.json"
 
-SYSTEM_PROMPT_PATH = Path(__file__).with_name("prompts") / "sandbox-system.md"
-SANDBOX_SYSTEM_PROMPT = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").rstrip("\n")
+
+def inspection_helper_catalog() -> str:
+    """Advertise only the inspection scripts hydrated by this server."""
+    return (
+        "# Inspection helpers\n\n"
+        + "\n".join(
+            f"- `/reference/tools/{name}`: {description} Run with `--help` for usage."
+            for name, description in INSPECTION_HELPERS.items()
+        )
+        + "\n\nThe result reader supports exported roster cells with bracketed annotations. Other layouts or decorations need a custom parser.\n"
+        + "\nAssignment query: `python /reference/tools/inspect_optimizer_result.py --source-sha256 <completion hash> --person <exact ID> --date <YYYY-MM-DD>`. Person and date filters are repeatable. Omitted filters select the full dimension, with bounded output.\n"
+    )
+
+
+SANDBOX_SYSTEM_PROMPT = compose_system_prompt()
+
+
+@dataclass(frozen=True)
+class AgentDownload:
+    """One validated ZIP captured before sandbox cleanup."""
+
+    content: bytes
+
+
+class SandboxDownloadError(SandboxError):
+    """The generated ZIP could not be captured safely."""
+
+
+class SandboxDownloadValidationError(SandboxDownloadError):
+    """The agent generated a ZIP that violates the download contract."""
 
 
 class SandboxCandidateError(SandboxError):
     """The final untrusted schedule failed trusted server-side review."""
+
+    def __init__(self, message: str, *, user_message: str | None = None) -> None:
+        super().__init__(message)
+        self.user_message = user_message
+
+
+class SandboxCommandTimeoutError(SandboxError):
+    """A command timeout terminated the sandbox and the remaining run."""
 
 
 class SandboxRunTimeoutError(SandboxError):
@@ -88,6 +138,7 @@ class SandboxAttachment:
     filename: str
     media_type: str
     data: bytes
+    id: str = ""
 
 
 @dataclass(frozen=True)
@@ -98,6 +149,8 @@ class WorkspaceInputs:
     pending_proposal: PendingProposal | None = None
     attachments: tuple[SandboxAttachment, ...] = ()
     optimizer_result: bytes | None = None
+    # Compiled selectors of the schedule the optimizer received, built when the job completed.
+    optimizer_context: bytes | None = None
 
 
 @dataclass(frozen=True)
@@ -111,12 +164,14 @@ class WorkspaceLimits:
     max_tool_rounds: int
     max_tool_calls: int
     optimizer_default_timeout_seconds: int = 300
+    max_download_bytes: int = 50_000_000
 
     @classmethod
     def from_settings(cls, settings: AiSettings) -> "WorkspaceLimits":
         """Collect workspace run limits from validated application settings."""
         return cls(
             max_schedule_bytes=settings.max_schedule_bytes,
+            max_download_bytes=settings.max_download_bytes,
             run_timeout_seconds=settings.sandbox_turn_timeout_seconds,
             cleanup_timeout_seconds=settings.sandbox_cleanup_timeout_seconds,
             bash_command_timeout_seconds=settings.sandbox_command_timeout_seconds,
@@ -228,8 +283,11 @@ class SandboxWorkspace:
     async def write_files(self, files: Mapping[str, str | bytes]) -> None:
         await (await self._start()).write_files(files)
 
-    async def read_file(self, path: str) -> bytes:
-        return await (await self._start()).read_file(path)
+    async def read_file(self, path: str, *, max_bytes: int | None = None) -> bytes:
+        backend = await self._start()
+        if max_bytes is None:
+            return await backend.read_file(path)
+        return await backend.read_file(path, max_bytes=max_bytes)
 
     async def run(self, command: str, *, timeout_seconds: float | None = None):
         return await (await self._start()).run(command, timeout_seconds=timeout_seconds)
@@ -278,6 +336,13 @@ async def hydrate_sandbox(
     """Copy trusted application state and searchable references into one run."""
     started = time.perf_counter()
     files: dict[str, str | bytes] = {WORKSPACE_SCHEDULE: inputs.schedule_yaml}
+    try:
+        files[WORKSPACE_SOURCE_CONTEXT] = json.dumps(
+            build_result_context(inputs.schedule_yaml), ensure_ascii=False, allow_nan=False
+        )
+    except Exception:
+        # A draft may not compile. Its YAML remains available for direct inspection.
+        logger.debug("Current schedule inspection context unavailable", exc_info=True)
     if inputs.pending_proposal is not None:
         files[WORKSPACE_PENDING_PROPOSAL] = inputs.pending_proposal.schedule_yaml
         files[WORKSPACE_PENDING_DIFF] = inputs.pending_proposal.diff
@@ -290,28 +355,24 @@ async def hydrate_sandbox(
         files[f"{REFERENCE_USER_GUIDE}/{relative_path}"] = reference
     for destination, source in REFERENCE_ATTACHMENT_TOOLS.items():
         files[destination] = source.read_text(encoding="utf-8")
-    if inputs.attachments:
-        manifest = []
-        for index, attachment in enumerate(inputs.attachments, start=1):
-            safe_name = _safe_attachment_name(attachment.filename, index)
-            path = f"{WORKSPACE_ATTACHMENTS}/{safe_name}"
-            files[path] = attachment.data
-            manifest.append(
-                {
-                    "original_filename": attachment.filename,
-                    "path": path,
-                    "media_type": attachment.media_type,
-                    "bytes": len(attachment.data),
-                    "trusted": False,
-                }
-            )
-        files[WORKSPACE_ATTACHMENT_MANIFEST] = json.dumps(
-            {"attachments": manifest},
-            ensure_ascii=False,
-            indent=2,
-        )
+    files["/reference/tools/README.md"] = inspection_helper_catalog()
+    for index, attachment in enumerate(inputs.attachments, start=1):
+        files[attachment_path(attachment, index)] = attachment.data
     if inputs.optimizer_result is not None:
         files[WORKSPACE_OPTIMIZER_RESULT] = inputs.optimizer_result
+        files[WORKSPACE_RESULT_CONTEXT] = (
+            inputs.optimizer_context
+            if inputs.optimizer_context is not None
+            else json.dumps(
+                build_result_context(inputs.schedule_yaml, workbook=inputs.optimizer_result),
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+        )
+        if inputs.pending_proposal is not None:
+            files[WORKSPACE_PENDING_RESULT_CONTEXT] = json.dumps(
+                build_result_context(inputs.pending_proposal.schedule_yaml), ensure_ascii=False, allow_nan=False
+            )
     # One request, because hydration now precedes the first tool result rather than the run.
     await sandbox.write_files(files)
     logger.info(
@@ -323,13 +384,30 @@ async def hydrate_sandbox(
     )
 
 
-def _safe_attachment_name(filename: str, index: int) -> str:
-    """Create a deterministic basename below the fixed attachment directory."""
-    basename = filename.replace("\\", "/").rsplit("/", 1)[-1]
+def attachment_path(attachment: SandboxAttachment, index: int) -> str:
+    """Return a deterministic path below the fixed attachment directory, prefixed by the upload ID or position."""
+    basename = attachment.filename.replace("\\", "/").rsplit("/", 1)[-1]
     sanitized = re.sub(r"[^A-Za-z0-9._-]+", "_", basename).strip("._")
     if not sanitized:
         sanitized = "attachment"
-    return f"{index:02d}-{sanitized[:120]}"
+    return f"{WORKSPACE_ATTACHMENTS}/{attachment.id or f'{index:02d}'}-{sanitized[:120]}"
+
+
+async def read_download(sandbox: SandboxBackend, max_download_bytes: int) -> bytes | None:
+    """Capture and validate the optional generated ZIP before sandbox cleanup."""
+    try:
+        download = await sandbox.read_file(WORKSPACE_DOWNLOAD, max_bytes=max_download_bytes)
+    except SandboxFileNotFoundError:
+        return None
+    except SandboxFileSizeError as exc:
+        raise SandboxDownloadValidationError(str(exc)) from exc
+    except SandboxError as exc:
+        raise SandboxDownloadError(str(exc)) from exc
+    try:
+        await asyncio.to_thread(validate_download_zip, download, max_download_bytes)
+    except ValueError as exc:
+        raise SandboxDownloadValidationError(str(exc)) from exc
+    return download
 
 
 async def _read_candidate(sandbox: SandboxBackend, max_schedule_bytes: int) -> str:

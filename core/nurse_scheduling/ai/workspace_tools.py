@@ -45,8 +45,10 @@ from .sandbox_tools import SandboxPiTools
 from .transcript import ToolCall
 from .workspace import (
     WORKSPACE_SCHEDULE,
+    AgentDownload,
     AgentScheduleChange,
     SandboxCandidateError,
+    SandboxCommandTimeoutError,
     SandboxRunMetrics,
     SandboxRunTimeoutError,
     SandboxWorkspace,
@@ -54,6 +56,7 @@ from .workspace import (
     WorkspaceLimits,
     _read_candidate,
     _ScheduleCandidateTracker,
+    read_download,
     sandbox_workspace,
 )
 
@@ -77,6 +80,8 @@ class WorkspaceTools:
         self.sandbox_tools = SandboxPiTools(sandbox, limits.bash_command_timeout_seconds)
         self._sandbox_tool_names = {definition["function"]["name"] for definition in self.sandbox_tools.definitions}
         self.candidate_tracker = _ScheduleCandidateTracker(sandbox, schedule_yaml, limits.max_schedule_bytes)
+        # The result text of a command timeout that terminated the sandbox.
+        self.command_timeout: str | None = None
         definitions = list(self.sandbox_tools.definitions)
         if execute_optimizer is not None:
             definitions.append(optimizer_tool_definition(limits.optimizer_default_timeout_seconds))
@@ -113,6 +118,9 @@ class WorkspaceTools:
                 return AgentToolResult(f"Trusted schedule check before optimizer:\n{review.outcome.text}", False)
             return await self.execute_optimizer(current_schedule, arguments)
         outcome = await self.sandbox_tools.execute(name, arguments)
+        if outcome.terminal:
+            self.command_timeout = outcome.text
+            return outcome
         if name == READ_TOOL:
             return outcome
         candidate_status = await self.candidate_tracker.review_if_changed()
@@ -137,7 +145,7 @@ async def run_workspace(
     take_steering: Callable[[bool], Sequence[tuple[str, str]]] | None = None,
     execute_optimizer: Callable[[str, str], Awaitable[AgentToolResult]] | None = None,
     agent: Agent | None = None,
-) -> AsyncGenerator[AgentEvent | AgentScheduleChange]:
+) -> AsyncGenerator[AgentEvent | AgentScheduleChange | AgentDownload]:
     """Hydrate, run, read, validate, and destroy one fresh workspace run."""
     agent = agent or Agent()
     metrics = metrics or SandboxRunMetrics()
@@ -178,6 +186,8 @@ async def run_workspace(
                         if isinstance(event, ToolExecutionEnd) and event.details is not None:
                             yield AgentScheduleChange(event.details["schedule_yaml"])
 
+                if toolset.command_timeout is not None:
+                    raise SandboxCommandTimeoutError(f"{toolset.command_timeout}. The sandbox was terminated.")
                 if not sandbox.started:
                     return
                 candidate = await _read_candidate(sandbox, limits.max_schedule_bytes)
@@ -189,7 +199,12 @@ async def run_workspace(
                     review.proposal is not None,
                 )
                 if not review.outcome.ok:
-                    raise SandboxCandidateError("The sandbox candidate failed trusted schedule validation.")
+                    raise SandboxCandidateError(
+                        "The sandbox candidate failed trusted schedule validation.", user_message=review.outcome.text
+                    )
+                download = await read_download(sandbox, limits.max_download_bytes)
+                if download is not None:
+                    yield AgentDownload(download)
                 if review.proposal is not None:
                     yield AgentProposal(review.proposal.text, review.proposal.diff.render())
     except TimeoutError as exc:

@@ -30,14 +30,15 @@ from fastapi import HTTPException
 from .agent_session import AgentSession, RunCompletion, schedule_revision
 from .candidate import PendingProposal, ProposalApproval
 from .config import AiSettings
-from .context import project_history, projected_history
+from .context import history_chars, project_history, projected_history, upload_event
 from .lifecycle import RunSnapshot
 from .session_event_stream import SessionEventStream
-from .transcript import AgentMessage, ProposalDecision, UserMessage, entry_text
+from .transcript import AgentMessage, ProposalDecision, entry_text, starts_exchange
+from .workspace import SandboxAttachment
 
 __all__ = ["SessionStore", "schedule_revision"]
 
-SESSION_TEXT_LIMIT_MESSAGE = "The AI service has reached its session text retention limit."
+SESSION_RETENTION_LIMIT_MESSAGE = "The AI service has reached its session text and file retention limit."
 
 
 def _text_bytes(value: str) -> int:
@@ -50,11 +51,25 @@ def _proposal_bytes(proposal: PendingProposal | None) -> int:
 
 
 def _session_bytes(session: "AgentSession") -> int:
-    """Return the chat text one session retains."""
+    """Return the text and file bytes one session retains."""
     total = _text_bytes(session.schedule_yaml) + _proposal_bytes(session.pending_proposal)
     total += sum(_text_bytes(entry_text(entry)) for entry in session.transcript)
     total += sum(_text_bytes(text) for text in session.queued_steering)
-    return total
+    total += sum(len(upload.data) for upload in session.uploads.values())
+    return total + sum(map(len, session.downloads.values()))
+
+
+def _unique_filename(filename: str, taken: set[str]) -> str:
+    """Add the lowest free ` (n)` suffix before the extension when a session already has the filename."""
+    if filename not in taken:
+        return filename
+    stem, dot, extension = filename.rpartition(".")
+    if not stem:
+        stem, dot, extension = filename, "", ""
+    counter = 1
+    while f"{stem} ({counter}){dot}{extension}" in taken:
+        counter += 1
+    return f"{stem} ({counter}){dot}{extension}"
 
 
 class SessionStore:
@@ -74,7 +89,7 @@ class SessionStore:
 
     @property
     def retained_bytes(self) -> int:
-        """Return the chat text retained across live sessions."""
+        """Return the text and file bytes retained across live sessions."""
         return self._retained_bytes
 
     def _recount(self, session: AgentSession) -> None:
@@ -98,9 +113,9 @@ class SessionStore:
         self._retained_bytes -= self._session_bytes.pop(session_id, 0)
 
     def _require_capacity(self, additional_bytes: int) -> None:
-        """Refuse text that would push retained chat state past the configured budget.
+        """Refuse content that would push retained session state past the configured budget.
 
-        Checked where a client pushes new text. A completed run is never refused here,
+        Checked where a client pushes new text or files. A completed run is never refused here,
         because its answer has already streamed to the user; `_trim_history_to_budget`
         reclaims the space instead.
 
@@ -108,7 +123,7 @@ class SessionStore:
             HTTPException: With status 429 when the budget is exhausted.
         """
         if self._retained_bytes + additional_bytes > self._settings.max_session_bytes:
-            raise HTTPException(status_code=429, detail=SESSION_TEXT_LIMIT_MESSAGE)
+            raise HTTPException(status_code=429, detail=SESSION_RETENTION_LIMIT_MESSAGE)
 
     def _trim_history_to_budget(self, session: AgentSession, protected_messages: int) -> None:
         """Drop this session's oldest context until retained text fits the budget.
@@ -130,13 +145,13 @@ class SessionStore:
 
     @staticmethod
     def _drop_oldest_exchange(session: AgentSession, keep_entries: int = 0) -> list[AgentMessage]:
-        """Drop the oldest prompt with everything that answers or decides on it.
+        """Drop the oldest prompt or app event with everything that answers or decides on it.
 
         The newest exchange and the newest `keep_entries` entries always stay, and the
-        transcript still starts at a prompt, so no answer or decision is left orphaned.
+        transcript still starts at a prompt or app event, so no answer or decision is left orphaned.
         """
         transcript = session.transcript
-        end = next((index for index in range(1, len(transcript)) if isinstance(transcript[index], UserMessage)), None)
+        end = next((index for index in range(1, len(transcript)) if starts_exchange(transcript[index])), None)
         if end is None or len(transcript) - end < keep_entries:
             return []
         removed = transcript[:end]
@@ -145,10 +160,22 @@ class SessionStore:
         return removed
 
     def _cap_history(self, session: AgentSession) -> None:
-        """Limit retained history to the configured message count, one whole exchange at a time."""
+        """Limit retained history to the configured message count, one whole exchange at a time.
+
+        Past the prompt history budget, drop the oldest exchanges until half the budget remains.
+        Cutting in large steps keeps the prompt prefix unchanged for many runs, so the provider
+        can reuse its cache. Cutting one exchange per run would change the prefix every time.
+        """
         limit = max(2, self._settings.max_history_messages)
         while len(projected_history(session.transcript)) > limit and self._drop_oldest_exchange(session):
             pass
+        max_chars = self._settings.max_history_chars
+        if history_chars(projected_history(session.transcript)) > max_chars:
+            # The newest exchange always stays. Per-request projection covers what still overflows.
+            while history_chars(projected_history(session.transcript)) > max_chars // 2 and self._drop_oldest_exchange(
+                session
+            ):
+                pass
 
     def create(self, owner_token: str, schedule_yaml: str) -> AgentSession:
         """Create a session after pruning expired entries."""
@@ -266,7 +293,74 @@ class SessionStore:
         if additional_bytes > 0:
             self._require_capacity(additional_bytes)
         session.update_schedule(schedule_yaml)
+        self._cap_history(session)
         self._recount(session)
+
+    def retain_uploads(
+        self, session_id: str, owner_token: str | None, uploads: Sequence[SandboxAttachment]
+    ) -> tuple[SandboxAttachment, ...]:
+        """Retain new uploads between runs without replacing a file a message may reference."""
+        session = self._get_owned(session_id, owner_token)
+        session.require_idle("uploading files")
+        if len(session.uploads) + len(uploads) > self._settings.max_attachment_files:
+            raise HTTPException(status_code=413, detail="Too many retained files. Remove unused uploads first.")
+        filenames = {item.filename for item in session.uploads.values()}
+        retained = []
+        for upload in uploads:
+            filename = _unique_filename(upload.filename, filenames)
+            filenames.add(filename)
+            retained.append(replace(upload, filename=filename, id=str(uuid4())))
+        event = upload_event(retained, len(session.uploads) + 1)
+        self._require_capacity(sum(len(upload.data) for upload in retained) + _text_bytes(event))
+        session.add_uploads(retained, event)
+        self._cap_history(session)
+        self._recount(session)
+        session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
+        return tuple(retained)
+
+    def attachments(self, session_id: str, owner_token: str | None) -> tuple[SandboxAttachment, ...]:
+        """List the retained source files of an owned session."""
+        return tuple(self._get_owned(session_id, owner_token).uploads.values())
+
+    def remove_upload(self, session_id: str, owner_token: str | None, upload_id: str) -> None:
+        """Remove an unused source file between runs and reclaim its bytes."""
+        session = self._get_owned(session_id, owner_token)
+        session.require_idle("removing files")
+        session.remove_upload(upload_id)
+        self._cap_history(session)
+        self._recount(session)
+        session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
+
+    def save_download(self, session_id: str, download_id: str, content: bytes) -> bool:
+        """Retain a bounded generated ZIP within the existing session retention budget."""
+        self._prune_expired()
+        session = self._sessions.get(session_id)
+        if session is None or len(content) > self._settings.max_download_bytes:
+            return False
+        delta = len(content) - len(session.downloads.get(download_id, b""))
+        if self._retained_bytes + delta > self._settings.max_session_bytes:
+            return False
+        session.downloads[download_id] = content
+        self._charge(session, delta)
+        return True
+
+    def download(self, session_id: str, owner_token: str | None, download_id: str) -> bytes:
+        """Read a generated ZIP only for its owning browser."""
+        session = self._get_owned(session_id, owner_token)
+        try:
+            return session.downloads[download_id]
+        except KeyError:
+            raise HTTPException(status_code=404, detail="This generated ZIP is no longer available.") from None
+
+    def remove_download(self, session_id: str, owner_token: str | None, download_id: str) -> None:
+        """Remove an owned generated ZIP and reclaim its bytes."""
+        session = self._get_owned(session_id, owner_token)
+        try:
+            content = session.downloads.pop(download_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="This generated ZIP is no longer available.") from None
+        self._charge(session, -len(content))
+        session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
 
     def approve_proposal(self, session_id: str, owner_token: str | None, base_sha256: str) -> ProposalApproval:
         """Check ownership, decide the proposal, and account for every mutation."""

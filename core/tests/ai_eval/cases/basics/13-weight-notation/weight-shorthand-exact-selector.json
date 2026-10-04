@@ -1,0 +1,34 @@
+{
+  "fixture": "weight-units",
+  "expect_proposal": true,
+  "changes": [
+    "preferences"
+  ],
+  "tags": [
+    "weight-notation",
+    "clarification"
+  ],
+  "note": "This testcase is mostly AI generated. The selector ID 11b is independent of the numeric weight 11000000000.",
+  "id": "weight-shorthand-exact-selector",
+  "question": "Delete all shift requests whose person selector is exactly the people group ID `11b`, regardless of their weight.",
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "removed": [
+        {
+          "type": "shift request",
+          "person": [
+            "11b"
+          ],
+          "date": [
+            "01"
+          ],
+          "shiftType": [
+            "OFF"
+          ],
+          "weight": 11000000
+        }
+      ]
+    }
+  ]
+}

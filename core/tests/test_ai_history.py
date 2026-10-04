@@ -185,23 +185,22 @@ def test_records_queued_steering_in_run_order(recorded_history):
     ]
 
 
-def test_history_records_the_prompt_the_model_saw_with_attachment_names(recorded_history):
+def test_history_records_the_typed_prompt_and_the_retained_upload_count(recorded_history):
     app = basic.create_test_app(
         settings=basic.make_settings(history_postgres_url="test"),
         provider=basic.FakeProvider([["Seen."]]),
     )
     with basic.AuthenticatedTestClient(app) as client:
         session_id = basic.create_session(client)
-        client.post(
-            f"/sessions/{session_id}/messages",
-            data={"message": "Read this."},
-            files={"files": ("ward.xlsx", b"bytes", "application/octet-stream")},
-        )
-        prompt = app.state.session_store._sessions[session_id].transcript[0]
+        basic.upload_files(client, session_id, ("ward.xlsx", b"bytes", "application/octet-stream"))
+        client.post(f"/sessions/{session_id}/messages", json={"message": "Read this."})
+        transcript = app.state.session_store._sessions[session_id].transcript
 
     (start,) = recorded_history["starts"]
-    assert start[3:] == (prompt.text, "test-model", 1)
-    assert "ward.xlsx" in prompt.text
+    # The upload is its own session history entry, so the run prompt stays as typed.
+    assert start[3:] == ("Read this.", "test-model", 1)
+    assert transcript[1] == UserMessage("Read this.")
+    assert "ward.xlsx" in transcript[0].text
 
 
 def test_history_keeps_the_full_run_while_the_session_keeps_only_later_context(recorded_history):
@@ -371,7 +370,7 @@ def test_postgres_duplicates_and_reconnection(postgres_history):
                 "prompt_tokens": 1,
                 "completion_tokens": 2,
                 "total_tokens": 3,
-                "cached_prompt_tokens": 0,
+                "cached_prompt_tokens": None,
                 "reasoning_tokens": 0,
             },
         )

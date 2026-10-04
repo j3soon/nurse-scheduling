@@ -1,0 +1,39 @@
+{
+  "id": "guide-start-from-empty-schedule",
+  "fixture": "new-schedule",
+  "question": "My schedule is empty. Guide me step by step from here to a downloaded optimized roster. Explain how to do it myself in the app, and also how you can help me here in this chat. Do not change the schedule yet.",
+  "expect_proposal": false,
+  "answer_contains": [
+    "Dates",
+    "Set Date Range",
+    "People",
+    "Add Person",
+    "Shift Types",
+    "Add Shift Type",
+    "Shift Type Requirements",
+    "Add Requirement",
+    "Optimize and Export",
+    "Optimize and Download",
+    [
+      "Save and Load",
+      "backup"
+    ],
+    "Attach files",
+    "Approve",
+    [
+      "proposal",
+      "propose"
+    ]
+  ],
+  "answer_matches": [
+    "Dates.*?People.*?Shift Types.*?Shift Type Requirements.*?Optimize and Export"
+  ],
+  "answer_not_matches": [
+    "\\bI(?:'ll| will| can)? approve\\b"
+  ],
+  "tags": [
+    "app-ui",
+    "navigation"
+  ],
+  "note": "This testcase is mostly AI generated. A new user asks for the full setup path. The manual steps follow the Quick Start page order, and the chat path must say that the assistant proposes edits that the user applies with Approve, and that existing data can be shared with Attach files."
+}

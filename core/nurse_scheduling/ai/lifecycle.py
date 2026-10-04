@@ -28,6 +28,7 @@ from fastapi import HTTPException
 
 from .candidate import PendingProposal
 from .transcript import AgentMessage
+from .workspace import SandboxAttachment
 
 # Each run publishes exactly one of these, after its cleanup, whichever transport carries it.
 TERMINAL_EVENTS = frozenset({"done", "stopped", "stale", "error"})
@@ -43,6 +44,8 @@ class RunSnapshot:
     pending_proposal: PendingProposal | None
     previously_dropped: int = 0
     run_id: str | None = None
+    # Uploads cannot change while a run is active, so this stays valid for the whole run.
+    uploads: tuple[SandboxAttachment, ...] = ()
 
 
 @dataclass(eq=False)

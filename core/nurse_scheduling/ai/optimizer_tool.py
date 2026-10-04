@@ -33,6 +33,14 @@ from .optimizer import (
 )
 
 
+def optimizer_start_message(job_id: str, source_sha256: str) -> str:
+    """Render the startup acknowledgement shared by production and controlled evaluations."""
+    return (
+        f"Started optimizer job {job_id} in the background for schedule SHA-256 {source_sha256}. "
+        "The assistant will be woken when it finishes. The user can keep chatting meanwhile."
+    )
+
+
 def parse_optimizer_arguments(arguments: str) -> tuple[Literal["start", "status", "finish_now"], int | None]:
     """Validate before workspace allocation or service calls, preserving tool wording."""
     try:
@@ -63,10 +71,7 @@ async def execute_optimizer_tool(
             job = await optimizer.start(session_id, schedule_yaml, timeout)
             if job is None:
                 return AgentToolResult("This chat session expired while the optimizer job was starting.", False)
-            text = (
-                f"Started optimizer job {job.id} in the background for schedule SHA-256 {job.source_sha256}. "
-                "The assistant will be woken when it finishes. The user can keep chatting meanwhile."
-            )
+            text = optimizer_start_message(job.id, job.source_sha256)
         elif action == "status":
             text = _job_summary(optimizer.status(session_id))
         else:
@@ -90,6 +95,7 @@ def optimizer_tool_definition(default_timeout_seconds: int = 300) -> dict[str, A
             "description": (
                 "Start the scheduling optimizer on the current working YAML, inspect its background status, or ask "
                 "a running optimizer to finish with its best available solution. Start returns immediately. "
+                "When asked only to optimize the current schedule, call start without preliminary schedule or reference reads. "
                 f"A completed workbook is available at {WORKSPACE_OPTIMIZER_RESULT} in the next assistant run. "
                 "Omit timeout_seconds to use the configured default."
             ),

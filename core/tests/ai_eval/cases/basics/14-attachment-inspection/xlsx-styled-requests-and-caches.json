@@ -1,0 +1,65 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun. Part of Nurse Scheduling Project.",
+  "_comment": "This testcase is mostly AI generated.",
+  "id": "xlsx-styled-requests-and-caches",
+  "fixture": "new-schedule",
+  "question": "Inspect the attached workbook without editing the schedule. In Requests, yellow name-cell fills identify senior nurses. Red-font numeric 1 means an OFF request, while black-font 1 is a work request. Return only JSON with seniorNames sorted alphabetically and offDays mapping every nurse to the ascending November day numbers of their red-font requests. Also return savedCapacity mapping Day, Evening, and Night to the last-saved cached values in Capacity audit, and formulaCount for those three capacity cells. Use null for missing caches. Do not recalculate formulas.",
+  "expect_proposal": false,
+  "attachments": [
+    "styled-requests-xlsx"
+  ],
+  "answer_json": {
+    "seniorNames": [
+      "Ada",
+      "Dara",
+      "Hana"
+    ],
+    "offDays": {
+      "Ada": [
+        3
+      ],
+      "Bruno": [
+        2,
+        5
+      ],
+      "Cleo": [
+        1,
+        4
+      ],
+      "Dara": [
+        3
+      ],
+      "Emil": [
+        2,
+        5
+      ],
+      "Faye": [
+        1,
+        4
+      ],
+      "Galen": [
+        3
+      ],
+      "Hana": [
+        2,
+        5
+      ]
+    },
+    "savedCapacity": {
+      "Day": 13,
+      "Evening": 9,
+      "Night": null
+    },
+    "formulaCount": 3
+  },
+  "tool_usage": {
+    "required": [
+      "bash"
+    ]
+  },
+  "tags": [
+    "attachment",
+    "xlsx-inspection"
+  ],
+  "note": "This testcase is mostly AI generated. Identical request values require font/fill interpretation, and hidden-sheet formula caches deliberately differ from recomputed values. Equivalent correct readers are accepted."
+}

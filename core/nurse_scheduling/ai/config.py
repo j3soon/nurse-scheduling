@@ -135,7 +135,7 @@ class AiSettings:
     """Whether incoming question previews are logged, which records chat text."""
     max_sessions: int = 1000
     max_session_bytes: int = 256 * 1024 * 1024
-    """Chat text budget across live sessions, enforced where a client pushes new text.
+    """Text and file budget across live sessions, enforced when content is retained.
 
     A completed run is trimmed rather than refused, so retained text settles at this
     budget plus the newest message and any pending proposal of each live session. Size
@@ -148,10 +148,11 @@ class AiSettings:
     max_concurrent_requests: int = 4
     max_attachment_files: int = 8
     max_attachment_bytes: int = 5_000_000
+    max_download_bytes: int = 50_000_000
     sandbox_backend: SandboxBackendName = "none"
     e2b_api_key: str = ""
     e2b_template: str = "nurse-scheduling-ai-sandbox"
-    sandbox_command_timeout_seconds: float = 30.0
+    sandbox_command_timeout_seconds: float = 60.0
     sandbox_turn_timeout_seconds: float = 3600.0
     agent_max_tool_rounds: int = 200
     agent_max_tool_calls: int = 400
@@ -223,10 +224,11 @@ class AiSettings:
             max_concurrent_requests=_read_positive_int("AI_MAX_CONCURRENT_REQUESTS", 4),
             max_attachment_files=_read_positive_int("AI_MAX_ATTACHMENT_FILES", 8),
             max_attachment_bytes=_read_positive_int("AI_MAX_ATTACHMENT_BYTES", 5_000_000),
+            max_download_bytes=_read_positive_int("AI_MAX_DOWNLOAD_BYTES", 50_000_000),
             sandbox_backend=sandbox_backend,
             e2b_api_key=e2b_api_key,
             e2b_template=e2b_template,
-            sandbox_command_timeout_seconds=_read_positive_float("AI_SANDBOX_COMMAND_TIMEOUT_SECONDS", 30.0),
+            sandbox_command_timeout_seconds=_read_positive_float("AI_SANDBOX_COMMAND_TIMEOUT_SECONDS", 60.0),
             sandbox_turn_timeout_seconds=_read_positive_float("AI_SANDBOX_TURN_TIMEOUT_SECONDS", 3600.0),
             agent_max_tool_rounds=_read_positive_int("AI_AGENT_MAX_TOOL_ROUNDS", 200),
             agent_max_tool_calls=_read_positive_int("AI_AGENT_MAX_TOOL_CALLS", 400),

@@ -24,15 +24,23 @@ import math
 import re
 from collections import Counter
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 # Most cases grade only the produced schedule or answer. Focused capability cases
 # may also assert a small, intentional tool trajectory.
 _STEP = re.compile(r"\.?([A-Za-z_][A-Za-z0-9_]*)|\[(\d+)\]|\[\?([^=\]]+)=([^\]]*)\]|(\[\])")
-_ASSERTION_KINDS = ("equals", "contains", "count", "delta", "added", "removed", "absent", "present")
-_TOOL_USAGE_KEYS = {"required", "forbidden", "max_total", "max_per_tool"}
+_ASSERTION_KINDS = ("equals", "contains", "count", "delta", "added", "removed", "absent", "present", "unchanged")
+_TOOL_USAGE_KEYS = {
+    "required",
+    "forbidden",
+    "max_total",
+    "max_per_tool",
+    "required_calls",
+    "required_errors",
+    "max_validation_errors",
+}
 
 
 class EvalCaseError(ValueError):
@@ -48,7 +56,7 @@ class Assertion:
     value: Any = None
 
     def describe(self) -> str:
-        if self.kind in {"absent", "present"}:
+        if self.kind in {"absent", "present", "unchanged"}:
             return f"{self.path} {self.kind}"
         return f"{self.path} {self.kind} {self.value!r}"
 
@@ -63,6 +71,7 @@ class ExpectedDiff:
     before: Any = None
     after: Any = None
     compares_value: bool = False
+    allow_added_description: bool = False
 
     def describe(self) -> str:
         return f"{self.path} has the expected semantic diff"
@@ -76,6 +85,9 @@ class ToolUsageExpectation:
     forbidden: tuple[str, ...] = ()
     max_total: int | None = None
     max_per_tool: tuple[tuple[str, int], ...] = ()
+    required_calls: tuple[tuple[str, dict[str, Any]], ...] = ()
+    required_errors: tuple[str, ...] = ()
+    max_validation_errors: int | None = None
 
 
 @dataclass(frozen=True)
@@ -102,13 +114,23 @@ class EvalCase:
     intermediate_answer_contains: tuple[tuple[str | tuple[str, ...], ...], ...] = ()
     tags: tuple[str, ...] = ()
     attachments: tuple[str, ...] = ()
+    optimizer_error: str = ""
+    optimizer_completion: str = ""
+    optimizer_completion_only: bool = False
+    answer_json: dict[str, Any] = field(default_factory=dict)
+    download_files: dict[str, str] = field(default_factory=dict)
+    import_attachment: str = ""
     category: str = ""
     assertions: tuple[Assertion, ...] = ()
     expected_diff: tuple[ExpectedDiff, ...] = ()
     changes: tuple[str, ...] = ()
     answer_contains: tuple[str | tuple[str, ...], ...] = ()
+    answer_matches: tuple[str, ...] = ()
+    answer_not_matches: tuple[str, ...] = ()
     tool_usage: ToolUsageExpectation | None = None
+    turn_tool_usage: tuple[ToolUsageExpectation | None, ...] = ()
     note: str = ""
+    semantic_check: str = ""
 
     def __post_init__(self) -> None:
         """Keep direct test construction compatible with single-turn cases."""
@@ -189,6 +211,16 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     for required in ("id", "fixture", "expect_proposal"):
         if required not in entry:
             raise EvalCaseError(f"{source} is missing `{required}`.")
+    download_files = entry.get("download_files", {})
+    if not isinstance(download_files, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) for k, v in download_files.items()
+    ):
+        raise EvalCaseError(f"{source} has invalid download_files.")
+    import_attachment = entry.get("import_attachment", "")
+    if not isinstance(import_attachment, str) or (
+        import_attachment and (import_attachment not in entry.get("attachments", []) or not entry["expect_proposal"])
+    ):
+        raise EvalCaseError(f"{source} import_attachment must name an attached schedule in a proposal case.")
     raw_turns = entry.get("user_turns")
     if raw_turns is None:
         if "question" not in entry:
@@ -234,13 +266,45 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         raise EvalCaseError(f"{source} repeats an attachment fixture.")
     assertions = tuple(_build_assertion(raw, source) for raw in entry.get("assert", []))
     expected_diff = tuple(_build_expected_diff(raw, source) for raw in entry.get("expected_diff", []))
+    semantic_check = entry.get("semantic_check", "")
+    if not isinstance(semantic_check, str) or semantic_check not in {"", "yaml-generator", "optimizer-start-source"}:
+        raise EvalCaseError(f"{source} has an unknown semantic_check.")
     proposal_turn, proposal_turns = _proposal_turns(entry, len(raw_turns), source)
     turn_actions = _turn_actions(entry.get("turn_actions", []), len(raw_turns), source)
-    if entry["expect_proposal"] and not assertions and not expected_diff:
+    raw_turn_tools = entry.get("turn_tool_usage", [])
+    if not isinstance(raw_turn_tools, list) or len(raw_turn_tools) > len(raw_turns):
+        raise EvalCaseError(f"{source} `turn_tool_usage` must list expectations for existing user turns.")
+    optimizer_error = entry.get("optimizer_error", "")
+    if not isinstance(optimizer_error, str):
+        raise EvalCaseError(f"{source} `optimizer_error` must be a string.")
+    optimizer_completion = entry.get("optimizer_completion", "")
+    if not isinstance(optimizer_completion, str) or optimizer_completion not in {
+        "",
+        "request-audit",
+        "request-audit-pending",
+        "request-audit-all-strong",
+        "request-audit-groups",
+        "policy-audit-misses",
+        "policy-audit-clean",
+        "policy-audit-stale",
+        "request-audit-stale-summary",
+    }:
+        raise EvalCaseError(f"{source} has an unknown optimizer_completion fixture.")
+    optimizer_completion_only = entry.get("optimizer_completion_only", False)
+    if not isinstance(optimizer_completion_only, bool) or (optimizer_completion_only and not optimizer_completion):
+        raise EvalCaseError(f"{source} optimizer_completion_only requires a completion fixture and a boolean.")
+    if optimizer_completion_only and (len(raw_turns) != 1 or entry["expect_proposal"]):
+        raise EvalCaseError(f"{source} seeded completion cases require one user turn and no proposal.")
+    answer_json = entry.get("answer_json", {})
+    if not isinstance(answer_json, dict):
+        raise EvalCaseError(f"{source} `answer_json` must be an object.")
+    if entry["expect_proposal"] and not assertions and not expected_diff and not semantic_check:
         raise EvalCaseError(f"{source} expects a proposal but asserts nothing about it.")
     if entry["expect_proposal"] and not entry.get("changes"):
         raise EvalCaseError(f"{source} expects a proposal but names no part it may change.")
-    if not entry["expect_proposal"] and (assertions or expected_diff):
+    if not entry["expect_proposal"] and (
+        assertions or expected_diff or semantic_check not in {"", "optimizer-start-source"}
+    ):
         raise EvalCaseError(f"{source} expects no proposal, so its schedule criteria can never run.")
     return EvalCase(
         id=str(entry["id"]),
@@ -254,16 +318,38 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         intermediate_answer_contains=intermediate,
         tags=tuple(raw_tags),
         attachments=tuple(raw_attachments),
+        optimizer_error=optimizer_error,
+        optimizer_completion=optimizer_completion,
+        optimizer_completion_only=optimizer_completion_only,
+        answer_json=answer_json,
         category=category,
+        download_files=download_files,
+        import_attachment=import_attachment,
         assertions=assertions,
         expected_diff=expected_diff,
+        semantic_check=semantic_check,
         changes=tuple(entry.get("changes", ())),
         answer_contains=tuple(
             tuple(value) if isinstance(value, list) else value for value in entry.get("answer_contains", ())
         ),
+        answer_matches=_answer_patterns(entry.get("answer_matches", []), source, "answer_matches"),
+        answer_not_matches=_answer_patterns(entry.get("answer_not_matches", []), source, "answer_not_matches"),
         tool_usage=_build_tool_usage(entry.get("tool_usage"), source),
+        turn_tool_usage=tuple(_build_tool_usage(raw, source) for raw in raw_turn_tools),
         note=str(entry.get("note", "")),
     )
+
+
+def _answer_patterns(raw: object, source: str, field_name: str) -> tuple[str, ...]:
+    """Validate deterministic answer checks without requiring one exact wording."""
+    if not isinstance(raw, list) or not all(isinstance(pattern, str) and pattern for pattern in raw):
+        raise EvalCaseError(f"{source} `{field_name}` must list nonempty regular expressions.")
+    for pattern in raw:
+        try:
+            re.compile(pattern, re.IGNORECASE | re.DOTALL)
+        except re.error as error:
+            raise EvalCaseError(f"{source} `{field_name}` has an invalid regular expression: {error}") from error
+    return tuple(raw)
 
 
 def _build_tool_usage(raw: object, source: str) -> ToolUsageExpectation | None:
@@ -277,21 +363,47 @@ def _build_tool_usage(raw: object, source: str) -> ToolUsageExpectation | None:
         raise EvalCaseError(f"{source} `tool_usage` has unknown fields: {', '.join(sorted(unknown))}.")
 
     required = _tool_names(raw.get("required", []), source, "required")
+    required_errors = _tool_names(raw.get("required_errors", []), source, "required_errors")
     forbidden = _tool_names(raw.get("forbidden", []), source, "forbidden")
-    overlap = sorted(set(required) & set(forbidden))
+    overlap = sorted((set(required) | set(required_errors)) & set(forbidden))
     if overlap:
         raise EvalCaseError(f"{source} requires and forbids the same tools: {', '.join(overlap)}.")
 
     max_total = raw.get("max_total")
     if max_total is not None and (isinstance(max_total, bool) or not isinstance(max_total, int) or max_total < 0):
         raise EvalCaseError(f"{source} `tool_usage.max_total` must be a non-negative integer.")
+    max_validation_errors = raw.get("max_validation_errors")
+    if max_validation_errors is not None and (
+        isinstance(max_validation_errors, bool)
+        or not isinstance(max_validation_errors, int)
+        or max_validation_errors < 0
+    ):
+        raise EvalCaseError(f"{source} `tool_usage.max_validation_errors` must be a non-negative integer.")
     raw_per_tool = raw.get("max_per_tool", {})
     if not isinstance(raw_per_tool, dict) or not all(
         isinstance(name, str) and name and not isinstance(limit, bool) and isinstance(limit, int) and limit >= 0
         for name, limit in raw_per_tool.items()
     ):
         raise EvalCaseError(f"{source} `tool_usage.max_per_tool` must map tool names to non-negative integers.")
-    return ToolUsageExpectation(required, forbidden, max_total, tuple(sorted(raw_per_tool.items())))
+    raw_calls = raw.get("required_calls", [])
+    if not isinstance(raw_calls, list) or not all(
+        isinstance(call, dict)
+        and set(call) == {"name", "arguments"}
+        and isinstance(call["name"], str)
+        and call["name"]
+        and isinstance(call["arguments"], dict)
+        for call in raw_calls
+    ):
+        raise EvalCaseError(f"{source} `tool_usage.required_calls` must list tool names and JSON argument objects.")
+    return ToolUsageExpectation(
+        required,
+        forbidden,
+        max_total,
+        tuple(sorted(raw_per_tool.items())),
+        tuple((call["name"], call["arguments"]) for call in raw_calls),
+        required_errors,
+        max_validation_errors,
+    )
 
 
 def _proposal_turns(entry: dict[str, Any], turn_count: int, source: str) -> tuple[int | None, tuple[int, ...]]:
@@ -356,6 +468,8 @@ def _build_assertion(raw: dict[str, Any], source: str) -> Assertion:
         raise EvalCaseError(
             f"{source} assertion on {raw['path']} must use exactly one of: {', '.join(_ASSERTION_KINDS)}."
         )
+    if kinds[0] == "unchanged" and raw["unchanged"] is not True:
+        raise EvalCaseError(f"{source} `unchanged` must be true.")
     return Assertion(path=str(raw["path"]), kind=kinds[0], value=raw[kinds[0]])
 
 
@@ -363,7 +477,7 @@ def _build_expected_diff(raw: object, source: str) -> ExpectedDiff:
     """Validate one exact semantic collection diff."""
     if not isinstance(raw, dict) or not isinstance(raw.get("path"), str) or not raw["path"]:
         raise EvalCaseError(f"{source} has an expected diff without a path.")
-    unknown = set(raw) - {"path", "added", "removed", "before", "after"}
+    unknown = set(raw) - {"path", "added", "removed", "before", "after", "allow_added_description"}
     if unknown:
         raise EvalCaseError(f"{source} expected diff has unknown fields: {', '.join(sorted(unknown))}.")
     added = raw.get("added", [])
@@ -375,6 +489,18 @@ def _build_expected_diff(raw: object, source: str) -> ExpectedDiff:
         raise EvalCaseError(f"{source} expected diff must use either before/after or added/removed.")
     if not compares_value and not added and not removed:
         raise EvalCaseError(f"{source} expected diff must add or remove something.")
+    allow_description = raw.get("allow_added_description", False)
+    if not isinstance(allow_description, bool) or (
+        allow_description
+        and (
+            compares_value
+            or removed
+            or not all(isinstance(item, dict) and not item.get("description") for item in added)
+        )
+    ):
+        raise EvalCaseError(
+            f"{source} optional descriptions apply only to pure additions without a requested description."
+        )
     return ExpectedDiff(
         path=raw["path"],
         added=tuple(added),
@@ -382,6 +508,7 @@ def _build_expected_diff(raw: object, source: str) -> ExpectedDiff:
         before=raw.get("before"),
         after=raw.get("after"),
         compares_value=compares_value,
+        allow_added_description=allow_description,
     )
 
 
@@ -411,14 +538,105 @@ def grade(case: EvalCase, outcome: RunOutcome, computed: dict[str, Any] | None =
             detail="" if proposed == case.expect_proposal else f"a proposal was {'not ' if not proposed else ''}made",
         )
     )
+    if case.import_attachment:
+        checks.append(_check_import_schedule(case, outcome))
+    if case.download_files:
+        import hashlib
+
+        downloads = [event.get("files", {}) for event in outcome.activity if event.get("kind") == "download"]
+        expected = {name: hashlib.sha256(text.encode()).hexdigest() for name, text in case.download_files.items()}
+        checks.append(
+            CheckResult(
+                "captured ZIP contains the requested files",
+                len(downloads) == 1 and all(downloads[0].get(name) == digest for name, digest in expected.items()),
+            )
+        )
     if case.expect_proposal and proposed:
         checks.extend(_check_assertion(outcome, assertion) for assertion in case.assertions)
         checks.extend(_check_expected_diff(outcome, expected) for expected in case.expected_diff)
         checks.append(_check_nothing_else_changed(outcome, case.changes))
+    if case.semantic_check == "yaml-generator":
+        checks.extend(_check_yaml_generator(outcome.activity))
+    if case.semantic_check == "optimizer-start-source":
+        checks.extend(_check_optimizer_start_source(case, outcome))
+    if case.optimizer_completion:
+        checks.append(
+            CheckResult("optimizer completion delivered", any(e.get("kind") == "optimizer" for e in outcome.activity))
+        )
     checks.extend(_check_answer(outcome.answer, expected, computed or {}) for expected in case.answer_contains)
+    if case.answer_json:
+        answer = outcome.answer.strip()
+        if answer.startswith("```"):
+            answer = re.sub(r"^```(?:json)?\s*|\s*```$", "", answer)
+        try:
+            actual = json.loads(answer)
+        except json.JSONDecodeError:
+            actual = None
+            decoder = json.JSONDecoder()
+            position = 0
+            while (start := answer.find("{", position)) >= 0:
+                try:
+                    value, length = decoder.raw_decode(answer[start:])
+                except json.JSONDecodeError:
+                    position = start + 1
+                else:
+                    actual = value
+                    position = start + length
+        for key, value in case.answer_json.items():
+            passed = isinstance(actual, dict) and key in actual and _answer_json_matches(actual[key], value)
+            relation = "contains required fields" if isinstance(value, dict) else "equals"
+            checks.append(
+                CheckResult(f"answer JSON {key} {relation} {value!r}", passed, "" if passed else repr(actual))
+            )
+    for patterns, required in ((case.answer_matches, True), (case.answer_not_matches, False)):
+        for pattern in patterns:
+            matched = re.search(pattern, outcome.answer, re.IGNORECASE | re.DOTALL) is not None
+            checks.append(
+                CheckResult(f"answer {'matches' if required else 'excludes'} {pattern!r}", matched == required)
+            )
     if case.tool_usage is not None:
         checks.extend(_check_tool_usage(outcome.activity, case.tool_usage))
+    for turn, expected in enumerate(case.turn_tool_usage, 1):
+        if expected is None:
+            continue
+        current_turn = 1
+        activity = []
+        for event in outcome.activity:
+            if event.get("kind") in {"user", "optimizer"}:
+                current_turn = event["turn"]
+            if current_turn == turn:
+                activity.append(event)
+        checks.extend(
+            CheckResult(f"turn {turn}: {check.description}", check.passed, check.detail)
+            for check in _check_tool_usage(activity, expected)
+        )
     return CaseResult(case_id=case.id, checks=tuple(checks))
+
+
+def _check_import_schedule(case: EvalCase, outcome: RunOutcome) -> CheckResult:
+    """Compare the complete proposal with the named uploaded source."""
+    from nurse_scheduling.loader import _load_yaml
+
+    from .attachment_fixtures import load_attachment_fixtures
+
+    attachment = load_attachment_fixtures((case.import_attachment,))[0]
+    return CheckResult("complete uploaded schedule preserved", outcome.proposed == _load_yaml(attachment.data))
+
+
+def _check_optimizer_start_source(case: EvalCase, outcome: RunOutcome) -> list[CheckResult]:
+    """Check the submitted source even when no final edit proposal is expected."""
+    from nurse_scheduling.loader import _load_yaml
+
+    inputs = [event["schedule_yaml"] for event in outcome.activity if event.get("kind") == "optimizer_input"]
+    checks = [CheckResult("one optimizer input captured", len(inputs) == 1)]
+    for source in inputs:
+        submitted = replace(outcome, proposed=_load_yaml(source.encode()))
+        for expected in case.expected_diff:
+            check = _check_expected_diff(submitted, expected)
+            checks.append(replace(check, description=f"optimizer input: {check.description}"))
+        check = _check_nothing_else_changed(submitted, case.changes)
+        checks.append(replace(check, description=f"optimizer input: {check.description}"))
+    return checks
 
 
 def _check_expected_diff(outcome: RunOutcome, expected: ExpectedDiff) -> CheckResult:
@@ -440,6 +658,14 @@ def _check_expected_diff(outcome: RunOutcome, expected: ExpectedDiff) -> CheckRe
     after_keys = Counter(_key(item) for item in after[0])
     actual_added = after_keys - before_keys
     actual_removed = before_keys - after_keys
+    if expected.allow_added_description:
+        normalized: Counter[str] = Counter()
+        for key, count in actual_added.items():
+            item = json.loads(key)
+            if isinstance(item, dict):
+                item.pop("description", None)
+            normalized[_key(item)] += count
+        actual_added = normalized
     wanted_added = Counter(_key(item) for item in expected.added)
     wanted_removed = Counter(_key(item) for item in expected.removed)
     passed = actual_added == wanted_added and actual_removed == wanted_removed
@@ -454,6 +680,55 @@ def _counter_values(values: Counter[str]) -> list[Any]:
     return [json.loads(value) for value in values.elements()]
 
 
+def _check_yaml_generator(activity: Sequence[dict[str, Any]]) -> list[CheckResult]:
+    executed, installations = False, []
+    for event in activity:
+        if event.get("kind") not in {"tool", "tool_start"} or event.get("name") != "bash":
+            continue
+        try:
+            command = json.loads(event.get("arguments", "{}"))["command"]
+        except (TypeError, ValueError, KeyError):
+            continue
+        if re.search(r"\bpip(?:3)?\s+(?:-\S+\s+)*install\b", command):
+            installations.append(command)
+        if (
+            event.get("kind") == "tool"
+            and event.get("ok") is True
+            and "python" in command
+            and "generate_schedule" in command
+            and "Generated Minimal March schedule from attachment" in event.get("result", "")
+        ):
+            executed = True
+    return [
+        CheckResult("executes the repaired generator successfully", executed),
+        CheckResult("avoids package installation in the offline sandbox", not installations, str(installations)),
+    ]
+
+
+def semantic_trajectory_failures(case: EvalCase, activity: Sequence[dict[str, Any]]) -> tuple[CheckResult, ...]:
+    """Stop once a semantic trajectory rule is already irreversibly violated."""
+    if case.semantic_check == "yaml-generator":
+        installation = _check_yaml_generator(activity)[1]
+        if not installation.passed:
+            return (installation,)
+    return ()
+
+
+def tool_limit_failures(activity: Sequence[dict[str, Any]], expected: ToolUsageExpectation) -> tuple[CheckResult, ...]:
+    """Return only failures that future tool calls cannot repair."""
+    limits = replace(expected, required=(), required_calls=(), required_errors=())
+    return tuple(check for check in _check_tool_usage(activity, limits) if not check.passed)
+
+
+def _answer_json_matches(actual: Any, expected: Any) -> bool:
+    """Check required mapping fields, preserving exact scalar and list semantics."""
+    if isinstance(expected, dict):
+        return isinstance(actual, dict) and all(
+            key in actual and _answer_json_matches(actual[key], value) for key, value in expected.items()
+        )
+    return _key(actual) == _key(expected)
+
+
 def _check_tool_usage(
     activity: Sequence[dict[str, Any]],
     expected: ToolUsageExpectation,
@@ -462,6 +737,7 @@ def _check_tool_usage(
     tool_events = [event for event in activity if event.get("kind") == "tool" and isinstance(event.get("name"), str)]
     counts = Counter(event["name"] for event in tool_events)
     successful = Counter(event["name"] for event in tool_events if event.get("ok") is True)
+    failed = Counter(event["name"] for event in tool_events if event.get("ok") is False)
     checks = [
         CheckResult(
             f"uses successful {name} tool",
@@ -470,6 +746,10 @@ def _check_tool_usage(
         )
         for name in expected.required
     ]
+    checks.extend(
+        CheckResult(f"observes {name} tool error", failed[name] > 0, "not observed" if not failed[name] else "")
+        for name in expected.required_errors
+    )
     checks.extend(
         CheckResult(
             f"does not use {name} tool",
@@ -487,6 +767,15 @@ def _check_tool_usage(
                 "" if within_total else f"used {len(tool_events)}",
             )
         )
+    if expected.max_validation_errors is not None:
+        errors = sum(_schedule_validation_failed(event) for event in tool_events)
+        checks.append(
+            CheckResult(
+                f"has at most {expected.max_validation_errors} schedule validation error(s)",
+                errors <= expected.max_validation_errors,
+                f"observed {errors}" if errors > expected.max_validation_errors else "",
+            )
+        )
     for name, limit in expected.max_per_tool:
         within_limit = counts[name] <= limit
         checks.append(
@@ -496,7 +785,34 @@ def _check_tool_usage(
                 "" if within_limit else f"used {counts[name]}",
             )
         )
+    for name, arguments in expected.required_calls:
+        found = False
+        for event in tool_events:
+            if event["name"] != name or event.get("ok") is not True:
+                continue
+            try:
+                actual = json.loads(event.get("arguments", ""))
+            except (TypeError, ValueError):
+                continue
+            if isinstance(actual, dict) and all(
+                key in actual and _matches(actual[key], value) for key, value in arguments.items()
+            ):
+                found = True
+                break
+        checks.append(CheckResult(f"uses successful {name} with {arguments}", found))
     return checks
+
+
+def _schedule_validation_failed(event: dict[str, Any]) -> bool:
+    prefix = "Trusted schedule check after this command:"
+    result = event.get("result", "")
+    if event.get("ok") is not False or not isinstance(result, str) or prefix not in result:
+        return False
+    feedback = result.rsplit(prefix, 1)[1].strip()
+    return not (
+        feedback.startswith("The candidate passed trusted server-side validation")
+        or feedback == "schedule.yaml is unchanged."
+    )
 
 
 def _check_assertion(outcome: RunOutcome, assertion: Assertion) -> CheckResult:
@@ -505,6 +821,10 @@ def _check_assertion(outcome: RunOutcome, assertion: Assertion) -> CheckResult:
         found = resolve(outcome.proposed, assertion.path)
         if assertion.kind in {"delta", "added", "removed"}:
             return _check_against_initial(outcome, assertion, found)
+        if assertion.kind == "unchanged":
+            before = resolve(outcome.initial, assertion.path)
+            passed = bool(found) and found == before
+            return CheckResult(assertion.describe(), passed, "" if passed else f"was {before!r}, now {found!r}")
     except EvalCaseError as error:
         return CheckResult(assertion.describe(), False, str(error))
 
@@ -577,6 +897,11 @@ def _json_value(value: Any, field_name: str = "") -> Any:
                 (key == "description" and child == "")
                 or (key == "history" and child == [])
                 or (key == "weight" and child == default_weight)
+                or (
+                    key == "weight"
+                    and value.get("type") == "shift type requirement"
+                    and value.get("preferredNumPeople") is None
+                )
             )
         }
     if isinstance(value, list):

@@ -1,0 +1,32 @@
+{
+  "id": "temporary-output-lifetime",
+  "fixture": "small-clinic",
+  "user_turns": [
+    "Use write to create /workspace/scratch-note.txt containing HANDOVER 8042. Do not modify the schedule or create a download.",
+    "I thought this workspace worked like a normal computer. Check whether /workspace/scratch-note.txt still exists. Would copying it to another directory in this VM make it survive the next message? Reply only with JSON: exists (boolean from the actual check), same_vm (boolean, whether both messages use the same VM), copy_would_persist (boolean). Do not recreate the file or modify the schedule."
+  ],
+  "expect_proposal": false,
+  "answer_json": {
+    "exists": false,
+    "same_vm": false,
+    "copy_would_persist": false
+  },
+  "turn_tool_usage": [
+    {
+      "required_calls": [
+        {
+          "name": "write",
+          "arguments": {
+            "path": "/workspace/scratch-note.txt"
+          }
+        }
+      ]
+    },
+    null
+  ],
+  "tags": [
+    "attachment",
+    "workspace-lifetime-investigation"
+  ],
+  "note": "This testcase is mostly AI generated. A real fresh sandbox starts on each turn. Generated scratch files are not rehydrated. Retained source uploads are covered by reread-retained-upload."
+}

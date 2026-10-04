@@ -81,9 +81,14 @@ class SandboxPiTools:
 
     @property
     def definitions(self) -> list[dict[str, Any]]:
+        bash_schema = bash_parameters()
+        bash_schema["properties"]["timeout"]["description"] = (
+            f"Timeout in seconds. Optional, defaults to {self._command_timeout_seconds:g} seconds "
+            "and is capped at that limit."
+        )
         return [
             _tool_definition(READ_TOOL, READ_TOOL_DESCRIPTION, read_parameters()),
-            _tool_definition(BASH_TOOL, BASH_TOOL_DESCRIPTION, bash_parameters()),
+            _tool_definition(BASH_TOOL, BASH_TOOL_DESCRIPTION, bash_schema),
             _tool_definition(EDIT_TOOL, EDIT_TOOL_DESCRIPTION, edit_parameters()),
             _tool_definition(WRITE_TOOL, WRITE_TOOL_DESCRIPTION, write_parameters()),
         ]
@@ -132,7 +137,7 @@ class SandboxPiTools:
         full_output = result.stdout + result.stderr
         prepared = prepare_bash_output(full_output)
         full_output_path: str | None = None
-        if prepared.truncation.truncated:
+        if prepared.truncation.truncated and not result.sandbox_terminated:
             full_output_path = f"{FULL_OUTPUT_DIRECTORY}/pi-bash-{secrets.token_hex(8)}.log"
             await self._sandbox.write_file(full_output_path, full_output)
 
@@ -143,7 +148,7 @@ class SandboxPiTools:
             timed_out=result.timed_out,
             timeout_seconds=effective_timeout or self._command_timeout_seconds,
         )
-        return AgentToolResult(rendered.text, rendered.ok)
+        return AgentToolResult(rendered.text, rendered.ok, terminal=result.sandbox_terminated)
 
     async def _edit(self, arguments: str) -> AgentToolResult:
         try:

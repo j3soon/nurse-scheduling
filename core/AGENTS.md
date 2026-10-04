@@ -39,6 +39,10 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   tool ships under `nurse_scheduling/`. Those scripts are uploaded and run
   inside the E2B image, which installs its own pinned copies, and only the
   tests import them here. Keep the two pin sets in step.
+- Verify sandbox dependency changes in a rebuilt image with a synthetic script.
+  A successful host import or fake-backend test does not prove availability in
+  the deployed template. State which template was tested and whether production
+  still needs a rebuild.
 - Keep an optional solver reachable through a lazy import and let
   `server/solver_options.py` report it unavailable. It already treats
   `ImportError` as unavailable, so a missing optional backend must degrade
@@ -125,11 +129,24 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   runs and job updates. Reader disconnect never cancels work. Explicit Stop does.
   Test output arriving before acknowledgement, lost required replay history,
   and retirement while a reader or optimizer callback remains active.
+- Use provider metadata for model limits instead of duplicate environment
+  settings. Verify the configured endpoint before adding a provider workaround.
+  Check metadata discovery and streamed usage separately. For a protected route,
+  verify that missing and invalid credentials are rejected. Keep reported usage
+  visible when the provider omits its model limit.
 - Keep attachment limits server-configured and report them through
   `/capabilities`. Attachments and the optimizer tool are always offered.
   Keep schedules and attachments separate from model instructions.
 - Bound uploads before provider calls and place them under fixed sandbox paths.
-  Do not retain raw attachments longer than their documented run behavior requires.
+  Retain uploaded source files only until the user removes them or the session expires.
+  Count retained files and generated downloads against the session memory budget.
+- Test file workflows across message boundaries and session expiry. Check the
+  bytes delivered by the download API and the files loaded into the next VM.
+  A printed workspace path does not prove delivery or retention.
+- Put fixed model instructions in a manifest-tracked prompt segment under
+  `ai/prompts/`, so they get a hash, linked cases, and a benefit witness.
+  `build_provider_messages` appends only request-specific values, such as a
+  configured limit or the pending-proposal state.
 - Keep model-facing prompts and intermediate messages concise. Avoid repeated
   warnings about malicious uploads or prescribed workbook-inspection commands.
   Rely on sandbox and server controls for security, and give generated artifacts
@@ -137,17 +154,32 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
 - Keep bundled attachment helpers general and optional. Preserve meaningful
   source data such as spreadsheet formulas and cached values, report truncation,
   and let the agent write a focused sandbox parser when a helper is insufficient.
-- Capture schedule YAML, the pending proposal, attachments, and optimizer workbook
-  in one immutable `WorkspaceInputs` value. Reuse it through lazy allocation and
-  hydration instead of passing independent file arguments.
+- Capture schedule YAML, the pending proposal, retained uploads, and the optimizer
+  workbook and its context in one immutable `WorkspaceInputs` value. Reuse it
+  through lazy allocation and hydration instead of passing independent file
+  arguments. Record uploads, removals, and schedule changes as `AppEventEntry`
+  transcript entries rather than as prompt text.
+- Prefer extending an existing helper when an operation shares its parser,
+  dependencies, and output format. Reuse loading and validation instead of
+  adding a sibling script. Keep a separate helper when its interface is useful
+  independently.
+- Separate command execution deadlines from provider connection timeouts. Reuse a
+  sandbox after a command timeout only when process cleanup is verified. Keep
+  shell commands single-attempt because a lost acknowledgement does not prove
+  they stopped or that replay is safe.
+  Evaluate tool deadlines through the tool's timeout parameter. Shell timers can
+  start separate process groups and exercise a different cleanup path.
 - Sandbox allocation is lazy. Tests that verify attachment hydration must make
   the agent call a tool, since a text-only run never creates a sandbox.
-- Keep shared schedule validation rules in `NurseSchedulingData`. Implement
+- Keep backend schedule format invariants in `NurseSchedulingData`. Implement
   consumer-specific subsets through explicit Pydantic entry points rather than
   input-controlled or global validation flags.
+- Parse schedules through `loader._load_yaml`, including comparisons of draft
+  schedules. It bounds nesting and alias expansion before constructing data.
+  Direct `YAML.load` calls bypass those bounds.
 - The assistant is reachable only from the web frontend, so its schedule tools
   target the frontend subset alone. Validate through
-  `ai/validation.py`, and do not expose the backend model, which
+  `ai/validation.py`, and do not expose the full backend schedule format, which
   accepts shapes the editor cannot represent.
 - Frontend validation checks normalized frontend state, not raw import
   compatibility. Do not broaden it merely because an import path can convert
@@ -161,6 +193,9 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   evaluation run, not from one trajectory. A repeated recoverable failure costs
   more than the case that exposed it, and a bounded tool should clamp an
   over-large request rather than refuse it.
+- For irreversible evaluation trajectory violations, prefer stopping at
+  `tool_start` before execution. Retain the attempted call in the trace so a
+  known behavioral failure does not become an avoidable command timeout.
 - For AI behavior changes, run deterministic affected pytest checks first. Then
   smoke-test the smallest relevant live evaluation set with repeatable
   `./scripts/run_ai_eval.sh --case CASE_ID` selectors from the repository root.
@@ -168,9 +203,27 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   category or tag only when the changed behavior spans it or a selected case
   reveals a neighboring risk. A bare evaluation command exits without running
   cases. Use `--tuning` to opt into the default tuning set.
+- Count exceeded model-output limits as behavior failures, not infrastructure
+  outages. Count invalid or oversized generated downloads as behavior failures
+  too. Keep the limit reason and partial trace. Keep provider connection and
+  sandbox availability failures separate.
+- Before live import comparisons, check an independent correct proposal against
+  both frontend validation and the case grader. Check cell-to-format associations
+  and finite weights, not just whether the inspector reports colors.
+- Reuse production response formatters in controlled evaluations. Shortened mock
+  replies can change the agent's decisions.
 - Treat one provider pass as a smoke check. Before claiming a tuning improvement,
   repeat affected cases at least three times with four total jobs and compare
   pass rate, infrastructure failures, turns, and tokens with a recorded baseline.
+  Treat success rate, tool calls and reads, turns, latency, and provider token
+  categories as first-class comparison metrics. Report before/after means and
+  mean token deltas with sample standard deviations and usable pair counts.
+  Keep all metrics in full reports. User-facing summaries may show only material
+  changes. Compare costs on matched passing repetitions with complete telemetry,
+  retain every attempt in reliability counts, and never count missing usage as zero.
+  With only one matched passing pair, report cost changes as preliminary and
+  standard deviation as unavailable. Repeated correctness does not establish
+  repeated performance gains.
   Reserve `--tuning` for broad changes or final tuning confirmation.
   Use `--full` only when explicitly requested, for release-level confirmation,
   or when cross-cutting behavior could affect cases outside the tuning set.
@@ -185,6 +238,64 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   guidance does not teach the agent to ask when the user already supplied a
   unique ID. Keep structurally different fixtures under a `holdout` tag. Do not
   tune prompts directly against one held-out trajectory.
+- Keep `nurse_scheduling/ai/prompts/system-steps.json` aligned with the ordered
+  production prompt sections. Give independently evaluated policies separate
+  prompt fragments and targeted cases. Keep each receipt tied to that policy's
+  comparison. Compare a changed step against its immediately
+  previous prefix on its targeted cases, repeating three to five times. Treat linked
+  cases as hypotheses until a clean comparison shows better outcomes or an
+  explicit relative cost gain. Run full-prompt ablation only when requested or
+  when a suspected interaction needs investigation. Extend selected cases up
+  to ten paired trials only for an explicitly requested deeper investigation.
+- Order ladder fragments so each tested prefix includes the policies its cases
+  need. For example, a case that starts optimization needs the background-start
+  rule before a separate goal-policy rule. If later guidance competes with a
+  policy, test that policy after the competing guidance. Rerun its adjacent
+  comparison after moving it. Do not reuse evidence from a different prefix.
+- Separate final correctness from the tool-call behavior a prompt claims to
+  improve. Preserving optimizer input does not prove a direct start or solver
+  quality. Inspect every repetition before describing its trajectory. Add a
+  tool-usage assertion when that behavior is a required outcome.
+- Ship a prompt clause only with a reviewed, clean repeated benefit witness.
+  Bind the receipt to the clause, parsed testcase, and fixture with one input
+  fingerprint. Keep tracked receipts to aggregate counts, model, and concise
+  scope notes. Preserve exact contexts, environment metadata, timing, old
+  receipts, and investigation history in ignored `artifacts/`.
+  Place cases in their final category before measuring. Before committing,
+  check that prompt, parsed case, and attachment fingerprints match the measured
+  inputs, including category and tags.
+  Do not force every later step to rerun after an earlier edit. Include a
+  counterfactual clarification reply where guessing the likely target would
+  produce the wrong edit, alongside an exact-target control.
+- Keep implementation comparisons separate from prompt comparisons. Removing
+  a whole prompt section does not isolate a sentence added to it. Report failed
+  controls even when the main witness passes. Retain their testcases and failed
+  attempts instead of carrying forward an old clean-control receipt.
+  Separate correctness controls from cost targets. If a witness reduces cost
+  but a control increases it, report both and the combined gate result. A
+  passing witness does not make the whole comparison pass.
+- Include the SPDX license header and AI marker in generated Markdown prompt
+  fragments. Strip their leading provenance comments during assembly, preserving
+  instruction comments and the model-facing clause hashes.
+- Supply app identity and enabled capabilities from server-known facts. Test
+  whether the agent knows its role, rather than guessing from available tools
+  or asking the user to inspect the UI. Keep navigation advice valid for someone
+  on another page.
+- Show known provider reasons and trusted validation details in both foreground
+  and background chat errors. Keep raw provider bodies and private SDK errors
+  in server logs. Test that failed validation still discards the turn's edits.
+- Isolate prompt policies with the smallest fixture that exercises the claim.
+  Use the large ward only when scale or reference cascades matter. Grade
+  scheduling semantics rather than ineffective fields or equivalent formatting.
+  For complete file imports, compare the whole parsed proposal with the uploaded
+  source, including every rule and weight. Use a partial-update control.
+  For import-file generation, grade the delivered file against the destination
+  importer's row and field rules. Pair summarized formats with a full-history
+  control so format-specific guidance does not discard required data.
+  Preserve exact selectors and values when fidelity to the user's wording is
+  under test. Define structured answer fields and counting units explicitly. Do not
+  let an undefined priority label or field name decide the grader's meaning. Keep original traces when correcting a grader, apply the correction
+  to both variants, and rerun affected comparisons before claiming an improvement.
 - Expose Pi's default `read`, `bash`, `edit`, and `write` model tools over
   the disposable sandbox. Always offer the server-side `optimizer` lifecycle
   tool. Keep optimizer execution and credentials outside
@@ -322,6 +433,9 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   and suppresses the full schedule output.
 - Core tests run on Linux, macOS, and Windows in CI. Keep tests platform
   neutral, including paths, line endings, and environment limits.
+- Write hash-bound fixture inputs as exact encoded bytes to avoid platform
+  newline translation. Fix ZIP creator metadata as well as timestamps when
+  generated archive bytes must match across platforms.
 - Give `pytest.mark.parametrize` explicit `ids` when a parameter is a large
   binary or text payload. Pytest derives the node ID from the parameter value
   and exports it through `PYTEST_CURRENT_TEST`, which fails on Windows once the

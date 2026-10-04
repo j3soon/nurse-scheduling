@@ -1,0 +1,54 @@
+{
+  "fixture": "small-clinic",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "description",
+      "before": "Small pediatric clinic",
+      "after": "January training clinic"
+    },
+    {
+      "path": "preferences",
+      "removed": [
+        {
+          "type": "shift request",
+          "person": [
+            "Ana"
+          ],
+          "date": [
+            "06"
+          ],
+          "shiftType": [
+            "N"
+          ],
+          "weight": -1
+        }
+      ]
+    }
+  ],
+  "changes": [
+    "description",
+    "preferences"
+  ],
+  "tags": [
+    "prompt-evidence",
+    "clarification"
+  ],
+  "id": "combined-edit-ambiguous-requests",
+  "user_turns": [
+    "For the person with exact ID `Ana`, set the schedule description to January training clinic and remove their requests.",
+    "Remove only the request for shift type N on the 6th. Keep the Night group request."
+  ],
+  "intermediate_answer_contains": [
+    [
+      [
+        "which",
+        "all",
+        "both",
+        "subset"
+      ]
+    ]
+  ],
+  "proposal_turn": 2,
+  "note": "This testcase is mostly AI generated. Multiple differently shaped Ana requests make the scope ambiguous. No partial proposal is allowed. After clarification, both original edits must be applied together."
+}

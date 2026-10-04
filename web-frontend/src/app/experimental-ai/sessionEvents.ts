@@ -21,6 +21,7 @@
 
 import type {
   ContextUsage,
+  ModelInput,
   OptimizationActivity,
   OptimizationProgressActivity,
   SessionReset,
@@ -40,6 +41,9 @@ export type SessionEvent = (
   | { type: 'steering'; messageId: string; message: string }
   | { type: 'schedule_change'; scheduleYaml: string }
   | { type: 'proposal'; diff: string }
+  | { type: 'download'; downloadId: string }
+  | { type: 'warning'; message: string }
+  | { type: 'model_input'; input: ModelInput }
   | { type: 'optimization'; activity: OptimizationActivity }
   | { type: 'optimization_progress'; activity: OptimizationProgressActivity }
   | { type: 'done' | 'stopped' }

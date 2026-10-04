@@ -65,6 +65,9 @@ export interface OptimizationProgressActivity {
 export interface ContextUsage {
   usedChars: number;
   maxChars: number;
+  // Tokens of the latest provider request. The limit is optional when model metadata is unavailable.
+  usedTokens?: number;
+  maxTokens?: number;
 }
 
 export interface SessionReset {
@@ -83,11 +86,41 @@ export interface AiCapabilities {
     enabled: boolean;
     max_files: number;
     max_bytes_per_file: number;
+    retained?: boolean;
   };
 }
 
-export interface MessageAttachments {
-  files?: File[];
+export interface UploadedFile {
+  id: string;
+  filename: string;
+  media_type: string;
+  bytes: number;
+}
+
+// The request messages added since the last assistant reply, in the order the model receives them.
+export interface ModelInputMessage {
+  kind: 'app' | 'question' | 'optimizer' | 'status';
+  content: string;
+  // Absolute history position of an app event, so a retried turn does not show it twice.
+  index?: number;
+  // Topic of an app event or status message, such as Proposal Rejected.
+  title?: string;
+}
+
+export interface ModelInput {
+  system: string;
+  messages: ModelInputMessage[];
+}
+
+const MODEL_INPUT_KINDS = new Set(['app', 'question', 'optimizer', 'status']);
+
+function isModelInputMessage(value: unknown): value is ModelInputMessage {
+  if (typeof value !== 'object' || value === null) return false;
+  const message = value as Partial<ModelInputMessage>;
+  return typeof message.kind === 'string' && MODEL_INPUT_KINDS.has(message.kind)
+    && typeof message.content === 'string'
+    && (message.title === undefined || typeof message.title === 'string')
+    && (message.kind === 'app' ? Number.isSafeInteger(message.index) : message.index === undefined);
 }
 
 interface SessionResponse {
@@ -103,10 +136,15 @@ interface SsePayload {
   message?: unknown;
   name?: unknown;
   diff?: unknown;
+  download_id?: unknown;
   arguments?: unknown;
   result?: unknown;
   ok?: unknown;
   schedule_yaml?: unknown;
+  system?: unknown;
+  messages?: unknown;
+  used_tokens?: unknown;
+  max_tokens?: unknown;
   message_id?: unknown;
   tool_call_id?: unknown;
   run_id?: unknown;
@@ -225,6 +263,7 @@ export async function getCapabilities(signal?: AbortSignal, endpoint = getAiBase
     || files.max_files <= 0
     || !Number.isInteger(files.max_bytes_per_file)
     || files.max_bytes_per_file <= 0
+    || (files.retained !== undefined && typeof files.retained !== 'boolean')
   ) {
     throw new Error('The AI backend returned invalid capabilities.');
   }
@@ -449,6 +488,8 @@ function decodeEvent(eventType: string, payload: SsePayload): SessionEvent[] {
       throw new Error('The AI backend returned an invalid schedule change.');
     }
     emit({ type: 'schedule_change', scheduleYaml: payload.schedule_yaml });
+  } else if (eventType === 'download' && typeof payload.download_id === 'string') {
+    emit({ type: 'download', downloadId: payload.download_id });
   } else if (eventType === 'proposal' && typeof payload.diff === 'string') {
     emit({ type: 'proposal', diff: payload.diff });
   } else if (
@@ -490,6 +531,12 @@ function decodeEvent(eventType: string, payload: SsePayload): SessionEvent[] {
         },
       });
     }
+  } else if (eventType === 'model_input') {
+    if (typeof payload.system !== 'string' || !Array.isArray(payload.messages)
+      || !payload.messages.every(isModelInputMessage)) {
+      throw new Error('The AI backend returned an invalid model input.');
+    }
+    emit({ type: 'model_input', input: { system: payload.system, messages: payload.messages } });
   } else if (eventType === 'done') {
     emit({ type: 'done' });
   } else if (eventType === 'stopped') {
@@ -501,9 +548,16 @@ function decodeEvent(eventType: string, payload: SsePayload): SessionEvent[] {
     if (Number.isSafeInteger(payload.used_chars) && (payload.used_chars as number) >= 0
       && Number.isSafeInteger(payload.max_chars) && (payload.max_chars as number) > 0
       && (payload.used_chars as number) <= (payload.max_chars as number)) {
+      const tokens: Pick<ContextUsage, 'usedTokens' | 'maxTokens'> = {};
+      if (Number.isSafeInteger(payload.used_tokens) && (payload.used_tokens as number) >= 0) {
+        tokens.usedTokens = payload.used_tokens as number;
+        if (Number.isSafeInteger(payload.max_tokens) && (payload.max_tokens as number) > 0) {
+          tokens.maxTokens = payload.max_tokens as number;
+        }
+      }
       emit({
         type: 'context_usage',
-        usage: { usedChars: payload.used_chars as number, maxChars: payload.max_chars as number },
+        usage: { usedChars: payload.used_chars as number, maxChars: payload.max_chars as number, ...tokens },
       });
     }
   } else if (eventType === 'history_trimmed') {
@@ -511,6 +565,8 @@ function decodeEvent(eventType: string, payload: SsePayload): SessionEvent[] {
     if (typeof dropped === 'number' && Number.isInteger(dropped) && dropped > 0) {
       emit({ type: 'history_trimmed', dropped });
     }
+  } else if (eventType === 'warning' && typeof payload.message === 'string') {
+    emit({ type: 'warning', message: payload.message });
   } else if (eventType === 'error') {
     const message = typeof payload.message === 'string' ? payload.message : 'The AI response failed.';
     emit({ type: 'error', message });
@@ -523,38 +579,29 @@ async function postMessage(
   message: string,
   signal: AbortSignal,
   authToken: string | null,
-  attachments: MessageAttachments,
   endpoint: string,
   accept: string,
 ): Promise<Response> {
-  const files = attachments.files ?? [];
-  let body: BodyInit;
-  const headers: Record<string, string> = { Accept: accept };
-  if (files.length > 0) {
-    const form = new FormData();
-    form.append('message', message);
-    files.forEach(file => form.append('files', file, file.name));
-    body = form;
-  } else {
-    headers['Content-Type'] = 'application/json';
-    body = JSON.stringify({ message });
-  }
   const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/messages`, {
-    method: 'POST', credentials: 'include', headers: authorizedHeaders(authToken, headers), body, signal,
+    method: 'POST',
+    credentials: 'include',
+    headers: authorizedHeaders(authToken, { Accept: accept, 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ message }),
+    signal,
   });
   if (!response.ok) throw await responseError(response);
   return response;
 }
 
+/** Post a question. Upload its files first with `uploadFiles`, so the backend records them as their own event. */
 export async function sendMessage(
   sessionId: string,
   message: string,
   signal: AbortSignal,
   authToken: string | null,
-  attachments: MessageAttachments = {},
   endpoint = getAiBaseUrl(),
 ): Promise<string> {
-  const response = await postMessage(sessionId, message, signal, authToken, attachments, endpoint, 'application/json');
+  const response = await postMessage(sessionId, message, signal, authToken, endpoint, 'application/json');
   const body = await response.json() as { run_id?: unknown };
   if (typeof body.run_id !== 'string' || !body.run_id) throw new Error('The AI backend returned an invalid run ID.');
   return body.run_id;
@@ -567,10 +614,9 @@ export async function streamMessage(
   callbacks: SessionStreamOptions,
   signal: AbortSignal,
   authToken: string | null,
-  attachments: MessageAttachments = {},
   endpoint = getAiBaseUrl(),
 ): Promise<void> {
-  const response = await postMessage(sessionId, message, signal, authToken, attachments, endpoint, 'text/event-stream');
+  const response = await postMessage(sessionId, message, signal, authToken, endpoint, 'text/event-stream');
   await consumeStream(response, callbacks);
 }
 
@@ -670,6 +716,65 @@ export async function downloadOptimization(
   );
   if (!response.ok) throw await responseError(response);
   return response.blob();
+}
+
+export async function getUploads(sessionId: string, authToken: string | null, endpoint = getAiBaseUrl(), signal?: AbortSignal): Promise<UploadedFile[]> {
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/uploads`, {
+    credentials: 'include', headers: authorizedHeaders(authToken), signal,
+  });
+  if (!response.ok) throw await responseError(response);
+  return parseUploadList(await response.json());
+}
+
+export async function uploadFiles(
+  sessionId: string,
+  files: File[],
+  authToken: string | null,
+  endpoint = getAiBaseUrl(),
+  signal?: AbortSignal,
+): Promise<UploadedFile[]> {
+  const form = new FormData();
+  files.forEach(file => form.append('files', file, file.name));
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/uploads`, {
+    method: 'POST', credentials: 'include', headers: authorizedHeaders(authToken), body: form, signal,
+  });
+  if (!response.ok) throw await responseError(response);
+  return parseUploadList(await response.json());
+}
+
+function parseUploadList(files: unknown): UploadedFile[] {
+  if (!Array.isArray(files) || files.some(file => typeof file.id !== 'string' || typeof file.filename !== 'string' || typeof file.media_type !== 'string' || !Number.isSafeInteger(file.bytes) || file.bytes < 0)) {
+    throw new Error('The AI backend returned an invalid upload list.');
+  }
+  return files;
+}
+
+export async function removeUpload(sessionId: string, uploadId: string, authToken: string | null, endpoint = getAiBaseUrl()): Promise<void> {
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/uploads/${encodeURIComponent(uploadId)}`, {
+    method: 'DELETE', credentials: 'include', headers: authorizedHeaders(authToken),
+  });
+  if (!response.ok) throw await responseError(response);
+}
+
+export async function downloadGeneratedZip(
+  sessionId: string,
+  downloadId: string,
+  authToken: string | null,
+  endpoint = getAiBaseUrl(),
+): Promise<Blob> {
+  const response = await fetch(
+    `${endpoint}/sessions/${encodeURIComponent(sessionId)}/downloads/${encodeURIComponent(downloadId)}`,
+    { credentials: 'include', headers: authorizedHeaders(authToken) },
+  );
+  if (!response.ok) throw await responseError(response);
+  return response.blob();
+}
+
+export async function removeGeneratedZip(sessionId: string, downloadId: string, authToken: string | null, endpoint = getAiBaseUrl()): Promise<void> {
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/downloads/${encodeURIComponent(downloadId)}`, {
+    method: 'DELETE', credentials: 'include', headers: authorizedHeaders(authToken),
+  });
+  if (!response.ok) throw await responseError(response);
 }
 
 export async function scheduleRevision(scheduleYaml: string): Promise<string> {

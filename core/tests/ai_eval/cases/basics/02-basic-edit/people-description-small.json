@@ -1,0 +1,37 @@
+{
+  "id": "people-description-small",
+  "fixture": "small-clinic",
+  "question": "Set the description of the person with exact ID Ana to Training lead.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "people.items",
+      "removed": [
+        {
+          "id": "Ana",
+          "description": "Charge nurse",
+          "history": [
+            "D"
+          ]
+        }
+      ],
+      "added": [
+        {
+          "id": "Ana",
+          "description": "Training lead",
+          "history": [
+            "D"
+          ]
+        }
+      ]
+    }
+  ],
+  "changes": [
+    "people.items"
+  ],
+  "tags": [
+    "prompt-evidence",
+    "exact-target"
+  ],
+  "note": "This testcase is mostly AI generated. Person-description control for the global schedule-description rule. It must leave the top-level description and every other person unchanged."
+}

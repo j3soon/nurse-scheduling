@@ -1,0 +1,74 @@
+{
+  "id": "optimizer-result-from-pending-proposal",
+  "fixture": "request-audit",
+  "question": "Change Alex's OFF request for 2026-05-03 from weight 11000000 to 11000000000, then run optimization for 60 seconds using the updated YAML. After it finishes, return only JSON with alexMay03 (actual assigned shift) and strongUnmet (an integer count of unmet person/date targets at weight 11000000000 in the submitted input).",
+  "expect_proposal": true,
+  "changes": [
+    "preferences"
+  ],
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "removed": [
+        {
+          "type": "shift request",
+          "person": [
+            "Alex"
+          ],
+          "date": [
+            "03"
+          ],
+          "shiftType": [
+            "OFF"
+          ],
+          "weight": 11000000
+        }
+      ],
+      "added": [
+        {
+          "type": "shift request",
+          "person": [
+            "Alex"
+          ],
+          "date": [
+            "03"
+          ],
+          "shiftType": [
+            "OFF"
+          ],
+          "weight": 11000000000
+        }
+      ]
+    }
+  ],
+  "semantic_check": "optimizer-start-source",
+  "tool_usage": {
+    "required_calls": [
+      {
+        "name": "optimizer",
+        "arguments": {
+          "action": "start",
+          "timeout_seconds": 60
+        }
+      }
+    ],
+    "max_per_tool": {
+      "optimizer": 1
+    }
+  },
+  "tags": [
+    "optimizer-result",
+    "pending-result",
+    "optimizer-snapshot"
+  ],
+  "note": "This testcase is mostly AI generated. The approved input has one strong miss. The pending input promotes another missed OFF target and therefore has two. The actual job snapshot and proposal are checked independently of the answer.",
+  "optimizer_completion": "request-audit-pending",
+  "proposal_turn": 1,
+  "answer_json": {
+    "alexMay03": "D",
+    "strongUnmet": 2
+  },
+  "user_turns": [
+    "Change Alex's OFF request for 2026-05-03 from weight 11000000 to 11000000000, then run optimization for 60 seconds using the updated YAML. After it finishes, return only JSON with alexMay03 (actual assigned shift) and strongUnmet (an integer count of unmet person/date targets at weight 11000000000 in the submitted input)."
+  ]
+}

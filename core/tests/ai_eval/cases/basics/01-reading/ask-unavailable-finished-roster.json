@@ -1,0 +1,25 @@
+{
+  "id": "ask-unavailable-finished-roster",
+  "fixture": "ward87",
+  "question": "What shift was P1 actually assigned on November 3, 2025, and who approved that finished roster?",
+  "expect_proposal": false,
+  "answer_matches": [
+    "\\b(?:cannot|can't|unable|unknown|not available|not provided|not recorded|not specified|not included|not contain|no (?:record|finished|final|optimized|actual|approved)|do not have|don't have|don't know|do not know)\\b"
+  ],
+  "answer_contains": [
+    [
+      "assignment",
+      "assigned",
+      "roster"
+    ],
+    [
+      "approval",
+      "approved",
+      "approver"
+    ]
+  ],
+  "note": "This testcase is mostly AI generated. The fixture contains scheduling inputs, not an optimizer result or an approval audit. An actual assignment or approver cannot be inferred from requests.",
+  "tags": [
+    "prompt-evidence"
+  ]
+}

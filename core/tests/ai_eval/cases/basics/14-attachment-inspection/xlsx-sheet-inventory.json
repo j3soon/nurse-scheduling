@@ -1,0 +1,24 @@
+{
+  "id": "xlsx-sheet-inventory",
+  "fixture": "new-schedule",
+  "question": "For the uploaded workbook, return only JSON with three integer counts: sheetCount is the number of worksheets, hiddenSheets counts hidden and very-hidden worksheets, and largeSheets counts worksheets with reported dimensions of at least 80 rows and 30 columns. Include all tabs, including hidden tabs. Use saved worksheet dimensions, not counts of populated cells. Do not change the schedule.",
+  "expect_proposal": false,
+  "attachments": [
+    "inventory-xlsx"
+  ],
+  "answer_json": {
+    "sheetCount": 24,
+    "hiddenSheets": 3,
+    "largeSheets": 12
+  },
+  "tags": [
+    "attachment-inspection",
+    "xlsx-overview"
+  ],
+  "tool_usage": {
+    "forbidden": [
+      "optimizer"
+    ]
+  },
+  "note": "This testcase is mostly AI generated. Several hidden tabs are beyond the usual content-reader sheet limit. Inventory requires headers, not cell values."
+}

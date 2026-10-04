@@ -53,7 +53,7 @@ def _require_flat_string_list(value: Any, path: str) -> None:
 
 
 class _FrontendNurseSchedulingData(NurseSchedulingData):
-    """Schedule constrained to shapes editable by the web UI."""
+    """Backend schedule format constrained to shapes editable by the web UI."""
 
     @model_validator(mode="after")
     def validate_frontend_subset(self) -> Self:
@@ -130,7 +130,7 @@ class _FrontendNurseSchedulingData(NurseSchedulingData):
 
 
 def load_frontend_data(content: bytes) -> NurseSchedulingData:
-    """Parse YAML with shared schedule validation and the frontend subset policy."""
+    """Parse YAML with backend schedule validation and the frontend subset policy."""
     return _FrontendNurseSchedulingData.model_validate(_load_yaml(content, reject_aliases=True))
 
 

@@ -28,13 +28,16 @@ write_fixture() {
 mkdir -p -- "$fixture_root/scripts"
 cp -- "$script_dir/affected_test_common.sh" "$script_dir/test_core_affected.sh" \
   "$script_dir/test_frontend_affected.sh" "$script_dir/test_frontend_e2e_affected.sh" \
-  "$fixture_root/scripts/"
+  "$script_dir/check_terminology.sh" "$fixture_root/scripts/"
 for path in \
   core/nurse_scheduling/ai/pi/read.py \
-  core/nurse_scheduling/ai/prompts/sandbox-system.md \
+  core/nurse_scheduling/ai/prompts/steps/role-and-truthfulness.md \
+  core/nurse_scheduling/ai/prompts/system-steps.json \
   core/tests/test_ai_basic.py \
   core/tests/test_ai_provider.py \
+  core/tests/test_preference_audit.py \
   core/tests/test_scheduler.py \
+  core/tests/ai_eval/cases/basics/case.json \
   web-frontend/src/app/page.tsx \
   web-frontend/src/app/page.test.tsx \
   web-frontend/e2e/page.spec.ts \
@@ -63,12 +66,26 @@ assert_line "$output" 'test: tests/test_ai_provider.py'
 assert_no_line "$output" 'test: tests/test_scheduler.py'
 
 write_fixture core/nurse_scheduling/ai/pi/read.py
-printf 'change\n' >> "$fixture_root/core/nurse_scheduling/ai/prompts/sandbox-system.md"
+printf 'change\n' >> "$fixture_root/core/nurse_scheduling/ai/prompts/steps/role-and-truthfulness.md"
 output="$("$fixture_root/scripts/test_core_affected.sh" --list)"
 assert_line "$output" 'test: tests/test_ai_basic.py'
 assert_line "$output" 'test: tests/test_ai_provider.py'
 assert_no_line "$output" 'test: tests/test_scheduler.py'
-write_fixture core/nurse_scheduling/ai/prompts/sandbox-system.md
+write_fixture core/nurse_scheduling/ai/prompts/steps/role-and-truthfulness.md
+
+printf 'change\n' >> "$fixture_root/core/nurse_scheduling/ai/prompts/system-steps.json"
+output="$("$fixture_root/scripts/test_core_affected.sh" --list)"
+assert_line "$output" 'test: tests/test_ai_basic.py'
+assert_line "$output" 'test: tests/test_ai_provider.py'
+assert_no_line "$output" 'test: tests/test_scheduler.py'
+write_fixture core/nurse_scheduling/ai/prompts/system-steps.json
+
+printf 'change\n' >> "$fixture_root/core/tests/ai_eval/cases/basics/case.json"
+output="$("$fixture_root/scripts/test_core_affected.sh" --list)"
+assert_line "$output" 'test: tests/test_ai_basic.py'
+assert_line "$output" 'test: tests/test_preference_audit.py'
+assert_no_line "$output" 'test: tests/test_scheduler.py'
+write_fixture core/tests/ai_eval/cases/basics/case.json
 
 printf 'change\n' >> "$fixture_root/core/nurse_scheduling/ai/pi/read.py"
 

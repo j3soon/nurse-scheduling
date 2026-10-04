@@ -19,6 +19,7 @@ RUN python3 -m pip install --no-cache-dir \
         'Pillow==12.3.0' \
         'pypdf==6.19.0' \
         'pypdfium2==5.13.0' \
+        'PyYAML==6.0.3' \
         'ruamel.yaml==0.19.1'
 
 RUN mkdir -p /workspace /reference/tools \

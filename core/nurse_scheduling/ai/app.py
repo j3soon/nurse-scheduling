@@ -30,6 +30,7 @@ from typing import Literal, cast
 from uuid import UUID, uuid4
 
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
@@ -163,6 +164,7 @@ class FileAttachmentCapability(BaseModel):
     enabled: bool
     max_files: int
     max_bytes_per_file: int
+    retained: bool = True
 
 
 class CapabilitiesResponse(BaseModel):
@@ -220,11 +222,6 @@ async def _session_sse(
 
 async def _read_files(uploads: list[UploadFile], settings: AiSettings) -> list[SandboxAttachment]:
     """Read arbitrary bounded files without interpreting or executing them."""
-    if not uploads:
-        return []
-    if len(uploads) > settings.max_attachment_files:
-        raise HTTPException(status_code=413, detail="Too many file attachments.")
-
     attachments = []
     for index, upload in enumerate(uploads, start=1):
         data = await upload.read(settings.max_attachment_bytes + 1)
@@ -237,7 +234,7 @@ async def _read_files(uploads: list[UploadFile], settings: AiSettings) -> list[S
 
 
 def _validate_question(raw_message: object, settings: AiSettings) -> str:
-    """Validate one question consistently across JSON and multipart requests."""
+    """Validate one question consistently across message and steering requests."""
     try:
         request = ChatRequest.model_validate({"message": raw_message})
     except ValidationError as exc:
@@ -250,28 +247,13 @@ def _validate_question(raw_message: object, settings: AiSettings) -> str:
     return question
 
 
-# FastAPI cannot declaratively combine a JSON body with multipart files on one route.
-# Ref: https://fastapi.tiangolo.com/tutorial/request-files/#what-is-form-data
-async def _parse_message_request(
-    request: Request,
-    settings: AiSettings,
-) -> tuple[str, list[SandboxAttachment]]:
-    """Accept a JSON question or multipart input with arbitrary files."""
-    content_type = request.headers.get("content-type", "").lower()
-    if content_type.startswith("application/json"):
-        try:
-            body = await request.json()
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            raise HTTPException(status_code=422, detail="Request body is not valid JSON.") from exc
-        if not isinstance(body, dict):
-            raise HTTPException(status_code=422, detail="Request body must be an object.")
-        return _validate_question(body.get("message"), settings), []
-
-    if not content_type.startswith("multipart/form-data"):
-        raise HTTPException(status_code=415, detail="Use JSON or multipart form data.")
+async def _parse_upload_request(request: Request, settings: AiSettings) -> list[SandboxAttachment]:
+    """Accept multipart input with one or more arbitrary files and no other fields."""
+    if not request.headers.get("content-type", "").lower().startswith("multipart/form-data"):
+        raise HTTPException(status_code=415, detail="Upload files as multipart form data.")
 
     content_length = request.headers.get("content-length")
-    max_body_bytes = settings.max_attachment_files * settings.max_attachment_bytes + 100_000 + 65_536
+    max_body_bytes = settings.max_attachment_files * settings.max_attachment_bytes + 65_536
     if content_length is not None:
         try:
             if int(content_length) > max_body_bytes:
@@ -280,28 +262,28 @@ async def _parse_message_request(
             raise HTTPException(status_code=400, detail="Invalid Content-Length header.") from None
 
     try:
-        async with request.form(
-            max_files=settings.max_attachment_files,
-            max_fields=1,
-            max_part_size=100_000,
-        ) as form:
-            if any(key not in {"message", "files"} for key in form):
+        async with request.form(max_files=settings.max_attachment_files, max_fields=0) as form:
+            if any(key != "files" for key in form):
                 raise HTTPException(status_code=422, detail="Unexpected multipart field.")
-            message_values = form.getlist("message")
-            if len(message_values) != 1 or not isinstance(message_values[0], str):
-                raise HTTPException(status_code=422, detail="Multipart request requires one message field.")
             uploads: list[UploadFile] = []
             for value in form.getlist("files"):
                 if not isinstance(value, UploadFile):
                     raise HTTPException(status_code=422, detail="Attachments must be uploaded as files.")
                 uploads.append(value)
-            question = _validate_question(message_values[0], settings)
-            files = await _read_files(uploads, settings)
+            if not uploads:
+                raise HTTPException(status_code=422, detail="Upload at least one file.")
+            return await _read_files(uploads, settings)
     except StarletteHTTPException as exc:
         if exc.status_code == 400 and str(exc.detail).startswith("Too many files"):
             raise HTTPException(status_code=413, detail="Too many file attachments.") from exc
+        if exc.status_code == 400 and str(exc.detail).startswith("Too many fields"):
+            raise HTTPException(status_code=422, detail="Unexpected multipart field.") from exc
         raise
-    return question, files
+
+
+def _upload_metadata(upload: SandboxAttachment) -> dict[str, str | int]:
+    """Describe one retained source file without its contents."""
+    return {"id": upload.id, "filename": upload.filename, "media_type": upload.media_type, "bytes": len(upload.data)}
 
 
 def create_app(
@@ -321,7 +303,7 @@ def create_app(
     )
     settings = replace(settings, auth_token=auth_token, auth_tokens=auth_tokens)
     configure_request_logging(settings.request_log_enabled)
-    provider = provider or OpenAiCompatibleProvider(settings, include_usage=bool(settings.history_postgres_url))
+    provider = provider or OpenAiCompatibleProvider(settings, include_usage=True)
     history_log = (
         ChatHistory(settings.history_postgres_url, settings.history_retention_days)
         if settings.history_postgres_url
@@ -437,7 +419,7 @@ def create_app(
         CORSMiddleware,
         allow_origin_regex=ORIGIN_REGEX,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT"],
+        allow_methods=["GET", "POST", "PUT", "DELETE"],
         allow_headers=["Authorization", "Content-Type", "Last-Event-ID"],
     )
     app.state.settings = settings
@@ -449,6 +431,12 @@ def create_app(
     app.state.app_version = get_app_version()
     app.state.session_optimizer = session_optimizer
     app.state.session_event_stream = event_stream
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(_request: Request, exc: RequestValidationError) -> JSONResponse:
+        """Report schema failures without echoing the input, which can be binary file data."""
+        errors = [{key: error[key] for key in ("type", "loc", "msg") if key in error} for error in exc.errors()]
+        return JSONResponse(status_code=422, content={"detail": errors})
 
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:
@@ -533,6 +521,77 @@ def create_app(
         runs.stop(session_id)
         return Response(status_code=status.HTTP_202_ACCEPTED)
 
+    @app.post(
+        "/sessions/{session_id}/uploads",
+        dependencies=[Depends(require_auth)],
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def add_uploads(
+        session_id: str,
+        request: Request,
+        response: Response,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> list[dict[str, str | int]]:
+        """Retain source files for later messages and return their metadata."""
+        store.require_owned(session_id, owner)
+        uploads = await _parse_upload_request(request, settings)
+        retained = store.retain_uploads(session_id, owner, uploads)
+        refresh_owner_cookie(response, owner)
+        return [_upload_metadata(item) for item in retained]
+
+    @app.get("/sessions/{session_id}/uploads", dependencies=[Depends(require_auth)])
+    async def list_uploads(
+        session_id: str,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> list[dict[str, str | int]]:
+        """List source-file metadata without returning file contents."""
+        return [_upload_metadata(item) for item in store.attachments(session_id, owner)]
+
+    @app.delete(
+        "/sessions/{session_id}/uploads/{upload_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+        dependencies=[Depends(require_auth)],
+    )
+    async def remove_upload(
+        session_id: str,
+        upload_id: str,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> Response:
+        """Remove one retained source file from the session."""
+        store.remove_upload(session_id, owner, upload_id)
+        response = Response(status_code=status.HTTP_204_NO_CONTENT)
+        refresh_owner_cookie(response, owner)
+        return response
+
+    @app.get("/sessions/{session_id}/downloads/{download_id}", dependencies=[Depends(require_auth)])
+    async def download_generated_zip(
+        session_id: str,
+        download_id: str,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> Response:
+        """Deliver one captured ZIP without exposing arbitrary sandbox paths."""
+        return Response(
+            content=store.download(session_id, owner, download_id),
+            media_type="application/zip",
+            headers={"Content-Disposition": 'attachment; filename="download.zip"'},
+        )
+
+    @app.delete(
+        "/sessions/{session_id}/downloads/{download_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+        dependencies=[Depends(require_auth)],
+    )
+    async def remove_generated_zip(
+        session_id: str,
+        download_id: str,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> Response:
+        """Remove one generated ZIP from the owning session."""
+        store.remove_download(session_id, owner, download_id)
+        response = Response(status_code=status.HTTP_204_NO_CONTENT)
+        refresh_owner_cookie(response, owner)
+        return response
+
     @app.get(
         "/sessions/{session_id}/optimizations/{job_id}/xlsx",
         dependencies=[Depends(require_auth)],
@@ -594,11 +653,12 @@ def create_app(
     @app.post("/sessions/{session_id}/messages", dependencies=[Depends(require_auth)])
     async def send_message(
         session_id: str,
+        body: ChatRequest,
         request: Request,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> Response:
         """Start a run independently of its event subscribers."""
-        question, attachments = await _parse_message_request(request, settings)
+        question = _validate_question(body.message, settings)
         session = store.require_owned(session_id, owner)
         cursor = event_stream.cursor(session_id)
         run = runs.start(
@@ -609,7 +669,6 @@ def create_app(
                 runtime=runtime,
                 owner=owner,
                 credential_id=request.state.auth_credential_id,
-                attachments=attachments,
             ),
         )
         if not await asyncio.shield(run.ready):
@@ -619,7 +678,7 @@ def create_app(
             session_id,
             len(question),
             json.dumps(_question_log_preview(question), ensure_ascii=False),
-            len(attachments),
+            len(session.uploads),
         )
 
         # Compatibility readers explicitly request SSE. They use the same journal

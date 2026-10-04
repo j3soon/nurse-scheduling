@@ -1,0 +1,26 @@
+# This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
+# Copyright (C) 2023-2026 Johnson Sun
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# This test fixture is mostly AI generated.
+
+import hashlib
+import json
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+workspace = Path('/workspace')
+with (workspace / 'timeout-attempts.txt').open('a') as output:
+    output.write('once\n')
+checkpoint = {
+    'description': 'Recovered clinic checkpoint',
+    'source_sha256': hashlib.sha256((workspace / 'schedule.yaml').read_bytes()).hexdigest(),
+}
+(workspace / 'timeout-checkpoint.json').write_text(json.dumps(checkpoint))
+print('checkpoint saved', flush=True)
+subprocess.Popen([
+    sys.executable, '-c',
+    "import time; from pathlib import Path; time.sleep(4); Path('/workspace/late-write.txt').write_text('unsafe')",
+])
+time.sleep(60)

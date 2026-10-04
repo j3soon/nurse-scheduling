@@ -150,6 +150,8 @@ async def agent_loop(
         tool_calls += len(calls)
         batch_scope = config.activity_batch or _unbatched_activity
         async with batch_scope(calls):
+            terminal = False
+            completed_calls = 0
             parallel = len(calls) > 1 and all(
                 by_name.get(call.name) is not None and by_name[call.name].read_only for call in calls
             )
@@ -161,6 +163,8 @@ async def agent_loop(
                 execution_seconds = time.perf_counter() - started
                 completed = zip(calls, outcomes, strict=True)
                 for call, outcome in completed:
+                    completed_calls += 1
+                    terminal = terminal or outcome.terminal
                     yield _record_tool_result(conversation, call, outcome)
             else:
                 execution_seconds = 0.0
@@ -169,9 +173,16 @@ async def agent_loop(
                     started = time.perf_counter()
                     outcome = await execute(call.name, call.arguments)
                     execution_seconds += time.perf_counter() - started
+                    completed_calls += 1
+                    terminal = terminal or outcome.terminal
                     yield _record_tool_result(conversation, call, outcome)
+                    # A terminal result means the workspace is gone, so later calls cannot run.
+                    if terminal:
+                        break
             if config.observe_tool_batch is not None:
-                config.observe_tool_batch(AgentToolBatchMetrics(len(calls), parallel, execution_seconds))
+                config.observe_tool_batch(AgentToolBatchMetrics(completed_calls, parallel, execution_seconds))
+        if terminal:
+            return
         if config.take_steering is not None:
             for message_id, text in config.take_steering(False):
                 conversation.append(UserMessage(text))
