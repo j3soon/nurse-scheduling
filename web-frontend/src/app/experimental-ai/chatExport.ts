@@ -25,6 +25,7 @@ import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { CURRENT_APP_VERSION } from '@/utils/version';
 import type { ActivityEntry } from './AssistantActivity';
+import { activitySummary, formatResponseDuration, scheduleChangeLines } from './chatPresentation';
 import { parseOptimizerMessage } from './optimizerMessage';
 
 export interface ChatExportMessage {
@@ -109,41 +110,12 @@ function activityText(entry: ActivityEntry): string {
   ].filter(Boolean).join('\n\n');
 }
 
-function formatCount(characters: number): string {
-  return characters >= 1000 ? `${(characters / 1000).toFixed(1)}k` : `${characters}`;
-}
-
-function formatResponseDuration(startedAt: number, completedAt: number): string {
-  const seconds = Math.max(0, completedAt - startedAt) / 1000;
-  if (seconds < 1) return '<1s';
-  if (seconds < 10) return `${seconds.toFixed(1)}s`;
-  if (seconds < 60) return `${Math.round(seconds)}s`;
-  return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
-}
-
-function activitySummary(entry: Exclude<ActivityEntry, { kind: 'response' }>): string {
-  if (entry.kind === 'reasoning') return `Reasoning · ${formatCount(entry.text.length)} characters`;
-  if (entry.kind === 'schedule-change') return 'schedule edit';
-  if (entry.state === 'running') return `${entry.name} · running`;
-  if (entry.state === 'interrupted') return `${entry.name} · interrupted`;
-  return entry.ok ? entry.name : `${entry.name} · failed`;
-}
-
 function renderScheduleChangeHtml(entry: Extract<ActivityEntry, { kind: 'schedule-change' }>): string {
-  const before = entry.before.split('\n');
-  const after = entry.after.split('\n');
-  let prefix = 0;
-  while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) prefix += 1;
-  let suffix = 0;
-  while (
-    suffix < before.length - prefix
-    && suffix < after.length - prefix
-    && before[before.length - suffix - 1] === after[after.length - suffix - 1]
-  ) suffix += 1;
-  const removed = before.slice(prefix, before.length - suffix)
+  const lines = scheduleChangeLines(entry.before, entry.after);
+  const removed = lines.removed
     .map(line => `<span class="removed">- ${escapeHtml(line)}</span>`)
     .join('');
-  const added = after.slice(prefix, after.length - suffix)
+  const added = lines.added
     .map(line => `<span class="added">+ ${escapeHtml(line)}</span>`)
     .join('');
   return `<pre class="schedule-diff">${removed}${added}</pre>`;

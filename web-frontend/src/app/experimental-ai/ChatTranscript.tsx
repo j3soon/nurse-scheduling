@@ -21,6 +21,7 @@
 
 import { FiDownload } from 'react-icons/fi';
 import { AssistantActivity } from './AssistantActivity';
+import { formatResponseDuration } from './chatPresentation';
 import type { ChatMessage } from './chatTranscript';
 import { parseOptimizerMessage } from './optimizerMessage';
 
@@ -48,14 +49,6 @@ function formatSessionExpiration(timestamp: number): string {
     second: '2-digit',
     timeZoneName: 'short',
   });
-}
-
-function formatResponseDuration(startedAt: number, completedAt: number): string {
-  const seconds = Math.max(0, completedAt - startedAt) / 1000;
-  if (seconds < 1) return '<1s';
-  if (seconds < 10) return `${seconds.toFixed(1)}s`;
-  if (seconds < 60) return `${Math.round(seconds)}s`;
-  return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
 }
 
 function formatResponseTime(timestamp: number): string {
