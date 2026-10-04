@@ -34,8 +34,9 @@ from typing import Literal
 from uuid import UUID, uuid4
 
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
 from starlette.background import BackgroundTask
 from starlette.datastructures import UploadFile
@@ -958,6 +959,12 @@ def create_app(
     app.state.sandbox_factory = sandbox_factory
     app.state.session_optimizer = session_optimizer
     app.state.session_event_broker = event_broker
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(_request: Request, exc: RequestValidationError) -> JSONResponse:
+        """Report schema failures without echoing the input, which can be binary file data."""
+        errors = [{key: error[key] for key in ("type", "loc", "msg") if key in error} for error in exc.errors()]
+        return JSONResponse(status_code=422, content={"detail": errors})
 
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:

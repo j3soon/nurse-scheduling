@@ -914,6 +914,24 @@ def test_legacy_attachment_fields_are_rejected() -> None:
     assert response.json()["detail"] == "Unexpected multipart field."
 
 
+def test_schema_errors_do_not_echo_binary_request_input() -> None:
+    client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
+    session_id = create_session(client)
+
+    response = client.post(
+        f"/sessions/{session_id}/messages/queue", files={"files": ("ward.png", PNG_BYTES, "image/png")}
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == [
+        {
+            "type": "model_attributes_type",
+            "loc": ["body"],
+            "msg": "Input should be a valid dictionary or object to extract fields from",
+        }
+    ]
+
+
 def test_arbitrary_file_is_available_in_the_disposable_sandbox() -> None:
     read_manifest = [
         ToolCallRequest((ToolCall("call_0", READ_TOOL, json.dumps({"path": "/workspace/attachments/manifest.json"})),))
