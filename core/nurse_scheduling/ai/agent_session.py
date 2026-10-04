@@ -33,10 +33,10 @@ from fastapi import HTTPException
 from .agent import Agent
 from .candidate import PendingProposal
 from .config import AiSettings
-from .context import build_provider_messages, project_history, retained_entries
+from .context import build_provider_messages, optimizer_review_prompt, project_history, retained_entries
 from .history import ChatHistory
 from .lifecycle import AgentRun, RunSnapshot, SessionRuns
-from .optimizer import OptimizerArtifact, SessionOptimizer
+from .optimizer import OptimizerArtifact, OptimizerCompletion, SessionOptimizer
 from .optimizer_tool import execute_optimizer_tool
 from .provider import ChatMessage, ProviderError, ToolCapableChatProvider
 from .sandbox import SandboxError, SandboxFactory
@@ -200,16 +200,16 @@ class AgentSession:
 
     async def review_optimizer_result(
         self,
-        prompt: str,
-        artifact: OptimizerArtifact | None,
+        completion: OptimizerCompletion,
         *,
         runtime: SessionRuntime,
         runs: SessionRuns,
     ) -> None:
         """Queue a fresh review after prior runs finish, using the latest snapshot."""
+        prompt = optimizer_review_prompt(completion)
         run = runs.start(
             self.id,
-            lambda run: self.run(run, prompt, runtime=runtime, background=True, artifact=artifact),
+            lambda run: self.run(run, prompt, runtime=runtime, background=True, artifact=completion.artifact),
             background=True,
         )
         try:

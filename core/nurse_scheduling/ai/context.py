@@ -24,7 +24,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from .config import DEFAULT_MAX_HISTORY_CHARS
-from .optimizer import WORKSPACE_OPTIMIZER_RESULT
+from .optimizer import WORKSPACE_OPTIMIZER_RESULT, OptimizerCompletion
 from .provider import (
     ChatMessage,
     assistant_tool_call_message,
@@ -61,6 +61,24 @@ PROPOSAL_DECISION_HISTORY: dict[ProposalDecision, str] = {
     "invalid": PROPOSAL_INVALID_HISTORY,
 }
 ABORTED_RESPONSE_HISTORY = "[This response was interrupted before completion. Its workspace changes were discarded.]"
+
+
+def optimizer_review_prompt(completion: OptimizerCompletion) -> str:
+    """Describe a finished job for a new review run without embedding its workbook."""
+    result_data = {
+        "job_id": completion.job_id,
+        "state": completion.state,
+        "source_sha256": completion.source_sha256,
+        "result": completion.result,
+        "error": completion.error,
+        "download_available": completion.artifact is not None,
+        "artifact_error": completion.artifact_error,
+    }
+    result_path = WORKSPACE_OPTIMIZER_RESULT if completion.artifact is not None else "unavailable"
+    return (
+        f"Optimizer job finished. Result workbook: {result_path}.\n"
+        f"Optimizer result JSON:\n{json.dumps(result_data, ensure_ascii=False)}"
+    )
 
 
 def retained_entries(entries: Sequence[AgentMessage]) -> list[AgentMessage]:

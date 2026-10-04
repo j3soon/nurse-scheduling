@@ -30,6 +30,7 @@ from nurse_scheduling.ai.app import OWNER_COOKIE, SessionStore
 from nurse_scheduling.ai.candidate import PendingProposal
 from nurse_scheduling.ai.history import ChatHistory
 from nurse_scheduling.ai.lifecycle import SessionRuns
+from nurse_scheduling.ai.optimizer import OptimizerCompletion
 from nurse_scheduling.ai.provider import ProviderError, TextDelta
 from nurse_scheduling.ai.session_event_stream import SessionEventStream
 from nurse_scheduling.ai.transcript import AssistantMessage, UserMessage
@@ -80,9 +81,9 @@ def test_retirement_cancels_the_owner_and_queued_followups_without_recreating_ev
         store = app.state.session_store
         session = store.create("owner", schedule_yaml())
         callback = app.state.session_optimizer._on_completion
-        active = asyncio.create_task(callback(session.id, "Review", None))
+        active = asyncio.create_task(callback(session.id, OptimizerCompletion("job-1", "completed", "source")))
         await started.wait()
-        queued = asyncio.create_task(callback(session.id, "Another result", None))
+        queued = asyncio.create_task(callback(session.id, OptimizerCompletion("job-1", "completed", "source")))
         await asyncio.sleep(0)
         session.expires_at = 0
         with pytest.raises(HTTPException):
@@ -270,7 +271,11 @@ def test_stop_during_history_start_waits_for_history_then_releases_the_session(m
         ) as client:
             session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
             if background:
-                running = asyncio.create_task(app.state.session_optimizer._on_completion(session_id, "Review", None))
+                running = asyncio.create_task(
+                    app.state.session_optimizer._on_completion(
+                        session_id, OptimizerCompletion("job-1", "completed", "source")
+                    )
+                )
             else:
                 running = asyncio.create_task(client.post(f"/sessions/{session_id}/messages", json={"message": "Ask"}))
             await entered.wait()
@@ -308,7 +313,9 @@ def test_terminal_background_event_is_published_only_after_history_cleanup(monke
             provider=FakeProvider([[ProviderError("private failure")]]) if failed else FakeProvider(),
         )
         session = app.state.session_store.create("owner", schedule_yaml())
-        running = asyncio.create_task(app.state.session_optimizer._on_completion(session.id, "Review", None))
+        running = asyncio.create_task(
+            app.state.session_optimizer._on_completion(session.id, OptimizerCompletion("job-1", "completed", "source"))
+        )
         await finalizing.wait()
         assert app.state.runs.busy(session.id)
         assert not any(
@@ -346,7 +353,9 @@ def test_stop_during_completed_history_write_keeps_completed_outcome(monkeypatch
         monkeypatch.setattr(ChatHistory, "write", write)
         app = create_test_app(settings=make_settings(history_postgres_url="test"), provider=FakeProvider())
         session = app.state.session_store.create("owner", schedule_yaml())
-        running = asyncio.create_task(app.state.session_optimizer._on_completion(session.id, "Review", None))
+        running = asyncio.create_task(
+            app.state.session_optimizer._on_completion(session.id, OptimizerCompletion("job-1", "completed", "source"))
+        )
 
         await asyncio.wait_for(finalizing.wait(), timeout=1)
         assert [type(entry) for entry in session.transcript] == [UserMessage, AssistantMessage]

@@ -27,8 +27,10 @@ from collections.abc import AsyncIterator
 import httpx
 import pytest
 
+from nurse_scheduling.ai.context import optimizer_review_prompt
 from nurse_scheduling.ai.optimizer import (
     OptimizerArtifact,
+    OptimizerCompletion,
     OptimizerError,
     OptimizerJobPayload,
     OptimizerResultUnavailable,
@@ -429,7 +431,7 @@ def test_a_rejected_submission_reports_the_reason_to_the_model() -> None:
         backend = FakeOptimizerBackend()
         backend.submit_error = True
 
-        async def on_completion(_session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+        async def on_completion(_session_id: str, completion: OptimizerCompletion) -> None:
             return None
 
         optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
@@ -447,7 +449,7 @@ def test_invalid_start_timeout_is_rejected_before_submission(timeout: object) ->
     async def scenario() -> None:
         backend = FakeOptimizerBackend()
 
-        async def on_completion(_session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+        async def on_completion(_session_id: str, completion: OptimizerCompletion) -> None:
             return None
 
         optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
@@ -472,12 +474,12 @@ def test_start_returns_immediately_and_completion_wakes_the_agent() -> None:
                 return payload
 
         backend = ProvenanceBackend()
-        completions: list[tuple[str, str, OptimizerArtifact | None]] = []
+        completions: list[tuple[str, OptimizerCompletion]] = []
         updates: list[tuple[str, dict[str, object]]] = []
         completed = asyncio.Event()
 
-        async def on_completion(session_id: str, prompt: str, artifact: OptimizerArtifact | None) -> None:
-            completions.append((session_id, prompt, artifact))
+        async def on_completion(session_id: str, completion: OptimizerCompletion) -> None:
+            completions.append((session_id, completion))
             completed.set()
 
         async def on_update(session_id: str, update: dict[str, object]) -> None:
@@ -509,11 +511,15 @@ def test_start_returns_immediately_and_completion_wakes_the_agent() -> None:
         limited = await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')
 
         assert completions[0][0] == "session-1"
-        assert '"score": 17' in completions[0][1]
-        assert "/workspace/optimizer-results/optimized-schedule.xlsx" in completions[0][1]
-        assert repr(WORKBOOK_BYTES) not in completions[0][1]
-        assert completions[0][2] is not None
-        assert completions[0][2].content == WORKBOOK_BYTES
+        completion = completions[0][1]
+        assert completion.state == "completed"
+        assert completion.result == {"outcome": "feasible", "score": 17}
+        assert completion.artifact is not None
+        assert completion.artifact.content == WORKBOOK_BYTES
+        prompt = optimizer_review_prompt(completion)
+        assert '"score": 17' in prompt
+        assert "/workspace/optimizer-results/optimized-schedule.xlsx" in prompt
+        assert repr(WORKBOOK_BYTES) not in prompt
         assert [update[1]["state"] for update in updates] == ["running", "completed"]
         assert updates[-1][1]["request"] == {"solver": "ortools/cp-sat", "timeout_seconds": 30}
         assert updates[-1][1]["backend"] == {"url": "http://optimizer:8000", "app_version": "v0.4.3"}
@@ -552,7 +558,8 @@ def test_progress_reaches_browser_updates_without_entering_the_agent_prompt() ->
             if "progress" in update:
                 progress_seen.set()
 
-        async def on_completion(_session_id: str, prompt: str, _artifact: OptimizerArtifact | None) -> None:
+        async def on_completion(_session_id: str, completion: OptimizerCompletion) -> None:
+            prompt = optimizer_review_prompt(completion)
             prompts.append(prompt)
             completed.set()
 
@@ -584,7 +591,8 @@ def test_session_optimizer_restores_named_people_in_download_and_attached_result
         completed = asyncio.Event()
         attached_result: OptimizerArtifact | None = None
 
-        async def on_completion(_session_id: str, _prompt: str, artifact: OptimizerArtifact | None) -> None:
+        async def on_completion(_session_id: str, completion: OptimizerCompletion) -> None:
+            artifact = completion.artifact
             nonlocal attached_result
             attached_result = artifact
             completed.set()
@@ -612,7 +620,9 @@ def test_oversized_restored_result_is_not_attached_or_downloadable() -> None:
         completed = asyncio.Event()
         received: list[tuple[str, OptimizerArtifact | None]] = []
 
-        async def on_completion(_session_id: str, prompt: str, artifact: OptimizerArtifact | None) -> None:
+        async def on_completion(_session_id: str, completion: OptimizerCompletion) -> None:
+            prompt = optimizer_review_prompt(completion)
+            artifact = completion.artifact
             received.append((prompt, artifact))
             completed.set()
 
@@ -642,7 +652,7 @@ def test_finish_now_controls_the_active_job_and_a_second_run_waits_for_terminal_
         backend = FakeOptimizerBackend()
         completed = asyncio.Event()
 
-        async def on_completion(_session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+        async def on_completion(_session_id: str, completion: OptimizerCompletion) -> None:
             completed.set()
 
         optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
@@ -665,7 +675,7 @@ def test_completed_artifacts_are_evicted_to_bound_process_memory() -> None:
         backend = FakeOptimizerBackend()
         completions = asyncio.Queue[None]()
 
-        async def on_completion(_session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+        async def on_completion(_session_id: str, completion: OptimizerCompletion) -> None:
             completions.put_nowait(None)
 
         optimizer = SessionOptimizer(
@@ -725,7 +735,7 @@ def test_an_omitted_timeout_submits_the_advertised_default() -> None:
     async def scenario() -> None:
         backend = FakeOptimizerBackend()
 
-        async def on_completion(_session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+        async def on_completion(_session_id: str, completion: OptimizerCompletion) -> None:
             return None
 
         optimizer = SessionOptimizer(
@@ -748,7 +758,7 @@ def test_a_finished_run_without_a_workbook_hides_the_previous_result() -> None:
         backend = FakeOptimizerBackend()
         completions = asyncio.Queue[None]()
 
-        async def on_completion(_session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+        async def on_completion(_session_id: str, completion: OptimizerCompletion) -> None:
             completions.put_nowait(None)
 
         optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
@@ -776,7 +786,7 @@ def test_finish_now_does_not_revive_a_job_that_already_completed() -> None:
         backend.finish_gate = asyncio.Event()
         completions = asyncio.Queue[None]()
 
-        async def on_completion(_session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+        async def on_completion(_session_id: str, completion: OptimizerCompletion) -> None:
             completions.put_nowait(None)
 
         optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
@@ -809,7 +819,7 @@ def test_finish_now_waits_for_workbook_before_terminal_update() -> None:
         async def on_update(_session_id: str, update: dict[str, object]) -> None:
             updates.append(update)
 
-        async def on_completion(_session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+        async def on_completion(_session_id: str, completion: OptimizerCompletion) -> None:
             completed.set()
 
         optimizer = SessionOptimizer(
@@ -843,7 +853,7 @@ def test_immediately_completed_submission_waits_for_workbook_before_terminal_upd
         async def on_update(_session_id: str, update: dict[str, object]) -> None:
             updates.append(update)
 
-        async def on_completion(_session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+        async def on_completion(_session_id: str, completion: OptimizerCompletion) -> None:
             completed.set()
 
         optimizer = SessionOptimizer(
@@ -868,7 +878,8 @@ def test_a_brief_status_outage_does_not_end_a_running_job() -> None:
         completions: list[str] = []
         completed = asyncio.Event()
 
-        async def on_completion(_session_id: str, prompt: str, _artifact: OptimizerArtifact | None) -> None:
+        async def on_completion(_session_id: str, completion: OptimizerCompletion) -> None:
+            prompt = optimizer_review_prompt(completion)
             completions.append(prompt)
             completed.set()
 
@@ -890,7 +901,8 @@ def test_a_sustained_status_outage_does_not_abandon_the_remote_job() -> None:
         completions: list[str] = []
         completed = asyncio.Event()
 
-        async def on_completion(_session_id: str, prompt: str, _artifact: OptimizerArtifact | None) -> None:
+        async def on_completion(_session_id: str, completion: OptimizerCompletion) -> None:
+            prompt = optimizer_review_prompt(completion)
             completions.append(prompt)
             completed.set()
 
@@ -923,7 +935,7 @@ def test_a_slow_submission_does_not_block_other_sessions() -> None:
         backend = FakeOptimizerBackend()
         backend.submit_gate = asyncio.Event()
 
-        async def on_completion(_session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+        async def on_completion(_session_id: str, completion: OptimizerCompletion) -> None:
             return None
 
         optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
@@ -946,7 +958,7 @@ def test_a_cancelled_start_returns_the_reserved_run() -> None:
         backend = FakeOptimizerBackend()
         backend.submit_gate = asyncio.Event()
 
-        async def on_completion(_session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+        async def on_completion(_session_id: str, completion: OptimizerCompletion) -> None:
             return None
 
         optimizer = SessionOptimizer(
@@ -973,7 +985,7 @@ def test_a_rejected_submission_returns_the_reserved_run() -> None:
         backend = FakeOptimizerBackend()
         backend.submit_error = True
 
-        async def on_completion(_session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+        async def on_completion(_session_id: str, completion: OptimizerCompletion) -> None:
             return None
 
         optimizer = SessionOptimizer(
@@ -996,7 +1008,7 @@ def test_a_retired_session_releases_its_runs_and_retained_workbooks() -> None:
         backend = FakeOptimizerBackend()
         completions = asyncio.Queue[None]()
 
-        async def on_completion(_session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+        async def on_completion(_session_id: str, completion: OptimizerCompletion) -> None:
             completions.put_nowait(None)
 
         optimizer = SessionOptimizer(
@@ -1029,7 +1041,7 @@ def test_retirement_during_submission_does_not_restore_session_state() -> None:
         completions: list[str] = []
         updates: list[dict[str, object]] = []
 
-        async def on_completion(session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+        async def on_completion(session_id: str, completion: OptimizerCompletion) -> None:
             completions.append(session_id)
 
         async def on_update(_session_id: str, update: dict[str, object]) -> None:
@@ -1059,7 +1071,7 @@ def test_retirement_cancels_a_running_remote_job() -> None:
         backend = FakeOptimizerBackend()
         completions: list[str] = []
 
-        async def on_completion(session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+        async def on_completion(session_id: str, completion: OptimizerCompletion) -> None:
             completions.append(session_id)
 
         optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
@@ -1092,7 +1104,7 @@ def test_retired_session_waits_for_remote_cancellation_before_cleanup() -> None:
         backend = CancellingBackend()
         completions: list[str] = []
 
-        async def on_completion(session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+        async def on_completion(session_id: str, completion: OptimizerCompletion) -> None:
             completions.append(session_id)
 
         optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
@@ -1117,7 +1129,7 @@ def test_retirement_during_result_download_does_not_retain_or_announce_it() -> N
         backend.result_gate = asyncio.Event()
         completions: list[str] = []
 
-        async def on_completion(session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+        async def on_completion(session_id: str, completion: OptimizerCompletion) -> None:
             completions.append(session_id)
 
         optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
@@ -1141,7 +1153,7 @@ def test_session_limit_preserves_a_live_sessions_completed_result() -> None:
         backend = FakeOptimizerBackend()
         completed = asyncio.Event()
 
-        async def on_completion(_session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+        async def on_completion(_session_id: str, completion: OptimizerCompletion) -> None:
             completed.set()
 
         optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion, max_sessions=1)

@@ -21,7 +21,6 @@
 
 import asyncio
 import hashlib
-import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
@@ -119,7 +118,20 @@ class OptimizerArtifact:
     media_type: str
 
 
-CompletionCallback = Callable[[str, str, OptimizerArtifact | None], Awaitable[None]]
+@dataclass(frozen=True)
+class OptimizerCompletion:
+    """Terminal job data and the workbook retained for its result review."""
+
+    job_id: str
+    state: str
+    source_sha256: str
+    result: dict[str, Any] | None = None
+    error: dict[str, Any] | None = None
+    artifact_error: str | None = None
+    artifact: OptimizerArtifact | None = None
+
+
+CompletionCallback = Callable[[str, OptimizerCompletion], Awaitable[None]]
 UpdateCallback = Callable[[str, OptimizerUpdate], Awaitable[None]]
 
 
@@ -457,26 +469,19 @@ class SessionOptimizer:
                 logger.warning("Optimizer result read failed job_id=%s error=%s", job.id, exc)
                 artifact_error = str(exc)
         await self._delete_retired(job)
-        if self._jobs.get(job.id) is not job:
-            return
-        result_data = {
-            "job_id": job.id,
-            "state": job.payload.state,
-            "source_sha256": job.source_sha256,
-            "result": job.payload.result,
-            "error": job.payload.error,
-            "download_available": job.artifact is not None,
-            "artifact_error": artifact_error,
-        }
         await self._notify_update(job)
-        result_path = WORKSPACE_OPTIMIZER_RESULT if job.artifact is not None else "unavailable"
-        prompt = (
-            f"Optimizer job finished. Result workbook: {result_path}.\n"
-            f"Optimizer result JSON:\n{json.dumps(result_data, ensure_ascii=False)}"
-        )
         if self._jobs.get(job.id) is not job:
             return
-        await self._on_completion(job.session_id, prompt, job.artifact)
+        completion = OptimizerCompletion(
+            job_id=job.id,
+            state=job.payload.state,
+            source_sha256=job.source_sha256,
+            result=job.payload.result,
+            error=job.payload.error,
+            artifact_error=artifact_error,
+            artifact=job.artifact,
+        )
+        await self._on_completion(job.session_id, completion)
 
     async def _retain_artifact(self, job: SessionOptimization, artifact: OptimizerArtifact) -> None:
         if self._jobs.get(job.id) is not job:

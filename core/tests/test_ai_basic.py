@@ -64,7 +64,7 @@ from nurse_scheduling.ai.context import (
     project_history,
 )
 from nurse_scheduling.ai.history import ChatHistory
-from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL, OptimizerArtifact, OptimizerJobPayload
+from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL, OptimizerArtifact, OptimizerCompletion, OptimizerJobPayload
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.pi.read import READ_TOOL
 from nurse_scheduling.ai.provider import (
@@ -744,7 +744,9 @@ def test_stop_cancels_background_turn_waiting_behind_foreground_turn() -> None:
             )
             await asyncio.wait_for(foreground_started.wait(), timeout=1)
             background = asyncio.create_task(
-                app.state.session_optimizer._on_completion(session_id, "Optimizer finished", None)
+                app.state.session_optimizer._on_completion(
+                    session_id, OptimizerCompletion("job-1", "completed", "source")
+                )
             )
             await asyncio.sleep(0)
 

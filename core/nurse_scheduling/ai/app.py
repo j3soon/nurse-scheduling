@@ -44,8 +44,8 @@ from .config import AiSettings, validate_ai_auth_credentials
 from .history import ChatHistory, stop_maintenance
 from .lifecycle import TERMINAL_EVENTS, AgentRun, SessionRuns
 from .optimizer import (
-    OptimizerArtifact,
     OptimizerBackend,
+    OptimizerCompletion,
     OptimizerResultUnavailable,
     SessionOptimizer,
 )
@@ -359,11 +359,11 @@ def create_app(
             settings.optimizer_max_result_bytes,
         )
 
-    async def optimizer_completed(session_id: str, prompt: str, artifact: OptimizerArtifact | None) -> None:
+    async def optimizer_completed(session_id: str, completion: OptimizerCompletion) -> None:
         session = store.get(session_id)
         if session is None:
             return
-        await session.review_optimizer_result(prompt, artifact, runtime=runtime, runs=runs)
+        await session.review_optimizer_result(completion, runtime=runtime, runs=runs)
 
     async def optimizer_updated(session_id: str, update: OptimizerUpdate) -> None:
         session = store.get(session_id)
