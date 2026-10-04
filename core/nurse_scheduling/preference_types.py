@@ -40,21 +40,25 @@ def staffing_expression(shift_at, n_people, compiled_preference, day, group):
 
 
 def iter_succession_patterns(compiled_preference, histories, n_days):
-    """Yield the same date windows and history suffixes used by the optimizer."""
+    """Yield valid candidate date succession windows and the corresponding history suffixes."""
     for p in compiled_preference.people:
         history = histories[p]
         pattern = compiled_preference.pattern
+        # For all windows in scheduled date range, and in the preference's specified date set
         for d_begin in range(n_days - len(pattern) + 1):
             if all(d in compiled_preference.date_set for d in range(d_begin, d_begin + len(pattern))):
                 yield p, d_begin, 0, pattern
         # Patterns crossing history include day 0, the first scheduled date.
         # Only their scheduled positions must belong to the selected dates.
+        # Note that the succession patterns are not applied to windows entirely inside history.
         if history:
             for suffix_len in range(1, min(len(pattern) - 1, len(history)) + 1):
-                remaining = pattern[suffix_len:]
+                remaining = pattern[suffix_len:]  # The remaining patterns (excluding history matches) for scheduled date range matching
                 if len(remaining) > n_days or not all(d in compiled_preference.date_set for d in range(len(remaining))):
+                    # Ignore non-valid windows with dates outside the preference's specified date set
                     continue
-                prefix = pattern[:suffix_len]
+                prefix = pattern[:suffix_len]  # pattern prefix for checking history match
+                # Only yield windows where the pattern prefix matches history suffixes
                 if all(
                     shift in element.shift_types for shift, element in zip(history[-suffix_len:], prefix, strict=True)
                 ):
