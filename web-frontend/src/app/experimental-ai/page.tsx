@@ -1858,8 +1858,10 @@ export default function ExperimentalAiPage() {
     }
   };
 
+  // The Session files panel is fixed on the right at xl, so the chat and composer reserve
+  // equal space on both sides to stay centered without overlapping it.
   return (
-    <main className={`mx-auto flex min-h-[calc(100dvh-3.5rem)] max-w-5xl flex-col px-4 pb-36 pt-8 sm:px-6 ${fileCapability.retained ? 'xl:mr-72' : ''}`}>
+    <main className={`mx-auto flex min-h-[calc(100dvh-3.5rem)] max-w-5xl flex-col px-4 pb-36 pt-8 sm:px-6 ${fileCapability.retained ? 'xl:max-w-[min(64rem,calc(100vw-36rem))]' : ''}`}>
       <div className="mb-6">
         <div className="mb-2 flex items-center gap-3">
           <h1 className="text-3xl font-bold text-gray-900">Schedule AI Chat</h1>
@@ -2260,7 +2262,7 @@ export default function ExperimentalAiPage() {
         onDragLeave={leaveAttachmentDropZone}
         onDrop={dropAttachments}
         aria-label="Message composer"
-        className={`fixed inset-x-10 bottom-0 z-30 mx-auto max-w-5xl space-y-3 ${fileCapability.retained ? 'xl:right-72' : ''} bg-gradient-to-t from-white via-white to-white/90 px-4 pb-4 pt-3 sm:px-6 ${
+        className={`fixed inset-x-10 bottom-0 z-30 mx-auto max-w-5xl space-y-3 ${fileCapability.retained ? 'xl:inset-x-72' : ''} bg-gradient-to-t from-white via-white to-white/90 px-4 pb-4 pt-3 sm:px-6 ${
           isDraggingFiles ? 'rounded-xl ring-2 ring-blue-400 ring-offset-2' : ''
         }`}
       >

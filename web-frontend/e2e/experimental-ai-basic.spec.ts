@@ -597,6 +597,19 @@ test('places uploads beside desktop chat and below mobile controls and allows re
   const panelBox = (await panel.boundingBox())!;
   const chatBox = (await page.getByRole('region', { name: 'Chat messages' }).boundingBox())!;
   expect(panelBox.x).toBeGreaterThan(chatBox.x + chatBox.width);
+  for (const width of [1440, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    const pageCenter = await page.evaluate(() => document.documentElement.clientWidth / 2);
+    const fixedPanel = (await panel.boundingBox())!;
+    for (const box of [
+      (await page.getByRole('region', { name: 'Chat messages' }).boundingBox())!,
+      (await page.locator('form', { has: page.getByRole('textbox', { name: 'Ask about the current schedule' }) }).boundingBox())!,
+    ]) {
+      expect(Math.abs(box.x + box.width / 2 - pageCenter)).toBeLessThanOrEqual(2);
+      expect(box.x + box.width).toBeLessThanOrEqual(fixedPanel.x);
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.screenshot({ path: '../artifacts/uploads-layout/desktop.png' });
   await page.setViewportSize({ width: 390, height: 844 });
   const mobilePanelBox = (await panel.boundingBox())!;
