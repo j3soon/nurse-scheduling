@@ -141,10 +141,10 @@ def test_provider_http_error_bounds_untrusted_response_excerpt(
     assert len(excerpt) == provider_module.MAX_PROVIDER_ERROR_EXCERPT_CHARS
 
 
-def _sse_body(*chunks: dict) -> str:
+def _sse_body(*chunks: object, include_done: bool = True) -> str:
     """Render provider chunks as one server-sent event stream."""
     events = "".join(f"data: {json.dumps(chunk)}\n\n" for chunk in chunks)
-    return events + "data: [DONE]\n\n"
+    return events + ("data: [DONE]\n\n" if include_done else "")
 
 
 def _delta_chunk(delta: dict) -> dict:
@@ -400,11 +400,37 @@ def test_requests_and_streams_token_usage_when_enabled(monkeypatch: pytest.Monke
 
 
 def test_skips_a_choiceless_chunk_that_carries_no_usage(monkeypatch: pytest.MonkeyPatch) -> None:
-    body = _sse_body({"choices": []}, _delta_chunk({"content": "Answer"}))
+    body = _sse_body({"choices": []}, _delta_chunk({}), _delta_chunk({"content": "Answer"}))
 
     events = _events(_streaming_provider(monkeypatch, body))
 
     assert events == [TextDelta("Answer"), ResponseEnd(None)]
+
+
+@pytest.mark.parametrize(
+    "chunk",
+    [
+        pytest.param(None, id="null-event"),
+        pytest.param([], id="array-event"),
+        pytest.param({"choices": {}}, id="object-choices"),
+        pytest.param({"choices": [None]}, id="null-choice"),
+        pytest.param({"choices": [[]]}, id="array-choice"),
+        pytest.param({"choices": [{"delta": None}]}, id="null-delta"),
+        pytest.param({"choices": [{"delta": []}]}, id="array-delta"),
+    ],
+)
+def test_reports_malformed_chunks_as_provider_errors(monkeypatch: pytest.MonkeyPatch, chunk: object) -> None:
+    requests: list[httpx.Request] = []
+    provider = _streaming_provider(monkeypatch, _sse_body(_delta_chunk({"content": "Partial"}), chunk), requests)
+
+    async def scenario() -> None:
+        stream = provider.stream_events([{"role": "user", "content": "Question"}])
+        assert await anext(stream) == TextDelta("Partial")
+        with pytest.raises(ProviderError, match="invalid stream"):
+            await _collect(stream)
+
+    asyncio.run(scenario())
+    assert len(requests) == 1
 
 
 def test_reports_the_finish_reason_after_tool_calls(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -416,6 +442,84 @@ def test_reports_the_finish_reason_after_tool_calls(monkeypatch: pytest.MonkeyPa
     events = _events(_streaming_provider(monkeypatch, body))
 
     assert events == [ToolCallRequest((ToolCall("call_1", "bash", "{"),)), ResponseEnd("length")]
+
+
+@pytest.mark.parametrize("with_tool_call", [False, True], ids=["text-only", "parseable-tool-call"])
+def test_premature_eof_preserves_partial_text_without_releasing_tool_calls(
+    monkeypatch: pytest.MonkeyPatch, with_tool_call: bool
+) -> None:
+    requests: list[httpx.Request] = []
+    delta: dict = {"content": "Partial"}
+    if with_tool_call:
+        delta["tool_calls"] = [
+            {"index": 0, "id": "call_1", "function": {"name": "bash", "arguments": '{"command":"echo ok"}'}}
+        ]
+    provider = _streaming_provider(monkeypatch, _sse_body(_delta_chunk(delta), include_done=False), requests)
+
+    async def scenario() -> None:
+        stream = provider.stream_events([{"role": "user", "content": "Question"}])
+        assert await anext(stream) == TextDelta("Partial")
+        with pytest.raises(ProviderError, match="ended before completion"):
+            await anext(stream)
+
+    asyncio.run(scenario())
+    assert len(requests) == 1
+
+
+def test_empty_provider_stream_fails_without_retrying(monkeypatch: pytest.MonkeyPatch) -> None:
+    requests: list[httpx.Request] = []
+
+    with pytest.raises(ProviderError, match="ended before completion"):
+        _events(_streaming_provider(monkeypatch, "", requests))
+
+    assert len(requests) == 1
+
+
+@pytest.mark.parametrize("reason", ["content_filter", "network_error", "unexpected_reason"])
+def test_failed_finish_reasons_preserve_partial_text_without_releasing_tool_calls(
+    monkeypatch: pytest.MonkeyPatch, reason: str
+) -> None:
+    requests: list[httpx.Request] = []
+    body = _sse_body(
+        _delta_chunk(
+            {
+                "content": "Partial",
+                "tool_calls": [{"index": 0, "id": "call_1", "function": {"name": "bash", "arguments": "{}"}}],
+            }
+        ),
+        {"choices": [{"delta": {}, "finish_reason": reason}]},
+    )
+    provider = _streaming_provider(monkeypatch, body, requests)
+
+    async def scenario() -> None:
+        stream = provider.stream_events([{"role": "user", "content": "Question"}])
+        assert await anext(stream) == TextDelta("Partial")
+        with pytest.raises(ProviderError, match=f"unsuccessful finish reason: {reason}"):
+            await anext(stream)
+
+    asyncio.run(scenario())
+    assert len(requests) == 1
+
+
+@pytest.mark.parametrize(
+    ("reason", "with_tool_call"),
+    [("stop", False), ("end", False), ("tool_calls", True), ("function_call", True), ("length", True)],
+)
+def test_accepts_supported_finish_reasons_without_a_done_marker(
+    monkeypatch: pytest.MonkeyPatch, reason: str, with_tool_call: bool
+) -> None:
+    delta: dict = {"content": "Answer"}
+    if with_tool_call:
+        delta["tool_calls"] = [{"index": 0, "id": "call_1", "function": {"name": "bash", "arguments": "{}"}}]
+    body = _sse_body(_delta_chunk(delta), {"choices": [{"delta": {}, "finish_reason": reason}]}, include_done=False)
+
+    events = _events(_streaming_provider(monkeypatch, body))
+
+    expected: list = [TextDelta("Answer")]
+    if with_tool_call:
+        expected.append(ToolCallRequest((ToolCall("call_1", "bash", "{}"),)))
+    expected.append(ResponseEnd(reason))
+    assert events == expected
 
 
 def test_does_not_request_token_usage_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
