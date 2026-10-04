@@ -32,7 +32,8 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from ..sentry import capture_invalid_request, init_sentry, tag_client_address
+from ..sentry import SentryClientAddressMiddleware, capture_invalid_request, init_sentry
+from ..service_logging import configure_service_logging
 from .api.optimize import events_router as optimize_events_router
 from .api.optimize import router as optimize_router
 from .auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry, create_stream_auth_dependency
@@ -73,13 +74,8 @@ ORIGIN_REGEX = r"^(http://(localhost|127\.0\.0\.1):[0-9]+|https://([a-zA-Z0-9-]+
 
 # Keep API output focused on server behavior. Solver progress is delivered to
 # clients through job events and remains available from the CLI's verbose logs.
-logging.basicConfig(
-    level=logging.WARNING,
-    format="%(asctime)s %(levelname)s %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 server_logger = logging.getLogger("nurse_scheduling.server")
-server_logger.setLevel(logging.INFO)
+configure_service_logging(server_logger)
 
 
 def get_app_version() -> str:
@@ -299,11 +295,7 @@ def create_app(
             await run_in_threadpool(capture_invalid_request, request, exc.status_code, exc.detail)
         return await http_exception_handler(request, exc)
 
-    @app.middleware("http")
-    async def tag_sentry_client_address(request: Request, call_next):
-        """Record the connection address on every request's events."""
-        tag_client_address(request)
-        return await call_next(request)
+    app.add_middleware(SentryClientAddressMiddleware)
 
     # Added before CORS so the CORS layer stays outermost and still decorates a
     # rejected oversize request.

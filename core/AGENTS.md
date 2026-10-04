@@ -59,6 +59,12 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   Reading the imports is not enough, because transitive-only packages such as
   the `jinja2` that `pandas.DataFrame.style` needs have no import statement.
 
+## Service Monitoring
+- Initialize Sentry with the application build version, not the API version.
+  Standalone services use `version.get_app_version()` and keep a distinct `app`
+  tag. Use `configure_service_logging` for the shared service logging defaults.
+  Short-lived services flush Sentry in a `finally` block before exit.
+
 ## Server Job Processes
 - `run_optimization_process` owns its optimization process tree through
   `server/jobs/process_tree.py`. Tree cleanup is required for PuLP command-line

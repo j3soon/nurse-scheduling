@@ -44,8 +44,9 @@ from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ..loader import _load_yaml
-from ..sentry import init_sentry
+from ..sentry import SentryClientAddressMiddleware, init_sentry
 from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry
+from ..service_logging import configure_service_logging
 from ..version import get_app_version
 from .agent import AgentProposal, AgentReasoning, AgentSteering, AgentText, AgentToolStart, AgentToolUse
 from .background import (
@@ -846,7 +847,9 @@ def create_app(
     optimizer_backend: OptimizerBackend | None = None,
 ) -> FastAPI:
     """Construct the independently deployable AI application."""
-    init_sentry(API_VERSION, app="ai-backend")
+    configure_service_logging(logger)
+    app_version = get_app_version()
+    init_sentry(app_version, app="ai-backend")
     settings = settings or AiSettings.from_env()
     auth_token, auth_tokens = validate_ai_auth_credentials(
         settings.auth_token,
@@ -1003,9 +1006,11 @@ def create_app(
     app.state.turn_locks = turn_locks
     app.state.provider = provider
     app.state.sandbox_factory = sandbox_factory
-    app.state.app_version = get_app_version()
+    app.state.app_version = app_version
     app.state.session_optimizer = session_optimizer
     app.state.session_event_broker = event_broker
+
+    app.add_middleware(SentryClientAddressMiddleware)
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(_request: Request, exc: RequestValidationError) -> JSONResponse:

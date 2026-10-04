@@ -27,6 +27,7 @@ from urllib.parse import unquote_plus
 
 from fastapi import Request
 from fastapi.encoders import jsonable_encoder
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .anonymize_scheduling_data import anonymize_scheduling_data_in_yaml
 from .server.auth import describe_stream_token, extract_bearer_token
@@ -165,6 +166,18 @@ def tag_client_address(request: Request) -> None:
     except Exception:
         # This runs for every request, so a reporting failure must never fail one.
         sentry_logger.warning("[sentry:report] could not record a connection address", exc_info=True)
+
+
+class SentryClientAddressMiddleware:
+    """Tag HTTP requests without wrapping or buffering streamed responses."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http":
+            tag_client_address(Request(scope))
+        await self.app(scope, receive, send)
 
 
 def report_outage_recovery(operation: str, failures: int) -> None:

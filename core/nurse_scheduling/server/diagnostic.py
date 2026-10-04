@@ -70,6 +70,7 @@ from uuid import uuid4
 import httpx
 
 from ..sentry import flush_sentry, init_sentry
+from ..service_logging import configure_service_logging
 from ..version import get_app_version
 from .auth import AUTH_TOKEN_ENV_NAME
 
@@ -1400,7 +1401,7 @@ def _run(argv: list[str] | None = None) -> int:
 def main(argv: list[str] | None = None) -> int:
     """Run diagnostics with process-specific Sentry monitoring."""
     init_sentry(get_app_version(), app="diagnostic")
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    configure_service_logging(DIAGNOSTIC_LOGGER)
     try:
         return _run(argv)
     finally:

@@ -171,9 +171,21 @@ def test_application_initializes_sentry_for_ai_service(monkeypatch):
     calls = []
     monkeypatch.setattr("nurse_scheduling.ai.app.init_sentry", lambda version, *, app: calls.append((version, app)))
 
-    create_test_app(settings=make_settings(), provider=FakeProvider())
+    monkeypatch.setattr("nurse_scheduling.ai.app.get_app_version", lambda: "v0.2.0-572-gbecfc27fb644")
+    app = create_test_app(settings=make_settings(), provider=FakeProvider())
 
-    assert calls == [("0.2.0", "ai-backend")]
+    assert calls == [(app.state.app_version, "ai-backend")]
+    assert app.state.app_version == "v0.2.0-572-gbecfc27fb644"
+    assert app.version == "0.2.0"
+
+
+def test_application_tags_sentry_request_address(monkeypatch):
+    requests = []
+    monkeypatch.setattr("nurse_scheduling.sentry.tag_client_address", requests.append)
+    client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
+
+    assert client.get("/health").status_code == 200
+    assert [request.url.path for request in requests] == ["/health"]
 
 
 def test_application_lifespan_runs_sandbox_cleanup_supervision():
