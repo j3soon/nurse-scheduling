@@ -24,7 +24,7 @@ import json
 import pytest
 from fastapi import HTTPException
 
-from nurse_scheduling.ai.app import SessionStore
+from nurse_scheduling.ai.app import SessionStore, _unique_filename
 from nurse_scheduling.ai.provider import TextDelta, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxFactory
 from nurse_scheduling.ai.sandbox_agent import SandboxAttachment
@@ -72,32 +72,51 @@ def test_followup_hydrates_retained_upload_and_removal_stops_hydration():
         assert preflight.status_code == 200
 
 
-def test_upload_replacement_limits_removal_and_expiry_reclaim_bytes():
-    store = SessionStore(make_settings(max_attachment_files=1, max_session_bytes=1000))
+def test_duplicate_filename_is_numbered_instead_of_replaced():
+    taken = {"ward.csv", "ward (1).csv", "README", ".env", "a.tar.gz"}
+    assert _unique_filename("new.csv", taken) == "new.csv"
+    assert _unique_filename("ward.csv", taken) == "ward (2).csv"
+    assert _unique_filename("README", taken) == "README (1)"
+    assert _unique_filename(".env", taken) == ".env (1)"
+    assert _unique_filename("a.tar.gz", taken) == "a.tar (1).gz"
+
+
+def test_upload_limits_removal_and_expiry_reclaim_bytes():
+    store = SessionStore(make_settings(max_attachment_files=3, max_session_bytes=1000))
     session = store.create("owner", "description: test")
     original = store.retained_bytes
-    first = store.retain_uploads(session.id, "owner", [SandboxAttachment("note", "text/plain", b"abc")])[0]
-    second = store.retain_uploads(session.id, "owner", [SandboxAttachment("note", "text/plain", b"12345")])[0]
-    assert first.id == second.id
-    assert store.retained_bytes == original + 5
+    first = store.retain_uploads(session.id, "owner", [SandboxAttachment("ward.csv", "text/csv", b"abc")])[0]
+    second, third = store.retain_uploads(
+        session.id,
+        "owner",
+        [SandboxAttachment("ward.csv", "text/csv", b"12345"), SandboxAttachment("ward.csv", "text/csv", b"6")],
+    )
+    assert [first.filename, second.filename, third.filename] == ["ward.csv", "ward (1).csv", "ward (2).csv"]
+    assert len({first.id, second.id, third.id}) == 3
+    assert store.attachments(session.id) == (first, second, third)
+    assert store.retained_bytes == original + 9
     with pytest.raises(HTTPException) as error:
         store.retain_uploads(session.id, "owner", [SandboxAttachment("other", "text/plain", b"x")])
     assert error.value.status_code == 413
-    assert store.attachments(session.id) == (second,)
+    store.remove_upload(session.id, "owner", second.id)
     with pytest.raises(HTTPException) as error:
         store.retain_uploads(session.id, "owner", [SandboxAttachment("note", "text/plain", b"x" * 1000)])
     assert error.value.status_code == 429
-    assert store.attachments(session.id) == (second,)
+    assert store.attachments(session.id) == (first, third)
     store.begin(session.id, "owner")
     with pytest.raises(HTTPException) as error:
-        store.remove_upload(session.id, "owner", second.id)
+        store.remove_upload(session.id, "owner", first.id)
     assert error.value.status_code == 409
     with pytest.raises(HTTPException) as error:
         store.retain_uploads(session.id, "owner", [SandboxAttachment("note", "text/plain", b"x")])
     assert error.value.status_code == 409
-    assert store.attachments(session.id) == (second,)
     store.abort(session.id)
-    store.remove_upload(session.id, "owner", second.id)
+    reused = store.retain_uploads(session.id, "owner", [SandboxAttachment("ward.csv", "text/csv", b"new")])[0]
+    assert reused.filename == "ward (1).csv" and reused.id != second.id
+    assert store.attachments(session.id) == (first, third, reused)
+    store.remove_upload(session.id, "owner", first.id)
+    store.remove_upload(session.id, "owner", third.id)
+    store.remove_upload(session.id, "owner", reused.id)
     assert store.retained_bytes == original
     store.retain_uploads(session.id, "owner", [first])
     session.expires_at = 0

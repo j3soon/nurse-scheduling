@@ -167,7 +167,8 @@ reports a tool error instead.
 
 Files attached with **Attach files** remain available for later questions in the
 same chat. The **Uploaded files** panel lists their names and sizes. Use **Remove**
-when a file is no longer needed. Uploading the same filename replaces its contents.
+when a file is no longer needed. Uploading a file with a name already in the list
+keeps both files and adds a number to the new name, such as `ward (1).csv`.
 The panel sits on the right on large screens and can be collapsed on smaller screens.
 To replace the schedule currently open in the app directly, use **Upload** on
 **Save and Load**.

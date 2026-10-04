@@ -2053,7 +2053,7 @@ export default function ExperimentalAiPage() {
         <aside aria-label="Session files" className="mb-4 rounded-xl border border-gray-200 bg-white p-4 xl:fixed xl:right-4 xl:top-24 xl:z-10 xl:max-h-[calc(100dvh-8rem)] xl:w-64 xl:overflow-y-auto">
           <details open>
             <summary className="cursor-pointer font-semibold">Uploaded files ({uploadedFiles.length})</summary>
-            <p className="mt-2 text-xs text-gray-600">Available for later questions until removed or this chat expires. Uploading the same filename replaces its contents.</p>
+            <p className="mt-2 text-xs text-gray-600">Available for later questions until removed or this chat expires. A repeated filename gets a number, such as ward (1).csv.</p>
             {uploadedFiles.length === 0 ? <p className="mt-3 text-sm text-gray-500">No uploaded files.</p> : (
               <ul className="mt-3 space-y-3">
                 {uploadedFiles.map(file => (

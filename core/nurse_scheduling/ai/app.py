@@ -280,6 +280,19 @@ def _session_bytes(session: "ChatSession") -> int:
     )
 
 
+def _unique_filename(filename: str, taken: set[str]) -> str:
+    """Add the lowest free ` (n)` suffix before the extension when a session already has the filename."""
+    if filename not in taken:
+        return filename
+    stem, dot, extension = filename.rpartition(".")
+    if not stem:
+        stem, dot, extension = filename, "", ""
+    counter = 1
+    while f"{stem} ({counter}){dot}{extension}" in taken:
+        counter += 1
+    return f"{stem} ({counter}){dot}{extension}"
+
+
 @dataclass(frozen=True)
 class TurnCompletion:
     """Whether a completed turn and its optional proposal were retained."""
@@ -449,28 +462,25 @@ class SessionStore:
     def retain_uploads(
         self, session_id: str, owner_token: str | None, uploads: Sequence[SandboxAttachment]
     ) -> tuple[SandboxAttachment, ...]:
-        """Retain uploads by filename between turns and return their retained versions."""
+        """Retain new uploads between turns without replacing a file a message may reference."""
         with self._lock:
             session = self._get_owned(session_id, owner_token)
             if session.active:
                 raise HTTPException(status_code=409, detail="Wait for the active response before uploading files.")
-            updated = dict(session.uploads)
-            retained_uploads: dict[str, SandboxAttachment] = {}
-            for upload in uploads:
-                existing = next((item for item in updated.values() if item.filename == upload.filename), None)
-                retained = replace(upload, id=existing.id if existing else str(uuid4()))
-                updated[retained.id] = retained
-                retained_uploads[retained.id] = retained
-            if len(updated) > self._settings.max_attachment_files:
+            if len(session.uploads) + len(uploads) > self._settings.max_attachment_files:
                 raise HTTPException(status_code=413, detail="Too many retained files. Remove unused uploads first.")
-            delta = sum(len(item.data) for item in updated.values()) - sum(
-                len(item.data) for item in session.uploads.values()
-            )
+            delta = sum(len(upload.data) for upload in uploads)
             self._require_capacity(delta)
-            session.uploads = updated
+            filenames = {item.filename for item in session.uploads.values()}
+            retained_uploads = []
+            for upload in uploads:
+                filename = _unique_filename(upload.filename, filenames)
+                filenames.add(filename)
+                retained_uploads.append(replace(upload, filename=filename, id=str(uuid4())))
+            session.uploads.update((item.id, item) for item in retained_uploads)
             self._charge(session, delta)
             session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
-            return tuple(retained_uploads.values())
+            return tuple(retained_uploads)
 
     def attachments(self, session_id: str) -> tuple[SandboxAttachment, ...]:
         """Snapshot retained source files for a foreground or background turn."""
