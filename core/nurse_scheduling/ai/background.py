@@ -224,11 +224,7 @@ def build_provider_messages(
 ) -> list[ChatMessage]:
     """Build a provider prompt that keeps schedule data and untrusted filenames separate from instructions."""
     system_content = f"{system_prompt}\n\nCurrent schedule summary:\n{describe_schedule(schedule_yaml)}"
-    system_content += (
-        "\nGenerated file download: write one ZIP to /workspace/download.zip. "
-        f"Its size and total uncompressed contents must each be at most {max_download_bytes} bytes. "
-        "The server captures it and provides a download button.\n"
-    )
+    system_content += f"\nDownload size limit: {max_download_bytes} bytes.\n"
     if pending_proposal:
         system_content += (
             "\nA validated proposal is pending. Its exact candidate and diff are available in the trusted workspace "

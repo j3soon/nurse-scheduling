@@ -83,6 +83,10 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
 - Test file workflows across message boundaries and session expiry. Check the
   bytes delivered by the download API and the files loaded into the next VM.
   A printed workspace path does not prove delivery or retention.
+- Put fixed model instructions in a manifest-tracked prompt segment under
+  `ai/prompts/`, so they get a hash, linked cases, and a benefit witness.
+  `build_provider_messages` appends only request-specific values, such as a
+  configured limit or the pending-proposal state.
 - Keep model-facing prompts and intermediate messages concise. Avoid repeated
   warnings about malicious uploads or prescribed workbook-inspection commands.
   Rely on sandbox and server controls for security, and give generated artifacts

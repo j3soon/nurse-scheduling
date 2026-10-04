@@ -27,6 +27,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from nurse_scheduling.ai.app import SessionStore
+from nurse_scheduling.ai.background import build_provider_messages
 from nurse_scheduling.ai.downloads import WORKSPACE_DOWNLOAD, validate_download_zip
 from nurse_scheduling.ai.provider import TextDelta, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.sandbox import CommandResult
@@ -61,6 +62,14 @@ def test_zip_checks_actual_contents_and_compressed_limit():
     corrupt[45] ^= 255
     with pytest.raises(ValueError):
         validate_download_zip(bytes(corrupt), 1000)
+
+
+def test_prompt_names_the_captured_path_and_the_configured_limit():
+    messages = build_provider_messages([], "description: schedule\n", "Make a CSV.", max_download_bytes=1234)
+    system = messages[0]["content"]
+
+    assert f"`{WORKSPACE_DOWNLOAD}`" in system
+    assert "Download size limit: 1234 bytes." in system
 
 
 def test_generated_zip_is_downloadable_after_sandbox_cleanup_and_is_owned():

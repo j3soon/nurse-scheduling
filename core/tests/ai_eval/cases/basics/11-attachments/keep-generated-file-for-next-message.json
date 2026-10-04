@@ -1,0 +1,15 @@
+{
+  "id": "keep-generated-file-for-next-message",
+  "fixture": "small-clinic",
+  "question": "Create sample.csv containing exactly these two lines, with a final newline: name,date\nAlex,2026-10-01. Keep it in your workspace so you can add rows to it when I send my next message. I do not need a download yet. Do not edit the schedule or start optimization. End your reply with JSON: kept_for_next_message (boolean, whether sample.csv will still be in your workspace when my next message arrives).",
+  "expect_proposal": false,
+  "answer_json": {
+    "kept_for_next_message": false
+  },
+  "tags": [
+    "attachment",
+    "downloads",
+    "workspace-lifetime-investigation"
+  ],
+  "note": "This testcase is mostly AI generated. Each message runs in a new VM, so only the schedule proposal and download.zip are kept. Grade whether the agent tells the user that an ordinary workspace file is not kept, before any later message can reveal the deletion."
+}
