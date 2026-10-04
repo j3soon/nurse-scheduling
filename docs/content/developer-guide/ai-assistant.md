@@ -204,6 +204,7 @@ relative to `web-frontend/src/app/experimental-ai/`.
 | Browser `useSessionEventStream`<br/>`useSessionEventStream.ts` | Own the SSE reader, replay cursor, reconnect delay, and teardown. Reader disconnect leaves server work running. |
 | Browser `SessionEventRouter`<br/>`sessionEventRouter.ts` | Deliver typed `SessionEvent` values directly to chat handlers. Route by run ID and buffer early output until the POST acknowledgement identifies its answer. |
 | Browser HTTP client<br/>`aiClient.ts` | Parse GET and compatibility POST SSE into the same typed `SessionEvent` values. Preserve run IDs, recovery snapshots, and replay cursors. |
+| Browser optimizer projection<br/>`optimizerEvents.ts`, `optimizerMessage.ts` | Apply job status, bound progress history, and append completion messages once. Share optimizer-message formatting and parsing for the page and exports. |
 | Browser transcript projection<br/>`chatTranscript.ts`, `assistantEvents.ts` | Create and resume responses, insert steering, replace replayed runs, and apply assistant output. The hook supplies IDs, timestamps, and operation ownership. |
 
 ## One Run at a Glance {#one-turn-at-a-glance}

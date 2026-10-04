@@ -101,6 +101,8 @@ converting them through legacy callback bundles.
 Apply assistant output from the single session GET stream through
 `applyAssistantEvent`. Keep transcript creation, steering segments, and recovery
 in the pure `chatTranscript` functions, with IDs and timestamps supplied by callers.
+Keep optimizer status, bounded progress, and completion-message projection in
+`optimizerEvents`, with message formatting and parsing together in `optimizerMessage`.
 Route foreground and review events by `run_id`, including
 output that arrives before POST message acceptance is acknowledged. Keep run identity on
 answer segments so recovery replaces matching output without duplicating text or

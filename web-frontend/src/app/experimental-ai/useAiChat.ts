@@ -21,10 +21,9 @@
 
 import { useCallback, useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import type { OptimizationProgressPoint } from '@/components/OptimizationProgressChart';
 import {
   AiHttpError, AiStaleRunError, DEFAULT_SESSION_RETENTION_SECONDS,
-  type ContextUsage, type OptimizationActivity,
+  type ContextUsage,
   approveProposal, createSession, getSessionStatus, isAuthenticationError, queueMessage,
   rejectProposal, sendMessage, stopSession, updateSessionSchedule,
 } from './aiClient';
@@ -33,15 +32,13 @@ import {
 } from './assistantEvents';
 import { type ChatMessage, applyResponseEvent, beginResponse, createResponse, resetRunMessages, restoreTranscript, steerResponse } from './chatTranscript';
 import { ChatLifecycle, scopedEventHandler } from './chatLifecycle';
+import { type ActiveOptimization, applyOptimizationEvent, appendOptimizationResult } from './optimizerEvents';
 import { SessionEventRouter } from './sessionEventRouter';
 import type { SessionEvent, SessionEventHandler } from './sessionEvents';
 import { useSessionEventStream } from './useSessionEventStream';
 
 export type { ChatMessage } from './chatTranscript';
-
-export interface ActiveOptimization extends OptimizationActivity {
-  points: OptimizationProgressPoint[];
-}
+export type { ActiveOptimization } from './optimizerEvents';
 
 /** Conversation data for tab storage. Browser I/O stays in the page. */
 export interface ChatConversation {
@@ -75,46 +72,6 @@ interface QueuedChatMessage {
   createdAt: number;
   id: string;
   content: string;
-}
-
-// A solver can emit a progress event per incumbent solution, and the whole series is
-// persisted with the conversation. Halving the oldest points keeps the sparkline shape
-// while bounding the array and the tab storage a long run consumes.
-const OPTIMIZATION_PROGRESS_POINT_LIMIT = 500;
-
-function optimizationMessage(activity: OptimizationActivity): string {
-  const summary = activity.state === 'completed'
-    ? activity.downloadable
-      ? 'Optimization finished. Download the optimized schedule to review it.'
-      : 'Optimization finished, but no result workbook is available to download.'
-    : `Optimization ended with status: ${activity.state}.`;
-  const details: string[] = [];
-  const add = (label: string, value: string | number | undefined) => {
-    // Indent continuation lines so field values cannot introduce another label.
-    if (value !== undefined) details.push(`${label}: ${String(value).replace(/\r\n?|\n/g, '\n ')}`);
-  };
-  add('Outcome', activity.result?.outcome);
-  add('Final score', activity.result?.score);
-  add('Solver', activity.request?.solver);
-  add('Solver status', activity.result?.solverStatus);
-  add('Termination reason', activity.result?.terminationReason);
-  if (activity.request?.timeoutSeconds !== undefined) add('Solver timeout', `${activity.request.timeoutSeconds}s`);
-  if (activity.backend) {
-    add('Backend URL', activity.backend.url ?? 'unknown');
-    add('Backend version', activity.backend.appVersion ?? 'unknown');
-    add('API version', activity.backend.apiVersion);
-    add('Service', activity.backend.serviceName);
-    add('Deployment', activity.backend.deploymentId);
-    add('Instance', activity.backend.instanceId);
-    if (activity.backend.requestTimeoutSeconds !== undefined) {
-      add('Backend request timeout', `${activity.backend.requestTimeoutSeconds}s`);
-    }
-    const claimed = activity.backend.claimedPerformance;
-    add('Claimed performance', claimed ? `${claimed.score} (version ${claimed.appVersion}, measured ${claimed.measuredAt})` : 'unavailable');
-  }
-  add('Error code', activity.error?.code);
-  add('Error', activity.error?.message);
-  return [summary, ...details].join('\n');
 }
 
 // Output that closes a steering placeholder, so queued input starts a new response.
@@ -375,51 +332,11 @@ export function useAiChat({
           });
           break;
         }
-        case 'optimization': {
-          const { activity } = event;
-          if (!activity.terminal) {
-            setActiveOptimization(current => ({
-              ...activity,
-              points: current?.jobId === activity.jobId ? current.points : [],
-            }));
-            return;
+        case 'optimization': case 'optimization_progress': {
+          setActiveOptimization(current => applyOptimizationEvent(current, event));
+          if (event.type === 'optimization' && event.activity.terminal) {
+            setMessages(previous => appendOptimizationResult(previous, event.activity, Date.now()));
           }
-          setActiveOptimization(current => current?.jobId === activity.jobId ? null : current);
-          const content = optimizationMessage(activity);
-          setMessages(previous => previous.some(message => message.id === `optimizer-${activity.jobId}`)
-            ? previous
-            : [
-              ...previous,
-              {
-                id: `optimizer-${activity.jobId}`,
-                role: 'optimizer',
-                createdAt: Date.now(),
-                content,
-                optimizerJob: { jobId: activity.jobId, downloadable: activity.downloadable },
-              },
-            ]);
-          break;
-        }
-        case 'optimization_progress': {
-          const { jobId, point } = event.activity;
-          setActiveOptimization(current => {
-            if (current !== null && current.jobId !== jobId) return current;
-            const previous = current?.points ?? [];
-            const last = previous.at(-1);
-            if (last?.elapsedSeconds === point.elapsedSeconds && last.currentBestScore === point.currentBestScore) {
-              return current;
-            }
-            const retained = previous.length >= OPTIMIZATION_PROGRESS_POINT_LIMIT
-              ? previous.filter((_, index) => index % 2 === 0 || index === previous.length - 1)
-              : previous;
-            return {
-              jobId,
-              state: current?.state ?? 'running',
-              terminal: false,
-              downloadable: false,
-              points: [...retained, point],
-            };
-          });
           break;
         }
         case 'done': case 'stopped': case 'stale': case 'error': {
