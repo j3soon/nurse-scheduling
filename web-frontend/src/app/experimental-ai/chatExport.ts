@@ -45,7 +45,11 @@ interface ChatExportMetadata {
   exportedAt: Date;
   frontendVersion: string;
   backendVersion?: string;
+  // A proposal waiting for approval is not part of the transcript, so exports add it separately.
+  pendingProposalDiff?: string;
 }
+
+const PENDING_PROPOSAL_NOTE = 'This change is waiting for approval in the app. The current schedule has not changed.';
 
 export type ChatExportFormat = 'html' | 'markdown';
 
@@ -291,6 +295,9 @@ export function buildMarkdownChatExport(
     const details = messageDetails(message);
     if (details.length) lines.push('', ...details.map(detail => `- ${detail}`));
   });
+  if (metadata.pendingProposalDiff !== undefined) {
+    lines.push('', '## Pending proposal', '', PENDING_PROPOSAL_NOTE, '', ...fencedText(metadata.pendingProposalDiff));
+  }
   return `${lines.join('\n')}\n`;
 }
 
@@ -325,6 +332,10 @@ export function buildHtmlChatExport(
     main { box-sizing: border-box; max-width: 1024px; margin: 0 auto; padding: 32px 16px; }
     main > h1 { margin: 0 0 8px; font-size: 30px; line-height: 36px; font-weight: 700; }
     .metadata { margin: 0 0 32px; color: #6b7280; font-size: 13px; }
+    .proposal { margin-top: 24px; border: 1px solid #bfdbfe; border-radius: 12px; background: #eff6ff; padding: 16px; color: #1e3a8a; }
+    .proposal h2 { margin: 0 0 8px; font-size: 16px; }
+    .proposal p { margin: 0 0 8px; font-size: 13px; }
+    .proposal pre { max-height: 480px; overflow: auto; margin: 0; border-radius: 8px; background: white; padding: 12px; color: #1f2937; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.625 ui-monospace, monospace; }
     .chat { display: flex; flex-direction: column; gap: 16px; border: 1px solid #e5e7eb; border-radius: 12px; background: #f9fafb; padding: 16px; }
     .message { box-sizing: border-box; width: 85%; min-width: 0; max-width: 85%; padding: 12px 16px; border-radius: 12px; }
     .user { align-self: flex-end; background: #155dfc; color: white; }
@@ -387,7 +398,12 @@ export function buildHtmlChatExport(
     <h1>Schedule AI Chat</h1>
     <p class="metadata">Exported ${escapeHtml(metadata.exportedAt.toISOString())}<br>Frontend version: ${escapeHtml(metadata.frontendVersion)}<br>Backend version: ${escapeHtml(metadata.backendVersion ?? 'unknown')}<br>AI server: ${escapeHtml(metadata.endpoint)}</p>
     <section class="chat" aria-label="Chat transcript">${renderedMessages}
-    </section>
+    </section>${metadata.pendingProposalDiff === undefined ? '' : `
+    <section class="proposal" aria-label="Pending proposal">
+      <h2>Pending proposal</h2>
+      <p>${PENDING_PROPOSAL_NOTE}</p>
+      <pre>${escapeHtml(metadata.pendingProposalDiff)}</pre>
+    </section>`}
   </main>
 </body>
 </html>
@@ -400,8 +416,9 @@ export function downloadChatExport(
   endpoint: string,
   exportedAt = new Date(),
   backendVersion?: string,
+  pendingProposalDiff?: string,
 ): string {
-  const metadata = { endpoint, exportedAt, frontendVersion: CURRENT_APP_VERSION, backendVersion };
+  const metadata = { endpoint, exportedAt, frontendVersion: CURRENT_APP_VERSION, backendVersion, pendingProposalDiff };
   const content = format === 'html'
     ? buildHtmlChatExport(messages, metadata)
     : buildMarkdownChatExport(messages, metadata);

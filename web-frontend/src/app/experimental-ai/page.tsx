@@ -1842,7 +1842,7 @@ export default function ExperimentalAiPage() {
   const exportChat = (format: ChatExportFormat) => {
     const previousUrl = chatExportUrlRef.current;
     chatExportUrlRef.current = downloadChatExport(
-      format, messages, sessionEndpointRef.current ?? aiEndpoint, new Date(), backendVersion,
+      format, messages, sessionEndpointRef.current ?? aiEndpoint, new Date(), backendVersion, proposalDiff ?? undefined,
     );
     if (previousUrl) URL.revokeObjectURL(previousUrl);
   };

@@ -81,6 +81,23 @@ describe('chat export', () => {
     expect(html).toContain('uploaded files: [&lt;b&gt;]');
   });
 
+  it('exports a pending proposal after the transcript', () => {
+    const pending = { ...metadata, pendingProposalDiff: '- description: "" -> "<April>"' };
+
+    const markdown = buildMarkdownChatExport(messages, pending);
+    const html = buildHtmlChatExport(messages, pending);
+
+    expect(markdown.endsWith(
+      '## Pending proposal\n\nThis change is waiting for approval in the app. The current schedule has not changed.\n\n'
+      + '```text\n- description: "" -> "<April>"\n```\n',
+    )).toBe(true);
+    expect(html).toContain('<section class="proposal" aria-label="Pending proposal">');
+    expect(html).toContain('<pre>- description: &quot;&quot; -&gt; &quot;&lt;April&gt;&quot;</pre>');
+    expect(html.indexOf('aria-label="Chat transcript"')).toBeLessThan(html.indexOf('aria-label="Pending proposal"'));
+    expect(buildMarkdownChatExport(messages, metadata)).not.toContain('Pending proposal');
+    expect(buildHtmlChatExport(messages, metadata)).not.toContain('class="proposal"');
+  });
+
   it('marks an unavailable backend version as unknown', () => {
     const legacyMetadata = { ...metadata, backendVersion: undefined };
     expect(buildMarkdownChatExport([], legacyMetadata)).toContain('- Backend version: unknown');
