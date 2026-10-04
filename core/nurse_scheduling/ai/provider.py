@@ -226,6 +226,10 @@ class ProviderError(RuntimeError):
         return cls(message, user_message=message)
 
 
+class ProviderResponseLimitError(ProviderError):
+    """The model response exceeded an application limit."""
+
+
 def _redact_provider_error(response_body: str, provider_api_key: str) -> str:
     """Redact known credential forms before writing an upstream error to logs."""
     redacted = response_body.replace(provider_api_key, "[REDACTED]") if provider_api_key else response_body
@@ -379,14 +383,16 @@ class OpenAiCompatibleProvider:
                 if isinstance(content, str) and content:
                     text_chars += len(content)
                     if text_chars > MAX_RESPONSE_TEXT_CHARS:
-                        raise ProviderError.for_user("The AI provider returned more text than one answer may contain.")
+                        raise ProviderResponseLimitError.for_user(
+                            "The AI provider returned more text than one answer may contain."
+                        )
                     yield TextDelta(content)
                 # Providers name this field either way, and llama.cpp uses the first.
                 reasoning = delta.get("reasoning_content") or delta.get("reasoning")
                 if isinstance(reasoning, str) and reasoning:
                     reasoning_chars += len(reasoning)
                     if reasoning_chars > MAX_RESPONSE_REASONING_CHARS:
-                        raise ProviderError.for_user(
+                        raise ProviderResponseLimitError.for_user(
                             "The AI provider returned more reasoning than one answer may contain."
                         )
                     yield ReasoningDelta(reasoning)
@@ -446,7 +452,7 @@ def _merge_tool_call_fragments(partial_calls: dict[int, _PartialToolCall], fragm
         index = _fragment_index(partial_calls, fragment)
         partial = partial_calls.setdefault(index, _PartialToolCall())
         if len(partial_calls) > MAX_TOOL_CALLS_PER_RESPONSE:
-            raise ProviderError.for_user(
+            raise ProviderResponseLimitError.for_user(
                 f"The AI provider requested more than {MAX_TOOL_CALLS_PER_RESPONSE} tools at once."
             )
         if isinstance(fragment.get("id"), str):
@@ -460,7 +466,7 @@ def _merge_tool_call_fragments(partial_calls: dict[int, _PartialToolCall], fragm
         if isinstance(arguments, str):
             partial.arguments += arguments
             if len(partial.arguments) > MAX_TOOL_ARGUMENT_CHARS:
-                raise ProviderError.for_user("The AI provider sent tool arguments that are too large.")
+                raise ProviderResponseLimitError.for_user("The AI provider sent tool arguments that are too large.")
 
 
 def _fragment_index(partial_calls: dict[int, _PartialToolCall], fragment: dict[str, Any]) -> int:

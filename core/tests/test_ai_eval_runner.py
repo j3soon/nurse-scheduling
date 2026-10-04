@@ -39,6 +39,7 @@ from nurse_scheduling.ai.provider import (
     ChatMessage,
     ProviderAttempt,
     ProviderError,
+    ProviderResponseLimitError,
     ReasoningDelta,
     TextDelta,
     TokenUsage,
@@ -1660,3 +1661,27 @@ def test_complete_evaluation_fixtures_match_frontend_subset(fixture):
     # new-schedule intentionally starts with an incomplete construction scaffold.
     result = validate_frontend_schedule_yaml(fixture_text(fixture), max_bytes=2000000)
     assert result.valid, result.issues
+
+
+@pytest.mark.parametrize("response_limit", [True, False], ids=["model-limit", "provider-outage"])
+def test_response_limit_is_a_behavior_failure_and_outages_remain_infrastructure(response_limit):
+    error = (
+        ProviderResponseLimitError.for_user("The AI provider returned more reasoning than one answer may contain.")
+        if response_limit
+        else ProviderError("connection unavailable")
+    )
+
+    class FailingProvider:
+        async def stream_events(self, messages, tools=None):
+            yield ReasoningDelta("Checking the source.")
+            raise error
+
+    run = asyncio.run(run_case(FailingProvider(), settings(), CASE_BY_ID["ask-people-count"], _factory()))
+    assert not run.passed
+    assert bool(run.error) is not response_limit
+    assert run.reasoning_chars == len("Checking the source.")
+    if response_limit:
+        assert run.failures == [str(error)]
+        assert run.trajectory["events"][-1] == {"kind": "evaluation_stop", "reason": str(error)}
+    else:
+        assert run.failures == ["the provider failed"]

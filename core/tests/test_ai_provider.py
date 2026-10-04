@@ -35,6 +35,7 @@ from nurse_scheduling.ai.provider import (
     OpenAiCompatibleProvider,
     ProviderAttempt,
     ProviderError,
+    ProviderResponseLimitError,
     ReasoningDelta,
     TextDelta,
     TokenUsage,
@@ -434,7 +435,7 @@ def test_rejects_more_tool_calls_than_the_limit(monkeypatch: pytest.MonkeyPatch)
         )
     )
 
-    with pytest.raises(ProviderError, match="more than"):
+    with pytest.raises(ProviderResponseLimitError, match="more than"):
         _events(_streaming_provider(monkeypatch, body), TOOLS)
 
 
@@ -444,7 +445,7 @@ def test_rejects_oversized_tool_arguments(monkeypatch: pytest.MonkeyPatch) -> No
         _delta_chunk({"tool_calls": [{"index": 0, "id": "call_1", "function": {"name": "a", "arguments": oversized}}]})
     )
 
-    with pytest.raises(ProviderError, match="too large"):
+    with pytest.raises(ProviderResponseLimitError, match="too large"):
         _events(_streaming_provider(monkeypatch, body), TOOLS)
 
 
@@ -471,12 +472,12 @@ def test_streams_reasoning_separately_from_the_answer(monkeypatch: pytest.Monkey
 def test_rejects_an_answer_longer_than_the_limit(monkeypatch: pytest.MonkeyPatch) -> None:
     body = _sse_body(_delta_chunk({"content": "x" * (provider_module.MAX_RESPONSE_TEXT_CHARS + 1)}))
 
-    with pytest.raises(ProviderError, match="more text than"):
+    with pytest.raises(ProviderResponseLimitError, match="more text than"):
         _events(_streaming_provider(monkeypatch, body))
 
 
 def test_rejects_reasoning_longer_than_the_limit(monkeypatch: pytest.MonkeyPatch) -> None:
     body = _sse_body(_delta_chunk({"reasoning_content": "x" * (provider_module.MAX_RESPONSE_REASONING_CHARS + 1)}))
 
-    with pytest.raises(ProviderError, match="more reasoning than"):
+    with pytest.raises(ProviderResponseLimitError, match="more reasoning than"):
         _events(_streaming_provider(monkeypatch, body))

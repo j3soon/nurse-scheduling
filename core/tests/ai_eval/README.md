@@ -105,7 +105,9 @@ A shell timeout returns a failed tool result after verified process-group cleanu
 available and the agent may recover. If cleanup cannot be confirmed, the sandbox is terminated and
 the evaluation ends as a behavioral failure with the original failed tool result retained. Execution
 deadlines are separate from E2B connection timeouts. Commands are never replayed automatically.
-Provider and other sandbox failures remain infrastructure errors.
+Responses that exceed text, reasoning, tool-argument or tool-count limits are model behavior failures.
+Their limit reason and partial trajectory remain recorded. Provider connection and other sandbox failures
+remain infrastructure errors.
 
 For a real-provider timeout recovery comparison, load the ignored local env file and run from `core/`:
 

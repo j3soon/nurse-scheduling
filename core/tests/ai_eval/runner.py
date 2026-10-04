@@ -54,6 +54,7 @@ from nurse_scheduling.ai.provider import (
     OpenAiCompatibleProvider,
     ProviderAttempt,
     ProviderError,
+    ProviderResponseLimitError,
     TokenUsage,
     ToolCallRequest,
 )
@@ -475,13 +476,13 @@ async def run_case(
             if action is not None:
                 text, pending_proposal = _apply_turn_action(action, text, pending_proposal, history, events)
     except (ProviderError, SandboxError) as error:
-        command_timeout = isinstance(error, SandboxCommandTimeoutError)
+        behavior_failure = isinstance(error, (SandboxCommandTimeoutError, ProviderResponseLimitError))
         failure = (
             str(error)
-            if command_timeout
+            if behavior_failure
             else ("the provider failed" if isinstance(error, ProviderError) else "the sandbox failed")
         )
-        if command_timeout:
+        if behavior_failure:
             events.append({"kind": "evaluation_stop", "reason": failure})
         return CaseRun(
             case.id,
@@ -494,7 +495,7 @@ async def run_case(
             answers[-1] if answers else "",
             False,
             reasoning,
-            "" if command_timeout else str(error),
+            "" if behavior_failure else str(error),
             _trajectory(case, prompt_messages, events, None),
             token_usage=counting.token_usage,
             token_usage_turns=counting.token_usage_turns,

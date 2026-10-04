@@ -130,6 +130,9 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   category or tag only when the changed behavior spans it or a selected case
   reveals a neighboring risk. A bare evaluation command exits without running
   cases. Use `--tuning` to opt into the default tuning set.
+- Count exceeded model-output limits as behavior failures, not infrastructure
+  outages. Keep the limit reason and partial trace. Keep provider connection and
+  sandbox availability failures separate.
 - Reuse production response formatters in controlled evaluations. Shortened mock
   replies can change the agent's decisions.
 - Treat one provider pass as a smoke check. Before claiming a tuning improvement,

@@ -35,6 +35,9 @@ errors, evaluator defects, and infrastructure failures. A nonzero shell exit
 can report a normal condition, such as a diff or a missing-file check, rather
 than a broken command. Grade that condition instead of requiring a zero exit.
 Separate assistant overhead from solver time and backend latency.
+Treat exceeded model-output limits as behavior failures. A limit on generated
+reasoning or tool arguments is not a provider outage. Preserve the partial trace
+and keep unavailable token usage unavailable.
 
 Rank findings by recurrence, consequence, wasted calls/tokens/time, expected
 repair effort, and how cheaply a reliable testcase can demonstrate a benefit.
