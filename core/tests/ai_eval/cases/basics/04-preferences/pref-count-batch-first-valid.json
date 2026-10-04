@@ -1,0 +1,102 @@
+{
+  "id": "pref-count-batch-first-valid",
+  "fixture": "small-clinic",
+  "question": "Add three mandatory workload rules across the whole roster. Ana must have exactly 3 points, counting each D as 1 and each N as 2. Omar must have at most 4 points, counting each D as 1 and each N as 2. 林護師 must have at least 2 points, counting each N as 1 and each O as 2. Keep all existing rules unchanged.",
+  "expect_proposal": true,
+  "tags": [
+    "prompt-evidence"
+  ],
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "added": [
+        {
+          "type": "shift count",
+          "person": [
+            "Ana"
+          ],
+          "countDates": [
+            "ALL"
+          ],
+          "countShiftTypes": [
+            "D",
+            "N"
+          ],
+          "countShiftTypeCoefficients": [
+            [
+              "D",
+              1
+            ],
+            [
+              "N",
+              2
+            ]
+          ],
+          "expression": "x = T",
+          "target": 3,
+          "weight": "-.inf"
+        },
+        {
+          "type": "shift count",
+          "person": [
+            "Omar"
+          ],
+          "countDates": [
+            "ALL"
+          ],
+          "countShiftTypes": [
+            "D",
+            "N"
+          ],
+          "countShiftTypeCoefficients": [
+            [
+              "D",
+              1
+            ],
+            [
+              "N",
+              2
+            ]
+          ],
+          "expression": "x <= T",
+          "target": 4,
+          "weight": "-.inf"
+        },
+        {
+          "type": "shift count",
+          "person": [
+            "林護師"
+          ],
+          "countDates": [
+            "ALL"
+          ],
+          "countShiftTypes": [
+            "N",
+            "O"
+          ],
+          "countShiftTypeCoefficients": [
+            [
+              "N",
+              1
+            ],
+            [
+              "O",
+              2
+            ]
+          ],
+          "expression": "x >= T",
+          "target": 2,
+          "weight": "-.inf"
+        }
+      ],
+      "allow_added_description": true
+    }
+  ],
+  "changes": [
+    "preferences"
+  ],
+  "tool_usage": {
+    "max_validation_errors": 0
+  },
+  "note": "This testcase is mostly AI generated. Three different operators, targets, people and weighted shift sets. Requires exact semantic additions, preserved existing rules, and no invalid intermediate schedule. A repaired numeric expression still fails this trajectory criterion."
+}

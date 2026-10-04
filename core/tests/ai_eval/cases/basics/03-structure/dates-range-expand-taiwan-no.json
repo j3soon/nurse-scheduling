@@ -20,8 +20,8 @@
       "path": "dates.groups[?id=FREEDAY].members",
       "equals": ["11-01", "11-02", "11-08", "11-09", "11-15", "11-16", "11-22", "11-23", "11-29", "11-30"]
     },
-    {"path": "dates.groups[?id=WORKDAY].description", "equals": "11 月沒有放假"},
-    {"path": "dates.groups[?id=FREEDAY].description", "equals": "11 月沒有放假"},
+    {"path": "dates.groups[?id=WORKDAY].description", "unchanged": true},
+    {"path": "dates.groups[?id=FREEDAY].description", "unchanged": true},
     {"path": "dates.groups[?id=Freeday shift right].members", "equals": ["11-02", "11-03", "11-09", "11-10", "11-16", "11-17", "11-23", "11-24", "11-30"]},
     {"path": "preferences[?date=11-01]", "present": true},
     {"path": "preferences[?date=11-30]", "present": true}

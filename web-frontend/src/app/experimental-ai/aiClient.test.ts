@@ -25,6 +25,10 @@ import {
   approveProposal,
   createSession,
   downloadOptimization,
+  downloadGeneratedZip,
+  removeGeneratedZip,
+  getUploads,
+  removeUpload,
   getAiBaseUrl,
   getCapabilities,
   getBackendVersion,
@@ -207,14 +211,18 @@ describe('AI client', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response));
     const deltas: string[] = [];
     const onDone = vi.fn();
+    const onAccepted = vi.fn();
 
     const streaming = streamMessage(
       'session-id',
       'Question',
-      { onDelta: delta => deltas.push(delta), onDone },
+      { onDelta: delta => deltas.push(delta), onDone, onAccepted },
       new AbortController().signal,
       null,
     );
+    await vi.waitFor(() => expect(onAccepted).toHaveBeenCalledOnce());
+    expect(deltas).toEqual([]);
+    expect(onDone).not.toHaveBeenCalled();
     streamController?.enqueue(encoder.encode('event: delta\ndata: {"text":"First"}\n\n'));
 
     await vi.waitFor(() => expect(deltas).toEqual(['First']));
@@ -224,6 +232,36 @@ describe('AI client', () => {
     streamController?.close();
     await streaming;
     expect(onDone).toHaveBeenCalledOnce();
+  });
+
+  it('reports a download warning without failing the completed turn', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      'event: delta\ndata: {"text":"Your files are ready."}\n\n',
+      'event: warning\ndata: {"message":"The generated ZIP could not be retained."}\n\n',
+      'event: done\ndata: {"message_id":"completed-turn"}\n\n',
+    ])));
+    const onWarning = vi.fn();
+    const onDone = vi.fn();
+
+    await expect(streamMessage(
+      'session-id', 'Download the CSV.', { onDelta: vi.fn(), onWarning, onDone },
+      new AbortController().signal, null,
+    )).resolves.toBeUndefined();
+
+    expect(onWarning).toHaveBeenCalledWith('The generated ZIP could not be retained.');
+    expect(onDone).toHaveBeenCalledWith('completed-turn');
+  });
+
+  it('does not accept a rejected message', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ detail: 'Too many retained files.' }),
+      { status: 413, headers: { 'Content-Type': 'application/json' } },
+    )));
+    const onAccepted = vi.fn();
+    await expect(streamMessage(
+      'session-id', 'Question', { onDelta: vi.fn(), onAccepted }, new AbortController().signal, null,
+    )).rejects.toThrow('Too many retained files.');
+    expect(onAccepted).not.toHaveBeenCalled();
   });
 
   it('surfaces a provider status with its backend error ID', async () => {
@@ -256,28 +294,86 @@ describe('AI client', () => {
     )).rejects.toEqual(new AiStaleTurnError('The schedule changed.'));
   });
 
-  it('sends arbitrary files as multipart form data', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(streamedResponse([
-      'event: done\ndata: {"message_id":"message-id"}\n\n',
-    ]));
+  it('uploads files before sending the question as typed', async () => {
+    const uploaded = { id: 'file-1', filename: 'ward.png', media_type: 'image/png', bytes: 11 };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([uploaded]), { status: 201 }))
+      .mockResolvedValueOnce(streamedResponse(['event: done\ndata: {"message_id":"message-id"}\n\n']));
     vi.stubGlobal('fetch', fetchMock);
     const image = new File(['image bytes'], 'ward.png', { type: 'image/png' });
+    const signal = new AbortController().signal;
+
+    const onUploaded = vi.fn();
 
     await streamMessage(
-      'session-id',
-      'What is shown?',
-      { onDelta: vi.fn() },
-      new AbortController().signal,
-      null,
+      'session-id', 'What is shown?', { onDelta: vi.fn(), onUploaded }, signal, 'stream-token',
       { files: [image] },
     );
 
-    const request = fetchMock.mock.calls[0][1] as RequestInit;
-    expect(request.headers).toBeUndefined();
-    expect(request.body).toBeInstanceOf(FormData);
-    const form = request.body as FormData;
-    expect(form.get('message')).toBe('What is shown?');
-    expect(form.getAll('files')).toEqual([image]);
+    const [uploadUrl, uploadRequest] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(uploadUrl).toBe('https://api.nursescheduling.org/ai/sessions/session-id/uploads');
+    expect(uploadRequest).toMatchObject({
+      method: 'POST', credentials: 'include', headers: { Authorization: 'Bearer stream-token' }, signal,
+    });
+    expect((uploadRequest.body as FormData).getAll('files')).toEqual([image]);
+    expect(fetchMock).toHaveBeenLastCalledWith('https://api.nursescheduling.org/ai/sessions/session-id/messages', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer stream-token' },
+      body: JSON.stringify({ message: 'What is shown?' }),
+      signal,
+    });
+    expect(onUploaded).toHaveBeenCalledWith([uploaded]);
+  });
+
+  it('forwards the model input and rejects a malformed one', async () => {
+    const onModelInput = vi.fn();
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(streamedResponse([
+        `event: model_input\ndata: ${JSON.stringify({
+          system: 'System',
+          messages: [
+            { kind: 'app', index: 3, content: '[App event] Upload' },
+            { kind: 'question', content: 'Question' },
+            { kind: 'status', content: '[Current status]' },
+          ],
+        })}\n\n`,
+        'event: done\ndata: {"message_id":"1"}\n\n',
+      ]))
+      .mockResolvedValueOnce(streamedResponse([
+        'event: model_input\ndata: {"system":"System","messages":[{"kind":"app","content":"No index"}]}\n\n',
+      ])));
+
+    await streamMessage('session-id', 'Question', { onDelta: vi.fn(), onModelInput }, new AbortController().signal, null);
+    await expect(streamMessage(
+      'session-id', 'Question', { onDelta: vi.fn(), onModelInput }, new AbortController().signal, null,
+    )).rejects.toThrow('The AI backend returned an invalid model input.');
+
+    expect(onModelInput).toHaveBeenCalledOnce();
+    expect(onModelInput).toHaveBeenCalledWith({
+      system: 'System',
+      messages: [
+        { kind: 'app', index: 3, content: '[App event] Upload' },
+        { kind: 'question', content: 'Question' },
+        { kind: 'status', content: '[Current status]' },
+      ],
+    });
+  });
+
+  it('does not send a message when its upload is rejected', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ detail: 'File attachment is too large.' }),
+      { status: 413, headers: { 'Content-Type': 'application/json' } },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+    const onAccepted = vi.fn();
+
+    await expect(streamMessage(
+      'session-id', 'Question', { onDelta: vi.fn(), onAccepted }, new AbortController().signal, null,
+      { files: [new File(['data'], 'large.bin')] },
+    )).rejects.toThrow('File attachment is too large.');
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(onAccepted).not.toHaveBeenCalled();
   });
 
   it('forwards tool use and a proposal to the caller', async () => {
@@ -322,6 +418,21 @@ describe('AI client', () => {
     expect(scheduleChanges).toEqual(['people:\n  - id: Head\n']);
     expect(texts).toEqual(['Renamed P1.']);
     expect(diffs).toEqual(['- people.items[0].id']);
+  });
+
+  it('receives latest request tokens with context usage and drops invalid token fields', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      'event: context_usage\ndata: {"used_chars":250,"max_chars":1000,"used_tokens":4321,"max_tokens":131072}\n\n',
+      'event: context_usage\ndata: {"used_chars":250,"max_chars":1000,"used_tokens":4321}\n\n',
+      'event: context_usage\ndata: {"used_chars":250,"max_chars":1000,"used_tokens":-5,"max_tokens":131072}\n\n',
+    ])));
+    const onContextUsage = vi.fn();
+    await streamSessionEvents('session', { onDelta: vi.fn(), onContextUsage }, new AbortController().signal, null);
+    expect(onContextUsage.mock.calls).toEqual([
+      [{ usedChars: 250, maxChars: 1000, usedTokens: 4321, maxTokens: 131072 }],
+      [{ usedChars: 250, maxChars: 1000, usedTokens: 4321 }],
+      [{ usedChars: 250, maxChars: 1000 }],
+    ]);
   });
 
   it('receives context usage and ignores invalid budgets', async () => {
@@ -490,6 +601,40 @@ describe('AI client', () => {
         headers: { Authorization: 'Bearer result-token' },
       },
     );
+  });
+
+  it('lists and removes retained uploads with the session credentials', async () => {
+    const files = [{ id: 'file/id', filename: 'ward.xlsx', media_type: 'application/xlsx', bytes: 123 }];
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(files)))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await getUploads('session/id', 'upload-token')).toEqual(files);
+    await removeUpload('session/id', 'file/id', 'upload-token');
+    expect(fetchMock).toHaveBeenLastCalledWith('https://api.nursescheduling.org/ai/sessions/session%2Fid/uploads/file%2Fid', {
+      method: 'DELETE', credentials: 'include', headers: { Authorization: 'Bearer upload-token' },
+    });
+  });
+
+  it('downloads a generated ZIP with authentication', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('zip-data', { headers: { 'Content-Type': 'application/zip' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const zip = await downloadGeneratedZip('session/id', 'turn/id', 'zip-token');
+    expect(await zip.text()).toBe('zip-data');
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.nursescheduling.org/ai/sessions/session%2Fid/downloads/turn%2Fid',
+      { credentials: 'include', headers: { Authorization: 'Bearer zip-token' } },
+    );
+  });
+
+  it('removes a generated ZIP with the session credentials', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'The ZIP is no longer available.' }), { status: 404 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await removeGeneratedZip('session/id', 'turn/id', 'zip-token');
+    expect(fetchMock).toHaveBeenLastCalledWith('https://api.nursescheduling.org/ai/sessions/session%2Fid/downloads/turn%2Fid', {
+      method: 'DELETE', credentials: 'include', headers: { Authorization: 'Bearer zip-token' },
+    });
+    await expect(removeGeneratedZip('session/id', 'turn/id', 'zip-token')).rejects.toThrow('The ZIP is no longer available.');
   });
 
   it('downloads an optimizer result with authentication', async () => {

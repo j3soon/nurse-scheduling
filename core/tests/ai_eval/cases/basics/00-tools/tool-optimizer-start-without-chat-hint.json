@@ -1,0 +1,41 @@
+{
+  "id": "tool-optimizer-start-without-chat-hint",
+  "fixture": "small-clinic",
+  "question": "Optimize this roster and give me the workbook when it is ready.",
+  "expect_proposal": false,
+  "tags": [
+    "prompt-evidence"
+  ],
+  "answer_contains": [
+    [
+      "background",
+      "running"
+    ],
+    [
+      "keep chatting",
+      "continue chatting",
+      "continue our conversation",
+      "other questions",
+      "keep talking",
+      "continue the conversation",
+      "continue talking"
+    ]
+  ],
+  "answer_not_matches": [
+    "\\b(?:optimization|optimizing)\\s+(?:is |has )?(?:complete|completed|finished)\\b"
+  ],
+  "tool_usage": {
+    "required_calls": [
+      {
+        "name": "optimizer",
+        "arguments": {
+          "action": "start"
+        }
+      }
+    ],
+    "max_per_tool": {
+      "optimizer": 1
+    }
+  },
+  "note": "This testcase is mostly AI generated. User does not prompt the background/conversation explanation. Controlled optimizer acknowledges startup and stays running. Checks startup and no optimizer polling, not solver quality or later completion delivery."
+}

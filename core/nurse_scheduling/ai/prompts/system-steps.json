@@ -1,0 +1,892 @@
+[
+  {
+    "id": "assistant-identity",
+    "file": "steps/assistant-identity.md",
+    "cases": [
+      "current-chat-identity",
+      "colleague-open-ai-chat"
+    ],
+    "hypothesis": "Identifies the current chat as the Experimental AI chat instead of sending the user to another chat.",
+    "sha256": "9515e51b586aa567276143bc36d0335e9b53eba50903bced9358cc956c1d2774",
+    "evidence": [
+      {
+        "case": "current-chat-identity",
+        "input_sha256": "3d0d49b16f94e3f9cf6f052fdd6284f6124eb0719e301ac2749fd4196541b7ff",
+        "before": "0/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "colleague-open-ai-chat",
+            "input_sha256": "0e7c9899573e4f4021ea540b87f7588b40f26ff979bd3fd72c10e9fb2e089208",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Full-prompt ablation over three user turns. Without the clause, the agent answers that it cannot tell whether this is the Experimental AI chat. Navigation advice for a colleague on another page stays correct."
+      }
+    ],
+    "comparison_mode": "ablation"
+  },
+  {
+    "id": "app-guide",
+    "file": "steps/app-guide.md",
+    "cases": [
+      "guide-start-from-empty-schedule",
+      "guide-run-optimization"
+    ],
+    "hypothesis": "Answers how-to questions from the bundled user guide with its page and button names.",
+    "sha256": "29880956e7f09b4ec6a9c858a1bba2196bfe1ebe406677395e35b8c7747a0988",
+    "evidence": [
+      {
+        "case": "guide-start-from-empty-schedule",
+        "input_sha256": "deb5714a70bac131535a564baafc35b508611987d34321991773dc00c945c8c0",
+        "before": "1/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "guide-run-optimization",
+            "input_sha256": "9bdd048261b36be0ed53fe1efb9a7f71d9183f825da6dd155508ded275b87de0",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Full-prompt ablation with the final testcase inputs. Without the clause, the agent omits the setup pages and controls. Reading both the setup and chat guides supplies the manual path, Attach files, and user approval. The earlier one-page clause passed this witness only 2/3. A separate earlier guide-add-person exploration failed 0/3 in both arms and remains outside this receipt."
+      }
+    ],
+    "comparison_mode": "ablation"
+  },
+  {
+    "id": "tools-and-schema",
+    "file": "steps/tools-and-schema.md",
+    "cases": [
+      "pref-count-coefficients-small"
+    ],
+    "hypothesis": "Consults the relevant schema to construct a valid schedule edit.",
+    "sha256": "dbe538986f6d8df64e8cbeb95b09f370d45e0953d0bf85ccaf241861a338c388",
+    "evidence": [
+      {
+        "case": "pref-count-coefficients-small",
+        "input_sha256": "8bc3a045d60be46ae360325e1284659a58fd6fe6ab3b4409f39875a518fe99f1",
+        "before": "2/5",
+        "after": "5/5",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0
+      }
+    ]
+  },
+  {
+    "id": "literal-edits-and-validation",
+    "file": "steps/literal-edits-and-validation.md",
+    "cases": [
+      "pref-count-batch-first-valid"
+    ],
+    "hypothesis": "Keeps count expressions literal across operators and targets without validation repairs.",
+    "sha256": "6ac0b8a895661478b28c6f6bcb659bb11dd12b379d4563476f5a7b94ebf2d1c1",
+    "evidence": [
+      {
+        "case": "pref-count-batch-first-valid",
+        "input_sha256": "ca51042423c9b2bf5ad351745102949d5574f0d25c1d85c3b21774e69b73562d",
+        "before": "1/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "note": "Full-prompt ablation. Measures first-valid-write trajectory, not eventual YAML correctness."
+      }
+    ],
+    "comparison_mode": "ablation"
+  },
+  {
+    "id": "exact-selectors-and-conflicts",
+    "file": "steps/exact-selectors-and-conflicts.md",
+    "cases": [
+      "combined-edit-missing-shift-before-edit",
+      "combined-edit-exact-shift"
+    ],
+    "hypothesis": "Clarifies a missing shift type before proposing any part of a combined edit.",
+    "sha256": "576f58cbf71578f7d5e5927350209fcd4802f142c1b57ad51587d91d461fba49",
+    "evidence": [
+      {
+        "case": "combined-edit-missing-shift-before-edit",
+        "input_sha256": "4e220978bc1358caabe9c215dc1b807e5c29053906885a16fd8057b478f0412b",
+        "before": "1/5",
+        "after": "5/5",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "combined-edit-exact-shift",
+            "input_sha256": "c9b4fb6a6b14ee5600538bed894161d9b7985fb068a18244db19c6d32873be9d",
+            "before": "5/5",
+            "after": "5/5"
+          }
+        ],
+        "note": "Allows inspection before clarification."
+      }
+    ]
+  },
+  {
+    "id": "known-id-clarifications",
+    "file": "steps/known-id-clarifications.md",
+    "cases": [
+      "clarify-night-request-scope",
+      "clarify-night-keep-only-existing-request",
+      "remove-night-request-exact-id"
+    ],
+    "hypothesis": "Clarifies N versus Night rather than deleting a guessed selector.",
+    "sha256": "4b11e50c4011871c3f8e21eaed580a7710bfc11ab883f7cb6073fc3ff00e6fb9",
+    "evidence": [
+      {
+        "case": "clarify-night-keep-only-existing-request",
+        "input_sha256": "fbf0d7bc83e04c35fd2158927d8d9c116498beaabad412e824e8f828da7f83dc",
+        "before": "0/5",
+        "after": "5/5",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "clarify-night-request-scope",
+            "input_sha256": "6851c12a22c4a554a34ed592c91f8f0cf869a295588f7767fda0f9807aa6cc78",
+            "before": "0/5",
+            "after": "5/5"
+          },
+          {
+            "case": "remove-night-request-exact-id",
+            "input_sha256": "7a00111445c76afa15955e648561d01ffb58dd7fed47acf7ae57d2e49bd29280",
+            "before": "5/5",
+            "after": "5/5"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "resolve-ambiguous-targets",
+    "file": "steps/resolve-ambiguous-targets.md",
+    "cases": [
+      "combined-edit-exact-requests",
+      "people-description-small"
+    ],
+    "hypothesis": "Applies schedule descriptions to the global field and preserves person descriptions.",
+    "sha256": "ac5e78f35a66eb0217d37fa02443c9c27b11b99c881779e87026f9e2554d92fa",
+    "evidence": [
+      {
+        "case": "combined-edit-exact-requests",
+        "input_sha256": "f9c48e4f19b24c8d87d2fd92aac104e2be0546f3805833b18ec85abd742a1e65",
+        "before": "2/5",
+        "after": "5/5",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "people-description-small",
+            "input_sha256": "8460474d4a997ebaf2a53b2a91cd754bf0d9e19cfd1c280ef5ab6574ea3af172",
+            "before": "5/5",
+            "after": "5/5"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "request-scope",
+    "file": "steps/request-scope.md",
+    "cases": [
+      "combined-edit-ambiguous-requests",
+      "copy-all-requests-exact-small"
+    ],
+    "hypothesis": "Clarifies an unspecified request subset and then preserves every confirmed edit.",
+    "sha256": "6f88f3b6f4c2a6478e9d9185da5cfeb6a35d3e4d2cccfe1b8b0feb01d8644b8b",
+    "evidence": [
+      {
+        "case": "combined-edit-ambiguous-requests",
+        "input_sha256": "fd3bb6d833bc8567899733be2664bfe9f67af34ad2850e20d7b1a73c989dc77d",
+        "before": "0/5",
+        "after": "5/5",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "copy-all-requests-exact-small",
+            "input_sha256": "09502eec80863a097180f91e43a0dd7ce9272e476afd67e186fc6e026365871a",
+            "before": "5/5",
+            "after": "5/5"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "taiwan-holiday-renewal",
+    "file": "steps/taiwan-holiday-renewal.md",
+    "cases": [
+      "holiday-expansion-question-without-reads",
+      "dates-range-renew-small",
+      "dates-range-renew-custom-group-small"
+    ],
+    "hypothesis": "Asks the Taiwan holiday renewal question immediately and applies the confirmed range.",
+    "sha256": "ef1f009175af95a63ba305b272a051f1e19decfbdc99660392c07857d71d76a7",
+    "evidence": [
+      {
+        "case": "holiday-expansion-question-without-reads",
+        "input_sha256": "c6234d6b2c38bae175bb674b632a8723d878971f12d4e215df39225706215fac",
+        "before": "0/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "dates-range-renew-small",
+            "input_sha256": "1635101c576eba0d9aed90e90fb93a4933798050d3cd37f388a791cb5b537cc6",
+            "before": "3/3",
+            "after": "3/3"
+          },
+          {
+            "case": "dates-range-renew-custom-group-small",
+            "input_sha256": "aee21cba8f5b5bc79723633f3b8442c5831e9f1ff97d4a42f108c7ca2a9c4b79",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Controls explicitly distinguish custom-group preservation and extension."
+      }
+    ]
+  },
+  {
+    "id": "optimizer-start",
+    "file": "steps/optimizer-start.md",
+    "cases": [
+      "tool-optimizer-start-without-chat-hint"
+    ],
+    "hypothesis": "Reports a background start without unnecessary follow-up tool calls.",
+    "sha256": "8bf39c5c2668fbd019ec4924bac9a664cb2050ead612e2a98f7c3826eb415558",
+    "evidence": [
+      {
+        "case": "tool-optimizer-start-without-chat-hint",
+        "input_sha256": "c70e1caccfc1175af4e399fa1d3edee1cb3f5c034370e4476f4c54f73ac9207e",
+        "before": "0/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "note": "Adjacent prefix comparison. Controlled startup verifies the background explanation and no optimizer polling. Solver quality and completion callbacks are not graded."
+      }
+    ]
+  },
+  {
+    "id": "optimizer-lifecycle",
+    "file": "steps/optimizer-lifecycle.md",
+    "cases": [
+      "tool-optimizer-api-unavailable",
+      "tool-optimizer-start"
+    ],
+    "hypothesis": "Reports an optimizer API error without retrying or polling it.",
+    "sha256": "b45399ffaaf009d2d4e6264751c19aa4c071a6d7badc6dc87f722216c4ed6549",
+    "evidence": [
+      {
+        "case": "tool-optimizer-api-unavailable",
+        "input_sha256": "0d84142bc73c524f5b2640d08a04422ed3eb2bc537387fc57a5f0301465164a9",
+        "before": "1/5",
+        "after": "5/5",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "tool-optimizer-start",
+            "input_sha256": "cbfbca834beca2dc793785b4db3d35dadd0229708162bdbcf36cf5891f93f60a",
+            "before": "5/5",
+            "after": "5/5"
+          }
+        ],
+        "note": "Controlled API outage. Solver quality and completion callbacks are not graded."
+      }
+    ]
+  },
+  {
+    "id": "pending-proposal",
+    "file": "steps/pending-proposal.md",
+    "cases": [
+      "revise-pending-preserve-person"
+    ],
+    "hypothesis": "Produces a cumulative revision preserving prior proposed edits.",
+    "sha256": "fe9aae482be29db50f552293fdedf3c855345e4a0667da4ebfb750a5ad2c97fc",
+    "evidence": [
+      {
+        "case": "revise-pending-preserve-person",
+        "input_sha256": "ff108f6e6ad8ac68770e0775ca35e20ad505e588fe64505c2820a23b52a6ef65",
+        "before": "0/5",
+        "after": "5/5",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "note": "Covers cumulative revision, not cancellation."
+      }
+    ]
+  },
+  {
+    "id": "proposal-approval-boundary",
+    "file": "steps/proposal-approval-boundary.md",
+    "cases": [
+      "proposal-is-not-saved-yet",
+      "chat-approve-does-not-apply",
+      "approved-description-is-current"
+    ],
+    "hypothesis": "Describes current-turn changes as awaiting approval and sends the user to the Approve button instead of claiming to approve them.",
+    "sha256": "9a8abcdb84a3e8735d5f66260ab211c4ebc90ab9b5b0ad9ac74c807b8d0eeaef",
+    "evidence": [
+      {
+        "case": "proposal-is-not-saved-yet",
+        "input_sha256": "bb8378ee766bce666f56d3ff846cf7c3169978844825fc6e693a0b0768438ae4",
+        "before": "1/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "approved-description-is-current",
+            "input_sha256": "3b3c57d25f5949be87f886397cff1e63f9e23e949101ef213daad1541a06ebe0",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ]
+      },
+      {
+        "case": "chat-approve-does-not-apply",
+        "input_sha256": "6bc7763b1b403e90f69cdf3992131dcee949ebcaa7d9471af265e1fe3bb2d84d",
+        "before": "0/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "note": "Without the clause, the agent treats a typed approve as approval and edits the schedule again."
+      }
+    ]
+  },
+  {
+    "id": "ambiguous-people-group",
+    "file": "steps/ambiguous-people-group.md",
+    "cases": [
+      "clarify-similar-people-groups",
+      "heldout-exact-people-group",
+      "heldout-clarify-similar-groups"
+    ],
+    "hypothesis": "Clarifies informal group descriptions before edits or proposals, while using explicitly identified IDs directly.",
+    "sha256": "ce60492b560eab3bd227ad627fc5c2ae717e06d73d057c53cce99b4dcd3be5ee",
+    "evidence": [
+      {
+        "case": "clarify-similar-people-groups",
+        "input_sha256": "e2fe95cd72f6cfca4704ee9d5ad7fbb4d4e72fc0731bc33eda5f043cf3b8a4c3",
+        "before": "0/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "heldout-exact-people-group",
+            "input_sha256": "e932bab75824a169fe767c17b1235576855916d337862023c9028debabdd7a45",
+            "before": "3/3",
+            "after": "3/3"
+          },
+          {
+            "case": "heldout-clarify-similar-groups",
+            "input_sha256": "354a7692093a859f5d47e003123a0012ce82589177a58192a47194d6bb132836",
+            "before": "2/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Full-prompt ablation. Clarifies before preparing a proposal, with informal-description and explicit-ID controls on two fixtures."
+      }
+    ],
+    "comparison_mode": "ablation"
+  },
+  {
+    "id": "weight-notation",
+    "file": "steps/weight-notation.md",
+    "cases": [
+      "weight-shorthand-clarify-selector",
+      "weight-shorthand-exact-weight",
+      "weight-shorthand-exact-selector"
+    ],
+    "hypothesis": "Clarifies weight-versus-selector ambiguity before edits or proposals and applies explicitly named fields directly.",
+    "sha256": "73f7515c812d4afa1146add66cb4bb64be70689e2f408a60af4c8245c95c9cf8",
+    "evidence": [
+      {
+        "case": "weight-shorthand-clarify-selector",
+        "input_sha256": "16ac170d8d972b1514b14b4f0f681d1c6eb7732a9b82801b4dadb48e882db4f2",
+        "before": "0/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "weight-shorthand-exact-weight",
+            "input_sha256": "2f3c0160adc7c92d10d6ec37e305cb5046624024c3c536c82f9a090f0d039057",
+            "before": "3/3",
+            "after": "3/3"
+          },
+          {
+            "case": "weight-shorthand-exact-selector",
+            "input_sha256": "e9e652f703d154390e730db64f774c25928f7928e996774d0df3d68c7b0b2e81",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "inspection-helpers",
+    "file": "steps/inspection-helpers.md",
+    "cases": [
+      "result-grouped-cross-month",
+      "result-zero-target-misses",
+      "result-single-tier-summary",
+      "result-stale-summary-control"
+    ],
+    "hypothesis": "Uses matching bounded audit counts within their stated scope, preserves source verification and helper fallback, and continues completed optimizer jobs without restarting.",
+    "sha256": "4f5d2848c7d54d73b30f549da312c21b8344adc5a1ad5c379503344102a8eb85",
+    "evidence": [
+      {
+        "case": "result-stale-summary-control",
+        "input_sha256": "1f2b90a90045b160e17960d255fbf16df1086cb7055396a6728c66212c85ffb3",
+        "before": "0/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "result-grouped-cross-month",
+            "input_sha256": "9bf1c383273562b723d79e34c8d09d743176ed3b7efdc437f5b1f21432d6afc2",
+            "before": "3/3",
+            "after": "3/3"
+          },
+          {
+            "case": "result-single-tier-summary",
+            "input_sha256": "bcbf6ffbe36985c573623f310ac5c45b3b9dff57955cc340da16aedd6e419343",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Full-prompt ablation. The stale-summary witness verifies the current result instead of repeating earlier incumbent counts, improving from 0/3 to 3/3. Both controls pass in both arms. The total-token cost target of 0.80 failed: grouped counts cost 1.73 times baseline and single-tier counts cost 0.90 times baseline. Retain this clause for correctness, with no token-saving claim. Zero-target output was not rerun and remains outside this receipt."
+      }
+    ],
+    "comparison_mode": "ablation"
+  },
+  {
+    "id": "xlsx-inspection",
+    "file": "steps/xlsx-inspection.md",
+    "cases": [
+      "xlsx-formulas-and-caches",
+      "xlsx-color-fallback",
+      "xlsx-styled-requests-and-caches",
+      "xlsx-sheet-inventory"
+    ],
+    "hypothesis": "Reduces generated XLSX parsing while preserving color-dependent requests and last-saved formula caches.",
+    "sha256": "b166d9f3956a724a6747b1d554b1a742d60f2a819e39a207eab2836f8491d62c",
+    "evidence": [
+      {
+        "case": "xlsx-sheet-inventory",
+        "before": "3/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "cost_metric": "total-tokens",
+        "cost_ratio": 0.5315305590039762,
+        "cost_target": 0.8,
+        "controls": [
+          {
+            "case": "xlsx-formulas-and-caches",
+            "before": "3/3",
+            "after": "3/3",
+            "input_sha256": "bbeaf716b09c9c80b6cdc3d764fd6aeeab33bb3837870c96ace30f7cc08c68b6"
+          },
+          {
+            "case": "xlsx-color-fallback",
+            "before": "3/3",
+            "after": "3/3",
+            "input_sha256": "a7d2aa0986d71eb9c5c11c110c27c3277892e56ac0868c8c627b6271c73cd424"
+          },
+          {
+            "case": "xlsx-styled-requests-and-caches",
+            "before": "3/3",
+            "after": "3/3",
+            "input_sha256": "df1e7d89cd5ebed8cd9ace22448e502d01272f7bc96d72b940785d793d4b19d6"
+          }
+        ],
+        "note": "Adjacent prefix comparison with inspect_xlsx.py --overview available in both arms. Formula, cache and color controls all pass. Separate production comparison kept inventory correct in five pairs, with 10% more tokens and 23% more time after consolidation. Normal cell output is unchanged. Full distributions remain in ignored artifacts.",
+        "input_sha256": "26c29490ec0664c7e8479bc8df96b0950c848cecb5b7e9d3aa39fc965e351c02"
+      }
+    ]
+  },
+  {
+    "id": "pdf-inspection",
+    "file": "steps/pdf-inspection.md",
+    "cases": [
+      "pdf-specified-text-page",
+      "pdf-visual-layout",
+      "pdf-find-unknown-page"
+    ],
+    "hypothesis": "Uses the maintained PDF reader for selected pages and renders visual evidence only when needed, reducing generated parsing and latency.",
+    "sha256": "781c7ab30a0d0b359a7d6457730cec7799d7f84fa33dfe120fab448407b35c11",
+    "evidence": [
+      {
+        "case": "pdf-find-unknown-page",
+        "before": "5/5",
+        "after": "5/5",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "cost_metric": "total-tokens",
+        "cost_ratio": 0.6111268503435088,
+        "cost_target": 0.8,
+        "controls": [
+          {
+            "case": "pdf-specified-text-page",
+            "before": "3/3",
+            "after": "3/3",
+            "input_sha256": "fdd8aa86a6311746610c2f43e2101a96da2b47b6fa6aeb25091ca974b4dae024"
+          },
+          {
+            "case": "pdf-visual-layout",
+            "before": "5/5",
+            "after": "5/5",
+            "input_sha256": "f0bea39bd2f861223be16a7e0d6623a2898575ff3b82927890ae3f58456dd1fc"
+          }
+        ],
+        "note": "Search paragraph removed from the full prompt, with inspect_pdf.py --find available in both arms and the other PDF instructions unchanged. Search has five paired attempts, known-page text has three, and visual inspection has five. Visual inspection uses 5% more tokens with similar time. The known-page grader accepts correct read-tool answers. Initial restrictive-grader attempts and all distributions remain in ignored artifacts.",
+        "input_sha256": "d576cc2b8753c67f897bf4be503d8b41b12fd4db1a9fdee1a41061528591188b"
+      }
+    ]
+  },
+  {
+    "id": "request-inspection",
+    "file": "steps/request-inspection.md",
+    "cases": [
+      "request-tier-counts-large",
+      "request-bans-counts-large",
+      "request-filtered-cross-month"
+    ],
+    "hypothesis": "Answers shift-request questions with the counting script instead of repeatedly reading YAML and writing parsing code. Checks that saved data matches the current YAML.",
+    "sha256": "3afc9d1aa4746e06de8ddd856c73f00232e1d1ff1916c6ca7e8497d052f5797b",
+    "evidence": [
+      {
+        "case": "request-tier-counts-large",
+        "input_sha256": "4728e535fc57adc9141fd5bb6e9432b75034bb77becf5a6e3b0ea5d65c4b2e91",
+        "before": "3/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "cost_metric": "total-tokens",
+        "cost_ratio": 0.3103647520618179,
+        "cost_target": 0.8,
+        "controls": [
+          {
+            "case": "request-filtered-cross-month",
+            "input_sha256": "37f23c09edb3110a94fca4342858726a3039c57b2e6d448b0b8c126ba63cab2f",
+            "before": "1/3",
+            "after": "3/3"
+          },
+          {
+            "case": "request-bans-counts-large",
+            "input_sha256": "aa9a15679355d87c471f514f28db28f4c2dd2669c745a468fa07a5562beffdfe",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Plain-language rewrite compared with the previous prompt step, not with the old wording. Request counts stayed correct with 69% fewer mean tokens, with substantial variation between runs. The cross-month case improved from 1/3 to 3/3. Ban counts stayed correct, without a confirmed time reduction."
+      }
+    ]
+  },
+  {
+    "id": "verified-helper-counts",
+    "file": "steps/verified-helper-counts.md",
+    "cases": [
+      "request-bans-counts-large",
+      "result-policy-stale",
+      "optimizer-independent-request-check"
+    ],
+    "hypothesis": "Avoids duplicate computations for read-only questions covered by source-verified helper counts, while preserving explicitly independent checks and joint-feasibility reasoning.",
+    "sha256": "d545bfa3acc22ae960037c4e41f919694ad50924addcbc5a58b776b5b3608071",
+    "evidence": [
+      {
+        "case": "request-bans-counts-large",
+        "input_sha256": "ac2c8ead4d14b39340622d8835d3c00e568e6498066915d049918dfbf1cc051f",
+        "before": "5/5",
+        "after": "5/5",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "cost_metric": "total-tokens",
+        "cost_ratio": 0.6945307308970099,
+        "cost_target": 0.8,
+        "controls": [
+          {
+            "case": "optimizer-independent-request-check",
+            "input_sha256": "8cd9c2a3818f6266e8a3883e96b3cb86dfc9d3ea34a10029fc8d4d13e611be60",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "The unchanged request-count witness remains valid. Independent checking remains authorized when requested. Stale-policy conclusions are not confirmed in the new comparison, so that testcase remains linked without a passing control receipt. Failed attempts remain in ignored artifacts."
+      }
+    ]
+  },
+  {
+    "id": "request-tier-inventory",
+    "file": "steps/request-tier-inventory.md",
+    "cases": [
+      "request-tier-inventory-large",
+      "request-filtered-cross-month",
+      "request-bans-counts-large"
+    ],
+    "hypothesis": "Returns all nonzero weight-tier counts without repeated raw YAML parsing or individual request dumps.",
+    "sha256": "07652c58a82929fea7c64f269698c6a488c9c4046e996e5e2fe3b32c6a0cbe08",
+    "evidence": [
+      {
+        "case": "request-tier-inventory-large",
+        "input_sha256": "e249fefa5d404bde9ad487ce2ee2f9c2193aed30edf1a616b93204655de26caa",
+        "before": "3/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "cost_metric": "total-tokens",
+        "cost_ratio": 0.08636516352767168,
+        "cost_target": 0.8,
+        "controls": [
+          {
+            "case": "request-filtered-cross-month",
+            "input_sha256": "125e0c94473d5e0def012d12d36c05185f75e9705f7f70c6a97ffa14f3d873e7",
+            "before": "3/3",
+            "after": "3/3"
+          },
+          {
+            "case": "request-bans-counts-large",
+            "input_sha256": "f8b1b951fc7898412d8b185fb0ce590509852099479a07e4fedde1f28421ca58",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Full prompt with and without this final pointer, with identical helpers available. All tier counts must match independently checked selectors. Exact JSON object shape clarified in both arms after diagnostic array-only replies. Earlier format failures and cost outliers remain in ignored artifacts. Baseline cost variance is high."
+      }
+    ]
+  },
+  {
+    "id": "uploaded-yaml-import",
+    "file": "steps/uploaded-yaml-import.md",
+    "cases": [
+      "import-complete-uploaded-yaml",
+      "import-description-only"
+    ],
+    "hypothesis": "Imports a complete uploaded YAML without reading or rewriting its whole contents, while preserving partial-update scope.",
+    "sha256": "c2f7cb61b725beafe2d2168efa13fdbea892f6969d00881b54e9cf2a574dbb7f",
+    "evidence": [
+      {
+        "case": "import-complete-uploaded-yaml",
+        "input_sha256": "e1c4d4066745c23b0bab9b223dce54d9d3a08894be1d3b1e6d7d387929e5f02d",
+        "before": "3/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "cost_metric": "total-tokens",
+        "cost_ratio": 0.32908843500013746,
+        "cost_target": 0.75,
+        "token_metrics": {
+          "pairs": 3,
+          "missing_pairs": 0,
+          "before": {
+            "mean": 48502.666666666664,
+            "std": 10120.963804565914
+          },
+          "after": {
+            "mean": 15961.666666666666,
+            "std": 2770.104751328609
+          },
+          "delta": {
+            "mean": -32541.0,
+            "std": 12828.73481680871
+          },
+          "relative_delta": -0.6709115649998625
+        },
+        "controls": [
+          {
+            "case": "import-description-only",
+            "input_sha256": "265558320e965429ec819254b612b8da649516258df6dfd83e888abd14003bad",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Full-prompt ablation. The complete uploaded schedule stays intact. Mean total tokens fall 67%, with fewer full-file reads. Partial updates preserve the current schedule."
+      }
+    ],
+    "comparison_mode": "ablation"
+  },
+  {
+    "id": "people-history-import",
+    "file": "steps/people-history-import.md",
+    "cases": [
+      "month-end-history-forward",
+      "month-end-history-reverse",
+      "month-end-full-history"
+    ],
+    "hypothesis": "Produces one shorthand history row per person from the final consecutive shift run, including OFF, while preserving full daily history when requested.",
+    "sha256": "c244762367884de1c0bea5856a3ee8ce606e49c28e5046e0652096fede907db8",
+    "evidence": [
+      {
+        "case": "month-end-history-forward",
+        "input_sha256": "204cd96c1ddccd32ab1b16bc5133f99137b1b38b4681377b2dfa17516cae225a",
+        "before": "1/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "month-end-history-reverse",
+            "input_sha256": "d10b3575aac2ef79852ba15d7add6863112b7cbd24f6d94c9d00b96dbd96362e",
+            "before": "1/3",
+            "after": "3/3"
+          },
+          {
+            "case": "month-end-full-history",
+            "input_sha256": "fe71b2c03aac4519d5ba63ca86a797535270dafbb5dfe7e34607f6ad310a1b2c",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Compare the previous full prompt with this final step. Grade captured CSV downloads. Both date orders improved. Full daily history stayed correct. The reversed-date receipt uses a clean paired recheck after an earlier E2B failure."
+      }
+    ]
+  },
+  {
+    "id": "workbook-policy-clarification",
+    "file": "steps/workbook-policy-clarification.md",
+    "cases": [
+      "workbook-unexplained-policy",
+      "workbook-explained-policy",
+      "workbook-unexplained-policy-ward87"
+    ],
+    "hypothesis": "Asks about unexplained workbook codes, formatting and scheduling rules before proposing YAML. Imports explained data without unnecessary clarification.",
+    "sha256": "56e615e10cb2fc57c13028d6eeab4c2652ccb922015c32ff479627a09c5f7130",
+    "evidence": [
+      {
+        "case": "workbook-unexplained-policy",
+        "input_sha256": "7c292dae40cb431cff440f1cbf83edcd1f2f436202b375b7cd2f14e7a60ec166",
+        "before": "0/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "workbook-explained-policy",
+            "input_sha256": "3d96a7865a2f793a29860d4327d5fff64437b57a092763a6bb9f9f3e70c5056d",
+            "before": "2/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Adjacent full-prompt comparison. Unexplained workbooks require clarification. Explained colors, histories and requests produce complete proposals with exact finite weights. Costs are not compared for the failing baseline. The 87-person case is linked for additional coverage, not included in this clean receipt."
+      }
+    ]
+  },
+  {
+    "id": "optimizer-goal",
+    "file": "steps/optimizer-goal.md",
+    "cases": [
+      "optimizer-goal-preserves-policy",
+      "optimizer-authorized-policy-change",
+      "optimizer-independent-request-check"
+    ],
+    "hypothesis": "Starts optimization goals with unchanged policy directly, while handling explicit edits and independent checks first.",
+    "sha256": "ef108b52850ee85e05e28427bcac9e28b7dbce0a2a04afd70691b15f0c0b9ece",
+    "evidence": [
+      {
+        "case": "optimizer-goal-preserves-policy",
+        "input_sha256": "adb555246db145d92787378bdc211de4e768ea73a0b779ed0f1d98b42051e7c5",
+        "before": "3/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "cost_metric": "total-tokens",
+        "cost_ratio": 0.31278434281673984,
+        "cost_target": 0.8,
+        "controls": [
+          {
+            "case": "optimizer-authorized-policy-change",
+            "input_sha256": "4fee349955bdb45efe16da671cf40b452ac619fcbced1d85dd6cdf728ad77ee3",
+            "before": "3/3",
+            "after": "3/3"
+          },
+          {
+            "case": "optimizer-independent-request-check",
+            "input_sha256": "0ebfcc2a151d96f1d27555c75aaf80f39a7e184045db9e4b09e57d5ceacbbcb1",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Adjacent full-prompt prefixes. Goal witness preserves submitted policy with 69% fewer mean tokens. Two of three starts are direct. Edit and independent-check controls stay correct. Authorized edits use 38% more tokens, so the combined cost gate fails. Baseline token variance is high. Controlled starts do not grade solver quality."
+      }
+    ]
+  },
+  {
+    "id": "generated-downloads",
+    "file": "steps/generated-downloads.md",
+    "cases": [
+      "download-generated-zip"
+    ],
+    "hypothesis": "Delivers requested generated files through the server-captured download ZIP.",
+    "sha256": "bf59afa6702fc9d6f8c273ce924a35122f0614677d619d227631daa391694647",
+    "evidence": [
+      {
+        "case": "download-generated-zip",
+        "input_sha256": "e7320ac910fbacf1d69c96582b851f4ab9f985f3cf983308416a58aa69b26666",
+        "before": "0/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "note": "Adjacent full-prompt prefixes. Without the section, every attempt wrote /workspace/sample.csv and reported it as delivered, so the server captured no ZIP. With it, every attempt packaged the requested CSV in the captured ZIP."
+      }
+    ]
+  },
+  {
+    "id": "workspace-lifecycle",
+    "file": "steps/workspace-lifecycle.md",
+    "cases": [
+      "keep-generated-file-for-next-message",
+      "earlier-download-availability",
+      "temporary-output-lifetime",
+      "download-generated-zip"
+    ],
+    "hypothesis": "Knows that only the proposal and download ZIP outlive each VM, and that earlier downloads stay available although the next VM lacks them.",
+    "sha256": "1ce9c7dd80b3b716869250b2884b22b55dc24c2f4531ea7c6eed90414919c36d",
+    "evidence": [
+      {
+        "case": "keep-generated-file-for-next-message",
+        "input_sha256": "973ee96d8218b63c18749bb214759ba10e8c94bb5a3f26df644029f928c8a8da",
+        "before": "0/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "temporary-output-lifetime",
+            "input_sha256": "5d6e2a97fd7b8156caa6131417e8fa3fbcf847d4c872f8b9c4b6a55e92d5f91f",
+            "before": "2/3",
+            "after": "3/3"
+          },
+          {
+            "case": "download-generated-zip",
+            "input_sha256": "2d666c34936e630b0dd5cf0322cfa88695d42baa04c1ac9d2890e36101991117",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Adjacent full-prompt prefixes. Without the section, every attempt promised to keep an ordinary workspace file for the next message. With it, every attempt said the file is lost. The lifetime check and download delivery stay correct."
+      },
+      {
+        "case": "earlier-download-availability",
+        "input_sha256": "877e82e02b1221d1051331c492d9df2f5aabf70d36d08ff507948297f88a2e5f",
+        "before": "0/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "note": "Adjacent full-prompt prefixes. Without the section, every attempt treated the earlier download as lost after finding no ZIP in the new VM. An earlier wording that only said the ZIP is kept also failed 0/3. Stating that the button stays available while the next VM lacks the ZIP passes 3/3."
+      }
+    ]
+  }
+]

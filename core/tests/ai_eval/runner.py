@@ -26,7 +26,8 @@ import json
 import os
 import subprocess
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
+from contextlib import aclosing
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from io import StringIO
@@ -40,26 +41,40 @@ from nurse_scheduling.ai.agent import (
     AgentReasoning,
     AgentText,
     AgentToolBatchMetrics,
+    AgentToolOutcome,
     AgentToolStart,
     AgentToolUse,
 )
-from nurse_scheduling.ai.app import PROPOSAL_APPROVED_HISTORY, PROPOSAL_REJECTED_HISTORY, build_provider_messages
+from nurse_scheduling.ai.app import (
+    PROPOSAL_APPROVED_HISTORY,
+    PROPOSAL_REJECTED_HISTORY,
+    build_provider_messages,
+)
+from nurse_scheduling.ai.background import SCHEDULE_CHANGED_DISCARDED_EVENT, SCHEDULE_CHANGED_EVENT, upload_event
 from nurse_scheduling.ai.config import AiSettings
+from nurse_scheduling.ai.optimizer import optimizer_completion_message, optimizer_start_message
 from nurse_scheduling.ai.provider import (
     ChatMessage,
     ChatStreamEvent,
     OpenAiCompatibleProvider,
     ProviderAttempt,
     ProviderError,
+    ProviderResponseLimitError,
     TokenUsage,
     ToolCallRequest,
 )
+from nurse_scheduling.ai.result_context import build_result_context
 from nurse_scheduling.ai.sandbox import SandboxError, SandboxFactory, managed_sandbox_factory
 from nurse_scheduling.ai.sandbox.factory import create_sandbox_factory
 from nurse_scheduling.ai.sandbox_agent import (
+    REFERENCE_ATTACHMENT_TOOLS,
     SANDBOX_SYSTEM_PROMPT,
+    AgentDownload,
     SandboxAgentLimits,
+    SandboxCommandTimeoutError,
+    SandboxDownloadValidationError,
     SandboxTurnMetrics,
+    inspection_helper_catalog,
     run_sandbox_agent,
 )
 from nurse_scheduling.ai.schema import (
@@ -72,11 +87,26 @@ from nurse_scheduling.ai.schema import (
 from nurse_scheduling.loader import _load_yaml
 
 from .attachment_fixtures import load_attachment_fixtures
-from .grading import EvalCase, RunOutcome, computed_values, grade, load_cases
+from .comparison import comparison_metrics_markdown, comparison_statistics
+from .grading import (
+    EvalCase,
+    RunOutcome,
+    computed_values,
+    grade,
+    load_cases,
+    semantic_trajectory_failures,
+    tool_limit_failures,
+)
+from .optimizer_fixtures import RESULT_SOURCES, completion_result
+from .prompt_ladder import case_digest, load_prompt_steps, prompt_at_step
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 CASES = Path(__file__).resolve().parent / "cases"
 FIXTURES = {
+    "policy-audit": Path(__file__).resolve().parent / "fixtures" / "policy-audit.yaml",
+    "request-audit-groups": Path(__file__).resolve().parent / "fixtures" / "request-audit-groups.yaml",
+    "weight-units": Path(__file__).resolve().parent / "fixtures" / "weight-units.yaml",
+    "request-audit": Path(__file__).resolve().parent / "fixtures" / "request-audit.yaml",
     "cross-year-unit": Path(__file__).resolve().parent / "fixtures" / "cross-year-unit.yaml",
     "new-schedule": Path(__file__).resolve().parent / "fixtures" / "new-schedule.yaml",
     "small-clinic": Path(__file__).resolve().parent / "fixtures" / "small-clinic.yaml",
@@ -113,12 +143,14 @@ class CaseRun:
     tool_calls_per_turn: list[int] = field(default_factory=list)
     tool_batch_metrics: list[AgentToolBatchMetrics] = field(default_factory=list)
     repetition: int = 1
+    prompt_variant: str = "production"
 
     def as_record(self) -> dict[str, Any]:
         """Render one result as a line of the report."""
         return {
             "case_id": self.case_id,
             "repetition": self.repetition,
+            "prompt_variant": self.prompt_variant,
             "category": self.category,
             "passed": self.passed,
             "seconds": round(self.seconds, 1),
@@ -217,6 +249,10 @@ async def run_case(
     settings: AiSettings,
     case: EvalCase,
     sandbox_factory: SandboxFactory | None = None,
+    *,
+    system_prompt: str = SANDBOX_SYSTEM_PROMPT,
+    fail_fast: bool = True,
+    optimizer_completion_factory: Callable[[str, str], tuple[bytes, dict]] | None = None,
 ) -> CaseRun:
     """Answer one case the way the service would, then grade what it produced."""
     text = fixture_text(case.fixture)
@@ -238,23 +274,119 @@ async def run_case(
     reasoning = 0
     started = time.perf_counter()
     case_attachments = load_attachment_fixtures(case.attachments)
+    if case_attachments:
+        # Production records uploads as their own history message before the question that uses them.
+        history.append(ChatMessage(role="user", content=upload_event(case_attachments)))
+    optimizer_started = False
+    optimizer_source = ""
+
+    async def execute_optimizer(_schedule_yaml: str, arguments: str) -> AgentToolOutcome:
+        """Expose the production tool contract without submitting an actual job."""
+        nonlocal optimizer_started, optimizer_source
+        try:
+            request = json.loads(arguments or "{}")
+        except json.JSONDecodeError:
+            return AgentToolOutcome("Optimizer arguments must be valid JSON.", False)
+        if not isinstance(request, dict):
+            return AgentToolOutcome("Optimizer arguments must be an object.", False)
+        if case.optimizer_error:
+            return AgentToolOutcome(case.optimizer_error, False)
+        action = request.get("action", "start")
+        if action == "start":
+            timeout = request.get("timeout_seconds")
+            if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, int) or timeout <= 0):
+                return AgentToolOutcome("timeout_seconds must be a positive integer.", False)
+            if optimizer_started:
+                return AgentToolOutcome("An optimizer run is already running for this chat session.", False)
+            optimizer_started = True
+            optimizer_source = _schedule_yaml
+            events.append({"kind": "optimizer_input", "schedule_yaml": _schedule_yaml})
+            return AgentToolOutcome(
+                optimizer_start_message("eval-job", hashlib.sha256(_schedule_yaml.encode()).hexdigest()), True
+            )
+        if action == "status" and optimizer_started:
+            return AgentToolOutcome("Optimizer job eval-job is running.", True)
+        if action == "finish_now" and optimizer_started:
+            return AgentToolOutcome("Asked optimizer job eval-job to finish now.", True)
+        if action not in {"start", "status", "finish_now"}:
+            return AgentToolOutcome("action must be one of: start, status, finish_now.", False)
+        return AgentToolOutcome("No optimizer job has been started in this chat session.", False)
+
     try:
         if sandbox_factory is None:
             raise ValueError("sandbox_factory is required for AI evaluation")
-        for turn_index, question in enumerate(case.user_turns):
-            attachments = case_attachments if turn_index == 0 else ()
+        turns = [(question, False) for question in case.user_turns]
+        if case.optimizer_completion:
+            turns.append(("", True))
+        for turn_index, (question, completion) in enumerate(turns):
+            if case.optimizer_completion_only and not completion:
+                arguments = json.dumps({"action": "start", "timeout_seconds": 60})
+                outcome = await execute_optimizer(text, arguments)
+                if not outcome.ok:
+                    raise ValueError("Fixed optimizer setup failed")
+                acknowledgement = (
+                    "Optimization is running in the background for 60 seconds. You can keep chatting. "
+                    "I will review the result when it completes."
+                )
+                events.extend(
+                    [
+                        {"kind": "user", "turn": turn_index + 1, "text": question},
+                        {"kind": "tool_start", "name": "optimizer", "arguments": arguments, "seeded": True},
+                        {
+                            "kind": "tool",
+                            "name": "optimizer",
+                            "arguments": arguments,
+                            "ok": True,
+                            "result": outcome.text,
+                            "seeded": True,
+                        },
+                        {"kind": "text", "text": acknowledgement, "seeded": True},
+                    ]
+                )
+                answers.append(acknowledgement)
+                proposal_turns.append(False)
+                intermediate_proposals.append(False)
+                history.extend(
+                    [ChatMessage(role="user", content=question), ChatMessage(role="assistant", content=acknowledgement)]
+                )
+                continue
+            optimizer_result = None
+            optimizer_context = None
+            if completion:
+                if not optimizer_started:
+                    events.append({"kind": "evaluation_stop", "reason": "optimizer was not started"})
+                    break
+                try:
+                    if optimizer_completion_factory is None:
+                        optimizer_result, result_data = completion_result(case.optimizer_completion, optimizer_source)
+                    else:
+                        optimizer_result, result_data = await asyncio.to_thread(
+                            optimizer_completion_factory, case.optimizer_completion, optimizer_source
+                        )
+                except ValueError as error:
+                    events.append({"kind": "evaluation_stop", "reason": str(error)})
+                    break
+                context = await asyncio.to_thread(build_result_context, optimizer_source, workbook=optimizer_result)
+                optimizer_context = json.dumps(context, ensure_ascii=False, allow_nan=False).encode()
+                question = optimizer_completion_message(result_data)
+                optimizer_started = False
+            attachments = case_attachments
             messages = build_provider_messages(
                 history,
                 text,
                 question,
                 attachments,
-                system_prompt=SANDBOX_SYSTEM_PROMPT,
+                system_prompt=system_prompt,
+                max_download_bytes=settings.max_download_bytes,
                 pending_proposal=pending_proposal is not None,
+                optimizer_result_available=optimizer_result is not None,
             )
             prompt_messages.append(messages)
             turn_answer: list[str] = []
             turn_proposal: AgentProposal | None = None
-            events.append({"kind": "user", "turn": turn_index + 1, "text": question})
+            stopped_on_limit = False
+            turn_event_offset = len(events)
+            events.append({"kind": "optimizer" if completion else "user", "turn": turn_index + 1, "text": question})
             agent_events = run_sandbox_agent(
                 counting,
                 sandbox_factory,
@@ -265,54 +397,108 @@ async def run_case(
                 tool_batch_metrics.append,
                 pending_proposal_yaml=pending_proposal.text if pending_proposal else "",
                 pending_proposal_diff=pending_proposal.diff if pending_proposal else "",
+                execute_optimizer=execute_optimizer,
                 attachments=attachments,
+                optimizer_result=optimizer_result,
+                optimizer_context=optimizer_context,
             )
-            async for event in agent_events:
-                if isinstance(event, AgentText):
-                    turn_answer.append(event.text)
-                    _record_text(events, "text", event.text)
-                elif isinstance(event, AgentReasoning):
-                    reasoning += len(event.text)
-                    _record_text(events, "reasoning", event.text)
-                elif isinstance(event, AgentToolStart):
-                    events.append(
-                        {
-                            "kind": "tool_start",
-                            "name": event.name,
-                            "arguments": event.arguments,
-                        }
-                    )
-                elif isinstance(event, AgentToolUse):
-                    tools.append(event.name if event.ok else f"{event.name}(failed)")
-                    events.append(
-                        {
-                            "kind": "tool",
-                            "name": event.name,
-                            "ok": event.ok,
-                            "arguments": event.arguments,
-                            "result": event.result,
-                        }
-                    )
-                elif isinstance(event, AgentProposal):
-                    turn_proposal = event
-                    events.append({"kind": "proposal", "diff": event.diff})
+            async with aclosing(agent_events):
+                async for event in agent_events:
+                    if isinstance(event, AgentText):
+                        turn_answer.append(event.text)
+                        _record_text(events, "text", event.text)
+                    elif isinstance(event, AgentReasoning):
+                        reasoning += len(event.text)
+                        _record_text(events, "reasoning", event.text)
+                    elif isinstance(event, AgentToolStart):
+                        events.append({"kind": "tool_start", "name": event.name, "arguments": event.arguments})
+                        if fail_fast and (failures := semantic_trajectory_failures(case, events)):
+                            events.append(
+                                {
+                                    "kind": "evaluation_stop",
+                                    "turn": turn_index + 1,
+                                    "reason": _describe(failures[0]),
+                                }
+                            )
+                            stopped_on_limit = True
+                            break
+                    elif isinstance(event, AgentToolUse):
+                        tools.append(event.name if event.ok else f"{event.name}(failed)")
+                        events.append(
+                            {
+                                "kind": "tool",
+                                "name": event.name,
+                                "ok": event.ok,
+                                "arguments": event.arguments,
+                                "result": event.result,
+                            }
+                        )
+                        if fail_fast:
+                            turn_limit = (
+                                case.turn_tool_usage[turn_index] if turn_index < len(case.turn_tool_usage) else None
+                            )
+                            for expected, activity in (
+                                (case.tool_usage, events),
+                                (turn_limit, events[turn_event_offset:]),
+                            ):
+                                failures = tool_limit_failures(activity, expected) if expected is not None else ()
+                                if failures:
+                                    events.append(
+                                        {
+                                            "kind": "evaluation_stop",
+                                            "turn": turn_index + 1,
+                                            "reason": _describe(failures[0]),
+                                        }
+                                    )
+                                    stopped_on_limit = True
+                                    break
+                        if stopped_on_limit:
+                            break
+                    elif isinstance(event, AgentDownload):
+                        from io import BytesIO
+                        from zipfile import ZipFile
+
+                        with ZipFile(BytesIO(event.content)) as archive:
+                            files = {
+                                item.filename: hashlib.sha256(archive.read(item)).hexdigest()
+                                for item in archive.infolist()
+                                if not item.is_dir()
+                            }
+                        events.append({"kind": "download", "files": files})
+                    elif isinstance(event, AgentProposal):
+                        turn_proposal = event
+                        events.append({"kind": "proposal", "diff": event.diff})
             answer_text = "".join(turn_answer)
             answers.append(answer_text)
             proposal_turns.append(turn_proposal is not None)
             if turn_proposal is not None:
                 pending_proposal = turn_proposal
-            if turn_index < len(case.user_turns) - 1:
+            if turn_index < len(turns) - 1:
                 intermediate_proposals.append(turn_proposal is not None)
             if turn_index + 1 == case.proposal_turn:
                 proposal_event = turn_proposal
             history.extend(
                 [ChatMessage(role="user", content=question), ChatMessage(role="assistant", content=answer_text)]
             )
+            if stopped_on_limit:
+                break
+            if fail_fast and turn_proposal is not None and turn_index + 1 not in case.proposal_turns:
+                events.append({"kind": "evaluation_stop", "turn": turn_index + 1, "reason": "unexpected proposal"})
+                break
             action = turn_actions.get(turn_index + 1)
             if action is not None:
                 text, pending_proposal = _apply_turn_action(action, text, pending_proposal, history, events)
     except (ProviderError, SandboxError) as error:
-        failure = "the provider failed" if isinstance(error, ProviderError) else "the sandbox failed"
+        behavior_failure = isinstance(
+            error, (SandboxCommandTimeoutError, SandboxDownloadValidationError, ProviderResponseLimitError)
+        )
+        failure = (
+            str(error)
+            if behavior_failure
+            else ("the provider failed" if isinstance(error, ProviderError) else "the sandbox failed")
+        )
+        if behavior_failure:
+            events.append({"kind": "evaluation_stop", "reason": failure})
         return CaseRun(
             case.id,
             case.category,
@@ -324,7 +510,7 @@ async def run_case(
             answers[-1] if answers else "",
             False,
             reasoning,
-            str(error),
+            "" if behavior_failure else str(error),
             _trajectory(case, prompt_messages, events, None),
             token_usage=counting.token_usage,
             token_usage_turns=counting.token_usage_turns,
@@ -404,6 +590,11 @@ def _apply_turn_action(
         stream = StringIO()
         YAML().dump(schedule, stream)
         text = stream.getvalue()
+        history.append(
+            ChatMessage(
+                role="user", content=SCHEDULE_CHANGED_DISCARDED_EVENT if pending is not None else SCHEDULE_CHANGED_EVENT
+            )
+        )
     events.append({"kind": "turn_action", "turn": action.after_turn, "action": action.action, "ok": True})
     return text, None
 
@@ -680,6 +871,45 @@ def default_output_dir() -> Path:
     return artifact_root / "ai-evals" / timestamp
 
 
+class RunCheckpoints:
+    """Claim an output directory and persist completed attempts before the batch ends."""
+
+    def __init__(self, output_dir: Path, metadata: dict[str, dict[str, Any]], repetitions: int, expected: int):
+        output_dir.mkdir(parents=True, exist_ok=False)
+        self.output_dir = output_dir
+        self.repetitions = repetitions
+        self.expected = expected
+        self.completed = 0
+        self.directories = {}
+        for label, values in metadata.items():
+            directory = output_dir / label if len(metadata) > 1 else output_dir
+            directory.mkdir(exist_ok=True)
+            (directory / "cases").mkdir()
+            (directory / "metadata.json").write_text(json.dumps(values, indent=2, sort_keys=True) + "\n")
+            (directory / "results.jsonl").touch()
+            self.directories[label] = directory
+        self.set_status("running")
+
+    def set_status(self, status: str) -> None:
+        progress = {"status": status, "completed": self.completed, "expected": self.expected}
+        path = self.output_dir / "progress.json"
+        temporary = path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(progress, indent=2) + "\n")
+        temporary.replace(path)
+
+    def record(self, run: CaseRun) -> None:
+        directory = self.directories[run.prompt_variant]
+        suffix = f"--run-{run.repetition}" if self.repetitions > 1 else ""
+        path = directory / "cases" / f"{run.case_id}{suffix}.json"
+        temporary = path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(run.as_trajectory(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(path)
+        with (directory / "results.jsonl").open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(run.as_record(), ensure_ascii=False) + "\n")
+        self.completed += 1
+        self.set_status("running")
+
+
 def write_report(
     runs: Sequence[CaseRun],
     output_dir: Path,
@@ -688,15 +918,16 @@ def write_report(
     wall_seconds: float | None = None,
     metadata: dict[str, Any] | None = None,
     baseline_report: Path | None = None,
+    checkpointed: bool = False,
 ) -> Path:
     """Write one run's results and summary, and report where the summary landed."""
-    output_dir.mkdir(parents=True, exist_ok=False)
+    output_dir.mkdir(parents=True, exist_ok=checkpointed)
     (output_dir / "results.jsonl").write_text(
         "".join(json.dumps(run.as_record(), ensure_ascii=False) + "\n" for run in runs), encoding="utf-8"
     )
     # One file per case, so a failure can be read back in full.
     cases_dir = output_dir / "cases"
-    cases_dir.mkdir()
+    cases_dir.mkdir(exist_ok=checkpointed)
     repeated = max((run.repetition for run in runs), default=1) > 1
     for run in runs:
         suffix = f"--run-{run.repetition}" if repeated else ""
@@ -710,7 +941,14 @@ def write_report(
     summary = output_dir / "summary.md"
     timing = f"\nWall time: {wall_seconds:.1f} seconds\n" if wall_seconds is not None else ""
     stability = stability_markdown(runs)
-    comparison = comparison_markdown(_load_report_records(baseline_report), runs) if baseline_report else ""
+    comparison = ""
+    if baseline_report:
+        baseline = _load_report_records(baseline_report)
+        comparison = comparison_markdown(baseline, runs)
+        (output_dir / "baseline-comparison.json").write_text(
+            json.dumps(comparison_statistics(baseline, [run.as_record() for run in runs]), indent=2) + "\n",
+            encoding="utf-8",
+        )
     stability_section = f"{stability}\n\n" if stability else ""
     comparison_section = f"{comparison}\n\n" if comparison else ""
     summary.write_text(
@@ -750,27 +988,128 @@ def comparison_markdown(baseline: Sequence[dict[str, Any]], current: Sequence[Ca
     lines = [
         "## Baseline comparison",
         "",
-        "| Case | Baseline pass | Current pass | Pass delta | Turn delta | Token delta |",
-        "| --- | ---: | ---: | ---: | ---: | ---: |",
+        "| Case | Baseline pass | Current pass | Pass delta | Infrastructure |",
+        "| --- | ---: | ---: | ---: | ---: |",
     ]
-    current_ids = {run.case_id for run in current}
-    baseline_ids = {str(record["case_id"]) for record in baseline}
-    for case_id in sorted(current_ids & baseline_ids):
-        before = [record for record in baseline if record["case_id"] == case_id]
-        after = [run for run in current if run.case_id == case_id]
-        before_rate = sum(bool(record["passed"]) for record in before) / len(before)
-        after_rate = sum(run.passed for run in after) / len(after)
-        before_turns = _median([float(record["turns"]) for record in before])
-        after_turns = _median([float(run.turns) for run in after])
-        before_tokens = _median(
-            [float(record["token_usage"]["total_tokens"]) for record in before if record["token_usage"]["total_tokens"]]
-        )
-        after_tokens = _median([float(run.token_usage.total_tokens) for run in after if run.token_usage is not None])
-        lines.append(
-            f"| {case_id} | {before_rate:.0%} | {after_rate:.0%} | {after_rate - before_rate:+.0%} "
-            f"| {after_turns - before_turns:+.1f} | {after_tokens - before_tokens:+.0f} |"
-        )
+    statistics = comparison_statistics(baseline, [run.as_record() for run in current])
+    for case_id, case in statistics["cases"].items():
+        before, after = case["before"], case["after"]
+        before_rate = f"{before['pass_rate']:.0%}" if before["runs"] else "n/a"
+        after_rate = f"{after['pass_rate']:.0%}" if after["runs"] else "n/a"
+        delta = f"{case['pass_rate_delta']:+.0%}" if case["pass_rate_delta"] is not None else "n/a"
+        infra = before["infrastructure_errors"] + after["infrastructure_errors"]
+        lines.append(f"| {case_id} | {before_rate} | {after_rate} | {delta} | {infra} |")
+    lines.extend(["", comparison_metrics_markdown(statistics)])
     return "\n".join(lines)
+
+
+def _prompt_cost(run: CaseRun, metric: str) -> float | None:
+    """Count cost only for a completed, correct case run."""
+    if not run.passed or run.error:
+        return None
+    if metric == "tool-calls":
+        return float(len(run.tools))
+    if metric == "turns":
+        return float(run.turns)
+    if metric == "seconds":
+        return run.seconds
+    if run.token_usage is not None and run.token_usage_turns == run.turns:
+        if metric == "uncached-tokens":
+            cached = run.token_usage.cached_prompt_tokens
+            return float(run.token_usage.prompt_tokens - cached) if cached is not None else None
+        if metric == "completion-tokens":
+            return float(run.token_usage.completion_tokens)
+        if metric == "total-tokens":
+            return float(run.token_usage.total_tokens)
+    return None
+
+
+def prompt_comparison_markdown(
+    runs: Sequence[CaseRun], metric: str | None = None, max_ratio: float | None = None
+) -> tuple[str, bool]:
+    """Require a clean correctness gain or an explicit relative cost gain."""
+    case_ids = sorted({run.case_id for run in runs})
+    lines = [
+        "# Prompt comparison",
+        "",
+        "Infrastructure errors make the benefit decision inconclusive. Cost gains count toward it only when every attempt passes.",
+        "A passing result is directional evidence, not a statistical guarantee.",
+        "",
+        "| Case | Before pass | After pass | Infrastructure | Cost ratio |",
+        "| --- | ---: | ---: | ---: | ---: |",
+    ]
+    all_after_pass = True
+    any_correctness_gain = False
+    any_cost_gain = False
+    cost_regression = False
+    cost_missing = False
+    any_correctness_regression = False
+    clean = True
+    for case_id in case_ids:
+        before = [run for run in runs if run.case_id == case_id and run.prompt_variant == "before"]
+        after = [run for run in runs if run.case_id == case_id and run.prompt_variant == "after"]
+        if not before or len(before) != len(after):
+            raise ValueError(f"Unpaired prompt comparison for {case_id}")
+        if {run.repetition for run in before} != {run.repetition for run in after}:
+            raise ValueError(f"Unpaired prompt repetitions for {case_id}")
+        infra = sum(bool(run.error) for run in (*before, *after))
+        clean &= infra == 0
+        before_pass = sum(run.passed for run in before)
+        after_pass = sum(run.passed for run in after)
+        all_after_pass &= after_pass == len(after)
+        any_correctness_gain |= after_pass > before_pass
+        any_correctness_regression |= after_pass < before_pass
+        ratio: float | None = None
+        if metric and before_pass == len(before) and after_pass == len(after):
+            before_costs = [_prompt_cost(run, metric) for run in before]
+            after_costs = [_prompt_cost(run, metric) for run in after]
+            if all(value is not None for value in (*before_costs, *after_costs)):
+                before_total = sum(value for value in before_costs if value is not None)
+                after_total = sum(value for value in after_costs if value is not None)
+                ratio = after_total / before_total if before_total else None
+                any_cost_gain |= ratio is not None and max_ratio is not None and ratio <= max_ratio
+            cost_missing |= ratio is None
+            cost_regression |= ratio is not None and ratio > 1
+        lines.append(
+            f"| {case_id} | {before_pass}/{len(before)} | {after_pass}/{len(after)} | {infra} | {ratio:.2f} |"
+            if ratio is not None
+            else f"| {case_id} | {before_pass}/{len(before)} | {after_pass}/{len(after)} | {infra} | n/a |"
+        )
+    improved = (
+        clean
+        and all_after_pass
+        and not cost_regression
+        and not cost_missing
+        and (any_correctness_gain or any_cost_gain)
+    )
+    if not clean:
+        decision = "inconclusive due to infrastructure errors"
+    elif any_correctness_regression:
+        decision = "regression observed"
+    elif cost_regression:
+        decision = "cost regression observed"
+    elif cost_missing:
+        decision = "inconclusive due to missing cost data"
+    elif improved:
+        decision = "benefit observed"
+    else:
+        decision = "no measured benefit"
+    lines.extend(
+        [
+            "",
+            f"Decision: {decision}.",
+            f"Cost target: {metric} after/before <= {max_ratio:.2f}."
+            if metric and max_ratio is not None
+            else "Cost target: none specified.",
+            "Full trajectories and selected prompt-variant hashes are in the before/ and after/ reports.",
+        ]
+    )
+    statistics = comparison_statistics(
+        [run.as_record() for run in runs if run.prompt_variant == "before"],
+        [run.as_record() for run in runs if run.prompt_variant == "after"],
+    )
+    lines.extend(["", comparison_metrics_markdown(statistics)])
+    return "\n".join(lines), improved
 
 
 def select(
@@ -820,33 +1159,71 @@ async def run_all(
     jobs: int = 1,
     sandbox_factory: SandboxFactory | None = None,
     repetitions: int = 1,
+    *,
+    prompt_variants: Sequence[tuple[str, str]] | None = None,
+    fail_fast: bool = True,
+    on_complete: Callable[[CaseRun], None] | None = None,
 ) -> list[CaseRun]:
     """Run selected cases with bounded parallelism and preserve dataset order."""
     if jobs <= 0 or repetitions <= 0:
         raise ValueError("jobs and repetitions must be positive")
 
+    # Fixture solving and exporting are setup, outside timed model attempts.
+    for case in cases:
+        if case.optimizer_completion:
+            await asyncio.to_thread(
+                completion_result,
+                case.optimizer_completion,
+                RESULT_SOURCES[case.optimizer_completion].read_text(encoding="utf-8"),
+            )
+
     concurrency_limit = asyncio.Semaphore(jobs)
     completed = 0
 
-    scheduled = [(case, repetition) for case in cases for repetition in range(1, repetitions + 1)]
+    variants = tuple(prompt_variants or (("production", SANDBOX_SYSTEM_PROMPT),))
+    if len({label for label, _ in variants}) != len(variants):
+        raise ValueError("Prompt variant labels must be unique")
+    if len(variants) == 1:
+        scheduled = [
+            (case, repetition, variants[0][0], variants[0][1])
+            for case in cases
+            for repetition in range(1, repetitions + 1)
+        ]
+    else:
+        scheduled = [
+            (case, repetition, label, prompt)
+            for repetition in range(1, repetitions + 1)
+            for case in cases
+            for label, prompt in (variants if repetition % 2 else reversed(variants))
+        ]
 
-    async def run_bounded(index: int, case: EvalCase, repetition: int) -> tuple[int, CaseRun]:
+    async def run_bounded(index: int, case: EvalCase, repetition: int, label: str, prompt: str) -> tuple[int, CaseRun]:
         nonlocal completed
         async with concurrency_limit:
-            run = await run_case(provider, settings, case, sandbox_factory)
+            run = await run_case(provider, settings, case, sandbox_factory, system_prompt=prompt, fail_fast=fail_fast)
             run.repetition = repetition
+            run.prompt_variant = label
         completed += 1
+        if on_complete is not None:
+            on_complete(run)
         mark = "pass" if run.passed else "FAIL"
-        label = f"{run.case_id}#{repetition}" if repetitions > 1 else run.case_id
-        print(f"[{completed}/{len(scheduled)}] {mark} {label} {run.seconds:.0f}s", flush=True)
+        run_label = f"{run.case_id}#{repetition}" if repetitions > 1 else run.case_id
+        if len(variants) > 1:
+            run_label += f" ({label})"
+        print(f"[{completed}/{len(scheduled)}] {mark} {run_label} {run.seconds:.0f}s", flush=True)
         return index, run
 
     if sandbox_factory is None:
         raise ValueError("sandbox_factory is required for AI evaluation")
     async with managed_sandbox_factory(sandbox_factory):
-        indexed_runs = await asyncio.gather(
-            *(run_bounded(index, case, repetition) for index, (case, repetition) in enumerate(scheduled))
-        )
+        tasks = [asyncio.create_task(run_bounded(index, *item)) for index, item in enumerate(scheduled)]
+        try:
+            indexed_runs = await asyncio.gather(*tasks)
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
     return [run for _, run in sorted(indexed_runs)]
 
 
@@ -856,10 +1233,32 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--case", action="append", default=[], help="run one case id, repeatable")
     parser.add_argument("--category", action="append", default=[], help="run one category directory, repeatable")
     parser.add_argument("--tag", action="append", default=[], help="run cases with one tag, repeatable")
+    parser.add_argument(
+        "--continue-after-failure",
+        action="store_true",
+        help="continue after irreversible proposal or tool-limit failures",
+    )
     broad_scope = parser.add_mutually_exclusive_group()
     broad_scope.add_argument("--tuning", action="store_true", help="run the default tuning set")
     broad_scope.add_argument("--full", action="store_true", help="run every case")
-    parser.add_argument("--repeat", type=int, default=1, help="run every selected case this many times")
+    broad_scope.add_argument(
+        "--ladder-audit",
+        action="store_true",
+        help="compare every prompt section, then run all ladder cases with the production prompt",
+    )
+    parser.add_argument("--plan-only", action="store_true", help="print the ladder audit plan without provider work")
+    prompt_scope = parser.add_mutually_exclusive_group()
+    prompt_scope.add_argument("--prompt-step", type=int, help="run with the first N prompt sections (0 is empty)")
+    prompt_scope.add_argument("--prompt-compare-step", type=int, help="compare prompt steps N-1 and N")
+    prompt_scope.add_argument(
+        "--prompt-ablate-step", type=int, help="compare the full prompt without N to the full prompt"
+    )
+    parser.add_argument("--repeat", type=int, default=None, help="run every selected case this many times")
+    parser.add_argument(
+        "--cost-metric",
+        choices=("tool-calls", "turns", "uncached-tokens", "completion-tokens", "total-tokens", "seconds"),
+    )
+    parser.add_argument("--cost-ratio", type=float, help="maximum after/before cost ratio for a cost benefit")
     parser.add_argument("--baseline-report", type=Path, help="compare with a prior report directory or results.jsonl")
     parser.add_argument("--cases-dir", type=Path, default=CASES, help="directory holding the cases")
     parser.add_argument("--output-dir", type=Path, default=None, help="new directory for the report")
@@ -870,14 +1269,55 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help=f"number of cases to run concurrently (default: {DEFAULT_CASE_JOBS})",
     )
     arguments = parser.parse_args(argv)
+    comparing = arguments.prompt_compare_step is not None or arguments.prompt_ablate_step is not None
+    arguments.repeat = (
+        arguments.repeat if arguments.repeat is not None else (3 if comparing or arguments.ladder_audit else 1)
+    )
     if arguments.jobs <= 0 or arguments.repeat <= 0:
         parser.error("--jobs and --repeat must be positive")
+    if (comparing or arguments.ladder_audit) and not 3 <= arguments.repeat <= 10:
+        parser.error("prompt comparisons require --repeat between 3 and 10")
+    if (arguments.cost_metric is None) != (arguments.cost_ratio is None):
+        parser.error("--cost-metric and --cost-ratio must be supplied together")
+    if arguments.cost_ratio is not None and not 0 < arguments.cost_ratio < 1:
+        parser.error("--cost-ratio must be between 0 and 1")
+    if arguments.cost_ratio is not None and not comparing:
+        parser.error("cost targets require a prompt comparison")
+    if arguments.baseline_report is not None and comparing:
+        parser.error("--baseline-report cannot be combined with a prompt comparison")
+    steps = (
+        load_prompt_steps()
+        if arguments.ladder_audit
+        or any(
+            value is not None
+            for value in (arguments.prompt_step, arguments.prompt_compare_step, arguments.prompt_ablate_step)
+        )
+        else ()
+    )
+    if arguments.prompt_step is not None and not 0 <= arguments.prompt_step <= len(steps):
+        parser.error(f"--prompt-step must be between 0 and {len(steps)}")
+    for flag, value in (
+        ("--prompt-compare-step", arguments.prompt_compare_step),
+        ("--prompt-ablate-step", arguments.prompt_ablate_step),
+    ):
+        if value is not None and not 1 <= value <= len(steps):
+            parser.error(f"{flag} must be between 1 and {len(steps)}")
     if any(not value.strip() for value in arguments.case + arguments.category + arguments.tag):
         parser.error("case, category, and tag selectors must not be empty")
     selected = bool(arguments.case or arguments.category or arguments.tag)
+    if arguments.plan_only and not arguments.ladder_audit:
+        parser.error("--plan-only requires --ladder-audit")
+    if arguments.ladder_audit and (
+        selected
+        or comparing
+        or arguments.prompt_step is not None
+        or arguments.baseline_report is not None
+        or arguments.continue_after_failure
+    ):
+        parser.error("--ladder-audit defines its own cases, prompts, and failure policy")
     if selected and (arguments.tuning or arguments.full):
         parser.error("--tuning and --full cannot be combined with case, category, or tag selectors")
-    if not selected and not (arguments.tuning or arguments.full):
+    if not selected and not (arguments.tuning or arguments.full or comparing or arguments.ladder_audit):
         parser.error("choose --case, --category, or --tag, or explicitly pass --tuning or --full")
     return arguments
 
@@ -885,48 +1325,176 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 def _selected_cases(argv: Sequence[str] | None) -> tuple[argparse.Namespace, list[EvalCase]]:
     """Validate the CLI scope and resolve its cases without provider work."""
     arguments = _parse_args(argv)
+    step = arguments.prompt_compare_step or arguments.prompt_ablate_step
+    default_ids = (
+        tuple(dict.fromkeys(case for entry in load_prompt_steps() for case in entry.cases))
+        if arguments.ladder_audit
+        else load_prompt_steps()[step - 1].cases
+        if step and not (arguments.case or arguments.category or arguments.tag or arguments.tuning or arguments.full)
+        else ()
+    )
+    if (
+        step
+        and not default_ids
+        and not (arguments.case or arguments.category or arguments.tag or arguments.tuning or arguments.full)
+    ):
+        raise SystemExit(f"Prompt step {step} has no targeted cases. Add one or select an explicit evaluation scope.")
     # --tuning opts into select's default tagged set when no filters are given.
     cases = select(
-        load_cases(arguments.cases_dir), arguments.case, arguments.category, arguments.tag, full=arguments.full
+        load_cases(arguments.cases_dir),
+        [*arguments.case, *default_ids],
+        arguments.category,
+        arguments.tag,
+        full=arguments.full,
     )
+    if arguments.ladder_audit:
+        from .ladder_audit import build_plan
+
+        build_plan(
+            load_prompt_steps(),
+            {case.id: case for case in cases},
+            arguments.output_dir or default_output_dir(),
+            repeat=arguments.repeat,
+            jobs=arguments.jobs,
+        )
     return arguments, cases
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the evaluation from the command line."""
     arguments, cases = _selected_cases(argv)
+    if arguments.ladder_audit:
+        from .ladder_audit import build_plan, run_audit
+
+        root = (arguments.output_dir or default_output_dir()).resolve()
+        plan = build_plan(
+            load_prompt_steps(), {case.id: case for case in cases}, root, repeat=arguments.repeat, jobs=arguments.jobs
+        )
+        if arguments.plan_only:
+            print(json.dumps(plan, indent=2))
+            return 0
+
+        def unchanged() -> bool:
+            try:
+                return plan == build_plan(
+                    load_prompt_steps(),
+                    {case.id: case for case in load_cases(arguments.cases_dir)},
+                    root,
+                    repeat=arguments.repeat,
+                    jobs=arguments.jobs,
+                )
+            except (OSError, ValueError, KeyError):
+                return False
+
+        return run_audit(plan, root, unchanged=unchanged)
     settings = AiSettings.from_env()
     sandbox_factory = create_sandbox_factory(settings)
-    started = time.perf_counter()
-    runs = asyncio.run(
-        run_all(
-            cases,
-            settings,
-            OpenAiCompatibleProvider(settings, include_usage=True, include_attempts=True),
-            arguments.jobs,
-            sandbox_factory,
-            arguments.repeat,
+    variants = _prompt_variants(arguments)
+    output_dir = (arguments.output_dir or default_output_dir()).resolve()
+    metadata = {
+        label: _evaluation_metadata(
+            settings, cases, arguments.repeat, prompt, fail_fast=not arguments.continue_after_failure
         )
-    )
+        for label, prompt in variants
+    }
+    checkpoints = RunCheckpoints(output_dir, metadata, arguments.repeat, len(cases) * arguments.repeat * len(variants))
+    started = time.perf_counter()
+    try:
+        runs = asyncio.run(
+            run_all(
+                cases,
+                settings,
+                OpenAiCompatibleProvider(settings, include_usage=True, include_attempts=True),
+                arguments.jobs,
+                sandbox_factory,
+                arguments.repeat,
+                prompt_variants=variants,
+                fail_fast=not arguments.continue_after_failure,
+                on_complete=checkpoints.record,
+            )
+        )
+    except BaseException:
+        checkpoints.set_status("interrupted")
+        raise
     wall_seconds = time.perf_counter() - started
 
-    summary = write_report(
-        runs,
-        (arguments.output_dir or default_output_dir()).resolve(),
-        jobs=arguments.jobs,
-        wall_seconds=wall_seconds,
-        metadata=_evaluation_metadata(settings, cases, arguments.repeat),
-        baseline_report=arguments.baseline_report,
-    )
+    if len(variants) == 2:
+        for label, prompt in variants:
+            write_report(
+                [run for run in runs if run.prompt_variant == label],
+                output_dir / label,
+                jobs=arguments.jobs,
+                wall_seconds=wall_seconds,
+                metadata=metadata[label],
+                checkpointed=True,
+            )
+        comparison, improved = prompt_comparison_markdown(runs, arguments.cost_metric, arguments.cost_ratio)
+        step_number = arguments.prompt_compare_step or arguments.prompt_ablate_step
+        step = load_prompt_steps()[step_number - 1]
+        mode = "adjacent steps" if arguments.prompt_compare_step is not None else "full-prompt ablation"
+        comparison = f"# Step {step_number}: {step.id}\n\nMode: {mode}. Hypothesis: {step.hypothesis}\n\n" + comparison
+        summary = output_dir / "comparison.md"
+        summary.write_text(comparison + "\n", encoding="utf-8")
+        statistics = comparison_statistics(
+            [run.as_record() for run in runs if run.prompt_variant == "before"],
+            [run.as_record() for run in runs if run.prompt_variant == "after"],
+        )
+        (output_dir / "comparison.json").write_text(
+            json.dumps(
+                {
+                    **statistics,
+                    "improved": improved,
+                    "cost_metric": arguments.cost_metric,
+                    "cost_ratio": arguments.cost_ratio,
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    else:
+        summary = write_report(
+            runs,
+            output_dir,
+            jobs=arguments.jobs,
+            wall_seconds=wall_seconds,
+            metadata=metadata[variants[0][0]],
+            baseline_report=arguments.baseline_report,
+            checkpointed=True,
+        )
+        improved = all(run.passed for run in runs)
+    checkpoints.completed = len(runs)
+    checkpoints.set_status("complete")
     print()
     print(summarize(runs))
     print(f"Wall time: {wall_seconds:.1f} seconds with {arguments.jobs} case job(s)")
     print()
     print(f"Evaluation report: {summary}")
-    return 0 if all(run.passed for run in runs) else 1
+    return 0 if improved else 1
 
 
-def _evaluation_metadata(settings: AiSettings, cases: Sequence[EvalCase], repetitions: int) -> dict[str, Any]:
+def _prompt_variants(arguments: argparse.Namespace) -> tuple[tuple[str, str], ...]:
+    """Build only the explicitly requested prompt variants."""
+    if arguments.prompt_compare_step is not None:
+        step = arguments.prompt_compare_step
+        return (("before", prompt_at_step(step - 1)), ("after", prompt_at_step(step)))
+    if arguments.prompt_ablate_step is not None:
+        step = arguments.prompt_ablate_step
+        count = len(load_prompt_steps())
+        return (("before", prompt_at_step(count, omit=step)), ("after", prompt_at_step(count)))
+    if arguments.prompt_step is not None:
+        return ((f"step-{arguments.prompt_step}", prompt_at_step(arguments.prompt_step)),)
+    return (("production", SANDBOX_SYSTEM_PROMPT),)
+
+
+def _evaluation_metadata(
+    settings: AiSettings,
+    cases: Sequence[EvalCase],
+    repetitions: int,
+    prompt: str = SANDBOX_SYSTEM_PROMPT,
+    *,
+    fail_fast: bool = True,
+) -> dict[str, Any]:
     """Record enough immutable context to reproduce or compare a run."""
     revision = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=REPOSITORY_ROOT, check=True, capture_output=True, text=True
@@ -938,9 +1506,18 @@ def _evaluation_metadata(settings: AiSettings, cases: Sequence[EvalCase], repeti
         "git_revision": revision,
         "dirty_diff_sha256": hashlib.sha256(diff).hexdigest() if diff else None,
         "provider_model": settings.provider_model,
+        "fail_fast": fail_fast,
+        "sandbox_configuration": {
+            "backend": settings.sandbox_backend,
+            "command_timeout_seconds": settings.sandbox_command_timeout_seconds,
+            "control_request_timeout_seconds": settings.sandbox_control_request_timeout_seconds,
+            "pause_request_timeout_seconds": settings.sandbox_pause_request_timeout_seconds,
+            "max_attempts": settings.sandbox_max_attempts,
+        },
         "repetitions": repetitions,
         "case_ids": [case.id for case in cases],
-        "prompt_sha256": hashlib.sha256(SANDBOX_SYSTEM_PROMPT.encode()).hexdigest(),
+        "cases_sha256": {case.id: case_digest(case) for case in cases},
+        "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
         "references_sha256": _reference_digests(),
         "fixtures_sha256": {
             fixture: hashlib.sha256(fixture_text(fixture).encode()).hexdigest()
@@ -966,6 +1543,22 @@ def _reference_digests() -> dict[str, str]:
     digests[TAIWAN_HOLIDAYS_SOURCE.name] = hashlib.sha256(load_taiwan_holidays_reference().encode()).hexdigest()
     for relative_path, reference in load_user_guide_references().items():
         digests[f"user-guide/{relative_path}"] = hashlib.sha256(reference.encode()).hexdigest()
+    for destination, source in REFERENCE_ATTACHMENT_TOOLS.items():
+        digests[destination.removeprefix("/reference/")] = hashlib.sha256(source.read_bytes()).hexdigest()
+    digests["tools/README.md"] = hashlib.sha256(inspection_helper_catalog().encode()).hexdigest()
+    import inspect
+
+    from nurse_scheduling.preference_audit import audit_staffing_and_successions
+    from nurse_scheduling.preference_types import iter_succession_patterns, staffing_expression
+
+    digests["policy_audit"] = hashlib.sha256(
+        Path(audit_staffing_and_successions.__code__.co_filename).read_bytes()
+        + inspect.getsource(iter_succession_patterns).encode()
+        + inspect.getsource(staffing_expression).encode()
+    ).hexdigest()
+    digests["result_context.py"] = hashlib.sha256(
+        Path(build_result_context.__code__.co_filename).read_bytes()
+    ).hexdigest()
     return dict(sorted(digests.items()))
 
 

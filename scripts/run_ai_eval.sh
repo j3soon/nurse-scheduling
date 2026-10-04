@@ -25,6 +25,27 @@ if [[ -x "${CORE_DIR}/.venv/bin/python" && -f "${CORE_DIR}/.venv/bin/activate" ]
   source "${CORE_DIR}/.venv/bin/activate"
 fi
 
+# The runner starts in core/, so resolve relative path options from the caller.
+args=()
+resolve_next=false
+for arg in "$@"; do
+  if [[ "$resolve_next" == true ]]; then
+    [[ "$arg" == /* ]] || arg="${PWD}/${arg}"
+    resolve_next=false
+  else
+    case "$arg" in
+      --output-dir | --cases-dir | --baseline-report)
+        resolve_next=true
+        ;;
+      --output-dir=[!/]* | --cases-dir=[!/]* | --baseline-report=[!/]*)
+        arg="${arg%%=*}=${PWD}/${arg#*=}"
+        ;;
+    esac
+  fi
+  args+=("$arg")
+done
+set -- "${args[@]}"
+
 cd "${CORE_DIR}"
 for arg in "$@"; do
   if [[ "$arg" == --help || "$arg" == -h ]]; then
@@ -32,6 +53,11 @@ for arg in "$@"; do
   fi
 done
 python -c 'import sys; from tests.ai_eval.runner import _selected_cases; _selected_cases(sys.argv[1:])' "$@"
+for arg in "$@"; do
+  if [[ "$arg" == --plan-only ]]; then
+    exec python -m tests.ai_eval.runner "$@"
+  fi
+done
 
 for required in AI_PROVIDER_BASE_URL AI_PROVIDER_API_KEY; do
   if [[ -z "${!required:-}" ]]; then

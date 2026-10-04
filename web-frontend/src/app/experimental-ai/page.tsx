@@ -42,7 +42,8 @@ import { CURRENT_APP_VERSION } from '@/utils/version';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
 import yaml from 'js-yaml';
 import { ActivityEntry, AssistantActivity } from './AssistantActivity';
-import { ChatExportMessage, downloadChatExport, type ChatExportFormat } from './chatExport';
+import CollapsedText from './CollapsedText';
+import { ChatExportMessage, downloadChatExport, messageLabel, type ChatExportFormat } from './chatExport';
 import { parseOptimizerMessage } from './optimizerMessage';
 import {
   AiCapabilities,
@@ -57,6 +58,12 @@ import {
   approveProposal,
   createSession,
   downloadOptimization,
+  downloadGeneratedZip,
+  removeGeneratedZip,
+  getUploads,
+  removeUpload,
+  type ModelInput,
+  type UploadedFile,
   getAiBaseUrl,
   getCapabilities,
   getBackendVersion,
@@ -73,6 +80,9 @@ import {
 
 interface ChatMessage extends ChatExportMessage {
   id: string;
+  downloadId?: string;
+  // Absolute history position of an app event, so a retried turn does not show it twice.
+  historyIndex?: number;
   retry?: {
     question: string;
     requiresAttachments: boolean;
@@ -259,10 +269,11 @@ function isChatMessage(value: unknown): value is ChatMessage {
   if (typeof value !== 'object' || value === null) return false;
   const message = value as Partial<ChatMessage>;
   return typeof message.id === 'string'
-    && (message.role === 'user' || message.role === 'assistant' || message.role === 'optimizer')
+    && (message.role === 'system' || message.role === 'user' || message.role === 'assistant' || message.role === 'optimizer')
     && typeof message.content === 'string'
-    && (message.attachmentNames === undefined
-      || (Array.isArray(message.attachmentNames) && message.attachmentNames.every(name => typeof name === 'string')))
+    && (message.source === undefined || message.source === 'app' || message.source === 'status' || message.source === 'optimizer')
+    && (message.historyIndex === undefined || Number.isSafeInteger(message.historyIndex))
+    && (message.title === undefined || typeof message.title === 'string')
     && (message.activity === undefined
       || (Array.isArray(message.activity) && message.activity.every(isActivityEntry)))
     && (message.status === undefined || message.status === 'pending' || message.status === 'failed')
@@ -275,6 +286,7 @@ function isChatMessage(value: unknown): value is ChatMessage {
       && typeof message.retry.question === 'string'
       && typeof message.retry.requiresAttachments === 'boolean'
     ))
+    && (message.downloadId === undefined || typeof message.downloadId === 'string')
     && (message.optimizerJob === undefined || (message.optimizerJob !== null
       && typeof message.optimizerJob.jobId === 'string'
       && typeof message.optimizerJob.downloadable === 'boolean'
@@ -299,7 +311,9 @@ function readStoredConversation(): StoredChatConversation | null {
       || (value.backendVersion !== undefined && typeof value.backendVersion !== 'string')
       || (value.contextUsage != null && (!Number.isSafeInteger(value.contextUsage.usedChars)
         || value.contextUsage.usedChars < 0 || !Number.isSafeInteger(value.contextUsage.maxChars)
-        || value.contextUsage.maxChars <= 0 || value.contextUsage.usedChars > value.contextUsage.maxChars))
+        || value.contextUsage.maxChars <= 0 || value.contextUsage.usedChars > value.contextUsage.maxChars
+        || (value.contextUsage.usedTokens !== undefined && !Number.isSafeInteger(value.contextUsage.usedTokens))
+        || (value.contextUsage.maxTokens !== undefined && !Number.isSafeInteger(value.contextUsage.maxTokens))))
       || (value.sessionEventId !== undefined
         && (!Number.isSafeInteger(value.sessionEventId) || value.sessionEventId < 0))
       || (value.trimmedHistoryCount !== undefined
@@ -422,6 +436,62 @@ function finishToolActivity(entries: ActivityEntry[], result: ToolActivity): Act
   return entries.map((entry, index) => (index === runningIndex ? completed : entry));
 }
 
+// Show the request messages added since the last reply, in the order the model receives them:
+// a changed system prompt, app events, the question, and a status message just before the reply.
+function applyModelInput(
+  messages: ChatMessage[],
+  input: ModelInput,
+  turn: { questionId: string | null; assistantId: string },
+): ChatMessage[] {
+  const statusId = `status-${turn.assistantId}`;
+  // History never keeps a status message, so only the latest request's status stays visible.
+  const result = messages.filter(message => message.source !== 'status');
+  const known = new Set(result.map(message => message.historyIndex));
+  const lastSystem = [...result].reverse().find(message => message.role === 'system');
+  const before: ChatMessage[] = lastSystem?.content === input.system
+    ? []
+    : [{ id: messageId(), role: 'system', content: input.system }];
+  let status: ChatMessage | null = null;
+  let questionText: string | null = null;
+  let optimizerText: string | null = null;
+  input.messages.forEach(entry => {
+    if (entry.kind === 'app' && !known.has(entry.index)) {
+      before.push({
+        id: `history-${entry.index}`, role: 'user', source: 'app', title: entry.title, historyIndex: entry.index, content: entry.content,
+      });
+    } else if (entry.kind === 'status') {
+      status = { id: statusId, role: 'user', source: 'status', title: entry.title, content: entry.content };
+    } else if (entry.kind === 'question') {
+      questionText = entry.content;
+    } else if (entry.kind === 'optimizer') {
+      optimizerText = entry.content;
+    }
+  });
+  let assistantIndex = result.findIndex(message => message.id === turn.assistantId);
+  if (assistantIndex < 0) return messages;
+  let questionIndex = turn.questionId === null ? -1 : result.findIndex(message => message.id === turn.questionId);
+  if (questionIndex >= 0 && questionText !== null) {
+    result[questionIndex] = { ...result[questionIndex], content: questionText };
+  }
+  if (optimizerText !== null) {
+    // The optimizer notice keeps the run summary. The model receives its own user-role optimizer message.
+    const optimizerId = `optimizer-input-${turn.assistantId}`;
+    questionIndex = result.findIndex(message => message.id === optimizerId);
+    if (questionIndex >= 0) {
+      result[questionIndex] = { ...result[questionIndex], content: optimizerText };
+    } else {
+      result.splice(assistantIndex, 0, { id: optimizerId, role: 'user', source: 'optimizer', content: optimizerText });
+      questionIndex = assistantIndex;
+      assistantIndex += 1;
+    }
+  }
+  const insertAt = questionIndex >= 0 ? questionIndex : assistantIndex;
+  result.splice(insertAt, 0, ...before);
+  assistantIndex += before.length;
+  if (status !== null) result.splice(assistantIndex, 0, status);
+  return result;
+}
+
 function interruptRunningTools(entries: ActivityEntry[]): ActivityEntry[] {
   return entries.map(entry => (
     entry.kind === 'tool' && entry.state === 'running'
@@ -509,8 +579,17 @@ export default function ExperimentalAiPage() {
   ]);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
+  const [removingUploadId, setRemovingUploadId] = useState<string | null>(null);
+  const [removingDownloadId, setRemovingDownloadId] = useState<string | null>(null);
   const [backendVersion, setBackendVersion] = useState<string | undefined>();
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
+  // A turn's first report has no provider call yet, so keep the latest token figures until a new call reports.
+  const updateContextUsage = useCallback((usage: ContextUsage) => setContextUsage(previous => (
+    usage.usedTokens === undefined && previous?.usedTokens !== undefined
+      ? { ...usage, usedTokens: previous.usedTokens, maxTokens: previous.maxTokens }
+      : usage
+  )), []);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sessionExpiresAt, setSessionExpiresAt] = useState<number | null>(null);
   const [sessionRetentionSeconds, setSessionRetentionSeconds] = useState(DEFAULT_SESSION_RETENTION_SECONDS);
@@ -808,6 +887,36 @@ export default function ExperimentalAiPage() {
         }
       });
   }, [activeSessionId, aiEndpoint, authToken, isClientReady, reportRequestError]);
+
+  useEffect(() => {
+    if (!activeSessionId || !fileCapability.retained || conversationUnavailable) {
+      setUploadedFiles([]);
+      return;
+    }
+    if (isStreaming || removingUploadId !== null || (authRequired && authToken === null)) return;
+    const controller = new AbortController();
+    getUploads(activeSessionId, authToken, sessionEndpointRef.current ?? aiEndpoint, controller.signal)
+      .then(files => { if (!controller.signal.aborted) setUploadedFiles(files); })
+      .catch(uploadError => {
+        if (!controller.signal.aborted) reportRequestError(uploadError, 'Uploaded files could not be listed.');
+      });
+    return () => controller.abort();
+  }, [activeSessionId, fileCapability.retained, isStreaming, removingUploadId, aiEndpoint, authToken, authRequired, conversationUnavailable, reportRequestError]);
+
+  const removeUploadedFile = async (uploadId: string) => {
+    const sessionId = sessionIdRef.current;
+    if (!sessionId) return;
+    setRemovingUploadId(uploadId);
+    try {
+      await removeUpload(sessionId, uploadId, authToken, sessionEndpointRef.current ?? aiEndpoint);
+      setUploadedFiles(files => files.filter(file => file.id !== uploadId));
+      renewSessionExpiration();
+    } catch (uploadError) {
+      reportRequestError(uploadError, 'The uploaded file could not be removed.');
+    } finally {
+      setRemovingUploadId(null);
+    }
+  };
 
   useEffect(() => {
     if (activeSessionId === null || sessionExpiresAt === null) return;
@@ -1211,6 +1320,13 @@ export default function ExperimentalAiPage() {
           sessionEventsRetryRef.current = 0;
         },
         onTurnStart: beginBackgroundMessage,
+        onModelInput: input => {
+          resumeBackgroundMessage();
+          const assistantId = backgroundAssistantIdRef.current;
+          if (assistantId !== null) {
+            setMessages(previous => applyModelInput(previous, input, { questionId: null, assistantId }));
+          }
+        },
         onDelta: text => {
           resumeBackgroundMessage();
           updateBackgroundMessage(message => ({
@@ -1259,6 +1375,8 @@ export default function ExperimentalAiPage() {
             ],
           }));
         },
+        onDownload: downloadId => updateBackgroundMessage(message => ({ ...message, downloadId })),
+        onWarning: setError,
         onProposal: diff => setProposalDiff(diff),
         onOptimization: activity => {
           if (!activity.terminal) {
@@ -1343,7 +1461,7 @@ export default function ExperimentalAiPage() {
           setIsStopping(false);
           setError(message);
         },
-        onContextUsage: setContextUsage,
+        onContextUsage: updateContextUsage,
         onHistoryTrimmed: setTrimmedHistoryCount,
         onError: failBackgroundTurn,
       },
@@ -1368,7 +1486,7 @@ export default function ExperimentalAiPage() {
       }
       reconnect();
     });
-  }, [authToken, reportRequestError, sessionRetentionSeconds]);
+  }, [authToken, reportRequestError, sessionRetentionSeconds, updateContextUsage]);
 
   useEffect(() => {
     if (!isClientReady || activeSessionId === null || conversationUnavailable) return;
@@ -1397,7 +1515,6 @@ export default function ExperimentalAiPage() {
       role: 'user',
       createdAt,
       content: question,
-      attachmentNames: attachmentsForMessage.map(attachment => attachment.file.name),
     };
     let activeAssistantId = messageId();
     let activeAssistantHasOutput = false;
@@ -1419,7 +1536,7 @@ export default function ExperimentalAiPage() {
       setSelectedAttachments([]);
     }
     setError(null);
-    setProposalDiff(null);
+    // A pending proposal stays approvable across messages until it is approved, rejected, or replaced.
     setProposalNotice(null);
     setIsStreaming(true);
     sandboxScheduleRef.current = scheduleYaml;
@@ -1439,8 +1556,10 @@ export default function ExperimentalAiPage() {
         setConversationUnavailable(false);
         setSessionNotice(null);
       } else if (syncedScheduleRef.current !== scheduleYaml) {
-        // The schedule can change elsewhere in the app between questions.
+        // The schedule can change elsewhere in the app between questions. The backend then
+        // discards a proposal made for the previous schedule.
         await updateSessionSchedule(sessionId, scheduleYaml, authToken, sessionEndpoint);
+        setProposalDiff(null);
       }
       syncedScheduleRef.current = scheduleYaml;
       renewSessionExpiration();
@@ -1448,6 +1567,27 @@ export default function ExperimentalAiPage() {
         sessionId,
         question,
         {
+          onModelInput: input => {
+            const assistantId = activeAssistantId;
+            setMessages(previous => applyModelInput(previous, input, { questionId: userMessage.id, assistantId }));
+          },
+          onUploaded: files => {
+            // The upload is now its own history message, so a retry needs only the question.
+            activeQuestionRequiresAttachments = false;
+            if (fileCapability.retained) setUploadedFiles(previous => [...previous, ...files]);
+          },
+          onAccepted: () => {
+            if (!fileCapability.retained) return;
+            getUploads(sessionId, authToken, sessionEndpoint, controller.signal)
+              .then(files => {
+                if (!controller.signal.aborted && abortControllerRef.current === controller) setUploadedFiles(files);
+              })
+              .catch(uploadError => {
+                if (!controller.signal.aborted && abortControllerRef.current === controller) {
+                  reportRequestError(uploadError, 'Uploaded files could not be listed.');
+                }
+              });
+          },
           onDelta: text => {
             if (text) {
               activeAssistantHasOutput = true;
@@ -1540,6 +1680,10 @@ export default function ExperimentalAiPage() {
             activeQuestion = queuedMessage;
             activeQuestionRequiresAttachments = false;
           },
+          onDownload: downloadId => setMessages(previous => previous.map(message => (
+            message.id === activeAssistantId ? { ...message, downloadId } : message
+          ))),
+          onWarning: setError,
           onScheduleChange: candidate => {
             const before = sandboxScheduleRef.current ?? scheduleYaml;
             sandboxScheduleRef.current = candidate;
@@ -1556,7 +1700,7 @@ export default function ExperimentalAiPage() {
             )));
           },
           onProposal: diff => setProposalDiff(diff),
-          onContextUsage: setContextUsage,
+          onContextUsage: updateContextUsage,
           onHistoryTrimmed: setTrimmedHistoryCount,
         },
         controller.signal,
@@ -1654,11 +1798,13 @@ export default function ExperimentalAiPage() {
 
   const retryMessage = (failedId: string, question: string) => {
     if (!question || isStreaming || (authRequired && authToken === null)) return;
-    // The retried turn replaces the failed pair, so the question is not repeated.
+    // The retried turn replaces the failed question, status, and reply. App events stay in history.
     setMessages(previous => {
       const failedIndex = previous.findIndex(message => message.id === failedId);
       if (failedIndex < 0) return previous;
-      const start = previous[failedIndex - 1]?.role === 'user' ? failedIndex - 1 : failedIndex;
+      let start = failedIndex;
+      if (previous[start - 1]?.source === 'status') start -= 1;
+      if (previous[start - 1]?.role === 'user' && previous[start - 1]?.source === undefined) start -= 1;
       return [...previous.slice(0, start), ...previous.slice(failedIndex + 1)];
     });
     void sendRequest(question, [], false);
@@ -1689,11 +1835,59 @@ export default function ExperimentalAiPage() {
       });
   };
 
+  const downloadGeneratedFiles = async (downloadId: string) => {
+    const sessionId = sessionIdRef.current;
+    if (!sessionId) return;
+    try {
+      const blob = await downloadGeneratedZip(sessionId, downloadId, authToken, sessionEndpointRef.current ?? aiEndpoint);
+      const url = URL.createObjectURL(blob);
+      if (optimizationDownloadUrlRef.current) URL.revokeObjectURL(optimizationDownloadUrlRef.current);
+      optimizationDownloadUrlRef.current = url;
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'download.zip';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (downloadError) {
+      reportRequestError(downloadError, 'The generated files could not be downloaded.');
+    }
+  };
+
+  const removeGeneratedFiles = async (downloadId: string) => {
+    const sessionId = sessionIdRef.current;
+    if (!sessionId || removingDownloadId !== null) return;
+    setRemovingDownloadId(downloadId);
+    try {
+      await removeGeneratedZip(sessionId, downloadId, authToken, sessionEndpointRef.current ?? aiEndpoint);
+      if (sessionIdRef.current === sessionId) {
+        setMessages(previous => previous.map(message => (
+          message.downloadId === downloadId ? { ...message, downloadId: undefined } : message
+        )));
+        renewSessionExpiration();
+      }
+    } catch (downloadError) {
+      reportRequestError(downloadError, 'The generated ZIP could not be removed.');
+    } finally {
+      setRemovingDownloadId(null);
+    }
+  };
+
   const exportChat = (format: ChatExportFormat) => {
     const previousUrl = chatExportUrlRef.current;
-    chatExportUrlRef.current = downloadChatExport(
-      format, messages, sessionEndpointRef.current ?? aiEndpoint, new Date(), backendVersion,
-    );
+    chatExportUrlRef.current = downloadChatExport(format, messages, sessionEndpointRef.current ?? aiEndpoint, new Date(), {
+      backendVersion,
+      pendingProposalDiff: proposalDiff ?? undefined,
+      runningOptimization: activeOptimization !== null && !activeOptimization.terminal
+        ? {
+          jobId: activeOptimization.jobId,
+          state: activeOptimization.state,
+          solver: activeOptimization.request?.solver,
+          timeoutSeconds: activeOptimization.request?.timeoutSeconds,
+        }
+        : undefined,
+      uploadedFiles: fileCapability.retained ? uploadedFiles : undefined,
+    });
     if (previousUrl) URL.revokeObjectURL(previousUrl);
   };
 
@@ -1840,8 +2034,10 @@ export default function ExperimentalAiPage() {
     }
   };
 
+  // The Session files panel is fixed on the right at xl, so the chat and composer reserve
+  // equal space on both sides to stay centered without overlapping it.
   return (
-    <main className="mx-auto flex min-h-[calc(100dvh-3.5rem)] max-w-5xl flex-col px-4 pb-36 pt-8 sm:px-6">
+    <main className={`mx-auto flex min-h-[calc(100dvh-3.5rem)] max-w-5xl flex-col px-4 pb-36 pt-8 sm:px-6 ${fileCapability.retained ? 'xl:max-w-[min(64rem,calc(100vw-36rem))]' : ''}`}>
       <div className="mb-6">
         <div className="mb-2 flex flex-wrap items-center gap-3">
           <h1 className="text-3xl font-bold text-gray-900">Schedule AI Chat</h1>
@@ -2059,6 +2255,26 @@ export default function ExperimentalAiPage() {
         )}
       </div>
 
+      {fileCapability.retained && (
+        <aside aria-label="Session files" className="mb-4 rounded-xl border border-gray-200 bg-white p-4 xl:fixed xl:right-4 xl:top-24 xl:z-10 xl:max-h-[calc(100dvh-8rem)] xl:w-64 xl:overflow-y-auto">
+          <details open>
+            <summary className="cursor-pointer font-semibold">Uploaded files ({uploadedFiles.length})</summary>
+            <p className="mt-2 text-xs text-gray-600">Available for later questions until removed or this chat expires. A repeated filename gets a number, such as ward (1).csv.</p>
+            {uploadedFiles.length === 0 ? <p className="mt-3 text-sm text-gray-500">No uploaded files.</p> : (
+              <ul className="mt-3 space-y-3">
+                {uploadedFiles.map(file => (
+                  <li key={file.id} className="flex items-start gap-2">
+                    <span className="min-w-0 flex-1 break-words text-sm">{file.filename}<span className="block text-xs text-gray-500">{(file.bytes / 1000).toLocaleString()} KB</span></span>
+                    <button type="button" aria-label={`Remove ${file.filename}`} disabled={isStreaming || removingUploadId !== null}
+                      onClick={() => void removeUploadedFile(file.id)} className="rounded px-2 py-1 text-xs text-red-700 hover:bg-red-50 disabled:opacity-50">Remove</button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </details>
+        </aside>
+      )}
+
       <section
         aria-label="Chat messages"
         aria-live="polite"
@@ -2075,17 +2291,22 @@ export default function ExperimentalAiPage() {
           return (
             <article
               key={message.id}
-              className={`max-w-[85%] rounded-xl px-4 py-3 ${
-                message.role === 'user'
-                  ? 'ml-auto bg-blue-600 text-white'
-                  : message.role === 'optimizer'
-                    ? 'mr-auto border border-emerald-200 bg-emerald-50 text-emerald-950'
-                    : 'mr-auto border border-gray-200 bg-white text-gray-900'
+              className={`rounded-xl px-4 py-3 ${
+                message.role === 'system'
+                  ? 'border border-dashed border-gray-300 bg-gray-50 text-gray-700'
+                  : message.role === 'user' && message.source === undefined
+                    ? 'ml-auto max-w-[85%] bg-blue-600 text-white'
+                    : message.source === 'optimizer'
+                      // Optimizer messages align left like the optimizer notice, in the chat and in exports.
+                      ? 'mr-auto max-w-[85%] border border-emerald-200 bg-emerald-50 text-emerald-950'
+                      : message.role === 'user'
+                        ? 'ml-auto max-w-[85%] border border-blue-200 bg-blue-50 text-blue-950'
+                        : message.role === 'optimizer'
+                          ? 'mr-auto max-w-[85%] border border-emerald-200 bg-emerald-50 text-emerald-950'
+                          : 'mr-auto max-w-[85%] border border-gray-200 bg-white text-gray-900'
               }`}
             >
-              <p className="mb-1 text-xs font-semibold uppercase tracking-wide opacity-70">
-                {message.role === 'user' ? 'You' : message.role === 'optimizer' ? 'Optimizer' : 'Assistant'}
-              </p>
+              <p className="mb-1 text-xs font-semibold uppercase tracking-wide opacity-70">{messageLabel(message)}</p>
               {message.activity && (
                 <AssistantActivity
                   entries={message.activity.filter(entry => (
@@ -2095,6 +2316,11 @@ export default function ExperimentalAiPage() {
               )}
               {message.role === 'assistant' && !message.content && message.status === 'pending' ? (
                 steeringAssistantId === message.id ? <p className="text-xs text-gray-500">Steering…</p> : <ThinkingIndicator />
+              ) : message.role === 'system' ? (
+                <CollapsedText summary={`${message.content.length.toLocaleString('en-US')} characters`} text={message.content} />
+              ) : message.source !== undefined ? (
+                // The label names the topic, so the exact text starts collapsed.
+                <CollapsedText summary={`${message.content.length.toLocaleString('en-US')} characters`} text={message.content} />
               ) : message.role === 'user' ? (
                 <p className="whitespace-pre-wrap break-words">{message.content}</p>
               ) : optimizer ? (
@@ -2123,16 +2349,26 @@ export default function ExperimentalAiPage() {
                   {downloadingOptimizationId === message.optimizerJob.jobId ? 'Downloading...' : 'Download result'}
                 </button>
               )}
-              {message.attachmentNames && message.attachmentNames.length > 0 && (
-                <p className="mt-2 text-xs opacity-80">
-                  Attached: {message.attachmentNames.join(', ')}
-                </p>
+              {message.downloadId && (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button type="button" onClick={() => void downloadGeneratedFiles(message.downloadId!)}
+                    disabled={removingDownloadId === message.downloadId}
+                    className="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
+                    Download files (ZIP)
+                  </button>
+                  <button type="button" onClick={() => void removeGeneratedFiles(message.downloadId!)}
+                    disabled={removingDownloadId !== null || conversationUnavailable}
+                    title="Remove this ZIP from the chat to free session storage."
+                    className="rounded-lg px-3 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50">
+                    {removingDownloadId === message.downloadId ? 'Removing...' : 'Remove ZIP'}
+                  </button>
+                </div>
               )}
               {timestamp !== undefined && (
                 <time
                   dateTime={new Date(timestamp).toISOString()}
                   title={new Date(timestamp).toLocaleString()}
-                  className={`mt-2 block text-[0.6875rem] ${message.role === 'user' ? 'text-blue-100' : 'text-gray-400'}`}
+                  className={`mt-2 block text-[0.6875rem] ${message.role === 'user' && message.source === undefined ? 'text-blue-100' : 'text-gray-400'}`}
                 >
                   {formatResponseTime(timestamp)}
                   {message.responseStartedAt !== undefined && message.responseCompletedAt !== undefined && (
@@ -2244,7 +2480,7 @@ export default function ExperimentalAiPage() {
         onDragLeave={leaveAttachmentDropZone}
         onDrop={dropAttachments}
         aria-label="Message composer"
-        className={`fixed inset-x-10 bottom-0 z-30 mx-auto max-w-5xl space-y-3 bg-gradient-to-t from-white via-white to-white/90 px-4 pb-4 pt-3 sm:px-6 ${
+        className={`fixed inset-x-10 bottom-0 z-30 mx-auto max-w-5xl space-y-3 ${fileCapability.retained ? 'xl:inset-x-72' : ''} bg-gradient-to-t from-white via-white to-white/90 px-4 pb-4 pt-3 sm:px-6 ${
           isDraggingFiles ? 'rounded-xl ring-2 ring-blue-400 ring-offset-2' : ''
         }`}
       >
@@ -2459,12 +2695,19 @@ export default function ExperimentalAiPage() {
           <p
             className="mt-2 text-center text-[0.6875rem] text-gray-500"
             title={contextUsage !== null
-              ? `${contextUsage.usedChars.toLocaleString()} of ${contextUsage.maxChars.toLocaleString()} characters in retained chat history. Excludes instructions, schedule, tools, and attachments. This is not the model token window.`
+              ? `${contextUsage.usedChars.toLocaleString()} of ${contextUsage.maxChars.toLocaleString()} characters in retained chat history. Excludes instructions, schedule, tools, and attachments.${
+                contextUsage.usedTokens !== undefined
+                  ? ' Tokens count the latest model request, including instructions, tool output, and the reply.'
+                  : ' The AI server does not report model tokens.'
+              }`
               : 'The AI server has not reported context usage. Update the AI server to a version that reports its chat history budget.'}
           >
             Chat history context: {contextUsage !== null
               ? `${(100 * contextUsage.usedChars / contextUsage.maxChars).toFixed(1)}%`
               : 'unavailable'}
+            {contextUsage?.usedTokens !== undefined && (
+              <> · Tokens: {contextUsage.usedTokens.toLocaleString('en-US')} / {contextUsage.maxTokens?.toLocaleString('en-US') ?? 'unavailable'}</>
+            )}
           </p>
         )}
       </form>

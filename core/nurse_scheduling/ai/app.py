@@ -34,27 +34,41 @@ from typing import Literal
 from uuid import UUID, uuid4
 
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
+from ruamel.yaml.error import YAMLError
 from starlette.background import BackgroundTask
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from ..loader import _load_yaml
 from ..sentry import init_sentry
 from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry
 from ..version import get_app_version
 from .agent import AgentProposal, AgentReasoning, AgentSteering, AgentText, AgentToolStart, AgentToolUse
 from .background import (
     CANDIDATE_VALIDATION_ERROR,
+    PROPOSAL_APPROVED_HISTORY,
+    PROPOSAL_INVALID_HISTORY,
+    PROPOSAL_REJECTED_HISTORY,
     PROVIDER_ERROR,
+    SANDBOX_COMMAND_TIMEOUT_ERROR,
     SANDBOX_TURN_TIMEOUT_ERROR,
+    SCHEDULE_CHANGED_DISCARDED_EVENT,
+    SCHEDULE_CHANGED_EVENT,
     STALE_TURN_ERROR,
     SessionEventBroker,
     build_provider_messages,
+    context_usage,
+    history_chars,
     history_context_chars,
+    model_input,
     recent_history,
+    removal_event,
     run_background_turn,
+    upload_event,
 )
 from .config import AiSettings, validate_ai_auth_credentials
 from .history import ChatHistory, stop_maintenance
@@ -76,10 +90,13 @@ from .sandbox import SandboxError, SandboxFactory, managed_sandbox_factory
 from .sandbox.factory import create_sandbox_factory
 from .sandbox_agent import (
     SANDBOX_SYSTEM_PROMPT,
+    AgentDownload,
     AgentScheduleChange,
     SandboxAgentLimits,
     SandboxAttachment,
     SandboxCandidateError,
+    SandboxCommandTimeoutError,
+    SandboxDownloadError,
     SandboxTurnTimeoutError,
     run_sandbox_agent,
 )
@@ -88,18 +105,6 @@ from .validation import new_schedule_issues, validate_frontend_schedule_yaml
 SERVICE_NAME = "nurse-scheduling-ai-api"
 API_VERSION = "0.2.0"
 OWNER_COOKIE = "nurse_scheduling_ai_owner"
-PROPOSAL_APPROVED_HISTORY = (
-    "The user approved the previous schedule proposal. Its changes are now part of the current canonical schedule."
-)
-PROPOSAL_REJECTED_HISTORY = (
-    "The user rejected the previous schedule proposal. All schedule changes made during that agent turn were "
-    "discarded. This turn starts with a fresh workspace containing the current canonical schedule."
-)
-PROPOSAL_INVALID_HISTORY = (
-    "The previous schedule proposal failed trusted validation when the user approved it, so it was discarded. All "
-    "schedule changes made during that agent turn were dropped. This turn starts with a fresh workspace containing "
-    "the current canonical schedule."
-)
 ORIGIN_REGEX = (
     r"^(http://(localhost|127\.0\.0\.1|host\.docker\.internal|10(?:\.[0-9]{1,3}){3}|"
     r"192\.168(?:\.[0-9]{1,3}){2}|172\.(1[6-9]|2[0-9]|3[01])(?:\.[0-9]{1,3}){2}):[0-9]+|"
@@ -200,6 +205,7 @@ class FileAttachmentCapability(BaseModel):
     enabled: bool
     max_files: int
     max_bytes_per_file: int
+    retained: bool = True
 
 
 class CapabilitiesResponse(BaseModel):
@@ -211,13 +217,21 @@ class CapabilitiesResponse(BaseModel):
     auth: dict[str, bool | str]
 
 
+def _schedule_data(schedule_yaml: str) -> object:
+    """Parse a schedule for comparison, so a formatting-only change is not reported as an edit."""
+    try:
+        return _load_yaml(schedule_yaml.encode(), reject_aliases=True)
+    except (ValueError, YAMLError):
+        return schedule_yaml
+
+
 def schedule_revision(schedule_yaml: str) -> str:
     """Identify one exact schedule snapshot, so a stale proposal cannot be applied."""
     return hashlib.sha256(schedule_yaml.encode("utf-8")).hexdigest()
 
 
 def owner_cookie_token(owner: str | None) -> str:
-    """Return a canonical browser owner token or replace an invalid value."""
+    """Return a normalized browser owner token or replace an invalid value."""
     if owner is not None:
         try:
             return str(UUID(owner))
@@ -243,6 +257,8 @@ class ChatSession:
     steering_ids: set[str] = field(default_factory=set)
     proposal_yaml: str = ""
     proposal_diff: str = ""
+    downloads: dict[str, bytes] = field(default_factory=dict)
+    uploads: dict[str, SandboxAttachment] = field(default_factory=dict)
 
 
 SESSION_MEMORY_LIMIT_MESSAGE = "The AI service has reached its memory limit."
@@ -258,10 +274,28 @@ def _text_bytes(value: object) -> int:
 
 
 def _session_bytes(session: "ChatSession") -> int:
-    """Return the chat text one session retains."""
+    """Return the text and file bytes one session retains."""
     total = _text_bytes(session.schedule_yaml) + _text_bytes(session.proposal_yaml) + _text_bytes(session.proposal_diff)
     total += sum(_text_bytes(message.get("content")) for message in session.history)
-    return total + sum(_text_bytes(text) for _message_id, text in session.steering_queue)
+    return (
+        total
+        + sum(_text_bytes(text) for _message_id, text in session.steering_queue)
+        + sum(map(len, session.downloads.values()))
+        + sum(len(upload.data) for upload in session.uploads.values())
+    )
+
+
+def _unique_filename(filename: str, taken: set[str]) -> str:
+    """Add the lowest free ` (n)` suffix before the extension when a session already has the filename."""
+    if filename not in taken:
+        return filename
+    stem, dot, extension = filename.rpartition(".")
+    if not stem:
+        stem, dot, extension = filename, "", ""
+    counter = 1
+    while f"{stem} ({counter}){dot}{extension}" in taken:
+        counter += 1
+    return f"{stem} ({counter}){dot}{extension}"
 
 
 @dataclass(frozen=True)
@@ -291,7 +325,7 @@ class SessionStore:
 
     @property
     def retained_bytes(self) -> int:
-        """Return the chat text retained across live sessions."""
+        """Return the text and file bytes retained across live sessions."""
         with self._lock:
             return self._retained_bytes
 
@@ -316,7 +350,7 @@ class SessionStore:
         self._retained_bytes -= self._session_bytes.pop(session_id, 0)
 
     def _require_capacity(self, additional_bytes: int) -> None:
-        """Refuse text that would push retained chat state past the configured budget.
+        """Refuse content that would push retained session state past the configured budget.
 
         Checked where a client pushes new text. A completed turn is never refused here,
         because its answer has already streamed to the user; `_trim_history_to_budget`
@@ -361,8 +395,27 @@ class SessionStore:
         )
 
     def _cap_history(self, session: ChatSession) -> None:
-        """Limit retained messages without leaving an assistant reply at the front."""
+        """Limit retained messages without leaving an assistant reply at the front.
+
+        Past the prompt history budget, drop the oldest messages until half the budget remains.
+        Cutting in large steps keeps the prompt prefix unchanged for many turns, so the provider
+        can reuse its cache. Cutting one message per turn would change the prefix every time.
+        """
         overflow = max(0, len(session.history) - max(2, self._settings.max_history_messages))
+        if history_chars(session.history) > self._settings.max_history_chars:
+            # Never cut into the newest completed exchange. Per-request trimming covers what still overflows.
+            last_reply = max(
+                (index for index, message in enumerate(session.history) if message["role"] == "assistant"), default=0
+            )
+            newest_exchange = max(
+                (index for index in range(last_reply) if session.history[index]["role"] == "user"), default=0
+            )
+            remaining = history_chars(session.history[overflow:])
+            while overflow < newest_exchange and remaining > self._settings.max_history_chars // 2:
+                remaining -= history_chars(session.history[overflow : overflow + 1])
+                overflow += 1
+            while overflow < newest_exchange and session.history[overflow]["role"] != "user":
+                overflow += 1
         if overflow:
             while overflow < len(session.history) and session.history[overflow]["role"] != "user":
                 overflow += 1
@@ -430,6 +483,86 @@ class SessionStore:
         """Validate access to a session without exposing its state."""
         with self._lock:
             self._get_owned(session_id, owner_token)
+
+    def retain_uploads(
+        self, session_id: str, owner_token: str | None, uploads: Sequence[SandboxAttachment]
+    ) -> tuple[SandboxAttachment, ...]:
+        """Retain new uploads between turns without replacing a file a message may reference."""
+        with self._lock:
+            session = self._get_owned(session_id, owner_token)
+            if session.active:
+                raise HTTPException(status_code=409, detail="Wait for the active response before uploading files.")
+            if len(session.uploads) + len(uploads) > self._settings.max_attachment_files:
+                raise HTTPException(status_code=413, detail="Too many retained files. Remove unused uploads first.")
+            filenames = {item.filename for item in session.uploads.values()}
+            retained_uploads = []
+            for upload in uploads:
+                filename = _unique_filename(upload.filename, filenames)
+                filenames.add(filename)
+                retained_uploads.append(replace(upload, filename=filename, id=str(uuid4())))
+            first_index = len(session.uploads) + 1
+            history_event = upload_event(retained_uploads, first_index)
+            self._require_capacity(sum(len(upload.data) for upload in retained_uploads) + _text_bytes(history_event))
+            session.uploads.update((item.id, item) for item in retained_uploads)
+            self._append_history_event(session, history_event)
+            self._recount(session)
+            session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
+            return tuple(retained_uploads)
+
+    def attachments(self, session_id: str) -> tuple[SandboxAttachment, ...]:
+        """Snapshot retained source files for a foreground or background turn."""
+        with self._lock:
+            self._prune_expired()
+            session = self._sessions.get(session_id)
+            return tuple(session.uploads.values()) if session is not None else ()
+
+    def remove_upload(self, session_id: str, owner_token: str | None, upload_id: str) -> None:
+        """Remove an unused source file between turns and reclaim its bytes."""
+        with self._lock:
+            session = self._get_owned(session_id, owner_token)
+            if session.active:
+                raise HTTPException(status_code=409, detail="Wait for the active response before removing files.")
+            if upload_id not in session.uploads:
+                raise HTTPException(status_code=404, detail="The uploaded file is no longer available.")
+            index = list(session.uploads).index(upload_id) + 1
+            upload = session.uploads.pop(upload_id)
+            self._append_history_event(session, removal_event(upload, index))
+            self._recount(session)
+            session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
+
+    def save_download(self, session_id: str, download_id: str, content: bytes) -> bool:
+        """Retain a bounded generated ZIP within the existing session memory budget."""
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None or len(content) > self._settings.max_download_bytes:
+                return False
+            previous = session.downloads.get(download_id, b"")
+            delta = len(content) - len(previous)
+            if self._retained_bytes + delta > self._settings.max_session_bytes:
+                return False
+            session.downloads[download_id] = content
+            self._charge(session, delta)
+            return True
+
+    def download(self, session_id: str, owner_token: str | None, download_id: str) -> bytes:
+        """Read a generated ZIP only for its owning browser."""
+        with self._lock:
+            session = self._get_owned(session_id, owner_token)
+            try:
+                return session.downloads[download_id]
+            except KeyError:
+                raise HTTPException(status_code=404, detail="This generated ZIP is no longer available.") from None
+
+    def remove_download(self, session_id: str, owner_token: str | None, download_id: str) -> None:
+        """Remove an owned generated ZIP and reclaim its bytes."""
+        with self._lock:
+            session = self._get_owned(session_id, owner_token)
+            try:
+                content = session.downloads.pop(download_id)
+            except KeyError:
+                raise HTTPException(status_code=404, detail="This generated ZIP is no longer available.") from None
+            self._charge(session, -len(content))
+            session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
 
     def has_active_turn(self, session_id: str, owner_token: str | None) -> bool:
         """Check whether Stop has a reserved turn to cancel."""
@@ -541,10 +674,16 @@ class SessionStore:
             )
             if additional_bytes > 0:
                 self._require_capacity(additional_bytes)
+            data_changed = _schedule_data(session.schedule_yaml) != _schedule_data(schedule_yaml)
+            had_proposal = bool(session.proposal_yaml)
             session.schedule_yaml = schedule_yaml
             session.revision = schedule_revision(schedule_yaml)
             session.proposal_yaml = ""
             session.proposal_diff = ""
+            if data_changed or had_proposal:
+                self._append_history_event(
+                    session, SCHEDULE_CHANGED_DISCARDED_EVENT if had_proposal else SCHEDULE_CHANGED_EVENT
+                )
             self._recount(session)
 
     def peek_proposal(self, session_id: str, owner_token: str | None, base_sha256: str) -> tuple[str, str]:
@@ -639,11 +778,6 @@ def _sse_event(event_type: str, data: dict[str, object]) -> str:
 
 async def _read_files(uploads: list[UploadFile], settings: AiSettings) -> list[SandboxAttachment]:
     """Read arbitrary bounded files without interpreting or executing them."""
-    if not uploads:
-        return []
-    if len(uploads) > settings.max_attachment_files:
-        raise HTTPException(status_code=413, detail="Too many file attachments.")
-
     attachments = []
     for index, upload in enumerate(uploads, start=1):
         data = await upload.read(settings.max_attachment_bytes + 1)
@@ -656,7 +790,7 @@ async def _read_files(uploads: list[UploadFile], settings: AiSettings) -> list[S
 
 
 def _validate_question(raw_message: object, settings: AiSettings) -> str:
-    """Validate one question consistently across JSON and multipart requests."""
+    """Validate one question consistently across message and steering requests."""
     try:
         request = ChatRequest.model_validate({"message": raw_message})
     except ValidationError as exc:
@@ -669,28 +803,13 @@ def _validate_question(raw_message: object, settings: AiSettings) -> str:
     return question
 
 
-# FastAPI cannot declaratively combine a JSON body with multipart files on one route.
-# Ref: https://fastapi.tiangolo.com/tutorial/request-files/#what-is-form-data
-async def _parse_message_request(
-    request: Request,
-    settings: AiSettings,
-) -> tuple[str, list[SandboxAttachment]]:
-    """Accept a JSON question or multipart input with arbitrary files."""
-    content_type = request.headers.get("content-type", "").lower()
-    if content_type.startswith("application/json"):
-        try:
-            body = await request.json()
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            raise HTTPException(status_code=422, detail="Request body is not valid JSON.") from exc
-        if not isinstance(body, dict):
-            raise HTTPException(status_code=422, detail="Request body must be an object.")
-        return _validate_question(body.get("message"), settings), []
-
-    if not content_type.startswith("multipart/form-data"):
-        raise HTTPException(status_code=415, detail="Use JSON or multipart form data.")
+async def _parse_upload_request(request: Request, settings: AiSettings) -> list[SandboxAttachment]:
+    """Accept multipart input with one or more arbitrary files and no other fields."""
+    if not request.headers.get("content-type", "").lower().startswith("multipart/form-data"):
+        raise HTTPException(status_code=415, detail="Upload files as multipart form data.")
 
     content_length = request.headers.get("content-length")
-    max_body_bytes = settings.max_attachment_files * settings.max_attachment_bytes + 100_000 + 65_536
+    max_body_bytes = settings.max_attachment_files * settings.max_attachment_bytes + 65_536
     if content_length is not None:
         try:
             if int(content_length) > max_body_bytes:
@@ -699,26 +818,24 @@ async def _parse_message_request(
             raise HTTPException(status_code=400, detail="Invalid Content-Length header.") from None
 
     try:
-        async with request.form(
-            max_files=settings.max_attachment_files,
-            max_fields=1,
-            max_part_size=100_000,
-        ) as form:
-            if any(key not in {"message", "files"} for key in form):
+        async with request.form(max_files=settings.max_attachment_files, max_fields=0) as form:
+            if any(key != "files" for key in form):
                 raise HTTPException(status_code=422, detail="Unexpected multipart field.")
-            message_values = form.getlist("message")
-            if len(message_values) != 1 or not isinstance(message_values[0], str):
-                raise HTTPException(status_code=422, detail="Multipart request requires one message field.")
             file_values = form.getlist("files")
-            if any(not isinstance(value, UploadFile) for value in file_values):
-                raise HTTPException(status_code=422, detail="Attachments must be uploaded as files.")
-            question = _validate_question(message_values[0], settings)
-            files = await _read_files(file_values, settings)
+            if not file_values:
+                raise HTTPException(status_code=422, detail="Upload at least one file.")
+            return await _read_files(file_values, settings)
     except StarletteHTTPException as exc:
         if exc.status_code == 400 and str(exc.detail).startswith("Too many files"):
             raise HTTPException(status_code=413, detail="Too many file attachments.") from exc
+        if exc.status_code == 400 and str(exc.detail).startswith("Too many fields"):
+            raise HTTPException(status_code=422, detail="Unexpected multipart field.") from exc
         raise
-    return question, files
+
+
+def _upload_metadata(upload: SandboxAttachment) -> dict[str, str | int]:
+    """Describe one retained source file without its contents."""
+    return {"id": upload.id, "filename": upload.filename, "media_type": upload.media_type, "bytes": len(upload.data)}
 
 
 def create_app(
@@ -738,7 +855,7 @@ def create_app(
     )
     settings = replace(settings, auth_token=auth_token, auth_tokens=auth_tokens)
     configure_request_logging(settings.request_log_enabled)
-    provider = provider or OpenAiCompatibleProvider(settings, include_usage=bool(settings.history_postgres_url))
+    provider = provider or OpenAiCompatibleProvider(settings, include_usage=True)
     history_log = (
         ChatHistory(settings.history_postgres_url, settings.history_retention_days)
         if settings.history_postgres_url
@@ -759,12 +876,12 @@ def create_app(
     def refresh_owner_cookie(response: Response, owner: str) -> None:
         """Keep browser ownership available for the session's sliding lifetime."""
         try:
-            canonical_owner = str(UUID(owner))
+            normalized_owner = str(UUID(owner))
         except ValueError:
             return
         response.set_cookie(
             OWNER_COOKIE,
-            canonical_owner,
+            normalized_owner,
             httponly=True,
             secure=settings.cookie_secure,
             # Public deployments allow approved cross-site frontends. Browsers
@@ -877,7 +994,7 @@ def create_app(
         CORSMiddleware,
         allow_origin_regex=ORIGIN_REGEX,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT"],
+        allow_methods=["GET", "POST", "PUT", "DELETE"],
         allow_headers=["Authorization", "Content-Type", "Last-Event-ID"],
     )
     app.state.settings = settings
@@ -889,6 +1006,12 @@ def create_app(
     app.state.app_version = get_app_version()
     app.state.session_optimizer = session_optimizer
     app.state.session_event_broker = event_broker
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(_request: Request, exc: RequestValidationError) -> JSONResponse:
+        """Report schema failures without echoing the input, which can be binary file data."""
+        errors = [{key: error[key] for key in ("type", "loc", "msg") if key in error} for error in exc.errors()]
+        return JSONResponse(status_code=422, content={"detail": errors})
 
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:
@@ -987,6 +1110,69 @@ def create_app(
                 background_task.cancel()
         return Response(status_code=status.HTTP_202_ACCEPTED)
 
+    @app.post(
+        "/sessions/{session_id}/uploads",
+        dependencies=[Depends(require_auth)],
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def add_uploads(
+        session_id: str,
+        request: Request,
+        response: Response,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ):
+        """Retain source files for later messages and return their metadata."""
+        store.require_owned(session_id, owner)
+        uploads = await _parse_upload_request(request, settings)
+        retained = store.retain_uploads(session_id, owner, uploads)
+        refresh_owner_cookie(response, owner)
+        return [_upload_metadata(item) for item in retained]
+
+    @app.get("/sessions/{session_id}/uploads", dependencies=[Depends(require_auth)])
+    async def list_uploads(session_id: str, owner: str | None = Cookie(default=None, alias=OWNER_COOKIE)):
+        """List source-file metadata without returning file contents."""
+        store.require_owned(session_id, owner)
+        return [_upload_metadata(item) for item in store.attachments(session_id)]
+
+    @app.delete("/sessions/{session_id}/uploads/{upload_id}", dependencies=[Depends(require_auth)], status_code=204)
+    async def remove_upload(
+        session_id: str,
+        upload_id: str,
+        response: Response,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> Response:
+        """Remove one retained source file from the session."""
+        store.remove_upload(session_id, owner, upload_id)
+        refresh_owner_cookie(response, owner)
+        response.status_code = 204
+        return response
+
+    @app.get("/sessions/{session_id}/downloads/{download_id}", dependencies=[Depends(require_auth)])
+    async def download_generated_zip(
+        session_id: str,
+        download_id: str,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> Response:
+        """Deliver one captured ZIP without exposing arbitrary sandbox paths."""
+        return Response(
+            content=store.download(session_id, owner, download_id),
+            media_type="application/zip",
+            headers={"Content-Disposition": 'attachment; filename="download.zip"'},
+        )
+
+    @app.delete("/sessions/{session_id}/downloads/{download_id}", dependencies=[Depends(require_auth)], status_code=204)
+    async def remove_generated_zip(
+        session_id: str,
+        download_id: str,
+        response: Response,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> Response:
+        """Remove one generated ZIP from the owning session."""
+        store.remove_download(session_id, owner, download_id)
+        refresh_owner_cookie(response, owner)
+        response.status_code = 204
+        return response
+
     @app.get(
         "/sessions/{session_id}/optimizations/{job_id}/xlsx",
         dependencies=[Depends(require_auth)],
@@ -1048,11 +1234,12 @@ def create_app(
     @app.post("/sessions/{session_id}/messages", dependencies=[Depends(require_auth)])
     async def stream_message(
         session_id: str,
+        body: ChatRequest,
         request: Request,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> StreamingResponse:
         """Stream one answer and retain only text after successful completion."""
-        question, attachments = await _parse_message_request(request, settings)
+        question = _validate_question(body.message, settings)
         store.require_owned(session_id, owner)
         turn_lock = turn_locks.setdefault(session_id, asyncio.Lock())
         if turn_lock.locked():
@@ -1070,6 +1257,8 @@ def create_app(
             history, schedule_yaml, base_revision, proposal_yaml, proposal_diff, previously_dropped = store.begin(
                 session_id, owner
             )
+            # Uploads cannot change while the turn is active, so this snapshot stays valid for the whole turn.
+            hydrated_attachments = store.attachments(session_id)
         except BaseException:
             pending_turn_stops.discard(session_id)
             release_turn()
@@ -1084,7 +1273,7 @@ def create_app(
                     request.state.auth_credential_id,
                     question,
                     settings.provider_model,
-                    len(attachments),
+                    len(hydrated_attachments),
                 )
                 if not logged:
                     raise HTTPException(status_code=503, detail="AI chat history is temporarily unavailable.")
@@ -1098,7 +1287,7 @@ def create_app(
             session_id,
             len(question),
             json.dumps(_question_log_preview(question), ensure_ascii=False),
-            len(attachments),
+            len(hydrated_attachments),
         )
         stream_started = threading.Event()
         latest_artifact = await session_optimizer.latest_result_artifact(session_id)
@@ -1108,16 +1297,15 @@ def create_app(
             retained_history,
             schedule_yaml,
             question,
-            attachments,
+            hydrated_attachments,
             system_prompt=SANDBOX_SYSTEM_PROMPT,
             pending_proposal=bool(proposal_yaml),
             optimizer_result_available=latest_artifact is not None,
             max_history_chars=settings.max_history_chars,
+            max_download_bytes=settings.max_download_bytes,
         )
+        # History keeps the question as typed. Upload and removal events are separate history messages.
         history_question = question
-        if attachments:
-            filenames = json.dumps([attachment.filename for attachment in attachments], ensure_ascii=False)
-            history_question = f"{history_question}\n[Files were attached: {filenames}.]"
 
         async def generate_events():
             stream_started.set()
@@ -1128,20 +1316,20 @@ def create_app(
             pending_turn_stops.discard(session_id)
             assistant_parts: list[str] = []
             pending_proposal: AgentProposal | None = None
+            pending_download: bytes | None = None
             completed = False
             outcome = "cancelled"
             error_code = None
             usage = None
+            last_call: TokenUsage | None = None
             turn_messages = [ChatMessage(role="user", content=history_question)]
             assistant_segment: list[str] = []
             try:
                 yield _sse_event(
-                    "context_usage",
-                    {
-                        "used_chars": history_context_chars(history, settings.max_history_chars),
-                        "max_chars": settings.max_history_chars,
-                    },
+                    "model_input", model_input(messages, len(retained_history), dropped_history, "question")
                 )
+                context_chars = history_context_chars(history, settings.max_history_chars)
+                yield _sse_event("context_usage", context_usage(context_chars, settings))
                 if dropped_history:
                     yield _sse_event("history_trimmed", {"dropped": dropped_history})
                 if stopped_before_stream:
@@ -1161,8 +1349,9 @@ def create_app(
                                 session_id, current_yaml, arguments
                             )
                         ),
-                        attachments=attachments,
+                        attachments=hydrated_attachments,
                         optimizer_result=latest_artifact.content if latest_artifact is not None else None,
+                        optimizer_context=latest_artifact.schedule_context if latest_artifact is not None else None,
                     )
                     async for event in agent_events:
                         if isinstance(event, AgentText):
@@ -1173,6 +1362,10 @@ def create_app(
                             yield _sse_event("reasoning", {"text": event.text})
                         elif isinstance(event, TokenUsage):
                             usage = event if usage is None else usage + event
+                            last_call = event
+                            yield _sse_event(
+                                "context_usage", context_usage(context_chars, settings, last_call, provider)
+                            )
                         elif isinstance(event, AgentToolStart):
                             yield _sse_event(
                                 "tool_start",
@@ -1208,6 +1401,8 @@ def create_app(
                                 "schedule_change",
                                 {"schedule_yaml": event.schedule_yaml},
                             )
+                        elif isinstance(event, AgentDownload):
+                            pending_download = event.content
                         elif isinstance(event, AgentProposal):
                             pending_proposal = event
                 proposal = None
@@ -1241,29 +1436,44 @@ def create_app(
                     yield _sse_event("history_trimmed", {"dropped": completion.history_trimmed_count})
                 if completion.proposal_saved:
                     yield _sse_event("proposal", {"diff": pending_proposal.diff})
+                if pending_download is not None:
+                    if store.save_download(session_id, turn_id, pending_download):
+                        yield _sse_event("download", {"download_id": turn_id})
+                    else:
+                        yield _sse_event(
+                            "warning",
+                            {
+                                "message": "The generated ZIP could not be retained because the service memory limit was reached."
+                            },
+                        )
                 done = {"message_id": turn_id}
                 if history_saved is not None:
                     done["history_saved"] = history_saved
                 yield _sse_event(
-                    "context_usage",
-                    {
-                        "used_chars": completion.context_used_chars,
-                        "max_chars": settings.max_history_chars,
-                    },
+                    "context_usage", context_usage(completion.context_used_chars, settings, last_call, provider)
                 )
                 yield _sse_event("done", done)
             except asyncio.CancelledError:
                 raise
-            except ProviderError:
+            except ProviderError as exc:
                 outcome, error_code = "failed", "provider_error"
-                yield _sse_event("error", {"message": PROVIDER_ERROR})
+                yield _sse_event("error", {"message": exc.user_message or PROVIDER_ERROR})
+            except SandboxDownloadError as exc:
+                outcome, error_code = "failed", "download_error"
+                yield _sse_event("error", {"message": str(exc)})
+            except SandboxCommandTimeoutError:
+                outcome, error_code = "failed", "sandbox_command_timeout"
+                yield _sse_event("error", {"message": SANDBOX_COMMAND_TIMEOUT_ERROR})
             except SandboxTurnTimeoutError:
                 outcome, error_code = "failed", "sandbox_timeout"
                 yield _sse_event("error", {"message": SANDBOX_TURN_TIMEOUT_ERROR})
             except SandboxCandidateError as exc:
                 outcome, error_code = "failed", "candidate_validation"
                 logger.warning("AI candidate validation failed: %s", exc)
-                yield _sse_event("error", {"message": CANDIDATE_VALIDATION_ERROR})
+                yield _sse_event(
+                    "error",
+                    {"message": CANDIDATE_VALIDATION_ERROR + (f"\n\n{exc.user_message}" if exc.user_message else "")},
+                )
             except SandboxError:
                 outcome, error_code = "failed", "sandbox_error"
                 logger.exception("AI sandbox turn failed")

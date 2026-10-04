@@ -42,6 +42,10 @@ class SandboxFileNotFoundError(SandboxError):
     """A requested path does not exist inside an otherwise healthy sandbox."""
 
 
+class SandboxFileSizeError(SandboxError):
+    """A readable sandbox file exceeds its configured byte limit."""
+
+
 @dataclass(frozen=True)
 class CommandResult:
     """Provider-independent result from one foreground shell command."""
@@ -51,6 +55,7 @@ class CommandResult:
     exit_code: int
     duration_seconds: float = 0.0
     timed_out: bool = False
+    sandbox_terminated: bool = False
 
 
 @dataclass(frozen=True)
@@ -88,7 +93,7 @@ class SandboxBackend(Protocol):
         """Create or replace several files inside the sandbox in one request."""
         ...
 
-    async def read_file(self, path: str) -> bytes:
+    async def read_file(self, path: str, *, max_bytes: int | None = None) -> bytes:
         """Read one file inside the sandbox."""
         ...
 

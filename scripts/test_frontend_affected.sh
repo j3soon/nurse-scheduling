@@ -45,6 +45,7 @@ if ((${#related_files[@]} > 0)); then
 fi
 
 if [[ "$affected_list" == true ]]; then
+  echo "lint: scripts/check_terminology.sh"
   echo "lint: bun run lint"
   if [[ "$run_full_suite" == true ]]; then
     echo "tests: full Vitest suite"
@@ -56,6 +57,7 @@ if [[ "$affected_list" == true ]]; then
   exit 0
 fi
 
+"$SCRIPT_DIR/check_terminology.sh"
 cd "$FRONTEND_DIR"
 
 # Prevent concurrent repair/test runs from mutating the same node_modules tree.

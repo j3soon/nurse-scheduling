@@ -51,8 +51,8 @@ asynchronous for a running job. The job first becomes `cancelling`, then
 ## Interpret the result
 
 `OPTIMAL` means the solver proved the best score for this model. A feasible
-result can still be useful when the timeout ends first. Compare scores only
-between runs of the same model.
+result can still be useful when the timeout ends first. The optimizer maximizes
+the score, so higher is better. Compare scores only between runs of the same model.
 
 Rows in the workbook are people. Date cells contain shift IDs, and a plain
 blank means `OFF`. For individual-person to individual-date requests, the

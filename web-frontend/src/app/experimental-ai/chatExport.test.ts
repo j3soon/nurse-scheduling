@@ -27,7 +27,6 @@ const messages: ChatExportMessage[] = [
     role: 'user',
     content: 'Show <script>alert(1)</script> coverage.',
     createdAt: Date.parse('2026-09-18T01:00:00Z'),
-    attachmentNames: ['ward.xlsx'],
   },
   {
     role: 'assistant',
@@ -51,6 +50,92 @@ const metadata = {
 };
 
 describe('chat export', () => {
+  it('keeps event titles as text in HTML exports', () => {
+    const title = '<img src=x onerror=alert(1)> & "uploaded"';
+    const output = buildHtmlChatExport([
+      { role: 'user', source: 'app', title, content: 'Files uploaded.' },
+    ], metadata);
+    const document = new DOMParser().parseFromString(output, 'text/html');
+
+    expect(document.querySelector('.label')?.textContent).toBe(`User · App - ${title}`);
+    expect(document.querySelector('img')).toBeNull();
+  });
+
+  it('exports provider messages in request order with role labels', () => {
+    const turns: ChatExportMessage[] = [
+      { role: 'system', content: 'System with ``` fence' },
+      { role: 'user', source: 'app', title: 'Files Uploaded', content: '[App event] The user uploaded files: [<b>]' },
+      { role: 'user', content: 'Question' },
+      { role: 'user', source: 'status', title: 'Optimizer Result', content: '[Current status]\nOptimization result: result.xlsx.' },
+      { role: 'assistant', content: 'Answer' },
+      { role: 'user', source: 'optimizer', content: 'Optimizer job finished.' },
+    ];
+
+    const markdown = buildMarkdownChatExport(turns, metadata);
+    const html = buildHtmlChatExport(turns, metadata);
+
+    expect(markdown.match(/^## .+$/gm)).toEqual([
+      '## System', '## User · App - Files Uploaded', '## User', '## User · Status - Optimizer Result', '## Assistant',
+      '## User · Optimizer',
+    ]);
+    expect(markdown).toContain('````text\nSystem with ``` fence\n````');
+    expect(html.match(/<div class="label">[^<]+<\/div>/g)).toEqual([
+      '<div class="label">System</div>',
+      '<div class="label">User · App - Files Uploaded</div>',
+      '<div class="label">User</div>',
+      '<div class="label">User · Status - Optimizer Result</div>',
+      '<div class="label">Assistant</div>',
+      '<div class="label">User · Optimizer</div>',
+    ]);
+    expect(html).toContain('<details class="system-prompt"><summary>21 characters</summary>');
+    expect(html).not.toMatch(/<details class="system-prompt" open/);
+    expect(html).toContain('class="message user app"');
+    expect(html).toContain('.user.optimizer { align-self: flex-start;');
+    expect(html).toContain('uploaded files: [&lt;b&gt;]');
+  });
+
+  it('exports a pending proposal after the transcript', () => {
+    const pending = { ...metadata, pendingProposalDiff: '- description: "" -> "<April>"' };
+
+    const markdown = buildMarkdownChatExport(messages, pending);
+    const html = buildHtmlChatExport(messages, pending);
+
+    expect(markdown.endsWith(
+      '## Pending proposal\n\nThis change is waiting for approval in the app. The current schedule has not changed.\n\n'
+      + '```text\n- description: "" -> "<April>"\n```\n',
+    )).toBe(true);
+    expect(html).toContain('<section class="proposal" aria-label="Pending proposal">');
+    expect(html).toContain('<pre>- description: &quot;&quot; -&gt; &quot;&lt;April&gt;&quot;</pre>');
+    expect(html.indexOf('aria-label="Chat transcript"')).toBeLessThan(html.indexOf('aria-label="Pending proposal"'));
+    expect(buildMarkdownChatExport(messages, metadata)).not.toContain('Pending proposal');
+    expect(buildHtmlChatExport(messages, metadata)).not.toContain('class="proposal"');
+  });
+
+  it('mentions an optimization that is still running without its score', () => {
+    const running = { ...metadata, runningOptimization: { jobId: 'job-<1>', state: 'running', solver: 'ortools/cp-sat', timeoutSeconds: 300 } };
+
+    const markdown = buildMarkdownChatExport(messages, running);
+    const html = buildHtmlChatExport(messages, running);
+
+    expect(markdown).toContain('## Optimization running\n\nAn optimization was still running when this chat was exported.');
+    expect(markdown).toContain('- Job: job-<1>\n- State: running\n- Solver: ortools/cp-sat\n- Solver timeout: 300s');
+    expect(html).toContain('<section class="proposal" aria-label="Optimization running">');
+    expect(html).toContain('<li>Job: job-&lt;1&gt;</li>');
+    expect(markdown).not.toContain('score');
+    expect(buildMarkdownChatExport(messages, metadata)).not.toContain('Optimization running');
+  });
+
+  it('lists uploaded session files without their contents', () => {
+    const withFiles = { ...metadata, uploadedFiles: [{ filename: 'ward <1>.csv', bytes: 26 }, { filename: 'roster.xlsx', bytes: 18234 }] };
+
+    const markdown = buildMarkdownChatExport(messages, withFiles);
+    const html = buildHtmlChatExport(messages, withFiles);
+
+    expect(markdown).toContain('## Uploaded files\n\n- ward <1>.csv (0.026 KB)\n- roster.xlsx (18.234 KB)');
+    expect(html).toContain('<li>ward &lt;1&gt;.csv (0.026 KB)</li>');
+    expect(buildMarkdownChatExport(messages, { ...metadata, uploadedFiles: [] })).not.toContain('Uploaded files');
+  });
+
   it('marks an unavailable backend version as unknown', () => {
     const legacyMetadata = { ...metadata, backendVersion: undefined };
     expect(buildMarkdownChatExport([], legacyMetadata)).toContain('- Backend version: unknown');
@@ -64,7 +149,6 @@ describe('chat export', () => {
     expect(output).toContain('- Frontend version: v0.4.2-3-gabc1234');
     expect(output).toContain('- Backend version: v0.4.3-2-gdef5678');
     expect(output).toContain('Show <script>alert(1)</script> coverage.');
-    expect(output).toContain('Attachments: ward.xlsx');
     expect(output).toContain('Response time: 1.25s');
     expect(output).toContain('Sent: 2026-09-18T01:00:00.000Z');
     expect(output).toContain('### Reasoning');
@@ -97,7 +181,6 @@ describe('chat export', () => {
     expect(output).toContain('<span class="removed">- description: old</span>');
     expect(output).toContain('<span class="added">+ description: new</span>');
     expect(output).not.toContain('Before:');
-    expect(output).toContain('<p class="attachments">Attached: ward.xlsx</p>');
     expect(output).toContain('<time datetime="2026-09-18T01:00:01.250Z" title="');
     expect(output).toContain('<time datetime="2026-09-18T01:00:00.000Z" title="');
   });

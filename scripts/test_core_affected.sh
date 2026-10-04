@@ -11,6 +11,7 @@ affected_parse_args "$ROOT_DIR" "$@"
 test_paths=()
 run_full_suite="$affected_full"
 ai_changed=false
+ai_eval_changed=false
 
 if ((${#affected_paths[@]} > 0)); then
   for path in "${affected_paths[@]}"; do
@@ -27,6 +28,10 @@ elif [[ "$run_full_suite" == false ]]; then
         ;;
       nurse_scheduling/ai/* | nurse_scheduling/ai_serve.py)
         ai_changed=true
+        ;;
+      tests/ai_eval/*)
+        ai_changed=true
+        ai_eval_changed=true
         ;;
       nurse_scheduling/* | tests/* | requirements*.txt | pyproject.toml)
         run_full_suite=true
@@ -48,6 +53,10 @@ elif [[ "$run_full_suite" == false ]]; then
     for path in "$CORE_DIR"/tests/test_ai_*.py; do
       [[ -f "$path" ]] && test_paths+=("tests/${path##*/}")
     done
+    # The preference audit also imports the evaluation package.
+    if [[ "$ai_eval_changed" == true && -f "$CORE_DIR/tests/test_preference_audit.py" ]]; then
+      test_paths+=(tests/test_preference_audit.py)
+    fi
   fi
 fi
 
@@ -56,6 +65,7 @@ if ((${#test_paths[@]} > 0)); then
 fi
 
 if [[ "$affected_list" == true ]]; then
+  echo "lint: scripts/check_terminology.sh"
   echo "lint: ruff format --check nurse_scheduling tests"
   echo "lint: ruff check nurse_scheduling tests"
   if [[ "$run_full_suite" == true ]]; then
@@ -68,6 +78,7 @@ if [[ "$affected_list" == true ]]; then
   exit 0
 fi
 
+"$SCRIPT_DIR/check_terminology.sh"
 cd "$CORE_DIR"
 ruff format --check nurse_scheduling tests
 ruff check nurse_scheduling tests
@@ -93,6 +104,7 @@ fi
 
 if ((${#required_solvers[@]} > 0)); then
   python - "${required_solvers[@]}" <<'PY'
+import os
 import sys
 
 from nurse_scheduling.server.solver_options import solver_is_available
@@ -100,7 +112,10 @@ from nurse_scheduling.server.solver_options import solver_is_available
 unavailable = [solver for solver in dict.fromkeys(sys.argv[1:]) if not solver_is_available(solver)]
 if unavailable:
     print(f"Required optional solver runtimes unavailable: {', '.join(unavailable)}", file=sys.stderr)
-    print("From core/, run: uv pip install -r requirements-optional.txt", file=sys.stderr)
+    if os.path.exists("/.dockerenv"):
+        print("This dev image omits them. Pass explicit test paths that do not need them.", file=sys.stderr)
+    else:
+        print("From core/, run: uv pip install -r requirements-optional.txt", file=sys.stderr)
     raise SystemExit(2)
 PY
 fi

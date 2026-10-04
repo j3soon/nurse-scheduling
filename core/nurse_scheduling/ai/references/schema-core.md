@@ -184,6 +184,7 @@ Fields:
 Rules:
 - Person IDs must be unique and cannot case-insensitively equal the reserved selector ALL.
 - History may contain concrete shift-type IDs or OFF, but not ALL or shift-type group IDs.
+- Keep explicit OFF entries when importing supplied history. An empty list means no history was supplied.
 - To remove a person entirely, remove their item, every group membership, and every preference that names only that person in the same coordinated file edit. Locate every exact reference with `rg --word-regexp` and bounded context.
 
 Minimal frontend-compatible YAML:

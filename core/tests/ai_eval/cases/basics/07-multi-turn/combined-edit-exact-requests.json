@@ -1,0 +1,40 @@
+{
+  "fixture": "small-clinic",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "description",
+      "before": "Small pediatric clinic",
+      "after": "January training clinic"
+    },
+    {
+      "path": "preferences",
+      "removed": [
+        {
+          "type": "shift request",
+          "person": [
+            "Ana"
+          ],
+          "date": [
+            "06"
+          ],
+          "shiftType": [
+            "N"
+          ],
+          "weight": -1
+        }
+      ]
+    }
+  ],
+  "changes": [
+    "description",
+    "preferences"
+  ],
+  "tags": [
+    "prompt-evidence",
+    "clarification"
+  ],
+  "id": "combined-edit-exact-requests",
+  "question": "For the person with exact ID `Ana`, set the schedule description to January training clinic and remove only their request for shift type N on the 6th. Keep the Night group request.",
+  "note": "This testcase is mostly AI generated. Fully specified control for combined-edit-ambiguous-requests. The correct proposal preserves the Night group request and makes both requested edits."
+}

@@ -1,0 +1,165 @@
+{
+  "id": "optimizer-authorized-policy-change",
+  "fixture": "ward87",
+  "question": "For this experiment, change only the preferred staffing requirement penalties from -1000000000000 to -100000000, then optimize for 60 seconds using the updated YAML. Leave all other preferences unchanged.",
+  "expect_proposal": true,
+  "semantic_check": "optimizer-start-source",
+  "tool_usage": {
+    "required_calls": [
+      {
+        "name": "optimizer",
+        "arguments": {
+          "action": "start",
+          "timeout_seconds": 60
+        }
+      }
+    ],
+    "max_per_tool": {
+      "optimizer": 1
+    }
+  },
+  "tags": [
+    "optimizer-goal"
+  ],
+  "note": "This testcase is mostly AI generated. The user explicitly authorizes a particular staffing weight change. The actual optimizer input must contain only that change.",
+  "changes": [
+    "preferences"
+  ],
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "removed": [
+        {
+          "type": "shift type requirement",
+          "description": "",
+          "shiftType": [
+            "N"
+          ],
+          "requiredNumPeople": 12,
+          "qualifiedPeople": [
+            "All Nurses w/o Students"
+          ],
+          "preferredNumPeople": 13,
+          "date": [
+            "ALL"
+          ],
+          "weight": -1000000000000
+        },
+        {
+          "type": "shift type requirement",
+          "description": "",
+          "shiftType": [
+            "E"
+          ],
+          "requiredNumPeople": 12,
+          "qualifiedPeople": [
+            "All Nurses w/o Students"
+          ],
+          "preferredNumPeople": 13,
+          "date": [
+            "ALL"
+          ],
+          "weight": -1000000000000
+        },
+        {
+          "type": "shift type requirement",
+          "description": "",
+          "shiftType": [
+            "D"
+          ],
+          "requiredNumPeople": 12,
+          "qualifiedPeople": [
+            "All Nurses w/o Students"
+          ],
+          "preferredNumPeople": 13,
+          "date": [
+            "FREEDAY"
+          ],
+          "weight": -1000000000000
+        },
+        {
+          "type": "shift type requirement",
+          "description": "",
+          "shiftType": [
+            "D"
+          ],
+          "requiredNumPeople": 13,
+          "qualifiedPeople": [
+            "All Nurses w/o Students"
+          ],
+          "preferredNumPeople": 14,
+          "date": [
+            "WORKDAY"
+          ],
+          "weight": -1000000000000
+        }
+      ],
+      "added": [
+        {
+          "type": "shift type requirement",
+          "description": "",
+          "shiftType": [
+            "N"
+          ],
+          "requiredNumPeople": 12,
+          "qualifiedPeople": [
+            "All Nurses w/o Students"
+          ],
+          "preferredNumPeople": 13,
+          "date": [
+            "ALL"
+          ],
+          "weight": -100000000
+        },
+        {
+          "type": "shift type requirement",
+          "description": "",
+          "shiftType": [
+            "E"
+          ],
+          "requiredNumPeople": 12,
+          "qualifiedPeople": [
+            "All Nurses w/o Students"
+          ],
+          "preferredNumPeople": 13,
+          "date": [
+            "ALL"
+          ],
+          "weight": -100000000
+        },
+        {
+          "type": "shift type requirement",
+          "description": "",
+          "shiftType": [
+            "D"
+          ],
+          "requiredNumPeople": 12,
+          "qualifiedPeople": [
+            "All Nurses w/o Students"
+          ],
+          "preferredNumPeople": 13,
+          "date": [
+            "FREEDAY"
+          ],
+          "weight": -100000000
+        },
+        {
+          "type": "shift type requirement",
+          "description": "",
+          "shiftType": [
+            "D"
+          ],
+          "requiredNumPeople": 13,
+          "qualifiedPeople": [
+            "All Nurses w/o Students"
+          ],
+          "preferredNumPeople": 14,
+          "date": [
+            "WORKDAY"
+          ],
+          "weight": -100000000
+        }
+      ]
+    }
+  ]
+}

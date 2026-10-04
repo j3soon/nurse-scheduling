@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# This test is mostly AI generated.
+apiVersion: alpha
+description: Request audit fixture
+dates:
+  range: {startDate: '2026-05-01', endDate: '2026-05-03'}
+  items: []
+  groups: []
+people:
+  items:
+    - {id: Alex, description: '', history: [OFF, D, N]}
+    - {id: Mira, description: '', history: [OFF]}
+    - {id: Kai, description: '', history: []}
+  groups: [{id: 11b, description: Training cohort, members: [Kai]}]
+shiftTypes:
+  items:
+    - {id: D, description: Day}
+    - {id: N, description: Night}
+    - {id: K, description: Training}
+  groups: []
+preferences:
+  - {type: at most one shift per day}
+  - {type: shift request, person: [Alex], date: ['01'], shiftType: [OFF], weight: 11000000000}
+  - {type: shift request, person: [Alex], date: ['02'], shiftType: [K], weight: 11000000000}
+  - {type: shift request, person: [Mira], date: ['02', '03'], shiftType: [OFF], weight: 11000000000}
+  - {type: shift request, person: [Alex], date: ['03'], shiftType: [OFF], weight: 11000000}
+  - {type: shift request, person: [Kai], date: [ALL], shiftType: [K], weight: -.inf}
+  - {type: shift request, person: ['11b'], date: ['01'], shiftType: [OFF], weight: 11000000}
+export:
+  formatting:
+    - type: cell
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [OFF, ALL]
+      appendText: ' [{shiftType}]'
+      when: {preference: {types: [shift request], requestShape: [person-item-to-date-item], weightRange: [1, .inf]}}
+    - type: cell
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [OFF, ALL]
+      appendText: ' [X]'
+      note: {text: 'Weight of unmet single-style request: {totalAbsWeight}'}
+      when: {preference: {types: [shift request], requestShape: [person-item-to-date-item], satisfied: false, weightRange: [1, .inf]}}

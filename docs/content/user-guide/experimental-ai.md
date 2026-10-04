@@ -65,6 +65,9 @@ The optimizer runs for up to 300 seconds (five minutes) by default. Ask the
 assistant for a different timeout when needed. A deployment may set another
 default. One chat may start 50 optimizer runs by default.
 
+Optimizer completion reports explain when an automatic request audit is unavailable.
+Custom export text outside bracketed annotations can prevent the audit.
+
 Before submission to the optimizer, the AI service applies the same basic
 anonymization as **Optimize and Export**: it replaces person IDs and removes
 description fields. It restores person IDs in the downloaded workbook. Dates,
@@ -90,9 +93,15 @@ assistant proposes one instead of changing the schedule itself.
 
 **Chat history context** below the message box shows the portion of the server's
 conversation history budget selected for the next turn. It excludes instructions,
-schedule data, tools, and attachments, and does not measure the model token window.
-If the server does not report usage, the chat displays **unavailable**. Update the
-AI server to enable the percentage.
+schedule data, tools, and attachments. If the server does not report usage, the
+chat displays **unavailable**. Update the AI server to enable the percentage.
+
+When the provider reports token usage, the line also shows **Tokens:
+used / limit**. It counts the tokens of the latest model request, including
+instructions, tool output, and the reply. A turn with long tool output can
+therefore use many more tokens than its history percentage suggests.
+The server reads the limit from the provider's model metadata. If the provider
+does not report a limit, the chat shows **unavailable** for the limit.
 
 Small grey rows under an answer record how it was produced. They stay collapsed
 until you select one.
@@ -116,6 +125,11 @@ either kind. The choice is remembered on this browser.
 
 Approval is refused when the schedule changed after the proposal was made. Ask
 again so the assistant works from what you now have.
+
+If a turn fails, read the error below the chat. A provider error can include an
+HTTP status and an error ID to share when reporting the problem. A schedule
+validation error explains the invalid value or field. Failed validation discards
+that turn's edits and keeps your current schedule.
 
 ## Real scenario example
 
@@ -151,7 +165,18 @@ Assistant answers render Markdown, including headings, lists, links, code, and
 tables. Use the copy icon at the top-right of a code block to copy its contents.
 Raw HTML is ignored. Remote images written in an answer are not loaded.
 Use **HTML** under **Export chat** for a styled, standalone transcript, or
-**Markdown** for a plain-text transcript. Export runs in the browser.
+**Markdown** for a plain-text transcript. Export runs in the browser. The export
+also lists the uploaded files by name and size, includes a proposal that is
+waiting for approval, and notes an optimization that is still running without
+its changing score.
+
+When the assistant creates files for download, it puts them in one ZIP archive.
+Use **Download files (ZIP)** below its answer. The archive and its uncompressed
+contents are each limited to 50 MB by default. Downloads remain available while
+the chat session exists, subject to the service memory limit. A workspace path
+printed in an answer is not itself a download link.
+Use **Remove ZIP** after saving a file you no longer need in the chat. This frees
+session storage for new files and removes that ZIP's download button.
 
 ## Ask how to use the app
 
@@ -162,9 +187,13 @@ guide you through those controls, but it cannot navigate, click, or upload for
 you. It can always start optimization itself. An unavailable optimizer API
 reports a tool error instead.
 
-Files attached with **Attach files** belong to the next chat message. To replace
-the schedule currently open in the app, use **Upload** on **Save and Load**
-instead.
+Files attached with **Attach files** remain available for later questions in the
+same chat. The **Uploaded files** panel lists their names and sizes. Use **Remove**
+when a file is no longer needed. Uploading a file with a name already in the list
+keeps both files and adds a number to the new name, such as `ward (1).csv`.
+The panel sits on the right on large screens and can be collapsed on smaller screens.
+To replace the schedule currently open in the app directly, use **Upload** on
+**Save and Load**.
 
 The browser uploads one YAML snapshot when it creates the chat session. Later
 questions in that session use the same service-held snapshot. The current
@@ -176,8 +205,17 @@ and the page reports when a preserved chat has expired.
 
 The complete schedule YAML is sent to the configured AI service and placed in
 the assistant's temporary workspace. Relevant schedule content reaches the
-model when the assistant inspects it. Attached files are copied to that isolated
-workspace for the current question and are destroyed with it. The assistant can
+model when the assistant inspects it. Uploaded source files stay with the chat
+until removed or the session expires. The service loads them into each new
+workspace. The file count and per-file size limits apply to retained uploads,
+and their bytes share the service's session memory budget.
+
+Each message uses a fresh temporary virtual machine, not your computer or a
+persistent desktop. The service loads the current schedule, relevant references,
+and retained uploads into it. Other files created during a response disappear
+when that workspace closes. Download generated output with **Download files (ZIP)**.
+A chat message can mention a removed file even when it is no longer available.
+Upload that source again if a later question needs it. The assistant can
 inspect spreadsheet cells, including formulas and last-saved values, or extract
 text and render selected PDF pages. Rendered pages and any images the assistant
 extracts may be sent to the model when it reads them. File support still depends

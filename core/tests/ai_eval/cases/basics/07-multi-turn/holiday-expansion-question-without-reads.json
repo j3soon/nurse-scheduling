@@ -1,0 +1,29 @@
+{
+  "id": "holiday-expansion-question-without-reads",
+  "fixture": "small-clinic",
+  "question": "The current roster covers January 5 through January 11, 2026. Extend it through January 18, 2026.",
+  "expect_proposal": false,
+  "answer_contains": [
+    "Taiwan",
+    [
+      "holiday",
+      "holidays"
+    ],
+    [
+      "renew",
+      "update",
+      "refresh"
+    ]
+  ],
+  "note": "This testcase is mostly AI generated. The user supplies the current and requested range, so the renewal question needs no schedule facts. Tests whether prompt knowledge avoids reference-discovery calls on the clarification turn.",
+  "tags": [
+    "prompt-evidence",
+    "calendar",
+    "clarification"
+  ],
+  "turn_tool_usage": [
+    {
+      "max_total": 0
+    }
+  ]
+}

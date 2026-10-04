@@ -1,0 +1,47 @@
+{
+  "id": "pref-count-coefficients-small",
+  "fixture": "small-clinic",
+  "question": "Ana must work exactly 3 workload points over the roster, counting each D as 1 and each N as 2.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "added": [
+        {
+          "type": "shift count",
+          "person": [
+            "Ana"
+          ],
+          "countDates": [
+            "ALL"
+          ],
+          "countShiftTypes": [
+            "D",
+            "N"
+          ],
+          "countShiftTypeCoefficients": [
+            [
+              "D",
+              1
+            ],
+            [
+              "N",
+              2
+            ]
+          ],
+          "expression": "x = T",
+          "target": 3,
+          "weight": "-.inf"
+        }
+      ],
+      "allow_added_description": true
+    }
+  ],
+  "changes": [
+    "preferences"
+  ],
+  "note": "This testcase is mostly AI generated. Tests the uncommon coefficient matrix and hard equality shape on a small schedule.",
+  "tags": [
+    "prompt-evidence"
+  ]
+}

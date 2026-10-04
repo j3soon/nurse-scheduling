@@ -29,6 +29,8 @@ interface CapturedRequests {
   messageBody: string;
   messageBodies: string[];
   messageContentType: string;
+  uploadBody: string;
+  uploadContentType: string;
   authorizationHeaders: string[];
 }
 
@@ -38,7 +40,8 @@ function frontendOrigin(): string {
   return new URL(baseURL).origin;
 }
 
-async function startCancelableAiBackend() {
+async function startCancelableAiBackend(retainUploads = false) {
+  let hasUpload = false;
   let disconnected = false;
   const allowedOrigin = frontendOrigin();
   const server = createServer((request, response) => {
@@ -61,6 +64,7 @@ async function startCancelableAiBackend() {
           enabled: true,
           max_files: 8,
           max_bytes_per_file: 5_000_000,
+          retained: retainUploads,
         },
       }));
       return;
@@ -68,6 +72,17 @@ async function startCancelableAiBackend() {
     if (request.url === '/ai/sessions') {
       response.writeHead(201, { ...headers, 'Content-Type': 'application/json' })
         .end(JSON.stringify({ id: 'cancel-session' }));
+      return;
+    }
+    if (request.url === '/ai/sessions/cancel-session/events') {
+      response.writeHead(200, { ...headers, 'Content-Type': 'text/event-stream' }).end();
+      return;
+    }
+    if (request.url === '/ai/sessions/cancel-session/uploads') {
+      if (request.method === 'POST') hasUpload = retainUploads;
+      response.writeHead(request.method === 'POST' ? 201 : 200, { ...headers, 'Content-Type': 'application/json' }).end(JSON.stringify(
+        hasUpload ? [{ id: 'file-1', filename: 'ward.csv', media_type: 'text/csv', bytes: 26 }] : [],
+      ));
       return;
     }
     if (request.url === '/ai/sessions/cancel-session/messages') {
@@ -118,9 +133,14 @@ async function mockAiBackend(
     messageBody: '',
     messageBodies: [] as string[],
     messageContentType: '',
+    uploadBody: '',
+    uploadContentType: '',
     authorizationHeaders: [] as string[],
   };
   const allowedOrigin = frontendOrigin();
+  // Like the backend, record each upload as an app event that the next request sends before the question.
+  const pendingAppEvents: string[] = [];
+  let historyLength = 0;
 
   await page.route('**/info', route => route.fulfill({
     status: 200, contentType: 'application/json', body: JSON.stringify({ app_version: 'v0.4.3-backend' }),
@@ -188,15 +208,40 @@ async function mockAiBackend(
       return;
     }
 
+    if (request.url().endsWith('/sessions/browser-session/uploads') && request.method() === 'POST') {
+      captured.uploadBody = request.postDataBuffer()?.toString('latin1') ?? '';
+      captured.uploadContentType = request.headers()['content-type'] ?? '';
+      const filenames = [...captured.uploadBody.matchAll(/filename="([^"]+)"/g)].map(match => match[1]);
+      pendingAppEvents.push(`[App event] The user uploaded files: ${JSON.stringify(filenames)}`);
+      await route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        headers: corsHeaders,
+        body: JSON.stringify(filenames.map((filename, index) => ({
+          id: `file-${index + 1}`, filename, media_type: 'application/octet-stream', bytes: 1,
+        }))),
+      });
+      return;
+    }
+
     captured.messageBody = request.postData() ?? '';
     captured.messageBodies.push(captured.messageBody);
     captured.messageContentType = request.headers()['content-type'] ?? '';
     const firstMessageFailed = failFirstMessage && captured.messageBodies.length === 1;
+    const sent = JSON.parse(captured.messageBody || '{}') as { message?: string };
+    const appEvents = pendingAppEvents.splice(0).map(content => ({
+      kind: 'app', index: historyLength++, content, title: 'Files Uploaded',
+    }));
+    historyLength += 2;
+    const modelInput = `event: model_input\ndata: ${JSON.stringify({
+      system: 'Mock system prompt',
+      messages: [...appEvents, { kind: 'question', content: sent.message }],
+    })}\n\n`;
     await route.fulfill({
       status: 200,
       contentType: 'text/event-stream',
       headers: corsHeaders,
-      body: firstMessageFailed
+      body: modelInput + (firstMessageFailed
         ? [
           `event: tool_start\ndata: ${JSON.stringify({ name: 'bash', arguments: '{"command":"sleep 30"}' })}\n\n`,
           'event: delta\ndata: {"text":"Provisional response."}\n\n',
@@ -206,7 +251,7 @@ async function mockAiBackend(
           'event: context_usage\ndata: {"used_chars":500,"max_chars":2000}\n\n',
           ...answerDeltas.map(text => `event: delta\ndata: ${JSON.stringify({ text })}\n\n`),
           'event: done\ndata: {"message_id":"answer-id"}\n\n',
-        ].join(''),
+        ].join('')),
     });
   });
 
@@ -500,7 +545,7 @@ test('renders assistant Markdown with safe images and copyable code', async ({ p
   await expect(page.getByText('[Remote image omitted: tracker]')).toBeVisible();
   await expect(page.locator('article img')).toHaveCount(0);
 
-  const codeBlock = page.locator('article pre');
+  const codeBlock = page.locator('article pre', { hasText: 'people: []' });
   const copyButton = page.getByRole('button', { name: 'Copy code' });
   await expect(codeBlock).toContainText('people: []');
   await expect(copyButton).toBeVisible();
@@ -563,10 +608,19 @@ test('previews and sends an image attachment', async ({ page }) => {
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   await expect(page.getByText('The image and schedule were received.')).toBeVisible();
-  await expect(page.getByText('Attached: ward.png')).toBeVisible();
-  expect(captured.messageContentType).toContain('multipart/form-data');
-  expect(captured.messageBody).toContain('What is shown?');
-  expect(captured.messageBody).toContain('ward.png');
+  expect(captured.uploadContentType).toContain('multipart/form-data');
+  expect(captured.uploadBody).toContain('filename="ward.png"');
+  expect(captured.messageContentType).toBe('application/json');
+  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'What is shown?' });
+  // The bubbles follow the provider request: system prompt, upload event, then the question as typed.
+  const cards = page.getByLabel('Chat messages').locator('article');
+  await expect(cards.locator('> p:first-child')).toHaveText(['System', 'User · App - Files Uploaded', 'User', 'Assistant']);
+  await expect(cards.nth(1)).toContainText('[App event] The user uploaded files: ["ward.png"]');
+  await expect(cards.nth(2)).toContainText('What is shown?');
+  const systemPrompt = cards.nth(0).locator('details');
+  await expect(systemPrompt.locator('pre')).toBeHidden();
+  await systemPrompt.locator('summary').click();
+  await expect(systemPrompt.locator('pre')).toHaveText('Mock system prompt');
 });
 
 test('previews and sends arbitrary file attachments', async ({ page }) => {
@@ -597,11 +651,144 @@ test('previews and sends arbitrary file attachments', async ({ page }) => {
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   await expect(page.getByText('The image and schedule were received.')).toBeVisible();
-  await expect(page.getByText('Attached: staff.csv, notes.pdf, coverage.custom')).toBeVisible();
-  expect(captured.messageContentType).toContain('multipart/form-data');
-  expect(captured.messageBody).toContain('name="files"');
-  expect(captured.messageBody).toContain('staff.csv');
-  expect(captured.messageBody).toContain('notes.pdf');
-  expect(captured.messageBody).toContain('coverage.custom');
-  expect(captured.messageBody).toContain('Alice,day');
+  // The upload event text starts collapsed under its titled label.
+  const upload = page.getByLabel('Chat messages').locator('article', { hasText: 'User · App - Files Uploaded' });
+  await expect(upload.locator('pre')).toBeHidden();
+  await expect(upload).toContainText('[App event] The user uploaded files: ["staff.csv","notes.pdf","coverage.custom"]');
+  expect(captured.uploadContentType).toContain('multipart/form-data');
+  expect(captured.uploadBody).toContain('name="files"');
+  expect(captured.uploadBody).toContain('staff.csv');
+  expect(captured.uploadBody).toContain('notes.pdf');
+  expect(captured.uploadBody).toContain('coverage.custom');
+  expect(captured.uploadBody).toContain('Alice,day');
+  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Check the documents.' });
+});
+
+
+test('downloads and removes generated files through the ZIP controls', async ({ page }) => {
+  await mockAiBackend(page);
+  await page.route('**/ai/sessions/*/messages', route => route.fulfill({
+    contentType: 'text/event-stream',
+    body: 'event: delta\ndata: {"text":"Files ready."}\n\nevent: download\ndata: {"download_id":"zip-turn"}\n\nevent: done\ndata: {}\n\n',
+  }));
+  let removed = false;
+  await page.route('**/ai/sessions/*/downloads/zip-turn', route => {
+    if (route.request().method() === 'DELETE') {
+      removed = true;
+      return route.fulfill({ status: 204 });
+    }
+    return route.fulfill({ contentType: 'application/zip', body: Buffer.from('captured ZIP bytes') });
+  });
+  await page.goto('/experimental-ai');
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Create a downloadable CSV');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  const pendingDownload = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download files (ZIP)' }).click();
+  const download = await pendingDownload;
+  expect(download.suggestedFilename()).toBe('download.zip');
+  expect(await readFile((await download.path())!)).toEqual(Buffer.from('captured ZIP bytes'));
+  await page.getByRole('button', { name: 'Remove ZIP' }).click();
+  await expect(page.getByRole('button', { name: 'Remove ZIP' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Download files (ZIP)' })).toHaveCount(0);
+  expect(removed).toBe(true);
+  await expect(page.getByText('Files ready.')).toBeVisible();
+  await page.reload();
+  await expect(page.getByText('Files ready.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Download files (ZIP)' })).toHaveCount(0);
+});
+
+
+test('shows retained uploads while the assistant response is still running', async ({ page }) => {
+  const backend = await startCancelableAiBackend(true);
+  await page.route('**/ai/**', route => {
+    const requestUrl = new URL(route.request().url());
+    return route.continue({ url: `${backend.origin}${requestUrl.pathname}${requestUrl.search}` });
+  });
+  try {
+    await page.goto('/experimental-ai');
+    await page.getByLabel('Attach files').setInputFiles({
+      name: 'ward.csv', mimeType: 'text/csv', buffer: Buffer.from('name,date\nAlex,2026-10-01\n'),
+    });
+    await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Read this file');
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    const panel = page.getByRole('complementary', { name: 'Session files' });
+    await expect(panel.getByRole('button', { name: 'Remove ward.csv' })).toBeVisible();
+    await expect(panel.getByRole('button', { name: 'Remove ward.csv' })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Stop', exact: true }).click();
+    await expect.poll(backend.wasDisconnected).toBe(true);
+    await expect(panel.getByRole('button', { name: 'Remove ward.csv' })).toBeEnabled();
+  } finally {
+    await backend.close();
+  }
+});
+
+test('places uploads beside desktop chat and below mobile controls and allows removal', async ({ page }) => {
+  await mockAiBackend(page);
+  let retained = false;
+  await page.route('**/ai/capabilities', route => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({ auth: { required: true, scheme: 'bearer' }, file_attachments: { enabled: true, retained: true, max_files: 8, max_bytes_per_file: 5000000 } }),
+  }));
+  await page.route('**/ai/sessions/*/uploads', route => {
+    if (route.request().method() === 'POST') retained = true;
+    return route.fulfill({
+      contentType: 'application/json', body: JSON.stringify(retained ? [{ id: 'file-1', filename: 'ward.csv', media_type: 'text/csv', bytes: 26 }] : []),
+    });
+  });
+  await page.route('**/ai/sessions/*/uploads/file-1', route => {
+    expect(route.request().method()).toBe('DELETE');
+    retained = false;
+    return route.fulfill({ status: 204 });
+  });
+  await page.route('**/ai/sessions/*/messages', route => {
+    expect(route.request().postDataJSON()).toEqual({ message: 'Read this file' });
+    return route.fulfill({ contentType: 'text/event-stream', body: 'event: delta\ndata: {"text":"Workbook inspected."}\n\nevent: done\ndata: {}\n\n' });
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/experimental-ai');
+  await page.getByRole('button', { name: 'Enter token for AI assistant' }).click();
+  await page.getByRole('textbox', { name: 'Token for AI assistant' }).fill('browser-ai-auth-token');
+  await page.getByRole('button', { name: 'Save token for AI assistant' }).click();
+  await page.getByLabel('Attach files').setInputFiles({ name: 'ward.csv', mimeType: 'text/csv', buffer: Buffer.from('name,date\nAlex,2026-10-01\n') });
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Read this file');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  const panel = page.getByRole('complementary', { name: 'Session files' });
+  await expect(panel.getByRole('button', { name: 'Remove ward.csv' })).toBeVisible();
+  const panelBox = (await panel.boundingBox())!;
+  const chatBox = (await page.getByRole('region', { name: 'Chat messages' }).boundingBox())!;
+  expect(panelBox.x).toBeGreaterThan(chatBox.x + chatBox.width);
+  for (const width of [1440, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    const pageCenter = await page.evaluate(() => document.documentElement.clientWidth / 2);
+    const fixedPanel = (await panel.boundingBox())!;
+    for (const box of [
+      (await page.getByRole('region', { name: 'Chat messages' }).boundingBox())!,
+      (await page.locator('form', { has: page.getByRole('textbox', { name: 'Ask about the current schedule' }) }).boundingBox())!,
+    ]) {
+      expect(Math.abs(box.x + box.width / 2 - pageCenter)).toBeLessThanOrEqual(2);
+      expect(box.x + box.width).toBeLessThanOrEqual(fixedPanel.x);
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.screenshot({ path: '../artifacts/uploads-layout/desktop.png' });
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobilePanelBox = (await panel.boundingBox())!;
+  const titleBox = (await page.getByRole('heading', { name: 'Schedule AI Chat' }).boundingBox())!;
+  const exportBox = (await page.getByRole('button', { name: 'Markdown', exact: true }).boundingBox())!;
+  const tokenBox = (await page.getByRole('button', { name: 'Change token for AI assistant' }).boundingBox())!;
+  const mobileChatBox = (await page.getByRole('region', { name: 'Chat messages' }).boundingBox())!;
+  expect(mobilePanelBox.y).toBeGreaterThan(titleBox.y + titleBox.height);
+  expect(mobilePanelBox.y).toBeGreaterThan(exportBox.y + exportBox.height);
+  expect(mobilePanelBox.y).toBeGreaterThan(tokenBox.y + tokenBox.height);
+  expect(mobilePanelBox.y + mobilePanelBox.height).toBeLessThan(mobileChatBox.y);
+  await page.screenshot({
+    path: '../artifacts/uploads-layout/mobile.png', fullPage: true,
+    style: '[aria-label="Message composer"] { visibility: hidden !important; }',
+  });
+  await panel.getByText('Uploaded files (1)', { exact: true }).click();
+  await expect(panel.getByRole('button', { name: 'Remove ward.csv' })).toBeHidden();
+  await panel.getByText('Uploaded files (1)', { exact: true }).click();
+  await panel.getByRole('button', { name: 'Remove ward.csv' }).click();
+  await expect(panel.getByText('No uploaded files.')).toBeVisible();
 });

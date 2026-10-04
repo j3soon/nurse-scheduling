@@ -19,11 +19,16 @@
 
 // This test is mostly AI generated.
 
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ExperimentalAiPage from './page';
+import type { ModelInput, UploadedFile } from './aiClient';
 
 const mockCreateSession = vi.hoisted(() => vi.fn());
+const mockGetUploads = vi.hoisted(() => vi.fn());
+const mockRemoveUpload = vi.hoisted(() => vi.fn());
+const mockDownloadGeneratedZip = vi.hoisted(() => vi.fn());
+const mockRemoveGeneratedZip = vi.hoisted(() => vi.fn());
 const mockDownloadOptimization = vi.hoisted(() => vi.fn());
 const mockGetBackendVersion = vi.hoisted(() => vi.fn());
 const mockGetCapabilities = vi.hoisted(() => vi.fn());
@@ -58,6 +63,10 @@ vi.mock('./aiClient', () => ({
   PRODUCTION_AI_API_URL: 'https://api.nursescheduling.org/ai',
   createSession: mockCreateSession,
   downloadOptimization: mockDownloadOptimization,
+  downloadGeneratedZip: mockDownloadGeneratedZip,
+  removeGeneratedZip: mockRemoveGeneratedZip,
+  getUploads: mockGetUploads,
+  removeUpload: mockRemoveUpload,
   getAiBaseUrl: () => '/ai',
   getCapabilities: mockGetCapabilities,
   getBackendVersion: mockGetBackendVersion,
@@ -113,6 +122,10 @@ describe('ExperimentalAiPage', () => {
     vi.restoreAllMocks();
     vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined);
     mockCreateSession.mockReset().mockResolvedValue('session-id');
+    mockGetUploads.mockReset().mockResolvedValue([]);
+    mockRemoveUpload.mockReset().mockResolvedValue(undefined);
+    mockDownloadGeneratedZip.mockReset().mockResolvedValue(new Blob(['zip']));
+    mockRemoveGeneratedZip.mockReset().mockResolvedValue(undefined);
     mockDownloadOptimization.mockReset().mockResolvedValue(new Blob(['workbook']));
     mockGetCapabilities.mockReset().mockResolvedValue(defaultCapabilities);
     mockGetBackendVersion.mockReset().mockResolvedValue('v0.4.3');
@@ -127,7 +140,7 @@ describe('ExperimentalAiPage', () => {
     });
     mockStreamSessionEvents.mockReset().mockResolvedValue(undefined);
     mockStopSession.mockReset().mockResolvedValue(undefined);
-    mockGenerateYaml.mockClear();
+    mockGenerateYaml.mockClear().mockReturnValue('description: current schedule\n');
     mockApproveProposal.mockReset().mockResolvedValue('description: proposed schedule\n');
     mockRejectProposal.mockReset().mockResolvedValue(undefined);
     mockQueueMessage.mockReset().mockResolvedValue(undefined);
@@ -136,6 +149,96 @@ describe('ExperimentalAiPage', () => {
     mockUseTabSwitchWarning.mockReset();
     window.localStorage.clear();
     window.sessionStorage.clear();
+  });
+
+  it('lists uploads before the assistant responds and removes an unused file', async () => {
+    mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, file_attachments: { ...defaultCapabilities.file_attachments, retained: true } });
+    mockRemoveUpload.mockImplementation(async () => { mockGetUploads.mockResolvedValue([]); });
+    mockGetUploads.mockResolvedValue([{ id: 'upload-1', filename: 'ward.xlsx', media_type: 'application/xlsx', bytes: 5000 }]);
+    let finishResponse: () => void = () => {};
+    mockStreamMessage.mockImplementation((_id: string, _question: string, callbacks: { onAccepted: () => void }) => {
+      callbacks.onAccepted();
+      return new Promise<void>(resolve => { finishResponse = resolve; });
+    });
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await user.upload(await screen.findByLabelText('Attach files'), new File(['workbook'], 'ward.xlsx'));
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Read the workbook');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    const panel = await screen.findByRole('complementary', { name: 'Session files' });
+    expect(await within(panel).findByText('ward.xlsx')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: 'Remove ward.xlsx' })).toBeDisabled();
+    await act(async () => { finishResponse(); });
+    await user.click(within(panel).getByRole('button', { name: 'Remove ward.xlsx' }));
+    await waitFor(() => expect(mockRemoveUpload).toHaveBeenCalledWith('session-id', 'upload-1', null, '/ai'));
+    expect(await within(panel).findByText('No uploaded files.')).toBeInTheDocument();
+  });
+
+  it('downloads server-captured files from an assistant answer', async () => {
+    mockStreamMessage.mockImplementation(async (_id: string, _question: string, callbacks: { onDownload: (id: string) => void }) => {
+      callbacks.onDownload('zip-turn');
+    });
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Make a downloadable CSV');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:generated-zip');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    await user.click(await screen.findByRole('button', { name: 'Download files (ZIP)' }));
+    await waitFor(() => expect(mockDownloadGeneratedZip).toHaveBeenCalledWith('session-id', 'zip-turn', null, '/ai'));
+    expect(click).toHaveBeenCalled();
+  });
+
+  it.each([false, true])('removes a generated ZIP only after the server accepts deletion (failure: %s)', async failure => {
+    mockStreamMessage.mockImplementation(async (_id: string, _question: string, callbacks: {
+      onDelta: (text: string) => void;
+      onDownload: (id: string) => void;
+    }) => {
+      callbacks.onDelta('Your CSV is ready.');
+      callbacks.onDownload('zip-turn');
+    });
+    let finishRemoval!: () => void;
+    mockRemoveGeneratedZip.mockImplementation(() => new Promise<void>((resolve, reject) => {
+      finishRemoval = () => failure ? reject(new Error('Removal failed.')) : resolve();
+    }));
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Make a CSV');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await user.click(await screen.findByRole('button', { name: 'Remove ZIP' }));
+    expect(mockRemoveGeneratedZip).toHaveBeenCalledWith('session-id', 'zip-turn', null, '/ai');
+    expect(screen.getByRole('button', { name: 'Removing...' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Download files (ZIP)' })).toBeDisabled();
+    await act(async () => { finishRemoval(); });
+    if (failure) {
+      expect(await screen.findByRole('alert')).toHaveTextContent('Removal failed.');
+      expect(screen.getByRole('button', { name: 'Download files (ZIP)' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Remove ZIP' })).toBeEnabled();
+    } else {
+      expect(screen.queryByRole('button', { name: 'Download files (ZIP)' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Remove ZIP' })).not.toBeInTheDocument();
+    }
+    expect(screen.getByText('Your CSV is ready.')).toBeInTheDocument();
+  });
+
+  it('shows a download warning without offering to retry a completed answer', async () => {
+    mockStreamMessage.mockImplementation(async (_id: string, _question: string, callbacks: {
+      onDelta: (text: string) => void;
+      onWarning: (message: string) => void;
+    }) => {
+      callbacks.onDelta('Your files are ready.');
+      callbacks.onWarning('The generated ZIP could not be retained.');
+    });
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Make a CSV');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('The generated ZIP could not be retained.');
+    expect(screen.getByText('Your files are ready.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
   });
 
   it('sends a question with the current schedule and renders streamed text', async () => {
@@ -240,6 +343,23 @@ describe('ExperimentalAiPage', () => {
     expect(usage.closest('form')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Start new chat' }));
     expect(screen.queryByText(/Chat history context:/)).not.toBeInTheDocument();
+  });
+
+  it.each([131072, undefined])('shows request tokens beside the history budget with limit %s', async maxTokens => {
+    const user = userEvent.setup();
+    mockStreamMessage.mockImplementationOnce(async (_id, _message, callbacks) => {
+      callbacks.onContextUsage({ usedChars: 500, maxChars: 2000, usedTokens: 4321, maxTokens });
+      // A report without tokens, such as the next turn's first one, keeps the latest token figures.
+      callbacks.onContextUsage({ usedChars: 600, maxChars: 2000 });
+      callbacks.onDelta('Done.');
+    });
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    const usage = await screen.findByText(/Chat history context: 30\.0%/);
+    expect(usage).toHaveTextContent(`Chat history context: 30.0% · Tokens: 4,321 / ${maxTokens ? '131,072' : 'unavailable'}`);
+    expect(usage).toHaveAttribute('title', expect.stringContaining('latest model request'));
   });
 
   it('restores the transcript and live session after navigating away', async () => {
@@ -433,10 +553,56 @@ describe('ExperimentalAiPage', () => {
     await act(async () => finishStream?.());
   });
 
+  it('shows request messages as role bubbles in the order the model receives them', async () => {
+    let turn = 0;
+    mockStreamMessage.mockImplementation(async (
+      _sessionId: string,
+      message: string,
+      callbacks: { onModelInput?: (input: ModelInput) => void; onDelta: (text: string) => void },
+    ) => {
+      turn += 1;
+      callbacks.onModelInput?.({
+        system: 'Shared system prompt',
+        messages: [
+          // The second turn repeats the event, as after a failed turn. The page shows it once.
+          { kind: 'app', index: 0, content: '[App event] The user uploaded files: ward.csv', title: 'Files Uploaded' },
+          { kind: 'question', content: message },
+          { kind: 'status', content: `[Current status]\nTurn ${turn}`, title: 'Pending Proposal' },
+        ],
+      });
+      callbacks.onDelta(`Answer to ${message}`);
+    });
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+
+    await user.type(composer, 'First');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Answer to First');
+    await user.type(composer, 'Second');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Answer to Second');
+
+    const cards = Array.from(screen.getByLabelText('Chat messages').querySelectorAll('article'));
+    // History never keeps a status message, so only the latest request's status is shown.
+    expect(cards.map(card => card.querySelector('p')?.textContent)).toEqual([
+      'System', 'User · App - Files Uploaded', 'User', 'Assistant', 'User', 'User · Status - Pending Proposal', 'Assistant',
+    ]);
+    // The label names the topic, so the exact text of app and status messages starts collapsed.
+    for (const [card, text] of [[cards[1], '[App event] The user uploaded files: ward.csv'], [cards[5], 'Turn 2']] as const) {
+      expect(card.querySelector('details')).not.toHaveAttribute('open');
+      expect(card.querySelector('details pre')).toHaveTextContent(text);
+    }
+    const systemPrompt = cards[0].querySelector('details');
+    expect(systemPrompt).not.toHaveAttribute('open');
+    expect(systemPrompt).toHaveTextContent('Shared system prompt');
+  });
+
   it('renders an assistant turn when background optimization wakes the agent', async () => {
     const user = userEvent.setup();
     let backgroundCallbacks: {
       onTurnStart?: (messageId: string, trigger: string) => void;
+      onModelInput?: (input: ModelInput) => void;
       onDelta: (text: string) => void;
       onToolStart?: (activity: { name: string; arguments: string }) => void;
       onTool?: (activity: { name: string; arguments: string; result: string; ok: boolean }) => void;
@@ -492,8 +658,20 @@ describe('ExperimentalAiPage', () => {
           claimedPerformance: { score: 125, appVersion: 'v0.4.2', measuredAt: '2026-09-18T01:00:00Z' } },
       });
       backgroundCallbacks?.onTurnStart?.('optimizer-turn', 'optimizer');
+      backgroundCallbacks?.onModelInput?.({
+        system: 'Background system prompt',
+        messages: [
+          { kind: 'optimizer', content: 'Optimizer result with score 23.' },
+          { kind: 'status', content: '[Current status]\nOptimization result: result.xlsx.' },
+        ],
+      });
       backgroundCallbacks?.onToolStart?.({ name: 'bash', arguments: '{"command":"echo ready"}' });
     });
+    const optimizerInput = screen.getByText('Optimizer result with score 23.').closest('article');
+    expect(optimizerInput?.querySelector('p')).toHaveTextContent('User · Optimizer');
+    expect(optimizerInput).toHaveClass('mr-auto');
+    expect(optimizerInput?.previousElementSibling).toHaveTextContent('Background system prompt');
+    expect(optimizerInput?.nextElementSibling).toHaveTextContent('Optimization result: result.xlsx.');
     expect(screen.getByText('Background tool running · bash')).toBeInTheDocument();
     expect(screen.getByText('bash · running')).toBeInTheDocument();
     await user.click(screen.getByRole('checkbox', { name: 'Show tool activity' }));
@@ -1190,10 +1368,10 @@ describe('ExperimentalAiPage', () => {
     expect(screen.getByText('Also compare P3.')).toBeInTheDocument();
     const messageCards = screen.getByLabelText('Chat messages').querySelectorAll('article');
     expect(Array.from(messageCards, card => card.querySelector('p')?.textContent)).toEqual([
-      'You',
+      'User',
       'Assistant',
-      'You',
-      'You',
+      'User',
+      'User',
       'Assistant',
     ]);
     const stopButton = screen.getByRole('button', { name: 'Stop' });
@@ -1644,7 +1822,6 @@ describe('ExperimentalAiPage', () => {
       { files: [image] },
       '/ai',
     );
-    expect(screen.getByText('Attached: ward.png')).toBeInTheDocument();
     expect(createObjectUrl).toHaveBeenCalledWith(image);
     expect(revokeObjectUrl).toHaveBeenCalledWith('blob:image-preview');
   });
@@ -1696,7 +1873,6 @@ describe('ExperimentalAiPage', () => {
       { files: [expect.objectContaining({ name: 'staff.custom', type: 'application/x-custom' })] },
       '/ai',
     );
-    expect(screen.getByText('Attached: staff.custom')).toBeInTheDocument();
   });
 
   it('sends PDF and XLSX files without rewriting their media types', async () => {
@@ -1834,6 +2010,32 @@ describe('ExperimentalAiPage', () => {
     expect(mockStreamMessage).toHaveBeenCalledTimes(1);
   });
 
+  it('retries only the question after its files uploaded', async () => {
+    mockStreamMessage.mockImplementationOnce(async (_sessionId, _message, callbacks: { onUploaded?: (files: UploadedFile[]) => void }) => {
+      callbacks.onUploaded?.([{ id: 'file-1', filename: 'ward.png', media_type: 'image/png', bytes: 3 }]);
+      throw new Error('The temporary AI sandbox failed.');
+    });
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+
+    await user.upload(await screen.findByLabelText('Attach files'), new File(['png'], 'ward.png', { type: 'image/png' }));
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Check this image.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await user.click(await screen.findByRole('button', { name: 'Retry' }));
+
+    // The backend recorded the upload as its own history message, so the retry sends no files.
+    expect(mockStreamMessage).toHaveBeenLastCalledWith(
+      'session-id',
+      'Check this image.',
+      expect.any(Object),
+      expect.any(AbortSignal),
+      null,
+      { files: [] },
+      '/ai',
+    );
+    expect(screen.queryByRole('button', { name: 'Prepare retry' })).not.toBeInTheDocument();
+  });
+
   describe('proposals', () => {
     const proposingStream = (
       _sessionId: string,
@@ -1924,6 +2126,28 @@ describe('ExperimentalAiPage', () => {
       await waitFor(() => expect(mockRejectProposal).toHaveBeenCalledWith('session-id', null, '/ai'));
       expect(screen.queryByRole('region', { name: 'Proposed schedule change' })).not.toBeInTheDocument();
       expect(mockLoadFromYaml).not.toHaveBeenCalled();
+    });
+
+    it('keeps a pending proposal approvable across messages until the schedule changes', async () => {
+      const user = userEvent.setup();
+      render(<ExperimentalAiPage />);
+      const reply = (text: string) => async (_sessionId: string, _message: string, callbacks: { onDelta: (text: string) => void }) => {
+        callbacks.onDelta(text);
+      };
+      await ask(user);
+      expect(await screen.findByRole('region', { name: 'Proposed schedule change' })).toBeInTheDocument();
+
+      mockStreamMessage.mockImplementationOnce(reply('It is still waiting for your approval.'));
+      await ask(user);
+      await screen.findByText('It is still waiting for your approval.');
+      expect(screen.getByRole('region', { name: 'Proposed schedule change' })).toBeInTheDocument();
+
+      // Replacing the session schedule makes the backend discard the proposal.
+      mockGenerateYaml.mockReturnValue('description: edited elsewhere\n');
+      mockStreamMessage.mockImplementationOnce(reply('The schedule changed.'));
+      await ask(user);
+      await screen.findByText('The schedule changed.');
+      expect(screen.queryByRole('region', { name: 'Proposed schedule change' })).not.toBeInTheDocument();
     });
 
     it('sends a changed schedule to an existing session before the next question', async () => {

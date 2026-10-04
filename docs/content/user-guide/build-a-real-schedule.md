@@ -399,8 +399,6 @@ to students through shift requests.
   violations. It represents a requirement the ward expects to satisfy, with
   violations allowed when necessary. There is no fixed numerical threshold:
   its priority depends on the other weights and the number of scored events.
-  For a desired headcount `n`, setting the required count to `n - 1`, the
-  preferred count to `n`, and a large shortfall penalty is one example.
 
 Positive finite weights reward preferred assignments or patterns. Negative
 finite weights penalize discouraged assignments or patterns. Their values
@@ -444,17 +442,19 @@ count unintended shifts or overlap with individual requirements.
 
 ![Eight staffing requirements for the ward](../assets/images/user-guide/build-a-real-schedule/build-real-requirements.png)
 
-The `D`, `E`, and `N` requirements count non-student nurses. They use a hard
-minimum one below the preferred level, making preferred staffing a near-hard
-constraint. The large penalty allows a one-person staffing shortfall
-when the preferred count cannot be reached, while strongly discouraging it.
-Making every desired count an absolute minimum could make
-an understaffed month infeasible and difficult to diagnose. The one-person gap is intended for a staffing shortage. `D` uses separate
-workday and freeday requirements because the ward's workload differs. The `+` requirements count senior nurses, and the
-freeday `A` requirement uses `Admin People`. The headcounts come from the ward,
-not from a universal staffing formula. The `+` slots are separate from the
-ordinary slots: `N+` requiring three seniors is in addition to the `N`
-minimum of 12, not part of that 12.
+For near-hard staffing, set **Preferred Number of People** to the desired
+count, **Required Number of People** one lower, and **Weight** to `-1t`.
+With this guide's `11b` and `11m` request tiers, `-1t` is the largest
+individual finite penalty. In practice, it usually keeps preferred staffing
+even alongside many `11b` requests. A shortfall remains possible. If none is
+acceptable, set Required equal to Preferred. That makes the count hard and
+may make an understaffed month infeasible with no schedule results, which makes debugging much more difficult.
+
+The `D`, `E`, and `N` requirements count non-student nurses. `D` has separate
+workday and freeday counts because workload differs. The `+` requirements
+count senior nurses, and the freeday `A` requirement uses `Admin People`.
+These headcounts come from the ward, not a universal formula. The `+` slots are separate from the
+ordinary slots: `N+` requiring three seniors is in addition to the `N` general nurses slot.
 
 The GUI warns that 140 date/shift-type pairs have no fixed staffing
 requirement: `A` on `WORKDAY`, plus `D~`, `E~`, `N~`, and `K` on `ALL`. These

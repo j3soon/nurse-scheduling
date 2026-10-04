@@ -92,11 +92,11 @@ background assistant turn. It does not cancel the independent optimizer run.
 
 Sandbox and conversation state are separate. The backend copies the current
 schedule to `/workspace/schedule.yaml` and searchable schema documentation to
-`/reference`. It writes uploads below `/workspace/attachments` and records safe
-paths, original names, media types, and sizes in `manifest.json`. It then runs
-every command for that user message in the same sandbox,
+`/reference`. It writes uploads below `/workspace/attachments` under safe paths
+prefixed with their upload IDs. The backend then runs every command for that
+user message in the same sandbox,
 reads the candidate, and destroys the sandbox. A later message always starts a
-new sandbox. Only conversation history, the canonical schedule revision, and a
+new sandbox. Only conversation history, the current schedule revision, and a
 pending validated proposal remain in application state.
 
 When a turn fails, its provisional activity remains visible but is not added to
@@ -306,7 +306,7 @@ supported images as multimodal tool results. `edit`
 applies one or more unique, non-overlapping exact-text replacements against the
 same original file snapshot. `write` creates or overwrites one complete file.
 `bash` remains available for searches, checks, and complex operations using
-preinstalled Bash, Python with `ruamel.yaml`, ripgrep, grep, and diff. All
+preinstalled Bash, Python with `ruamel.yaml` and PyYAML, ripgrep, grep, and diff. All
 relative paths resolve from `/workspace`. The application hydrates separate
 core, preference, and export schema documents under `/reference` for each turn.
 Each document groups related variants so the model can retrieve the context for
@@ -316,7 +316,7 @@ This follows the minimalism philosophy of the [Pi coding agent](https://pi.dev/)
 prefer a small set of general file and shell capabilities with discoverable
 documentation over a growing set of domain-specific tools. Nurse Scheduling
 retains stricter service boundaries than a local coding agent. The workspace is
-disposable, tool output is bounded, secrets and canonical storage stay outside
+disposable, tool output is bounded, secrets and the stored schedule stay outside
 it, and a trusted application validates every possible schedule change and the
 final candidate.
 
@@ -351,17 +351,17 @@ elsewhere in the app, which also drops any pending proposal.
 
 Approval and rejection add a backend-only user-action note to model history.
 The rejection note says that every schedule change from the proposed turn was
-discarded and that the next turn starts from a fresh copy of the canonical
+discarded and that the next turn starts from a fresh copy of the current
 schedule. It never includes the discarded YAML.
 
 A run that fails, is cancelled, or is abandoned does not commit its user
 message, assistant response, or candidate proposal. Its provisional activity
 may remain visible in the browser, but the next turn starts from the last
-successfully committed history and canonical schedule. A successful run that
+successfully committed history and current schedule. A successful run that
 only answers a question never creates a proposal.
 
 If the final candidate fails trusted validation, the UI reports that every
-schedule change from the turn was discarded and that the canonical schedule
+schedule change from the turn was discarded and that the current schedule
 was not changed. The failed turn does not add a history note.
 
 After a Bash command changes the candidate, the trusted application returns an
@@ -417,7 +417,7 @@ response cannot prove that the original operation did not take effect.
 | `AI_SANDBOX_BACKEND` | Required | Sandbox provider. Currently `e2b`. |
 | `E2B_API_KEY` | Required for E2B | E2B Cloud credential used only by the trusted application. |
 | `E2B_TEMPLATE` | `nurse-scheduling-ai-sandbox` | Prebuilt E2B template alias. |
-| `AI_SANDBOX_COMMAND_TIMEOUT_SECONDS` | `30` | Default and maximum deadline for one shell command. |
+| `AI_SANDBOX_COMMAND_TIMEOUT_SECONDS` | `60` | Default and maximum deadline for one shell command. |
 | `AI_SANDBOX_TURN_TIMEOUT_SECONDS` | `3600` | Deadline for the complete sandbox-backed user message. The Compose deployment's NGINX proxy waits up to 3660 seconds between response bytes, so raise its `proxy_read_timeout` before raising this past it. |
 | `AI_AGENT_MAX_TOOL_ROUNDS` | `200` | Maximum model tool-call rounds before the agent must answer from verified results. |
 | `AI_AGENT_MAX_TOOL_CALLS` | `400` | Maximum total tool calls in one sandbox-backed user message. |
@@ -616,11 +616,52 @@ FastAPI.
 | `GET /capabilities` | Public attachment limits, session lifetime, and authentication requirement. |
 | `POST /sessions` | Store a YAML snapshot and create a browser-owned session. |
 | `GET /sessions/{id}` | Check the remaining session lifetime without renewing it. |
-| `POST /sessions/{id}/messages` | Stream one answer. Accepts JSON text or multipart text and attachments. |
+| `POST /sessions/{id}/uploads` | Retain multipart files for later messages and return their IDs. |
+| `GET /sessions/{id}/uploads` | List retained file metadata. |
+| `DELETE /sessions/{id}/uploads/{upload_id}` | Remove one retained file. |
+| `POST /sessions/{id}/messages` | Stream one answer to a JSON `message`. |
 
-Multipart requests use one `message` field and repeated `files` fields. Other
-attachment field names are rejected. Sessions are process-local. Use one AI
-backend instance until shared AI storage is added.
+Upload requests contain only repeated `files` fields. Other field names are
+rejected. Uploads are refused while a response is active. Every turn can read
+all retained files. Sessions are process-local. Use one AI backend instance
+until shared AI storage is added.
+
+### Provider request layout
+
+Providers reuse cached prompt work only for an identical request prefix. Each
+request therefore keeps earlier content unchanged and puts changing state last:
+
+1. The system message. It does not change during a chat.
+2. The chat history. Each entry stays unchanged once it is stored.
+3. The user's question, exactly as typed.
+4. A status message, only when needed. History never keeps it.
+
+The backend stores app events as separate `user` messages in history when they
+happen. Each event starts with `[App event]`. Events record uploads, removals,
+proposal approvals and rejections, and schedule changes made in the app. An
+upload event lists the original name, sandbox path, media type, and size of
+each file. A schedule change is recorded only when the parsed schedule data
+changes. Filenames stay out of the system prompt because they are untrusted
+input.
+
+The status message starts with `[Current status]`. It reports a pending
+proposal, the optimizer result path, and retained files whose upload event the
+request does not contain. That happens when history was trimmed or when a
+failed turn followed the upload.
+
+When history passes `AI_MAX_HISTORY_CHARS`, the backend drops the oldest
+messages until about half the budget remains. It keeps the newest completed
+exchange. This keeps the request prefix unchanged for many turns between cuts.
+
+Each assistant turn starts with a `model_input` event. Its `system` field
+contains the system message. Its `messages` field lists the request messages
+added since the last assistant reply, in order. Each entry has a `kind` of
+`app`, `question`, `optimizer`, or `status`. An `app` entry also has its
+absolute history `index`, so a client shows it once when a failed turn is
+retried. App events and status messages also have a short `title`, such as
+`Proposal Rejected` or `Pending Proposal`. The chat shows it after the role
+label and keeps the exact text collapsed. A foreground turn sends this event first in the message stream. A
+background turn publishes it on the session event stream after `turn_start`.
 
 `GET /health`, `GET /ready`, and `GET /capabilities` stay public so deployment
 probes work and the frontend can discover authentication and attachment limits.
@@ -656,10 +697,10 @@ curl -H "Authorization: Bearer ${AI_AUTH_TOKEN}" \
   backend does not require changing model logic.
 - The trusted application creates E2B sandboxes with outbound Internet access
   disabled. It does not pass the E2B key, model provider key, database
-  credentials, host paths, or canonical storage into the sandbox.
+  credentials, host paths, or the stored schedule into the sandbox.
 - Treat shell commands and every sandbox file as untrusted. A sandbox can only
   return a candidate schedule. Trusted validation, proposal storage, revision
-  checks, user approval, and canonical updates remain outside it.
+  checks, user approval, and updates to the current schedule remain outside it.
 - Use `AI_COOKIE_SECURE=0` only for local HTTP. Set it to `1` when the public
   browser route uses HTTPS, even if NGINX uses internal HTTP to the container.
   Secure deployments set the owner cookie to `SameSite=None`; the CORS origin

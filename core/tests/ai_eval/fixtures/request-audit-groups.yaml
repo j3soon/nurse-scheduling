@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Johnson Sun
+# This test is mostly AI generated.
+apiVersion: alpha
+description: Cross-month grouped request audit
+dates:
+  range: {startDate: '2026-05-30', endDate: '2026-06-02'}
+  items: []
+  groups:
+    - {id: Closing, description: '', members: ['05-30', '05-31']}
+    - {id: Opening, description: '', members: ['06-01', '06-02']}
+people:
+  items:
+    - {id: Asha, description: '', history: [OFF, D, N]}
+    - {id: Ben, description: '', history: [N]}
+    - {id: Cleo, description: '', history: []}
+    - {id: Dara, description: '', history: [OFF]}
+    - {id: Eli, description: '', history: []}
+    - {id: Fran, description: '', history: [D]}
+  groups:
+    - {id: Alpha Team, description: '', members: [Asha, Ben]}
+    - {id: Early Team, description: '', members: [Alpha Team, Cleo]}
+    - {id: Late Team, description: '', members: [Dara, Eli, Fran]}
+shiftTypes:
+  items:
+    - {id: D, description: Day}
+    - {id: N, description: Night}
+    - {id: K, description: Training}
+  groups:
+    - {id: Clinical, description: '', members: [D, N]}
+preferences:
+  - {type: at most one shift per day}
+  - {type: shift request, person: [Early Team], date: [Closing], shiftType: [OFF], weight: 11000000000}
+  - {type: shift request, person: [Dara], date: ['06-02'], shiftType: [N], weight: 11000000000}
+  - {type: shift request, person: [Eli], date: ['05-30'], shiftType: [OFF], weight: 11000000000}
+  - {type: shift request, person: [Late Team], date: [Opening], shiftType: [Clinical], weight: 11000000}
+  - {type: shift request, person: [Early Team], date: [Opening], shiftType: [N], weight: -11000000000}
+  - {type: shift request, person: [ALL], date: [ALL], shiftType: [K], weight: -.inf}
+export:
+  formatting:
+    - type: cell
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [OFF, ALL]
+      appendText: ' [{shiftType}]'
+      when: {preference: {types: [shift request], requestShape: [person-item-to-date-item], weightRange: [1, .inf]}}
+    - type: cell
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [OFF, ALL]
+      appendText: ' [X]'
+      note: {text: 'Weight of unmet single-style request: {totalAbsWeight}'}
+      when: {preference: {types: [shift request], requestShape: [person-item-to-date-item], satisfied: false, weightRange: [1, .inf]}}

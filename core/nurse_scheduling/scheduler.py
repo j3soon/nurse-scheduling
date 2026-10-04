@@ -34,23 +34,18 @@ logger = logging.getLogger(__name__)
 ORTOOLS_CP_SAT_SOLVER = "ortools/cp-sat"
 ORTOOLS_MPSOLVER_API = "mpsolver"
 ORTOOLS_MPSOLVER_MIP_ENGINES = ("cbc", "scip", "cp-sat", "bop")
-ORTOOLS_MPSOLVER_CANONICAL_SOLVERS = tuple(
-    f"ortools/{ORTOOLS_MPSOLVER_API}/{engine}" for engine in ORTOOLS_MPSOLVER_MIP_ENGINES
-)
+ORTOOLS_MPSOLVER_SOLVERS = tuple(f"ortools/{ORTOOLS_MPSOLVER_API}/{engine}" for engine in ORTOOLS_MPSOLVER_MIP_ENGINES)
 ORTOOLS_MATHOPT_API = "mathopt"
 ORTOOLS_MATHOPT_MIP_ENGINES = ("gscip", "cp-sat", "highs")
-ORTOOLS_MATHOPT_CANONICAL_SOLVERS = tuple(
-    f"ortools/{ORTOOLS_MATHOPT_API}/{engine}" for engine in ORTOOLS_MATHOPT_MIP_ENGINES
-)
+ORTOOLS_MATHOPT_SOLVERS = tuple(f"ortools/{ORTOOLS_MATHOPT_API}/{engine}" for engine in ORTOOLS_MATHOPT_MIP_ENGINES)
 PULP_ENGINES = ("cbc", "cuopt", "glpk", "highs", "scip")
 PULP_SOLVERS = tuple(f"pulp/{engine}" for engine in PULP_ENGINES)
-CANONICAL_SOLVER_CHOICES = (
+SUPPORTED_SOLVER_CHOICES = (
     ORTOOLS_CP_SAT_SOLVER,
-    *ORTOOLS_MPSOLVER_CANONICAL_SOLVERS,
-    *ORTOOLS_MATHOPT_CANONICAL_SOLVERS,
+    *ORTOOLS_MPSOLVER_SOLVERS,
+    *ORTOOLS_MATHOPT_SOLVERS,
     *PULP_SOLVERS,
 )
-SUPPORTED_SOLVER_CHOICES = CANONICAL_SOLVER_CHOICES
 SOLVER_SELECTOR_HELP = (
     "Solver selector (ortools/cp-sat, ortools/mpsolver/cbc, ortools/mpsolver/scip, "
     "ortools/mpsolver/cp-sat, ortools/mpsolver/bop, ortools/mathopt/gscip, "
@@ -66,7 +61,7 @@ class SolverSelector:
     backend: str
     api: str | None
     engine: str
-    canonical: str
+    normalized: str
 
 
 def normalize_solver_selector(solver: str) -> SolverSelector:
@@ -75,7 +70,7 @@ def normalize_solver_selector(solver: str) -> SolverSelector:
     parts = normalized.split("/")
 
     if parts == ["ortools", "cp-sat"]:
-        return SolverSelector(backend="ortools", api="cp-sat", engine="cp-sat", canonical=ORTOOLS_CP_SAT_SOLVER)
+        return SolverSelector(backend="ortools", api="cp-sat", engine="cp-sat", normalized=ORTOOLS_CP_SAT_SOLVER)
 
     if len(parts) == 3 and parts[:2] == ["ortools", ORTOOLS_MPSOLVER_API]:
         engine = parts[2]
@@ -84,7 +79,7 @@ def normalize_solver_selector(solver: str) -> SolverSelector:
                 backend="ortools",
                 api=ORTOOLS_MPSOLVER_API,
                 engine=engine,
-                canonical=f"ortools/{ORTOOLS_MPSOLVER_API}/{engine}",
+                normalized=f"ortools/{ORTOOLS_MPSOLVER_API}/{engine}",
             )
         raise ValueError(f"Unsupported OR-Tools MPSolver engine: {engine!r}")
 
@@ -95,12 +90,12 @@ def normalize_solver_selector(solver: str) -> SolverSelector:
                 backend="ortools",
                 api=ORTOOLS_MATHOPT_API,
                 engine=engine,
-                canonical=f"ortools/{ORTOOLS_MATHOPT_API}/{engine}",
+                normalized=f"ortools/{ORTOOLS_MATHOPT_API}/{engine}",
             )
         raise ValueError(f"Unsupported OR-Tools MathOpt engine: {engine!r}")
 
     if len(parts) == 2 and normalized in PULP_SOLVERS:
-        return SolverSelector(backend="pulp", api=None, engine=parts[1], canonical=normalized)
+        return SolverSelector(backend="pulp", api=None, engine=parts[1], normalized=normalized)
 
     raise ValueError(f"Unsupported solver configuration: {solver!r}")
 
@@ -166,7 +161,7 @@ def schedule(
     solver_selector = normalize_solver_selector(solver)
 
     # Initialize the solver based on backend provider + engine
-    if solver_selector.canonical == ORTOOLS_CP_SAT_SOLVER:
+    if solver_selector.normalized == ORTOOLS_CP_SAT_SOLVER:
         from .solver_ortools_cp_sat import ORToolsSolver
 
         logger.info(
@@ -180,22 +175,22 @@ def schedule(
         from .solver_ortools_linear import ORToolsLinearSolver
 
         logger.info(
-            "Using solver backend=%s api=%s engine=%s canonical=%s",
+            "Using solver backend=%s api=%s engine=%s selector=%s",
             solver_selector.backend,
             solver_selector.api,
             solver_selector.engine,
-            solver_selector.canonical,
+            solver_selector.normalized,
         )
         ctx.solver = ORToolsLinearSolver(engine=solver_selector.engine)
     elif solver_selector.backend == "ortools" and solver_selector.api == ORTOOLS_MATHOPT_API:
         from .solver_ortools_mathopt import ORToolsMathOptSolver
 
         logger.info(
-            "Using solver backend=%s api=%s engine=%s canonical=%s",
+            "Using solver backend=%s api=%s engine=%s selector=%s",
             solver_selector.backend,
             solver_selector.api,
             solver_selector.engine,
-            solver_selector.canonical,
+            solver_selector.normalized,
         )
         ctx.solver = ORToolsMathOptSolver(engine=solver_selector.engine)
     elif solver_selector.backend == "pulp" and solver_selector.engine == "cbc":

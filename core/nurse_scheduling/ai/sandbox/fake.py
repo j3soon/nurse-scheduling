@@ -27,6 +27,7 @@ from .base import (
     CommandResult,
     SandboxError,
     SandboxFileNotFoundError,
+    SandboxFileSizeError,
 )
 
 CommandHandler = Callable[[str, float | None, "FakeSandboxBackend"], CommandResult | Awaitable[CommandResult]]
@@ -71,12 +72,14 @@ class FakeSandboxBackend:
         for path, content in files.items():
             self.files[path] = content.encode() if isinstance(content, str) else content
 
-    async def read_file(self, path: str) -> bytes:
+    async def read_file(self, path: str, *, max_bytes: int | None = None) -> bytes:
         self._ensure_open()
         try:
             content = self.files[path]
         except KeyError as exc:
             raise SandboxFileNotFoundError(f"Sandbox file not found: {path}") from exc
+        if max_bytes is not None and len(content) > max_bytes:
+            raise SandboxFileSizeError("The generated file exceeds the download size limit.")
         return content
 
     async def run(self, command: str, *, timeout_seconds: float | None = None) -> CommandResult:

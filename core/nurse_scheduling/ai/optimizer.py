@@ -36,12 +36,36 @@ from pydantic import BaseModel, Field, ValidationError
 
 from .agent import AgentToolOutcome
 from .optimizer_privacy import OptimizerResultError, prepare_optimizer_schedule, restore_people_ids
+from .result_context import build_request_audit, build_result_context
 
 OPTIMIZER_TOOL = "optimizer"
 WORKSPACE_OPTIMIZER_RESULT = "/workspace/optimizer-results/optimized-schedule.xlsx"
 TERMINAL_STATES = frozenset({"completed", "cancelled", "failed"})
 MAX_REJECTION_DETAIL_CHARS = 300
 logger = logging.getLogger("nurse_scheduling.ai.optimizer")
+
+
+def optimizer_start_message(job_id: str, source_sha256: str) -> str:
+    """Render the startup acknowledgement shared by production and controlled evaluations."""
+    return (
+        f"Started optimizer job {job_id} in the background for schedule SHA-256 {source_sha256}. "
+        "The assistant will be woken when it finishes. The user can keep chatting meanwhile."
+    )
+
+
+def optimizer_completion_message(result_data: dict[str, Any]) -> str:
+    """Render the completion turn shared by production and controlled evaluations."""
+    if (result_data.get("result") or {}).get("score") is not None:
+        result_data = {
+            **result_data,
+            "score_direction": "maximize",
+            "score_comparison_scope": "Compare only scores from unchanged constraints and weights.",
+        }
+    result_path = WORKSPACE_OPTIMIZER_RESULT if result_data["download_available"] else "unavailable"
+    return (
+        f"Optimizer job finished. Result workbook: {result_path}.\n"
+        f"Optimizer result JSON:\n{json.dumps(result_data, ensure_ascii=False)}"
+    )
 
 
 class OptimizerError(Exception):
@@ -265,6 +289,7 @@ class SessionOptimization:
     payload: OptimizerJobPayload
     original_id_by_anonymized_id: dict[str, str]
     people_count: int
+    schedule_yaml: str
     backend: dict[str, Any] = field(default_factory=dict)
     request: dict[str, Any] = field(default_factory=dict)
     artifact: "OptimizerArtifact | None" = None
@@ -278,6 +303,12 @@ class OptimizerArtifact:
     content: bytes
     filename: str
     media_type: str
+    schedule_context: bytes | None = None
+
+    @property
+    def retained_bytes(self) -> int:
+        """Include compiled selectors in the result cache budget."""
+        return len(self.content) + len(self.schedule_context or b"")
 
 
 CompletionCallback = Callable[[str, str, OptimizerArtifact | None], Awaitable[None]]
@@ -442,6 +473,7 @@ class SessionOptimizer:
                 payload=payload,
                 original_id_by_anonymized_id=prepared.original_id_by_anonymized_id,
                 people_count=prepared.people_count,
+                schedule_yaml=schedule_yaml,
                 backend=payload.backend or {},
                 request={
                     **payload.request,
@@ -468,11 +500,7 @@ class SessionOptimizer:
             return AgentToolOutcome("This chat session expired while the optimizer job was starting.", False)
         if not _is_terminal(job.payload):
             await self._notify_update(job)
-        return AgentToolOutcome(
-            f"Started optimizer job {job.id} in the background for schedule SHA-256 {job.source_sha256}. "
-            "The assistant will be woken when it finishes. The user can keep chatting meanwhile.",
-            True,
-        )
+        return AgentToolOutcome(optimizer_start_message(job.id, job.source_sha256), True)
 
     async def _status(self, session_id: str) -> AgentToolOutcome:
         job = self._latest(session_id)
@@ -575,6 +603,7 @@ class SessionOptimizer:
 
     async def _complete(self, job: SessionOptimization) -> None:
         artifact_error: str | None = None
+        request_audit = None
         if self._jobs.get(job.id) is job and job.payload.state == "completed":
             try:
                 artifact = await self._backend.result_artifact(job.payload)
@@ -586,11 +615,20 @@ class SessionOptimizer:
                 )
                 if len(restored_content) > self._max_result_bytes:
                     raise OptimizerResultError("The restored workbook exceeded the assistant download limit.")
-                artifact = OptimizerArtifact(restored_content, artifact.filename, artifact.media_type)
+                context = await asyncio.to_thread(build_result_context, job.schedule_yaml, workbook=restored_content)
+                artifact = OptimizerArtifact(
+                    restored_content,
+                    artifact.filename,
+                    artifact.media_type,
+                    json.dumps(context, ensure_ascii=False, allow_nan=False).encode(),
+                )
                 await self._retain_artifact(job, artifact)
+                if job.artifact is not None:
+                    request_audit = await asyncio.to_thread(build_request_audit, job.schedule_yaml, restored_content)
             except (OptimizerError, OptimizerResultError) as exc:
                 logger.warning("Optimizer result read failed job_id=%s error=%s", job.id, exc)
                 artifact_error = str(exc)
+        job.schedule_yaml = ""
         try:
             await self._backend.delete(job.remote_id)
         except OptimizerError as exc:
@@ -606,12 +644,10 @@ class SessionOptimizer:
             "download_available": job.artifact is not None,
             "artifact_error": artifact_error,
         }
+        if job.artifact is not None and request_audit is not None:
+            result_data["request_audit"] = request_audit
         await self._notify_update(job)
-        result_path = WORKSPACE_OPTIMIZER_RESULT if job.artifact is not None else "unavailable"
-        prompt = (
-            f"Optimizer job finished. Result workbook: {result_path}.\n"
-            f"Optimizer result JSON:\n{json.dumps(result_data, ensure_ascii=False)}"
-        )
+        prompt = optimizer_completion_message(result_data)
         if self._jobs.get(job.id) is not job:
             return
         await self._on_completion(job.session_id, prompt, job.artifact)
@@ -621,17 +657,17 @@ class SessionOptimizer:
             if self._jobs.get(job.id) is not job:
                 return
             while self._artifact_order and (
-                self._cached_artifact_bytes + len(artifact.content) > self._max_cached_result_bytes
+                self._cached_artifact_bytes + artifact.retained_bytes > self._max_cached_result_bytes
             ):
                 expired_id = self._artifact_order.pop(0)
                 expired = self._jobs.get(expired_id)
                 if expired is not None and expired.artifact is not None:
-                    self._cached_artifact_bytes -= len(expired.artifact.content)
+                    self._cached_artifact_bytes -= expired.artifact.retained_bytes
                     expired.artifact = None
-            if len(artifact.content) <= self._max_cached_result_bytes:
+            if artifact.retained_bytes <= self._max_cached_result_bytes:
                 job.artifact = artifact
                 self._artifact_order.append(job.id)
-                self._cached_artifact_bytes += len(artifact.content)
+                self._cached_artifact_bytes += artifact.retained_bytes
 
     async def _notify_update(self, job: SessionOptimization) -> None:
         if self._on_update is None or self._jobs.get(job.id) is not job:
@@ -676,7 +712,7 @@ class SessionOptimizer:
         for job_id in [job_id for job_id, job in self._jobs.items() if job.session_id == session_id]:
             job = self._jobs.pop(job_id)
             if job.artifact is not None:
-                self._cached_artifact_bytes -= len(job.artifact.content)
+                self._cached_artifact_bytes -= job.artifact.retained_bytes
                 self._artifact_order.remove(job_id)
 
     def _start_task(self, coroutine: Awaitable[None]) -> asyncio.Task[None]:
@@ -695,6 +731,7 @@ def optimizer_tool_definition(default_timeout_seconds: int = 300) -> dict[str, A
             "description": (
                 "Start the scheduling optimizer on the current working YAML, inspect its background status, or ask "
                 "a running optimizer to finish with its best available solution. Start returns immediately. "
+                "When asked only to optimize the current schedule, call start without preliminary schedule or reference reads. "
                 f"A completed workbook is available at {WORKSPACE_OPTIMIZER_RESULT} in the next assistant turn. "
                 "Omit timeout_seconds to use the configured default."
             ),

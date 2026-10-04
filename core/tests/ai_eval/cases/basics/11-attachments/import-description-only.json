@@ -1,0 +1,23 @@
+{
+  "id": "import-description-only",
+  "fixture": "small-clinic",
+  "question": "Read the attached schedule-source.yaml and set only the current schedule description to the description in that file. Preserve all other current schedule data. Do not import the whole file or start optimization.",
+  "attachments": [
+    "schedule-yaml"
+  ],
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "description",
+      "equals": ""
+    }
+  ],
+  "changes": [
+    "description"
+  ],
+  "tags": [
+    "attachment",
+    "yaml-import-investigation"
+  ],
+  "note": "This testcase is mostly AI generated. Contrast a partial update with an explicitly authorized whole-schedule replacement."
+}

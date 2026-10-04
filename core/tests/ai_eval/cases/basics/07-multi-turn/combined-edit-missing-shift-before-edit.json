@@ -1,0 +1,68 @@
+{
+  "id": "combined-edit-missing-shift-before-edit",
+  "fixture": "small-clinic",
+  "user_turns": [
+    "For the person with exact ID Ana, set the description to Training lead and add a mandatory shift request on the 8th.",
+    "Use shift type D."
+  ],
+  "intermediate_answer_contains": [
+    [
+      "shift",
+      [
+        "which",
+        "what",
+        "specify"
+      ]
+    ]
+  ],
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "people.items",
+      "removed": [
+        {
+          "id": "Ana",
+          "description": "Charge nurse",
+          "history": [
+            "D"
+          ]
+        }
+      ],
+      "added": [
+        {
+          "id": "Ana",
+          "description": "Training lead",
+          "history": [
+            "D"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "preferences",
+      "added": [
+        {
+          "type": "shift request",
+          "person": [
+            "Ana"
+          ],
+          "date": [
+            "08"
+          ],
+          "shiftType": [
+            "D"
+          ],
+          "weight": ".inf"
+        }
+      ]
+    }
+  ],
+  "changes": [
+    "people.items",
+    "preferences"
+  ],
+  "note": "This testcase is mostly AI generated. Correctness witness for clarifying a missing shift type before any proposal and recovering both confirmed edits. Schedule reads are allowed. The original combined-edit-missing-shift remains the separate zero-tool performance case.",
+  "tags": [
+    "prompt-evidence"
+  ]
+}

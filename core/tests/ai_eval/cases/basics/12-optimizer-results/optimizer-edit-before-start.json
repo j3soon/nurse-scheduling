@@ -1,0 +1,64 @@
+{
+  "id": "optimizer-edit-before-start",
+  "fixture": "request-audit",
+  "question": "Change Alex's OFF request for 2026-05-03 from weight 11000000 to 11000000000, then start a 60-second optimization using the updated YAML.",
+  "expect_proposal": true,
+  "changes": [
+    "preferences"
+  ],
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "removed": [
+        {
+          "type": "shift request",
+          "person": [
+            "Alex"
+          ],
+          "date": [
+            "03"
+          ],
+          "shiftType": [
+            "OFF"
+          ],
+          "weight": 11000000
+        }
+      ],
+      "added": [
+        {
+          "type": "shift request",
+          "person": [
+            "Alex"
+          ],
+          "date": [
+            "03"
+          ],
+          "shiftType": [
+            "OFF"
+          ],
+          "weight": 11000000000
+        }
+      ]
+    }
+  ],
+  "semantic_check": "optimizer-start-source",
+  "tool_usage": {
+    "required_calls": [
+      {
+        "name": "optimizer",
+        "arguments": {
+          "action": "start",
+          "timeout_seconds": 60
+        }
+      }
+    ],
+    "max_per_tool": {
+      "optimizer": 1
+    }
+  },
+  "tags": [
+    "optimizer-goal",
+    "control"
+  ],
+  "note": "This testcase is mostly AI generated. The submitted optimizer snapshot must contain the requested edit. A correct final proposal cannot conceal starting with the old YAML."
+}

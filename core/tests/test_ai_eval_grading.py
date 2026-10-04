@@ -20,6 +20,7 @@
 # This test is mostly AI generated.
 
 import copy
+import hashlib
 import json
 from pathlib import Path
 
@@ -32,8 +33,9 @@ from nurse_scheduling.ai.pi.write import WRITE_TOOL
 from nurse_scheduling.ai.schedule_context import describe_schedule
 from nurse_scheduling.loader import _load_yaml
 
-from .ai_eval.attachment_fixtures import attachment_fixture_names
+from .ai_eval.attachment_fixtures import attachment_fixture_names, load_attachment_fixtures
 from .ai_eval.grading import (
+    EvalCase,
     EvalCaseError,
     RunOutcome,
     computed_values,
@@ -51,6 +53,10 @@ CROSS_YEAR_UNIT_PATH = Path(__file__).parent / "ai_eval" / "fixtures" / "cross-y
 WARD_PATH = Path(__file__).parent / "testcases" / "real" / "large-ward-with-87-people-2025-11.yaml"
 
 FIXTURE_SCHEDULES = {
+    "policy-audit": _load_yaml((CASES_PATH.parent / "fixtures" / "policy-audit.yaml").read_bytes()),
+    "request-audit-groups": _load_yaml((CASES_PATH.parent / "fixtures" / "request-audit-groups.yaml").read_bytes()),
+    "weight-units": _load_yaml((CASES_PATH.parent / "fixtures" / "weight-units.yaml").read_bytes()),
+    "request-audit": _load_yaml((CASES_PATH.parent / "fixtures" / "request-audit.yaml").read_bytes()),
     "cross-year-unit": _load_yaml(CROSS_YEAR_UNIT_PATH.read_bytes()),
     "new-schedule": _load_yaml(NEW_SCHEDULE_PATH.read_bytes()),
     "small-clinic": _load_yaml(SMALL_CLINIC_PATH.read_bytes()),
@@ -90,6 +96,68 @@ def test_resolves_fields_indexes_and_selectors():
     assert resolve(SCHEDULE, "people.items[0].id") == ["P1"]
     assert resolve(SCHEDULE, "people.items[?id=P1].description") == ["Head nurse"]
     assert resolve(SCHEDULE, "people.items[?id=P9]") == []
+
+
+def test_turn_tool_limits_do_not_penalize_edits_after_clarification(tmp_path: Path):
+    case = load_cases(
+        _write(
+            tmp_path,
+            _case(
+                expect_proposal=False,
+                user_turns=["Add a request.", "Use N."],
+                turn_tool_usage=[{"max_total": 0}, {"required": ["edit"]}],
+            ),
+        )
+    )[0]
+    tool = {"kind": "tool", "name": "edit", "ok": True}
+    events = [{"kind": "user", "turn": 1}, {"kind": "user", "turn": 2}, tool]
+    assert grade(case, RunOutcome(activity=events)).passed
+    premature = [{"kind": "user", "turn": 1}, tool, {"kind": "user", "turn": 2}, tool]
+    failures = grade(case, RunOutcome(activity=premature)).failures()
+    assert len(failures) == 1
+    assert failures[0].description == "turn 1: uses at most 0 tool call(s)"
+
+
+@pytest.mark.parametrize("raw", [{}, [{}, None], [{"max_total": -1}]])
+def test_invalid_turn_tool_limits_are_rejected(tmp_path: Path, raw):
+    with pytest.raises(EvalCaseError, match="turn_tool_usage|max_total"):
+        load_cases(_write(tmp_path, _case(expect_proposal=False, turn_tool_usage=raw)))
+
+
+@pytest.mark.parametrize(
+    ("answer", "passes"),
+    [
+        ("No, the proposal is pending. You must approve it.", True),
+        ("NOT YET. Your approval is required.", True),
+        ("It has not changed. Please approve the proposal first.", True),
+        ("No, the saved schedule is updated only after your approval.", True),
+        ("Now updated. Please approve it.", False),
+        ("Yes, the saved schedule changed. Approval is pending.", False),
+        ("No other fields changed. The saved schedule has now changed. Please approve it.", False),
+        ("No, it has not changed.", False),
+    ],
+)
+def test_proposal_answer_contract_accepts_denials_and_rejects_false_adoption(answer, passes):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "proposal-is-not-saved-yet")
+    proposed = copy.deepcopy(FIXTURE_SCHEDULES[case.fixture])
+    proposed["description"] = "April clinic roster"
+    outcome = RunOutcome(
+        answer=f"April clinic roster. {answer}", proposed=proposed, initial=FIXTURE_SCHEDULES[case.fixture]
+    )
+    assert grade(case, outcome).passed == passes
+
+
+@pytest.mark.parametrize("field_name", ["answer_matches", "answer_not_matches"])
+@pytest.mark.parametrize("raw", ["not a list", [""], [123], ["["]])
+def test_invalid_answer_patterns_are_rejected(tmp_path: Path, field_name, raw):
+    with pytest.raises(EvalCaseError, match=field_name):
+        load_cases(_write(tmp_path, _case(expect_proposal=False, **{field_name: raw})))
+
+
+@pytest.mark.parametrize("answer", ["There is no shift type S in the schedule.", "S is absent.", "S was not found."])
+def test_missing_shift_case_accepts_equivalent_correct_refusals(answer):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "rename-unknown-shift")
+    assert grade(case, RunOutcome(answer=answer)).passed
 
 
 def test_a_selector_matches_one_id_exactly():
@@ -179,6 +247,45 @@ def test_expected_diff_compares_the_complete_collection_delta(tmp_path: Path):
     assert "P4" in result.failures()[0].detail
 
 
+@pytest.mark.parametrize("extend_custom", [False, True], ids=["preserve-custom", "extend-custom"])
+def test_calendar_scope_cases_reject_the_opposite_custom_group_behavior(extend_custom):
+    initial = FIXTURE_SCHEDULES["small-clinic"]
+    changed = copy.deepcopy(initial)
+    changed["dates"]["range"]["endDate"] = "2026-01-18"
+    weekdays = ["05", "06", "07", "08", "09", "12", "13", "14", "15", "16"]
+    changed["dates"]["groups"].extend(
+        [
+            {
+                "id": "WORKDAY",
+                "description": "Taiwan workdays imported from the current holiday calendar",
+                "members": weekdays,
+            },
+            {
+                "id": "FREEDAY",
+                "description": "Taiwan freedays imported from the current holiday calendar",
+                "members": ["10", "11", "17", "18"],
+            },
+        ]
+    )
+    if extend_custom:
+        changed["dates"]["groups"][0]["members"] = weekdays
+    name = "dates-range-renew-custom-group-small" if extend_custom else "dates-range-renew-small"
+    path = CASES_PATH / "basics" / "03-structure"
+    case = load_cases(path / f"{name}.json")[0]
+    opposite = load_cases(
+        path / f"{'dates-range-renew-small' if extend_custom else 'dates-range-renew-custom-group-small'}.json"
+    )[0]
+    outcome = RunOutcome(
+        proposed=changed,
+        initial=initial,
+        intermediate_answers=["Should I renew Taiwan holiday date groups?"],
+        intermediate_proposals=[False],
+        proposal_turns=[False, True],
+    )
+    assert grade(case, outcome).passed
+    assert not grade(opposite, outcome).passed
+
+
 def test_expected_diff_supports_replacing_a_complete_object(tmp_path: Path):
     before = SCHEDULE["people"]["items"][0]
     after = {**before, "description": "Lead nurse"}
@@ -202,6 +309,79 @@ def test_expected_diff_uses_json_strings_for_yaml_infinity(tmp_path: Path):
     )
 
     assert grade(load_cases(_write(tmp_path, case))[0], RunOutcome(proposed=changed, initial=SCHEDULE)).passed
+
+
+def test_hard_staffing_ignores_ineffective_weight_but_keeps_count_and_qualification(tmp_path: Path):
+    requirement = {
+        "type": "shift type requirement",
+        "shiftType": ["N"],
+        "date": ["ALL"],
+        "requiredNumPeople": 1,
+        "qualifiedPeople": ["P1"],
+    }
+    case = load_cases(
+        _write(
+            tmp_path, _case(expected_diff=[{"path": "preferences", "added": [requirement]}], changes=["preferences"])
+        )
+    )[0]
+    changed = copy.deepcopy(SCHEDULE)
+    changed["preferences"].append({**requirement, "weight": -1000})
+    assert grade(case, RunOutcome(proposed=changed, initial=SCHEDULE)).passed
+    for key, value in (("requiredNumPeople", 0), ("qualifiedPeople", ["P2"]), ("preferredNumPeople", 2)):
+        modified = copy.deepcopy(changed)
+        modified["preferences"][-1][key] = value
+        assert not grade(case, RunOutcome(proposed=modified, initial=SCHEDULE)).passed
+
+
+def test_preferred_staffing_weight_remains_semantic(tmp_path: Path):
+    requirement = {"type": "shift type requirement", "requiredNumPeople": 1, "preferredNumPeople": 2, "weight": -10}
+    case = load_cases(
+        _write(
+            tmp_path, _case(expected_diff=[{"path": "preferences", "added": [requirement]}], changes=["preferences"])
+        )
+    )[0]
+    changed = copy.deepcopy(SCHEDULE)
+    changed["preferences"].append({**requirement, "weight": -1})
+    assert not grade(case, RunOutcome(proposed=changed, initial=SCHEDULE)).passed
+
+
+def test_optional_new_descriptions_do_not_allow_changes_to_existing_rules(tmp_path: Path):
+    added = {"type": "shift request", "person": ["P2"], "date": ["ALL"], "shiftType": ["N"], "weight": 1}
+    case = load_cases(
+        _write(
+            tmp_path,
+            _case(
+                expected_diff=[{"path": "preferences", "added": [added], "allow_added_description": True}],
+                changes=["preferences"],
+            ),
+        )
+    )[0]
+    changed = copy.deepcopy(SCHEDULE)
+    changed["preferences"].append({**added, "description": "P2 night preference"})
+    assert grade(case, RunOutcome(proposed=changed, initial=SCHEDULE)).passed
+    changed["preferences"][0]["description"] = "Unexpected rewrite"
+    assert not grade(case, RunOutcome(proposed=changed, initial=SCHEDULE)).passed
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"added": [{"description": "Requested label"}]},
+        {"added": [{}], "removed": [{}]},
+        {"before": "old", "after": "new"},
+    ],
+)
+def test_optional_description_flag_cannot_hide_requested_or_existing_fields(tmp_path: Path, entry):
+    with pytest.raises(EvalCaseError, match="optional descriptions"):
+        load_cases(
+            _write(
+                tmp_path,
+                _case(
+                    expected_diff=[{"path": "preferences", **entry, "allow_added_description": True}],
+                    changes=["preferences"],
+                ),
+            )
+        )
 
 
 def test_expected_diff_normalizes_unordered_members_and_optional_defaults(tmp_path: Path):
@@ -299,6 +479,24 @@ def test_a_change_inside_the_allowed_paths_passes(tmp_path: Path):
     )
 
     assert grade(load_cases(_write(tmp_path, case))[0], RunOutcome(proposed=changed, initial=SCHEDULE)).passed
+
+
+def test_unchanged_assertion_uses_the_input_fixture(tmp_path: Path):
+    case = load_cases(
+        _write(
+            tmp_path,
+            _case(
+                **{
+                    "assert": [{"path": "people.items[?id=P1].description", "unchanged": True}],
+                    "changes": ["people.items"],
+                },
+            ),
+        )
+    )[0]
+    assert grade(case, RunOutcome(proposed=SCHEDULE, initial=SCHEDULE)).passed
+    changed = copy.deepcopy(SCHEDULE)
+    changed["people"]["items"][0]["description"] = "Changed"
+    assert not grade(case, RunOutcome(proposed=changed, initial=SCHEDULE)).passed
 
 
 def test_a_sibling_of_an_allowed_path_is_still_guarded(tmp_path: Path):
@@ -402,6 +600,38 @@ def test_a_failed_required_tool_does_not_count_as_successful_use(tmp_path: Path)
     assert result.failures()[0].description == "uses successful read tool"
 
 
+def test_validation_error_limit_distinguishes_repair_from_other_tool_errors(tmp_path: Path):
+    case = load_cases(_write(tmp_path, _case(expect_proposal=False, tool_usage={"max_validation_errors": 0})))[0]
+    prefix = "Trusted schedule check after this command:"
+    unrelated = [
+        {"kind": "tool", "name": "optimizer", "ok": False, "result": "API unavailable"},
+        {"kind": "tool", "name": "read", "ok": False, "result": "File missing"},
+        {"kind": "tool", "name": "edit", "ok": True, "result": prefix + "\nCandidate passed."},
+        {
+            "kind": "tool",
+            "name": "bash",
+            "ok": False,
+            "result": "Command exited with code 1\n"
+            + prefix
+            + "\nThe candidate passed trusted server-side validation.",
+        },
+        {
+            "kind": "tool",
+            "name": "bash",
+            "ok": False,
+            "result": "Command exited with code 1\n" + prefix + "\nschedule.yaml is unchanged.",
+        },
+    ]
+    assert grade(case, RunOutcome(activity=unrelated)).passed
+    repaired = unrelated + [
+        {"kind": "tool", "name": "edit", "ok": False, "result": prefix + "\nUnsupported expression: x = 3"},
+        {"kind": "tool", "name": "edit", "ok": True, "result": prefix + "\nCandidate passed."},
+    ]
+    result = grade(case, RunOutcome(activity=repaired))
+    assert not result.passed
+    assert result.failures()[0].detail == "observed 1"
+
+
 @pytest.mark.parametrize(
     ("tool_usage", "message"),
     [
@@ -411,12 +641,32 @@ def test_a_failed_required_tool_does_not_count_as_successful_use(tmp_path: Path)
         ({"required": ["read", "read"]}, "repeats a tool name"),
         ({"required": ["read"], "forbidden": ["read"]}, "requires and forbids"),
         ({"max_total": -1}, "must be a non-negative integer"),
+        ({"max_validation_errors": True}, "must be a non-negative integer"),
+        ({"max_validation_errors": -1}, "must be a non-negative integer"),
         ({"max_per_tool": {"read": True}}, "must map tool names"),
     ],
 )
 def test_invalid_tool_usage_is_rejected(tmp_path: Path, tool_usage: object, message: str):
     with pytest.raises(EvalCaseError, match=message):
         load_cases(_write(tmp_path, _case(expect_proposal=False, tool_usage=tool_usage)))
+
+
+def test_required_tool_call_checks_successful_json_arguments(tmp_path: Path):
+    case = load_cases(
+        _write(
+            tmp_path,
+            _case(
+                expect_proposal=False,
+                tool_usage={"required_calls": [{"name": "optimizer", "arguments": {"action": "start"}}]},
+            ),
+        )
+    )[0]
+    activity = [{"kind": "tool", "name": "optimizer", "ok": True, "arguments": '{"action":"status"}'}]
+    assert not grade(case, RunOutcome(activity=activity)).passed
+    activity[0]["arguments"] = '{"action":"start","timeout_seconds":300}'
+    assert grade(case, RunOutcome(activity=activity)).passed
+    activity[0]["ok"] = False
+    assert not grade(case, RunOutcome(activity=activity)).passed
 
 
 @pytest.mark.parametrize(
@@ -577,10 +827,53 @@ def test_a_file_name_that_disagrees_with_its_case_id_is_rejected(tmp_path: Path)
         load_cases(tmp_path)
 
 
+@pytest.mark.parametrize("target", ["weight", "selector"])
+def test_weight_notation_oracle_rejects_deleting_the_other_axis(target):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == f"weight-shorthand-exact-{target}")
+    initial = FIXTURE_SCHEDULES["weight-units"]
+    by_weight = copy.deepcopy(initial)
+    by_weight["preferences"] = [p for p in initial["preferences"] if p.get("weight") != 11_000_000_000]
+    by_selector = copy.deepcopy(initial)
+    by_selector["preferences"] = [p for p in initial["preferences"] if p.get("person") != ["11b"]]
+    correct, wrong = (by_weight, by_selector) if target == "weight" else (by_selector, by_weight)
+    assert grade(case, RunOutcome(proposed=correct, initial=initial)).passed
+    assert not grade(case, RunOutcome(proposed=wrong, initial=initial)).passed
+
+
+def test_ambiguous_weight_case_rejects_guessing_and_wrong_clarified_target():
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "weight-shorthand-clarify-selector")
+    initial = FIXTURE_SCHEDULES["weight-units"]
+    correct = copy.deepcopy(initial)
+    correct["preferences"] = [p for p in initial["preferences"] if p.get("weight") != 11_000_000_000]
+    outcome = RunOutcome(
+        initial=initial,
+        proposed=correct,
+        proposal_turns=[False, True],
+        intermediate_answers=["Does 11b mean the numeric weight or the group selector?"],
+    )
+    assert grade(case, outcome).passed
+    outcome.proposal_turns = [True, True]
+    assert not grade(case, outcome).passed
+    outcome.proposal_turns = [False, True]
+    wrong = copy.deepcopy(initial)
+    wrong["preferences"] = [p for p in initial["preferences"] if p.get("person") != ["11b"]]
+    outcome.proposed = wrong
+    assert not grade(case, outcome).passed
+
+
 def test_the_dataset_only_uses_registered_fixtures():
     cases = load_cases(CASES_PATH)
 
-    assert {case.fixture for case in cases} == {"cross-year-unit", "new-schedule", "small-clinic", "ward87"}
+    assert {case.fixture for case in cases} == {
+        "policy-audit",
+        "cross-year-unit",
+        "new-schedule",
+        "request-audit",
+        "request-audit-groups",
+        "small-clinic",
+        "ward87",
+        "weight-units",
+    }
     assert len(cases) == len({case.id for case in cases})
 
 
@@ -616,8 +909,13 @@ def test_every_dataset_path_and_placeholder_resolves_against_its_fixture():
             found = resolve(schedule, expected_diff.path)
             if not expected_diff.compares_value:
                 assert len(found) == 1 and isinstance(found[0], list), f"{case.id} diff path must select one list"
+        imported = (
+            _load_yaml(load_attachment_fixtures([case.import_attachment])[0].data) if case.import_attachment else {}
+        )
         for changed in case.changes:
-            assert resolve(schedule, changed) or changed == "export", f"{case.id} may change a missing part {changed}"
+            assert resolve(schedule, changed) or resolve(imported, changed) or changed == "export", (
+                f"{case.id} may change a missing part {changed}"
+            )
         for expected in case.answer_contains:
             options = [expected] if isinstance(expected, str) else list(expected)
             assert all(option.format(**values).strip() for option in options), f"{case.id} expects an empty value"
@@ -689,6 +987,9 @@ def test_every_case_sits_in_a_category_directory():
         "basics/09-holdout",
         "basics/10-app-ui",
         "basics/11-attachments",
+        "basics/12-optimizer-results",
+        "basics/13-weight-notation",
+        "basics/14-attachment-inspection",
     }
     assert all(
         not case.expect_proposal for case in cases if case.category.endswith(("00-summary", "01-reading", "06-refusal"))
@@ -769,3 +1070,121 @@ def test_every_removal_case_asserts_the_references_it_orphans():
                 assert any(assertion.path.startswith(container) for assertion in case.assertions), (
                     f"{case.id} removes {token} but says nothing about {container}"
                 )
+
+
+@pytest.mark.parametrize(
+    "privacy",
+    [
+        "Anonymize YAML is a separate download. Browser data remains unchanged. Free-text descriptions remain unchanged.",
+        "Anonymize YAML doesn't modify your current roster. It does not scrub personal names from free-text descriptions.",
+        "Anonymize YAML leaves local data intact. Descriptions are preserved as-is.",
+        "Anonymize YAML does **not** change the schedule data in your browser. Free-text descriptions remain unchanged.",
+    ],
+)
+def test_restore_anonymization_case_accepts_equivalent_explanations(privacy):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "guide-restore-and-anonymize")
+    answer = (
+        "Upload merges or replaces? In Save and Load, Download a YAML backup. Upload replaces the current schedule. "
+        "Review the version warning and confirm, or cancel to keep the roster. "
+        "Undo with Ctrl+Z or Cmd+Z. " + privacy
+    )
+    assert grade(case, RunOutcome(answer=answer)).passed
+
+
+@pytest.mark.parametrize(
+    "wrong_fact",
+    [
+        "Upload merges the older YAML into the current schedule.",
+        "Browser data is changed by anonymization.",
+        "Free-text descriptions are anonymized and personal names are removed.",
+        "You cannot undo an upload.",
+    ],
+)
+def test_restore_anonymization_case_rejects_wrong_or_missing_fact(wrong_fact):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "guide-restore-and-anonymize")
+    parts = [
+        "In Save and Load, Download a YAML backup.",
+        "Upload replaces the current schedule.",
+        "Review the version warning and confirm, or cancel to keep the roster.",
+        "Undo with Ctrl+Z or Cmd+Z.",
+        "Anonymize YAML is a separate download.",
+        "Browser data remains unchanged.",
+        "Free-text descriptions remain unchanged.",
+    ]
+    index = {"Upload": 1, "Browser": 5, "Free-text": 6, "You": 3}[wrong_fact.split()[0]]
+    parts[index] = wrong_fact
+    assert not grade(case, RunOutcome(answer=" ".join(parts))).passed
+
+
+def test_restore_case_question_heading_cannot_replace_an_actual_replacement_explanation():
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "guide-restore-and-anonymize")
+    answer = (
+        "Upload merges or replaces? The current schedule will be merged. "
+        "Use Save and Load, Download for backup, and confirm the version warning or cancel. "
+        "Undo with Ctrl+Z or Cmd+Z. Anonymize YAML leaves browser data unchanged. "
+        "Free-text descriptions remain unchanged."
+    )
+    assert not grade(case, RunOutcome(answer=answer)).passed
+
+
+@pytest.mark.parametrize("mutation", [None, "target", "operator", "existing-rule", "validation-repair"])
+def test_count_batch_case_checks_semantics_and_validation_trajectory(mutation):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "pref-count-batch-first-valid")
+    original = FIXTURE_SCHEDULES[case.fixture]
+    proposed = copy.deepcopy(original)
+    additions = copy.deepcopy(list(case.expected_diff[0].added))
+    for preference in additions:
+        preference["countShiftTypes"].reverse()
+        preference["countShiftTypeCoefficients"].reverse()
+    proposed["preferences"].extend(additions)
+    activity = []
+    if mutation == "target":
+        proposed["preferences"][-1]["target"] = 3
+    elif mutation == "operator":
+        proposed["preferences"][-1]["expression"] = "x <= T"
+    elif mutation == "existing-rule":
+        proposed["preferences"].pop(0)
+    elif mutation == "validation-repair":
+        activity = [
+            {
+                "kind": "tool",
+                "name": "edit",
+                "ok": False,
+                "result": "Trusted schedule check after this command:\nUnsupported expression: x = 3",
+            }
+        ]
+    result = grade(case, RunOutcome(initial=original, proposed=proposed, activity=activity))
+    assert result.passed == (mutation is None)
+
+
+@pytest.mark.parametrize(
+    "files,expected",
+    [
+        ({}, False),
+        ({"sample.csv": "wrong"}, False),
+        ({"sample.csv": hashlib.sha256(b"name,date\n").hexdigest()}, True),
+    ],
+    ids=["missing", "wrong-bytes", "exact-bytes"],
+)
+def test_download_grader_requires_captured_file_bytes(files, expected):
+    case = EvalCase(
+        id="zip",
+        fixture="small-clinic",
+        question="Download",
+        expect_proposal=False,
+        download_files={"sample.csv": "name,date\n"},
+    )
+    result = grade(
+        case, RunOutcome(answer="Download /workspace/download.zip", activity=[{"kind": "download", "files": files}]), {}
+    )
+    assert result.passed is expected
+
+
+@pytest.mark.parametrize("drop_rule", [False, True], ids=["exact-upload", "missing-rule"])
+def test_import_grader_checks_every_uploaded_rule(drop_rule):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "import-complete-uploaded-yaml")
+    proposed = _load_yaml(load_attachment_fixtures([case.import_attachment])[0].data)
+    if drop_rule:
+        proposed["preferences"].pop()
+    result = grade(case, RunOutcome(initial=FIXTURE_SCHEDULES[case.fixture], proposed=proposed))
+    assert result.passed is not drop_rule

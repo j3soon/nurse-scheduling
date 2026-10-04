@@ -1,0 +1,23 @@
+{
+  "id": "pdf-visual-layout",
+  "fixture": "new-schedule",
+  "question": "On page 3 of the attached PDF, what is the complete label inside the yellow box, including all words and digits? Reply only as JSON with a yellowCode key.",
+  "expect_proposal": false,
+  "attachments": [
+    "visual-inspection-pdf"
+  ],
+  "answer_json": {
+    "yellowCode": "BETA CHECK 6428"
+  },
+  "tool_usage": {
+    "required": [
+      "bash"
+    ]
+  },
+  "tags": [
+    "attachment",
+    "pdf-inspection",
+    "control"
+  ],
+  "note": "This testcase is mostly AI generated. Neutral labels require color/layout evidence. Equivalent correct vector parsing and rendered image inspection are both accepted."
+}

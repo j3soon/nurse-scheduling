@@ -1,0 +1,17 @@
+{
+  "id": "pdf-specified-text-page",
+  "fixture": "new-schedule",
+  "question": "Read page 3 of the attached PDF. Return the complete handoff code after its label, including all words and digits, only as JSON with a handoffCode key.",
+  "expect_proposal": false,
+  "attachments": [
+    "text-inspection-pdf"
+  ],
+  "answer_json": {
+    "handoffCode": "TEXT CHECK 5703"
+  },
+  "tags": [
+    "attachment",
+    "pdf-inspection"
+  ],
+  "note": "This testcase is mostly AI generated. A specified text page can be answered without rendering or a custom parser."
+}

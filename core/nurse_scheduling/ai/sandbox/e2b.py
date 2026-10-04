@@ -42,14 +42,14 @@ from e2b.exceptions import (
     SandboxException,
     SandboxNotFoundException,
     TemplateException,
-    TimeoutException,
 )
 from e2b.sandbox.commands.command_handle import CommandExitException
 from e2b.sandbox.filesystem.filesystem import WriteEntry
 
 from ..config import AiSettings
-from .base import CommandResult, SandboxError, SandboxFileNotFoundError, SandboxLifecycleMetrics
+from .base import CommandResult, SandboxError, SandboxFileNotFoundError, SandboxFileSizeError, SandboxLifecycleMetrics
 from .e2b_cleanup import E2BSandboxCleanupManager
+from .e2b_commands import isolated_command, stop_command_group
 
 logger = logging.getLogger("nurse_scheduling.ai.sandbox.e2b")
 E2B_USER = "user"
@@ -405,15 +405,28 @@ class E2BSandboxBackend:
             except Exception as exc:
                 raise SandboxError(f"E2B could not write {len(entries)} sandbox files") from exc
 
-    async def read_file(self, path: str) -> bytes:
+    async def read_file(self, path: str, *, max_bytes: int | None = None) -> bytes:
         async with self._active_operation(read_only=True):
             try:
-                content = await self._request_with_retry(
-                    "read_file",
-                    lambda: self._sandbox.files.read(path, format="bytes", user=E2B_USER),
-                )
+                if max_bytes is None:
+                    content = await self._request_with_retry(
+                        "read_file",
+                        lambda: self._sandbox.files.read(path, format="bytes", user=E2B_USER),
+                    )
+                else:
+                    content = bytearray()
+                    stream_reader = await self._request_with_retry(
+                        "read_file", lambda: self._sandbox.files.read(path, format="stream", user=E2B_USER)
+                    )
+                    async with stream_reader as stream:
+                        async for chunk in stream:
+                            if len(content) + len(chunk) > max_bytes:
+                                raise SandboxFileSizeError("The generated file exceeds the download size limit.")
+                            content.extend(chunk)
             except FileNotFoundException as exc:
                 raise SandboxFileNotFoundError(f"Sandbox file not found: {path}") from exc
+            except SandboxError:
+                raise
             except Exception as exc:
                 raise SandboxError(f"E2B could not read sandbox file: {path}") from exc
         return bytes(content)
@@ -426,35 +439,76 @@ class E2BSandboxBackend:
         async with self._active_operation():
             self._commands += 1
             started = time.perf_counter()
+            handle = None
+            waiting = None
             try:
-                result = await self._sandbox.commands.run(
-                    command,
+                handle = await self._sandbox.commands.run(
+                    isolated_command(command),
+                    background=True,
                     user=E2B_USER,
                     cwd=E2B_WORKSPACE,
-                    timeout=timeout,
+                    timeout=0,
+                    request_timeout=self._control_request_timeout_seconds,
                 )
+                waiting = asyncio.create_task(handle.wait())
+                # wait() keeps ownership of the task without shield's detached-exception
+                # logging when the deadline expires and SIGKILL produces a nonzero exit.
+                completed, _ = await asyncio.wait({waiting}, timeout=timeout)
+                if completed:
+                    result = waiting.result()
+                else:
+                    cleaned = await self._stop_command_group(handle.pid)
+                    if cleaned:
+                        # Let the stream drain after SIGKILL, but never wait indefinitely.
+                        try:
+                            drained, _ = await asyncio.wait({waiting}, timeout=self._control_request_timeout_seconds)
+                            if not drained:
+                                raise TimeoutError("Command stream did not drain after cleanup")
+                            waiting.result()
+                        except CommandExitException:
+                            pass
+                        except Exception:
+                            logger.warning(
+                                "sandbox command stream did not drain sandbox_id=%s", self.sandbox_id, exc_info=True
+                            )
+                    else:
+                        async with self._lifecycle_lock:
+                            await self._destroy_locked()
+                    duration = time.perf_counter() - started
+                    logger.warning(
+                        "sandbox command timed out sandbox_id=%s command_number=%s duration_seconds=%.3f recovered=%s",
+                        self.sandbox_id,
+                        self._commands,
+                        duration,
+                        cleaned,
+                    )
+                    return CommandResult(
+                        handle.stdout,
+                        handle.stderr,
+                        COMMAND_TIMEOUT_EXIT_CODE,
+                        duration_seconds=duration,
+                        timed_out=True,
+                        sandbox_terminated=not cleaned,
+                    )
             except CommandExitException as exc:
                 result = exc
-            except TimeoutException:
-                duration = time.perf_counter() - started
-                async with self._lifecycle_lock:
-                    destroyed = await self._destroy_locked()
-                logger.warning(
-                    "sandbox command timed out sandbox_id=%s command_number=%s duration_seconds=%.3f destroyed=%s",
-                    self.sandbox_id,
-                    self._commands,
-                    duration,
-                    destroyed,
-                )
-                return CommandResult(
-                    "",
-                    "",
-                    COMMAND_TIMEOUT_EXIT_CODE,
-                    duration_seconds=duration,
-                    timed_out=True,
-                )
             except Exception as exc:
+                # A lost start/stream acknowledgement leaves command execution uncertain.
+                async with self._lifecycle_lock:
+                    await self._destroy_locked()
                 raise SandboxError("E2B could not run the sandbox command.") from exc
+            finally:
+                if waiting is not None:
+                    waiting.cancel()
+                    await asyncio.gather(waiting, return_exceptions=True)
+                if handle is not None:
+                    try:
+                        async with asyncio.timeout(self._control_request_timeout_seconds):
+                            await handle.disconnect()
+                    except Exception:
+                        logger.warning(
+                            "sandbox command stream disconnect failed sandbox_id=%s", self.sandbox_id, exc_info=True
+                        )
 
             duration = time.perf_counter() - started
             logger.info(
@@ -470,6 +524,22 @@ class E2BSandboxBackend:
                 exit_code=result.exit_code,
                 duration_seconds=duration,
             )
+
+    async def _stop_command_group(self, pid: int) -> bool:
+        """Bound cleanup independently of execution and never replay the user command."""
+        try:
+            async with asyncio.timeout(self._control_request_timeout_seconds):
+                result = await self._sandbox.commands.run(
+                    stop_command_group(pid),
+                    user=E2B_USER,
+                    cwd=E2B_WORKSPACE,
+                    timeout=self._control_request_timeout_seconds,
+                    request_timeout=self._control_request_timeout_seconds,
+                )
+            return result.exit_code == 0
+        except Exception:
+            logger.warning("sandbox command group cleanup unconfirmed sandbox_id=%s", self.sandbox_id, exc_info=True)
+            return False
 
     async def close(self) -> None:
         if self._state is E2BSandboxState.CLOSED:

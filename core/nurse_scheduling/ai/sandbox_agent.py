@@ -32,14 +32,17 @@ from pathlib import Path
 from .agent import AgentEvent, AgentProposal, AgentToolBatchMetrics, AgentToolOutcome, AgentToolUse, run_tool_agent
 from .candidate import SCHEDULE_FILENAME, review_schedule_candidate
 from .config import AiSettings
+from .downloads import WORKSPACE_DOWNLOAD, validate_download_zip
 from .optimizer import OPTIMIZER_TOOL, WORKSPACE_OPTIMIZER_RESULT, optimizer_tool_definition
 from .pi.read import READ_TOOL
 from .provider import ChatMessage, ToolCapableChatProvider
+from .result_context import build_result_context
 from .sandbox import (
     SandboxBackend,
     SandboxError,
     SandboxFactory,
     SandboxFileNotFoundError,
+    SandboxFileSizeError,
     SandboxLifecycleMetrics,
     managed_sandbox,
 )
@@ -51,27 +54,73 @@ from .schema import (
     load_taiwan_holidays_reference,
     load_user_guide_references,
 )
+from .system_prompt import compose_system_prompt
 
 logger = logging.getLogger("nurse_scheduling.ai.sandbox_agent")
 WORKSPACE_SCHEDULE = f"/workspace/{SCHEDULE_FILENAME}"
 WORKSPACE_PENDING_PROPOSAL = "/workspace/pending-proposal.yaml"
 WORKSPACE_PENDING_DIFF = "/workspace/pending-proposal.diff"
 WORKSPACE_ATTACHMENTS = "/workspace/attachments"
-WORKSPACE_ATTACHMENT_MANIFEST = f"{WORKSPACE_ATTACHMENTS}/manifest.json"
 REFERENCE_SCHEMAS = {group: f"/reference/{path.name}" for group, path in SCHEMA_REFERENCE_FILES.items()}
 REFERENCE_SCHEMAS["taiwan-holidays"] = f"/reference/{TAIWAN_HOLIDAYS_SOURCE.name}"
 REFERENCE_USER_GUIDE = "/reference/user-guide"
 ATTACHMENT_TOOL_DIRECTORY = Path(__file__).with_name("attachment_tools")
-REFERENCE_ATTACHMENT_TOOLS = {
-    f"/reference/tools/{name}": ATTACHMENT_TOOL_DIRECTORY / name for name in ("inspect_xlsx.py", "inspect_pdf.py")
+INSPECTION_HELPERS = {
+    "inspect_request_tiers.py": "Current YAML inventory of all nonzero shift-request weight tiers, with entry and expanded target counts. --max-tiers bounds returned tiers.",
+    "inspect_shift_requests.py": "Current YAML nonzero shift-request counts and resolved selectors. Repeat --weight, --person or --date to filter. --max-requests 0 returns counts only.",
+    "inspect_xlsx.py": "XLSX inspection. Use --overview for up to 100 sheet names, visibility states, and reported sizes without reading cells. Otherwise inspect bounded cells, formulas, and saved caches. Add --styles for stored font/fill colors, borders, alignment, and number formats.",
+    "inspect_pdf.py": "PDF page text and rendered page images. Use --find TEXT for bounded literal search with matching page numbers and excerpts. Reports search truncation and pages without text. No OCR.",
+    "inspect_optimizer_result.py": "Optimizer assignments, signed request counts and available staffing/succession audits using a compiled schedule context.",
 }
+REFERENCE_ATTACHMENT_TOOLS = {
+    f"/reference/tools/{name}": ATTACHMENT_TOOL_DIRECTORY / name for name in INSPECTION_HELPERS
+}
+WORKSPACE_SOURCE_CONTEXT = "/workspace/schedule-context.json"
+WORKSPACE_RESULT_CONTEXT = "/workspace/optimizer-results/schedule-context.json"
+WORKSPACE_PENDING_RESULT_CONTEXT = "/workspace/optimizer-results/pending-schedule-context.json"
 
-SYSTEM_PROMPT_PATH = Path(__file__).with_name("prompts") / "sandbox-system.md"
-SANDBOX_SYSTEM_PROMPT = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").rstrip("\n")
+
+def inspection_helper_catalog() -> str:
+    """Advertise only the inspection scripts hydrated by this server."""
+    return (
+        "# Inspection helpers\n\n"
+        + "\n".join(
+            f"- `/reference/tools/{name}`: {description} Run with `--help` for usage."
+            for name, description in INSPECTION_HELPERS.items()
+        )
+        + "\n\nThe result reader supports exported roster cells with bracketed annotations. Other layouts or decorations need a custom parser.\n"
+        + "\nAssignment query: `python /reference/tools/inspect_optimizer_result.py --source-sha256 <completion hash> --person <exact ID> --date <YYYY-MM-DD>`. Person and date filters are repeatable. Omitted filters select the full dimension, with bounded output.\n"
+    )
+
+
+SANDBOX_SYSTEM_PROMPT = compose_system_prompt()
+
+
+@dataclass(frozen=True)
+class AgentDownload:
+    """One validated ZIP captured before sandbox cleanup."""
+
+    content: bytes
+
+
+class SandboxDownloadError(SandboxError):
+    """The generated ZIP could not be captured safely."""
+
+
+class SandboxDownloadValidationError(SandboxDownloadError):
+    """The agent generated a ZIP that violates the download contract."""
 
 
 class SandboxCandidateError(SandboxError):
     """The final untrusted schedule failed trusted server-side review."""
+
+    def __init__(self, message: str, *, user_message: str | None = None) -> None:
+        super().__init__(message)
+        self.user_message = user_message
+
+
+class SandboxCommandTimeoutError(SandboxError):
+    """A command timeout terminated the sandbox and the remaining turn."""
 
 
 class SandboxTurnTimeoutError(SandboxError):
@@ -92,6 +141,7 @@ class SandboxAttachment:
     filename: str
     media_type: str
     data: bytes
+    id: str = ""
 
 
 @dataclass(frozen=True)
@@ -105,12 +155,14 @@ class SandboxAgentLimits:
     max_tool_rounds: int
     max_tool_calls: int
     optimizer_default_timeout_seconds: int = 300
+    max_download_bytes: int = 50_000_000
 
     @classmethod
     def from_settings(cls, settings: AiSettings) -> "SandboxAgentLimits":
         """Collect sandbox-turn limits from validated application settings."""
         return cls(
             max_schedule_bytes=settings.max_schedule_bytes,
+            max_download_bytes=settings.max_download_bytes,
             turn_timeout_seconds=settings.sandbox_turn_timeout_seconds,
             cleanup_timeout_seconds=settings.sandbox_cleanup_timeout_seconds,
             bash_command_timeout_seconds=settings.sandbox_command_timeout_seconds,
@@ -148,6 +200,7 @@ async def _measured_sandbox_turn(
     pending_proposal_diff: str,
     attachments: Sequence[SandboxAttachment],
     optimizer_result: bytes | None,
+    optimizer_context: bytes | None,
 ) -> AsyncIterator[SandboxBackend]:
     """Create, hydrate, and measure a sandbox only when its first tool batch begins."""
     stack = AsyncExitStack()
@@ -161,6 +214,7 @@ async def _measured_sandbox_turn(
         pending_proposal_diff,
         attachments,
         optimizer_result,
+        optimizer_context,
     )
     try:
         async with stack:
@@ -186,6 +240,7 @@ class _LazySandboxTurn:
         pending_proposal_diff: str,
         attachments: Sequence[SandboxAttachment],
         optimizer_result: bytes | None,
+        optimizer_context: bytes | None,
     ) -> None:
         self._factory = factory
         self._cleanup_timeout_seconds = cleanup_timeout_seconds
@@ -196,6 +251,7 @@ class _LazySandboxTurn:
         self._pending_proposal_diff = pending_proposal_diff
         self._attachments = tuple(attachments)
         self._optimizer_result = optimizer_result
+        self._optimizer_context = optimizer_context
         self._sandbox: SandboxBackend | None = None
         self._lifecycle_started: float | None = None
         self._cleanup_started: float | None = None
@@ -225,6 +281,7 @@ class _LazySandboxTurn:
             self._pending_proposal_diff,
             self._attachments,
             self._optimizer_result,
+            self._optimizer_context,
         )
         return self._sandbox
 
@@ -242,8 +299,11 @@ class _LazySandboxTurn:
     async def write_file(self, path: str, content: str | bytes) -> None:
         await (await self._start()).write_file(path, content)
 
-    async def read_file(self, path: str) -> bytes:
-        return await (await self._start()).read_file(path)
+    async def read_file(self, path: str, *, max_bytes: int | None = None) -> bytes:
+        backend = await self._start()
+        if max_bytes is None:
+            return await backend.read_file(path)
+        return await backend.read_file(path, max_bytes=max_bytes)
 
     async def run(self, command: str, *, timeout_seconds: float | None = None):
         return await (await self._start()).run(command, timeout_seconds=timeout_seconds)
@@ -299,7 +359,8 @@ async def run_sandbox_agent(
     execute_optimizer: Callable[[str, str], Awaitable[AgentToolOutcome]] | None = None,
     attachments: Sequence[SandboxAttachment] = (),
     optimizer_result: bytes | None = None,
-) -> AsyncIterator[AgentEvent | AgentScheduleChange]:
+    optimizer_context: bytes | None = None,
+) -> AsyncIterator[AgentEvent | AgentScheduleChange | AgentDownload]:
     """Hydrate, run, read, validate, and destroy one fresh sandbox turn."""
     metrics = metrics or SandboxTurnMetrics()
     try:
@@ -313,6 +374,7 @@ async def run_sandbox_agent(
                 pending_proposal_diff,
                 attachments,
                 optimizer_result,
+                optimizer_context,
             ) as sandbox:
                 sandbox_tools = SandboxPiTools(
                     sandbox,
@@ -324,9 +386,10 @@ async def run_sandbox_agent(
                     limits.max_schedule_bytes,
                 )
                 pending_schedule_change: str | None = None
+                command_timeout: str | None = None
 
                 async def execute_command(name: str, arguments: str) -> AgentToolOutcome:
-                    nonlocal pending_schedule_change
+                    nonlocal pending_schedule_change, command_timeout
                     pending_schedule_change = None
                     if name == OPTIMIZER_TOOL and execute_optimizer is not None:
                         try:
@@ -349,6 +412,9 @@ async def run_sandbox_agent(
                             )
                         return await execute_optimizer(current_schedule, arguments)
                     outcome = await sandbox_tools.execute(name, arguments)
+                    if outcome.terminal:
+                        command_timeout = outcome.text
+                        return outcome
                     if name == READ_TOOL:
                         return outcome
                     candidate_status = await candidate_tracker.review_if_changed()
@@ -384,6 +450,8 @@ async def run_sandbox_agent(
                         yield AgentScheduleChange(pending_schedule_change)
                         pending_schedule_change = None
 
+                if command_timeout is not None:
+                    raise SandboxCommandTimeoutError(f"{command_timeout}. The sandbox was terminated.")
                 if not sandbox.started:
                     return
                 candidate = await _read_candidate(sandbox, limits.max_schedule_bytes)
@@ -395,7 +463,23 @@ async def run_sandbox_agent(
                     review.proposal is not None,
                 )
                 if not review.outcome.ok:
-                    raise SandboxCandidateError("The sandbox candidate failed trusted schedule validation.")
+                    raise SandboxCandidateError(
+                        "The sandbox candidate failed trusted schedule validation.", user_message=review.outcome.text
+                    )
+                try:
+                    download = await sandbox.read_file(WORKSPACE_DOWNLOAD, max_bytes=limits.max_download_bytes)
+                except SandboxFileNotFoundError:
+                    download = None
+                except SandboxFileSizeError as exc:
+                    raise SandboxDownloadValidationError(str(exc)) from exc
+                except SandboxError as exc:
+                    raise SandboxDownloadError(str(exc)) from exc
+                if download is not None:
+                    try:
+                        await asyncio.to_thread(validate_download_zip, download, limits.max_download_bytes)
+                    except ValueError as exc:
+                        raise SandboxDownloadValidationError(str(exc)) from exc
+                    yield AgentDownload(download)
                 if review.proposal is not None:
                     yield AgentProposal(review.proposal.text, review.proposal.diff.render())
     except TimeoutError as exc:
@@ -428,10 +512,18 @@ async def hydrate_sandbox(
     pending_proposal_diff: str = "",
     attachments: Sequence[SandboxAttachment] = (),
     optimizer_result: bytes | None = None,
+    optimizer_context: bytes | None = None,
 ) -> None:
     """Copy trusted application state and searchable references into one turn."""
     started = time.perf_counter()
     files: dict[str, str | bytes] = {WORKSPACE_SCHEDULE: schedule_yaml}
+    try:
+        files[WORKSPACE_SOURCE_CONTEXT] = json.dumps(
+            build_result_context(schedule_yaml), ensure_ascii=False, allow_nan=False
+        )
+    except Exception:
+        # A draft may not compile. Its YAML remains available for direct inspection.
+        logger.debug("Current schedule inspection context unavailable", exc_info=True)
     if pending_proposal_yaml:
         files[WORKSPACE_PENDING_PROPOSAL] = pending_proposal_yaml
         files[WORKSPACE_PENDING_DIFF] = pending_proposal_diff
@@ -444,28 +536,22 @@ async def hydrate_sandbox(
         files[f"{REFERENCE_USER_GUIDE}/{relative_path}"] = reference
     for destination, source in REFERENCE_ATTACHMENT_TOOLS.items():
         files[destination] = source.read_text(encoding="utf-8")
-    if attachments:
-        manifest = []
-        for index, attachment in enumerate(attachments, start=1):
-            safe_name = _safe_attachment_name(attachment.filename, index)
-            path = f"{WORKSPACE_ATTACHMENTS}/{safe_name}"
-            files[path] = attachment.data
-            manifest.append(
-                {
-                    "original_filename": attachment.filename,
-                    "path": path,
-                    "media_type": attachment.media_type,
-                    "bytes": len(attachment.data),
-                    "trusted": False,
-                }
-            )
-        files[WORKSPACE_ATTACHMENT_MANIFEST] = json.dumps(
-            {"attachments": manifest},
-            ensure_ascii=False,
-            indent=2,
-        )
+    files["/reference/tools/README.md"] = inspection_helper_catalog()
+    for index, attachment in enumerate(attachments, start=1):
+        files[attachment_path(attachment, index)] = attachment.data
     if optimizer_result is not None:
         files[WORKSPACE_OPTIMIZER_RESULT] = optimizer_result
+        files[WORKSPACE_RESULT_CONTEXT] = (
+            optimizer_context
+            if optimizer_context is not None
+            else json.dumps(
+                build_result_context(schedule_yaml, workbook=optimizer_result), ensure_ascii=False, allow_nan=False
+            )
+        )
+        if pending_proposal_yaml:
+            files[WORKSPACE_PENDING_RESULT_CONTEXT] = json.dumps(
+                build_result_context(pending_proposal_yaml), ensure_ascii=False, allow_nan=False
+            )
     # One request, because hydration now precedes the first tool result rather than the turn.
     await sandbox.write_files(files)
     logger.info(
@@ -477,13 +563,13 @@ async def hydrate_sandbox(
     )
 
 
-def _safe_attachment_name(filename: str, index: int) -> str:
-    """Create a deterministic basename below the fixed attachment directory."""
-    basename = filename.replace("\\", "/").rsplit("/", 1)[-1]
+def attachment_path(attachment: SandboxAttachment, index: int) -> str:
+    """Return a deterministic path below the fixed attachment directory, prefixed by the upload ID or position."""
+    basename = attachment.filename.replace("\\", "/").rsplit("/", 1)[-1]
     sanitized = re.sub(r"[^A-Za-z0-9._-]+", "_", basename).strip("._")
     if not sanitized:
         sanitized = "attachment"
-    return f"{index:02d}-{sanitized[:120]}"
+    return f"{WORKSPACE_ATTACHMENTS}/{attachment.id or f'{index:02d}'}-{sanitized[:120]}"
 
 
 async def _read_candidate(sandbox: SandboxBackend, max_schedule_bytes: int) -> str:

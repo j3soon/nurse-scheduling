@@ -58,17 +58,53 @@ def _render_page(path: Path, page_number: int, output_directory: Path, max_pixel
         document.close()
 
 
+def _search_text(reader: PdfReader, path: Path, needle: str, max_pages: int, max_matches: int) -> dict[str, Any]:
+    """Return bounded literal matches from already loaded PDF pages."""
+    scanned = min(len(reader.pages), max_pages)
+    matches, no_text = [], []
+    for number in range(scanned):
+        text = (reader.pages[number].extract_text() or "").strip()
+        if not text:
+            no_text.append(number + 1)
+        index = text.lower().find(needle.lower())
+        if index >= 0:
+            start = max(0, index - 80)
+            matches.append({"page": number + 1, "excerpt": text[start : start + 400]})
+    return {
+        "path": str(path),
+        "page_count": len(reader.pages),
+        "pages_scanned": scanned,
+        "pages_truncated": scanned < len(reader.pages),
+        "matched_pages": len(matches),
+        "matches": matches[:max_matches],
+        "matches_truncated": len(matches) > max_matches,
+        "pages_without_extractable_text": no_text,
+        "ocr_performed": False,
+    }
+
+
 def inspect_pdf(
     path: Path,
     *,
     page_number: int | None = None,
-    max_pages: int = 10,
+    max_pages: int | None = None,
+    find: str | None = None,
+    max_matches: int = 20,
     max_chars_per_page: int = 3_000,
     render: bool = False,
     output_directory: Path = Path("/workspace/rendered-pages"),
     max_render_pixels: int = 4_000_000,
 ) -> dict[str, Any]:
     """Return text by page and optionally a visual rendering of one page."""
+    if find is not None:
+        if not find.strip() or (max_pages is not None and max_pages <= 0) or max_matches <= 0:
+            raise ValueError("Provide nonempty text and positive limits")
+        if page_number is not None or render:
+            raise ValueError("Use --find separately from --page and --render")
+        max_pages = min(100 if max_pages is None else max_pages, 100)
+        max_matches = min(max_matches, 100)
+    elif max_pages is None:
+        max_pages = 10
     if not 1 <= max_pages <= 100 or not 1 <= max_chars_per_page <= 10_000 or max_render_pixels <= 0:
         raise ValueError("Select 1-100 pages and 1-10,000 characters per page")
     if render and page_number is None:
@@ -76,6 +112,8 @@ def inspect_pdf(
     reader = PdfReader(path)
     if reader.is_encrypted:
         raise ValueError("Encrypted PDFs are not supported")
+    if find is not None:
+        return _search_text(reader, path, find, max_pages, max_matches)
     page_count = len(reader.pages)
     if page_number is not None:
         if not 1 <= page_number <= page_count:
@@ -110,7 +148,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("path", type=Path)
     parser.add_argument("--page", type=int)
-    parser.add_argument("--max-pages", type=int, default=10)
+    parser.add_argument("--find", help="Literal text to find across pages, case insensitive.")
+    parser.add_argument("--max-pages", type=int, help="Maximum pages, default 10 for inspection or 100 for search.")
+    parser.add_argument("--max-matches", type=int, default=20)
     parser.add_argument("--max-chars-per-page", type=int, default=3_000)
     parser.add_argument("--render", action="store_true")
     parser.add_argument("--output", type=Path, default=Path("/workspace/rendered-pages"))
@@ -119,11 +159,13 @@ def main() -> None:
         args.path,
         page_number=args.page,
         max_pages=args.max_pages,
+        find=args.find,
+        max_matches=args.max_matches,
         max_chars_per_page=args.max_chars_per_page,
         render=args.render,
         output_directory=args.output,
     )
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    print(json.dumps(result, ensure_ascii=False, indent=None if args.find is not None else 2))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,46 @@
+{
+  "id": "copy-all-requests-exact-small",
+  "fixture": "small-clinic",
+  "question": "Copy all shift requests from the person with exact ID `Ana` to the person with exact ID `Omar`. Preserve every source request and keep each copied date, shift selector, and weight unchanged.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "added": [
+        {
+          "type": "shift request",
+          "person": [
+            "Omar"
+          ],
+          "date": [
+            "06"
+          ],
+          "shiftType": [
+            "N"
+          ],
+          "weight": -1
+        },
+        {
+          "type": "shift request",
+          "person": [
+            "Omar"
+          ],
+          "date": [
+            "07"
+          ],
+          "shiftType": [
+            "Night"
+          ],
+          "weight": -1
+        }
+      ]
+    }
+  ],
+  "changes": [
+    "preferences"
+  ],
+  "note": "This testcase is mostly AI generated. Explicit all scope must override the clarification examples. Both source requests survive, including the distinct shift-group selector.",
+  "tags": [
+    "prompt-evidence"
+  ]
+}

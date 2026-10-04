@@ -110,6 +110,7 @@ class AgentToolOutcome:
     text: str
     ok: bool
     image: ToolResultImage | None = None
+    terminal: bool = False
 
 
 @dataclass(frozen=True)
@@ -186,6 +187,8 @@ async def run_tool_agent(
         batch_scope = activity_batch or _unbatched_activity
         async with batch_scope():
             image_results: list[ChatMessage] = []
+            terminal = False
+            completed_calls = 0
             parallel = len(calls) > 1 and all(call.name in parallel_tool_names for call in calls)
             if parallel:
                 for call in calls:
@@ -197,6 +200,8 @@ async def run_tool_agent(
                 for call, outcome in completed:
                     _log_tool_outcome(call.name, outcome)
                     yield AgentToolUse(call.name, call.arguments, outcome.text, outcome.ok)
+                    completed_calls += 1
+                    terminal = terminal or outcome.terminal
                     conversation.append(tool_result_message(call.id, outcome.text))
                     if outcome.image is not None:
                         image_results.append(tool_result_image_message(call.id, outcome.image))
@@ -209,12 +214,18 @@ async def run_tool_agent(
                     execution_seconds += time.perf_counter() - started
                     _log_tool_outcome(call.name, outcome)
                     yield AgentToolUse(call.name, call.arguments, outcome.text, outcome.ok)
+                    completed_calls += 1
+                    terminal = terminal or outcome.terminal
                     conversation.append(tool_result_message(call.id, outcome.text))
                     if outcome.image is not None:
                         image_results.append(tool_result_image_message(call.id, outcome.image))
+                    if terminal:
+                        break
             conversation.extend(image_results)
             if observe_tool_batch is not None:
-                observe_tool_batch(AgentToolBatchMetrics(len(calls), parallel, execution_seconds))
+                observe_tool_batch(AgentToolBatchMetrics(completed_calls, parallel, execution_seconds))
+        if terminal:
+            return
         if take_steering is not None:
             for message_id, text in take_steering(False):
                 conversation.append(ChatMessage(role="user", content=text))

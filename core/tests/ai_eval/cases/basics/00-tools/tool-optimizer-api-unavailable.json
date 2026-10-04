@@ -1,0 +1,31 @@
+{
+  "id": "tool-optimizer-api-unavailable",
+  "fixture": "small-clinic",
+  "question": "Start optimizing the current schedule.",
+  "optimizer_error": "Optimizer API is temporarily unavailable.",
+  "expect_proposal": false,
+  "answer_contains": [
+    [
+      "unavailable",
+      "could not",
+      "unable",
+      "not available"
+    ]
+  ],
+  "note": "This testcase is mostly AI generated. A controlled optimizer API outage should be reported after one failed call without repeated starts or status polls. This does not test installed-program probing.",
+  "tool_usage": {
+    "required_errors": [
+      "optimizer"
+    ],
+    "max_per_tool": {
+      "optimizer": 1
+    },
+    "forbidden": [
+      "edit",
+      "write"
+    ]
+  },
+  "tags": [
+    "prompt-evidence"
+  ]
+}

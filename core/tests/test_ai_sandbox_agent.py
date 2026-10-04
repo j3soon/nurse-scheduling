@@ -44,15 +44,19 @@ from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFact
 from nurse_scheduling.ai.sandbox_agent import (
     REFERENCE_SCHEMAS,
     REFERENCE_USER_GUIDE,
-    WORKSPACE_ATTACHMENT_MANIFEST,
     WORKSPACE_PENDING_DIFF,
     WORKSPACE_PENDING_PROPOSAL,
+    WORKSPACE_PENDING_RESULT_CONTEXT,
+    WORKSPACE_RESULT_CONTEXT,
     WORKSPACE_SCHEDULE,
+    WORKSPACE_SOURCE_CONTEXT,
     AgentScheduleChange,
     SandboxAgentLimits,
     SandboxAttachment,
     SandboxCandidateError,
     SandboxTurnTimeoutError,
+    attachment_path,
+    hydrate_sandbox,
     run_sandbox_agent,
 )
 from nurse_scheduling.ai.schema import load_taiwan_holidays_reference, load_user_guide_references
@@ -141,6 +145,8 @@ def test_one_turn_hydrates_runs_reads_validates_proposes_and_closes():
     backend = factory.created[0]
     assert backend.closed
     assert WORKSPACE_SCHEDULE in backend.files
+    context = json.loads(backend.files[WORKSPACE_SOURCE_CONTEXT])
+    assert context["people"] == ["P1", "P2"]
     assert set(REFERENCE_SCHEMAS.values()) <= backend.files.keys()
     assert b"# Experimental AI Chat" in backend.files[f"{REFERENCE_USER_GUIDE}/experimental-ai.md"]
     assert b"# People" in backend.files[f"{REFERENCE_USER_GUIDE}/people.md"]
@@ -322,27 +328,19 @@ def test_hydration_uploads_every_reference_in_one_request():
 def test_hydration_places_untrusted_attachments_under_safe_paths():
     factory = FakeSandboxFactory()
     provider = ScriptedProvider(
-        [ToolCallRequest((ToolCall("call-1", READ_TOOL, json.dumps({"path": WORKSPACE_ATTACHMENT_MANIFEST})),))],
+        [ToolCallRequest((ToolCall("call-1", READ_TOOL, json.dumps({"path": WORKSPACE_SCHEDULE})),))],
         [TextDelta("Inspected.")],
     )
+    unnamed = SandboxAttachment("../../staff data.bin", "application/octet-stream", b"payload")
+    uploaded = SandboxAttachment("報表 (1).xlsx", "application/octet-stream", b"sheet", id="upload-id")
 
-    _collect(
-        provider,
-        factory,
-        attachments=(SandboxAttachment("../../staff data.bin", "application/octet-stream", b"payload"),),
-    )
+    _collect(provider, factory, attachments=(unnamed, uploaded))
 
     backend = factory.created[0]
-    manifest = json.loads(backend.files[WORKSPACE_ATTACHMENT_MANIFEST])
-    attachment = manifest["attachments"][0]
-    assert attachment == {
-        "original_filename": "../../staff data.bin",
-        "path": "/workspace/attachments/01-staff_data.bin",
-        "media_type": "application/octet-stream",
-        "bytes": 7,
-        "trusted": False,
-    }
-    assert backend.files[attachment["path"]] == b"payload"
+    assert attachment_path(unnamed, 1) == "/workspace/attachments/01-staff_data.bin"
+    assert attachment_path(uploaded, 2) == "/workspace/attachments/upload-id-1_.xlsx"
+    assert backend.files["/workspace/attachments/01-staff_data.bin"] == b"payload"
+    assert backend.files["/workspace/attachments/upload-id-1_.xlsx"] == b"sheet"
     assert b"inspect_workbook" in backend.files["/reference/tools/inspect_xlsx.py"]
     assert b"inspect_pdf" in backend.files["/reference/tools/inspect_pdf.py"]
 
@@ -358,7 +356,26 @@ def test_hydration_keeps_optimizer_result_outside_user_attachments():
 
     backend = factory.created[0]
     assert backend.files[WORKSPACE_OPTIMIZER_RESULT] == b"workbook"
-    assert WORKSPACE_ATTACHMENT_MANIFEST not in backend.files
+    assert not any(path.startswith("/workspace/attachments/") for path in backend.files)
+    context = json.loads(backend.files[WORKSPACE_RESULT_CONTEXT])
+    assert context["schema_version"] == 1
+    assert context["people"] == ["P1", "P2"]
+    assert b"inspect_optimizer_result.py" in backend.files["/reference/tools/README.md"]
+
+
+def test_result_contexts_keep_pending_and_current_sources_distinct():
+    factory = FakeSandboxFactory()
+    provider = ScriptedProvider(
+        [ToolCallRequest((ToolCall("call-1", READ_TOOL, json.dumps({"path": WORKSPACE_RESULT_CONTEXT})),))],
+        [TextDelta("Inspected.")],
+    )
+    pending = schedule_yaml().replace("description: ''", "description: Pending", 1)
+    _collect(provider, factory, optimizer_result=b"workbook", pending_proposal_yaml=pending)
+    files = factory.created[0].files
+    current_context = json.loads(files[WORKSPACE_RESULT_CONTEXT])
+    pending_context = json.loads(files[WORKSPACE_PENDING_RESULT_CONTEXT])
+    assert pending_context["source_sha256"] != current_context["source_sha256"]
+    assert pending_context["people"] == current_context["people"]
 
 
 def test_reference_sources_are_read_from_disk_once_per_process():
@@ -442,9 +459,9 @@ def test_read_tool_does_not_trigger_a_redundant_schedule_change_scan():
             super().__init__(sandbox_id)
             self.read_paths: list[str] = []
 
-        async def read_file(self, path: str) -> bytes:
+        async def read_file(self, path: str, *, max_bytes: int | None = None) -> bytes:
             self.read_paths.append(path)
-            return await super().read_file(path)
+            return await super().read_file(path, max_bytes=max_bytes)
 
     provider = ScriptedProvider(
         [ToolCallRequest((ToolCall("call-1", READ_TOOL, '{"path":"schedule.yaml"}'),))],
@@ -513,7 +530,7 @@ def test_failure_before_tools_skips_sandbox_and_command_failure_closes_it(failur
 
 def test_candidate_read_failure_closes_the_sandbox():
     class ReadFailureBackend(FakeSandboxBackend):
-        async def read_file(self, path: str) -> bytes:
+        async def read_file(self, path: str, *, max_bytes: int | None = None) -> bytes:
             raise SandboxError(f"cannot read {path}")
 
     factory = FakeSandboxFactory(ReadFailureBackend)
@@ -661,3 +678,86 @@ def test_whole_turn_timeout_before_a_tool_call_does_not_start_a_sandbox():
         _collect(WaitingProvider(), factory, turn_timeout_seconds=0.01)
 
     assert factory.created == []
+
+
+def test_terminal_command_timeout_is_reported_before_any_further_sandbox_operation():
+    from nurse_scheduling.ai.sandbox_agent import SandboxCommandTimeoutError
+
+    def timeout(_command, _timeout, backend):
+        backend.closed = True
+        return CommandResult("", "", 124, timed_out=True, sandbox_terminated=True)
+
+    factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=timeout))
+    provider = ScriptedProvider(
+        [
+            ToolCallRequest(
+                (
+                    ToolCall("wait", BASH_TOOL, '{"command":"sleep 30","timeout":40}'),
+                    ToolCall("next", READ_TOOL, '{"path":"/workspace/schedule.yaml"}'),
+                )
+            ),
+        ]
+    )
+    events = []
+    batches = []
+
+    async def collect():
+        with pytest.raises(SandboxCommandTimeoutError, match="Command timed out after 10 seconds"):
+            async for event in run_sandbox_agent(
+                provider,
+                factory,
+                schedule_yaml(),
+                MESSAGES,
+                _limits(),
+                observe_tool_batch=batches.append,
+            ):
+                events.append(event)
+
+    asyncio.run(collect())
+    assert len(provider.requests) == 1
+    assert factory.created[0].commands == [("sleep 30", 10)]
+    assert [event.name for event in events if isinstance(event, AgentToolStart)] == [BASH_TOOL]
+    outcomes = [event for event in events if isinstance(event, AgentToolUse)]
+    assert len(outcomes) == 1
+    assert not outcomes[0].ok
+    assert outcomes[0].result == "Command timed out after 10 seconds"
+    assert batches[0].call_count == 1
+    assert not any(isinstance(event, AgentProposal) for event in events)
+
+
+def test_recovered_command_timeout_keeps_files_and_allows_the_agent_to_continue():
+    factory = FakeSandboxFactory(
+        lambda sandbox_id: FakeSandboxBackend(
+            sandbox_id,
+            command_handler=lambda *_: CommandResult("partial\n", "", 124, timed_out=True),
+        )
+    )
+    provider = ScriptedProvider(
+        _run_call("slow"),
+        [ToolCallRequest((ToolCall("read", READ_TOOL, '{"path":"/workspace/schedule.yaml"}'),))],
+        [TextDelta("The command timed out. I can still read the schedule.")],
+    )
+    events = _collect(provider, factory)
+    outcomes = [event for event in events if isinstance(event, AgentToolUse)]
+    assert [event.ok for event in outcomes] == [False, True]
+    assert "partial" in outcomes[0].result
+    assert "Command timed out" in outcomes[0].result
+    assert "P1" in outcomes[1].result
+    assert factory.created[0].files[WORKSPACE_SCHEDULE] == schedule_yaml().encode()
+    assert len(provider.requests) == 3
+    assert not any(isinstance(event, AgentProposal) for event in events)
+
+
+@pytest.mark.parametrize("has_result", [False, True])
+def test_uncompilable_draft_keeps_yaml_without_a_source_context(has_result):
+    backend = FakeSandboxBackend("draft")
+    context = json.dumps({"schema_version": 1, "source_sha256": "submitted"}).encode() if has_result else None
+    asyncio.run(
+        hydrate_sandbox(
+            backend, "not a schedule", optimizer_result=b"workbook" if has_result else None, optimizer_context=context
+        )
+    )
+    assert backend.files[WORKSPACE_SCHEDULE] == b"not a schedule"
+    assert WORKSPACE_SOURCE_CONTEXT not in backend.files
+    if has_result:
+        assert backend.files[WORKSPACE_RESULT_CONTEXT] == context

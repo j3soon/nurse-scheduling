@@ -1,0 +1,22 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "id": "month-end-history-reverse",
+  "fixture": "new-schedule",
+  "question": "Create a downloadable People History (shorthand) CSV named people-history.csv for November 2025 from the attached October roster. Use one person,shift,repetition row per person, sorted by person, with no header. Write plain comma-separated lines with LF line endings and a final newline. D, E, N and OFF are the shift IDs. Do not edit the schedule or start optimization.",
+  "expect_proposal": false,
+  "attachments": [
+    "month-end-history-reverse-xlsx"
+  ],
+  "tool_usage": {
+    "required": [
+      "bash"
+    ]
+  },
+  "tags": [
+    "history-investigation"
+  ],
+  "download_files": {
+    "people-history.csv": "Ada,N,2\nBela,OFF,1\nCora,E,2\nDion,D,5\nEli,OFF,3\nFinn,E,1\n"
+  }
+}

@@ -597,8 +597,8 @@ export default function ShiftRequestsPage() {
       }
 
       // Validate repetition count is a non-negative integer
-      const repetitionCount = parseInt(repetitionStr);
-      if (isNaN(repetitionCount) || repetitionCount < 0) {
+      const repetitionCount = Number(repetitionStr);
+      if (!/^\d+$/.test(repetitionStr) || !Number.isSafeInteger(repetitionCount)) {
         return { isValid: false, error: `Invalid repetition count '${repetitionStr}' for person '${personId}' at row ${i + 1}. Must be a non-negative integer.` };
       }
 

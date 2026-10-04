@@ -75,7 +75,7 @@ class OptimizationOptionsResponse(BaseModel):
 
     @classmethod
     def from_settings(cls, settings: ServerSettings) -> "OptimizationOptionsResponse":
-        """Project validated settings and canonical solver metadata."""
+        """Project validated settings and normalized solver metadata."""
         timeout = TimeoutOptionsResponse(
             default=settings.default_timeout_seconds,
             minimum=settings.min_timeout_seconds,

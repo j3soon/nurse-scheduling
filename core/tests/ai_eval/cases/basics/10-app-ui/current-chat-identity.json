@@ -1,0 +1,18 @@
+{
+  "id": "current-chat-identity",
+  "fixture": "small-clinic",
+  "user_turns": [
+    "我有 Excel 要班表和舊 YAML，想在這裡整理成下個月排班。先說明你能幫忙的範圍，不要修改資料。",
+    "有人建議我使用網站的 Experimental AI chat。我需要另外打開或切換過去，還是目前這裡就是？",
+    "那我現在要傳 Excel 給你，應該用目前這個聊天的 Attach files，還是先去別的頁面？先不要修改資料。最後用 JSON 回答：in_experimental_ai_chat (boolean，若不能確定則 null)，upload_control (目前該使用的上傳按鈕英文名稱)。 請根據你已知的身分回答，不要只因為有排班工具就猜測這裡是哪個聊天介面。若沒有確定的身分資訊，in_experimental_ai_chat 請用 null。"
+  ],
+  "expect_proposal": false,
+  "answer_json": {
+    "in_experimental_ai_chat": true,
+    "upload_control": "Attach files"
+  },
+  "tags": [
+    "app-identity"
+  ],
+  "note": "This testcase is mostly AI generated. Reproduce confusion about whether the assistant is already in the app AI chat. Review the preceding answer as well as the structured final answer."
+}

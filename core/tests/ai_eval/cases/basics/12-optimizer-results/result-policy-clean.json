@@ -1,0 +1,34 @@
+{
+  "id": "result-policy-clean",
+  "fixture": "policy-audit",
+  "question": "Review the completed roster against all 11000000000 shift requests, the preferred staffing, and the N followed by D succession rule in the submitted YAML. Return only JSON with strongUnmet, preferredStaffingMisses, preferredStaffingShortfall, successionViolations, and reviewedPolicySatisfied. Count staffing equations and matched succession windows, including history, rather than preference entries. preferredStaffingShortfall is the total deficit from preferred staffing targets, not hard minimums. reviewedPolicySatisfied covers only the three listed checks.",
+  "expect_proposal": false,
+  "optimizer_completion": "policy-audit-clean",
+  "optimizer_completion_only": true,
+  "answer_json": {
+    "strongUnmet": 0,
+    "preferredStaffingMisses": 0,
+    "successionViolations": 0,
+    "preferredStaffingShortfall": 0,
+    "reviewedPolicySatisfied": true
+  },
+  "tool_usage": {
+    "required_calls": [
+      {
+        "name": "optimizer",
+        "arguments": {
+          "action": "start",
+          "timeout_seconds": 60
+        }
+      }
+    ],
+    "max_per_tool": {
+      "optimizer": 1
+    }
+  },
+  "tags": [
+    "optimizer-result",
+    "control"
+  ],
+  "note": "This testcase is mostly AI generated. Both incumbents satisfy every strong request and all hard constraints. The missed-policy incumbent has three preferred staffing shortfalls and one finite-weight succession violation. The clean incumbent has neither. Stale audit counts have a different source hash and must not be used."
+}

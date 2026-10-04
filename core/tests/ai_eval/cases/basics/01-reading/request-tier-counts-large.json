@@ -1,0 +1,19 @@
+{
+  "id": "request-tier-counts-large",
+  "fixture": "ward87",
+  "question": "For the current YAML, count nonzero shift-request preference entries with weight 11000000000 and their expanded person/date targets. Count targets separately per preference entry, including overlapping targets. Return only JSON with two integer counts: requestEntries and personDateTargets. Do not edit or optimize.",
+  "expect_proposal": false,
+  "answer_json": {
+    "requestEntries": 89,
+    "personDateTargets": 408
+  },
+  "tool_usage": {
+    "forbidden": [
+      "optimizer"
+    ]
+  },
+  "tags": [
+    "request-inspection"
+  ],
+  "note": "This testcase is mostly AI generated. Oracle counts resolved selectors, not textual list lengths or unique cells across preferences."
+}

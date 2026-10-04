@@ -1,0 +1,29 @@
+{
+  "id": "optimizer-score-changed-model",
+  "fixture": "request-audit",
+  "question": "Run optimization for 60 seconds. An older run scored 22000000000, but I changed request weights before this run. When this run finishes, reply only as JSON with better (current, previous, or not-comparable) and scoreDirection (higher or lower).",
+  "expect_proposal": false,
+  "optimizer_completion": "request-audit",
+  "answer_json": {
+    "better": "not-comparable",
+    "scoreDirection": "higher"
+  },
+  "tool_usage": {
+    "required_calls": [
+      {
+        "name": "optimizer",
+        "arguments": {
+          "action": "start",
+          "timeout_seconds": 60
+        }
+      }
+    ],
+    "max_per_tool": {
+      "optimizer": 1
+    }
+  },
+  "tags": [
+    "optimizer-result"
+  ],
+  "note": "This testcase is mostly AI generated. A fixed feasible assignment is replayed through the production exporter. Completion metadata simulates a feasible timeout result. The final structured answer is graded independently of the agent parser."
+}

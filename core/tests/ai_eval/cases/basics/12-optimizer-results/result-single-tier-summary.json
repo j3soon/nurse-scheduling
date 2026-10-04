@@ -1,0 +1,30 @@
+{
+  "id": "result-single-tier-summary",
+  "fixture": "request-audit",
+  "question": "Run optimization for 60 seconds. When it finishes, audit only the weight 11000000000 shift requests. Reply only as JSON with strongTotal and strongUnmet. Count expanded person/date cells, not preference entries.",
+  "expect_proposal": false,
+  "optimizer_completion": "request-audit-all-strong",
+  "answer_json": {
+    "strongTotal": 4,
+    "strongUnmet": 0
+  },
+  "tool_usage": {
+    "required_calls": [
+      {
+        "name": "optimizer",
+        "arguments": {
+          "action": "start",
+          "timeout_seconds": 60
+        }
+      }
+    ],
+    "max_per_tool": {
+      "optimizer": 1
+    }
+  },
+  "tags": [
+    "optimizer-result"
+  ],
+  "note": "This testcase is mostly AI generated. Narrow audit scope, zero strong-tier misses, and an actual lower-tier miss. The fixed assignment is verified through the production exporter.",
+  "optimizer_completion_only": true
+}
