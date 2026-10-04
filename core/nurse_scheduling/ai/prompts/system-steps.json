@@ -345,7 +345,7 @@
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
-        "note": "Stops before forbidden install commands execute. All after proposals pass independent host solves."
+        "note": "Historical comparison used a template without PyYAML. Stops before forbidden install commands execute. All after proposals pass independent host solves."
       }
     ]
   },

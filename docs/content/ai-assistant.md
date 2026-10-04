@@ -309,7 +309,7 @@ supported images as multimodal tool results. `edit`
 applies one or more unique, non-overlapping exact-text replacements against the
 same original file snapshot. `write` creates or overwrites one complete file.
 `bash` remains available for searches, checks, and complex operations using
-preinstalled Bash, Python with `ruamel.yaml`, ripgrep, grep, and diff. All
+preinstalled Bash, Python with `ruamel.yaml` and PyYAML, ripgrep, grep, and diff. All
 relative paths resolve from `/workspace`. The application hydrates separate
 core, preference, and export schema documents under `/reference` for each turn.
 Each document groups related variants so the model can retrieve the context for

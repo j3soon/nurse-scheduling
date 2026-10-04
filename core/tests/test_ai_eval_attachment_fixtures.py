@@ -138,7 +138,8 @@ def test_ooxml_fixture_contains_an_image_read_can_return_to_the_model(
     assert result.image is not None
 
 
-def test_yaml_generator_fixture_can_be_repaired_without_installation(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("pyyaml_available", [True, False])
+def test_yaml_generator_fixture_runs_without_installation(tmp_path: Path, monkeypatch, pyyaml_available: bool):
     from ruamel.yaml import YAML
 
     attachment = load_attachment_fixtures(["pyyaml-generator"])[0]
@@ -146,13 +147,14 @@ def test_yaml_generator_fixture_can_be_repaired_without_installation(tmp_path: P
     script = attachment.data.decode("utf-8").replace('"/workspace/schedule.yaml"', repr(str(output)))
     generator = tmp_path / "generate_schedule.py"
     generator.write_text(script)
-    monkeypatch.setitem(sys.modules, "yaml", None)
-    with pytest.raises(ModuleNotFoundError):
-        runpy.run_path(str(generator))
-    repaired = script.replace("import yaml", "from ruamel.yaml import YAML").replace(
-        "yaml.safe_dump(schedule, output, sort_keys=False)", "YAML().dump(schedule, output)"
-    )
-    generator.write_text(repaired)
+    if not pyyaml_available:
+        monkeypatch.setitem(sys.modules, "yaml", None)
+        with pytest.raises(ModuleNotFoundError):
+            runpy.run_path(str(generator))
+        repaired = script.replace("import yaml", "from ruamel.yaml import YAML").replace(
+            "yaml.safe_dump(schedule, output, sort_keys=False)", "YAML().dump(schedule, output)"
+        )
+        generator.write_text(repaired)
     runpy.run_path(str(generator))
     case = next(case for case in load_cases(CASES) if case.id == "tool-yaml-generator-repair")
     activity = [

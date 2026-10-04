@@ -75,12 +75,16 @@ def test_prebuilt_e2b_template_supports_the_raw_backend_lifecycle():
                 "rg -n 'P1' schedule.yaml && "
                 'python3 -c "from ruamel.yaml import YAML; '
                 "print(YAML(typ='safe').load(open('schedule.yaml'))['people'][0]['id'])\" && "
+                'python3 -c "import yaml; '
+                "data = yaml.safe_load(open('schedule.yaml')); "
+                "assert yaml.safe_load(yaml.safe_dump(data)) == data; "
+                "print(data['people'][0]['id'])\" && "
                 "cat /reference/schema-core.md && "
                 "if command -v nsctl >/dev/null; then exit 1; fi"
             )
             assert result.exit_code == 0
             assert result.stdout == (
-                "2:  - id: P1\nP1\n# Core schema\n\nPath: people.items\nPeople available for scheduling.\n"
+                "2:  - id: P1\nP1\nP1\n# Core schema\n\nPath: people.items\nPeople available for scheduling.\n"
             )
             assert await sandbox.read_file("/workspace/schedule.yaml") == b"people:\n  - id: P1\n"
 
