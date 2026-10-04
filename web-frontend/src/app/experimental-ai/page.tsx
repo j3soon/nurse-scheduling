@@ -59,6 +59,7 @@ import {
   createSession,
   downloadOptimization,
   downloadGeneratedZip,
+  removeGeneratedZip,
   getUploads,
   removeUpload,
   type ModelInput,
@@ -580,6 +581,7 @@ export default function ExperimentalAiPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [removingUploadId, setRemovingUploadId] = useState<string | null>(null);
+  const [removingDownloadId, setRemovingDownloadId] = useState<string | null>(null);
   const [backendVersion, setBackendVersion] = useState<string | undefined>();
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
   // A turn's first report has no provider call yet, so keep the latest token figures until a new call reports.
@@ -1852,6 +1854,25 @@ export default function ExperimentalAiPage() {
     }
   };
 
+  const removeGeneratedFiles = async (downloadId: string) => {
+    const sessionId = sessionIdRef.current;
+    if (!sessionId || removingDownloadId !== null) return;
+    setRemovingDownloadId(downloadId);
+    try {
+      await removeGeneratedZip(sessionId, downloadId, authToken, sessionEndpointRef.current ?? aiEndpoint);
+      if (sessionIdRef.current === sessionId) {
+        setMessages(previous => previous.map(message => (
+          message.downloadId === downloadId ? { ...message, downloadId: undefined } : message
+        )));
+        renewSessionExpiration();
+      }
+    } catch (downloadError) {
+      reportRequestError(downloadError, 'The generated ZIP could not be removed.');
+    } finally {
+      setRemovingDownloadId(null);
+    }
+  };
+
   const exportChat = (format: ChatExportFormat) => {
     const previousUrl = chatExportUrlRef.current;
     chatExportUrlRef.current = downloadChatExport(format, messages, sessionEndpointRef.current ?? aiEndpoint, new Date(), {
@@ -2329,10 +2350,19 @@ export default function ExperimentalAiPage() {
                 </button>
               )}
               {message.downloadId && (
-                <button type="button" onClick={() => void downloadGeneratedFiles(message.downloadId!)}
-                  className="mt-3 rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700">
-                  Download files (ZIP)
-                </button>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button type="button" onClick={() => void downloadGeneratedFiles(message.downloadId!)}
+                    disabled={removingDownloadId === message.downloadId}
+                    className="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
+                    Download files (ZIP)
+                  </button>
+                  <button type="button" onClick={() => void removeGeneratedFiles(message.downloadId!)}
+                    disabled={removingDownloadId !== null || conversationUnavailable}
+                    title="Remove this ZIP from the chat to free session storage."
+                    className="rounded-lg px-3 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50">
+                    {removingDownloadId === message.downloadId ? 'Removing...' : 'Remove ZIP'}
+                  </button>
+                </div>
               )}
               {timestamp !== undefined && (
                 <time

@@ -553,6 +553,17 @@ class SessionStore:
             except KeyError:
                 raise HTTPException(status_code=404, detail="This generated ZIP is no longer available.") from None
 
+    def remove_download(self, session_id: str, owner_token: str | None, download_id: str) -> None:
+        """Remove an owned generated ZIP and reclaim its bytes."""
+        with self._lock:
+            session = self._get_owned(session_id, owner_token)
+            try:
+                content = session.downloads.pop(download_id)
+            except KeyError:
+                raise HTTPException(status_code=404, detail="This generated ZIP is no longer available.") from None
+            self._charge(session, -len(content))
+            session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
+
     def has_active_turn(self, session_id: str, owner_token: str | None) -> bool:
         """Check whether Stop has a reserved turn to cancel."""
         with self._lock:
@@ -1148,6 +1159,19 @@ def create_app(
             media_type="application/zip",
             headers={"Content-Disposition": 'attachment; filename="download.zip"'},
         )
+
+    @app.delete("/sessions/{session_id}/downloads/{download_id}", dependencies=[Depends(require_auth)], status_code=204)
+    async def remove_generated_zip(
+        session_id: str,
+        download_id: str,
+        response: Response,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> Response:
+        """Remove one generated ZIP from the owning session."""
+        store.remove_download(session_id, owner, download_id)
+        refresh_owner_cookie(response, owner)
+        response.status_code = 204
+        return response
 
     @app.get(
         "/sessions/{session_id}/optimizations/{job_id}/xlsx",

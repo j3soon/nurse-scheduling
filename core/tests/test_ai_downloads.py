@@ -104,8 +104,15 @@ def test_generated_zip_is_downloadable_after_sandbox_cleanup_and_is_owned():
         assert client.get(f"/sessions/{session_id}/downloads/missing").status_code == 404
         with AuthenticatedTestClient(app) as other:
             assert other.get(path).status_code == 404
+            assert other.delete(path).status_code == 404
         with TestClient(app) as anonymous:
             assert anonymous.get(path).status_code == 401
+            assert anonymous.delete(path).status_code == 401
+        before_removal = app.state.session_store.retained_bytes
+        assert client.delete(path).status_code == 204
+        assert app.state.session_store.retained_bytes == before_removal - len(content)
+        assert client.get(path).status_code == 404
+        assert client.delete(path).status_code == 404
 
 
 def test_generated_bytes_share_session_budget_and_are_reclaimed():
@@ -115,6 +122,26 @@ def test_generated_bytes_share_session_budget_and_are_reclaimed():
     assert store.save_download(session.id, "zip1", b"x" * 100)
     assert store.retained_bytes == original + 100
     assert not store.save_download(session.id, "zip2", b"x" * 1000)
+    session.expires_at = 0
+    store._prune_expired()
+    assert store.retained_bytes == 0
+
+
+def test_removing_old_zip_allows_a_new_download_without_dropping_other_files():
+    store = SessionStore(make_settings(max_session_bytes=1000))
+    session = store.create("owner", "description: test")
+    original = store.retained_bytes
+    content = b"x" * ((1000 - original) // 2)
+    assert store.save_download(session.id, "zip1", content)
+    assert store.save_download(session.id, "zip2", content)
+    assert not store.save_download(session.id, "zip3", content)
+
+    store.remove_download(session.id, "owner", "zip1")
+
+    assert store.retained_bytes == original + len(content)
+    assert store.download(session.id, "owner", "zip2") == content
+    assert store.save_download(session.id, "zip3", content)
+    assert store.download(session.id, "owner", "zip3") == content
     session.expires_at = 0
     store._prune_expired()
     assert store.retained_bytes == 0

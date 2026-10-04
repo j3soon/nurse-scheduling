@@ -665,15 +665,20 @@ test('previews and sends arbitrary file attachments', async ({ page }) => {
 });
 
 
-test('downloads generated files through the ZIP button', async ({ page }) => {
+test('downloads and removes generated files through the ZIP controls', async ({ page }) => {
   await mockAiBackend(page);
   await page.route('**/ai/sessions/*/messages', route => route.fulfill({
     contentType: 'text/event-stream',
     body: 'event: delta\ndata: {"text":"Files ready."}\n\nevent: download\ndata: {"download_id":"zip-turn"}\n\nevent: done\ndata: {}\n\n',
   }));
-  await page.route('**/ai/sessions/*/downloads/zip-turn', route => route.fulfill({
-    contentType: 'application/zip', body: Buffer.from('captured ZIP bytes'),
-  }));
+  let removed = false;
+  await page.route('**/ai/sessions/*/downloads/zip-turn', route => {
+    if (route.request().method() === 'DELETE') {
+      removed = true;
+      return route.fulfill({ status: 204 });
+    }
+    return route.fulfill({ contentType: 'application/zip', body: Buffer.from('captured ZIP bytes') });
+  });
   await page.goto('/experimental-ai');
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Create a downloadable CSV');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
@@ -682,6 +687,14 @@ test('downloads generated files through the ZIP button', async ({ page }) => {
   const download = await pendingDownload;
   expect(download.suggestedFilename()).toBe('download.zip');
   expect(await readFile((await download.path())!)).toEqual(Buffer.from('captured ZIP bytes'));
+  await page.getByRole('button', { name: 'Remove ZIP' }).click();
+  await expect(page.getByRole('button', { name: 'Remove ZIP' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Download files (ZIP)' })).toHaveCount(0);
+  expect(removed).toBe(true);
+  await expect(page.getByText('Files ready.')).toBeVisible();
+  await page.reload();
+  await expect(page.getByText('Files ready.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Download files (ZIP)' })).toHaveCount(0);
 });
 
 

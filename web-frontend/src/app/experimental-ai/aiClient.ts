@@ -675,6 +675,13 @@ export async function downloadGeneratedZip(
   return response.blob();
 }
 
+export async function removeGeneratedZip(sessionId: string, downloadId: string, authToken: string | null, endpoint = getAiBaseUrl()): Promise<void> {
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/downloads/${encodeURIComponent(downloadId)}`, {
+    method: 'DELETE', credentials: 'include', headers: authorizedHeaders(authToken),
+  });
+  if (!response.ok) throw await responseError(response);
+}
+
 export async function scheduleRevision(scheduleYaml: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(scheduleYaml));
   return Array.from(new Uint8Array(digest))

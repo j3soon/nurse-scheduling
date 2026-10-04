@@ -28,6 +28,7 @@ const mockCreateSession = vi.hoisted(() => vi.fn());
 const mockGetUploads = vi.hoisted(() => vi.fn());
 const mockRemoveUpload = vi.hoisted(() => vi.fn());
 const mockDownloadGeneratedZip = vi.hoisted(() => vi.fn());
+const mockRemoveGeneratedZip = vi.hoisted(() => vi.fn());
 const mockDownloadOptimization = vi.hoisted(() => vi.fn());
 const mockGetBackendVersion = vi.hoisted(() => vi.fn());
 const mockGetCapabilities = vi.hoisted(() => vi.fn());
@@ -63,6 +64,7 @@ vi.mock('./aiClient', () => ({
   createSession: mockCreateSession,
   downloadOptimization: mockDownloadOptimization,
   downloadGeneratedZip: mockDownloadGeneratedZip,
+  removeGeneratedZip: mockRemoveGeneratedZip,
   getUploads: mockGetUploads,
   removeUpload: mockRemoveUpload,
   getAiBaseUrl: () => '/ai',
@@ -123,6 +125,7 @@ describe('ExperimentalAiPage', () => {
     mockGetUploads.mockReset().mockResolvedValue([]);
     mockRemoveUpload.mockReset().mockResolvedValue(undefined);
     mockDownloadGeneratedZip.mockReset().mockResolvedValue(new Blob(['zip']));
+    mockRemoveGeneratedZip.mockReset().mockResolvedValue(undefined);
     mockDownloadOptimization.mockReset().mockResolvedValue(new Blob(['workbook']));
     mockGetCapabilities.mockReset().mockResolvedValue(defaultCapabilities);
     mockGetBackendVersion.mockReset().mockResolvedValue('v0.4.3');
@@ -186,6 +189,38 @@ describe('ExperimentalAiPage', () => {
     await user.click(await screen.findByRole('button', { name: 'Download files (ZIP)' }));
     await waitFor(() => expect(mockDownloadGeneratedZip).toHaveBeenCalledWith('session-id', 'zip-turn', null, '/ai'));
     expect(click).toHaveBeenCalled();
+  });
+
+  it.each([false, true])('removes a generated ZIP only after the server accepts deletion (failure: %s)', async failure => {
+    mockStreamMessage.mockImplementation(async (_id: string, _question: string, callbacks: {
+      onDelta: (text: string) => void;
+      onDownload: (id: string) => void;
+    }) => {
+      callbacks.onDelta('Your CSV is ready.');
+      callbacks.onDownload('zip-turn');
+    });
+    let finishRemoval!: () => void;
+    mockRemoveGeneratedZip.mockImplementation(() => new Promise<void>((resolve, reject) => {
+      finishRemoval = () => failure ? reject(new Error('Removal failed.')) : resolve();
+    }));
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Make a CSV');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await user.click(await screen.findByRole('button', { name: 'Remove ZIP' }));
+    expect(mockRemoveGeneratedZip).toHaveBeenCalledWith('session-id', 'zip-turn', null, '/ai');
+    expect(screen.getByRole('button', { name: 'Removing...' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Download files (ZIP)' })).toBeDisabled();
+    await act(async () => { finishRemoval(); });
+    if (failure) {
+      expect(await screen.findByRole('alert')).toHaveTextContent('Removal failed.');
+      expect(screen.getByRole('button', { name: 'Download files (ZIP)' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Remove ZIP' })).toBeEnabled();
+    } else {
+      expect(screen.queryByRole('button', { name: 'Download files (ZIP)' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Remove ZIP' })).not.toBeInTheDocument();
+    }
+    expect(screen.getByText('Your CSV is ready.')).toBeInTheDocument();
   });
 
   it('shows a download warning without offering to retry a completed answer', async () => {

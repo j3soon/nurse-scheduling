@@ -26,6 +26,7 @@ import {
   createSession,
   downloadOptimization,
   downloadGeneratedZip,
+  removeGeneratedZip,
   getUploads,
   removeUpload,
   getAiBaseUrl,
@@ -623,6 +624,17 @@ describe('AI client', () => {
       'https://api.nursescheduling.org/ai/sessions/session%2Fid/downloads/turn%2Fid',
       { credentials: 'include', headers: { Authorization: 'Bearer zip-token' } },
     );
+  });
+
+  it('removes a generated ZIP with the session credentials', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'The ZIP is no longer available.' }), { status: 404 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await removeGeneratedZip('session/id', 'turn/id', 'zip-token');
+    expect(fetchMock).toHaveBeenLastCalledWith('https://api.nursescheduling.org/ai/sessions/session%2Fid/downloads/turn%2Fid', {
+      method: 'DELETE', credentials: 'include', headers: { Authorization: 'Bearer zip-token' },
+    });
+    await expect(removeGeneratedZip('session/id', 'turn/id', 'zip-token')).rejects.toThrow('The ZIP is no longer available.');
   });
 
   it('downloads an optimizer result with authentication', async () => {

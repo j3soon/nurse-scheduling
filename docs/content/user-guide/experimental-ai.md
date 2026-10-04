@@ -172,6 +172,8 @@ Use **Download files (ZIP)** below its answer. The archive and its uncompressed
 contents are each limited to 50 MB by default. Downloads remain available while
 the chat session exists, subject to the service memory limit. A workspace path
 printed in an answer is not itself a download link.
+Use **Remove ZIP** after saving a file you no longer need in the chat. This frees
+session storage for new files and removes that ZIP's download button.
 
 ## Ask how to use the app
 
