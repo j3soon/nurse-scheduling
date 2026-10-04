@@ -299,26 +299,36 @@
     "file": "steps/proposal-approval-boundary.md",
     "cases": [
       "proposal-is-not-saved-yet",
+      "chat-approve-does-not-apply",
       "approved-description-is-current"
     ],
-    "hypothesis": "Describes current-turn changes as awaiting approval.",
-    "sha256": "d18dfbf5eec7be545e4d6f8b793948c78dd68e9e6b6fed33d4d886f17b78223d",
+    "hypothesis": "Describes current-turn changes as awaiting approval and sends the user to the Approve button instead of claiming to approve them.",
+    "sha256": "9a8abcdb84a3e8735d5f66260ab211c4ebc90ab9b5b0ad9ac74c807b8d0eeaef",
     "evidence": [
       {
         "case": "proposal-is-not-saved-yet",
-        "input_sha256": "3a48e4502120bda805ae6501ad6a23172463f857ccef516749e2568905771986",
-        "before": "0/5",
-        "after": "5/5",
+        "input_sha256": "691c26a7acd75207d9de4f5aec8c33b8b1334fb1e6b7704b6686f51970083cdf",
+        "before": "0/3",
+        "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
         "controls": [
           {
             "case": "approved-description-is-current",
-            "input_sha256": "894dddde0f1281828d63041a2fb42b9a1665d845dfc7f4cbdda15a5872a8f47e",
-            "before": "5/5",
-            "after": "5/5"
+            "input_sha256": "137ae1933aa87f6a918862c0eaea0d908e3afdc0740f967fac8a95e8a4709454",
+            "before": "3/3",
+            "after": "3/3"
           }
         ]
+      },
+      {
+        "case": "chat-approve-does-not-apply",
+        "input_sha256": "6bc7763b1b403e90f69cdf3992131dcee949ebcaa7d9471af265e1fe3bb2d84d",
+        "before": "0/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "note": "Without the clause, the agent treats a typed approve as approval and edits the schedule again."
       }
     ]
   },

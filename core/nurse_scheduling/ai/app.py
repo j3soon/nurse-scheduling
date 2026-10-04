@@ -102,15 +102,15 @@ from .validation import new_schedule_issues, validate_frontend_schedule_yaml
 SERVICE_NAME = "nurse-scheduling-ai-api"
 API_VERSION = "0.2.0"
 OWNER_COOKIE = "nurse_scheduling_ai_owner"
-PROPOSAL_APPROVED_HISTORY = f"{APP_EVENT_PREFIX} The user approved the previous schedule proposal. Its changes are now part of the current canonical schedule."
+PROPOSAL_APPROVED_HISTORY = f"{APP_EVENT_PREFIX} The user approved the previous schedule proposal. Its changes are now part of the current schedule."
 PROPOSAL_REJECTED_HISTORY = (
     f"{APP_EVENT_PREFIX} The user rejected the previous schedule proposal. All schedule changes made during that agent turn were "
-    "discarded. This turn starts with a fresh workspace containing the current canonical schedule."
+    "discarded. This turn starts with a fresh workspace containing the current schedule."
 )
 PROPOSAL_INVALID_HISTORY = (
     f"{APP_EVENT_PREFIX} The previous schedule proposal failed trusted validation when the user approved it, so it was discarded. All "
     "schedule changes made during that agent turn were dropped. This turn starts with a fresh workspace containing "
-    "the current canonical schedule."
+    "the current schedule."
 )
 ORIGIN_REGEX = (
     r"^(http://(localhost|127\.0\.0\.1|host\.docker\.internal|10(?:\.[0-9]{1,3}){3}|"
