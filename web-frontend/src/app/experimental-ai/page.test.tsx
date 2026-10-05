@@ -672,10 +672,10 @@ describe('ExperimentalAiPage', () => {
     expect(optimizerInput).toHaveClass('mr-auto');
     expect(optimizerInput?.previousElementSibling).toHaveTextContent('Background system prompt');
     expect(optimizerInput?.nextElementSibling).toHaveTextContent('Optimization result: result.xlsx.');
-    expect(screen.getByText('Background tool running · bash')).toBeInTheDocument();
+    expect(screen.queryByText('Background tool running · bash')).not.toBeInTheDocument();
     expect(screen.getByText('bash · running')).toBeInTheDocument();
     await user.click(screen.getByRole('checkbox', { name: 'Show tool activity' }));
-    expect(screen.getByText('Background tool running · bash')).toBeInTheDocument();
+    expect(screen.queryByText('Background tool running · bash')).not.toBeInTheDocument();
     expect(screen.queryByText('bash · running')).not.toBeInTheDocument();
 
     act(() => {

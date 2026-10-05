@@ -1991,8 +1991,6 @@ export default function ExperimentalAiPage() {
     if (!attachmentPickerDisabled) addAttachments(Array.from(event.dataTransfer.files));
   };
   const serverLocked = sessionIdRef.current !== null || messages.length > 0;
-  const backgroundRunningTool = messages.find(message => message.id === backgroundAssistantIdRef.current)
-    ?.activity?.find(entry => entry.kind === 'tool' && entry.state === 'running');
 
   const applyProposal = async () => {
     const sessionId = sessionIdRef.current;
@@ -2517,12 +2515,6 @@ export default function ExperimentalAiPage() {
                 {activeOptimization.points.length > 1 && <OptimizationSparkline points={activeOptimization.points} />}
               </div>
             )}
-          </div>
-        )}
-        {backgroundRunningTool?.kind === 'tool' && (
-          <div role="status" className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
-            <span aria-hidden="true" className="h-2 w-2 animate-pulse rounded-full bg-blue-600" />
-            <span>Background tool running · {backgroundRunningTool.name}</span>
           </div>
         )}
         {queuedMessages.length > 0 && (
