@@ -87,6 +87,17 @@ exact browser origin. A loopback-only browser check can miss CORS failures.
 Replayable AI session events use `Last-Event-ID`, so include it in backend CORS
 preflight coverage. Keep object URLs for chat and workbook downloads alive until the
 download is replaced or the page unmounts.
+
+Use the shared `savedState` for AI input and Save and Load YAML. Omit automatically
+generated export defaults from both, while preserving explicit empty or custom
+layouts. Generate workbook defaults only at the optimizer submission boundary.
+
+For reconnect tests, verify that the active HTTP stream actually closes. Browser
+offline emulation alone can leave an existing stream open. Assert that reconnect
+uses the same request ID and executes the accepted question only once. Mock
+`/capabilities` with the real authentication and attachment-limit contract so
+reload recovery follows the production path.
+
 For AI chat issues involving the deployed service, test the real browser UI
 against `https://api-staging.nursescheduling.org/ai`. Run the local frontend,
 select that URL in the AI server control, and use `AI_AUTH_TOKEN` from the

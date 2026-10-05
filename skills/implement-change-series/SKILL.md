@@ -43,7 +43,11 @@ Choose commit boundaries by behavior and revertability:
 
 For each planned commit:
 
-1. Implement the smallest complete slice, including its necessary tests and
+1. For a regression, reproduce it with a focused testcase before fixing it.
+   Record the specific failing assertion, then require the same testcase to pass
+   with the fix. Run baseline comparisons in an isolated checkout with its own
+   processes. Do not swap source files while another check or server reads them.
+   Implement the smallest complete slice, including its necessary tests and
    documentation.
 2. Run the narrow affected checks before committing. Confirm the command
    selected the intended tests because a successful run with every relevant

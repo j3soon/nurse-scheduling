@@ -93,6 +93,15 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
 - Keep attachment limits server-configured and report them through
   `/capabilities`. Attachments and the optimizer tool are always offered.
   Keep schedules and attachments separate from model instructions.
+- Keep accepted AI turns independent of the browser stream. Reconnect with the
+  same `message_id` to replay output, without repeating provider or tool calls.
+  Keep complete replay snapshots separate from the bounded event buffer. Persist
+  accepted questions and terminal state when recovery storage is enabled.
+  Optimizer progress can remain transient.
+- Test Stop before acceptance, during execution, and after completion but before
+  acknowledgement. Verify recovery after buffer overflow and backend restart,
+  including session ownership and expiry. Use an isolated UTF-8 PostgreSQL
+  database with fresh migrations for persistence tests.
 - Bound uploads before provider calls and place them under fixed sandbox paths.
   Retain uploaded source files only until the user removes them or the session expires.
   Count retained files and generated downloads against the session memory budget.
