@@ -1,0 +1,35 @@
+{
+  "id": "new-schedule-qualified-slots",
+  "fixture": "new-schedule",
+  "question": "I am creating a schedule from scratch for next month. There are nine nurses. Six are seniors and three are other nurses. Every day, day and evening each need one senior and one other nurse, and night needs one senior. Explain how you would represent these staffing rules before making any changes. Do not edit yet.",
+  "expect_proposal": false,
+  "answer_contains": [
+    "D+",
+    "E+",
+    "N+"
+  ],
+  "answer_not_matches": [
+    "cannot.*(?:represent|enforce).*senior"
+  ],
+  "tool_usage": {
+    "required_calls": [
+      {
+        "name": "read",
+        "arguments": {
+          "path": "/reference/user-guide/build-a-real-schedule.md"
+        }
+      }
+    ],
+    "forbidden": [
+      "edit",
+      "write",
+      "optimizer"
+    ]
+  },
+  "tags": [
+    "app-ui",
+    "new-schedule",
+    "staffing"
+  ],
+  "note": "This testcase is mostly AI generated. Synthetic reproduction of late qualified-slot guidance. Explain separate senior and other slots before construction, preserving the requested staffing composition."
+}
