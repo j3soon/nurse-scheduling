@@ -2752,6 +2752,20 @@ describe('useSchedulingData', () => {
     expect(result.current.effectiveExportData).toBe(generated);
   });
 
+  it('preserves automatic and custom export layouts through saved schedule round trips', () => {
+    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    act(() => result.current.createNewState());
+    expect(result.current.savedState.export).toBeUndefined();
+    act(() => result.current.loadFromYaml({ ...result.current.savedState, description: 'AI edit' }));
+    expect(result.current.exportData).toBeUndefined();
+    expect(result.current.effectiveExportData.formatting?.length).toBeGreaterThan(0);
+    act(() => result.current.updateExportConfig({ formatting: [] }));
+    const customState = result.current.savedState;
+    expect(customState.export).toEqual(expect.objectContaining({ formatting: [] }));
+    act(() => result.current.loadFromYaml({ ...customState, description: 'Another AI edit' }));
+    expect(result.current.exportData?.formatting).toEqual([]);
+  });
+
   it('logs and no-ops when duplicate preference or export indexes are invalid', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
