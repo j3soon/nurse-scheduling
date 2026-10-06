@@ -1062,8 +1062,10 @@ def create_app(
     ) -> None:
         if history_log is None:
             return
+        # Deliver terminal and optimizer status events even when saving fails. Otherwise an
+        # outage leaves the browser waiting and stops the optimizer from waking the agent.
         if event_type in {"done", "stopped", "stale", "error"}:
-            if not await history_log.write(
+            await history_log.write(
                 "finish_recovery_turn",
                 session_id,
                 *store.recovery_state(session_id),
@@ -1072,10 +1074,13 @@ def create_app(
                 event_type,
                 data,
                 metadata,
-            ):
-                raise RuntimeError("AI message recovery is temporarily unavailable.")
+            )
             return
-        if event_type in {"turn_start", "optimization"} and not await save_session(session_id):
+        if event_type == "optimization":
+            if await save_session(session_id):
+                await history_log.write("append_recovery_event", session_id, "background", event_id, event_type, data)
+            return
+        if event_type == "turn_start" and not await save_session(session_id):
             raise RuntimeError("AI message recovery is temporarily unavailable.")
         if not await history_log.write("append_recovery_event", session_id, "background", event_id, event_type, data):
             raise RuntimeError("AI message recovery is temporarily unavailable.")

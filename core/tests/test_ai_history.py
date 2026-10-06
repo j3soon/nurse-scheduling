@@ -256,6 +256,31 @@ def test_final_write_failure_preserves_successful_conversation(recorded_history,
     assert "secret-database-url" not in caplog.text
 
 
+@pytest.mark.parametrize("failing", [("append_recovery_event",), ("start_recovery_turn", "finish_recovery_turn")])
+def test_background_recovery_outage_releases_session_and_reports_status(recorded_history, monkeypatch, failing):
+    def unavailable(*_args):
+        raise psycopg.OperationalError("secret-database-url")
+
+    for operation in (*failing, "save_recovery_session"):
+        monkeypatch.setattr(ChatHistory, operation, unavailable)
+
+    async def exercise():
+        app = basic.create_test_app(
+            settings=basic.make_settings(history_postgres_url="test"), provider=basic.FakeProvider()
+        )
+        session = app.state.session_store.create(str(uuid4()), basic.schedule_yaml())
+        optimizer = app.state.session_optimizer
+        await optimizer._on_update(session.id, {"job_id": "job", "state": "completed", "terminal": True})
+        await optimizer._on_completion(session.id, "Optimizer finished", None)
+        events = app.state.session_event_broker.events_after(session.id)
+        return [event.type for event in events], app.state.session_store._sessions[session.id].active
+
+    event_types, active = asyncio.run(exercise())
+    assert event_types[0] == "optimization"
+    assert event_types[-1] == "error"
+    assert not active
+
+
 def test_database_unavailable_prevents_startup(recorded_history, monkeypatch):
     def unavailable(*_args):
         raise psycopg.OperationalError("secret")

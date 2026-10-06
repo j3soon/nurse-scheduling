@@ -486,32 +486,6 @@ async def run_background_turn(
                 {"message": "AI message recovery is unavailable, so the optimizer result was not reviewed."},
             )
             return
-        await event_broker.emit(session_id, "turn_start", {"message_id": turn_id, "trigger": "optimizer"})
-        context_chars = history_context_chars(history, settings.max_history_chars)
-        await event_broker.emit(session_id, "context_usage", context_usage(context_chars, settings))
-        retained_history = recent_history(history, settings.max_history_chars)
-        dropped_history = previously_dropped + len(history) - len(retained_history)
-        if dropped_history:
-            await event_broker.emit(
-                session_id,
-                "history_trimmed",
-                {"dropped": dropped_history},
-            )
-        attachments = store.attachments(session_id)
-        messages = build_provider_messages(
-            retained_history,
-            schedule_yaml,
-            question,
-            attachments,
-            system_prompt=SANDBOX_SYSTEM_PROMPT,
-            pending_proposal=bool(proposal_yaml),
-            optimizer_result_available=artifact is not None,
-            max_history_chars=settings.max_history_chars,
-            max_download_bytes=settings.max_download_bytes,
-        )
-        await event_broker.emit(
-            session_id, "model_input", model_input(messages, len(retained_history), dropped_history, "optimizer")
-        )
         assistant_parts: list[str] = []
         pending_proposal: AgentProposal | None = None
         pending_download: bytes | None = None
@@ -533,6 +507,33 @@ async def run_background_turn(
             )
 
         try:
+            # A failed recovery write raises from emit, so the turn must already release the session.
+            await event_broker.emit(session_id, "turn_start", {"message_id": turn_id, "trigger": "optimizer"})
+            context_chars = history_context_chars(history, settings.max_history_chars)
+            await event_broker.emit(session_id, "context_usage", context_usage(context_chars, settings))
+            retained_history = recent_history(history, settings.max_history_chars)
+            dropped_history = previously_dropped + len(history) - len(retained_history)
+            if dropped_history:
+                await event_broker.emit(
+                    session_id,
+                    "history_trimmed",
+                    {"dropped": dropped_history},
+                )
+            attachments = store.attachments(session_id)
+            messages = build_provider_messages(
+                retained_history,
+                schedule_yaml,
+                question,
+                attachments,
+                system_prompt=SANDBOX_SYSTEM_PROMPT,
+                pending_proposal=bool(proposal_yaml),
+                optimizer_result_available=artifact is not None,
+                max_history_chars=settings.max_history_chars,
+                max_download_bytes=settings.max_download_bytes,
+            )
+            await event_broker.emit(
+                session_id, "model_input", model_input(messages, len(retained_history), dropped_history, "optimizer")
+            )
             async with concurrency_limit:
                 agent_events = run_sandbox_agent(
                     provider,
