@@ -55,9 +55,11 @@ class ReplayTurn:
     retired: bool = False
     durable_terminal: bool = False
     signal: asyncio.Event = field(default_factory=asyncio.Event)
+    measured_bytes: int | None = None
 
     def append(self, event_id: int, event_type: str, data: dict) -> None:
         self.cursor = event_id
+        self.measured_bytes = None
         self.recent.append((event_id, event_type, deepcopy(data)))
         append_compacted(self.events, event_type, data)
         self.terminal = event_type in TERMINAL_EVENTS
@@ -129,12 +131,7 @@ class TurnJournal:
     def trim_cache(self) -> None:
         if self.history is None:
             return
-        sizes = {
-            key: len(json.dumps(turn.events).encode())
-            + len(json.dumps(list(turn.recent)).encode())
-            + len(turn.question.encode())
-            for key, turn in self.turns.items()
-        }
+        sizes = {key: self.cached_bytes(turn) for key, turn in self.turns.items()}
         retained = sum(sizes.values())
         for key, turn in tuple(self.turns.items()):
             if retained <= self.max_cached_bytes:
@@ -142,6 +139,17 @@ class TurnJournal:
             if turn.durable_terminal:
                 del self.turns[key]
                 retained -= sizes[key]
+
+    @staticmethod
+    def cached_bytes(turn: ReplayTurn) -> int:
+        """Measure a turn once per change, because serializing every cached turn blocks the event loop."""
+        if turn.measured_bytes is None:
+            turn.measured_bytes = (
+                len(json.dumps(turn.events).encode())
+                + len(json.dumps(list(turn.recent)).encode())
+                + len(turn.question.encode())
+            )
+        return turn.measured_bytes
 
     async def start(
         self, session_id: str, turn_id: str, request_id: str, question: str, metadata: dict | None = None
