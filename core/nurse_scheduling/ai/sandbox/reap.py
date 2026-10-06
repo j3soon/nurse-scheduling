@@ -88,7 +88,8 @@ async def reap_once(
 
 def main() -> int:
     """Run one cleanup pass for use by cron or a platform scheduler."""
-    configure_service_logging(logger)
+    # The parent logger also reports each kill outcome from the cleanup manager.
+    configure_service_logging(logging.getLogger("nurse_scheduling.ai.sandbox"))
     init_sentry(get_app_version(), app="ai-reaper")
     try:
         return asyncio.run(reap_once())
