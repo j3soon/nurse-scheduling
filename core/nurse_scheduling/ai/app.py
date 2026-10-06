@@ -909,6 +909,7 @@ def create_app(
     event_broker = SessionEventBroker(max_sessions=settings.max_sessions, max_snapshot_bytes=settings.max_session_bytes)
     turn_journal = TurnJournal(history_log, settings.max_session_bytes)
     turn_workers: set[asyncio.Task] = set()
+    shutting_down = False
     recovery_lock = asyncio.Lock()
     turn_locks: dict[str, asyncio.Lock] = {}
     active_turn_tasks: dict[str, asyncio.Task[object]] = {}
@@ -1065,6 +1066,8 @@ def create_app(
         # Deliver terminal and optimizer status events even when saving fails. Otherwise an
         # outage leaves the browser waiting and stops the optimizer from waking the agent.
         if event_type in {"done", "stopped", "stale", "error"}:
+            if event_type == "stopped" and shutting_down:
+                return
             await history_log.write(
                 "finish_recovery_turn",
                 session_id,
@@ -1101,6 +1104,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        nonlocal shutting_down
         prepare_sandbox = getattr(sandbox_factory, "prepare", None)
         if prepare_sandbox is not None:
             await prepare_sandbox()
@@ -1111,6 +1115,9 @@ def create_app(
             async with managed_sandbox_factory(sandbox_factory):
                 yield
         finally:
+            # Interrupted turns stay running in recovery storage, so the restarted
+            # service reports a restart instead of a user Stop.
+            shutting_down = True
             for task in tuple(turn_workers):
                 task.cancel()
             await asyncio.gather(*turn_workers, return_exceptions=True)
@@ -1685,6 +1692,7 @@ def create_app(
         async def run_turn() -> None:
             queue = asyncio.Queue(maxsize=64)
             terminal = None
+            shutdown = False
 
             async def collect_events() -> None:
                 source = generate_events()
@@ -1723,7 +1731,9 @@ def create_app(
                         else:
                             await turn_journal.publish(replay_turn, event["type"], event["data"])
             except asyncio.CancelledError:
-                terminal = saved_outcome or ("stopped", {"message_id": turn_id})
+                # Only shutdown cancels this worker. Stop cancels the event source instead.
+                terminal = saved_outcome or terminal
+                shutdown = True
             except Exception:
                 logger.exception("AI turn recovery failed session_id=%s", session_id)
                 replay_turn.append(
@@ -1736,9 +1746,12 @@ def create_app(
             finally:
                 if not collector.done():
                     collector.cancel()
-                # Release a producer waiting for a full queue before joining it.
+                # Release a producer waiting for a full queue before joining it. Keep a
+                # terminal event that the turn queued before shutdown.
                 while not queue.empty():
-                    queue.get_nowait()
+                    event = queue.get_nowait()
+                    if shutdown and terminal is None and event and event[0] in {"done", "stopped", "stale", "error"}:
+                        terminal = event
                 await asyncio.gather(collector, return_exceptions=True)
                 if terminal is not None:
                     await turn_journal.finish(

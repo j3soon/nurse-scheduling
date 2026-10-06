@@ -782,3 +782,58 @@ def test_postgres_stop_before_message_arrival_survives_restart(postgres_history)
         assert basic.parse_sse(result.text, include_model_input=True)[-1][0] == "stopped"
         assert provider.calls == []
         assert restarted.state.session_store._sessions[session].history == []
+
+
+@pytest.mark.parametrize("kind", ["foreground", "background"])
+def test_postgres_shutdown_reports_interrupted_turn_as_restart(postgres_history, kind):
+    started = asyncio.Event()
+
+    class WaitingProvider:
+        async def stream_events(self, messages, tools=None):
+            yield TextDelta("Saved partial output")
+            started.set()
+            await asyncio.Event().wait()
+
+    settings = basic.make_settings(history_postgres_url="test")
+
+    async def exercise():
+        app = basic.create_test_app(settings=settings, provider=WaitingProvider())
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://testserver",
+                headers={"Authorization": f"Bearer {basic.AI_AUTH_TOKEN}"},
+            ) as client,
+        ):
+            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            if kind == "foreground":
+                request = client.post(f"/sessions/{session_id}/messages", json={"message": "Q", "message_id": "m"})
+            else:
+                optimizer = app.state.session_optimizer
+                request = optimizer._on_completion(session_id, "Optimizer finished", None)
+            task = asyncio.create_task(request)
+            if kind == "background":
+                optimizer._tasks.add(task)
+            await asyncio.wait_for(started.wait(), timeout=5)
+            if kind == "foreground":
+                # The browser disconnects while the server keeps working.
+                task.cancel()
+            await asyncio.sleep(0.1)
+        await asyncio.gather(task, return_exceptions=True)
+        return session_id, client.cookies.get(basic.OWNER_COOKIE)
+
+    session_id, owner = asyncio.run(exercise())
+    restarted = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
+    with basic.AuthenticatedTestClient(restarted) as client:
+        client.cookies.set(basic.OWNER_COOKIE, owner)
+        if kind == "foreground":
+            response = client.post(f"/sessions/{session_id}/messages", json={"message": "Q", "message_id": "m"})
+            assert "service restarted" in response.text and "Saved partial output" in response.text
+        else:
+            assert client.get(f"/sessions/{session_id}").status_code == 200
+    with postgres_history._connect() as connection:
+        assert connection.execute("SELECT status, error_code FROM chat_recovery_turns").fetchone() == (
+            "failed",
+            "service_restart",
+        )
