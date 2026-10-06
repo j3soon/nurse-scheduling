@@ -106,6 +106,10 @@ cases ran. A passing suite with those cases skipped does not validate persistenc
   Keep complete replay snapshots separate from the bounded event buffer. Persist
   accepted questions and terminal state when recovery storage is enabled.
   Optimizer progress can remain transient.
+- Deliver terminal and optimizer status events even when their recovery write
+  fails. When a call that could not fail becomes an awaited write, check every
+  caller's failure path. Each caller must still release the session and report
+  a terminal event.
 - Keep durable entry identity separate from SSE cursors. After combining text
   fragments, restore complete output with a replacement snapshot. Test a cursor
   inside a combined entry and an entry crossing the replay tail boundary.
@@ -117,6 +121,12 @@ cases ran. A passing suite with those cases skipped does not validate persistenc
   acknowledgement. Verify recovery after buffer overflow and backend restart,
   including session ownership and expiry. Use an isolated UTF-8 PostgreSQL
   database with fresh migrations for persistence tests.
+- Test a graceful shutdown separately from a crash. Seeded running rows cover
+  only a crash. Exit the application lifespan during a turn, then check that
+  recovery reports a restart instead of a user Stop.
+- A fake provider that sleeps between fragments starts each delay only after
+  the consumer asks for the next event. A network stream keeps arriving during
+  that work. Treat such stream timings as an upper bound.
 - Bound uploads before provider calls and place them under fixed sandbox paths.
   Retain uploaded source files only until the user removes them or the session expires.
   Count retained files and generated downloads against the session memory budget.
