@@ -97,6 +97,10 @@ Reloading the same tab also resumes an unfinished request. **Stop** requests
 cancellation on the server and waits for its outcome. An answer that completed
 before Stop remains a completed answer.
 
+You can switch to another app page while the assistant answers. Returning to
+chat resumes the conversation. The app still warns before leaving with unsent
+text or selected files.
+
 A failed turn keeps its original question and provisional output visible. **Retry**
 starts a new attempt. Reconnecting an accepted request keeps the same message ID,
 so it does not send the question to the model twice. Failed and stopped output is

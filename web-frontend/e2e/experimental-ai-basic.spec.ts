@@ -862,7 +862,7 @@ test('restores interleaved foreground and optimizer replies in chat and export o
   expect(positions).toEqual([...positions].sort((first, second) => first - second));
 });
 
-for (const interruption of ['network pause', 'reload'] as const) {
+for (const interruption of ['network pause', 'reload', 'tab switch'] as const) {
   test(`recovers the complete answer after a ${interruption}`, async ({ page, context }) => {
     const origin = frontendOrigin();
     const requests: { message: string; message_id: string; last_event_id: number }[] = [];
@@ -898,7 +898,7 @@ for (const interruption of ['network pause', 'reload'] as const) {
           executions += 1;
           response.write('id: 1\nevent: delta\ndata: {"text":"First part and "}\n\n');
           setTimeout(() => response.destroy(), 150);
-          setTimeout(complete, 750);
+          if (interruption !== 'tab switch') setTimeout(complete, 750);
         } else {
           const events: { type: string; data: Record<string, string> }[] = [{ type: 'delta', data: { text: completed ? 'First part and complete answer.' : 'First part and ' } }];
           if (completed) events.push({ type: 'done', data: { message_id: 'turn' } });
@@ -924,6 +924,15 @@ for (const interruption of ['network pause', 'reload'] as const) {
         await expect.poll(() => completed).toBe(true);
         await context.setOffline(false);
         await page.evaluate(() => window.dispatchEvent(new Event('online')));
+      } else if (interruption === 'tab switch') {
+        const dialogs: string[] = [];
+        page.on('dialog', async dialog => { dialogs.push(dialog.message()); await dialog.accept().catch(() => {}); });
+        await expect(page.getByRole('textbox', { name: 'Ask about the current schedule' })).toHaveValue('');
+        await page.getByRole('button', { name: '1. Dates', exact: true }).click();
+        await expect(page).toHaveURL(/\/dates$/);
+        expect(dialogs).toEqual([]);
+        complete();
+        await page.getByRole('button', { name: '12. Experimental AI', exact: true }).click();
       } else await page.reload();
       await expect(page.getByText('First part and complete answer.', { exact: true })).toBeVisible();
       await expect(page.getByText('Continue while disconnected', { exact: true })).toHaveCount(1);

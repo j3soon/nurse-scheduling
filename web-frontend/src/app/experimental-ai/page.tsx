@@ -660,7 +660,7 @@ export default function ExperimentalAiPage() {
   }, []);
   hasMessagesRef.current = messages.length > 0;
   scheduleYamlRef.current = scheduleYaml;
-  useTabSwitchWarning(isStreaming || draft.trim().length > 0 || selectedAttachments.length > 0);
+  useTabSwitchWarning(draft.trim().length > 0 || selectedAttachments.length > 0);
 
   useEffect(() => {
     // Reading the stored preferences here keeps the server-rendered markup stable.
