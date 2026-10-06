@@ -206,7 +206,7 @@ export class AiStaleTurnError extends Error {
 
 export const PRODUCTION_AI_API_URL = 'https://api.nursescheduling.org/ai';
 export const LOCAL_AI_API_URL = 'http://localhost:8001';
-export const DEFAULT_SESSION_RETENTION_SECONDS = 48 * 60 * 60;
+export const DEFAULT_SESSION_RETENTION_SECONDS = 30 * 24 * 60 * 60;
 
 export function getAiBaseUrl(): string {
   const configuredUrl = process.env.NEXT_PUBLIC_AI_API_URL?.trim().replace(/\/$/, '');

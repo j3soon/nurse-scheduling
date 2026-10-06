@@ -100,6 +100,9 @@ reload recovery follows the production path.
 Replay must replace existing messages in their original positions, including
 optimizer input and steering replies. Capture the message ID before queuing React
 state updates because one replay snapshot can contain several replies.
+Browser timers have a maximum delay of about 24.8 days. Schedule longer session
+expiry in bounded intervals and recheck the timestamp after each wake. Cover
+both the intermediate wake and the final expiry with a clock-controlled test.
 
 For AI chat issues involving the deployed service, test the real browser UI
 against `https://api-staging.nursescheduling.org/ai`. Run the local frontend,

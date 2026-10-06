@@ -59,7 +59,7 @@ const mockNormalizeAiEndpoint = vi.hoisted(() => (endpoint: string) => {
 vi.mock('./aiClient', () => ({
   AiHttpError: MockAiHttpError,
   AiStaleTurnError: MockAiStaleTurnError,
-  DEFAULT_SESSION_RETENTION_SECONDS: 172800,
+  DEFAULT_SESSION_RETENTION_SECONDS: 2592000,
   LOCAL_AI_API_URL: 'http://localhost:8001',
   PRODUCTION_AI_API_URL: 'https://api.nursescheduling.org/ai',
   createSession: mockCreateSession,
@@ -115,7 +115,7 @@ vi.mock('@/utils/unsavedEditingState', () => ({
 
 const defaultCapabilities = {
   app_version: 'v0.4.3',
-  session_retention_seconds: 172800,
+  session_retention_seconds: 2592000,
   file_attachments: {
     enabled: true,
     max_files: 8,
@@ -125,6 +125,7 @@ const defaultCapabilities = {
 
 describe('ExperimentalAiPage', () => {
   beforeEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined);
     mockCreateSession.mockReset().mockResolvedValue('session-id');
@@ -135,7 +136,7 @@ describe('ExperimentalAiPage', () => {
     mockDownloadOptimization.mockReset().mockResolvedValue(new Blob(['workbook']));
     mockGetCapabilities.mockReset().mockResolvedValue(defaultCapabilities);
     mockGetBackendVersion.mockReset().mockResolvedValue('v0.4.3');
-    mockGetSessionStatus.mockReset().mockResolvedValue(172800);
+    mockGetSessionStatus.mockReset().mockResolvedValue(2592000);
     mockStreamMessage.mockReset().mockImplementation(async (
       _sessionId: string,
       _message: string,
@@ -417,11 +418,11 @@ describe('ExperimentalAiPage', () => {
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'First question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
-    const firstExpiration = new Date(now + 172800 * 1000).toISOString();
+    const firstExpiration = new Date(now + 2592000 * 1000).toISOString();
     await waitFor(() => expect(screen.getByLabelText('Chat expiration')).toHaveAttribute('dateTime', firstExpiration));
     const expirationNotice = screen.getByLabelText('Chat expiration').closest('p');
     expect(expirationNotice).toHaveTextContent(/^Chat expires at /);
-    expect(expirationNotice).toHaveTextContent(/Each new message extends the chat for another 48 hours/);
+    expect(expirationNotice).toHaveTextContent(/Each new message extends the chat for another 30 days/);
     expect(screen.getByRole('region', { name: 'Chat messages' }).lastElementChild).toBe(expirationNotice);
 
     const oneHourLater = now + 60 * 60 * 1000;
@@ -429,8 +430,30 @@ describe('ExperimentalAiPage', () => {
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Second question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
-    const renewedExpiration = new Date(oneHourLater + 172800 * 1000).toISOString();
+    const renewedExpiration = new Date(oneHourLater + 2592000 * 1000).toISOString();
     await waitFor(() => expect(screen.getByLabelText('Chat expiration')).toHaveAttribute('dateTime', renewedExpiration));
+  });
+
+  it('keeps a thirty-day chat through the browser timer limit until its real expiry', async () => {
+    vi.useFakeTimers();
+    const now = Date.parse('2026-09-19T08:30:00Z');
+    vi.setSystemTime(now);
+    window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'long-session', endpoint: '/ai', expiresAt: now + 2592000 * 1000,
+      retentionSeconds: 2592000, messages: [{ id: 'user-1', role: 'user', content: 'Keep this chat' }],
+      syncedSchedule: 'description: old schedule\n', proposalDiff: null,
+      contextUsage: null, hasPendingProposal: false, backendSyncRequired: false, lastSessionEventId: 0,
+    }));
+    render(<ExperimentalAiPage />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(screen.getByLabelText('Chat expiration')).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(2147483647); });
+    expect(screen.queryByText(/This chat expired/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Chat expiration')).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(2592000 * 1000 - 2147483647 - 1); });
+    expect(screen.queryByText(/This chat expired/)).not.toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(screen.getByText(/This chat expired after 30 days/)).toBeInTheDocument();
   });
 
   it('reports an expired stored chat and requires a new conversation', async () => {
@@ -438,7 +461,7 @@ describe('ExperimentalAiPage', () => {
       sessionId: 'expired-session',
       endpoint: '/ai',
       expiresAt: Date.now() - 1,
-      retentionSeconds: 172800,
+      retentionSeconds: 2592000,
       messages: [{ id: 'user-1', role: 'user', content: 'Old question' }],
       syncedSchedule: 'description: old schedule\n',
       proposalDiff: null,
@@ -447,7 +470,7 @@ describe('ExperimentalAiPage', () => {
     render(<ExperimentalAiPage />);
 
     expect(await screen.findByText('Old question')).toBeInTheDocument();
-    expect(screen.getByText(/expired after 48 hours of inactivity/)).toBeInTheDocument();
+    expect(screen.getByText(/expired after 30 days of inactivity/)).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeDisabled();
     expect(mockGetSessionStatus).not.toHaveBeenCalled();
     expect(window.sessionStorage.getItem('nurse-scheduling-ai-conversation')).toBeNull();
@@ -478,7 +501,7 @@ describe('ExperimentalAiPage', () => {
       sessionId: 'missing-session',
       endpoint: '/ai',
       expiresAt: Date.now() + 60_000,
-      retentionSeconds: 172800,
+      retentionSeconds: 2592000,
       messages: [{ id: 'user-1', role: 'user', content: 'Preserve this transcript' }],
       syncedSchedule: 'description: old schedule\n',
       proposalDiff: null,
@@ -508,7 +531,7 @@ describe('ExperimentalAiPage', () => {
       sessionId: 'restored-session',
       endpoint: '/ai',
       expiresAt: Date.now() + 60_000,
-      retentionSeconds: 172800,
+      retentionSeconds: 2592000,
       messages: [{ id: 'user-1', role: 'user', content: 'Stored question' }],
       syncedSchedule: 'description: old schedule\n',
       proposalDiff: null,
@@ -839,7 +862,7 @@ describe('ExperimentalAiPage', () => {
       sessionId: 'restored-session',
       endpoint: '/ai',
       expiresAt: Date.now() + 60_000,
-      retentionSeconds: 172800,
+      retentionSeconds: 2592000,
       messages: [{ id: 'optimizer-turn', role: 'assistant', content: 'Completed answer.', status: 'pending' }],
       syncedSchedule: 'description: current schedule\n',
       proposalDiff: null,
@@ -867,7 +890,7 @@ describe('ExperimentalAiPage', () => {
     if (requiresToken) mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, auth: { required: true, scheme: 'bearer' } });
     const request = { id: 'original-request', question: 'Keep working', questionId: 'question', assistantId: 'answer', active: true };
     window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
-      sessionId: 'restored-session', endpoint: '/ai', expiresAt: Date.now() + 60_000, retentionSeconds: 172800,
+      sessionId: 'restored-session', endpoint: '/ai', expiresAt: Date.now() + 60_000, retentionSeconds: 2592000,
       messages: [
         { id: 'question', role: 'user', content: request.question, requestId: request.id },
         { id: 'answer', role: 'assistant', content: 'Partial', status: 'pending', requestId: request.id, request },
@@ -900,7 +923,7 @@ describe('ExperimentalAiPage', () => {
     const request = { id: 'original-request', question: 'Optimize it.', questionId: 'question', assistantId: 'answer', active: true };
     const startedAt = Date.now() - 120_000;
     window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
-      sessionId: 'restored-session', endpoint: '/ai', expiresAt: Date.now() + 60_000, retentionSeconds: 172800,
+      sessionId: 'restored-session', endpoint: '/ai', expiresAt: Date.now() + 60_000, retentionSeconds: 2592000,
       messages: [
         { id: 'system', role: 'system', content: 'Shared instructions' },
         { id: 'question', role: 'user', content: request.question, requestId: request.id },
@@ -946,7 +969,7 @@ describe('ExperimentalAiPage', () => {
 
   it('keeps replayed background replies before later questions in the chat and export', async () => {
     window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
-      sessionId: 'restored-session', endpoint: '/ai', expiresAt: Date.now() + 60_000, retentionSeconds: 172800,
+      sessionId: 'restored-session', endpoint: '/ai', expiresAt: Date.now() + 60_000, retentionSeconds: 2592000,
       messages: [
         { id: 'system', role: 'system', content: 'Shared instructions' },
         { id: 'question', role: 'user', content: 'Optimize it.' },
@@ -1035,7 +1058,7 @@ describe('ExperimentalAiPage', () => {
       sessionId: 'restored-session',
       endpoint: '/ai',
       expiresAt: Date.now() + 60_000,
-      retentionSeconds: 172800,
+      retentionSeconds: 2592000,
       messages: [{ id: 'answer-1', role: 'assistant', content: 'Earlier answer.' }],
       syncedSchedule: 'description: current schedule\n',
       proposalDiff: null,
@@ -1059,7 +1082,7 @@ describe('ExperimentalAiPage', () => {
       sessionId: 'restored-session',
       endpoint: '/ai',
       expiresAt: Date.now() - 1_000,
-      retentionSeconds: 172800,
+      retentionSeconds: 2592000,
       messages: [{ id: 'answer-1', role: 'assistant', content: 'Earlier answer.' }],
       syncedSchedule: 'description: current schedule\n',
       proposalDiff: null,
@@ -1069,7 +1092,7 @@ describe('ExperimentalAiPage', () => {
 
     render(<ExperimentalAiPage />);
 
-    expect(await screen.findByText(/This chat expired after 48 hours of inactivity/)).toBeInTheDocument();
+    expect(await screen.findByText(/This chat expired after 30 days of inactivity/)).toBeInTheDocument();
     // An expired chat sends nothing, so a warning about what it omits would mislead.
     expect(screen.queryByText(/no longer sent to the assistant/)).not.toBeInTheDocument();
   });
@@ -1138,7 +1161,7 @@ describe('ExperimentalAiPage', () => {
       sessionId: 'restored-session',
       endpoint: '/ai',
       expiresAt: Date.now() + 60_000,
-      retentionSeconds: 172800,
+      retentionSeconds: 2592000,
       messages: [{ id: 'optimizer-turn', role: 'assistant', content: 'Partial ', status: 'pending' }],
       syncedSchedule: 'description: current schedule\n',
       proposalDiff: null,

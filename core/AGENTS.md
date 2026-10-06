@@ -98,6 +98,13 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   Keep complete replay snapshots separate from the bounded event buffer. Persist
   accepted questions and terminal state when recovery storage is enabled.
   Optimizer progress can remain transient.
+- Keep durable entry identity separate from SSE cursors. After combining text
+  fragments, restore complete output with a replacement snapshot. Test a cursor
+  inside a combined entry and an entry crossing the replay tail boundary.
+  Save execution status with terminal output and conversation context instead
+  of inferring status from a bounded replay buffer.
+- Keep execution metadata on recovery sessions and turns. Use one expiry policy
+  for content and metadata instead of adding a second conversation log.
 - Test Stop before acceptance, during execution, and after completion but before
   acknowledgement. Verify recovery after buffer overflow and backend restart,
   including session ownership and expiry. Use an isolated UTF-8 PostgreSQL

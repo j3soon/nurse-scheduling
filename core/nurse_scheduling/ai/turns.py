@@ -20,9 +20,13 @@
 # This file is mostly AI generated.
 
 import asyncio
+import json
 from collections import deque
 from copy import deepcopy
 from dataclasses import dataclass, field
+from typing import Any
+
+from .history import ChatHistory
 
 TERMINAL_EVENTS = frozenset({"done", "stopped", "stale", "error"})
 
@@ -46,8 +50,10 @@ class ReplayTurn:
     events: list[dict] = field(default_factory=list)
     recent: deque = field(default_factory=lambda: deque(maxlen=1000))
     cursor: int = 0
+    restored_cursor: int = 0
     terminal: bool = False
     retired: bool = False
+    durable_terminal: bool = False
     signal: asyncio.Event = field(default_factory=asyncio.Event)
 
     def append(self, event_id: int, event_type: str, data: dict) -> None:
@@ -59,7 +65,8 @@ class ReplayTurn:
 
     async def stream(self, cursor: int, snapshot: bool = False):
         """Replay missed events or send complete output when a cursor is too old."""
-        if snapshot:
+        # Stored entries can contain text both before and after the client's cursor.
+        if snapshot or cursor < self.restored_cursor:
             cursor = self.cursor
             yield cursor, "turn_snapshot", {"events": deepcopy(self.events)}
             if self.terminal:
@@ -92,29 +99,108 @@ class ReplayTurn:
 class TurnJournal:
     """Keep accepted questions and complete output beyond the bounded SSE buffer."""
 
-    def __init__(self) -> None:
+    def __init__(self, history: ChatHistory | None, max_cached_bytes: int = 256 * 1024 * 1024) -> None:
+        self.history = history
+        self.max_cached_bytes = max_cached_bytes
         self.turns: dict[tuple[str, str], ReplayTurn] = {}
         self.stopped_requests: set[tuple[str, str]] = set()
 
     async def request_stop(self, session_id: str, request_id: str) -> None:
+        if self.history is not None and not await self.history.write("stop_recovery_request", session_id, request_id):
+            raise RuntimeError("The stop request could not be saved. Please try again.")
         self.stopped_requests.add((session_id, request_id))
 
     async def was_stopped(self, session_id: str, request_id: str) -> bool:
-        return (session_id, request_id) in self.stopped_requests
+        if (session_id, request_id) in self.stopped_requests:
+            return True
+        if self.history is not None:
+            return bool(await self.history.read("recovery_request_stopped", session_id, request_id))
+        return False
 
     async def get(self, session_id: str, request_id: str) -> ReplayTurn | None:
-        return self.turns.get((session_id, request_id))
+        turn = self.turns.get((session_id, request_id))
+        if turn is None and self.history is not None:
+            record = await self.history.read("load_recovery_turn", session_id, request_id)
+            if record is not None:
+                turn = self.restore(session_id, [record])[0]
+                self.trim_cache()
+        return turn
 
-    async def start(self, session_id: str, turn_id: str, request_id: str, question: str) -> ReplayTurn:
+    def trim_cache(self) -> None:
+        if self.history is None:
+            return
+        sizes = {
+            key: len(json.dumps(turn.events).encode())
+            + len(json.dumps(list(turn.recent)).encode())
+            + len(turn.question.encode())
+            for key, turn in self.turns.items()
+        }
+        retained = sum(sizes.values())
+        for key, turn in tuple(self.turns.items()):
+            if retained <= self.max_cached_bytes:
+                break
+            if turn.durable_terminal:
+                del self.turns[key]
+                retained -= sizes[key]
+
+    async def start(
+        self, session_id: str, turn_id: str, request_id: str, question: str, metadata: dict | None = None
+    ) -> ReplayTurn:
         turn = ReplayTurn(turn_id, session_id, request_id, question)
         self.turns[session_id, request_id] = turn
+        if self.history is not None and not await self.history.write(
+            "start_recovery_turn", turn_id, session_id, request_id, question, metadata
+        ):
+            self.turns.pop((session_id, request_id), None)
+            raise RuntimeError("AI message recovery is temporarily unavailable.")
         return turn
 
     async def publish(self, turn: ReplayTurn, event_type: str, data: dict) -> None:
-        turn.append(turn.cursor + 1, event_type, data)
+        event_id = turn.cursor + 1
+        if self.history is not None and not await self.history.write(
+            "append_recovery_event", turn.session_id, turn.id, event_id, event_type, data
+        ):
+            raise RuntimeError("AI message recovery is temporarily unavailable.")
+        turn.append(event_id, event_type, data)
+        if turn.terminal:
+            turn.durable_terminal = self.history is not None
+            self.trim_cache()
 
-    async def finish(self, turn: ReplayTurn, event_type: str, data: dict) -> None:
-        turn.append(turn.cursor + 1, event_type, data)
+    async def finish(
+        self, turn: ReplayTurn, event_type: str, data: dict, *, state: tuple, metadata: dict | None = None
+    ) -> None:
+        event_id = turn.cursor + 1
+        persisted = self.history is not None
+        data = deepcopy(data)
+        if persisted and event_type == "done":
+            data["history_saved"] = True
+        if self.history is not None and not await self.history.write(
+            "finish_recovery_turn", turn.session_id, *state, turn.id, event_id, event_type, data, metadata
+        ):
+            turn.append(
+                event_id,
+                "warning",
+                {"message": "This response could not be saved for recovery after a service restart."},
+            )
+            event_id += 1
+            persisted = False
+            if event_type == "done":
+                data["history_saved"] = False
+        turn.append(event_id, event_type, data)
+        turn.durable_terminal = persisted
+        self.trim_cache()
+
+    def restore(self, session_id: str, records: list[dict[str, Any]]) -> list[ReplayTurn]:
+        restored = []
+        for record in records:
+            turn = ReplayTurn(record["id"], session_id, record["request_id"], record["question"])
+            for event in record["events"]:
+                turn.append(event["id"], event["type"], event["data"])
+            turn.restored_cursor = turn.cursor
+            turn.durable_terminal = turn.terminal
+            self.turns[session_id, turn.request_id] = turn
+            restored.append(turn)
+        return restored
 
     def forget_session(self, session_id: str) -> None:
         self.stopped_requests = {key for key in self.stopped_requests if key[0] != session_id}

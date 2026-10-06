@@ -91,7 +91,7 @@ describe('AI client', () => {
 
     await expect(getCapabilities()).resolves.toEqual({
       auth: null,
-      session_retention_seconds: 172800,
+      session_retention_seconds: 2592000,
       file_attachments: {
         enabled: true,
         max_files: 5,

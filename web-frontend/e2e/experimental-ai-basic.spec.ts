@@ -758,6 +758,7 @@ test('places uploads beside desktop chat and below mobile controls and allows re
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Read this file');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   const panel = page.getByRole('complementary', { name: 'Session files' });
+  await expect(panel.getByText(/may disappear after a server restart without prior notice/)).toBeVisible();
   await expect(panel.getByRole('button', { name: 'Remove ward.csv' })).toBeVisible();
   const panelBox = (await panel.boundingBox())!;
   const chatBox = (await page.getByRole('region', { name: 'Chat messages' }).boundingBox())!;

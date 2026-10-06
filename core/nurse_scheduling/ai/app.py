@@ -29,7 +29,7 @@ import threading
 import time
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from typing import Literal
 from uuid import UUID, uuid4
 
@@ -493,6 +493,41 @@ class SessionStore:
         with self._lock:
             self._get_owned(session_id, owner_token)
 
+    def recovery_state(self, session_id: str) -> tuple[str, float, dict]:
+        with self._lock:
+            session = self._sessions[session_id]
+            return (
+                session.owner_token,
+                time.time() + max(0, session.expires_at - time.monotonic()),
+                {
+                    "schedule_yaml": session.schedule_yaml,
+                    "history": [dict(message) for message in session.history],
+                    "proposal_yaml": session.proposal_yaml,
+                    "proposal_diff": session.proposal_diff,
+                    "dropped_history_messages": session.dropped_history_messages,
+                },
+            )
+
+    def restore(self, session_id: str, owner: str, record: dict) -> None:
+        with self._lock:
+            self._prune_expired()
+            remaining = record["expires_at"] - time.time()
+            if remaining <= 0:
+                raise HTTPException(status_code=404, detail="Chat session not found.")
+            if len(self._sessions) >= self._settings.max_sessions:
+                raise HTTPException(status_code=429, detail="The AI service has reached its session limit.")
+            state = record["state"]
+            session = ChatSession(
+                id=session_id,
+                owner_token=owner,
+                expires_at=time.monotonic() + remaining,
+                revision=schedule_revision(state["schedule_yaml"]),
+                **state,
+            )
+            self._require_capacity(_session_bytes(session))
+            self._sessions[session_id] = session
+            self._recount(session)
+
     def retain_uploads(
         self, session_id: str, owner_token: str | None, uploads: Sequence[SandboxAttachment]
     ) -> tuple[SandboxAttachment, ...]:
@@ -867,17 +902,14 @@ def create_app(
     settings = replace(settings, auth_token=auth_token, auth_tokens=auth_tokens)
     configure_request_logging(settings.request_log_enabled)
     provider = provider or OpenAiCompatibleProvider(settings, include_usage=True)
-    history_log = (
-        ChatHistory(settings.history_postgres_url, settings.history_retention_days)
-        if settings.history_postgres_url
-        else None
-    )
+    history_log = ChatHistory(settings.history_postgres_url) if settings.history_postgres_url else None
     if sandbox_factory is None:
         sandbox_factory = create_sandbox_factory(settings)
     store = SessionStore(settings)
-    event_broker = SessionEventBroker(max_sessions=settings.max_sessions)
-    turn_journal = TurnJournal()
+    event_broker = SessionEventBroker(max_sessions=settings.max_sessions, max_snapshot_bytes=settings.max_session_bytes)
+    turn_journal = TurnJournal(history_log, settings.max_session_bytes)
     turn_workers: set[asyncio.Task] = set()
+    recovery_lock = asyncio.Lock()
     turn_locks: dict[str, asyncio.Lock] = {}
     active_turn_tasks: dict[str, asyncio.Task[object]] = {}
     background_turn_tasks: dict[str, set[asyncio.Task[object]]] = {}
@@ -885,6 +917,62 @@ def create_app(
     concurrency_limit = asyncio.Semaphore(settings.max_concurrent_requests)
     auth_registry = create_auth_registry(settings.auth_token, settings.auth_tokens)
     require_auth = create_auth_dependency(auth_registry)
+
+    async def save_session(session_id: str, credential_id: str | None = None) -> bool:
+        if history_log is None:
+            return True
+        if session_id not in store._sessions:
+            return True
+        owner, expires_at, state = store.recovery_state(session_id)
+        return await history_log.write("save_recovery_session", session_id, owner, expires_at, state, credential_id)
+
+    async def restore_session(request: Request, owner: str | None = Cookie(default=None, alias=OWNER_COOKIE)) -> None:
+        session_id = request.path_params.get("session_id")
+        if session_id is None:
+            return
+        try:
+            store.require_owned(session_id, owner)
+            return
+        except HTTPException as exc:
+            if exc.status_code != 404 or history_log is None or owner is None:
+                raise
+        async with recovery_lock:
+            if session_id in store._sessions:
+                store.require_owned(session_id, owner)
+                return
+            try:
+                try:
+                    UUID(session_id)
+                    UUID(owner)
+                except ValueError:
+                    raise HTTPException(status_code=404, detail="Chat session not found.") from None
+                record = await history_log.read("load_recovery_session", session_id, owner)
+            except RuntimeError as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from None
+            if record is None:
+                raise HTTPException(status_code=404, detail="Chat session not found.")
+            store.restore(session_id, owner, record)
+            for turn in turn_journal.restore(session_id, record["turns"]):
+                if not turn.terminal:
+                    await turn_journal.finish(
+                        turn,
+                        "error",
+                        {
+                            "message": "The AI service restarted during this response. Your question and saved output were recovered. You can retry this turn."
+                        },
+                        state=(owner, record["expires_at"], record["state"]),
+                        metadata={"error_code": "service_restart"},
+                    )
+            event_broker.restore(session_id, record["background_events"])
+            if record["background_status"] == "running":
+                await event_broker.emit(
+                    session_id,
+                    "error",
+                    {
+                        "message": "The AI service restarted during this background response. Its saved output was recovered."
+                    },
+                    metadata={"error_code": "service_restart"},
+                )
 
     def refresh_owner_cookie(response: Response, owner: str) -> None:
         """Keep browser ownership available for the session's sliding lifetime."""
@@ -968,6 +1056,33 @@ def create_app(
         max_cached_result_bytes=settings.optimizer_result_cache_bytes,
         max_schedule_bytes=settings.max_schedule_bytes,
     )
+
+    async def persist_background_event(
+        session_id: str, event_id: int, event_type: str, data: dict, metadata: dict | None = None
+    ) -> None:
+        if history_log is None:
+            return
+        if event_type in {"done", "stopped", "stale", "error"}:
+            if not await history_log.write(
+                "finish_recovery_turn",
+                session_id,
+                *store.recovery_state(session_id),
+                "background",
+                event_id,
+                event_type,
+                data,
+                metadata,
+            ):
+                raise RuntimeError("AI message recovery is temporarily unavailable.")
+            return
+        if event_type in {"turn_start", "optimization"} and not await save_session(session_id):
+            raise RuntimeError("AI message recovery is temporarily unavailable.")
+        if not await history_log.write("append_recovery_event", session_id, "background", event_id, event_type, data):
+            raise RuntimeError("AI message recovery is temporarily unavailable.")
+
+    event_broker.on_publish = persist_background_event
+    if history_log is not None:
+        event_broker.load_snapshot = lambda session_id: history_log.read("load_background_snapshot", session_id)
 
     def retire_session(session_id: str) -> None:
         """Release everything keyed by a session once the store drops it."""
@@ -1063,7 +1178,7 @@ def create_app(
         "/sessions",
         response_model=CreateSessionResponse,
         status_code=status.HTTP_201_CREATED,
-        dependencies=[Depends(require_auth)],
+        dependencies=[Depends(require_auth), Depends(restore_session)],
     )
     async def create_session(
         request: CreateSessionRequest,
@@ -1071,12 +1186,14 @@ def create_app(
         response: Response,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ):
-        """Create a process-local chat session for the calling browser."""
+        """Create a chat session for the calling browser."""
         if len(request.schedule_yaml.encode("utf-8")) > settings.max_schedule_bytes:
             raise HTTPException(status_code=413, detail="Schedule is too large.")
         owner = owner_cookie_token(owner)
         refresh_owner_cookie(response, owner)
         session = store.create(owner, request.schedule_yaml)
+        if not await save_session(session.id, http_request.state.auth_credential_id):
+            raise HTTPException(status_code=503, detail="AI message recovery is temporarily unavailable.")
         logger.info(
             "Created AI session session_id=%s auth_credential_id=%s",
             session.id,
@@ -1084,7 +1201,7 @@ def create_app(
         )
         return CreateSessionResponse(id=session.id)
 
-    @app.get("/sessions/{session_id}/events", dependencies=[Depends(require_auth)])
+    @app.get("/sessions/{session_id}/events", dependencies=[Depends(require_auth), Depends(restore_session)])
     async def stream_session_events(
         session_id: str,
         request: Request,
@@ -1114,7 +1231,7 @@ def create_app(
     @app.post(
         "/sessions/{session_id}/stop",
         status_code=status.HTTP_202_ACCEPTED,
-        dependencies=[Depends(require_auth)],
+        dependencies=[Depends(require_auth), Depends(restore_session)],
     )
     async def stop_active_turn(
         session_id: str,
@@ -1140,7 +1257,7 @@ def create_app(
 
     @app.post(
         "/sessions/{session_id}/uploads",
-        dependencies=[Depends(require_auth)],
+        dependencies=[Depends(require_auth), Depends(restore_session)],
         status_code=status.HTTP_201_CREATED,
     )
     async def add_uploads(
@@ -1156,7 +1273,7 @@ def create_app(
         refresh_owner_cookie(response, owner)
         return [_upload_metadata(item) for item in retained]
 
-    @app.get("/sessions/{session_id}/uploads", dependencies=[Depends(require_auth)])
+    @app.get("/sessions/{session_id}/uploads", dependencies=[Depends(require_auth), Depends(restore_session)])
     async def list_uploads(session_id: str, owner: str | None = Cookie(default=None, alias=OWNER_COOKIE)):
         """List source-file metadata without returning file contents."""
         store.require_owned(session_id, owner)
@@ -1164,7 +1281,7 @@ def create_app(
 
     @app.delete(
         "/sessions/{session_id}/uploads/{upload_id}",
-        dependencies=[Depends(require_auth)],
+        dependencies=[Depends(require_auth), Depends(restore_session)],
         status_code=204,
     )
     async def remove_upload(
@@ -1179,7 +1296,9 @@ def create_app(
         response.status_code = 204
         return response
 
-    @app.get("/sessions/{session_id}/downloads/{download_id}", dependencies=[Depends(require_auth)])
+    @app.get(
+        "/sessions/{session_id}/downloads/{download_id}", dependencies=[Depends(require_auth), Depends(restore_session)]
+    )
     async def download_generated_zip(
         session_id: str,
         download_id: str,
@@ -1194,7 +1313,7 @@ def create_app(
 
     @app.delete(
         "/sessions/{session_id}/downloads/{download_id}",
-        dependencies=[Depends(require_auth)],
+        dependencies=[Depends(require_auth), Depends(restore_session)],
         status_code=204,
     )
     async def remove_generated_zip(
@@ -1211,7 +1330,7 @@ def create_app(
 
     @app.get(
         "/sessions/{session_id}/optimizations/{job_id}/xlsx",
-        dependencies=[Depends(require_auth)],
+        dependencies=[Depends(require_auth), Depends(restore_session)],
     )
     async def download_optimization(
         session_id: str,
@@ -1233,7 +1352,7 @@ def create_app(
     @app.get(
         "/sessions/{session_id}",
         response_model=SessionStatusResponse,
-        dependencies=[Depends(require_auth)],
+        dependencies=[Depends(require_auth), Depends(restore_session)],
     )
     async def session_status(
         session_id: str,
@@ -1245,7 +1364,7 @@ def create_app(
     @app.post(
         "/sessions/{session_id}/messages/queue",
         status_code=status.HTTP_202_ACCEPTED,
-        dependencies=[Depends(require_auth)],
+        dependencies=[Depends(require_auth), Depends(restore_session)],
     )
     async def queue_message(
         session_id: str,
@@ -1282,7 +1401,7 @@ def create_app(
         refresh_owner_cookie(response, owner)
         return response
 
-    @app.post("/sessions/{session_id}/messages", dependencies=[Depends(require_auth)])
+    @app.post("/sessions/{session_id}/messages", dependencies=[Depends(require_auth), Depends(restore_session)])
     async def stream_message(
         session_id: str,
         body: ChatRequest,
@@ -1322,24 +1441,6 @@ def create_app(
             release_turn()
             raise
         turn_id = str(uuid4())
-        if history_log is not None:
-            try:
-                logged = await history_log.write(
-                    "start_turn",
-                    turn_id,
-                    session_id,
-                    request.state.auth_credential_id,
-                    question,
-                    settings.provider_model,
-                    len(hydrated_attachments),
-                )
-                if not logged:
-                    raise HTTPException(status_code=503, detail="AI chat history is temporarily unavailable.")
-            except BaseException:
-                store.abort(session_id)
-                pending_turn_stops.discard(session_id)
-                release_turn()
-                raise
         request_logger.info(
             "AI request started session_id=%s question_chars=%s question=%s files=%s",
             session_id,
@@ -1349,14 +1450,29 @@ def create_app(
         )
         history_question = question
         request_id = body.message_id or turn_id
+        if not await save_session(session_id):
+            store.abort(session_id)
+            release_turn()
+            raise HTTPException(status_code=503, detail="AI message recovery is temporarily unavailable.")
         try:
-            replay_turn = await turn_journal.start(session_id, turn_id, request_id, question)
+            replay_turn = await turn_journal.start(
+                session_id,
+                turn_id,
+                request_id,
+                question,
+                {
+                    "model": settings.provider_model,
+                    "auth_credential_id": request.state.auth_credential_id,
+                    "attachment_count": len(hydrated_attachments),
+                },
+            )
         except RuntimeError as exc:
             store.abort(session_id)
             release_turn()
             raise HTTPException(status_code=503, detail=str(exc)) from None
 
         saved_outcome = None
+        recovery_metadata = {}
 
         async def generate_events():
             nonlocal saved_outcome
@@ -1369,7 +1485,7 @@ def create_app(
             pending_proposal: AgentProposal | None = None
             pending_download: bytes | None = None
             completed = False
-            outcome = "cancelled"
+
             error_code = None
             usage = None
             last_call: TokenUsage | None = None
@@ -1490,17 +1606,7 @@ def create_app(
                     if completion.turn_saved
                     else ("stale", {"message": STALE_TURN_ERROR})
                 )
-                outcome = "completed" if completion.turn_saved else "stale"
-                history_saved = None
-                if history_log is not None:
-                    history_saved = await history_log.write(
-                        "finish_turn",
-                        turn_id,
-                        "".join(assistant_parts),
-                        outcome,
-                        None,
-                        usage,
-                    )
+
                 if not completion.turn_saved:
                     yield _sse_event("stale", {"message": STALE_TURN_ERROR})
                     return
@@ -1519,8 +1625,6 @@ def create_app(
                             },
                         )
                 done = {"message_id": turn_id}
-                if history_saved is not None:
-                    done["history_saved"] = history_saved
                 yield _sse_event(
                     "context_usage", context_usage(completion.context_used_chars, settings, last_call, provider)
                 )
@@ -1536,30 +1640,30 @@ def create_app(
                 else:
                     yield _sse_event("stopped", {"message_id": turn_id})
             except ProviderError as exc:
-                outcome, error_code = "failed", "provider_error"
+                error_code = "provider_error"
                 yield _sse_event("error", {"message": exc.user_message or PROVIDER_ERROR})
             except SandboxDownloadError as exc:
-                outcome, error_code = "failed", "download_error"
+                error_code = "download_error"
                 yield _sse_event("error", {"message": str(exc)})
             except SandboxCommandTimeoutError:
-                outcome, error_code = "failed", "sandbox_command_timeout"
+                error_code = "sandbox_command_timeout"
                 yield _sse_event("error", {"message": SANDBOX_COMMAND_TIMEOUT_ERROR})
             except SandboxTurnTimeoutError:
-                outcome, error_code = "failed", "sandbox_timeout"
+                error_code = "sandbox_timeout"
                 yield _sse_event("error", {"message": SANDBOX_TURN_TIMEOUT_ERROR})
             except SandboxCandidateError as exc:
-                outcome, error_code = "failed", "candidate_validation"
+                error_code = "candidate_validation"
                 logger.warning("AI candidate validation failed: %s", exc)
                 yield _sse_event(
                     "error",
                     {"message": CANDIDATE_VALIDATION_ERROR + (f"\n\n{exc.user_message}" if exc.user_message else "")},
                 )
             except SandboxError:
-                outcome, error_code = "failed", "sandbox_error"
+                error_code = "sandbox_error"
                 logger.exception("AI sandbox turn failed")
                 yield _sse_event("error", {"message": "The temporary AI sandbox failed. Please try again."})
             except Exception:
-                outcome, error_code = "failed", "internal_error"
+                error_code = "internal_error"
                 logger.exception("Unexpected AI stream failure")
                 yield _sse_event("error", {"message": "The AI response failed unexpectedly."})
             finally:
@@ -1568,15 +1672,7 @@ def create_app(
                     del active_turn_tasks[session_id]
                 if not completed:
                     store.abort(session_id)
-                    if history_log is not None:
-                        await history_log.write(
-                            "finish_turn",
-                            turn_id,
-                            "".join(assistant_parts),
-                            outcome,
-                            error_code,
-                            usage,
-                        )
+                recovery_metadata.update(error_code=error_code, usage=asdict(usage) if usage else None)
                 release_turn()
 
         async def run_turn() -> None:
@@ -1638,7 +1734,11 @@ def create_app(
                     queue.get_nowait()
                 await asyncio.gather(collector, return_exceptions=True)
                 if terminal is not None:
-                    await turn_journal.finish(replay_turn, *terminal)
+                    await turn_journal.finish(
+                        replay_turn, *terminal, state=store.recovery_state(session_id), metadata=recovery_metadata
+                    )
+                else:
+                    await save_session(session_id)
 
         worker = asyncio.create_task(run_turn(), name=f"ai-turn-{turn_id}")
         turn_workers.add(worker)
@@ -1648,7 +1748,7 @@ def create_app(
     @app.put(
         "/sessions/{session_id}/schedule",
         status_code=status.HTTP_204_NO_CONTENT,
-        dependencies=[Depends(require_auth)],
+        dependencies=[Depends(require_auth), Depends(restore_session)],
     )
     async def update_schedule(
         session_id: str,
@@ -1659,6 +1759,7 @@ def create_app(
         if len(request.schedule_yaml.encode("utf-8")) > settings.max_schedule_bytes:
             raise HTTPException(status_code=413, detail="The schedule is too large for the AI service.")
         store.update_schedule(session_id, owner, request.schedule_yaml)
+        await save_session(session_id)
         response = Response(status_code=status.HTTP_204_NO_CONTENT)
         refresh_owner_cookie(response, owner)
         return response
@@ -1666,7 +1767,7 @@ def create_app(
     @app.post(
         "/sessions/{session_id}/proposal/approve",
         response_model=ProposalResponse,
-        dependencies=[Depends(require_auth)],
+        dependencies=[Depends(require_auth), Depends(restore_session)],
     )
     async def approve_proposal(
         session_id: str,
@@ -1686,15 +1787,17 @@ def create_app(
             if new_schedule_issues(replaced_validation, validation):
                 logger.error("Approved proposal failed revalidation session_id=%s", session_id)
                 store.discard_proposal(session_id, owner, PROPOSAL_INVALID_HISTORY)
+                await save_session(session_id)
                 raise HTTPException(status_code=409, detail="The proposed schedule is no longer valid.")
         schedule_yaml = store.adopt_proposal(session_id, owner, request.base_sha256)
+        await save_session(session_id)
         refresh_owner_cookie(response, owner)
         return ProposalResponse(schedule_yaml=schedule_yaml)
 
     @app.post(
         "/sessions/{session_id}/proposal/reject",
         status_code=status.HTTP_204_NO_CONTENT,
-        dependencies=[Depends(require_auth)],
+        dependencies=[Depends(require_auth), Depends(restore_session)],
     )
     async def reject_proposal(
         session_id: str,
@@ -1702,6 +1805,7 @@ def create_app(
     ) -> Response:
         """Drop the pending proposal at the user's request."""
         store.discard_proposal(session_id, owner)
+        await save_session(session_id)
         response = Response(status_code=status.HTTP_204_NO_CONTENT)
         refresh_owner_cookie(response, owner)
         return response

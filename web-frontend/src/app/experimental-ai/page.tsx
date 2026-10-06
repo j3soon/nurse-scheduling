@@ -353,6 +353,10 @@ function readStoredConversation(): StoredChatConversation | null {
 }
 
 function retentionLabel(seconds: number): string {
+  if (seconds % 86400 === 0) {
+    const days = seconds / 86400;
+    return `${days} ${days === 1 ? 'day' : 'days'}`;
+  }
   if (seconds % 3600 === 0) {
     const hours = seconds / 3600;
     return `${hours} ${hours === 1 ? 'hour' : 'hours'}`;
@@ -908,8 +912,14 @@ export default function ExperimentalAiPage() {
 
   useEffect(() => {
     if (activeSessionId === null || sessionExpiresAt === null) return;
-    const delay = sessionExpiresAt - Date.now();
-    if (delay <= 0) {
+    let timeout: number | undefined;
+    const checkExpiration = () => {
+      const delay = sessionExpiresAt - Date.now();
+      if (delay > 0) {
+        // Browser timers cannot wait more than 2,147,483,647 milliseconds at once.
+        timeout = window.setTimeout(checkExpiration, Math.min(delay, 2147483647));
+        return;
+      }
       sessionEventsControllerRef.current?.abort();
       sessionEventsControllerRef.current = null;
       sessionIdRef.current = null;
@@ -921,21 +931,8 @@ export default function ExperimentalAiPage() {
         `This chat expired after ${retentionLabel(sessionRetentionSeconds)} of inactivity. Start a new chat to continue.`,
       );
       window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
-      return;
-    }
-    const timeout = window.setTimeout(() => {
-      sessionEventsControllerRef.current?.abort();
-      sessionEventsControllerRef.current = null;
-      sessionIdRef.current = null;
-      setActiveSessionId(null);
-      setSessionExpiresAt(null);
-      setActiveOptimization(null);
-      setConversationUnavailable(true);
-      setSessionNotice(
-        `This chat expired after ${retentionLabel(sessionRetentionSeconds)} of inactivity. Start a new chat to continue.`,
-      );
-      window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
-    }, delay);
+    };
+    checkExpiration();
     return () => window.clearTimeout(timeout);
   }, [activeSessionId, sessionExpiresAt, sessionRetentionSeconds]);
 
@@ -2284,7 +2281,7 @@ export default function ExperimentalAiPage() {
         <aside aria-label="Session files" className="mb-4 rounded-xl border border-gray-200 bg-white p-4 xl:fixed xl:right-4 xl:top-24 xl:z-10 xl:max-h-[calc(100dvh-8rem)] xl:w-64 xl:overflow-y-auto">
           <details open>
             <summary className="cursor-pointer font-semibold">Uploaded files ({uploadedFiles.length})</summary>
-            <p className="mt-2 text-xs text-gray-600">Available for later questions until removed or this chat expires. A repeated filename gets a number, such as ward (1).csv.</p>
+            <p className="mt-2 text-xs text-gray-600">Uploaded files are temporary and may disappear after a server restart without prior notice. Keep your original files. A repeated filename gets a number, such as ward (1).csv.</p>
             {uploadedFiles.length === 0 ? <p className="mt-3 text-sm text-gray-500">No uploaded files.</p> : (
               <ul className="mt-3 space-y-3">
                 {uploadedFiles.map(file => (

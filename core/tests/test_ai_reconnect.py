@@ -133,17 +133,28 @@ def test_reconnect_recovers_all_background_text_after_buffer_overflow():
 def test_stop_after_answer_saved_reports_completion(monkeypatch):
     async def exercise():
         saving = asyncio.Event()
+        release = asyncio.Event()
         original_write = ChatHistory.write
 
         async def write(self, operation, *args):
-            if operation == "finish_turn":
+            if operation == "finish_recovery_turn":
                 saving.set()
-                await asyncio.Event().wait()
+                await release.wait()
             return await original_write(self, operation, *args)
 
         monkeypatch.setattr(ChatHistory, "write", write)
         monkeypatch.setattr(ChatHistory, "initialize", lambda *_args: None)
-        monkeypatch.setattr(ChatHistory, "start_turn", lambda *_args: None)
+        monkeypatch.setattr(ChatHistory, "start_recovery_turn", lambda *_args: None)
+        for operation in (
+            "save_recovery_session",
+            "start_recovery_turn",
+            "append_recovery_event",
+            "finish_recovery_turn",
+            "load_recovery_turn",
+            "stop_recovery_request",
+            "recovery_request_stopped",
+        ):
+            monkeypatch.setattr(ChatHistory, operation, lambda *_args: None)
         provider = basic.FakeProvider([["Completed answer"]])
         app = basic.create_test_app(settings=basic.make_settings(history_postgres_url="test"), provider=provider)
         async with (
@@ -166,6 +177,7 @@ def test_stop_after_answer_saved_reports_completion(monkeypatch):
             )
             await asyncio.wait_for(saving.wait(), timeout=1)
             assert (await client.post(f"/sessions/{session}/stop")).status_code == 202
+            release.set()
             result = await asyncio.wait_for(response, timeout=2)
             assert basic.parse_sse(result.text)[-1][0] == "done"
             history = app.state.session_store._sessions[session].history

@@ -1,4 +1,4 @@
-"""AI audit logging lifecycle and PostgreSQL persistence checks."""
+"""AI recovery lifecycle and PostgreSQL persistence checks."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -21,12 +21,16 @@
 
 import asyncio
 import os
+import time
+from contextlib import asynccontextmanager
+from pathlib import Path
 from uuid import uuid4
 
 import psycopg
 import pytest
 from psycopg import sql
 
+from nurse_scheduling.ai import history as history_module
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.history import ChatHistory
 from nurse_scheduling.ai.provider import ProviderError, TextDelta, TokenUsage
@@ -41,36 +45,146 @@ def test_history_environment_settings(monkeypatch):
         "AI_SANDBOX_BACKEND": "e2b",
         "E2B_API_KEY": "test-e2b-key",
         "AI_HISTORY_POSTGRES_URL": " postgresql:///history ",
-        "AI_HISTORY_RETENTION_DAYS": "7",
+        "AI_SESSION_TTL_SECONDS": "604800",
     }.items():
         monkeypatch.setenv(name, value)
     settings = AiSettings.from_env()
     assert settings.history_postgres_url == "postgresql:///history"
-    assert settings.history_retention_days == 7
-    monkeypatch.setenv("AI_HISTORY_RETENTION_DAYS", "0")
-    with pytest.raises(ValueError, match="AI_HISTORY_RETENTION_DAYS"):
+    assert settings.session_ttl_seconds == 604800
+    monkeypatch.setenv("AI_SESSION_TTL_SECONDS", "0")
+    with pytest.raises(ValueError, match="AI_SESSION_TTL_SECONDS"):
         AiSettings.from_env()
 
 
-def test_postgres_stream_records_ordered_turns_and_partial_failure(postgres_history):
-    provider = basic.FakeProvider([["Answer"], ["Partial", ProviderError("private detail")]])
+def test_recovery_default_session_lifetime():
+    assert basic.make_settings().session_ttl_seconds == 30 * 24 * 60 * 60
+
+
+def test_postgres_recovery_keeps_operational_metadata(postgres_history):
+    class Provider:
+        def __init__(self):
+            self.calls = 0
+
+        async def stream_events(self, messages, tools=None):
+            self.calls += 1
+            yield TextDelta("Answer" if self.calls == 1 else "Partial")
+            if self.calls == 1:
+                yield TokenUsage(2, 3, 5)
+            else:
+                raise ProviderError("private detail")
+
+    provider = Provider()
     app = basic.create_test_app(settings=basic.make_settings(history_postgres_url="test"), provider=provider)
     with basic.AuthenticatedTestClient(app) as client:
-        session_id = basic.create_session(client)
-        for question in ["First", "Second"]:
-            client.post(f"/sessions/{session_id}/messages", json={"message": question})
-    with postgres_history._connect() as connection:
-        assert connection.execute(
-            "SELECT user_message, assistant_message, status, error_code FROM chat_turns ORDER BY sequence"
-        ).fetchall() == [("First", "Answer", "completed", None), ("Second", "Partial", "failed", "provider_error")]
+        session = basic.create_session(client)
+        for question in ("First", "Second"):
+            response = client.post(f"/sessions/{session}/messages", json={"message": question, "message_id": question})
+            assert response.status_code == 200
+        owner = client.cookies[basic.OWNER_COOKIE]
+        with postgres_history._connect() as connection:
+            rows = connection.execute(
+                "SELECT question, model, status, error_code, usage, auth_credential_id, attachment_count, "
+                "started_at, finished_at FROM chat_recovery_turns ORDER BY sequence"
+            ).fetchall()
+            credential, created = connection.execute(
+                "SELECT auth_credential_id, created_at FROM chat_recovery_sessions"
+            ).fetchone()
+            assert connection.execute("SELECT to_regclass('chat_turns'), to_regclass('chat_sessions')").fetchone() == (
+                None,
+                None,
+            )
+        assert rows[0][:5] == (
+            "First",
+            "test-model",
+            "completed",
+            None,
+            {
+                "prompt_tokens": 2,
+                "completion_tokens": 3,
+                "total_tokens": 5,
+                "cached_prompt_tokens": None,
+                "reasoning_tokens": 0,
+            },
+        )
+        assert rows[1][:5] == ("Second", "test-model", "failed", "provider_error", None)
+        assert credential and created
+        assert all(row[5] == credential and row[6] == 0 and row[7] <= row[8] for row in rows)
+        assert postgres_history.load_recovery_session(session, owner)["state"]["history"][-1]["content"] == "Answer"
+        assert "private detail" not in repr(rows)
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_postgres_background_turn_keeps_metadata_and_entry_ownership(postgres_history, failed):
+    from nurse_scheduling.ai.background import run_background_turn
+
+    @asynccontextmanager
+    async def track(_session):
+        yield
+
+    class Provider:
+        async def stream_events(self, messages, tools=None):
+            yield TextDelta("Background output")
+            yield TokenUsage(1, 2, 3)
+            if failed:
+                raise ProviderError("private provider detail")
+
+    async def exercise():
+        settings = basic.make_settings(history_postgres_url="test")
+        provider = Provider()
+        app = basic.create_test_app(settings=settings, provider=provider)
+        store = app.state.session_store
+        session = store.create(str(uuid4()), basic.schedule_yaml())
+        postgres_history.save_recovery_session(session.id, *store.recovery_state(session.id), "team-a")
+        await run_background_turn(
+            session.id,
+            "Review optimizer result",
+            None,
+            settings=settings,
+            store=store,
+            event_broker=app.state.session_event_broker,
+            turn_locks={},
+            track_active_turn=track,
+            concurrency_limit=asyncio.Semaphore(1),
+            history_log=postgres_history,
+            provider=provider,
+            sandbox_factory=app.state.sandbox_factory,
+            session_optimizer=app.state.session_optimizer,
+        )
+        with postgres_history._connect() as connection:
+            row = connection.execute(
+                "SELECT id, kind, auth_credential_id, model, status, error_code, usage, finished_at FROM chat_recovery_turns"
+            ).fetchone()
+            assert row[1:6] == (
+                "background",
+                "team-a",
+                "test-model",
+                "failed" if failed else "completed",
+                "provider_error" if failed else None,
+            )
+            assert row[6]["total_tokens"] == 3 and row[7] is not None
+            assert connection.execute("SELECT DISTINCT turn_id FROM chat_recovery_entries").fetchall() == [(row[0],)]
+        record = postgres_history.load_recovery_session(session.id, session.owner_token)
+        assert record["background_status"] == row[4]
+        assert record["turns"] == []
+        assert any(event["data"] == {"text": "Background output"} for event in record["background_events"])
+
+    asyncio.run(exercise())
 
 
 @pytest.fixture
 def recorded_history(monkeypatch):
     records = {"starts": [], "finishes": []}
     monkeypatch.setattr(ChatHistory, "initialize", lambda _self: None)
-    monkeypatch.setattr(ChatHistory, "start_turn", lambda _self, *args: records["starts"].append(args))
-    monkeypatch.setattr(ChatHistory, "finish_turn", lambda _self, *args: records["finishes"].append(args))
+    monkeypatch.setattr(ChatHistory, "start_recovery_turn", lambda _self, *args: records["starts"].append(args))
+    monkeypatch.setattr(ChatHistory, "finish_recovery_turn", lambda _self, *args: records["finishes"].append(args))
+    for operation in (
+        "save_recovery_session",
+        "append_recovery_event",
+        "load_recovery_turn",
+        "stop_recovery_request",
+        "recovery_request_stopped",
+    ):
+        monkeypatch.setattr(ChatHistory, operation, lambda *_args: None)
     return records
 
 
@@ -90,15 +204,20 @@ def test_records_text_usage_and_sanitized_failure(recorded_history, failed):
         response = client.post(f"/sessions/{session_id}/messages", json={"message": "Question"})
     (start,) = recorded_history["starts"]
     (finish,) = recorded_history["finishes"]
-    assert start[1] == session_id
-    assert start[3:] == ("Question", "test-model", 0)
-    assert finish == (
-        start[0],
-        "Partial answer",
-        "failed" if failed else "completed",
-        "provider_error" if failed else None,
-        TokenUsage(3, 4, 7),
-    )
+    assert start[1:4] == (session_id, start[2], "Question")
+    assert start[4]["model"] == "test-model"
+    assert finish[4] == start[0]
+    assert finish[6] == ("error" if failed else "done")
+    assert finish[8] == {
+        "error_code": "provider_error" if failed else None,
+        "usage": {
+            "prompt_tokens": 3,
+            "completion_tokens": 4,
+            "total_tokens": 7,
+            "cached_prompt_tokens": None,
+            "reasoning_tokens": 0,
+        },
+    }
     if not failed:
         assert basic.parse_sse(response.text)[-1] == ("done", {"message_id": start[0], "history_saved": True})
     assert "private provider credential" not in repr(recorded_history)
@@ -108,7 +227,7 @@ def test_database_unavailable_releases_session_before_provider_call(recorded_his
     def unavailable(*_args):
         raise psycopg.OperationalError("secret-database-url")
 
-    monkeypatch.setattr(ChatHistory, "start_turn", unavailable)
+    monkeypatch.setattr(ChatHistory, "start_recovery_turn", unavailable)
     provider = basic.FakeProvider()
     app = basic.create_test_app(settings=basic.make_settings(history_postgres_url="test"), provider=provider)
     with basic.AuthenticatedTestClient(app) as client:
@@ -116,7 +235,7 @@ def test_database_unavailable_releases_session_before_provider_call(recorded_his
         response = client.post(f"/sessions/{session_id}/messages", json={"message": "Question"})
         assert response.status_code == 503
         assert provider.calls == []
-        monkeypatch.setattr(ChatHistory, "start_turn", lambda *_args: None)
+        monkeypatch.setattr(ChatHistory, "start_recovery_turn", lambda *_args: None)
         response = client.post(f"/sessions/{session_id}/messages", json={"message": "Retry"})
         assert basic.parse_sse(response.text)[-1][0] == "done"
 
@@ -125,7 +244,7 @@ def test_final_write_failure_preserves_successful_conversation(recorded_history,
     def unavailable(*_args):
         raise psycopg.OperationalError("secret-database-url")
 
-    monkeypatch.setattr(ChatHistory, "finish_turn", unavailable)
+    monkeypatch.setattr(ChatHistory, "finish_recovery_turn", unavailable)
     app = basic.create_test_app(
         settings=basic.make_settings(history_postgres_url="test"), provider=basic.FakeProvider()
     )
@@ -133,7 +252,7 @@ def test_final_write_failure_preserves_successful_conversation(recorded_history,
         session_id = basic.create_session(client)
         response = client.post(f"/sessions/{session_id}/messages", json={"message": "Question"})
     assert basic.parse_sse(response.text)[-1][1]["history_saved"] is False
-    assert "AI history finish_turn failed" in caplog.text
+    assert "AI history finish_recovery_turn failed" in caplog.text
     assert "secret-database-url" not in caplog.text
 
 
@@ -150,7 +269,7 @@ def test_database_unavailable_prevents_startup(recorded_history, monkeypatch):
 
 
 @pytest.fixture
-def postgres_history(monkeypatch):
+def uninitialized_postgres_history(monkeypatch):
     database_url = os.getenv("AI_HISTORY_TEST_POSTGRES_URL")
     if not database_url:
         pytest.skip("Set AI_HISTORY_TEST_POSTGRES_URL to run PostgreSQL integration checks")
@@ -163,79 +282,439 @@ def postgres_history(monkeypatch):
 
     monkeypatch.setattr(ChatHistory, "_connect", connect)
     try:
-        history = ChatHistory(database_url)
-        history.initialize()
-        yield history
+        yield ChatHistory(database_url)
     finally:
         with psycopg.connect(database_url, autocommit=True) as connection:
             connection.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
 
 
+@pytest.fixture
+def postgres_history(uninitialized_postgres_history):
+    uninitialized_postgres_history.initialize()
+    return uninitialized_postgres_history
+
+
+def test_postgres_recovery_combines_fragments_without_losing_boundaries(postgres_history):
+    history = postgres_history
+    session, owner, turn = str(uuid4()), str(uuid4()), str(uuid4())
+    history.save_recovery_session(session, owner, time.time() + 60, {})
+    history.start_recovery_turn(turn, session, "request", "Question")
+    history.append_recovery_event(session, turn, 1, "reasoning", {"text": "Think "})
+    history.append_recovery_event(session, turn, 2, "reasoning", {"text": "carefully"})
+    history.append_recovery_event(session, turn, 3, "tool_start", {"name": "read"})
+    for cursor in range(4, 44):
+        history.append_recovery_event(session, turn, cursor, "delta", {"text": "x"})
+    history.append_recovery_event(session, turn, 43, "delta", {"text": "duplicate"})
+    history.append_recovery_event(session, turn, 44, "context_usage", {"tokens": 10})
+    history.append_recovery_event(session, turn, 45, "context_usage", {"tokens": 20})
+    history.append_recovery_event(session, "background", 1, "turn_start", {"message_id": "background"})
+    history.append_recovery_event(session, "background", 2, "delta", {"text": "Background "})
+    history.append_recovery_event(session, "background", 3, "delta", {"text": "answer"})
+    history.append_recovery_event(session, turn, 46, "delta", {"text": "After background"})
+    with history._connect() as connection:
+        assert connection.execute("SELECT count(*) FROM chat_recovery_entries").fetchone() == (7,)
+    recovered = history.load_recovery_turn(session, "request")
+    assert [(event["id"], event["type"], event["data"]) for event in recovered["events"]] == [
+        (2, "reasoning", {"text": "Think carefully"}),
+        (3, "tool_start", {"name": "read"}),
+        (43, "delta", {"text": "x" * 40}),
+        (45, "context_usage", {"tokens": 20}),
+        (46, "delta", {"text": "After background"}),
+    ]
+    with history._connect() as connection:
+        assert connection.execute("SELECT channel FROM chat_recovery_entries ORDER BY sequence").fetchall() == [
+            (turn,),
+            (turn,),
+            (turn,),
+            (turn,),
+            ("background",),
+            ("background",),
+            (turn,),
+        ]
+
+
+@pytest.mark.parametrize("channel", ["foreground", "background"])
+def test_postgres_restored_stream_replaces_output_for_cursor_inside_entry(postgres_history, channel):
+    from nurse_scheduling.ai.background import SessionEventBroker
+    from nurse_scheduling.ai.turns import TurnJournal
+
+    async def exercise():
+        session, owner, turn = str(uuid4()), str(uuid4()), str(uuid4())
+        postgres_history.save_recovery_session(session, owner, time.time() + 60, {})
+        postgres_history.start_recovery_turn(turn, session, "request", "Question")
+        stored_channel = turn if channel == "foreground" else "background"
+        for cursor, text in enumerate(("First ", "middle ", "last"), 1):
+            postgres_history.append_recovery_event(session, stored_channel, cursor, "delta", {"text": text})
+        if channel == "foreground":
+            recovered = await TurnJournal(postgres_history).get(session, "request")
+            stream = recovered.stream(2)
+            cursor, kind, data = await anext(stream)
+        else:
+            broker = SessionEventBroker()
+            broker.load_snapshot = lambda sid: postgres_history.read("load_background_snapshot", sid)
+            broker.restore(session, postgres_history.load_recovery_session(session, owner)["background_events"])
+            stream = broker.stream(session, 2)
+            event = await anext(stream)
+            cursor, kind, data = event.id, event.type, event.data
+        await stream.aclose()
+        assert kind == ("turn_snapshot" if channel == "foreground" else "session_snapshot")
+        assert cursor == 3
+        assert data["events"] == [{"type": "delta", "data": {"text": "First middle last"}}]
+
+    asyncio.run(exercise())
+
+
+def test_postgres_upgrade_discards_audit_rows(uninitialized_postgres_history):
+    history = uninitialized_postgres_history
+    session, owner = str(uuid4()), str(uuid4())
+    with history._connect() as connection:
+        connection.execute("CREATE TABLE ai_history_migrations (version text PRIMARY KEY)")
+        for migration in sorted(Path(history_module.__file__).with_name("migrations").glob("00[1-2]*.sql")):
+            connection.execute(migration.read_text(encoding="utf-8"))
+            connection.execute("INSERT INTO ai_history_migrations VALUES (%s)", (migration.name,))
+        connection.execute("INSERT INTO chat_sessions (id, auth_credential_id) VALUES (%s, 'team-a')", (session,))
+        connection.execute(
+            "INSERT INTO chat_turns (id, session_id, user_message, model) VALUES (%s, %s, 'Old audit text', 'model')",
+            (str(uuid4()), session),
+        )
+    history.initialize()
+    history.initialize()
+    with history._connect() as connection:
+        assert connection.execute("SELECT to_regclass('chat_turns'), to_regclass('chat_sessions')").fetchone() == (
+            None,
+            None,
+        )
+        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (3,)
+        assert connection.execute("SELECT count(*) FROM chat_recovery_sessions").fetchone() == (0,)
+    history.save_recovery_session(session, owner, time.time() + 60, {}, "team-a")
+    history.start_recovery_turn(str(uuid4()), session, "request", "New question", {"model": "model"})
+    assert history.load_recovery_session(session, owner)["turns"][0]["question"] == "New question"
+
+
+@pytest.mark.parametrize("channel", ["foreground", "background"])
+@pytest.mark.parametrize(
+    "terminal, status", [("done", "completed"), ("error", "failed"), ("stopped", "cancelled"), ("stale", "stale")]
+)
+def test_postgres_recovery_commits_status_context_and_output_together(postgres_history, channel, terminal, status):
+    history = postgres_history
+    session, owner, turn = str(uuid4()), str(uuid4()), str(uuid4())
+    expiry = time.time() + 60
+    history.save_recovery_session(session, owner, expiry, {})
+    stored_channel = turn if channel == "foreground" else "background"
+    history.start_recovery_turn(
+        turn, session, "request" if channel == "foreground" else None, "Question", {"kind": channel}
+    )
+    history.append_recovery_event(session, stored_channel, 1, "turn_start", {"message_id": turn})
+    history.append_recovery_event(session, stored_channel, 2, "delta", {"text": "Saved partial"})
+    state = {"history": [{"role": "assistant", "content": "Saved partial"}]}
+    with pytest.raises(TypeError):
+        history.finish_recovery_turn(session, owner, expiry, state, stored_channel, 3, terminal, {"invalid": object()})
+    record = history.load_recovery_session(session, owner)
+    assert record["state"] == {}
+    if channel == "background":
+        assert record["background_status"] == "running"
+    else:
+        assert len(record["turns"]) == 1
+    history.finish_recovery_turn(session, owner, expiry, state, stored_channel, 3, terminal, {"message_id": turn})
+    history.append_recovery_event(session, stored_channel, 3, terminal, {"message_id": "duplicate"})
+    record = history.load_recovery_session(session, owner)
+    assert record["state"] == state
+    if channel == "background":
+        assert record["background_status"] == status
+        events = record["background_events"]
+    else:
+        assert record["turns"] == []
+        events = history.load_recovery_turn(session, "request")["events"]
+        with history._connect() as connection:
+            assert connection.execute("SELECT status FROM chat_recovery_turns").fetchone() == (status,)
+    assert len(events) == 3
+    assert events[-1]["data"] == {"message_id": turn}
+
+
+def test_postgres_restored_background_keeps_entry_crossing_tail_boundary(postgres_history):
+    from nurse_scheduling.ai.background import SessionEventBroker
+
+    async def exercise():
+        session, owner = str(uuid4()), str(uuid4())
+        history = postgres_history
+        history.save_recovery_session(session, owner, time.time() + 60, {})
+        history.append_recovery_event(session, "background", 1, "turn_start", {"message_id": "background"})
+        history.append_recovery_event(session, "background", 2, "delta", {"text": "First "})
+        # Transient optimizer progress can leave large gaps in persisted stream cursors.
+        history.append_recovery_event(session, "background", 1020, "delta", {"text": "last"})
+        record = history.load_recovery_session(session, owner)
+        assert record["background_events"][0]["data"] == {"text": "First last"}
+        broker = SessionEventBroker(max_events_per_session=1)
+        broker.load_snapshot = lambda sid: history.read("load_background_snapshot", sid)
+        broker.on_publish = lambda sid, eid, kind, data: history.write(
+            "append_recovery_event", sid, "background", eid, kind, data
+        )
+        broker.restore(session, record["background_events"])
+        await broker.emit(session, "done", {"message_id": "background"})
+        stream = broker.stream(session, 1019)
+        snapshot = await anext(stream)
+        await stream.aclose()
+        assert (snapshot.id, snapshot.type) == (1021, "session_snapshot")
+        assert snapshot.data["events"] == [
+            {"type": "turn_start", "data": {"message_id": "background"}},
+            {"type": "delta", "data": {"text": "First last"}},
+            {"type": "done", "data": {"message_id": "background"}},
+        ]
+
+    asyncio.run(exercise())
+
+
+def test_postgres_concurrent_channels_keep_all_text(postgres_history):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    session, owner, turn = str(uuid4()), str(uuid4()), str(uuid4())
+    history = postgres_history
+    history.save_recovery_session(session, owner, time.time() + 60, {})
+    history.start_recovery_turn(turn, session, "request", "Question")
+    barrier = Barrier(2)
+
+    def publish(channel):
+        barrier.wait(timeout=5)
+        for cursor in range(1, 21):
+            history.append_recovery_event(session, channel, cursor, "delta", {"text": str(cursor) + " "})
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        list(executor.map(publish, [turn, "background"]))
+    expected = "".join(str(cursor) + " " for cursor in range(1, 21))
+    assert (
+        "".join(event["data"]["text"] for event in history.load_recovery_turn(session, "request")["events"]) == expected
+    )
+    cursor, events = history.load_background_snapshot(session)
+    assert cursor == 20
+    assert events == [{"type": "delta", "data": {"text": expected}}]
+
+
 def test_postgres_migrations_duplicates_and_reconnection(postgres_history):
     history = postgres_history
-    turn, session = str(uuid4()), str(uuid4())
-    history.start_turn(turn, session, "team-a", "What's next?", "model", 3)
-    history.start_turn(turn, session, "team-a", "duplicate", "model", 3)
-    history.finish_turn(turn, "Answer", "completed", None, TokenUsage(1, 2, 3))
-    history.finish_turn(turn, "Overwrite", "cancelled", None, None)
+    turn, session, owner = str(uuid4()), str(uuid4()), str(uuid4())
+    expiry = time.time() + 60
+    history.save_recovery_session(session, owner, expiry, {}, "team-a")
+    history.start_recovery_turn(turn, session, "request", "What's next?", {"model": "model", "attachment_count": 3})
+    history.start_recovery_turn(turn, session, "request", "duplicate", {"model": "other"})
+    history.append_recovery_event(session, turn, 1, "delta", {"text": "Answer"})
+    history.finish_recovery_turn(session, owner, expiry, {}, turn, 2, "done", {}, {"usage": {"total_tokens": 3}})
+    history.finish_recovery_turn(session, owner, expiry, {}, turn, 2, "stopped", {}, {"usage": {"total_tokens": 0}})
     restarted = ChatHistory("test")
     restarted.initialize()
     with restarted._connect() as connection:
         row = connection.execute(
-            "SELECT user_message, assistant_message, status, usage, finished_at, attachment_count FROM chat_turns"
+            "SELECT question, model, status, usage, attachment_count, auth_credential_id, finished_at FROM chat_recovery_turns"
         ).fetchone()
-        assert row[:4] == (
-            "What's next?",
-            "Answer",
-            "completed",
-            {
-                "prompt_tokens": 1,
-                "completion_tokens": 2,
-                "total_tokens": 3,
-                "cached_prompt_tokens": None,
-                "reasoning_tokens": 0,
-            },
-        )
-        assert row[4] is not None
-        assert row[5] == 3
-        credential_id = connection.execute("SELECT auth_credential_id FROM chat_sessions").fetchone()
-        assert credential_id == ("team-a",)
-        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (2,)
-
-
-def test_postgres_retention_preserves_recent_turns(postgres_history):
-    history = postgres_history
-    session = str(uuid4())
-    old, recent = str(uuid4()), str(uuid4())
-    history.start_turn(old, session, None, "old", "model", 0)
-    history.start_turn(recent, session, None, "recent", "model", 0)
-    with history._connect() as connection:
-        connection.execute("UPDATE chat_turns SET started_at = now() - interval '31 days' WHERE id = %s", (old,))
-        connection.execute("UPDATE chat_sessions SET created_at = now() - interval '31 days'")
-    history.prune()
-    with history._connect() as connection:
-        assert connection.execute("SELECT user_message FROM chat_turns").fetchall() == [("recent",)]
-        assert connection.execute("SELECT count(*) FROM chat_sessions").fetchone() == (1,)
-        connection.execute("UPDATE chat_turns SET started_at = now() - interval '31 days'")
-    history.prune()
-    with history._connect() as connection:
-        assert connection.execute("SELECT count(*) FROM chat_sessions").fetchone() == (0,)
+        assert row[:6] == ("What's next?", "model", "completed", {"total_tokens": 3}, 3, "team-a")
+        assert row[6] is not None
+        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (3,)
+    assert restarted.load_recovery_turn(session, "request")["events"][0]["data"] == {"text": "Answer"}
 
 
 def test_postgres_writes_survive_cancel_scope(postgres_history):
     import anyio
 
-    turn, session = str(uuid4()), str(uuid4())
-    postgres_history.start_turn(turn, session, None, "question", "model", 0)
+    turn, session, owner = str(uuid4()), str(uuid4()), str(uuid4())
+    expiry = time.time() + 60
+    postgres_history.save_recovery_session(session, owner, expiry, {})
+    postgres_history.start_recovery_turn(turn, session, "request", "question")
 
-    async def cancel_and_save():
+    async def write_cancelled():
         with anyio.CancelScope() as scope:
             scope.cancel()
-            assert await postgres_history.write("finish_turn", turn, "partial", "cancelled", None, None)
+            assert await postgres_history.write(
+                "finish_recovery_turn", session, owner, expiry, {}, turn, 1, "stopped", {}
+            )
 
-    asyncio.run(cancel_and_save())
+    anyio.run(write_cancelled)
     with postgres_history._connect() as connection:
-        assert connection.execute("SELECT status, assistant_message FROM chat_turns").fetchone() == (
-            "cancelled",
-            "partial",
+        assert connection.execute("SELECT status FROM chat_recovery_turns").fetchone() == ("cancelled",)
+
+
+def test_postgres_recovers_complete_message_and_history_after_backend_restart(postgres_history):
+    settings = basic.make_settings(history_postgres_url="test")
+    request = {"message": "Original question", "message_id": "stable-question"}
+    answer = "FIRST" + "x" * 1200 + "LAST"
+    first = basic.create_test_app(settings=settings, provider=basic.FakeProvider([["FIRST", *(["x"] * 1200), "LAST"]]))
+    with basic.AuthenticatedTestClient(first) as client:
+        session = basic.create_session(client)
+        response = client.post(f"/sessions/{session}/messages", json=request)
+        assert response.status_code == 200
+        cookies = dict(client.cookies)
+    provider = basic.FakeProvider([["This must never run"]])
+    restarted = basic.create_test_app(settings=settings, provider=provider)
+    with basic.AuthenticatedTestClient(restarted) as client:
+        assert client.get(f"/sessions/{session}").status_code == 404
+        client.cookies.update(cookies)
+        assert client.get(f"/sessions/{session}").status_code == 200
+        response = client.post(f"/sessions/{session}/messages", json=request)
+        assert response.status_code == 200
+        assert "turn_snapshot" in response.text
+        assert answer in response.text
+        assert provider.calls == []
+        history = restarted.state.session_store._sessions[session].history
+        assert [(item["role"], item["content"]) for item in history] == [
+            ("user", "Original question"),
+            ("assistant", answer),
+        ]
+
+
+def test_postgres_recovers_question_and_partial_output_from_interrupted_turn(postgres_history):
+    import time
+
+    session, turn, owner = str(uuid4()), str(uuid4()), str(uuid4())
+    state = {
+        "schedule_yaml": basic.schedule_yaml(),
+        "history": [],
+        "proposal_yaml": "",
+        "proposal_diff": "",
+        "dropped_history_messages": 0,
+    }
+    postgres_history.save_recovery_session(session, owner, time.time() + 60, state)
+    postgres_history.start_recovery_turn(turn, session, "interrupted-question", "Keep working")
+    postgres_history.append_recovery_event(session, turn, 1, "delta", {"text": "Saved partial output"})
+    provider = basic.FakeProvider()
+    app = basic.create_test_app(settings=basic.make_settings(history_postgres_url="test"), provider=provider)
+    with basic.AuthenticatedTestClient(app) as client:
+        client.cookies.set(basic.OWNER_COOKIE, owner)
+        response = client.post(
+            f"/sessions/{session}/messages", json={"message": "Keep working", "message_id": "interrupted-question"}
         )
+        assert response.status_code == 200
+        assert "Saved partial output" in response.text
+        assert "service restarted" in response.text
+        assert provider.calls == []
+    with postgres_history._connect() as connection:
+        assert connection.execute("SELECT status, error_code FROM chat_recovery_turns").fetchone() == (
+            "failed",
+            "service_restart",
+        )
+
+
+def test_postgres_recovers_background_metadata_after_restart(postgres_history):
+    session, owner, turn = str(uuid4()), str(uuid4()), str(uuid4())
+    state = {
+        "schedule_yaml": basic.schedule_yaml(),
+        "history": [],
+        "proposal_yaml": "",
+        "proposal_diff": "",
+        "dropped_history_messages": 0,
+    }
+    postgres_history.save_recovery_session(session, owner, time.time() + 60, state, "team-a")
+    postgres_history.start_recovery_turn(turn, session, None, "Review result", {"kind": "background", "model": "model"})
+    postgres_history.append_recovery_event(session, "background", 1, "turn_start", {"message_id": turn})
+    postgres_history.append_recovery_event(session, "background", 2, "delta", {"text": "Saved background output"})
+    provider = basic.FakeProvider()
+    app = basic.create_test_app(settings=basic.make_settings(history_postgres_url="test"), provider=provider)
+    with basic.AuthenticatedTestClient(app) as client:
+        client.cookies.set(basic.OWNER_COOKIE, owner)
+        assert client.get(f"/sessions/{session}").status_code == 200
+        assert provider.calls == []
+    with postgres_history._connect() as connection:
+        assert connection.execute(
+            "SELECT kind, auth_credential_id, model, status, error_code FROM chat_recovery_turns"
+        ).fetchone() == ("background", "team-a", "model", "failed", "service_restart")
+    _, events = postgres_history.load_background_snapshot(session)
+    assert any(event["data"] == {"text": "Saved background output"} for event in events)
+
+
+def test_postgres_background_replay_loads_complete_output_after_cache_eviction(postgres_history):
+    from nurse_scheduling.ai.background import SessionEventBroker
+
+    async def exercise():
+        session, owner = str(uuid4()), str(uuid4())
+        postgres_history.save_recovery_session(session, owner, time.time() + 60, {})
+        broker = SessionEventBroker(max_events_per_session=2, max_snapshot_bytes=1)
+        broker.on_publish = lambda sid, eid, kind, data: postgres_history.write(
+            "append_recovery_event",
+            sid,
+            "background",
+            eid,
+            kind,
+            data,
+        )
+        broker.load_snapshot = lambda sid: postgres_history.read("load_background_snapshot", sid)
+        await broker.emit(session, "turn_start", {"message_id": "background"})
+        for text in ("First ", "middle ", "last"):
+            await broker.emit(session, "delta", {"text": text})
+        await broker.emit(session, "done", {"message_id": "background"})
+        assert session not in broker._snapshots
+        stream = broker.stream(session, 0)
+        snapshot = await anext(stream)
+        await stream.aclose()
+        assert snapshot.type == "session_snapshot"
+        assert (
+            "".join(event["data"]["text"] for event in snapshot.data["events"] if event["type"] == "delta")
+            == "First middle last"
+        )
+
+    asyncio.run(exercise())
+
+
+def test_postgres_foreground_replay_survives_completed_cache_eviction(postgres_history):
+    from nurse_scheduling.ai.turns import TurnJournal
+
+    async def exercise():
+        session, owner, turn_id = str(uuid4()), str(uuid4()), str(uuid4())
+        state = {"history": [{"role": "user", "content": "Question"}, {"role": "assistant", "content": "Saved answer"}]}
+        expiry = time.time() + 60
+        postgres_history.save_recovery_session(session, owner, expiry, {})
+        journal = TurnJournal(postgres_history, max_cached_bytes=1)
+        turn = await journal.start(session, turn_id, "request", "Question")
+        await journal.publish(turn, "delta", {"text": "Saved answer"})
+        await journal.finish(turn, "done", {"message_id": turn_id}, state=(owner, expiry, state))
+        assert not journal.turns
+        recovered = await journal.get(session, "request")
+        assert recovered.terminal
+        assert recovered.events[0] == {"type": "delta", "data": {"text": "Saved answer"}}
+        assert not journal.turns
+        with postgres_history._connect() as connection:
+            assert connection.execute("SELECT state FROM chat_recovery_sessions").fetchone()[0] == state
+
+    asyncio.run(exercise())
+
+
+def test_postgres_recovery_enforces_owner_and_session_expiry(postgres_history):
+    owner, other_owner = str(uuid4()), str(uuid4())
+    expired, current = str(uuid4()), str(uuid4())
+    for session, expiry in ((expired, time.time() - 1), (current, time.time() + 60)):
+        postgres_history.save_recovery_session(session, owner, expiry, {})
+        turn = str(uuid4())
+        postgres_history.start_recovery_turn(turn, session, "question", "Original question")
+        postgres_history.append_recovery_event(session, turn, 1, "delta", {"text": "Private answer"})
+    assert postgres_history.load_recovery_session(current, other_owner) is None
+    assert postgres_history.load_recovery_session(expired, owner) is None
+    assert postgres_history.load_recovery_session(current, owner) is not None
+    with postgres_history._connect() as connection:
+        connection.execute(
+            "UPDATE chat_recovery_sessions SET created_at = now() - interval '35 days' WHERE id = %s", (current,)
+        )
+        connection.execute(
+            "UPDATE chat_recovery_turns SET started_at = now() - interval '35 days' WHERE session_id = %s", (current,)
+        )
+    # Retention follows renewed session expiry, rather than individual message age.
+    postgres_history.prune()
+    with postgres_history._connect() as connection:
+        assert connection.execute("SELECT count(*) FROM chat_recovery_sessions").fetchone() == (1,)
+        assert connection.execute("SELECT count(*) FROM chat_recovery_turns").fetchone() == (1,)
+        assert connection.execute("SELECT count(*) FROM chat_recovery_entries").fetchone() == (1,)
+
+
+def test_postgres_stop_before_message_arrival_survives_restart(postgres_history):
+    settings = basic.make_settings(history_postgres_url="test")
+    first = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
+    with basic.AuthenticatedTestClient(first) as client:
+        session = basic.create_session(client)
+        cookies = dict(client.cookies)
+        assert client.post(f"/sessions/{session}/stop", json={"message_id": "stopped-request"}).status_code == 202
+    provider = basic.FakeProvider()
+    restarted = basic.create_test_app(settings=settings, provider=provider)
+    with basic.AuthenticatedTestClient(restarted) as client:
+        client.cookies.update(cookies)
+        result = client.post(
+            f"/sessions/{session}/messages", json={"message": "Original question", "message_id": "stopped-request"}
+        )
+        assert basic.parse_sse(result.text, include_model_input=True)[-1][0] == "stopped"
+        assert provider.calls == []
+        assert restarted.state.session_store._sessions[session].history == []

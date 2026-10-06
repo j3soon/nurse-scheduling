@@ -102,8 +102,12 @@ starts a new attempt. Reconnecting an accepted request keeps the same message ID
 so it does not send the question to the model twice. Failed and stopped output is
 excluded from the model's conversation context.
 
-Recovery lasts until the session expires or the backend restarts. Uploaded files
-and result downloads are held in memory and do not survive a backend restart.
+Recovery lasts until the session expires, normally after 30 days of inactivity.
+Hosted deployments use PostgreSQL to
+recover messages after a backend restart. A restart interrupts active responses,
+but the saved question and partial output remain available. Uploaded files and
+result downloads are held in memory and can disappear after a server restart
+without prior notice. Keep your original files.
 
 ## See what the assistant did
 
@@ -214,7 +218,7 @@ To replace the schedule currently open in the app directly, use **Upload** on
 The browser uploads one YAML snapshot when it creates the chat session. Later
 questions in that session use the same service-held snapshot. The current
 browser tab preserves the transcript when you switch pages or reload. A chat
-expires after 48 hours without a message. Each new message renews that period,
+expires after 30 days without a message. Each new message renews that period,
 and the page reports when a preserved chat has expired.
 
 ## Data and limitations
