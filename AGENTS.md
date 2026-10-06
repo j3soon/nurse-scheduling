@@ -125,6 +125,10 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   modification is explicitly authorized.
 - Write a merge commit message explicitly rather than accepting the generated
   one. Describe what the merge takes and how conflicts were resolved.
+- When a merge combines changes from both sides to the affected-test scripts in
+  `scripts/`, run `scripts/test_affected_harness.sh` before committing. Git can
+  merge `case` branches without a conflict while an earlier pattern shadows a
+  later one, so a test suite silently stops being selected.
 
 ## Style
 - Keep comments and docs minimal, concise, yet informative.
