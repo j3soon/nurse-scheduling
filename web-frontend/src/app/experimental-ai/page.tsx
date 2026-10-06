@@ -80,6 +80,8 @@ import {
 
 interface ChatMessage extends ChatExportMessage {
   id: string;
+  requestId?: string;
+  request?: { id: string; question: string; questionId: string; assistantId: string; active: boolean };
   downloadId?: string;
   // Absolute history position of an app event, so a retried turn does not show it twice.
   historyIndex?: number;
@@ -286,6 +288,11 @@ function isChatMessage(value: unknown): value is ChatMessage {
       && typeof message.retry.question === 'string'
       && typeof message.retry.requiresAttachments === 'boolean'
     ))
+    && (message.requestId === undefined || typeof message.requestId === 'string')
+    && (message.request === undefined || (typeof message.request === 'object' && message.request !== null
+      && typeof message.request.id === 'string' && typeof message.request.question === 'string'
+      && typeof message.request.questionId === 'string' && typeof message.request.assistantId === 'string'
+      && typeof message.request.active === 'boolean'))
     && (message.downloadId === undefined || typeof message.downloadId === 'string')
     && (message.optimizerJob === undefined || (message.optimizerJob !== null
       && typeof message.optimizerJob.jobId === 'string'
@@ -577,6 +584,9 @@ export default function ExperimentalAiPage() {
   const [draft, setDraft] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
+  const [isReconnecting, setIsReconnecting] = useState(false);
+  const resumedRequestRef = useRef<string | null>(null);
+  const currentRequestRef = useRef<{ id: string; stopped: boolean } | null>(null);
   const [activeOptimization, setActiveOptimization] = useState<ActiveOptimization | null>(null);
   const [downloadingOptimizationId, setDownloadingOptimizationId] = useState<string | null>(null);
   const [isClientReady, setIsClientReady] = useState(false);
@@ -675,7 +685,7 @@ export default function ExperimentalAiPage() {
       // restore it before the stream opens. Its tools stopped with the old page.
       backgroundAssistantIdRef.current = storedConversation.backgroundAssistantId ?? null;
       setMessages(storedConversation.messages.map(message => (
-        message.status === 'pending'
+        message.status === 'pending' && !message.requestId
           ? { ...message, status: 'failed' as const, activity: interruptRunningTools(message.activity ?? []) }
           : message
       )));
@@ -1296,6 +1306,17 @@ export default function ExperimentalAiPage() {
         onEventId: id => {
           lastSessionEventIdRef.current = id;
           sessionEventsRetryRef.current = 0;
+          if (backgroundTurnActiveRef.current) setIsReconnecting(false);
+        },
+        onReplay: events => {
+          const assistantIds = new Set(events.filter(event => event.type === 'turn_start').map(event => event.data.message_id));
+          // Replace replayed output in its original row, before any later questions.
+          setMessages(previous => previous.map(message => assistantIds.has(message.id)
+            ? { ...message, content: '', activity: [], status: 'pending' as const,
+                downloadId: undefined, retry: undefined, responseCompletedAt: undefined }
+            : message));
+          backgroundAssistantIdRef.current = null;
+          backgroundTurnActiveRef.current = false;
         },
         onTurnStart: beginBackgroundMessage,
         onModelInput: input => {
@@ -1451,14 +1472,11 @@ export default function ExperimentalAiPage() {
         reconnect();
         return;
       }
-      // Report the first failure of a disconnected streak only, since reconnection
-      // attempts continue in the background.
-      if (sessionEventsRetryRef.current === 0) {
-        reportRequestError(streamError, 'The background AI event stream disconnected.');
-      }
+      if (backgroundTurnActiveRef.current) setIsReconnecting(true);
       // Rejected credentials cannot succeed until the token changes, which restarts
       // this stream through the effect below.
       if (streamError instanceof AiHttpError && (streamError.status === 401 || streamError.status === 403)) {
+        reportRequestError(streamError, 'The AI event stream could not authenticate.');
         if (sessionEventsControllerRef.current === controller) sessionEventsControllerRef.current = null;
         return;
       }
@@ -1485,27 +1503,55 @@ export default function ExperimentalAiPage() {
     attachmentsForMessage: SelectedAttachment[],
     clearComposer: boolean,
     createdAt = Date.now(),
+    resume?: { id: string; questionId: string; assistantId: string; recover?: boolean },
   ) => {
     if (!question || isStreaming || conversationUnavailable || (authRequired && authToken === null)) return;
 
     const userMessage: ChatMessage = {
-      id: messageId(),
+      id: resume?.questionId ?? messageId(),
       role: 'user',
       createdAt,
       content: question,
     };
-    let activeAssistantId = messageId();
+    const request = {
+      id: resume?.id ?? messageId(), question, questionId: userMessage.id,
+      assistantId: resume?.assistantId ?? messageId(), active: true,
+    };
+    currentRequestRef.current = { id: request.id, stopped: false };
+    const currentRequest = currentRequestRef.current;
+    userMessage.requestId = request.id;
+    let activeAssistantId = request.assistantId;
     let activeAssistantHasOutput = false;
     let activeQuestion = question;
     let activeQuestionRequiresAttachments = attachmentsForMessage.length > 0;
     const responseStartedAt = Date.now();
     followPageBottomRef.current = true;
     setShowScrollToBottom(false);
-    setMessages(previous => [
-      ...previous,
-      userMessage,
-      { id: activeAssistantId, role: 'assistant', content: '', status: 'pending', responseStartedAt },
-    ]);
+    const resetResponse = () => {
+      activeAssistantId = request.assistantId;
+      activeAssistantHasOutput = false;
+      activeQuestion = question;
+      setMessages(previous => {
+        const original = previous.find(message => message.id === request.assistantId);
+        const assistant: ChatMessage = {
+          id: request.assistantId, role: 'assistant', content: '', status: 'pending',
+          responseStartedAt: original?.responseStartedAt ?? responseStartedAt, requestId: request.id, request,
+        };
+        const retained = previous.filter(message => message.id !== `status-${request.assistantId}`
+          && (message.requestId !== request.id || message.id === userMessage.id || message.id === request.assistantId));
+        if (original) return retained.map(message => message.id === request.assistantId ? assistant : message);
+        const questionIndex = retained.findIndex(message => message.id === userMessage.id);
+        if (questionIndex < 0) return [...retained, userMessage, assistant];
+        retained.splice(questionIndex + 1, 0, assistant);
+        return retained;
+      });
+    };
+    const updateActiveMessage = (update: (message: ChatMessage) => ChatMessage) => {
+      // A snapshot can dispatch steering before React applies earlier event updates.
+      const assistantId = activeAssistantId;
+      setMessages(previous => previous.map(message => message.id === assistantId ? update(message) : message));
+    };
+    resetResponse();
     if (clearComposer) {
       setDraft('');
       attachmentsForMessage.forEach(attachment => {
@@ -1533,18 +1579,27 @@ export default function ExperimentalAiPage() {
         setActiveSessionId(sessionId);
         setConversationUnavailable(false);
         setSessionNotice(null);
-      } else if (syncedScheduleRef.current !== scheduleYaml) {
+      } else if (!resume?.recover && syncedScheduleRef.current !== scheduleYaml) {
         // The schedule can change elsewhere in the app between questions. The backend then
         // discards a proposal made for the previous schedule.
         await updateSessionSchedule(sessionId, scheduleYaml, authToken, sessionEndpoint);
         setProposalDiff(null);
       }
-      syncedScheduleRef.current = scheduleYaml;
+      if (!resume?.recover) syncedScheduleRef.current = scheduleYaml;
       renewSessionExpiration();
+      if (currentRequest.stopped) {
+        setMessages(previous => previous.map(message => message.id === request.assistantId
+          ? { ...message, content: 'Stopped.', status: undefined, responseCompletedAt: Date.now(),
+              activity: [{ kind: 'response' as const, text: 'Stopped.' }] } : message));
+        return;
+      }
       await streamMessage(
         sessionId,
         question,
         {
+          onReplay: resetResponse,
+          shouldStop: () => currentRequest.stopped,
+          onConnectionChange: connected => setIsReconnecting(!connected),
           onModelInput: input => {
             const assistantId = activeAssistantId;
             setMessages(previous => applyModelInput(previous, input, { questionId: userMessage.id, assistantId }));
@@ -1571,23 +1626,18 @@ export default function ExperimentalAiPage() {
               activeAssistantHasOutput = true;
               setSteeringAssistantId(null);
             }
-            setMessages(previous => previous.map(message => (
-              message.id === activeAssistantId
-                ? {
-                  ...message,
-                  content: message.content + text,
-                  activity: appendResponseActivity(message.activity ?? [], text),
-                }
-                : message
-            )));
+            updateActiveMessage(message => ({
+              ...message,
+              content: message.content + text,
+              activity: appendResponseActivity(message.activity ?? [], text),
+            }));
           },
           onReasoning: text => {
             if (text) {
               activeAssistantHasOutput = true;
               setSteeringAssistantId(null);
             }
-            setMessages(previous => previous.map(message => {
-              if (message.id !== activeAssistantId) return message;
+            updateActiveMessage(message => {
               const activity = message.activity ?? [];
               const last = activity[activity.length - 1];
               // Consecutive reasoning belongs to one entry, so the order of work stays readable.
@@ -1595,26 +1645,21 @@ export default function ExperimentalAiPage() {
                 return { ...message, activity: [...activity.slice(0, -1), { ...last, text: last.text + text }] };
               }
               return { ...message, activity: [...activity, { kind: 'reasoning', text }] };
-            }));
+            });
           },
           onToolStart: activity => {
             activeAssistantHasOutput = true;
             setSteeringAssistantId(null);
-            setMessages(previous => previous.map(message => (
-              message.id === activeAssistantId
-                ? {
-                  ...message,
-                  activity: [
-                    ...(message.activity ?? []),
-                    { kind: 'tool' as const, ...activity, result: '', ok: true, state: 'running' as const },
-                  ],
-                }
-                : message
-            )));
+            updateActiveMessage(message => ({
+              ...message,
+              activity: [
+                ...(message.activity ?? []),
+                { kind: 'tool' as const, ...activity, result: '', ok: true, state: 'running' as const },
+              ],
+            }));
           },
-          onTool: activity => setMessages(previous => previous.map(message => {
-            if (message.id !== activeAssistantId) return message;
-            return { ...message, activity: finishToolActivity(message.activity ?? [], activity) };
+          onTool: activity => updateActiveMessage(message => ({
+            ...message, activity: finishToolActivity(message.activity ?? [], activity),
           })),
           onSteering: (queuedId, queuedMessage) => {
             const createdAt = queuedMessagesRef.current.find(message => message.id === queuedId)?.createdAt ?? Date.now();
@@ -1624,21 +1669,25 @@ export default function ExperimentalAiPage() {
             if (activeAssistantHasOutput) {
               const completedAssistantId = activeAssistantId;
               const nextAssistantId = messageId();
-              setMessages(previous => [
-                ...previous.map(message => (
+              setMessages(previous => {
+                const result = previous.map(message => (
                   message.id === completedAssistantId
                     ? { ...message, status: undefined, responseCompletedAt: steeringStartedAt }
                     : message
-                )),
-                { id: queuedId, role: 'user', content: queuedMessage, createdAt },
-                {
-                  id: nextAssistantId,
-                  role: 'assistant',
-                  content: '',
-                  status: 'pending',
-                  responseStartedAt: steeringStartedAt,
-                },
-              ]);
+                ));
+                const completedIndex = result.findIndex(message => message.id === completedAssistantId);
+                result.splice(completedIndex < 0 ? result.length : completedIndex + 1, 0,
+                  { id: queuedId, role: 'user', content: queuedMessage, createdAt, requestId: request.id },
+                  {
+                    id: nextAssistantId,
+                    role: 'assistant',
+                    content: '',
+                    status: 'pending',
+                    responseStartedAt: steeringStartedAt,
+                    requestId: request.id,
+                  });
+                return result;
+              });
               activeAssistantId = nextAssistantId;
               setSteeringAssistantId(nextAssistantId);
               activeAssistantHasOutput = false;
@@ -1646,10 +1695,10 @@ export default function ExperimentalAiPage() {
               const pendingAssistantId = activeAssistantId;
               setMessages(previous => {
                 const pendingIndex = previous.findIndex(message => message.id === pendingAssistantId);
-                if (pendingIndex < 0) return [...previous, { id: queuedId, role: 'user', content: queuedMessage, createdAt }];
+                if (pendingIndex < 0) return [...previous, { id: queuedId, role: 'user', content: queuedMessage, createdAt, requestId: request.id }];
                 return [
                   ...previous.slice(0, pendingIndex),
-                  { id: queuedId, role: 'user', content: queuedMessage, createdAt },
+                  { id: queuedId, role: 'user', content: queuedMessage, createdAt, requestId: request.id },
                   ...previous.slice(pendingIndex),
                 ];
               });
@@ -1658,33 +1707,34 @@ export default function ExperimentalAiPage() {
             activeQuestion = queuedMessage;
             activeQuestionRequiresAttachments = false;
           },
-          onDownload: downloadId => setMessages(previous => previous.map(message => (
-            message.id === activeAssistantId ? { ...message, downloadId } : message
-          ))),
+          onDownload: downloadId => updateActiveMessage(message => ({ ...message, downloadId })),
           onWarning: setError,
           onScheduleChange: candidate => {
             const before = sandboxScheduleRef.current ?? scheduleYaml;
             sandboxScheduleRef.current = candidate;
-            setMessages(previous => previous.map(message => (
-              message.id === activeAssistantId
-                ? {
-                  ...message,
-                  activity: [
-                    ...(message.activity ?? []),
-                    { kind: 'schedule-change' as const, before, after: candidate },
-                  ],
-                }
-                : message
-            )));
+            updateActiveMessage(message => ({
+              ...message,
+              activity: [
+                ...(message.activity ?? []),
+                { kind: 'schedule-change' as const, before, after: candidate },
+              ],
+            }));
           },
           onProposal: diff => setProposalDiff(diff),
           onContextUsage: updateContextUsage,
           onHistoryTrimmed: setTrimmedHistoryCount,
+          onStopped: () => updateActiveMessage(message => ({
+            ...message, content: message.content || 'Stopped.', status: undefined,
+            activity: message.content ? interruptRunningTools(message.activity ?? [])
+              : [...interruptRunningTools(message.activity ?? []), { kind: 'response' as const, text: 'Stopped.' }],
+            responseCompletedAt: Date.now(),
+          })),
         },
         controller.signal,
         authToken,
         {
           files: attachmentsForMessage.map(attachment => attachment.file),
+          messageId: request.id,
         },
         sessionEndpoint,
       );
@@ -1694,20 +1744,10 @@ export default function ExperimentalAiPage() {
           : message
       )));
     } catch (streamError) {
+      if (controller.signal.aborted) return;
       const staleTurnMessage = streamError instanceof AiStaleTurnError ? streamError.message : null;
       setMessages(previous => previous.map(message => {
         if (message.id !== activeAssistantId) return message;
-        if (controller.signal.aborted) {
-          return {
-            ...message,
-            content: message.content || 'Stopped.',
-            status: undefined,
-            responseCompletedAt: Date.now(),
-            activity: message.content
-              ? interruptRunningTools(message.activity ?? [])
-              : [...interruptRunningTools(message.activity ?? []), { kind: 'response', text: 'Stopped.' }],
-          };
-        }
         return {
           ...message,
           content: staleTurnMessage ?? message.content,
@@ -1728,6 +1768,12 @@ export default function ExperimentalAiPage() {
         reportRequestError(streamError, 'The AI request failed.');
       }
     } finally {
+      if (!controller.signal.aborted) {
+        setMessages(previous => previous.map(message => message.request?.id === request.id
+          ? { ...message, request: { ...message.request, active: false } } : message));
+      }
+      if (currentRequestRef.current === currentRequest) currentRequestRef.current = null;
+      setIsReconnecting(false);
       setSteeringAssistantId(null);
       abortControllerRef.current = null;
       setIsStopping(false);
@@ -1740,6 +1786,15 @@ export default function ExperimentalAiPage() {
       }
     }
   };
+
+  useEffect(() => {
+    if (!isClientReady || serverStatus !== 'online' || activeSessionId === null || isStreaming || conversationUnavailable
+      || (authRequired && authToken === null)) return;
+    const pending = messages.find(message => message.request?.active)?.request;
+    if (!pending || resumedRequestRef.current === pending.id) return;
+    resumedRequestRef.current = pending.id;
+    void sendRequest(pending.question, [], false, Date.now(), { ...pending, recover: true });
+  });
 
   const send = async (event: FormEvent) => {
     event.preventDefault();
@@ -1776,16 +1831,10 @@ export default function ExperimentalAiPage() {
 
   const retryMessage = (failedId: string, question: string) => {
     if (!question || isStreaming || (authRequired && authToken === null)) return;
-    // The retried turn replaces the failed question, status, and reply. App events stay in history.
-    setMessages(previous => {
-      const failedIndex = previous.findIndex(message => message.id === failedId);
-      if (failedIndex < 0) return previous;
-      let start = failedIndex;
-      if (previous[start - 1]?.source === 'status') start -= 1;
-      if (previous[start - 1]?.role === 'user' && previous[start - 1]?.source === undefined) start -= 1;
-      return [...previous.slice(0, start), ...previous.slice(failedIndex + 1)];
-    });
-    void sendRequest(question, [], false);
+    const failedIndex = messages.findIndex(message => message.id === failedId);
+    const original = messages.slice(0, failedIndex).reverse().find(message => message.role === 'user' && message.source === undefined);
+    if (!original) return;
+    void sendRequest(question, [], false, original.createdAt, { id: messageId(), questionId: original.id, assistantId: failedId });
   };
 
   const prepareAttachmentRetry = (question: string) => {
@@ -1796,9 +1845,9 @@ export default function ExperimentalAiPage() {
   const stop = () => {
     if (isStopping) return;
     setIsStopping(true);
+    if (currentRequestRef.current) currentRequestRef.current.stopped = true;
     queuedMessagesRef.current = [];
     setQueuedMessages([]);
-    abortControllerRef.current?.abort();
     const sessionId = sessionIdRef.current;
     if (sessionId === null) {
       setIsStopping(false);
@@ -1806,7 +1855,7 @@ export default function ExperimentalAiPage() {
     }
     // The request only asks the server to stop. The turn keeps running until a terminal
     // event reports it ended, so every one of those clears the pending state instead.
-    void stopSession(sessionId, authToken, sessionEndpointRef.current ?? aiEndpoint)
+    void stopSession(sessionId, authToken, sessionEndpointRef.current ?? aiEndpoint, currentRequestRef.current?.id)
       .catch(stopError => {
         reportRequestError(stopError, 'The AI response could not be stopped.');
         setIsStopping(false);
@@ -2354,7 +2403,7 @@ export default function ExperimentalAiPage() {
               )}
               {message.role === 'assistant' && message.status === 'failed' && message.retry && (
                 <div className="mt-3 border-t border-red-200 pt-3 text-sm text-red-700">
-                  <p>This turn failed and was not saved to AI history.</p>
+                  <p>This turn failed. Its output was not added to the AI conversation context.</p>
                   {message.retry.requiresAttachments ? (
                     <>
                       <p className="mt-1 text-xs">Prepare the question, then reattach its files before sending.</p>
@@ -2475,6 +2524,11 @@ export default function ExperimentalAiPage() {
           >
             <FiArrowDown aria-hidden="true" className="h-4 w-4" />
           </button>
+        )}
+        {isReconnecting && (
+          <div role="status" className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
+            Reconnecting. Your AI response continues on the server.
+          </div>
         )}
         {activeOptimization !== null && (
           <div

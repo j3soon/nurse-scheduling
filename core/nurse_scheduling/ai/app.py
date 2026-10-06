@@ -39,7 +39,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
 from ruamel.yaml.error import YAMLError
-from starlette.background import BackgroundTask
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -101,6 +100,7 @@ from .sandbox_agent import (
     SandboxTurnTimeoutError,
     run_sandbox_agent,
 )
+from .turns import TurnJournal, append_compacted
 from .validation import new_schedule_issues, validate_frontend_schedule_yaml
 
 SERVICE_NAME = "nurse-scheduling-ai-api"
@@ -184,6 +184,14 @@ class ChatRequest(BaseModel):
     """One user question for an existing schedule chat."""
 
     message: str = Field(min_length=1, max_length=100_000)
+    message_id: str | None = Field(default=None, min_length=1, max_length=100)
+    last_event_id: int = Field(default=0, ge=0)
+
+
+class StopChatRequest(BaseModel):
+    """Identify a question that may still be arriving at the server."""
+
+    message_id: str = Field(min_length=1, max_length=100)
 
 
 class QueueChatRequest(ChatRequest):
@@ -868,6 +876,8 @@ def create_app(
         sandbox_factory = create_sandbox_factory(settings)
     store = SessionStore(settings)
     event_broker = SessionEventBroker(max_sessions=settings.max_sessions)
+    turn_journal = TurnJournal()
+    turn_workers: set[asyncio.Task] = set()
     turn_locks: dict[str, asyncio.Lock] = {}
     active_turn_tasks: dict[str, asyncio.Task[object]] = {}
     background_turn_tasks: dict[str, set[asyncio.Task[object]]] = {}
@@ -940,7 +950,7 @@ def create_app(
                     del background_turn_tasks[session_id]
 
     async def optimizer_updated(session_id: str, update: dict[str, object]) -> None:
-        event_broker.publish(
+        await event_broker.emit(
             session_id,
             "optimization_progress" if "progress" in update else "optimization",
             update,
@@ -965,6 +975,7 @@ def create_app(
         pending_turn_stops.discard(session_id)
         session_optimizer.forget_session(session_id)
         event_broker.forget_session(session_id)
+        turn_journal.forget_session(session_id)
 
     store.on_retire(retire_session)
 
@@ -980,6 +991,9 @@ def create_app(
             async with managed_sandbox_factory(sandbox_factory):
                 yield
         finally:
+            for task in tuple(turn_workers):
+                task.cancel()
+            await asyncio.gather(*turn_workers, return_exceptions=True)
             await session_optimizer.close()
             if maintenance is not None:
                 await stop_maintenance(maintenance)
@@ -1009,6 +1023,9 @@ def create_app(
     app.state.app_version = app_version
     app.state.session_optimizer = session_optimizer
     app.state.session_event_broker = event_broker
+    app.state.turn_journal = turn_journal
+    app.state.active_turn_tasks = active_turn_tasks
+    app.state.turn_workers = turn_workers
 
     app.add_middleware(SentryClientAddressMiddleware)
 
@@ -1101,10 +1118,16 @@ def create_app(
     )
     async def stop_active_turn(
         session_id: str,
+        body: StopChatRequest | None = None,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> Response:
         """Cancel the foreground or background assistant turn active in a session."""
         store.require_owned(session_id, owner)
+        if body is not None:
+            try:
+                await turn_journal.request_stop(session_id, body.message_id)
+            except RuntimeError as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from None
         task = active_turn_tasks.get(session_id)
         if task is not None and not task.done():
             task.cancel()
@@ -1139,7 +1162,11 @@ def create_app(
         store.require_owned(session_id, owner)
         return [_upload_metadata(item) for item in store.attachments(session_id)]
 
-    @app.delete("/sessions/{session_id}/uploads/{upload_id}", dependencies=[Depends(require_auth)], status_code=204)
+    @app.delete(
+        "/sessions/{session_id}/uploads/{upload_id}",
+        dependencies=[Depends(require_auth)],
+        status_code=204,
+    )
     async def remove_upload(
         session_id: str,
         upload_id: str,
@@ -1165,7 +1192,11 @@ def create_app(
             headers={"Content-Disposition": 'attachment; filename="download.zip"'},
         )
 
-    @app.delete("/sessions/{session_id}/downloads/{download_id}", dependencies=[Depends(require_auth)], status_code=204)
+    @app.delete(
+        "/sessions/{session_id}/downloads/{download_id}",
+        dependencies=[Depends(require_auth)],
+        status_code=204,
+    )
     async def remove_generated_zip(
         session_id: str,
         download_id: str,
@@ -1236,6 +1267,21 @@ def create_app(
         refresh_owner_cookie(response, owner)
         return response
 
+    def turn_response(turn, cursor: int, owner: str, snapshot: bool = False) -> StreamingResponse:
+        async def events():
+            async for event in turn.stream(cursor, snapshot=snapshot):
+                if event is None:
+                    yield ": keepalive\n\n"
+                else:
+                    event_id, event_type, data = event
+                    yield f"id: {event_id}\n{_sse_event(event_type, data)}"
+
+        response = StreamingResponse(
+            events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+        )
+        refresh_owner_cookie(response, owner)
+        return response
+
     @app.post("/sessions/{session_id}/messages", dependencies=[Depends(require_auth)])
     async def stream_message(
         session_id: str,
@@ -1246,6 +1292,13 @@ def create_app(
         """Stream one answer and retain only text after successful completion."""
         question = _validate_question(body.message, settings)
         store.require_owned(session_id, owner)
+        if (
+            body.message_id is not None
+            and (existing := await turn_journal.get(session_id, body.message_id)) is not None
+        ):
+            if existing.question != question:
+                raise HTTPException(status_code=409, detail="This message ID belongs to a different question.")
+            return turn_response(existing, body.last_event_id, owner, snapshot=True)
         turn_lock = turn_locks.setdefault(session_id, asyncio.Lock())
         if turn_lock.locked():
             raise HTTPException(status_code=409, detail="This chat session already has an active response.")
@@ -1294,26 +1347,19 @@ def create_app(
             json.dumps(_question_log_preview(question), ensure_ascii=False),
             len(hydrated_attachments),
         )
-        stream_started = threading.Event()
-        latest_artifact = await session_optimizer.latest_result_artifact(session_id)
-        retained_history = recent_history(history, settings.max_history_chars)
-        dropped_history = previously_dropped + len(history) - len(retained_history)
-        messages = build_provider_messages(
-            retained_history,
-            schedule_yaml,
-            question,
-            hydrated_attachments,
-            system_prompt=SANDBOX_SYSTEM_PROMPT,
-            pending_proposal=bool(proposal_yaml),
-            optimizer_result_available=latest_artifact is not None,
-            max_history_chars=settings.max_history_chars,
-            max_download_bytes=settings.max_download_bytes,
-        )
-        # History keeps the question as typed. Upload and removal events are separate history messages.
         history_question = question
+        request_id = body.message_id or turn_id
+        try:
+            replay_turn = await turn_journal.start(session_id, turn_id, request_id, question)
+        except RuntimeError as exc:
+            store.abort(session_id)
+            release_turn()
+            raise HTTPException(status_code=503, detail=str(exc)) from None
+
+        saved_outcome = None
 
         async def generate_events():
-            stream_started.set()
+            nonlocal saved_outcome
             current_task = asyncio.current_task()
             if current_task is not None:
                 active_turn_tasks[session_id] = current_task
@@ -1330,6 +1376,22 @@ def create_app(
             turn_messages = [ChatMessage(role="user", content=history_question)]
             assistant_segment: list[str] = []
             try:
+                if stopped_before_stream or await turn_journal.was_stopped(session_id, request_id):
+                    raise asyncio.CancelledError
+                latest_artifact = await session_optimizer.latest_result_artifact(session_id)
+                retained_history = recent_history(history, settings.max_history_chars)
+                dropped_history = previously_dropped + len(history) - len(retained_history)
+                messages = build_provider_messages(
+                    retained_history,
+                    schedule_yaml,
+                    question,
+                    hydrated_attachments,
+                    system_prompt=SANDBOX_SYSTEM_PROMPT,
+                    pending_proposal=bool(proposal_yaml),
+                    optimizer_result_available=latest_artifact is not None,
+                    max_history_chars=settings.max_history_chars,
+                    max_download_bytes=settings.max_download_bytes,
+                )
                 yield _sse_event(
                     "model_input", model_input(messages, len(retained_history), dropped_history, "question")
                 )
@@ -1423,6 +1485,11 @@ def create_app(
                     turn_messages=turn_messages,
                 )
                 completed = True
+                saved_outcome = (
+                    ("done", {"message_id": turn_id})
+                    if completion.turn_saved
+                    else ("stale", {"message": STALE_TURN_ERROR})
+                )
                 outcome = "completed" if completion.turn_saved else "stale"
                 history_saved = None
                 if history_log is not None:
@@ -1459,7 +1526,15 @@ def create_app(
                 )
                 yield _sse_event("done", done)
             except asyncio.CancelledError:
-                raise
+                if completed:
+                    # Stop can arrive while a completed answer is being persisted.
+                    yield (
+                        _sse_event("done", {"message_id": turn_id})
+                        if completion.turn_saved
+                        else _sse_event("stale", {"message": STALE_TURN_ERROR})
+                    )
+                else:
+                    yield _sse_event("stopped", {"message_id": turn_id})
             except ProviderError as exc:
                 outcome, error_code = "failed", "provider_error"
                 yield _sse_event("error", {"message": exc.user_message or PROVIDER_ERROR})
@@ -1504,22 +1579,71 @@ def create_app(
                         )
                 release_turn()
 
-        async def abort_unstarted_stream() -> None:
-            if not stream_started.is_set():
-                store.abort(session_id)
-                pending_turn_stops.discard(session_id)
-                if history_log is not None:
-                    await history_log.write("finish_turn", turn_id, "", "cancelled", None, None)
-                release_turn()
+        async def run_turn() -> None:
+            queue = asyncio.Queue(maxsize=64)
+            terminal = None
 
-        response = StreamingResponse(
-            generate_events(),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-            background=BackgroundTask(abort_unstarted_stream),
-        )
-        refresh_owner_cookie(response, owner)
-        return response
+            async def collect_events() -> None:
+                source = generate_events()
+                try:
+                    async for block in source:
+                        lines = block.splitlines()
+                        event_type = next(line[7:] for line in lines if line.startswith("event: "))
+                        data = json.loads(next(line[6:] for line in lines if line.startswith("data: ")))
+                        await queue.put((event_type, data))
+                except asyncio.CancelledError:
+                    await queue.put(saved_outcome or ("stopped", {"message_id": turn_id}))
+                finally:
+                    await source.aclose()
+                    await queue.put(None)
+
+            collector = asyncio.create_task(collect_events(), name=f"ai-output-{turn_id}")
+            try:
+                ended = False
+                while not ended:
+                    batch = []
+                    event = await queue.get()
+                    while True:
+                        if event is None:
+                            ended = True
+                            break
+                        if event[0] in {"delta", "reasoning"}:
+                            append_compacted(batch, *event)
+                        else:
+                            batch.append({"type": event[0], "data": event[1]})
+                        if queue.empty():
+                            break
+                        event = queue.get_nowait()
+                    for event in batch:
+                        if event["type"] in {"done", "stopped", "stale", "error"}:
+                            terminal = (event["type"], event["data"])
+                        else:
+                            await turn_journal.publish(replay_turn, event["type"], event["data"])
+            except asyncio.CancelledError:
+                terminal = saved_outcome or ("stopped", {"message_id": turn_id})
+            except Exception:
+                logger.exception("AI turn recovery failed session_id=%s", session_id)
+                replay_turn.append(
+                    replay_turn.cursor + 1,
+                    "error",
+                    {
+                        "message": "AI message recovery is temporarily unavailable. Reconnect to check the saved response."
+                    },
+                )
+            finally:
+                if not collector.done():
+                    collector.cancel()
+                # Release a producer waiting for a full queue before joining it.
+                while not queue.empty():
+                    queue.get_nowait()
+                await asyncio.gather(collector, return_exceptions=True)
+                if terminal is not None:
+                    await turn_journal.finish(replay_turn, *terminal)
+
+        worker = asyncio.create_task(run_turn(), name=f"ai-turn-{turn_id}")
+        turn_workers.add(worker)
+        worker.add_done_callback(turn_workers.discard)
+        return turn_response(replay_turn, body.last_event_id, owner)
 
     @app.put(
         "/sessions/{session_id}/schedule",

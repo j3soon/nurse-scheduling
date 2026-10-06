@@ -193,11 +193,27 @@ describe('AI client', () => {
     expect(fetchMock).toHaveBeenCalledWith(
       'https://api.nursescheduling.org/ai/sessions/session%2Fid/messages',
       expect.objectContaining({
-        body: JSON.stringify({ message: 'Who works?' }),
+        body: expect.any(String),
         credentials: 'include',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer stream-token' },
       }),
     );
+  });
+
+  it('reattaches after a lost completion without resubmitting a new question', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(streamedResponse(['id: 1\nevent: delta\ndata: {"text":"Saved answer"}\n\n']))
+      .mockResolvedValueOnce(streamedResponse(['id: 2\nevent: done\ndata: {"message_id":"turn-1"}\n\n']));
+    vi.stubGlobal('fetch', fetchMock);
+    const deltas: string[] = [];
+    const onDone = vi.fn();
+    await streamMessage('session-id', 'Question', { onDelta: text => deltas.push(text), onDone },
+      new AbortController().signal, null, { messageId: 'question-1' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ message: 'Question', message_id: 'question-1', last_event_id: 0 });
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ message: 'Question', message_id: 'question-1', last_event_id: 1 });
+    expect(deltas).toEqual(['Saved answer']);
+    expect(onDone).toHaveBeenCalledOnce();
   });
 
   it('delivers a streamed delta before the response completes', async () => {
@@ -320,8 +336,8 @@ describe('AI client', () => {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer stream-token' },
-      body: JSON.stringify({ message: 'What is shown?' }),
-      signal,
+      body: expect.any(String),
+      signal: expect.any(AbortSignal),
     });
     expect(onUploaded).toHaveBeenCalledWith([uploaded]);
   });
@@ -759,4 +775,51 @@ describe('AI client', () => {
     expect(isOfficialAiEndpoint('https://ai.example.test')).toBe(false);
     expect(isOfficialAiEndpoint('')).toBe(false);
   });
+  it('replaces a partial answer with a complete replay and uploads files only once', async () => {
+    const events = [
+      { type: 'delta', data: { text: 'Complete answer' } },
+      { type: 'done', data: { message_id: 'turn' } },
+    ];
+    const uploaded = { id: 'file', filename: 'notes.txt', media_type: 'text/plain', bytes: 1 };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([uploaded]), { status: 200 }))
+      .mockResolvedValueOnce(streamedResponse(['id: 1\nevent: delta\ndata: {"text":"Partial"}\n\n']))
+      .mockResolvedValueOnce(streamedResponse([`id: 1205\nevent: turn_snapshot\ndata: ${JSON.stringify({ events })}\n\n`]));
+    vi.stubGlobal('fetch', fetchMock);
+    let answer = '';
+    const onReplay = vi.fn(() => { answer = ''; });
+    await streamMessage('session-id', 'Question', {
+      onDelta: text => { answer += text; }, onReplay,
+    }, new AbortController().signal, null, {
+      files: [new File(['x'], 'notes.txt')], messageId: 'same-request',
+    });
+    expect(answer).toBe('Complete answer');
+    expect(onReplay).toHaveBeenCalledWith(events);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/uploads'))).toHaveLength(1);
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({
+      message: 'Question', message_id: 'same-request', last_event_id: 1,
+    });
+  });
+
+  it('rejects recursive replay snapshots', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      'event: turn_snapshot\ndata: {"events":[{"type":"turn_snapshot","data":{}}]}\n\n',
+    ])));
+    await expect(streamMessage('session', 'Question', { onDelta: vi.fn() },
+      new AbortController().signal, null)).rejects.toThrow('invalid replay snapshot');
+  });
+
+  it('does not submit a question stopped during upload', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([{ id: 'file', filename: 'notes.txt', media_type: 'text/plain', bytes: 1 }]), { status: 201 }))
+      .mockResolvedValueOnce(streamedResponse(['event: done\ndata: {}\n\n']));
+    vi.stubGlobal('fetch', fetchMock);
+    const onStopped = vi.fn();
+    await streamMessage('session', 'Original question', {
+      onDelta: vi.fn(), onStopped, shouldStop: () => true,
+    }, new AbortController().signal, null, { files: [new File(['x'], 'notes.txt')] });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(onStopped).toHaveBeenCalledOnce();
+  });
+
 });

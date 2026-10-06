@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, Page, test } from '@playwright/test';
-import { createServer } from 'node:http';
+import { createServer, type ServerResponse } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 
@@ -43,6 +43,7 @@ function frontendOrigin(): string {
 async function startCancelableAiBackend(retainUploads = false) {
   let hasUpload = false;
   let disconnected = false;
+  let activeResponse: ServerResponse | undefined;
   const allowedOrigin = frontendOrigin();
   const server = createServer((request, response) => {
     request.resume();
@@ -86,6 +87,7 @@ async function startCancelableAiBackend(retainUploads = false) {
       return;
     }
     if (request.url === '/ai/sessions/cancel-session/messages') {
+      activeResponse = response;
       response.writeHead(200, {
         ...headers,
         'Cache-Control': 'no-cache',
@@ -98,7 +100,8 @@ async function startCancelableAiBackend(retainUploads = false) {
       return;
     }
     if (request.url === '/ai/sessions/cancel-session/stop' && request.method === 'POST') {
-      response.writeHead(200, headers).end();
+      response.writeHead(202, headers).end();
+      activeResponse?.end('event: stopped\ndata: {"message_id":"cancel-turn"}\n\n');
       return;
     }
     response.writeHead(404, headers).end();
@@ -279,7 +282,7 @@ test('asks about the current schedule and renders a streamed answer', async ({ p
   expect(viewport).not.toBeNull();
   expect(Math.abs(composerBox!.y + composerBox!.height - viewport!.height)).toBeLessThanOrEqual(2);
   await expect(page.getByRole('contentinfo')).toHaveCount(0);
-  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Who works first?' });
+  expect(JSON.parse(captured.messageBody)).toMatchObject({ message: 'Who works first?' });
   expect(captured.scheduleYaml).toContain('apiVersion:');
 
   await expect(page.getByRole('button', { name: 'Stop' })).toBeHidden();
@@ -356,19 +359,19 @@ test('retries a failed text turn without hiding its provisional activity', async
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   await expect(page.getByText('Provisional response.')).toBeVisible();
-  await expect(page.getByText('This turn failed and was not saved to AI history.')).toBeVisible();
+  await expect(page.getByText('This turn failed. Its output was not added to the AI conversation context.')).toBeVisible();
   await page.getByText('bash · interrupted').click();
   await expect(page.getByText('{"command":"sleep 30"}', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Retry' }).click();
 
   await expect(page.getByText('Recovered response.')).toBeVisible();
-  expect(captured.messageBodies.map(body => JSON.parse(body))).toEqual([
+  expect(captured.messageBodies.map(body => ({ message: JSON.parse(body).message }))).toEqual([
     { message: 'Who works first?' },
     { message: 'Who works first?' },
   ]);
 });
 
-test('Stop aborts the active AI stream', async ({ page }) => {
+test('Stop waits for the server outcome', async ({ page }) => {
   const backend = await startCancelableAiBackend();
   for (const origin of ['null', 'https://untrusted.example']) {
     const response = await fetch(`${backend.origin}/ai/capabilities`, { headers: { Origin: origin } });
@@ -386,9 +389,10 @@ test('Stop aborts the active AI stream', async ({ page }) => {
     await page.getByRole('button', { name: 'Send', exact: true }).click();
 
     await expect(page.getByText('bash · running')).toBeVisible();
+    await expect(page.getByText(/Background tool running/)).toHaveCount(0);
     await page.getByRole('button', { name: 'Stop' }).click();
 
-    await expect.poll(backend.wasDisconnected).toBe(true);
+    await expect.poll(backend.wasDisconnected).toBe(false);
     await expect(page.getByText('bash · interrupted')).toBeVisible();
     await expect(page.getByText('Stopped.')).toBeVisible();
   } finally {
@@ -611,7 +615,7 @@ test('previews and sends an image attachment', async ({ page }) => {
   expect(captured.uploadContentType).toContain('multipart/form-data');
   expect(captured.uploadBody).toContain('filename="ward.png"');
   expect(captured.messageContentType).toBe('application/json');
-  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'What is shown?' });
+  expect(JSON.parse(captured.messageBody)).toMatchObject({ message: 'What is shown?' });
   // The bubbles follow the provider request: system prompt, upload event, then the question as typed.
   const cards = page.getByLabel('Chat messages').locator('article');
   await expect(cards.locator('> p:first-child')).toHaveText(['System', 'User · App - Files Uploaded', 'User', 'Assistant']);
@@ -661,7 +665,7 @@ test('previews and sends arbitrary file attachments', async ({ page }) => {
   expect(captured.uploadBody).toContain('notes.pdf');
   expect(captured.uploadBody).toContain('coverage.custom');
   expect(captured.uploadBody).toContain('Alice,day');
-  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Check the documents.' });
+  expect(JSON.parse(captured.messageBody)).toMatchObject({ message: 'Check the documents.' });
 });
 
 
@@ -716,7 +720,7 @@ test('shows retained uploads while the assistant response is still running', asy
     await expect(panel.getByRole('button', { name: 'Remove ward.csv' })).toBeDisabled();
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
-    await expect.poll(backend.wasDisconnected).toBe(true);
+    await expect.poll(backend.wasDisconnected).toBe(false);
     await expect(panel.getByRole('button', { name: 'Remove ward.csv' })).toBeEnabled();
   } finally {
     await backend.close();
@@ -742,7 +746,7 @@ test('places uploads beside desktop chat and below mobile controls and allows re
     return route.fulfill({ status: 204 });
   });
   await page.route('**/ai/sessions/*/messages', route => {
-    expect(route.request().postDataJSON()).toEqual({ message: 'Read this file' });
+    expect(route.request().postDataJSON()).toMatchObject({ message: 'Read this file' });
     return route.fulfill({ contentType: 'text/event-stream', body: 'event: delta\ndata: {"text":"Workbook inspected."}\n\nevent: done\ndata: {}\n\n' });
   });
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -792,3 +796,144 @@ test('places uploads beside desktop chat and below mobile controls and allows re
   await panel.getByRole('button', { name: 'Remove ward.csv' }).click();
   await expect(panel.getByText('No uploaded files.')).toBeVisible();
 });
+
+
+test('restores interleaved foreground and optimizer replies in chat and export order', async ({ page }) => {
+  await mockAiBackend(page);
+  const request = { id: 'original-request', question: 'Optimize it.', questionId: 'question', assistantId: 'answer', active: true };
+  await page.addInitScript(original => {
+    sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'browser-session', endpoint: '/ai', expiresAt: Date.now() + 60_000, retentionSeconds: 172800,
+      messages: [
+        { id: 'system', role: 'system', content: 'Mock system prompt' },
+        { id: 'question', role: 'user', content: original.question, requestId: original.id },
+        { id: 'answer', role: 'assistant', content: 'Partial foreground reply', status: 'pending', requestId: original.id, request: original },
+        { id: 'optimizer-result', role: 'optimizer', content: 'Optimization finished.' },
+        { id: 'optimizer-input-background', role: 'user', source: 'optimizer', content: 'Completed optimizer result.' },
+        { id: 'background', role: 'assistant', content: 'Partial background reply' },
+        { id: 'later-question', role: 'user', content: 'Explain the score.' },
+        { id: 'later-answer', role: 'assistant', content: 'The score explanation.' },
+      ], syncedSchedule: 'description: current schedule\n', proposalDiff: null,
+    }));
+  }, request);
+  const backgroundEvents = [
+    { type: 'turn_start', data: { message_id: 'background', trigger: 'optimizer' } },
+    { type: 'model_input', data: { system: 'Mock system prompt', messages: [{ kind: 'optimizer', content: 'Completed optimizer result.' }] } },
+    { type: 'delta', data: { text: 'The result is ready.' } },
+    { type: 'done', data: { message_id: 'background' } },
+  ];
+  await page.route('**/ai/sessions/browser-session/events', route => route.fulfill({
+    contentType: 'text/event-stream',
+    body: `id: 4\nevent: session_snapshot\ndata: ${JSON.stringify({ events: backgroundEvents })}\n\n`,
+  }));
+  const foregroundEvents = [
+    { type: 'model_input', data: { system: 'Mock system prompt', messages: [{ kind: 'question', content: request.question }] } },
+    { type: 'delta', data: { text: 'Optimizer started.' } },
+    { type: 'done', data: { message_id: 'answer' } },
+  ];
+  const recoveredIds: string[] = [];
+  await page.route('**/ai/sessions/browser-session/messages', route => {
+    recoveredIds.push(route.request().postDataJSON().message_id);
+    return route.fulfill({
+      contentType: 'text/event-stream',
+      body: `id: 3\nevent: turn_snapshot\ndata: ${JSON.stringify({ events: foregroundEvents })}\n\n`,
+    });
+  });
+  await page.goto('/experimental-ai');
+  await expect(page.getByText('Optimizer started.', { exact: true })).toBeVisible();
+  await expect(page.getByText('The result is ready.', { exact: true })).toBeVisible();
+  const chat = page.getByRole('region', { name: 'Chat messages' });
+  await expect(chat.locator('article > p:first-child')).toHaveText([
+    'System', 'User', 'Assistant', 'Optimizer', 'User · Optimizer', 'Assistant', 'User', 'Assistant',
+  ]);
+  await expect(chat.getByText('Partial foreground reply')).toHaveCount(0);
+  await expect(chat.getByText('Partial background reply')).toHaveCount(0);
+  expect(recoveredIds).toEqual([request.id]);
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'HTML', exact: true }).click();
+  const html = await readFile((await (await downloadPromise).path())!, 'utf8');
+  const contents = [
+    'Optimize it.', 'Optimizer started.', 'Optimization finished.', 'Completed optimizer result.',
+    'The result is ready.', 'Explain the score.', 'The score explanation.',
+  ];
+  const positions = contents.map(content => html.indexOf(content));
+  expect(positions.every(position => position >= 0)).toBe(true);
+  expect(positions).toEqual([...positions].sort((first, second) => first - second));
+});
+
+for (const interruption of ['network pause', 'reload'] as const) {
+  test(`recovers the complete answer after a ${interruption}`, async ({ page, context }) => {
+    const origin = frontendOrigin();
+    const requests: { message: string; message_id: string; last_event_id: number }[] = [];
+    let acceptedId: string | null = null;
+    let completed = false;
+    let executions = 0;
+    const responses = new Set<ServerResponse>();
+    const headers = {
+      'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Credentials': 'true',
+      'Access-Control-Allow-Headers': 'Content-Type, Last-Event-ID',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    };
+    const complete = () => {
+      completed = true;
+      for (const response of responses) response.end('id: 2\nevent: delta\ndata: {"text":"complete answer."}\n\nid: 3\nevent: done\ndata: {"message_id":"turn"}\n\n');
+      responses.clear();
+    };
+    const server = createServer(async (request, response) => {
+      if (request.method === 'OPTIONS') { response.writeHead(204, headers).end(); return; }
+      const json = (body: object, status = 200) => response.writeHead(status, { ...headers, 'Content-Type': 'application/json' }).end(JSON.stringify(body));
+      if (request.url === '/ai/capabilities') { json({ file_attachments: { enabled: true, max_files: 8, max_bytes_per_file: 5000000 } }); return; }
+      if (request.url === '/ai/sessions' && request.method === 'POST') { request.resume(); json({ id: 'replay-session' }, 201); return; }
+      if (request.url === '/ai/sessions/replay-session') { json({ expires_in_seconds: 60 }); return; }
+      if (request.url === '/ai/sessions/replay-session/events') { response.writeHead(200, { ...headers, 'Content-Type': 'text/event-stream' }).end(); return; }
+      if (request.url?.endsWith('/messages')) {
+        let body = '';
+        try { for await (const chunk of request) body += chunk; } catch { return; }
+        const sent = JSON.parse(body);
+        requests.push(sent);
+        response.writeHead(200, { ...headers, 'Content-Type': 'text/event-stream' });
+        if (acceptedId === null) {
+          acceptedId = sent.message_id;
+          executions += 1;
+          response.write('id: 1\nevent: delta\ndata: {"text":"First part and "}\n\n');
+          setTimeout(() => response.destroy(), 150);
+          setTimeout(complete, 750);
+        } else {
+          const events: { type: string; data: Record<string, string> }[] = [{ type: 'delta', data: { text: completed ? 'First part and complete answer.' : 'First part and ' } }];
+          if (completed) events.push({ type: 'done', data: { message_id: 'turn' } });
+          response.write(`id: ${completed ? 3 : 1}\nevent: turn_snapshot\ndata: ${JSON.stringify({ events })}\n\n`);
+          if (completed) response.end();
+          else { responses.add(response); response.on('close', () => responses.delete(response)); }
+        }
+        return;
+      }
+      request.resume();
+      response.writeHead(404, headers).end();
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}/ai`;
+    try {
+      await page.addInitScript(value => localStorage.setItem('nurse-scheduling-ai-server', value), endpoint);
+      await page.goto('/experimental-ai');
+      await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Continue while disconnected');
+      await page.getByRole('button', { name: 'Send', exact: true }).click();
+      await expect(page.getByText('First part and', { exact: true })).toBeVisible();
+      if (interruption === 'network pause') {
+        await context.setOffline(true);
+        await expect.poll(() => completed).toBe(true);
+        await context.setOffline(false);
+        await page.evaluate(() => window.dispatchEvent(new Event('online')));
+      } else await page.reload();
+      await expect(page.getByText('First part and complete answer.', { exact: true })).toBeVisible();
+      await expect(page.getByText('Continue while disconnected', { exact: true })).toHaveCount(1);
+      await expect(page.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0);
+      expect(executions).toBe(1);
+      expect(requests.length).toBeGreaterThan(1);
+      expect(new Set(requests.map(request => request.message_id)).size).toBe(1);
+    } finally {
+      await context.setOffline(false);
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+}

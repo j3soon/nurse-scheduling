@@ -22,7 +22,8 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ExperimentalAiPage from './page';
-import type { ModelInput, UploadedFile } from './aiClient';
+import type { ModelInput, StreamCallbacks, UploadedFile } from './aiClient';
+import * as chatExport from './chatExport';
 
 const mockCreateSession = vi.hoisted(() => vi.fn());
 const mockGetUploads = vi.hoisted(() => vi.fn());
@@ -288,7 +289,7 @@ describe('ExperimentalAiPage', () => {
       expect.any(Object),
       expect.any(AbortSignal),
       null,
-      { files: [] },
+      { files: [], messageId: expect.any(String) },
       '/ai',
     );
     expect(mockUseTabSwitchWarning).toHaveBeenCalledWith(true);
@@ -757,7 +758,7 @@ describe('ExperimentalAiPage', () => {
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
-    expect(await screen.findByText('network down')).toBeInTheDocument();
+    expect(screen.queryByText('network down')).not.toBeInTheDocument();
 
     await waitFor(() => expect(mockStreamSessionEvents).toHaveBeenCalledTimes(2), { timeout: 4000 });
     expect(mockStreamSessionEvents.mock.calls[1][0]).toBe('session-id');
@@ -860,6 +861,142 @@ describe('ExperimentalAiPage', () => {
       responseCompletedAt: expect.any(Number),
     }));
     expect(stored.messages[0].status).toBeUndefined();
+  });
+
+  it.each([false, true])('reattaches an unfinished foreground request after reload (auth required: %s)', async requiresToken => {
+    if (requiresToken) mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, auth: { required: true, scheme: 'bearer' } });
+    const request = { id: 'original-request', question: 'Keep working', questionId: 'question', assistantId: 'answer', active: true };
+    window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'restored-session', endpoint: '/ai', expiresAt: Date.now() + 60_000, retentionSeconds: 172800,
+      messages: [
+        { id: 'question', role: 'user', content: request.question, requestId: request.id },
+        { id: 'answer', role: 'assistant', content: 'Partial', status: 'pending', requestId: request.id, request },
+      ], syncedSchedule: 'description: original schedule\n', proposalDiff: null,
+    }));
+    mockStreamMessage.mockImplementation(async (_id: string, _question: string, callbacks: {
+      onReplay: () => void; onDelta: (text: string) => void;
+    }) => {
+      callbacks.onReplay();
+      callbacks.onDelta('Recovered complete answer');
+    });
+    render(<ExperimentalAiPage />);
+    if (requiresToken) {
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole('button', { name: 'Enter token for AI assistant' }));
+      expect(mockStreamMessage).not.toHaveBeenCalled();
+      await user.type(screen.getByLabelText('Token for AI assistant'), 'replacement-token');
+      await user.click(screen.getByRole('button', { name: 'Save token for AI assistant' }));
+    }
+    expect(await screen.findByText('Recovered complete answer')).toBeInTheDocument();
+    expect(screen.getAllByText('Keep working')).toHaveLength(1);
+    expect(screen.queryByText('Partial')).not.toBeInTheDocument();
+    expect(mockStreamMessage).toHaveBeenCalledOnce();
+    expect(mockStreamMessage.mock.calls[0][5]).toEqual({ files: [], messageId: 'original-request' });
+    expect(mockCreateSession).not.toHaveBeenCalled();
+    expect(mockUpdateSessionSchedule).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('keeps recovered foreground replies before optimizer completion (steering: %s)', async steering => {
+    const request = { id: 'original-request', question: 'Optimize it.', questionId: 'question', assistantId: 'answer', active: true };
+    const startedAt = Date.now() - 120_000;
+    window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'restored-session', endpoint: '/ai', expiresAt: Date.now() + 60_000, retentionSeconds: 172800,
+      messages: [
+        { id: 'system', role: 'system', content: 'Shared instructions' },
+        { id: 'question', role: 'user', content: request.question, requestId: request.id },
+        { id: 'answer', role: 'assistant', content: 'Partial', status: 'pending', requestId: request.id, request,
+          responseStartedAt: startedAt },
+        ...(steering ? [
+          { id: 'steering', role: 'user', content: 'Use thirty seconds.', requestId: request.id },
+          { id: 'steered-answer', role: 'assistant', content: 'More partial output', requestId: request.id },
+        ] : []),
+        { id: 'optimizer-result', role: 'optimizer', content: 'Optimization finished.' },
+        { id: 'optimizer-input-background', role: 'user', source: 'optimizer', content: 'Completed optimizer result.' },
+        { id: 'background', role: 'assistant', content: 'The result is ready.' },
+      ], syncedSchedule: 'description: current schedule\n', proposalDiff: null,
+    }));
+    mockStreamMessage.mockImplementation(async (_id: string, _question: string, callbacks: StreamCallbacks) => {
+      callbacks.onReplay?.([]);
+      callbacks.onModelInput?.({ system: 'Shared instructions', messages: [{ kind: 'question', content: request.question }] });
+      callbacks.onDelta('Optimizer started.');
+      if (steering) {
+        callbacks.onSteering?.('steering', 'Use thirty seconds.');
+        callbacks.onDelta('Thirty seconds selected.');
+      }
+    });
+    const download = vi.spyOn(chatExport, 'downloadChatExport').mockReturnValue('');
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await screen.findByText('Optimizer started.');
+    const expected = [
+      'Shared instructions', request.question, 'Optimizer started.',
+      ...(steering ? ['Use thirty seconds.', 'Thirty seconds selected.'] : []),
+      'Optimization finished.', 'Completed optimizer result.', 'The result is ready.',
+    ];
+    const cards = Array.from(screen.getByLabelText('Chat messages').querySelectorAll('article'));
+    expect(cards.map(card => card.querySelector('p')?.textContent)).toEqual([
+      'System', 'User', 'Assistant', ...(steering ? ['User', 'Assistant'] : []),
+      'Optimizer', 'User · Optimizer', 'Assistant',
+    ]);
+    await user.click(screen.getByRole('button', { name: 'HTML', exact: true }));
+    expect(download.mock.calls[0][1].map(message => message.content)).toEqual(expected);
+    expect(download.mock.calls[0][1][2].responseStartedAt).toBe(startedAt);
+    expect(mockStreamMessage).toHaveBeenCalledOnce();
+  });
+
+  it('keeps replayed background replies before later questions in the chat and export', async () => {
+    window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'restored-session', endpoint: '/ai', expiresAt: Date.now() + 60_000, retentionSeconds: 172800,
+      messages: [
+        { id: 'system', role: 'system', content: 'Shared instructions' },
+        { id: 'question', role: 'user', content: 'Optimize it.' },
+        { id: 'answer', role: 'assistant', content: 'Optimizer started.' },
+        { id: 'optimizer-result', role: 'optimizer', content: 'Optimization finished.' },
+        { id: 'optimizer-input-background', role: 'user', source: 'optimizer', content: 'Completed optimizer result.' },
+        { id: 'background', role: 'assistant', content: 'Partial result', responseStartedAt: Date.now() - 60_000 },
+        { id: 'later-question', role: 'user', content: 'Explain the score.' },
+        { id: 'later-answer', role: 'assistant', content: 'The score explanation.' },
+      ], syncedSchedule: 'description: current schedule\n', proposalDiff: null,
+    }));
+    let background: StreamCallbacks | undefined;
+    mockStreamSessionEvents.mockImplementation(async (_id: string, callbacks: StreamCallbacks) => { background = callbacks; });
+    const download = vi.spyOn(chatExport, 'downloadChatExport').mockReturnValue('');
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await waitFor(() => expect(background).toBeDefined());
+    for (let replay = 0; replay < 2; replay += 1) {
+      act(() => {
+        background?.onReplay?.([{ type: 'turn_start', data: { message_id: 'background', trigger: 'optimizer' } }]);
+        background?.onTurnStart?.('background', 'optimizer');
+        background?.onModelInput?.({ system: 'Shared instructions', messages: [{ kind: 'optimizer', content: 'Completed optimizer result.' }] });
+        background?.onDelta('The result is ready.');
+        background?.onDone?.('background');
+      });
+      const cards = Array.from(screen.getByLabelText('Chat messages').querySelectorAll('article'));
+      expect(cards.map(card => card.querySelector('p')?.textContent)).toEqual([
+        'System', 'User', 'Assistant', 'Optimizer', 'User · Optimizer', 'Assistant', 'User', 'Assistant',
+      ]);
+      await user.click(screen.getByRole('button', { name: 'HTML', exact: true }));
+      expect(download.mock.calls[replay][1].map(message => message.content)).toEqual([
+        'Shared instructions', 'Optimize it.', 'Optimizer started.', 'Optimization finished.',
+        'Completed optimizer result.', 'The result is ready.', 'Explain the score.', 'The score explanation.',
+      ]);
+    }
+    expect(mockStreamMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not submit a question stopped while the session is being created', async () => {
+    let finishSession!: (id: string) => void;
+    mockCreateSession.mockImplementation(() => new Promise<string>(resolve => { finishSession = resolve; }));
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Do not send after Stop');
+    await user.click(screen.getByRole('button', { name: 'Send', exact: true }));
+    await user.click(screen.getByRole('button', { name: 'Stop', exact: true }));
+    await act(async () => { finishSession('session-id'); });
+    expect(mockStreamMessage).not.toHaveBeenCalled();
+    expect(await screen.findByText('Stopped.', { exact: true })).toBeInTheDocument();
+    expect(screen.getByText('Do not send after Stop', { exact: true })).toBeInTheDocument();
   });
 
   it('warns that the chat is stored unencrypted in this browser', async () => {
@@ -1045,7 +1182,7 @@ describe('ExperimentalAiPage', () => {
     act(() => backgroundCallbacks?.onTurnStart?.('optimizer-turn', 'optimizer'));
 
     await user.click(screen.getByRole('button', { name: 'Stop' }));
-    expect(mockStopSession).toHaveBeenCalledWith('session-id', null, '/ai');
+    expect(mockStopSession).toHaveBeenCalledWith('session-id', null, '/ai', undefined);
     act(() => backgroundCallbacks?.onStopped?.());
 
     expect(screen.getByText('Stopped.')).toBeInTheDocument();
@@ -1077,7 +1214,7 @@ describe('ExperimentalAiPage', () => {
       act(() => backgroundCallbacks?.onTurnStart?.('optimizer-turn', 'optimizer'));
 
       await user.click(screen.getByRole('button', { name: 'Stop' }));
-      expect(mockStopSession).toHaveBeenCalledWith('session-id', null, '/ai');
+      expect(mockStopSession).toHaveBeenCalledWith('session-id', null, '/ai', undefined);
       // The request is accepted well before the turn ends, so the control stays pending.
       await act(async () => {});
       expect(screen.getByRole('button', { name: 'Stop' })).toBeDisabled();
@@ -1630,14 +1767,14 @@ describe('ExperimentalAiPage', () => {
 
   it('stops the active response through the session endpoint', async () => {
     const user = userEvent.setup();
+    let confirmStop: (() => void) | undefined;
     mockStreamMessage.mockImplementationOnce(async (
       _sessionId: string,
       _message: string,
-      _callbacks: unknown,
-      signal: AbortSignal,
+      callbacks: { onStopped: () => void },
     ) => {
-      await new Promise<void>((_resolve, reject) => {
-        signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+      await new Promise<void>(resolve => {
+        confirmStop = () => { callbacks.onStopped(); resolve(); };
       });
     });
     render(<ExperimentalAiPage />);
@@ -1646,9 +1783,11 @@ describe('ExperimentalAiPage', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await user.click(await screen.findByRole('button', { name: 'Stop' }));
 
-    expect(mockStopSession).toHaveBeenCalledWith('session-id', null, '/ai');
+    expect(mockStopSession).toHaveBeenCalledWith('session-id', null, '/ai', expect.any(String));
+    expect(screen.queryByText('Stopped.')).not.toBeInTheDocument();
+    act(() => confirmStop?.());
     expect(await screen.findByText('Stopped.')).toBeInTheDocument();
-    expect(screen.queryByText('This turn failed and was not saved to AI history.')).not.toBeInTheDocument();
+    expect(screen.queryByText('This turn failed. Its output was not added to the AI conversation context.')).not.toBeInTheDocument();
   });
 
   it('queues a drafted question while a response is streaming', async () => {
@@ -1822,7 +1961,7 @@ describe('ExperimentalAiPage', () => {
       expect.any(Object),
       expect.any(AbortSignal),
       null,
-      { files: [image] },
+      { files: [image], messageId: expect.any(String) },
       '/ai',
     );
     expect(createObjectUrl).toHaveBeenCalledWith(image);
@@ -1873,7 +2012,7 @@ describe('ExperimentalAiPage', () => {
       expect.any(Object),
       expect.any(AbortSignal),
       null,
-      { files: [expect.objectContaining({ name: 'staff.custom', type: 'application/x-custom' })] },
+      { files: [expect.objectContaining({ name: 'staff.custom', type: 'application/x-custom' })], messageId: expect.any(String) },
       '/ai',
     );
   });
@@ -1897,6 +2036,7 @@ describe('ExperimentalAiPage', () => {
       expect.any(AbortSignal),
       null,
       {
+        messageId: expect.any(String),
         files: [
           expect.objectContaining({ name: 'notes.pdf', type: '' }),
           expect.objectContaining({ name: 'coverage.xlsx', type: '' }),
@@ -1936,6 +2076,26 @@ describe('ExperimentalAiPage', () => {
     await waitFor(() => expect(screen.queryByRole('status', { name: 'Thinking' })).not.toBeInTheDocument());
   });
 
+  it('waits for the server outcome when Stop races with an already saved answer', async () => {
+    let signal: AbortSignal | undefined;
+    let complete: (() => void) | undefined;
+    mockStreamMessage.mockImplementationOnce((_session, _question, callbacks, currentSignal) => {
+      signal = currentSignal;
+      return new Promise<void>(resolve => {
+        complete = () => { callbacks.onDelta('The answer was already saved.'); resolve(); };
+      });
+    });
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Original question');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await user.click(screen.getByRole('button', { name: 'Stop' }));
+    expect(signal?.aborted).toBe(false);
+    act(() => complete?.());
+    expect(await screen.findByText('The answer was already saved.')).toBeInTheDocument();
+    expect(screen.queryByText('Stopped.')).not.toBeInTheDocument();
+  });
+
   it('shows backend failures without discarding the user question', async () => {
     const providerError = 'The AI provider returned HTTP 525. Error ID: 72dc8f31-45af-410d-9fc2-41bdf1fc718f.';
     mockStreamMessage.mockImplementationOnce(async (
@@ -1956,7 +2116,7 @@ describe('ExperimentalAiPage', () => {
     expect(alert).toHaveTextContent(providerError);
     expect(screen.getByText('Can you help?')).toBeInTheDocument();
     expect(screen.getByText('Provisional response.')).toBeInTheDocument();
-    expect(screen.getByText('This turn failed and was not saved to AI history.')).toBeInTheDocument();
+    expect(screen.getByText('This turn failed. Its output was not added to the AI conversation context.')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Retry' }));
 
@@ -1965,7 +2125,7 @@ describe('ExperimentalAiPage', () => {
     expect(mockStreamMessage.mock.calls[1][1]).toBe('Can you help?');
     expect(screen.getAllByText('Can you help?')).toHaveLength(1);
     expect(screen.queryByText('Provisional response.')).not.toBeInTheDocument();
-    expect(screen.queryByText('This turn failed and was not saved to AI history.')).not.toBeInTheDocument();
+    expect(screen.queryByText('This turn failed. Its output was not added to the AI conversation context.')).not.toBeInTheDocument();
   });
 
   it('removes provisional output when the backend discards a stale turn', async () => {
@@ -1987,7 +2147,7 @@ describe('ExperimentalAiPage', () => {
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Change it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
-    expect(await screen.findByText('This turn failed and was not saved to AI history.')).toBeInTheDocument();
+    expect(await screen.findByText('This turn failed. Its output was not added to the AI conversation context.')).toBeInTheDocument();
     expect(screen.getByText('The schedule changed.')).toBeInTheDocument();
     expect(screen.queryByText('Obsolete response.')).not.toBeInTheDocument();
     expect(screen.queryByText('schedule edit')).not.toBeInTheDocument();
@@ -2033,7 +2193,7 @@ describe('ExperimentalAiPage', () => {
       expect.any(Object),
       expect.any(AbortSignal),
       null,
-      { files: [] },
+      { files: [], messageId: expect.any(String) },
       '/ai',
     );
     expect(screen.queryByRole('button', { name: 'Prepare retry' })).not.toBeInTheDocument();

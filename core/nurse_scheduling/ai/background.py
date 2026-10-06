@@ -48,6 +48,7 @@ from .sandbox_agent import (
     run_sandbox_agent,
 )
 from .schedule_context import describe_schedule
+from .turns import append_compacted
 
 CANDIDATE_VALIDATION_ERROR = (
     "The candidate schedule failed trusted validation. All schedule changes made during this agent turn were "
@@ -119,6 +120,13 @@ class SessionEventBroker:
         self._progress_events: dict[str, list[SessionEvent]] = {}
         self._last_ids: dict[str, int] = {}
         self._signals: dict[str, asyncio.Event] = {}
+        self._snapshots: dict[str, list[dict]] = {}
+        self._evicted_ids: dict[str, int] = {}
+        self._publish_locks: dict[str, asyncio.Lock] = {}
+
+    async def emit(self, session_id: str, event_type: str, data: dict[str, object]) -> None:
+        async with self._publish_locks.setdefault(session_id, asyncio.Lock()):
+            self.publish(session_id, event_type, data)
 
     def publish(self, session_id: str, event_type: str, data: dict[str, object]) -> None:
         if session_id not in self._events and len(self._events) >= self._max_sessions:
@@ -133,11 +141,15 @@ class SessionEventBroker:
         event_id = self._last_ids.get(session_id, 0) + 1
         self._last_ids[session_id] = event_id
         events.append(SessionEvent(event_id, event_type, data))
+        if event_type != "optimization_progress":
+            append_compacted(self._snapshots.setdefault(session_id, []), event_type, data)
         limit = (
             self._max_progress_events_per_session
             if event_type == "optimization_progress"
             else self._max_events_per_session
         )
+        if event_type != "optimization_progress" and len(events) > limit:
+            self._evicted_ids[session_id] = max(self._evicted_ids.get(session_id, 0), events[-limit - 1].id)
         del events[:-limit]
         self._signals.setdefault(session_id, asyncio.Event()).set()
 
@@ -145,6 +157,9 @@ class SessionEventBroker:
         self._events.pop(session_id, None)
         self._progress_events.pop(session_id, None)
         self._last_ids.pop(session_id, None)
+        self._snapshots.pop(session_id, None)
+        self._evicted_ids.pop(session_id, None)
+        self._publish_locks.pop(session_id, None)
         # Wake an open stream so it observes the dropped signal and ends, instead of
         # recreating the entry this pop removes and waiting on a retired session.
         signal = self._signals.pop(session_id, None)
@@ -159,6 +174,13 @@ class SessionEventBroker:
     async def stream(self, session_id: str, after_id: int) -> AsyncIterator[SessionEvent | None]:
         signal = self._signals.setdefault(session_id, asyncio.Event())
         while True:
+            if self._signals.get(session_id) is not signal:
+                return
+            if after_id < self._evicted_ids.get(session_id, 0) or after_id > self._last_ids.get(session_id, 0):
+                after_id = self._last_ids.get(session_id, 0)
+                events = self._snapshots.get(session_id, [])
+                yield SessionEvent(after_id, "session_snapshot", {"events": events})
+                continue
             pending = self.events_after(session_id, after_id)
             if pending:
                 for event in pending:
@@ -410,7 +432,7 @@ async def run_background_turn(
             return
         history, schedule_yaml, base_revision, proposal_yaml, proposal_diff, previously_dropped = snapshot
         turn_id = str(uuid4())
-        event_broker.publish(session_id, "turn_start", {"message_id": turn_id, "trigger": "optimizer"})
+        await event_broker.emit(session_id, "turn_start", {"message_id": turn_id, "trigger": "optimizer"})
         if history_log is not None:
             try:
                 logged = await history_log.write(
@@ -427,18 +449,18 @@ async def run_background_turn(
                 logged = False
             if not logged:
                 store.abort(session_id)
-                event_broker.publish(
+                await event_broker.emit(
                     session_id,
                     "error",
                     {"message": "AI chat history is unavailable, so the optimizer result was not reviewed."},
                 )
                 return
         context_chars = history_context_chars(history, settings.max_history_chars)
-        event_broker.publish(session_id, "context_usage", context_usage(context_chars, settings))
+        await event_broker.emit(session_id, "context_usage", context_usage(context_chars, settings))
         retained_history = recent_history(history, settings.max_history_chars)
         dropped_history = previously_dropped + len(history) - len(retained_history)
         if dropped_history:
-            event_broker.publish(
+            await event_broker.emit(
                 session_id,
                 "history_trimmed",
                 {"dropped": dropped_history},
@@ -455,7 +477,7 @@ async def run_background_turn(
             max_history_chars=settings.max_history_chars,
             max_download_bytes=settings.max_download_bytes,
         )
-        event_broker.publish(
+        await event_broker.emit(
             session_id, "model_input", model_input(messages, len(retained_history), dropped_history, "optimizer")
         )
         assistant_parts: list[str] = []
@@ -486,23 +508,23 @@ async def run_background_turn(
                 async for event in agent_events:
                     if isinstance(event, AgentText):
                         assistant_parts.append(event.text)
-                        event_broker.publish(session_id, "delta", {"text": event.text})
+                        await event_broker.emit(session_id, "delta", {"text": event.text})
                     elif isinstance(event, AgentReasoning):
-                        event_broker.publish(session_id, "reasoning", {"text": event.text})
+                        await event_broker.emit(session_id, "reasoning", {"text": event.text})
                     elif isinstance(event, TokenUsage):
                         usage = event if usage is None else usage + event
                         last_call = event
-                        event_broker.publish(
+                        await event_broker.emit(
                             session_id, "context_usage", context_usage(context_chars, settings, last_call, provider)
                         )
                     elif isinstance(event, AgentToolStart):
-                        event_broker.publish(
+                        await event_broker.emit(
                             session_id,
                             "tool_start",
                             {"name": event.name, "arguments": event.arguments},
                         )
                     elif isinstance(event, AgentToolUse):
-                        event_broker.publish(
+                        await event_broker.emit(
                             session_id,
                             "tool",
                             {
@@ -513,7 +535,7 @@ async def run_background_turn(
                             },
                         )
                     elif isinstance(event, AgentScheduleChange):
-                        event_broker.publish(
+                        await event_broker.emit(
                             session_id,
                             "schedule_change",
                             {"schedule_yaml": event.schedule_yaml},
@@ -535,51 +557,58 @@ async def run_background_turn(
             completed = True
             if not completion.turn_saved:
                 outcome, error_code = "stale", None
-                event_broker.publish(session_id, "stale", {"message": STALE_TURN_ERROR})
+                await event_broker.emit(session_id, "stale", {"message": STALE_TURN_ERROR})
                 return
             outcome, error_code = "completed", None
             if completion.history_trimmed_count and completion.history_trimmed_count != dropped_history:
-                event_broker.publish(
+                await event_broker.emit(
                     session_id,
                     "history_trimmed",
                     {"dropped": completion.history_trimmed_count},
                 )
             if completion.proposal_saved and pending_proposal is not None:
-                event_broker.publish(session_id, "proposal", {"diff": pending_proposal.diff})
+                await event_broker.emit(session_id, "proposal", {"diff": pending_proposal.diff})
             if pending_download is not None:
                 if store.save_download(session_id, turn_id, pending_download):
-                    event_broker.publish(session_id, "download", {"download_id": turn_id})
+                    await event_broker.emit(session_id, "download", {"download_id": turn_id})
                 else:
-                    event_broker.publish(
+                    await event_broker.emit(
                         session_id,
                         "warning",
                         {
                             "message": "The generated ZIP could not be retained because the service memory limit was reached."
                         },
                     )
-            event_broker.publish(
+            await event_broker.emit(
                 session_id, "context_usage", context_usage(completion.context_used_chars, settings, last_call, provider)
             )
-            event_broker.publish(session_id, "done", {"message_id": turn_id})
+            await event_broker.emit(session_id, "done", {"message_id": turn_id})
         except asyncio.CancelledError:
-            outcome, error_code = "cancelled", None
-            event_broker.publish(session_id, "stopped", {"message_id": turn_id})
+            if completed and completion.turn_saved:
+                outcome, error_code = "completed", None
+                await event_broker.emit(session_id, "done", {"message_id": turn_id})
+            elif completed:
+                outcome, error_code = "stale", None
+                await event_broker.emit(session_id, "stale", {"message": STALE_TURN_ERROR})
+            else:
+                outcome, error_code = "cancelled", None
+                await event_broker.emit(session_id, "stopped", {"message_id": turn_id})
             raise
         except ProviderError as exc:
             error_code = "provider_error"
-            event_broker.publish(session_id, "error", {"message": exc.user_message or PROVIDER_ERROR})
+            await event_broker.emit(session_id, "error", {"message": exc.user_message or PROVIDER_ERROR})
         except SandboxDownloadError as exc:
             error_code = "download_error"
-            event_broker.publish(session_id, "error", {"message": str(exc)})
+            await event_broker.emit(session_id, "error", {"message": str(exc)})
         except SandboxCommandTimeoutError:
             error_code = "sandbox_command_timeout"
-            event_broker.publish(session_id, "error", {"message": SANDBOX_COMMAND_TIMEOUT_ERROR})
+            await event_broker.emit(session_id, "error", {"message": SANDBOX_COMMAND_TIMEOUT_ERROR})
         except SandboxTurnTimeoutError:
             error_code = "sandbox_timeout"
-            event_broker.publish(session_id, "error", {"message": SANDBOX_TURN_TIMEOUT_ERROR})
+            await event_broker.emit(session_id, "error", {"message": SANDBOX_TURN_TIMEOUT_ERROR})
         except SandboxCandidateError as exc:
             error_code = "candidate_validation"
-            event_broker.publish(
+            await event_broker.emit(
                 session_id,
                 "error",
                 {"message": CANDIDATE_VALIDATION_ERROR + (f"\n\n{exc.user_message}" if exc.user_message else "")},
@@ -587,14 +616,14 @@ async def run_background_turn(
         except SandboxError:
             error_code = "sandbox_error"
             logger.exception("Background AI sandbox turn failed session_id=%s", session_id)
-            event_broker.publish(
+            await event_broker.emit(
                 session_id,
                 "error",
                 {"message": "The temporary AI sandbox failed while reviewing optimizer results."},
             )
         except Exception:
             logger.exception("Unexpected background AI turn failure session_id=%s", session_id)
-            event_broker.publish(
+            await event_broker.emit(
                 session_id,
                 "error",
                 {"message": "The AI could not review the optimizer result."},

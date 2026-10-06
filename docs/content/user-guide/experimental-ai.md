@@ -48,8 +48,8 @@ you can continue chatting while it solves.
 - Ask it to **finish now** to request the best solution currently available.
 - A small status indicator remains above the message box while optimization is
   running.
-- A background assistant command also shows a running indicator there, even
-  when tool details are hidden.
+- Foreground commands such as `bash` appear in the answer activity. The status
+  indicator above the message box is reserved for optimizer runs.
 - When the run ends, the chat records its outcome, score, solver and timeout,
   backend URL and version, and any claimed performance. It offers the result
   workbook as a download. The
@@ -88,6 +88,22 @@ assistant proposes one instead of changing the schedule itself.
 3. Select **Approve** to apply it, or **Reject** to discard it.
 4. An approved proposal replaces the schedule in one step, so
    <kbd>Ctrl</kbd>+<kbd>Z</kbd> reverts the whole change.
+
+## Reconnect or retry
+
+The assistant continues working if the browser loses its connection or the phone
+sleeps. The chat reconnects automatically and recovers the complete saved answer.
+Reloading the same tab also resumes an unfinished request. **Stop** requests
+cancellation on the server and waits for its outcome. An answer that completed
+before Stop remains a completed answer.
+
+A failed turn keeps its original question and provisional output visible. **Retry**
+starts a new attempt. Reconnecting an accepted request keeps the same message ID,
+so it does not send the question to the model twice. Failed and stopped output is
+excluded from the model's conversation context.
+
+Recovery lasts until the session expires or the backend restarts. Uploaded files
+and result downloads are held in memory and do not survive a backend restart.
 
 ## See what the assistant did
 

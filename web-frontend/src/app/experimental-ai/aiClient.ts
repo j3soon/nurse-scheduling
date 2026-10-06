@@ -72,6 +72,9 @@ export interface StreamCallbacks {
   onUploaded?: (files: UploadedFile[]) => void;
   onModelInput?: (input: ModelInput) => void;
   onAccepted?: () => void;
+  onConnectionChange?: (connected: boolean) => void;
+  onReplay?: (events: ReplayEvent[]) => void;
+  shouldStop?: () => boolean;
   lastEventId?: number;
   onEventId?: (id: number) => void;
   onTurnStart?: (messageId: string, trigger: string) => void;
@@ -115,6 +118,12 @@ export interface UploadedFile {
 
 export interface MessageAttachments {
   files?: File[];
+  messageId?: string;
+}
+
+export interface ReplayEvent {
+  type: string;
+  data: Record<string, unknown>;
 }
 
 // The request messages added since the last assistant reply, in the order the model receives them.
@@ -152,6 +161,7 @@ interface SessionStatusResponse {
 }
 
 interface SsePayload {
+  events?: unknown;
   text?: unknown;
   message?: unknown;
   name?: unknown;
@@ -375,7 +385,7 @@ function optimizationDetails(payload: SsePayload): Partial<OptimizationActivity>
   };
 }
 
-function consumeEvent(block: string, callbacks: StreamCallbacks): void {
+function consumeEvent(block: string, callbacks: StreamCallbacks): boolean {
   const lines = block.split('\n');
   const eventId = Number(lines.find(line => line.startsWith('id:'))?.slice('id:'.length).trim());
   const eventType = lines.find(line => line.startsWith('event:'))?.slice('event:'.length).trim() ?? 'message';
@@ -383,7 +393,7 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
     .filter(line => line.startsWith('data:'))
     .map(line => line.slice('data:'.length).trimStart())
     .join('\n');
-  if (!rawData) return;
+  if (!rawData) return false;
 
   let payload: SsePayload;
   try {
@@ -395,6 +405,22 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
   // Acknowledge before dispatching, so a handler that throws cannot make a
   // replayed stream repeat the same event after every reconnect.
   if (Number.isSafeInteger(eventId) && eventId > 0) callbacks.onEventId?.(eventId);
+
+  if (eventType === 'turn_snapshot' || eventType === 'session_snapshot') {
+    if (!Array.isArray(payload.events) || payload.events.some(event =>
+      typeof event?.type !== 'string' || typeof event?.data !== 'object' || event.data === null
+      || event.type.endsWith('_snapshot'))) {
+      throw new Error('The AI backend returned an invalid replay snapshot.');
+    }
+    const events = payload.events as ReplayEvent[];
+    callbacks.onReplay?.(events);
+    let terminal = false;
+    for (const event of events) {
+      if (event.type === 'turn_start') terminal = false;
+      terminal = consumeEvent(`event: ${event.type}\ndata: ${JSON.stringify(event.data)}`, callbacks) || terminal;
+    }
+    return terminal;
+  }
 
   if (eventType === 'turn_start' && typeof payload.message_id === 'string') {
     callbacks.onTurnStart?.(
@@ -504,6 +530,18 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
     if (callbacks.onError) callbacks.onError(message);
     else throw new Error(message);
   }
+  return ['done', 'stopped', 'stale', 'error'].includes(eventType);
+}
+
+class AiConnectionError extends Error {}
+
+function waitForReconnect(delay: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const abort = () => { window.clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')); };
+    const timer = window.setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, delay);
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+  });
 }
 
 export async function streamMessage(
@@ -520,40 +558,92 @@ export async function streamMessage(
   // The backend records the upload as its own history message, so the question stays as typed.
   if (uploaded.length > 0) callbacks.onUploaded?.(uploaded);
 
-  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/messages`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ message }),
-    signal,
-  });
-  if (!response.ok) throw await responseError(response);
-  callbacks.onAccepted?.();
-  await consumeStream(response, callbacks);
+  if (callbacks.shouldStop?.()) {
+    callbacks.onStopped?.();
+    return;
+  }
+  const requestId = attachments.messageId ?? crypto.randomUUID();
+  let cursor = callbacks.lastEventId ?? 0;
+  let retries = 0;
+  let accepted = false;
+  while (!signal.aborted) {
+    const connection = new AbortController();
+    const abort = () => connection.abort();
+    const resume = () => { if (document.visibilityState === 'visible') connection.abort(); };
+    signal.addEventListener('abort', abort, { once: true });
+    window.addEventListener('online', abort);
+    document.addEventListener('visibilitychange', resume);
+    try {
+      let response: Response;
+      try {
+        response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/messages`, {
+          method: 'POST', credentials: 'include',
+          headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ message, message_id: requestId, last_event_id: cursor }),
+          signal: connection.signal,
+        });
+      } catch {
+        throw new AiConnectionError('The AI connection was interrupted.');
+      }
+      if (!response.ok) {
+        if ((accepted || retries > 0) && (response.status >= 500 || response.status === 409)) {
+          throw new AiConnectionError('The AI connection is being restored.');
+        }
+        throw await responseError(response);
+      }
+      if (!accepted) callbacks.onAccepted?.();
+      accepted = true;
+      callbacks.onConnectionChange?.(true);
+      const terminal = await consumeStream(response, {
+        ...callbacks,
+        onEventId: id => { cursor = id; retries = 0; callbacks.onEventId?.(id); },
+      }, true);
+      if (terminal) return;
+      throw new AiConnectionError('The AI connection ended before the response finished.');
+    } catch (error) {
+      if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+      if (!(error instanceof AiConnectionError)) throw error;
+      callbacks.onConnectionChange?.(false);
+      await waitForReconnect(Math.min(5000, 250 * 2 ** retries++), signal);
+    } finally {
+      signal.removeEventListener('abort', abort);
+      window.removeEventListener('online', abort);
+      document.removeEventListener('visibilitychange', resume);
+    }
+  }
+  throw new DOMException('Aborted', 'AbortError');
 }
 
-async function consumeStream(response: Response, callbacks: StreamCallbacks): Promise<void> {
-  if (!response.body) throw new Error('The AI backend returned an empty stream.');
+async function consumeStream(response: Response, callbacks: StreamCallbacks, stopAtTerminal = false): Promise<boolean> {
+  if (!response.body) throw new AiConnectionError('The AI backend returned an empty stream.');
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
 
-  while (true) {
-    const { done, value } = await reader.read();
-    buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, '\n');
+  try {
+    while (true) {
+      let chunk: ReadableStreamReadResult<Uint8Array>;
+      try { chunk = await reader.read(); } catch { throw new AiConnectionError('The AI connection was interrupted.'); }
+      const { done, value } = chunk;
+      buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, '\n');
 
-    let boundary = buffer.indexOf('\n\n');
-    while (boundary >= 0) {
-      consumeEvent(buffer.slice(0, boundary), callbacks);
-      buffer = buffer.slice(boundary + 2);
-      boundary = buffer.indexOf('\n\n');
+      let boundary = buffer.indexOf('\n\n');
+      while (boundary >= 0) {
+        const terminal = consumeEvent(buffer.slice(0, boundary), callbacks);
+        if (terminal && stopAtTerminal) return true;
+        buffer = buffer.slice(boundary + 2);
+        boundary = buffer.indexOf('\n\n');
+      }
+
+      if (done) break;
     }
 
-    if (done) break;
+    return buffer.trim() ? consumeEvent(buffer, callbacks) : false;
+  } finally {
+    void reader.cancel().catch(() => undefined);
+    reader.releaseLock();
   }
-
-  if (buffer.trim()) consumeEvent(buffer, callbacks);
 }
 
 export async function streamSessionEvents(
@@ -596,11 +686,13 @@ export async function stopSession(
   sessionId: string,
   authToken: string | null,
   endpoint = getAiBaseUrl(),
+  messageId?: string,
 ): Promise<void> {
   const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/stop`, {
     method: 'POST',
     credentials: 'include',
-    headers: authorizedHeaders(authToken),
+    headers: authorizedHeaders(authToken, messageId ? { 'Content-Type': 'application/json' } : undefined),
+    ...(messageId ? { body: JSON.stringify({ message_id: messageId }) } : {}),
   });
   if (!response.ok) throw await responseError(response);
 }

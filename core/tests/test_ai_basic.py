@@ -493,7 +493,7 @@ def parse_sse(response_text: str, *, include_model_input: bool = False) -> list[
 
 
 @pytest.mark.parametrize("wait_stage", ["provider", "command"])
-def test_client_disconnect_cancels_the_turn_and_closes_its_sandbox(wait_stage: str, monkeypatch) -> None:
+def test_disconnected_turn_keeps_running_until_explicit_stop(wait_stage: str, monkeypatch) -> None:
     saved = []
     monkeypatch.setattr(ChatHistory, "start_turn", lambda *_args: None)
     monkeypatch.setattr(ChatHistory, "finish_turn", lambda _self, *args: saved.append(args))
@@ -569,6 +569,14 @@ def test_client_disconnect_cancels_the_turn_and_closes_its_sandbox(wait_stage: s
         await asyncio.wait_for(response_started.wait(), timeout=1)
         await request_events.put({"type": "http.disconnect"})
         await asyncio.wait_for(request_task, timeout=1)
+
+        assert session.active
+        assert not operation_cancelled.is_set()
+        if factory.created:
+            assert not factory.created[0].closed
+        task = app.state.active_turn_tasks[session.id]
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
         backend = factory.created[0] if factory.created else None
         return backend, operation_cancelled.is_set(), session.active, list(session.history)
@@ -725,7 +733,7 @@ def test_stop_before_stream_registration_cancels_the_reserved_turn(monkeypatch: 
     assert provider_calls == 0
 
 
-def test_disconnect_before_stream_iteration_releases_the_session(monkeypatch) -> None:
+def test_disconnect_before_stream_iteration_keeps_the_accepted_turn(monkeypatch) -> None:
     saved = []
     monkeypatch.setattr(ChatHistory, "start_turn", lambda *_args: None)
     monkeypatch.setattr(ChatHistory, "finish_turn", lambda _self, *args: saved.append(args))
@@ -771,11 +779,12 @@ def test_disconnect_before_stream_iteration_releases_the_session(monkeypatch) ->
         }
 
         await app(scope, receive, send)
+        await asyncio.gather(*app.state.turn_workers)
         return session.active
 
     assert not asyncio.run(exercise())
     assert len(saved) == 1
-    assert saved[0][2] == "cancelled"
+    assert saved[0][2] == "completed"
 
 
 def test_health_and_streamed_schedule_question() -> None:
@@ -794,10 +803,10 @@ def test_health_and_streamed_schedule_question() -> None:
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
-    assert parse_sse(response.text) == [
+    events = parse_sse(response.text)
+    assert "".join(data["text"] for event, data in events if event == "delta") == "Hello from AI"
+    assert [(event, data) for event, data in events if event != "delta"] == [
         ("context_usage", {"used_chars": 0, "max_chars": 200_000}),
-        ("delta", {"text": "Hello"}),
-        ("delta", {"text": " from AI"}),
         ("context_usage", {"used_chars": 97, "max_chars": 200_000}),
         ("done", {"message_id": ANY}),
     ]

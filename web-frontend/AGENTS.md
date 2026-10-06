@@ -97,6 +97,9 @@ offline emulation alone can leave an existing stream open. Assert that reconnect
 uses the same request ID and executes the accepted question only once. Mock
 `/capabilities` with the real authentication and attachment-limit contract so
 reload recovery follows the production path.
+Replay must replace existing messages in their original positions, including
+optimizer input and steering replies. Capture the message ID before queuing React
+state updates because one replay snapshot can contain several replies.
 
 For AI chat issues involving the deployed service, test the real browser UI
 against `https://api-staging.nursescheduling.org/ai`. Run the local frontend,

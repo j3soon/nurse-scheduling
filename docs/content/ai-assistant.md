@@ -46,7 +46,7 @@ credentials are stored unencrypted per endpoint only when the user opts in.
 
 ```mermaid
 flowchart LR
-    Browser[Frontend<br/>current schedule] -->|POST schedule once| Session[AI backend<br/>in-memory session]
+    Browser[Frontend<br/>current schedule] -->|POST schedule once| Session[AI backend<br/>server-owned turn]
     Browser -->|POST question<br/>and optional attachments| Session
     Session -->|OpenAI-compatible chat request| Provider[Model provider]
     Provider -->|streamed deltas and tool calls| Session
@@ -86,9 +86,16 @@ chat turns while retained. It is separate from user attachments. The browser
 keeps a separate replayable session event stream open for
 optimizer status and background turns. It retains the latest 1,000 background
 turn events and 100 optimizer progress updates per session for reconnects.
+Complete compacted output is kept separately. If the event cursor is too old,
+the stream sends a complete snapshot instead of an incomplete tail.
+Consecutive text fragments are combined when writes fall behind the producer.
+The browser reattaches with the same client message ID and replaces partial
+output with the snapshot. It does not start another model turn.
 Foreground chat and optimization can proceed at the same time. Assistant turns
 remain serialized per session. The Stop control cancels either a foreground or
-background assistant turn. It does not cancel the independent optimizer run.
+background assistant turn and waits for the server outcome. It names the client
+message ID so a question stopped before arrival cannot start later. It does not
+cancel the independent optimizer run.
 
 Sandbox and conversation state are separate. The backend copies the current
 schedule to `/workspace/schedule.yaml` and searchable schema documentation to
