@@ -36,6 +36,13 @@ The script intentionally:
   non-coverage test commands.
 - Does not upload coverage or artifacts.
 
+When validating AI persistence, configure an isolated PostgreSQL test database
+before running the script. Follow the
+[container recipe](references/postgresql.md)
+and export `AI_HISTORY_TEST_POSTGRES_URL` in the shell that starts CI. The script
+inherits that setting. Without it, the PostgreSQL tests skip. Report that limit
+instead of claiming that a green CI run validated database recovery.
+
 Do not replace the script with affected-test commands or add excluded solver
 tests. When a check fails, diagnose and fix the underlying error while
 preserving repository conventions and unrelated user changes. Run a focused
