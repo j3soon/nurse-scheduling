@@ -21,11 +21,13 @@
 
 import asyncio
 import os
+import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
 
+import httpx
 import psycopg
 import pytest
 from psycopg import sql
@@ -238,6 +240,43 @@ def test_database_unavailable_releases_session_before_provider_call(recorded_his
         monkeypatch.setattr(ChatHistory, "start_recovery_turn", lambda *_args: None)
         response = client.post(f"/sessions/{session_id}/messages", json={"message": "Retry"})
         assert basic.parse_sse(response.text)[-1][0] == "done"
+
+
+def test_stop_during_failed_turn_start_does_not_stop_next_turn(recorded_history, monkeypatch):
+    release = threading.Event()
+    calls = []
+
+    def save(*_args):
+        calls.append(None)
+        if len(calls) == 2:
+            release.wait(5)
+            raise psycopg.OperationalError("secret-database-url")
+
+    monkeypatch.setattr(ChatHistory, "save_recovery_session", save)
+
+    async def exercise():
+        app = basic.create_test_app(
+            settings=basic.make_settings(history_postgres_url="test"), provider=basic.FakeProvider()
+        )
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://testserver",
+                headers={"Authorization": f"Bearer {basic.AI_AUTH_TOKEN}"},
+            ) as client,
+        ):
+            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            first = asyncio.create_task(client.post(f"/sessions/{session_id}/messages", json={"message": "First"}))
+            while len(calls) < 2:
+                await asyncio.sleep(0.01)
+            assert (await client.post(f"/sessions/{session_id}/stop")).status_code == 202
+            release.set()
+            assert (await first).status_code == 503
+            second = await client.post(f"/sessions/{session_id}/messages", json={"message": "Second"})
+            return basic.parse_sse(second.text)[-1][0]
+
+    assert asyncio.run(exercise()) == "done"
 
 
 def test_final_write_failure_preserves_successful_conversation(recorded_history, monkeypatch, caplog):

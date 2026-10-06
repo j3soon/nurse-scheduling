@@ -1457,6 +1457,7 @@ def create_app(
         request_id = body.message_id or turn_id
         if not await save_session(session_id):
             store.abort(session_id)
+            pending_turn_stops.discard(session_id)
             release_turn()
             raise HTTPException(status_code=503, detail="AI message recovery is temporarily unavailable.")
         try:
@@ -1473,6 +1474,7 @@ def create_app(
             )
         except RuntimeError as exc:
             store.abort(session_id)
+            pending_turn_stops.discard(session_id)
             release_turn()
             raise HTTPException(status_code=503, detail=str(exc)) from None
 
