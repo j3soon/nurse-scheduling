@@ -824,4 +824,36 @@ describe('AI client', () => {
     expect(onStopped).toHaveBeenCalledOnce();
   });
 
+  it('ends a stopped request locally when the server never accepted it', async () => {
+    let stopped = false;
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      stopped = true;
+      throw new TypeError('Failed to fetch');
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const onStopped = vi.fn();
+    await streamMessage('session', 'Question', {
+      onDelta: vi.fn(), onStopped, shouldStop: () => stopped,
+    }, new AbortController().signal, null);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(onStopped).toHaveBeenCalledOnce();
+  });
+
+  it('reconnects a stopped request the server accepted to replay its outcome', async () => {
+    let stopped = false;
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(async () => {
+        stopped = true;
+        return streamedResponse(['id: 1\nevent: delta\ndata: {"text":"Partial"}\n\n']);
+      })
+      .mockResolvedValueOnce(streamedResponse(['id: 2\nevent: stopped\ndata: {"message_id":"turn"}\n\n']));
+    vi.stubGlobal('fetch', fetchMock);
+    const onStopped = vi.fn();
+    await streamMessage('session', 'Question', {
+      onDelta: vi.fn(), onStopped, shouldStop: () => stopped,
+    }, new AbortController().signal, null);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(onStopped).toHaveBeenCalledOnce();
+  });
+
 });

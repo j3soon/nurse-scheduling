@@ -603,6 +603,11 @@ export async function streamMessage(
     } catch (error) {
       if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
       if (!(error instanceof AiConnectionError)) throw error;
+      // An accepted request keeps reconnecting, so the server can replay its Stop outcome.
+      if (!accepted && callbacks.shouldStop?.()) {
+        callbacks.onStopped?.();
+        return;
+      }
       callbacks.onConnectionChange?.(false);
       await waitForReconnect(Math.min(5000, 250 * 2 ** retries++), signal);
     } finally {
