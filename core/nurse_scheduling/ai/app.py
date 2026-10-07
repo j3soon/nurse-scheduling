@@ -27,6 +27,7 @@ import math
 import sys
 import threading
 import time
+from collections import Counter
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, field, replace
@@ -953,6 +954,8 @@ def create_app(
     shutting_down = False
     recovery_lock = asyncio.Lock()
     state_write_locks: dict[str, asyncio.Lock] = {}
+    session_pins: Counter[str] = Counter()
+    unsaved_sessions: set[str] = set()
     turn_locks: dict[str, asyncio.Lock] = {}
     active_turn_tasks: dict[str, asyncio.Task[object]] = {}
     active_turn_requests: dict[str, str] = {}
@@ -966,14 +969,44 @@ def create_app(
         """Serialize each state capture with its write, so an older state never commits last."""
         return state_write_locks.setdefault(session_id, asyncio.Lock())
 
+    def pin_session(session_id: str) -> Callable[..., None]:
+        """Keep a session loaded until the returned release runs.
+
+        The store marks a session idle before its worker saves the outcome, and an
+        endpoint changes a session before its write starts. Eviction must wait for both.
+        """
+        session_pins[session_id] += 1
+
+        def release(*_args: object) -> None:
+            session_pins[session_id] -= 1
+            if session_pins[session_id] <= 0:
+                del session_pins[session_id]
+
+        return release
+
+    def record_save(session_id: str, saved: bool) -> bool:
+        """Keep a session whose newest state failed to save, so eviction never drops its only copy."""
+        if saved:
+            unsaved_sessions.discard(session_id)
+        elif session_id in store._sessions:
+            unsaved_sessions.add(session_id)
+        return saved
+
     async def save_session(session_id: str, credential_id: str | None = None) -> bool:
         if history_log is None:
             return True
-        async with state_write_lock(session_id):
-            if session_id not in store._sessions:
-                return True
-            owner, expires_at, state = store.recovery_state(session_id)
-            return await history_log.write("save_recovery_session", session_id, owner, expires_at, state, credential_id)
+        release = pin_session(session_id)
+        try:
+            async with state_write_lock(session_id):
+                if session_id not in store._sessions:
+                    return True
+                owner, expires_at, state = store.recovery_state(session_id)
+                saved = await history_log.write(
+                    "save_recovery_session", session_id, owner, expires_at, state, credential_id
+                )
+                return record_save(session_id, saved)
+        finally:
+            release()
 
     async def restore_session(request: Request, owner: str | None = Cookie(default=None, alias=OWNER_COOKIE)) -> None:
         session_id = request.path_params.get("session_id")
@@ -1001,28 +1034,33 @@ def create_app(
             if record is None:
                 raise HTTPException(status_code=404, detail="Chat session not found.")
             store.restore(session_id, owner, record)
-            for turn in turn_journal.restore(session_id, record["turns"]):
-                if not turn.terminal:
-                    async with state_write_lock(session_id):
-                        await turn_journal.finish(
-                            turn,
-                            "error",
-                            {
-                                "message": "The AI service restarted during this response. Your question and saved output were recovered. You can retry this turn."
-                            },
-                            state=store.recovery_state(session_id),
-                            metadata={"error_code": "service_restart"},
-                        )
-            event_broker.restore(session_id, record["background_events"])
-            if record["background_status"] == "running":
-                await event_broker.emit(
-                    session_id,
-                    "error",
-                    {
-                        "message": "The AI service restarted during this background response. Its saved output was recovered."
-                    },
-                    metadata={"error_code": "service_restart"},
-                )
+            release = pin_session(session_id)
+            try:
+                for turn in turn_journal.restore(session_id, record["turns"]):
+                    if not turn.terminal:
+                        async with state_write_lock(session_id):
+                            saved = await turn_journal.finish(
+                                turn,
+                                "error",
+                                {
+                                    "message": "The AI service restarted during this response. Your question and saved output were recovered. You can retry this turn."
+                                },
+                                state=store.recovery_state(session_id),
+                                metadata={"error_code": "service_restart"},
+                            )
+                            record_save(session_id, saved)
+                event_broker.restore(session_id, record["background_events"])
+                if record["background_status"] == "running":
+                    await event_broker.emit(
+                        session_id,
+                        "error",
+                        {
+                            "message": "The AI service restarted during this background response. Its saved output was recovered."
+                        },
+                        metadata={"error_code": "service_restart"},
+                    )
+            finally:
+                release()
 
     def refresh_owner_cookie(response: Response, owner: str) -> None:
         """Keep browser ownership available for the session's sliding lifetime."""
@@ -1118,7 +1156,7 @@ def create_app(
             if event_type == "stopped" and shutting_down:
                 return
             async with state_write_lock(session_id):
-                await history_log.write(
+                saved = await history_log.write(
                     "finish_recovery_turn",
                     session_id,
                     *store.recovery_state(session_id),
@@ -1128,6 +1166,7 @@ def create_app(
                     data,
                     metadata,
                 )
+                record_save(session_id, saved)
             return
         if event_type == "optimization":
             if await save_session(session_id):
@@ -1146,6 +1185,7 @@ def create_app(
         """Release everything keyed by a session once the store drops it."""
         turn_locks.pop(session_id, None)
         state_write_locks.pop(session_id, None)
+        unsaved_sessions.discard(session_id)
         pending_turn_stops.discard(session_id)
         session_optimizer.forget_session(session_id)
         event_broker.forget_session(session_id)
@@ -1155,7 +1195,10 @@ def create_app(
     if history_log is not None:
         store.allow_eviction(
             lambda session_id: (
-                session_id not in background_turn_tasks and not session_optimizer.has_unfinished_run(session_id)
+                session_id not in session_pins
+                and session_id not in unsaved_sessions
+                and session_id not in background_turn_tasks
+                and not session_optimizer.has_unfinished_run(session_id)
             )
         )
 
@@ -1829,15 +1872,18 @@ def create_app(
                 await asyncio.gather(collector, return_exceptions=True)
                 if terminal is not None:
                     async with state_write_lock(session_id):
-                        await turn_journal.finish(
+                        saved = await turn_journal.finish(
                             replay_turn, *terminal, state=store.recovery_state(session_id), metadata=recovery_metadata
                         )
+                        record_save(session_id, saved)
                 else:
                     await save_session(session_id)
 
         worker = asyncio.create_task(run_turn(), name=f"ai-turn-{turn_id}")
         turn_workers.add(worker)
         worker.add_done_callback(turn_workers.discard)
+        # Keep the session loaded until the worker saves the turn's outcome.
+        worker.add_done_callback(pin_session(session_id))
         return turn_response(replay_turn, body.last_event_id, owner)
 
     @app.put(

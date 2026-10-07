@@ -188,7 +188,8 @@ class TurnJournal:
 
     async def finish(
         self, turn: ReplayTurn, event_type: str, data: dict, *, state: tuple, metadata: dict | None = None
-    ) -> None:
+    ) -> bool:
+        """Append the terminal event and return whether recovery storage saved it with the state."""
         event_id = turn.cursor + 1
         persisted = self.history is not None
         data = deepcopy(data)
@@ -209,6 +210,7 @@ class TurnJournal:
         turn.append(event_id, event_type, data)
         turn.durable_terminal = persisted
         self.trim_cache()
+        return persisted
 
     def restore(self, session_id: str, records: list[dict[str, Any]]) -> list[ReplayTurn]:
         restored = []

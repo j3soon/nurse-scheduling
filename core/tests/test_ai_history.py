@@ -437,6 +437,75 @@ def test_full_store_evicts_the_least_recently_used_idle_session(recorded_history
     assert list(store._sessions) == [first, third]
 
 
+@pytest.mark.parametrize("operation", ["finish_recovery_turn", "save_recovery_session"])
+def test_full_store_keeps_a_session_until_its_state_write_ends(recorded_history, monkeypatch, operation):
+    blocked = threading.Event()
+    release = threading.Event()
+
+    def write(*_args):
+        blocked.set()
+        release.wait(5)
+
+    async def exercise():
+        app = basic.create_test_app(
+            settings=basic.make_settings(history_postgres_url="test", max_sessions=1), provider=basic.FakeProvider()
+        )
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://testserver",
+                headers={"Authorization": f"Bearer {basic.AI_AUTH_TOKEN}"},
+            ) as client,
+        ):
+            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            monkeypatch.setattr(ChatHistory, operation, write)
+            if operation == "finish_recovery_turn":
+                request = client.post(f"/sessions/{session_id}/messages", json={"message": "Question"})
+            else:
+                request = client.put(f"/sessions/{session_id}/schedule", json={"schedule_yaml": "description: newer"})
+            pending = asyncio.create_task(request)
+            await asyncio.to_thread(blocked.wait, 5)
+            # The session is idle while its write runs, but eviction would make the write fail.
+            assert app.state.session_store._sessions[session_id].active is False
+            assert (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).status_code == 429
+            release.set()
+            response = await pending
+            if operation == "finish_recovery_turn":
+                assert basic.parse_sse(response.text)[-1][0] == "done"
+            else:
+                assert response.status_code == 204
+            await asyncio.wait_for(asyncio.gather(*app.state.turn_workers), timeout=1)
+            assert (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).status_code == 201
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("operation", ["finish_recovery_turn", "save_recovery_session"])
+def test_full_store_keeps_a_session_whose_state_was_not_saved(recorded_history, monkeypatch, operation):
+    def unavailable(*_args):
+        raise psycopg.OperationalError("secret-database-url")
+
+    app = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test", max_sessions=1), provider=basic.FakeProvider()
+    )
+    with basic.AuthenticatedTestClient(app) as client:
+        session_id = basic.create_session(client)
+        path = f"/sessions/{session_id}/schedule"
+        with monkeypatch.context() as patch:
+            patch.setattr(ChatHistory, operation, unavailable)
+            if operation == "finish_recovery_turn":
+                response = client.post(f"/sessions/{session_id}/messages", json={"message": "Question"})
+                assert basic.parse_sse(response.text)[-1][1]["history_saved"] is False
+            else:
+                assert client.put(path, json={"schedule_yaml": "description: newer"}).status_code == 503
+        # Memory holds the only copy of the newest state until a save succeeds.
+        assert client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()}).status_code == 429
+        assert client.put(path, json={"schedule_yaml": "description: newer"}).status_code == 204
+        basic.create_session(client)
+    assert session_id not in app.state.session_store._sessions
+
+
 def test_full_store_without_recovery_keeps_refusing_new_sessions():
     app = basic.create_test_app(settings=basic.make_settings(max_sessions=1), provider=basic.FakeProvider())
     with basic.AuthenticatedTestClient(app) as client:
