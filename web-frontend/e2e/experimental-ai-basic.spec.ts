@@ -865,14 +865,16 @@ test('restores interleaved foreground and optimizer replies in chat and export o
 for (const interruption of ['network pause', 'reload', 'tab switch'] as const) {
   test(`recovers the complete answer after a ${interruption}`, async ({ page, context }) => {
     const origin = frontendOrigin();
+    const authToken = 'browser-ai-auth-token';
     const requests: { message: string; message_id: string; last_event_id: number }[] = [];
     let acceptedId: string | null = null;
     let completed = false;
     let executions = 0;
+    let unauthorized = 0;
     const responses = new Set<ServerResponse>();
     const headers = {
       'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Credentials': 'true',
-      'Access-Control-Allow-Headers': 'Content-Type, Last-Event-ID',
+      'Access-Control-Allow-Headers': 'Authorization, Content-Type, Last-Event-ID',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     };
     const complete = () => {
@@ -883,7 +885,21 @@ for (const interruption of ['network pause', 'reload', 'tab switch'] as const) {
     const server = createServer(async (request, response) => {
       if (request.method === 'OPTIONS') { response.writeHead(204, headers).end(); return; }
       const json = (body: object, status = 200) => response.writeHead(status, { ...headers, 'Content-Type': 'application/json' }).end(JSON.stringify(body));
-      if (request.url === '/ai/capabilities') { json({ file_attachments: { enabled: true, max_files: 8, max_bytes_per_file: 5000000 } }); return; }
+      if (request.url === '/ai/capabilities') {
+        json({
+          auth: { required: true, scheme: 'bearer' },
+          file_attachments: { enabled: true, retained: true, max_files: 8, max_bytes_per_file: 5000000 },
+          session_retention_seconds: 2592000,
+        });
+        return;
+      }
+      // Hosted deployments require the token on every session request, including reload recovery.
+      if (request.url?.startsWith('/ai/sessions') && request.headers.authorization !== `Bearer ${authToken}`) {
+        unauthorized += 1;
+        request.resume();
+        json({ detail: 'Backend credentials are invalid.' }, 401);
+        return;
+      }
       if (request.url === '/ai/sessions' && request.method === 'POST') { request.resume(); json({ id: 'replay-session' }, 201); return; }
       if (request.url === '/ai/sessions/replay-session') { json({ expires_in_seconds: 60 }); return; }
       if (request.url === '/ai/sessions/replay-session/events') { response.writeHead(200, { ...headers, 'Content-Type': 'text/event-stream' }).end(); return; }
@@ -916,6 +932,10 @@ for (const interruption of ['network pause', 'reload', 'tab switch'] as const) {
     try {
       await page.addInitScript(value => localStorage.setItem('nurse-scheduling-ai-server', value), endpoint);
       await page.goto('/experimental-ai');
+      await page.getByRole('button', { name: 'Enter token for AI assistant' }).click();
+      await page.getByRole('textbox', { name: 'Token for AI assistant' }).fill(authToken);
+      await page.getByRole('checkbox', { name: /remember on this device/i }).check();
+      await page.getByRole('button', { name: 'Save token for AI assistant' }).click();
       await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Continue while disconnected');
       await page.getByRole('button', { name: 'Send', exact: true }).click();
       await expect(page.getByText('First part and', { exact: true })).toBeVisible();
@@ -938,6 +958,7 @@ for (const interruption of ['network pause', 'reload', 'tab switch'] as const) {
       await expect(page.getByText('Continue while disconnected', { exact: true })).toHaveCount(1);
       await expect(page.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0);
       expect(executions).toBe(1);
+      expect(unauthorized).toBe(0);
       expect(requests.length).toBeGreaterThan(1);
       expect(new Set(requests.map(request => request.message_id)).size).toBe(1);
     } finally {
