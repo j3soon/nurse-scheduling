@@ -347,6 +347,47 @@ def test_cancelled_turn_admission_releases_the_session(recorded_history, monkeyp
     assert asyncio.run(exercise()) == "done"
 
 
+def test_recovery_state_writes_commit_in_capture_order(recorded_history, monkeypatch):
+    older, newer = "description: older", "description: newer"
+    blocked = threading.Event()
+    release = threading.Event()
+    committed = []
+
+    def save(_self, _session_id, _owner, _expires_at, state, _credential_id=None):
+        if state["schedule_yaml"] == older:
+            blocked.set()
+            release.wait(5)
+        committed.append(state["schedule_yaml"])
+
+    monkeypatch.setattr(ChatHistory, "save_recovery_session", save)
+
+    async def exercise():
+        app = basic.create_test_app(
+            settings=basic.make_settings(history_postgres_url="test"), provider=basic.FakeProvider()
+        )
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://testserver",
+                headers={"Authorization": f"Bearer {basic.AI_AUTH_TOKEN}"},
+            ) as client,
+        ):
+            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            path = f"/sessions/{session_id}/schedule"
+            first = asyncio.create_task(client.put(path, json={"schedule_yaml": older}))
+            await asyncio.to_thread(blocked.wait, 5)
+            second = asyncio.create_task(client.put(path, json={"schedule_yaml": newer}))
+            # Without serialization, the newer state commits while the older write is blocked.
+            await asyncio.sleep(0.1)
+            assert newer not in committed
+            release.set()
+            assert [(await first).status_code, (await second).status_code] == [204, 204]
+
+    asyncio.run(exercise())
+    assert committed[-2:] == [older, newer]
+
+
 def test_final_write_failure_preserves_successful_conversation(recorded_history, monkeypatch, caplog):
     def unavailable(*_args):
         raise psycopg.OperationalError("secret-database-url")

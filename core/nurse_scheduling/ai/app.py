@@ -921,6 +921,7 @@ def create_app(
     turn_workers: set[asyncio.Task] = set()
     shutting_down = False
     recovery_lock = asyncio.Lock()
+    state_write_locks: dict[str, asyncio.Lock] = {}
     turn_locks: dict[str, asyncio.Lock] = {}
     active_turn_tasks: dict[str, asyncio.Task[object]] = {}
     background_turn_tasks: dict[str, set[asyncio.Task[object]]] = {}
@@ -929,13 +930,18 @@ def create_app(
     auth_registry = create_auth_registry(settings.auth_token, settings.auth_tokens)
     require_auth = create_auth_dependency(auth_registry)
 
+    def state_write_lock(session_id: str) -> asyncio.Lock:
+        """Serialize each state capture with its write, so an older state never commits last."""
+        return state_write_locks.setdefault(session_id, asyncio.Lock())
+
     async def save_session(session_id: str, credential_id: str | None = None) -> bool:
         if history_log is None:
             return True
-        if session_id not in store._sessions:
-            return True
-        owner, expires_at, state = store.recovery_state(session_id)
-        return await history_log.write("save_recovery_session", session_id, owner, expires_at, state, credential_id)
+        async with state_write_lock(session_id):
+            if session_id not in store._sessions:
+                return True
+            owner, expires_at, state = store.recovery_state(session_id)
+            return await history_log.write("save_recovery_session", session_id, owner, expires_at, state, credential_id)
 
     async def restore_session(request: Request, owner: str | None = Cookie(default=None, alias=OWNER_COOKIE)) -> None:
         session_id = request.path_params.get("session_id")
@@ -965,15 +971,16 @@ def create_app(
             store.restore(session_id, owner, record)
             for turn in turn_journal.restore(session_id, record["turns"]):
                 if not turn.terminal:
-                    await turn_journal.finish(
-                        turn,
-                        "error",
-                        {
-                            "message": "The AI service restarted during this response. Your question and saved output were recovered. You can retry this turn."
-                        },
-                        state=(owner, record["expires_at"], record["state"]),
-                        metadata={"error_code": "service_restart"},
-                    )
+                    async with state_write_lock(session_id):
+                        await turn_journal.finish(
+                            turn,
+                            "error",
+                            {
+                                "message": "The AI service restarted during this response. Your question and saved output were recovered. You can retry this turn."
+                            },
+                            state=store.recovery_state(session_id),
+                            metadata={"error_code": "service_restart"},
+                        )
             event_broker.restore(session_id, record["background_events"])
             if record["background_status"] == "running":
                 await event_broker.emit(
@@ -1078,16 +1085,17 @@ def create_app(
         if event_type in {"done", "stopped", "stale", "error"}:
             if event_type == "stopped" and shutting_down:
                 return
-            await history_log.write(
-                "finish_recovery_turn",
-                session_id,
-                *store.recovery_state(session_id),
-                "background",
-                event_id,
-                event_type,
-                data,
-                metadata,
-            )
+            async with state_write_lock(session_id):
+                await history_log.write(
+                    "finish_recovery_turn",
+                    session_id,
+                    *store.recovery_state(session_id),
+                    "background",
+                    event_id,
+                    event_type,
+                    data,
+                    metadata,
+                )
             return
         if event_type == "optimization":
             if await save_session(session_id):
@@ -1105,6 +1113,7 @@ def create_app(
     def retire_session(session_id: str) -> None:
         """Release everything keyed by a session once the store drops it."""
         turn_locks.pop(session_id, None)
+        state_write_locks.pop(session_id, None)
         pending_turn_stops.discard(session_id)
         session_optimizer.forget_session(session_id)
         event_broker.forget_session(session_id)
@@ -1773,9 +1782,10 @@ def create_app(
                         terminal = event
                 await asyncio.gather(collector, return_exceptions=True)
                 if terminal is not None:
-                    await turn_journal.finish(
-                        replay_turn, *terminal, state=store.recovery_state(session_id), metadata=recovery_metadata
-                    )
+                    async with state_write_lock(session_id):
+                        await turn_journal.finish(
+                            replay_turn, *terminal, state=store.recovery_state(session_id), metadata=recovery_metadata
+                        )
                 else:
                     await save_session(session_id)
 
