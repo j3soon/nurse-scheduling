@@ -156,10 +156,16 @@ class TurnJournal:
     ) -> ReplayTurn:
         turn = ReplayTurn(turn_id, session_id, request_id, question)
         self.turns[session_id, request_id] = turn
-        if self.history is not None and not await self.history.write(
-            "start_recovery_turn", turn_id, session_id, request_id, question, metadata
-        ):
-            self.turns.pop((session_id, request_id), None)
+        started = False
+        try:
+            started = self.history is None or await self.history.write(
+                "start_recovery_turn", turn_id, session_id, request_id, question, metadata
+            )
+        finally:
+            # A reconnect must never attach to a turn that no worker will run.
+            if not started:
+                self.turns.pop((session_id, request_id), None)
+        if not started:
             raise RuntimeError("AI message recovery is temporarily unavailable.")
         return turn
 

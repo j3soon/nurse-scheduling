@@ -805,14 +805,24 @@ class SessionStore:
             raise HTTPException(status_code=404, detail="Chat session not found.")
         return session
 
+    def discard(self, session_id: str) -> None:
+        """Drop a session that was never handed to a client."""
+        with self._lock:
+            if session_id in self._sessions:
+                self._retire(session_id)
+
+    def _retire(self, session_id: str) -> None:
+        """Drop one session and everything keyed by it, under the caller's lock."""
+        del self._sessions[session_id]
+        self._forget(session_id)
+        if self._on_retire is not None:
+            self._on_retire(session_id)
+
     def _prune_expired(self) -> None:
         now = time.monotonic()
         expired_ids = [session_id for session_id, session in self._sessions.items() if session.expires_at <= now]
         for session_id in expired_ids:
-            del self._sessions[session_id]
-            self._forget(session_id)
-            if self._on_retire is not None:
-                self._on_retire(session_id)
+            self._retire(session_id)
 
 
 def _sse_event(event_type: str, data: dict[str, object]) -> str:
@@ -1204,7 +1214,14 @@ def create_app(
         owner = owner_cookie_token(owner)
         refresh_owner_cookie(response, owner)
         session = store.create(owner, request.schedule_yaml)
-        if not await save_session(session.id, http_request.state.auth_credential_id):
+        # The client never learns this ID unless the save succeeds, so release its slot otherwise.
+        saved = False
+        try:
+            saved = await save_session(session.id, http_request.state.auth_credential_id)
+        finally:
+            if not saved:
+                store.discard(session.id)
+        if not saved:
             raise HTTPException(status_code=503, detail="AI message recovery is temporarily unavailable.")
         logger.info(
             "Created AI session session_id=%s auth_credential_id=%s",
@@ -1423,10 +1440,11 @@ def create_app(
         """Stream one answer and retain only text after successful completion."""
         question = _validate_question(body.message, settings)
         store.require_owned(session_id, owner)
-        if (
-            body.message_id is not None
-            and (existing := await turn_journal.get(session_id, body.message_id)) is not None
-        ):
+        try:
+            existing = None if body.message_id is None else await turn_journal.get(session_id, body.message_id)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from None
+        if existing is not None:
             if existing.question != question:
                 raise HTTPException(status_code=409, detail="This message ID belongs to a different question.")
             return turn_response(existing, body.last_event_id, owner, snapshot=True)
@@ -1462,12 +1480,11 @@ def create_app(
         )
         history_question = question
         request_id = body.message_id or turn_id
-        if not await save_session(session_id):
-            store.abort(session_id)
-            pending_turn_stops.discard(session_id)
-            release_turn()
-            raise HTTPException(status_code=503, detail="AI message recovery is temporarily unavailable.")
+        # No worker owns the session until admission ends, so every failure, including
+        # cancellation, must release it here.
         try:
+            if not await save_session(session_id):
+                raise RuntimeError("AI message recovery is temporarily unavailable.")
             replay_turn = await turn_journal.start(
                 session_id,
                 turn_id,
@@ -1479,11 +1496,13 @@ def create_app(
                     "attachment_count": len(hydrated_attachments),
                 },
             )
-        except RuntimeError as exc:
+        except BaseException as exc:
             store.abort(session_id)
             pending_turn_stops.discard(session_id)
             release_turn()
-            raise HTTPException(status_code=503, detail=str(exc)) from None
+            if isinstance(exc, RuntimeError):
+                raise HTTPException(status_code=503, detail=str(exc)) from None
+            raise
 
         saved_outcome = None
         recovery_metadata = {}

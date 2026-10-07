@@ -279,6 +279,74 @@ def test_stop_during_failed_turn_start_does_not_stop_next_turn(recorded_history,
     assert asyncio.run(exercise()) == "done"
 
 
+def test_failed_session_save_releases_the_session_slot(recorded_history, monkeypatch):
+    def unavailable(*_args):
+        raise psycopg.OperationalError("secret-database-url")
+
+    monkeypatch.setattr(ChatHistory, "save_recovery_session", unavailable)
+    app = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test"), provider=basic.FakeProvider()
+    )
+    with basic.AuthenticatedTestClient(app) as client:
+        response = client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})
+    assert response.status_code == 503
+    assert app.state.session_store._sessions == {}
+    assert app.state.session_store.retained_bytes == 0
+
+
+def test_recovery_read_failure_during_message_lookup_returns_503(recorded_history, monkeypatch):
+    def unavailable(*_args):
+        raise psycopg.OperationalError("secret-database-url")
+
+    monkeypatch.setattr(ChatHistory, "load_recovery_turn", unavailable)
+    provider = basic.FakeProvider()
+    app = basic.create_test_app(settings=basic.make_settings(history_postgres_url="test"), provider=provider)
+    with basic.AuthenticatedTestClient(app) as client:
+        session_id = basic.create_session(client)
+        response = client.post(f"/sessions/{session_id}/messages", json={"message": "Question", "message_id": "m1"})
+    assert response.status_code == 503
+    assert provider.calls == []
+
+
+def test_cancelled_turn_admission_releases_the_session(recorded_history, monkeypatch):
+    blocked = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    def save(*_args):
+        calls.append(None)
+        if len(calls) == 2:
+            blocked.set()
+            release.wait(5)
+
+    monkeypatch.setattr(ChatHistory, "save_recovery_session", save)
+
+    async def exercise():
+        app = basic.create_test_app(
+            settings=basic.make_settings(history_postgres_url="test"), provider=basic.FakeProvider()
+        )
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://testserver",
+                headers={"Authorization": f"Bearer {basic.AI_AUTH_TOKEN}"},
+            ) as client,
+        ):
+            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            first = asyncio.create_task(client.post(f"/sessions/{session_id}/messages", json={"message": "First"}))
+            await asyncio.to_thread(blocked.wait, 5)
+            first.cancel()
+            release.set()
+            await asyncio.gather(first, return_exceptions=True)
+            assert not app.state.session_store._sessions[session_id].active
+            assert not app.state.turn_locks[session_id].locked()
+            second = await client.post(f"/sessions/{session_id}/messages", json={"message": "Second"})
+            return basic.parse_sse(second.text)[-1][0]
+
+    assert asyncio.run(exercise()) == "done"
+
+
 def test_final_write_failure_preserves_successful_conversation(recorded_history, monkeypatch, caplog):
     def unavailable(*_args):
         raise psycopg.OperationalError("secret-database-url")
