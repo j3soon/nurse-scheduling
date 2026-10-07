@@ -158,10 +158,13 @@ class SessionEventBroker:
         if event_type != "optimization_progress" and session_id not in self._snapshot_incomplete:
             append_compacted(self._snapshots.setdefault(session_id, []), event_type, data)
             self._snapshot_bytes[session_id] = self._snapshot_bytes.get(session_id, 0) + len(json.dumps(data).encode())
-            if self.load_snapshot is not None and sum(self._snapshot_bytes.values()) > self._max_snapshot_bytes:
-                self._snapshots.pop(session_id, None)
-                self._snapshot_bytes.pop(session_id, None)
-                self._snapshot_incomplete.add(session_id)
+            if sum(self._snapshot_bytes.values()) > self._max_snapshot_bytes:
+                if self.load_snapshot is not None:
+                    self._snapshots.pop(session_id, None)
+                    self._snapshot_bytes.pop(session_id, None)
+                    self._snapshot_incomplete.add(session_id)
+                else:
+                    self._trim_snapshot(session_id)
         limit = (
             self._max_progress_events_per_session
             if event_type == "optimization_progress"
@@ -171,6 +174,23 @@ class SessionEventBroker:
             self._evicted_ids[session_id] = max(self._evicted_ids.get(session_id, 0), events[-limit - 1].id)
         del events[:-limit]
         self._signals.setdefault(session_id, asyncio.Event()).set()
+
+    def _trim_snapshot(self, session_id: str) -> None:
+        """Without recovery storage, drop a session's oldest output until the snapshots fit.
+
+        Trim to three quarters of the budget, so a full cache does not measure the
+        snapshot again on every event.
+        """
+        snapshot = self._snapshots[session_id]
+        sizes = [len(json.dumps(entry["data"]).encode()) for entry in snapshot]
+        others = sum(self._snapshot_bytes.values()) - self._snapshot_bytes[session_id]
+        retained = sum(sizes)
+        dropped = 0
+        while dropped < len(sizes) - 1 and others + retained > self._max_snapshot_bytes * 3 // 4:
+            retained -= sizes[dropped]
+            dropped += 1
+        del snapshot[:dropped]
+        self._snapshot_bytes[session_id] = retained
 
     def forget_session(self, session_id: str) -> None:
         self._events.pop(session_id, None)

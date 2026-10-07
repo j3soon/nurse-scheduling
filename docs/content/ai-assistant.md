@@ -542,8 +542,10 @@ or mutating tools. Without PostgreSQL, recovery is process-local.
 
 Completed foreground replay and background snapshots have separate memory
 cache budgets, each set by `AI_MAX_SESSION_BYTES`. PostgreSQL supplies output
-that was evicted from these caches. Active or unsaved foreground turns can
-exceed the budget. The caches do not limit database retention.
+that was evicted from these caches. Without PostgreSQL, the foreground cache
+keeps the newest turn of each session, and a background snapshot drops its
+oldest output. Active or unsaved foreground turns can exceed the budget. The
+caches do not limit database retention.
 
 ### History entries and streaming
 

@@ -129,14 +129,20 @@ class TurnJournal:
         return turn
 
     def trim_cache(self) -> None:
-        if self.history is None:
-            return
+        """Evict the oldest finished turns past the byte budget.
+
+        Recovery storage reloads an evicted turn. Without it, keep each session's newest
+        turn, which is the only one a browser reconnects to.
+        """
         sizes = {key: self.cached_bytes(turn) for key, turn in self.turns.items()}
         retained = sum(sizes.values())
+        newest = {key[0]: key for key in self.turns}
         for key, turn in tuple(self.turns.items()):
             if retained <= self.max_cached_bytes:
                 break
-            if turn.durable_terminal:
+            reloadable = turn.durable_terminal and self.history is not None
+            superseded = turn.terminal and self.history is None and newest[key[0]] != key
+            if reloadable or superseded:
                 del self.turns[key]
                 retained -= sizes[key]
 

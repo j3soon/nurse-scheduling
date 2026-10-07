@@ -249,3 +249,31 @@ def test_stop_for_an_earlier_message_leaves_the_active_turn_running():
             return basic.parse_sse(response.text)[-1][0]
 
     assert asyncio.run(exercise()) == "done"
+
+
+def test_replay_cache_without_recovery_keeps_each_sessions_newest_turn():
+    from nurse_scheduling.ai.turns import TurnJournal
+
+    async def exercise():
+        journal = TurnJournal(None, max_cached_bytes=1)
+        for session, request in (("a", "old"), ("b", "only"), ("a", "new")):
+            turn = await journal.start(session, request, request, "Question")
+            await journal.publish(turn, "delta", {"text": "Answer"})
+            await journal.finish(turn, "done", {"message_id": request}, state=())
+        running = await journal.start("a", "running", "running", "Question")
+        await journal.publish(running, "delta", {"text": "Partial"})
+        journal.trim_cache()
+        return set(journal.turns)
+
+    assert asyncio.run(exercise()) == {("a", "running"), ("b", "only")}
+
+
+def test_background_snapshot_without_recovery_keeps_newest_output_within_budget():
+    broker = SessionEventBroker(max_events_per_session=2, max_snapshot_bytes=200)
+    for index in range(20):
+        broker.publish("session", "warning", {"message": f"Entry {index:02d}"})
+    snapshot = broker._snapshots["session"]
+    retained = sum(len(json.dumps(entry["data"]).encode()) for entry in snapshot)
+    assert retained <= 200
+    assert broker._snapshot_bytes["session"] == retained
+    assert snapshot[-1]["data"]["message"] == "Entry 19"
