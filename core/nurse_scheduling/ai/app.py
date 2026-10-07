@@ -268,6 +268,8 @@ class ChatSession:
     proposal_diff: str = ""
     downloads: dict[str, bytes] = field(default_factory=dict)
     uploads: dict[str, SandboxAttachment] = field(default_factory=dict)
+    last_used: float = field(default_factory=time.monotonic)
+    """Last owner access, which orders eviction. A restored session keeps its stored expiry."""
 
 
 SESSION_MEMORY_LIMIT_MESSAGE = "The AI service has reached its memory limit."
@@ -327,10 +329,28 @@ class SessionStore:
         self._session_bytes: dict[str, int] = {}
         self._lock = threading.RLock()
         self._on_retire: Callable[[str], None] | None = None
+        self._evictable: Callable[[str], bool] | None = None
 
     def on_retire(self, callback: Callable[[str], None]) -> None:
         """Register the cleanup that follows every dropped session."""
         self._on_retire = callback
+
+    def allow_eviction(self, evictable: Callable[[str], bool]) -> None:
+        """Let a full store unload idle sessions that recovery storage can restore."""
+        self._evictable = evictable
+
+    def _make_room(self) -> None:
+        """Unload the least recently used idle session at the session limit, under the caller's lock.
+
+        Sessions live for the whole recovery period, so without eviction a month of chats
+        would hold every slot. Only uploads, downloads, and finished optimizer results are
+        lost, as after a restart.
+        """
+        if self._evictable is None or len(self._sessions) < self._settings.max_sessions:
+            return
+        idle = [session for session in self._sessions.values() if not session.active and self._evictable(session.id)]
+        if idle:
+            self._retire(min(idle, key=lambda session: session.last_used).id)
 
     @property
     def retained_bytes(self) -> int:
@@ -435,6 +455,7 @@ class SessionStore:
         """Create a session after pruning expired entries."""
         with self._lock:
             self._prune_expired()
+            self._make_room()
             if len(self._sessions) >= self._settings.max_sessions:
                 raise HTTPException(status_code=429, detail="The AI service has reached its session limit.")
             self._require_capacity(_text_bytes(schedule_yaml))
@@ -514,6 +535,7 @@ class SessionStore:
             remaining = record["expires_at"] - time.time()
             if remaining <= 0:
                 raise HTTPException(status_code=404, detail="Chat session not found.")
+            self._make_room()
             if len(self._sessions) >= self._settings.max_sessions:
                 raise HTTPException(status_code=429, detail="The AI service has reached its session limit.")
             state = record["state"]
@@ -803,6 +825,7 @@ class SessionStore:
         session = self._sessions.get(session_id)
         if session is None or owner_token is None or session.owner_token != owner_token:
             raise HTTPException(status_code=404, detail="Chat session not found.")
+        session.last_used = time.monotonic()
         return session
 
     def discard(self, session_id: str) -> None:
@@ -1121,6 +1144,12 @@ def create_app(
         turn_journal.forget_session(session_id)
 
     store.on_retire(retire_session)
+    if history_log is not None:
+        store.allow_eviction(
+            lambda session_id: (
+                session_id not in background_turn_tasks and not session_optimizer.has_unfinished_run(session_id)
+            )
+        )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:

@@ -388,6 +388,32 @@ def test_recovery_state_writes_commit_in_capture_order(recorded_history, monkeyp
     assert committed[-2:] == [older, newer]
 
 
+def test_full_store_evicts_the_least_recently_used_idle_session(recorded_history):
+    app = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test", max_sessions=2), provider=basic.FakeProvider()
+    )
+    store = app.state.session_store
+    with basic.AuthenticatedTestClient(app) as client:
+        first = basic.create_session(client)
+        second = basic.create_session(client)
+        for session_id in (first, second):
+            store._sessions[session_id].active = True
+        assert client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()}).status_code == 429
+        for session_id in (first, second):
+            store._sessions[session_id].active = False
+        assert client.get(f"/sessions/{first}/uploads").status_code == 200
+        third = basic.create_session(client)
+    assert list(store._sessions) == [first, third]
+
+
+def test_full_store_without_recovery_keeps_refusing_new_sessions():
+    app = basic.create_test_app(settings=basic.make_settings(max_sessions=1), provider=basic.FakeProvider())
+    with basic.AuthenticatedTestClient(app) as client:
+        basic.create_session(client)
+        response = client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})
+    assert response.status_code == 429
+
+
 def test_final_write_failure_preserves_successful_conversation(recorded_history, monkeypatch, caplog):
     def unavailable(*_args):
         raise psycopg.OperationalError("secret-database-url")

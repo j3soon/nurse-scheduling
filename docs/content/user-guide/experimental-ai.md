@@ -110,8 +110,9 @@ Recovery lasts until the session expires, normally after 30 days of inactivity.
 Hosted deployments use PostgreSQL to
 recover messages after a backend restart. A restart interrupts active responses,
 but the saved question and partial output remain available. Uploaded files and
-result downloads are held in memory and can disappear after a server restart
-without prior notice. Keep your original files.
+result downloads are held in memory. They can disappear without prior notice
+after a server restart or when a busy server unloads an idle chat. Keep your
+original files.
 
 ## See what the assistant did
 

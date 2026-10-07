@@ -439,7 +439,7 @@ response cannot prove that the original operation did not take effect.
 | `AI_BACKEND_PORT` | `8001` | Port used by the development launcher. |
 | `AI_COOKIE_SECURE` | `0` in the launcher | Use `0` for local HTTP and `1` for public HTTPS. Secure deployments use `SameSite=None` so approved cross-site frontends can retain session ownership. |
 | `AI_SESSION_TTL_SECONDS` | `2592000` | Idle session lifetime. Session activity renews it. |
-| `AI_MAX_SESSIONS` | `1000` | Maximum process-local sessions. |
+| `AI_MAX_SESSIONS` | `1000` | Maximum process-local sessions. With PostgreSQL, a new or restored session unloads the least recently used idle session instead of getting HTTP 429. That session loses its uploads, downloads, and optimizer results, as after a restart. |
 | `AI_MAX_SESSION_BYTES` | `268435456` | Chat text budget across live sessions. New sessions, schedule updates, and queued steering that would exceed it get HTTP 429. A completed turn instead drops its session's oldest complete exchanges and warns the browser. Size the process above this budget plus the newest turn and any pending proposal of each session. |
 | `AI_MAX_HISTORY_MESSAGES` | `1000` | Conversation messages retained per session. The effective minimum is two, so a completed question and answer survive when this is set to one. |
 | `AI_MAX_HISTORY_CHARS` | `200000` | Prompt budget for retained history. The newest messages that fit are sent, so a long session cannot outgrow the model context window. |
@@ -517,8 +517,9 @@ proposal, and conversation context. Foreground and background turns store the
 accepted question, model, credential ID, attachment count, token usage, error
 code, start and finish times, and execution status. Entries store answer text,
 reasoning, tool activity, and other replayable UI content. Binary uploads and
-downloads remain in memory and can disappear after a server restart without
-prior notice. Keep original files.
+downloads remain in memory. They can disappear without prior notice after a
+server restart or when a full service unloads an idle session. Keep original
+files.
 
 This data can contain staff information, schedules, and inspected document
 content. Session and turn metadata excludes service bearer keys and the raw owner cookie. Database access
