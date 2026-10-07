@@ -148,8 +148,8 @@ describe('ExperimentalAiPage', () => {
     mockStreamSessionEvents.mockReset().mockResolvedValue(undefined);
     mockStopSession.mockReset().mockResolvedValue(undefined);
     mockGenerateYaml.mockClear().mockReturnValue('description: current schedule\n');
-    mockApproveProposal.mockReset().mockResolvedValue('description: proposed schedule\n');
-    mockRejectProposal.mockReset().mockResolvedValue(undefined);
+    mockApproveProposal.mockReset().mockResolvedValue({ scheduleYaml: 'description: proposed schedule\n', historySaved: true });
+    mockRejectProposal.mockReset().mockResolvedValue(true);
     mockQueueMessage.mockReset().mockResolvedValue(undefined);
     mockUpdateSessionSchedule.mockReset().mockResolvedValue(undefined);
     mockLoadFromYaml.mockReset();
@@ -2288,6 +2288,23 @@ describe('ExperimentalAiPage', () => {
       expect(mockLoadFromYaml).toHaveBeenCalledWith({ description: 'proposed schedule' });
       expect(screen.queryByRole('region', { name: 'Proposed schedule change' })).not.toBeInTheDocument();
       expect(screen.getByText('The proposed schedule was applied. Undo reverts it in one step.')).toBeInTheDocument();
+      expect(screen.queryByText(/could not be saved for recovery/)).not.toBeInTheDocument();
+    });
+
+    it.each([
+      ['Approve', 'This approval could not be saved for recovery after a service restart.'],
+      ['Reject', 'This rejection could not be saved for recovery after a service restart.'],
+    ])('warns when recovery storage did not save the decision (%s)', async (decision, warning) => {
+      mockApproveProposal.mockResolvedValue({ scheduleYaml: 'description: proposed schedule\n', historySaved: false });
+      mockRejectProposal.mockResolvedValue(false);
+      const user = userEvent.setup();
+      render(<ExperimentalAiPage />);
+      await ask(user);
+
+      await user.click(await screen.findByRole('button', { name: decision }));
+
+      expect(await screen.findByText(warning)).toBeInTheDocument();
+      expect(screen.queryByRole('region', { name: 'Proposed schedule change' })).not.toBeInTheDocument();
     });
 
     it('reports a proposal that no longer matches the current schedule', async () => {

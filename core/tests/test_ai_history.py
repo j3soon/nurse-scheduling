@@ -388,6 +388,37 @@ def test_recovery_state_writes_commit_in_capture_order(recorded_history, monkeyp
     assert committed[-2:] == [older, newer]
 
 
+@pytest.mark.parametrize("decision", ["approve", "reject"])
+def test_proposal_decision_reports_a_failed_recovery_save(recorded_history, monkeypatch, decision):
+    client, session_id, revision = basic.proposing_client(history_postgres_url="test")
+
+    def unavailable(*_args):
+        raise psycopg.OperationalError("secret-database-url")
+
+    monkeypatch.setattr(ChatHistory, "save_recovery_session", unavailable)
+    body = {"base_sha256": revision} if decision == "approve" else None
+    response = client.post(f"/sessions/{session_id}/proposal/{decision}", json=body)
+    assert response.status_code == 200
+    assert response.json()["history_saved"] is False
+    assert not client.app.state.session_store._sessions[session_id].proposal_yaml
+
+
+def test_schedule_update_that_cannot_be_saved_can_be_retried(recorded_history, monkeypatch):
+    def unavailable(*_args):
+        raise psycopg.OperationalError("secret-database-url")
+
+    app = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test"), provider=basic.FakeProvider()
+    )
+    with basic.AuthenticatedTestClient(app) as client:
+        session_id = basic.create_session(client)
+        path = f"/sessions/{session_id}/schedule"
+        monkeypatch.setattr(ChatHistory, "save_recovery_session", unavailable)
+        assert client.put(path, json={"schedule_yaml": "description: newer"}).status_code == 503
+        monkeypatch.setattr(ChatHistory, "save_recovery_session", lambda *_args: None)
+        assert client.put(path, json={"schedule_yaml": "description: newer"}).status_code == 204
+
+
 def test_full_store_evicts_the_least_recently_used_idle_session(recorded_history):
     app = basic.create_test_app(
         settings=basic.make_settings(history_postgres_url="test", max_sessions=2), provider=basic.FakeProvider()

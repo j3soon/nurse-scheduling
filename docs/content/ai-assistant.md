@@ -359,6 +359,12 @@ as one undo step. `POST /sessions/{id}/proposal/reject` drops it, and `PUT
 /sessions/{id}/schedule` replaces the snapshot when the schedule changed
 elsewhere in the app, which also drops any pending proposal.
 
+With PostgreSQL, each of these requests saves the session state for recovery.
+The server applies an approval or rejection before it saves it, so a failed
+save returns `history_saved: false` and the browser shows a warning. The next
+message saves the change again before it starts. A schedule update that is not
+saved returns HTTP 503, and the browser sends it again with the next message.
+
 Approval and rejection add a backend-only user-action note to model history.
 The rejection note says that every schedule change from the proposed turn was
 discarded and that the next turn starts from a fresh copy of the current

@@ -97,6 +97,8 @@ interface ActiveOptimization extends OptimizationActivity {
 }
 
 const AI_STORAGE_KEY = 'nurse-scheduling-ai-data';
+const UNSAVED_APPROVAL_WARNING = 'This approval could not be saved for recovery after a service restart.';
+const UNSAVED_REJECTION_WARNING = 'This rejection could not be saved for recovery after a service restart.';
 const AI_AUTH_STORAGE_KEY = 'nurse-scheduling-ai-auth';
 const AI_SERVER_STORAGE_KEY = 'nurse-scheduling-ai-server';
 const AI_CONVERSATION_STORAGE_KEY = 'nurse-scheduling-ai-conversation';
@@ -2022,7 +2024,7 @@ export default function ExperimentalAiPage() {
     setIsApplyingProposal(true);
     setError(null);
     try {
-      const approvedYaml = await approveProposal(
+      const { scheduleYaml: approvedYaml, historySaved } = await approveProposal(
         sessionId,
         scheduleYaml,
         authToken,
@@ -2034,6 +2036,7 @@ export default function ExperimentalAiPage() {
       renewSessionExpiration();
       setProposalDiff(null);
       setProposalNotice('The proposed schedule was applied. Undo reverts it in one step.');
+      if (!historySaved) setError(UNSAVED_APPROVAL_WARNING);
     } catch (approveError) {
       reportRequestError(approveError, 'The proposal could not be applied.');
     } finally {
@@ -2047,8 +2050,9 @@ export default function ExperimentalAiPage() {
     setProposalNotice(null);
     if (sessionId === null) return;
     try {
-      await rejectProposal(sessionId, authToken, sessionEndpointRef.current ?? aiEndpoint);
+      const historySaved = await rejectProposal(sessionId, authToken, sessionEndpointRef.current ?? aiEndpoint);
       renewSessionExpiration();
+      if (!historySaved) setError(UNSAVED_REJECTION_WARNING);
     } catch (rejectError) {
       if (isAuthenticationError(rejectError)) {
         reportRequestError(rejectError, 'The proposal could not be rejected.');

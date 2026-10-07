@@ -2104,12 +2104,12 @@ def rename_factory() -> FakeSandboxFactory:
     return FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=rename))
 
 
-def proposing_client() -> tuple[TestClient, str, str]:
+def proposing_client(**settings: object) -> tuple[TestClient, str, str]:
     """Run one proposing turn and return the client, session, and base revision."""
     provider = ScriptedToolProvider(rename_call(), [TextDelta("Renamed P1.")])
     client = AuthenticatedTestClient(
         create_test_app(
-            settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT),
+            settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT, **settings),
             provider=provider,
             sandbox_factory=rename_factory(),
         )
@@ -2398,8 +2398,9 @@ def test_rejection_drops_the_proposal() -> None:
     approved = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
     follow_up = client.post(f"/sessions/{session_id}/messages", json={"message": "Continue"})
 
-    assert rejected.status_code == 204
-    assert repeated.status_code == 204
+    assert rejected.status_code == 200
+    assert rejected.json() == {"history_saved": True}
+    assert repeated.status_code == 200
     assert approved.status_code == 404
     assert follow_up.status_code == 200
     assert provider.calls[2].count({"role": "user", "content": PROPOSAL_REJECTED_HISTORY}) == 1

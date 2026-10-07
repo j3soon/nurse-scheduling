@@ -695,14 +695,14 @@ describe('AI client', () => {
 
   it('approves a proposal with the revision the browser holds', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(
-      JSON.stringify({ schedule_yaml: 'description: approved\n' }),
+      JSON.stringify({ schedule_yaml: 'description: approved\n', history_saved: false }),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
     ));
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(approveProposal('session-id', 'description: test', 'proposal-token')).resolves.toBe(
-      'description: approved\n',
-    );
+    await expect(approveProposal('session-id', 'description: test', 'proposal-token')).resolves.toEqual({
+      scheduleYaml: 'description: approved\n', historySaved: false,
+    });
     expect(fetchMock).toHaveBeenCalledWith('https://api.nursescheduling.org/ai/sessions/session-id/proposal/approve', {
       method: 'POST',
       credentials: 'include',
@@ -723,10 +723,12 @@ describe('AI client', () => {
   });
 
   it('rejects a proposal and refreshes a session schedule', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ history_saved: false }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    await rejectProposal('session-id', 'session-token');
+    await expect(rejectProposal('session-id', 'session-token')).resolves.toBe(false);
     await updateSessionSchedule('session-id', 'description: newer', 'session-token');
 
     expect(fetchMock.mock.calls[0][0]).toBe('https://api.nursescheduling.org/ai/sessions/session-id/proposal/reject');

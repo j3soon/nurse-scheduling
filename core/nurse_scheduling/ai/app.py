@@ -148,6 +148,14 @@ class ProposalResponse(BaseModel):
     """The approved schedule the browser should apply."""
 
     schedule_yaml: str
+    history_saved: bool
+    """Whether recovery storage saved the approval. It is already applied in the live session."""
+
+
+class ProposalRejectionResponse(BaseModel):
+    """The outcome of a rejection, which is already applied in the live session."""
+
+    history_saved: bool
 
 
 class ApproveProposalRequest(BaseModel):
@@ -1846,7 +1854,9 @@ def create_app(
         if len(request.schedule_yaml.encode("utf-8")) > settings.max_schedule_bytes:
             raise HTTPException(status_code=413, detail="The schedule is too large for the AI service.")
         store.update_schedule(session_id, owner, request.schedule_yaml)
-        await save_session(session_id)
+        # A retry repeats the same update, so the browser can resend it until it is saved.
+        if not await save_session(session_id):
+            raise HTTPException(status_code=503, detail="AI message recovery is temporarily unavailable.")
         response = Response(status_code=status.HTTP_204_NO_CONTENT)
         refresh_owner_cookie(response, owner)
         return response
@@ -1877,24 +1887,25 @@ def create_app(
                 await save_session(session_id)
                 raise HTTPException(status_code=409, detail="The proposed schedule is no longer valid.")
         schedule_yaml = store.adopt_proposal(session_id, owner, request.base_sha256)
-        await save_session(session_id)
+        # The proposal is gone once adopted, so a failed save is reported rather than refused.
+        history_saved = await save_session(session_id)
         refresh_owner_cookie(response, owner)
-        return ProposalResponse(schedule_yaml=schedule_yaml)
+        return ProposalResponse(schedule_yaml=schedule_yaml, history_saved=history_saved)
 
     @app.post(
         "/sessions/{session_id}/proposal/reject",
-        status_code=status.HTTP_204_NO_CONTENT,
+        response_model=ProposalRejectionResponse,
         dependencies=[Depends(require_auth), Depends(restore_session)],
     )
     async def reject_proposal(
         session_id: str,
+        response: Response,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
-    ) -> Response:
+    ) -> ProposalRejectionResponse:
         """Drop the pending proposal at the user's request."""
         store.discard_proposal(session_id, owner)
-        await save_session(session_id)
-        response = Response(status_code=status.HTTP_204_NO_CONTENT)
+        history_saved = await save_session(session_id)
         refresh_owner_cookie(response, owner)
-        return response
+        return ProposalRejectionResponse(history_saved=history_saved)
 
     return app

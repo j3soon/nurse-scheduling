@@ -801,7 +801,7 @@ export async function approveProposal(
   scheduleYaml: string,
   authToken: string | null,
   endpoint = getAiBaseUrl(),
-): Promise<string> {
+): Promise<{ scheduleYaml: string; historySaved: boolean }> {
   const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/proposal/approve`, {
     method: 'POST',
     credentials: 'include',
@@ -810,22 +810,25 @@ export async function approveProposal(
   });
   if (!response.ok) throw await responseError(response);
 
-  const body = await response.json() as { schedule_yaml?: unknown };
-  if (typeof body.schedule_yaml !== 'string' || !body.schedule_yaml) {
+  const body = await response.json() as { schedule_yaml?: unknown; history_saved?: unknown };
+  if (typeof body.schedule_yaml !== 'string' || !body.schedule_yaml || typeof body.history_saved !== 'boolean') {
     throw new Error('The AI backend returned an invalid proposal.');
   }
-  return body.schedule_yaml;
+  return { scheduleYaml: body.schedule_yaml, historySaved: body.history_saved };
 }
 
 export async function rejectProposal(
   sessionId: string,
   authToken: string | null,
   endpoint = getAiBaseUrl(),
-): Promise<void> {
+): Promise<boolean> {
   const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/proposal/reject`, {
     method: 'POST',
     credentials: 'include',
     headers: authorizedHeaders(authToken),
   });
   if (!response.ok) throw await responseError(response);
+  const body = await response.json() as { history_saved?: unknown };
+  if (typeof body.history_saved !== 'boolean') throw new Error('The AI backend returned an invalid rejection.');
+  return body.history_saved;
 }
