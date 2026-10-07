@@ -543,7 +543,8 @@ can accumulate history beyond 30 days.
 Startup fails if configured storage is unavailable. Failed initial recovery
 writes return HTTP 503 before contacting the provider. A failed final write
 keeps the live answer, emits a warning, and sets `history_saved: false` on
-`done`. This field describes recovery storage. A process crash recovers the
+`done`. This field describes recovery storage. The next save of that session
+retries the final write with the current state. A process crash recovers the
 accepted question and saved output but does not rerun interrupted model calls
 or mutating tools. Without PostgreSQL, recovery is process-local.
 

@@ -106,6 +106,7 @@ class TurnJournal:
         self.max_cached_bytes = max_cached_bytes
         self.turns: dict[tuple[str, str], ReplayTurn] = {}
         self.stopped_requests: set[tuple[str, str]] = set()
+        self.unsaved_outcomes: dict[str, list[tuple[ReplayTurn, tuple]]] = {}
 
     async def request_stop(self, session_id: str, request_id: str) -> None:
         if self.history is not None and not await self.history.write("stop_recovery_request", session_id, request_id):
@@ -205,12 +206,31 @@ class TurnJournal:
             )
             event_id += 1
             persisted = False
+            # Keep the outcome as it would have been saved, so the next session save can retry it.
+            outcome = (event_id, event_type, deepcopy(data), metadata)
+            self.unsaved_outcomes.setdefault(turn.session_id, []).append((turn, outcome))
             if event_type == "done":
                 data["history_saved"] = False
         turn.append(event_id, event_type, data)
         turn.durable_terminal = persisted
         self.trim_cache()
         return persisted
+
+    def has_unsaved_outcome(self, session_id: str) -> bool:
+        return session_id in self.unsaved_outcomes
+
+    async def save_outcomes(self, session_id: str, state: tuple) -> bool:
+        """Retry the final outcomes that recovery storage could not save, with the current state."""
+        pending = self.unsaved_outcomes.get(session_id, [])
+        while pending:
+            turn, outcome = pending[0]
+            if not await self.history.write("finish_recovery_turn", session_id, *state, turn.id, *outcome):
+                return False
+            pending.pop(0)
+            turn.durable_terminal = True
+        self.unsaved_outcomes.pop(session_id, None)
+        self.trim_cache()
+        return True
 
     def restore(self, session_id: str, records: list[dict[str, Any]]) -> list[ReplayTurn]:
         restored = []
@@ -226,6 +246,7 @@ class TurnJournal:
 
     def forget_session(self, session_id: str) -> None:
         self.stopped_requests = {key for key in self.stopped_requests if key[0] != session_id}
+        self.unsaved_outcomes.pop(session_id, None)
         for key in tuple(self.turns):
             if key[0] == session_id:
                 turn = self.turns.pop(key)

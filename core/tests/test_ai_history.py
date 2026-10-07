@@ -504,6 +504,43 @@ def test_full_store_keeps_a_session_whose_state_was_not_saved(recorded_history, 
         assert client.put(path, json={"schedule_yaml": "description: newer"}).status_code == 204
         basic.create_session(client)
     assert session_id not in app.state.session_store._sessions
+    if operation == "finish_recovery_turn":
+        # The schedule save also retried the answer's final outcome with the newer state.
+        [retried] = recorded_history["finishes"]
+        assert retried[3]["schedule_yaml"] == "description: newer"
+        assert retried[6:8] == ("done", {"message_id": retried[4], "history_saved": True})
+
+
+def test_postgres_retries_a_final_outcome_that_failed_to_save(postgres_history, monkeypatch):
+    def unavailable(*_args):
+        raise psycopg.OperationalError("secret-database-url")
+
+    settings = basic.make_settings(history_postgres_url="test")
+    request = {"message": "Question", "message_id": "unsaved-outcome"}
+    first = basic.create_test_app(settings=settings, provider=basic.FakeProvider([["Saved answer"]]))
+    with basic.AuthenticatedTestClient(first) as client:
+        session_id = basic.create_session(client)
+        with monkeypatch.context() as patch:
+            patch.setattr(ChatHistory, "finish_recovery_turn", unavailable)
+            response = client.post(f"/sessions/{session_id}/messages", json=request)
+        assert basic.parse_sse(response.text)[-1][1]["history_saved"] is False
+        update = client.put(f"/sessions/{session_id}/schedule", json={"schedule_yaml": basic.schedule_yaml()})
+        assert update.status_code == 204
+        cookies = dict(client.cookies)
+    with postgres_history._connect() as connection:
+        assert connection.execute("SELECT status FROM chat_recovery_turns").fetchone() == ("completed",)
+    provider = basic.FakeProvider([["This must never run"]])
+    restarted = basic.create_test_app(settings=settings, provider=provider)
+    with basic.AuthenticatedTestClient(restarted) as client:
+        client.cookies.update(cookies)
+        response = client.post(f"/sessions/{session_id}/messages", json=request)
+    [(kind, snapshot)] = basic.parse_sse(response.text, include_model_input=True)
+    assert kind == "turn_snapshot"
+    assert "Saved answer" in response.text
+    assert "service restarted" not in response.text
+    assert snapshot["events"][-1]["type"] == "done"
+    assert snapshot["events"][-1]["data"]["history_saved"] is True
+    assert provider.calls == []
 
 
 def test_full_store_without_recovery_keeps_refusing_new_sessions():

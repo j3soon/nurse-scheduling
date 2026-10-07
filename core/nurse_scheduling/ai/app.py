@@ -1000,9 +1000,9 @@ def create_app(
             async with state_write_lock(session_id):
                 if session_id not in store._sessions:
                     return True
-                owner, expires_at, state = store.recovery_state(session_id)
-                saved = await history_log.write(
-                    "save_recovery_session", session_id, owner, expires_at, state, credential_id
+                recovery_state = store.recovery_state(session_id)
+                saved = await turn_journal.save_outcomes(session_id, recovery_state) and await history_log.write(
+                    "save_recovery_session", session_id, *recovery_state, credential_id
                 )
                 return record_save(session_id, saved)
         finally:
@@ -1197,6 +1197,7 @@ def create_app(
             lambda session_id: (
                 session_id not in session_pins
                 and session_id not in unsaved_sessions
+                and not turn_journal.has_unsaved_outcome(session_id)
                 and session_id not in background_turn_tasks
                 and not session_optimizer.has_unfinished_run(session_id)
             )
