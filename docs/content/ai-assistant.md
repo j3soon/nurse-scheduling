@@ -95,7 +95,8 @@ output with the snapshot. It does not start another model turn.
 Foreground chat and optimization can proceed at the same time. Assistant turns
 remain serialized per session. The Stop control cancels either a foreground or
 background assistant turn and waits for the server outcome. It names the client
-message ID so a question stopped before arrival cannot start later. A delayed
+message ID so a question stopped before arrival cannot start later. After a
+connection failure, the browser sends the Stop again before it reconnects. A delayed
 Stop for an earlier message does not cancel a later turn. A Stop without a
 message ID cancels every active assistant turn in the session. No Stop cancels
 the independent optimizer run.

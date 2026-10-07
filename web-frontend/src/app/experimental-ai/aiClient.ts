@@ -566,6 +566,7 @@ export async function streamMessage(
   let cursor = callbacks.lastEventId ?? 0;
   let retries = 0;
   let accepted = false;
+  let stopSaved = false;
   while (!signal.aborted) {
     const connection = new AbortController();
     const abort = () => connection.abort();
@@ -574,6 +575,17 @@ export async function streamMessage(
     window.addEventListener('online', abort);
     document.addEventListener('visibilitychange', resume);
     try {
+      // The server may have started the turn even when no response arrived. Save Stop before a
+      // retry, so the server reports the turn's real outcome instead of running the question.
+      if (retries > 0 && !stopSaved && callbacks.shouldStop?.()) {
+        try {
+          await stopSession(sessionId, authToken, endpoint, requestId, connection.signal);
+        } catch (error) {
+          if (error instanceof AiHttpError && error.status < 500) throw error;
+          throw new AiConnectionError('The AI connection is being restored.');
+        }
+        stopSaved = true;
+      }
       let response: Response;
       try {
         response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/messages`, {
@@ -603,11 +615,6 @@ export async function streamMessage(
     } catch (error) {
       if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
       if (!(error instanceof AiConnectionError)) throw error;
-      // An accepted request keeps reconnecting, so the server can replay its Stop outcome.
-      if (!accepted && callbacks.shouldStop?.()) {
-        callbacks.onStopped?.();
-        return;
-      }
       callbacks.onConnectionChange?.(false);
       await waitForReconnect(Math.min(5000, 250 * 2 ** retries++), signal);
     } finally {
@@ -692,12 +699,14 @@ export async function stopSession(
   authToken: string | null,
   endpoint = getAiBaseUrl(),
   messageId?: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/stop`, {
     method: 'POST',
     credentials: 'include',
     headers: authorizedHeaders(authToken, messageId ? { 'Content-Type': 'application/json' } : undefined),
     ...(messageId ? { body: JSON.stringify({ message_id: messageId }) } : {}),
+    ...(signal ? { signal } : {}),
   });
   if (!response.ok) throw await responseError(response);
 }
