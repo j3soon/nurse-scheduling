@@ -919,6 +919,27 @@ describe('ExperimentalAiPage', () => {
     expect(mockUpdateSessionSchedule).not.toHaveBeenCalled();
   });
 
+  it('asks for files again instead of recovering a request whose upload never finished', async () => {
+    const request = {
+      id: 'original-request', question: 'Read these files', questionId: 'question', assistantId: 'answer',
+      active: true, uploading: true,
+    };
+    window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'restored-session', endpoint: '/ai', expiresAt: Date.now() + 60_000, retentionSeconds: 2592000,
+      messages: [
+        { id: 'question', role: 'user', content: request.question, requestId: request.id },
+        { id: 'answer', role: 'assistant', content: '', status: 'pending', requestId: request.id, request },
+      ], syncedSchedule: 'description: original schedule\n', proposalDiff: null,
+    }));
+    render(<ExperimentalAiPage />);
+    expect(await screen.findByRole('button', { name: 'Prepare retry' })).toBeInTheDocument();
+    expect(mockStreamMessage).not.toHaveBeenCalled();
+    await waitFor(() => {
+      const stored = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
+      expect(stored.messages[1].request.active).toBe(false);
+    });
+  });
+
   it.each([false, true])('keeps recovered foreground replies before optimizer completion (steering: %s)', async steering => {
     const request = { id: 'original-request', question: 'Optimize it.', questionId: 'question', assistantId: 'answer', active: true };
     const startedAt = Date.now() - 120_000;

@@ -81,7 +81,7 @@ import {
 interface ChatMessage extends ChatExportMessage {
   id: string;
   requestId?: string;
-  request?: { id: string; question: string; questionId: string; assistantId: string; active: boolean };
+  request?: { id: string; question: string; questionId: string; assistantId: string; active: boolean; uploading?: boolean };
   downloadId?: string;
   // Absolute history position of an app event, so a retried turn does not show it twice.
   historyIndex?: number;
@@ -294,7 +294,8 @@ function isChatMessage(value: unknown): value is ChatMessage {
     && (message.request === undefined || (typeof message.request === 'object' && message.request !== null
       && typeof message.request.id === 'string' && typeof message.request.question === 'string'
       && typeof message.request.questionId === 'string' && typeof message.request.assistantId === 'string'
-      && typeof message.request.active === 'boolean'))
+      && typeof message.request.active === 'boolean'
+      && (message.request.uploading === undefined || typeof message.request.uploading === 'boolean')))
     && (message.downloadId === undefined || typeof message.downloadId === 'string')
     && (message.optimizerJob === undefined || (message.optimizerJob !== null
       && typeof message.optimizerJob.jobId === 'string'
@@ -1515,6 +1516,8 @@ export default function ExperimentalAiPage() {
     const request = {
       id: resume?.id ?? messageId(), question, questionId: userMessage.id,
       assistantId: resume?.assistantId ?? messageId(), active: true,
+      // Recovery must not send the question without files whose upload never finished.
+      uploading: attachmentsForMessage.length > 0,
     };
     currentRequestRef.current = { id: request.id, stopped: false };
     const currentRequest = currentRequestRef.current;
@@ -1606,6 +1609,9 @@ export default function ExperimentalAiPage() {
           onUploaded: files => {
             // The upload is now its own history message, so a retry needs only the question.
             activeQuestionRequiresAttachments = false;
+            request.uploading = false;
+            setMessages(previous => previous.map(message => message.request?.id === request.id
+              ? { ...message, request: { ...message.request, uploading: false } } : message));
             if (fileCapability.retained) setUploadedFiles(previous => [...previous, ...files]);
           },
           onAccepted: () => {
@@ -1792,7 +1798,8 @@ export default function ExperimentalAiPage() {
     const pending = messages.find(message => message.request?.active)?.request;
     if (!pending || resumedRequestRef.current === pending.id) return;
     resumedRequestRef.current = pending.id;
-    void sendRequest(pending.question, [], false, Date.now(), { ...pending, recover: true });
+    if (pending.uploading) failInterruptedUpload(pending);
+    else void sendRequest(pending.question, [], false, Date.now(), { ...pending, recover: true });
   });
 
   const send = async (event: FormEvent) => {
@@ -1834,6 +1841,16 @@ export default function ExperimentalAiPage() {
     const original = messages.slice(0, failedIndex).reverse().find(message => message.role === 'user' && message.source === undefined);
     if (!original) return;
     void sendRequest(question, [], false, original.createdAt, { id: messageId(), questionId: original.id, assistantId: failedId });
+  };
+
+  // Leaving the page aborted this upload before the question was sent, so its files must be attached again.
+  const failInterruptedUpload = (pending: NonNullable<ChatMessage['request']>) => {
+    setMessages(previous => previous.map(message => message.id === pending.assistantId
+      ? {
+          ...message, status: 'failed', responseCompletedAt: Date.now(), request: { ...pending, active: false },
+          retry: { question: pending.question, requiresAttachments: true },
+        }
+      : message));
   };
 
   const prepareAttachmentRetry = (question: string) => {
