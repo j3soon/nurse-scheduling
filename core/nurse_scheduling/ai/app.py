@@ -924,6 +924,7 @@ def create_app(
     state_write_locks: dict[str, asyncio.Lock] = {}
     turn_locks: dict[str, asyncio.Lock] = {}
     active_turn_tasks: dict[str, asyncio.Task[object]] = {}
+    active_turn_requests: dict[str, str] = {}
     background_turn_tasks: dict[str, set[asyncio.Task[object]]] = {}
     pending_turn_stops: set[str] = set()
     concurrency_limit = asyncio.Semaphore(settings.max_concurrent_requests)
@@ -1276,13 +1277,19 @@ def create_app(
         body: StopChatRequest | None = None,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> Response:
-        """Cancel the foreground or background assistant turn active in a session."""
+        """Cancel the named foreground turn, or every assistant turn active in the session."""
         store.require_owned(session_id, owner)
         if body is not None:
             try:
                 await turn_journal.request_stop(session_id, body.message_id)
             except RuntimeError as exc:
                 raise HTTPException(status_code=503, detail=str(exc)) from None
+            # A delayed Stop must not cancel a later turn. A turn that has not started yet
+            # finds the saved request instead.
+            task = active_turn_tasks.get(session_id)
+            if task is not None and not task.done() and active_turn_requests.get(session_id) == body.message_id:
+                task.cancel()
+            return Response(status_code=status.HTTP_202_ACCEPTED)
         task = active_turn_tasks.get(session_id)
         if task is not None and not task.done():
             task.cancel()
@@ -1521,6 +1528,7 @@ def create_app(
             current_task = asyncio.current_task()
             if current_task is not None:
                 active_turn_tasks[session_id] = current_task
+                active_turn_requests[session_id] = request_id
             stopped_before_stream = session_id in pending_turn_stops
             pending_turn_stops.discard(session_id)
             assistant_parts: list[str] = []
@@ -1712,6 +1720,7 @@ def create_app(
                 pending_turn_stops.discard(session_id)
                 if current_task is not None and active_turn_tasks.get(session_id) is current_task:
                     del active_turn_tasks[session_id]
+                    active_turn_requests.pop(session_id, None)
                 if not completed:
                     store.abort(session_id)
                 recovery_metadata.update(error_code=error_code, usage=asdict(usage) if usage else None)

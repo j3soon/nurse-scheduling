@@ -215,3 +215,37 @@ def test_stop_before_message_arrives_prevents_provider_execution():
         assert basic.parse_sse(result.text, include_model_input=True)[-1][0] == "stopped"
         assert provider.calls == []
         assert app.state.session_store._sessions[session].history == []
+
+
+def test_stop_for_an_earlier_message_leaves_the_active_turn_running():
+    async def exercise():
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        class Provider:
+            async def stream_events(self, _messages, tools=None):
+                started.set()
+                await release.wait()
+                yield TextDelta("Current answer")
+
+        app = basic.create_test_app(settings=basic.make_settings(), provider=Provider())
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://testserver",
+                headers={"Authorization": f"Bearer {basic.AI_AUTH_TOKEN}"},
+            ) as client,
+        ):
+            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            turn = asyncio.create_task(
+                client.post(f"/sessions/{session_id}/messages", json={"message": "Current", "message_id": "current"})
+            )
+            await asyncio.wait_for(started.wait(), timeout=1)
+            stop = await client.post(f"/sessions/{session_id}/stop", json={"message_id": "earlier"})
+            assert stop.status_code == 202
+            release.set()
+            response = await asyncio.wait_for(turn, timeout=2)
+            return basic.parse_sse(response.text)[-1][0]
+
+    assert asyncio.run(exercise()) == "done"
