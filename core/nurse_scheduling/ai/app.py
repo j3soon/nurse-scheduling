@@ -890,9 +890,9 @@ def create_app(
     optimizer_backend: OptimizerBackend | None = None,
 ) -> FastAPI:
     """Construct the independently deployable AI application."""
-    configure_service_logging(logger)
     app_version = get_app_version()
     init_sentry(app_version, app="ai-backend", api_version=API_VERSION)
+    configure_service_logging(logger)
     settings = settings or AiSettings.from_env()
     auth_token, auth_tokens = validate_ai_auth_credentials(
         settings.auth_token,
