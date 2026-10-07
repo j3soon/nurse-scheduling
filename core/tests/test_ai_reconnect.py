@@ -104,10 +104,8 @@ def test_agent_completes_after_browser_disconnects_mid_response():
         assert disconnected.is_set()
         release.set()
         await asyncio.wait_for(completed.wait(), timeout=1)
-        for _ in range(10):
-            if not session.active:
-                break
-            await asyncio.sleep(0)
+        await asyncio.wait_for(asyncio.gather(*app.state.turn_workers), timeout=1)
+        assert not session.active
         assert session.history[-1]["content"] == "First part and completed answer"
 
     asyncio.run(exercise())
