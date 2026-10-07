@@ -587,7 +587,8 @@ def test_disconnected_turn_keeps_running_until_explicit_stop(wait_stage: str, mo
             assert not factory.created[0].closed
         task = app.state.active_turn_tasks[session.id]
         task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
+        # The turn worker saves the stopped outcome after this event task ends.
+        await asyncio.wait_for(asyncio.gather(*app.state.turn_workers), timeout=1)
 
         backend = factory.created[0] if factory.created else None
         return backend, operation_cancelled.is_set(), session.active, list(session.history)

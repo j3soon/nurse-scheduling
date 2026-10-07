@@ -124,6 +124,10 @@ cases ran. A passing suite with those cases skipped does not validate persistenc
 - Test a graceful shutdown separately from a crash. Seeded running rows cover
   only a crash. Exit the application lifespan during a turn, then check that
   recovery reports a restart instead of a user Stop.
+- A turn worker saves the outcome after the turn's event task ends, and
+  `asyncio.run` cancels a worker that is still running when the test returns.
+  A test that runs AI turns directly must wait for `app.state.turn_workers`
+  before it checks saved recovery records.
 - A fake provider that sleeps between fragments starts each delay only after
   the consumer asks for the next event. A network stream keeps arriving during
   that work. Treat such stream timings as an upper bound.
