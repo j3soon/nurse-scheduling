@@ -72,10 +72,7 @@ UNEXPECTED_ERROR_VERSION_ADVICE = (
 ORIGIN_REGEX = r"^(http://(localhost|127\.0\.0\.1):[0-9]+|https://([a-zA-Z0-9-]+\.)?nursescheduling\.org)$"
 
 
-# Keep API output focused on server behavior. Solver progress is delivered to
-# clients through job events and remains available from the CLI's verbose logs.
 server_logger = logging.getLogger("nurse_scheduling.server")
-configure_service_logging(server_logger)
 
 
 def get_app_version() -> str:
@@ -147,6 +144,11 @@ def create_app(
 
     Explicit dependencies support isolated tests; omitted values come from configuration.
     """
+    app_version = get_app_version()
+    init_sentry(app_version, api_version=API_VERSION)
+    # Keep API output focused on server behavior. Solver progress is delivered to
+    # clients through job events and remains available from the CLI's verbose logs.
+    configure_service_logging(server_logger)
     settings = settings or ServerSettings.from_env()
     validate_solver_availability(settings.solver_ids)
     deployment_id = get_deployment_id()
@@ -154,7 +156,6 @@ def create_app(
     store = store or _create_store(settings, instance_id)
     runner = runner or OptimizationRunner()
     started_at = datetime.now(timezone.utc)
-    app_version = get_app_version()
     claimed_performance = (
         {
             "score": settings.claimed_performance.score,
@@ -201,7 +202,6 @@ def create_app(
     )
     maintenance = JobMaintenance(controller, interval_seconds=settings.maintenance_interval_seconds)
     suspicion_tracker = create_suspicion_tracker(settings, salt=suspicion_salt(settings, deployment_id))
-    init_sentry(app_version, api_version=API_VERSION)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
