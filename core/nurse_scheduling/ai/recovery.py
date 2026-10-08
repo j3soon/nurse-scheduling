@@ -30,12 +30,11 @@ from uuid import UUID
 from fastapi import HTTPException
 
 from .agent_session import STALE_RUN_ERROR, AgentSession
-from .history import ChatHistory, EventRow, RunKind, RunStatus
+from .history import ChatHistory, EntryRow, EventRow, RunKind, RunStatus
 from .provider import TokenUsage
 from .session_event_stream import SessionEvent, SessionEventStream, fold_recovery
 from .session_events import AgentSessionTerminalEvent
 from .sessions import SessionStore
-from .transcript import AgentMessage, ProposalDecision
 
 logger = logging.getLogger("nurse_scheduling.ai.recovery")
 RESTART_ERROR = (
@@ -79,10 +78,14 @@ class SessionRecovery:
         self._unsaved: set[str] = set()
         # Final run writes that failed, retried before the next state save of their session.
         self._unsaved_outcomes: dict[str, list[tuple[Any, ...]]] = {}
+        # Conversation entries in session order, saved by the next write of their session.
+        self._pending_entries: dict[str, list[EntryRow]] = {}
+        self._entry_writers: dict[str, asyncio.Task[None]] = {}
         self._pending_events: dict[str, list[SessionEvent]] = {}
         self._writers: dict[str, asyncio.Task[None]] = {}
         self._restore_lock = asyncio.Lock()
         if history is not None:
+            store.on_entry(self._observe_entry)
             event_stream.observer = self._observe
             event_stream.load_recovery = self._load_recovery
 
@@ -116,6 +119,7 @@ class SessionRecovery:
             session_id not in self._pins
             and session_id not in self._unsaved
             and session_id not in self._unsaved_outcomes
+            and session_id not in self._pending_entries
             and session_id not in self._pending_events
         )
 
@@ -124,10 +128,12 @@ class SessionRecovery:
         self._locks.pop(session_id, None)
         self._unsaved.discard(session_id)
         self._unsaved_outcomes.pop(session_id, None)
+        self._pending_entries.pop(session_id, None)
         self._pending_events.pop(session_id, None)
-        writer = self._writers.pop(session_id, None)
-        if writer is not None:
-            writer.cancel()
+        for writers in (self._entry_writers, self._writers):
+            writer = writers.pop(session_id, None)
+            if writer is not None:
+                writer.cancel()
 
     def _record(self, session_id: str, saved: bool) -> bool:
         """Keep a session whose newest state failed to save, so eviction never drops its only copy."""
@@ -150,15 +156,55 @@ class SessionRecovery:
                 if self._store.get(session_id) is None:
                     return True
                 for outcome in tuple(self._unsaved_outcomes.get(session_id, ())):
-                    state = self._store.recovery_state(session_id)
-                    if not await self.history.write("finish_run", *outcome, session_id=session_id, state=state):
+                    if not await self._write_with_entries(session_id, "finish_run", *outcome, session_id=session_id):
                         return self._record(session_id, False)
                     self._unsaved_outcomes[session_id].remove(outcome)
                 self._unsaved_outcomes.pop(session_id, None)
-                state = self._store.recovery_state(session_id)
-                return self._record(session_id, await self.history.write(operation, *args, state=state, **kwargs))
+                return self._record(session_id, await self._write_with_entries(session_id, operation, *args, **kwargs))
         finally:
             release()
+
+    async def _write_with_entries(self, session_id: str, operation: str, /, *args: Any, **kwargs: Any) -> bool:
+        """Write the current state in one transaction with every entry it counts."""
+        assert self.history is not None
+        entries = list(self._pending_entries.get(session_id, ()))
+        state = self._store.recovery_state(session_id)
+        saved = await self.history.write(operation, *args, state=state, entries=entries, **kwargs)
+        if saved:
+            self._entries_saved(session_id, len(entries))
+        return saved
+
+    def _entries_saved(self, session_id: str, count: int) -> None:
+        pending = self._pending_entries.get(session_id)
+        if pending is not None:
+            del pending[:count]
+            if not pending:
+                del self._pending_entries[session_id]
+
+    def _observe_entry(self, session_id: str, entry: EntryRow) -> None:
+        """Queue a conversation entry, which a background writer saves as Pi saves each message."""
+        self._pending_entries.setdefault(session_id, []).append(entry)
+        writer = self._entry_writers.get(session_id)
+        if writer is None or writer.done():
+            self._entry_writers[session_id] = asyncio.create_task(
+                self._write_entries(session_id), name=f"ai-entries-{session_id}"
+            )
+
+    async def _write_entries(self, session_id: str) -> None:
+        """Save queued entries in order, retrying a failed batch until storage accepts it."""
+        assert self.history is not None
+        delay = 1.0
+        while self._pending_entries.get(session_id):
+            async with self._locks.setdefault(session_id, asyncio.Lock()):
+                entries = list(self._pending_entries.get(session_id, ()))
+                saved = not entries or await self.history.write("append_entries", session_id, entries)
+                if saved:
+                    self._entries_saved(session_id, len(entries))
+            if saved:
+                delay = 1.0
+                continue
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, MAX_RETRY_DELAY_SECONDS)
 
     async def save(self, session_id: str, credential_id: str | None = None) -> bool:
         if self.history is None:
@@ -170,6 +216,7 @@ class SessionRecovery:
         session_id: str,
         run_id: str,
         prompt: str,
+        prompt_seq: int,
         *,
         model: str,
         attachment_count: int,
@@ -185,6 +232,7 @@ class SessionRecovery:
             run_id,
             session_id,
             prompt=prompt,
+            prompt_seq=prompt_seq,
             model=model,
             attachment_count=attachment_count,
             kind=kind,
@@ -199,23 +247,17 @@ class SessionRecovery:
         status: RunStatus,
         error_code: str | None,
         usage: TokenUsage | None,
-        entries: Sequence[AgentMessage],
+        committed: bool,
     ) -> bool:
         """Save the outcome with the resulting state. A failed write is retried by the next save."""
         if self.history is None:
             return True
-        outcome = (run_id, status, error_code, usage, tuple(entries))
+        outcome = (run_id, status, error_code, usage, committed)
         if await self._write_state(session_id, "finish_run", *outcome, session_id=session_id):
             return True
         if self._store.get(session_id) is not None:
             self._unsaved_outcomes.setdefault(session_id, []).append(outcome)
         return False
-
-    async def record_decision(self, session_id: str, run_id: str | None, decision: ProposalDecision) -> bool:
-        """Save a decided proposal. It already took effect, so the result reports rather than refuses."""
-        if self.history is None:
-            return True
-        return await self._write_state(session_id, "record_decision", session_id, run_id=run_id, decision=decision)
 
     async def stop_message(self, session_id: str, message_id: str) -> None:
         """Save a named Stop, so its message cannot start later, even after a restart.
@@ -281,7 +323,14 @@ class SessionRecovery:
                 raise HTTPException(status_code=503, detail=str(exc)) from None
             if record is None:
                 raise HTTPException(status_code=404, detail="Chat session not found.")
-            session = self._store.restore(session_id, owner, record["state"], record["expires_at"])
+            session = self._store.restore(
+                session_id,
+                owner,
+                record["state"],
+                record["expires_at"],
+                entries=record["entries"],
+                next_entry_seq=record["next_entry_seq"],
+            )
             self._event_stream.restore(session_id, record["last_event_id"])
             release = self.pin(session_id)
             try:
@@ -297,7 +346,7 @@ class SessionRecovery:
             assert self.history is not None
             message = BACKGROUND_RESTART_ERROR if kind == "background" else RESTART_ERROR
             terminal = {"type": "error", "message": message}
-            await self.finish_run(session.id, run_id, "failed", "service_restart", None, ())
+            await self.finish_run(session.id, run_id, "failed", "service_restart", None, False)
         elif status == "completed":
             terminal = {"type": "done"}
         elif status == "cancelled":
@@ -341,10 +390,11 @@ class SessionRecovery:
             delay = min(delay * 2, MAX_RETRY_DELAY_SECONDS)
 
     async def flush(self, session_id: str) -> None:
-        """Wait until every event published so far is saved."""
-        writer = self._writers.get(session_id)
-        if writer is not None and not writer.done():
-            await asyncio.shield(writer)
+        """Wait until every entry and event so far is saved."""
+        for writers in (self._entry_writers, self._writers):
+            writer = writers.get(session_id)
+            if writer is not None and not writer.done():
+                await asyncio.shield(writer)
 
     async def _load_recovery(self, session_id: str, after_id: int) -> tuple[int, list[SessionEvent]] | None:
         """Build a complete reset from storage. None means storage lags, so the projection serves it."""
@@ -361,8 +411,13 @@ class SessionRecovery:
         return covered, fold_recovery(SessionEvent(last, kind, data) for _first, last, _run, kind, data in rows)
 
     async def close(self) -> None:
-        """Give pending event writes a bounded chance to finish during shutdown."""
-        writers = [writer for writer in self._writers.values() if not writer.done()]
+        """Give pending entry and event writes a bounded chance to finish during shutdown."""
+        writers = [
+            writer
+            for writers in (self._entry_writers, self._writers)
+            for writer in writers.values()
+            if not writer.done()
+        ]
         if writers:
             await asyncio.wait(writers, timeout=FLUSH_TIMEOUT_SECONDS)
         for writer in writers:

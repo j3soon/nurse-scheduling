@@ -33,7 +33,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from .provider import TokenUsage
-from .transcript import AgentMessage, ProposalDecision, ProposalDecisionEntry, UserMessage, entry_record
+from .transcript import AgentMessage, UserMessage, entry_from_record, entry_record
 
 logger = logging.getLogger("nurse_scheduling.ai.history")
 RunStatus = Literal["completed", "failed", "cancelled", "stale"]
@@ -42,6 +42,8 @@ RunKind = Literal["foreground", "background"]
 SessionState = tuple[str, float, dict[str, Any]]
 # One stored stream event: first and last event ID, run ID, type, and data.
 EventRow = tuple[int, int, str | None, str, dict[str, Any]]
+# One conversation entry in session order: sequence number, run ID, and entry.
+EntryRow = tuple[int, str | None, AgentMessage]
 RECOVERY_UNAVAILABLE = "AI message recovery is temporarily unavailable."
 
 
@@ -101,7 +103,14 @@ class ChatHistory:
             connection.execute("DELETE FROM chat_sessions WHERE expires_at < now()")
 
     @staticmethod
-    def _save_state(connection, session_id: str, state: SessionState, credential_id: str | None = None) -> None:
+    def _save_state(
+        connection,
+        session_id: str,
+        state: SessionState,
+        entries: Sequence[EntryRow],
+        credential_id: str | None = None,
+    ) -> None:
+        """Save the state with the entries it counts, so a restore never skips an unsaved entry."""
         owner, expires_at, data = state
         connection.execute(
             "INSERT INTO chat_sessions (id, owner_hash, expires_at, state, auth_credential_id) "
@@ -109,11 +118,24 @@ class ChatHistory:
             "expires_at = EXCLUDED.expires_at, state = EXCLUDED.state",
             (session_id, _owner_hash(owner), expires_at, _jsonb(data), credential_id),
         )
+        _insert_entries(connection, session_id, entries)
 
-    def save_session(self, session_id: str, state: SessionState, credential_id: str | None = None) -> None:
-        """Keep session ownership, expiry, schedule, proposal, and conversation context."""
+    def save_session(
+        self,
+        session_id: str,
+        state: SessionState,
+        credential_id: str | None = None,
+        *,
+        entries: Sequence[EntryRow] = (),
+    ) -> None:
+        """Keep session ownership, expiry, schedule, proposal, and new conversation entries."""
         with self._connect() as connection:
-            self._save_state(connection, session_id, state, credential_id)
+            self._save_state(connection, session_id, state, entries, credential_id)
+
+    def append_entries(self, session_id: str, entries: Sequence[EntryRow]) -> None:
+        """Save entries as they end, as Pi saves each message on `message_end`."""
+        with self._connect() as connection:
+            _insert_entries(connection, session_id, entries)
 
     def start_run(
         self,
@@ -121,19 +143,21 @@ class ChatHistory:
         session_id: str,
         state: SessionState,
         prompt: str,
+        prompt_seq: int,
         *,
         model: str,
         attachment_count: int,
         kind: RunKind = "foreground",
         message_id: str | None = None,
         credential_id: str | None = None,
+        entries: Sequence[EntryRow] = (),
     ) -> None:
         """Atomically save the session state, a uniquely identified run, and its prompt entry.
 
         The prompt is written before model work, so it survives a process that dies mid-run.
         """
         with self._connect() as connection:
-            self._save_state(connection, session_id, state)
+            self._save_state(connection, session_id, state, entries)
             inserted = connection.execute(
                 "INSERT INTO chat_runs (id, session_id, model, attachment_count, kind, message_id, auth_credential_id) "
                 "VALUES (%s, %s, %s, %s, %s, %s, "
@@ -142,7 +166,7 @@ class ChatHistory:
                 (run_id, session_id, model, attachment_count, kind, message_id, credential_id, session_id),
             ).fetchone()
             if inserted is not None:
-                _insert_entries(connection, run_id, 0, [UserMessage(prompt)])
+                _insert_entries(connection, session_id, [(prompt_seq, run_id, UserMessage(prompt))])
 
     def finish_run(
         self,
@@ -150,37 +174,23 @@ class ChatHistory:
         status: RunStatus,
         error_code: str | None,
         usage: TokenUsage | None,
-        entries: Sequence[AgentMessage] = (),
-        session_id: str | None = None,
-        state: SessionState | None = None,
+        committed: bool = False,
+        *,
+        session_id: str,
+        state: SessionState,
+        entries: Sequence[EntryRow] = (),
     ) -> None:
         """Commit the run outcome with the resulting session state, keeping the first terminal result.
 
-        `entries` continue the prompt written by `start_run` in run order.
+        `committed` records whether the run's messages joined the session conversation.
         """
         with self._connect() as connection:
-            if session_id is not None and state is not None:
-                self._save_state(connection, session_id, state)
-            finished = connection.execute(
-                "UPDATE chat_runs SET status = %s, error_code = %s, usage = %s, finished_at = now() "
-                "WHERE id = %s AND status = 'running' RETURNING id",
-                (status, error_code, Jsonb(asdict(usage)) if usage else None, run_id),
-            ).fetchone()
-            if finished is not None:
-                _insert_entries(connection, run_id, 1, entries)
-
-    def record_decision(
-        self, session_id: str, state: SessionState, run_id: str | None, decision: ProposalDecision
-    ) -> None:
-        """Save the decided session state and append the decision to the run that proposed it."""
-        with self._connect() as connection:
-            self._save_state(connection, session_id, state)
-            if run_id is None:
-                return
-            (next_seq,) = connection.execute(
-                "SELECT COALESCE(max(seq) + 1, 0) FROM chat_run_entries WHERE run_id = %s", (run_id,)
-            ).fetchone()
-            _insert_entries(connection, run_id, next_seq, [ProposalDecisionEntry(decision)])
+            self._save_state(connection, session_id, state, entries)
+            connection.execute(
+                "UPDATE chat_runs SET status = %s, error_code = %s, usage = %s, committed = %s, finished_at = now() "
+                "WHERE id = %s AND status = 'running'",
+                (status, error_code, Jsonb(asdict(usage)) if usage else None, committed, run_id),
+            )
 
     def append_events(self, session_id: str, rows: Sequence[EventRow]) -> None:
         """Store replayable events in publication order. A retried batch keeps the first copy."""
@@ -213,14 +223,20 @@ class ChatHistory:
         with self._connect() as connection:
             row = connection.execute(
                 "SELECT r.id, e.payload->>'text' FROM chat_runs r "
-                "JOIN chat_run_entries e ON e.run_id = r.id AND e.seq = 0 "
-                "WHERE r.session_id = %s AND r.message_id = %s",
+                "JOIN chat_session_entries e ON e.run_id = r.id AND e.type = 'user' "
+                "WHERE r.session_id = %s AND r.message_id = %s ORDER BY e.seq LIMIT 1",
                 (session_id, message_id),
             ).fetchone()
         return None if row is None else (str(row[0]), row[1])
 
     def load_session(self, session_id: str, owner: str) -> dict[str, Any] | None:
-        """Load an unexpired owned session and the runs whose terminal event was not stored."""
+        """Load an unexpired owned session, its conversation, and the runs whose terminal event was not stored.
+
+        As Pi's `buildSessionContext`, the conversation is rebuilt from saved entries: app
+        events, proposal decisions, and the messages of committed runs. Tool results never
+        join later context, so each loaded entry is one conversation entry, and the entries
+        that retention trimmed from the front are skipped.
+        """
         with self._connect() as connection:
             row = connection.execute(
                 "SELECT state, extract(epoch FROM expires_at) FROM chat_sessions "
@@ -229,6 +245,15 @@ class ChatHistory:
             ).fetchone()
             if row is None:
                 return None
+            entries = connection.execute(
+                "SELECT e.type, e.payload FROM chat_session_entries e LEFT JOIN chat_runs r ON r.id = e.run_id "
+                "WHERE e.session_id = %s AND e.type <> 'tool_result' "
+                "AND (e.type IN ('app_event', 'proposal_decision') OR r.committed) ORDER BY e.seq OFFSET %s",
+                (session_id, row[0]["dropped_entries"]),
+            ).fetchall()
+            (next_entry_seq,) = connection.execute(
+                "SELECT coalesce(max(seq) + 1, 0) FROM chat_session_entries WHERE session_id = %s", (session_id,)
+            ).fetchone()
             (last_event_id,) = connection.execute(
                 "SELECT coalesce(max(last_event_id), 0) FROM chat_session_events WHERE session_id = %s",
                 (session_id,),
@@ -242,6 +267,8 @@ class ChatHistory:
         return {
             "state": row[0],
             "expires_at": float(row[1]),
+            "entries": [entry_from_record(entry_type, payload) for entry_type, payload in entries],
+            "next_entry_seq": int(next_entry_seq),
             "last_event_id": int(last_event_id),
             "unfinished_runs": [
                 {"id": str(run_id), "kind": kind, "status": status} for run_id, kind, status in unfinished
@@ -293,13 +320,18 @@ class ChatHistory:
             await self.write("prune")
 
 
-def _insert_entries(connection, run_id: str, first_seq: int, entries: Sequence[AgentMessage]) -> None:
-    rows = [(run_id, seq, *entry_record(entry)) for seq, entry in enumerate(entries, first_seq)]
+def _insert_entries(connection, session_id: str, entries: Sequence[EntryRow]) -> None:
+    """Insert entries by sequence number. A retried batch keeps the first copy."""
+    rows = []
+    for seq, run_id, entry in entries:
+        entry_type, payload = entry_record(entry)
+        rows.append((session_id, seq, run_id, entry_type, _jsonb(payload)))
     if rows:
         with connection.cursor() as cursor:
             cursor.executemany(
-                "INSERT INTO chat_run_entries (run_id, seq, type, payload) VALUES (%s, %s, %s, %s)",
-                [(run_id, seq, kind, _jsonb(payload)) for run_id, seq, kind, payload in rows],
+                "INSERT INTO chat_session_entries (session_id, seq, run_id, type, payload) "
+                "VALUES (%s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                rows,
             )
 
 

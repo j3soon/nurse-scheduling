@@ -141,8 +141,8 @@ def configured_sandbox_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     # Tests that configure a placeholder database URL stub the operations they inspect.
     for operation in (
         "save_session",
+        "append_entries",
         "append_events",
-        "record_decision",
         "stop_message",
         "message_stopped",
         "find_message",
@@ -1363,8 +1363,17 @@ def test_provider_failure_is_streamed_without_recording_a_turn() -> None:
 
 def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming(monkeypatch) -> None:
     saved = []
+    saved_entries = []
+
+    def finish_run(_self, *args, entries=(), **_kwargs):
+        saved.append(args)
+        saved_entries.extend(entries)
+
     monkeypatch.setattr(ChatHistory, "start_run", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(ChatHistory, "finish_run", lambda _self, *args, **_kwargs: saved.append(args))
+    monkeypatch.setattr(
+        ChatHistory, "append_entries", lambda _self, _session_id, entries: saved_entries.extend(entries)
+    )
+    monkeypatch.setattr(ChatHistory, "finish_run", finish_run)
 
     class ScheduleUpdatingProvider(FakeProvider):
         update_schedule = lambda self: None
@@ -1395,7 +1404,11 @@ def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming(monke
     ]
     assert len(saved) == 1
     assert saved[0][1] == "stale"
-    assert list(saved[0][4]) == [AssistantMessage("Obsolete answer.")]
+    # The answer is saved for audit but never joins the conversation.
+    assert saved[0][4] is False
+    assert [entry for _seq, run_id, entry in saved_entries if run_id is not None] == [
+        AssistantMessage("Obsolete answer.")
+    ]
 
 
 @pytest.mark.parametrize(
@@ -2086,11 +2099,13 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
             *,
             state: object,
             prompt: str,
+            prompt_seq: int,
             model: str,
             attachment_count: int,
             kind: str,
             message_id: str | None,
             credential_id: str | None,
+            entries: object,
         ) -> None:
             history_starts.append((run_id, session_id, credential_id, prompt, model, attachment_count))
 
@@ -2693,6 +2708,8 @@ def test_a_newer_schedule_replaces_the_snapshot_and_the_proposal() -> None:
 
 def test_session_approval_refuses_invalid_yaml_and_releases_proposal_text() -> None:
     store = SessionStore(make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT))
+    saved_entries = []
+    store.on_entry(lambda _session_id, entry: saved_entries.append(entry))
     original = schedule_yaml()
     session = store.create("owner", original)
     broken = base_schedule_payload()
@@ -2701,14 +2718,14 @@ def test_session_approval_refuses_invalid_yaml_and_releases_proposal_text() -> N
     store.finish(session.id, exchange("Edit", "Proposal"), (schedule_yaml(broken), "diff"), snapshot=snapshot)
     retained = store.retained_bytes
 
-    approval = store.approve_proposal(session.id, "owner", session.revision)
+    approved = store.approve_proposal(session.id, "owner", session.revision)
 
-    assert approval.schedule_yaml is None
-    assert approval.decision == "invalid"
-    assert approval.run_id == "proposing-run"
+    assert approved is None
     assert session.schedule_yaml == original
     assert session.pending_proposal is None
     assert session.transcript[-1] == ProposalDecisionEntry("invalid")
+    # The decision is saved under the run that proposed it.
+    assert saved_entries[-1][1:] == ("proposing-run", ProposalDecisionEntry("invalid"))
     assert store.retained_bytes < retained
 
 

@@ -772,13 +772,13 @@ def create_app(
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> ProposalResponse:
         """Return the proposed schedule once the browser proves it holds the base revision."""
-        approval = store.approve_proposal(session_id, owner, request.base_sha256)
+        approved = store.approve_proposal(session_id, owner, request.base_sha256)
         # The decision already took effect, so a failed save is reported rather than refused.
-        history_saved = await recovery.record_decision(session_id, approval.run_id, approval.decision)
-        if approval.schedule_yaml is None:
+        history_saved = await recovery.save(session_id)
+        if approved is None:
             raise HTTPException(status_code=409, detail="The proposed schedule is no longer valid.")
         refresh_owner_cookie(response, owner)
-        return ProposalResponse(schedule_yaml=approval.schedule_yaml, history_saved=history_saved)
+        return ProposalResponse(schedule_yaml=approved, history_saved=history_saved)
 
     @app.post(
         "/sessions/{session_id}/proposal/reject",
@@ -791,8 +791,8 @@ def create_app(
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> ProposalRejectionResponse:
         """Drop the pending proposal at the user's request."""
-        run_id = store.discard_proposal(session_id, owner)
-        history_saved = await recovery.record_decision(session_id, run_id, "rejected")
+        store.discard_proposal(session_id, owner)
+        history_saved = await recovery.save(session_id)
         refresh_owner_cookie(response, owner)
         return ProposalRejectionResponse(history_saved=history_saved)
 

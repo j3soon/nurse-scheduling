@@ -20,7 +20,6 @@
 # This code is mostly AI generated.
 
 from dataclasses import dataclass
-from typing import Literal
 
 from ruamel.yaml.error import YAMLError
 
@@ -55,18 +54,6 @@ class PendingProposal:
     diff: str
     # Approval and rejection decisions are logged under the proposing run.
     run_id: str | None
-
-
-@dataclass(frozen=True)
-class ProposalApproval:
-    """Approved YAML or a refused proposal, with its originating audit run."""
-
-    schedule_yaml: str | None
-    run_id: str | None
-
-    @property
-    def decision(self) -> Literal["approved", "invalid"]:
-        return "approved" if self.schedule_yaml is not None else "invalid"
 
 
 @dataclass(frozen=True)

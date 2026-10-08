@@ -33,7 +33,7 @@ from ruamel.yaml.error import YAMLError
 
 from ..loader import _load_yaml
 from .agent import Agent
-from .candidate import PendingProposal, ProposalApproval
+from .candidate import PendingProposal
 from .config import AiSettings
 from .context import (
     SCHEDULE_CHANGED_DISCARDED_EVENT,
@@ -46,7 +46,7 @@ from .context import (
     removal_event,
     retained_entries,
 )
-from .history import RECOVERY_UNAVAILABLE, RunKind, RunStatus
+from .history import RECOVERY_UNAVAILABLE, EntryRow, RunKind, RunStatus
 from .lifecycle import AgentRun, RunSnapshot, SessionRuns
 from .optimizer import OptimizerArtifact, OptimizerCompletion, SessionOptimizer
 from .optimizer_tool import execute_optimizer_tool
@@ -68,8 +68,6 @@ from .transcript import (
     ProposalDecision,
     ProposalDecisionEntry,
     UserMessage,
-    entry_from_record,
-    entry_record,
 )
 from .validation import new_schedule_issues, validate_frontend_schedule_yaml
 from .workspace import (
@@ -192,6 +190,7 @@ class RunRecorder(Protocol):
         session_id: str,
         run_id: str,
         prompt: str,
+        prompt_seq: int,
         *,
         model: str,
         attachment_count: int,
@@ -207,7 +206,7 @@ class RunRecorder(Protocol):
         status: RunStatus,
         error_code: str | None,
         usage: TokenUsage | None,
-        entries: Sequence[AgentMessage],
+        committed: bool,
     ) -> bool: ...
 
 
@@ -248,6 +247,10 @@ class AgentSession:
     revision: str
     transcript: list[AgentMessage] = field(default_factory=list)
     dropped_history_messages: int = 0
+    # Conversation entries that retention trimmed from the front, which a restore skips.
+    dropped_entries: int = 0
+    # Saved entries are numbered in session order, as Pi's session entries.
+    next_entry_seq: int = 0
     version: int = 0
     snapshot: RunSnapshot | None = None
     agent: Agent = field(default_factory=Agent)
@@ -261,16 +264,22 @@ class AgentSession:
     # Named Stop requests, including those for messages that have not arrived yet.
     stopped_message_ids: set[str] = field(default_factory=set)
     event_stream: SessionEventStream | None = field(default=None, repr=False)
+    # Recovery storage, which receives each new entry as Pi's SessionManager does.
+    entry_log: Callable[[str, EntryRow], None] | None = field(default=None, repr=False)
+    _saved_run_messages: int = field(default=0, repr=False)
     _listeners: list[Callable[[AgentSessionEvent], None]] = field(default_factory=list, repr=False)
     _events_closed: bool = False
 
     def recovery_state(self) -> dict[str, Any]:
-        """Return the schedule, proposal, and conversation context that a restored session continues."""
+        """Return the schedule, proposal, and retention counts that a restored session continues.
+
+        The conversation itself is rebuilt from saved entries.
+        """
         return {
             "schedule_yaml": self.schedule_yaml,
-            "transcript": [dict(zip(("type", "payload"), entry_record(entry))) for entry in self.transcript],
             "pending_proposal": None if self.pending_proposal is None else asdict(self.pending_proposal),
             "dropped_history_messages": self.dropped_history_messages,
+            "dropped_entries": self.dropped_entries,
         }
 
     @classmethod
@@ -281,9 +290,15 @@ class AgentSession:
         expires_at: float,
         state: dict[str, Any],
         *,
+        entries: Sequence[AgentMessage],
+        next_entry_seq: int,
         event_stream: SessionEventStream | None,
+        entry_log: Callable[[str, EntryRow], None] | None,
     ) -> "AgentSession":
-        """Rebuild a session from `recovery_state`. Uploads, downloads, and optimizer results are not saved."""
+        """Rebuild a session from `recovery_state` and its saved conversation entries.
+
+        Uploads, downloads, and optimizer results are not saved.
+        """
         proposal = state["pending_proposal"]
         return cls(
             id=session_id,
@@ -291,11 +306,31 @@ class AgentSession:
             expires_at=expires_at,
             schedule_yaml=state["schedule_yaml"],
             revision=schedule_revision(state["schedule_yaml"]),
-            transcript=[entry_from_record(entry["type"], entry["payload"]) for entry in state["transcript"]],
+            transcript=retained_entries(entries),
             dropped_history_messages=state["dropped_history_messages"],
+            dropped_entries=state["dropped_entries"],
+            next_entry_seq=next_entry_seq,
             pending_proposal=None if proposal is None else PendingProposal(**proposal),
             event_stream=event_stream,
+            entry_log=entry_log,
         )
+
+    def _append_entries(self, run_id: str | None, entries: Sequence[AgentMessage]) -> None:
+        """Number new entries in session order and hand them to recovery storage."""
+        for entry in entries:
+            if self.entry_log is not None:
+                self.entry_log(self.id, (self.next_entry_seq, run_id, entry))
+            self.next_entry_seq += 1
+
+    def _add_entry(self, entry: AgentMessage, run_id: str | None = None) -> None:
+        """Add an app event or proposal decision to the conversation and save it."""
+        self.transcript.append(entry)
+        self._append_entries(run_id, [entry])
+
+    def _save_run_messages(self, run_id: str | None, messages: Sequence[AgentMessage]) -> None:
+        """Save the run messages that ended since the last call, as Pi saves each one on `message_end`."""
+        self._append_entries(run_id, messages[self._saved_run_messages :])
+        self._saved_run_messages = len(messages)
 
     def subscribe(self, listener: Callable[[AgentSessionEvent], None]) -> Callable[[], None]:
         """Observe public session events. HTTP serialization belongs to the caller."""
@@ -443,6 +478,7 @@ class AgentSession:
             raise HTTPException(status_code=409, detail="This chat session already has an active response.")
         self.agent.reset()
         self.agent.open_steering(accepting_steering)
+        self._saved_run_messages = 0
         self.snapshot = RunSnapshot(
             list(self.transcript),
             self.schedule_yaml,
@@ -511,9 +547,7 @@ class AgentSession:
         self.revision = schedule_revision(schedule_yaml)
         self.pending_proposal = None
         if data_changed or had_proposal:
-            self.transcript.append(
-                AppEventEntry(SCHEDULE_CHANGED_DISCARDED_EVENT if had_proposal else SCHEDULE_CHANGED_EVENT)
-            )
+            self._add_entry(AppEventEntry(SCHEDULE_CHANGED_DISCARDED_EVENT if had_proposal else SCHEDULE_CHANGED_EVENT))
 
     def require_idle(self, action: str) -> None:
         """Refuse a file change while a run may still read the session files."""
@@ -523,7 +557,7 @@ class AgentSession:
     def add_uploads(self, uploads: Sequence[SandboxAttachment], event: str) -> None:
         """Retain uploads with their IDs assigned and record their `upload_event` once in history."""
         self.uploads.update((upload.id, upload) for upload in uploads)
-        self.transcript.append(AppEventEntry(event))
+        self._add_entry(AppEventEntry(event))
 
     def remove_upload(self, upload_id: str) -> SandboxAttachment:
         """Drop one retained source file and record its removal in history."""
@@ -531,7 +565,7 @@ class AgentSession:
             raise HTTPException(status_code=404, detail="The uploaded file is no longer available.")
         index = list(self.uploads).index(upload_id) + 1
         upload = self.uploads.pop(upload_id)
-        self.transcript.append(AppEventEntry(removal_event(upload, index)))
+        self._add_entry(AppEventEntry(removal_event(upload, index)))
         return upload
 
     def require_proposal(self, base_sha256: str) -> PendingProposal:
@@ -547,8 +581,11 @@ class AgentSession:
             )
         return self.pending_proposal
 
-    def approve_proposal(self, base_sha256: str, max_schedule_bytes: int) -> ProposalApproval:
-        """Revalidate, then adopt or discard the proposal in one synchronous operation."""
+    def approve_proposal(self, base_sha256: str, max_schedule_bytes: int) -> str | None:
+        """Revalidate, then adopt or discard the proposal in one synchronous operation.
+
+        Returns the adopted schedule, or None when trusted validation refused the proposal.
+        """
         proposal = self.require_proposal(base_sha256)
         approved = proposal.schedule_yaml
         # Revalidate before adopting, so a refused proposal never becomes the
@@ -560,26 +597,23 @@ class AgentSession:
             replaced_validation = validate_frontend_schedule_yaml(self.schedule_yaml, max_schedule_bytes)
             if new_schedule_issues(replaced_validation, validation):
                 logger.error("Approved proposal failed revalidation session_id=%s", self.id)
-                return ProposalApproval(None, self.discard_proposal("invalid"))
+                self.discard_proposal("invalid")
+                return None
         self.pending_proposal = None
         self.version += 1
         self.schedule_yaml = approved
         self.revision = schedule_revision(approved)
-        self.transcript.append(ProposalDecisionEntry("approved"))
-        return ProposalApproval(approved, proposal.run_id)
+        self._add_entry(ProposalDecisionEntry("approved"), proposal.run_id)
+        return approved
 
-    def discard_proposal(self, decision: ProposalDecision = "rejected") -> str | None:
-        """Record a proposal decision once and invalidate results based on it.
-
-        Returns the run that proposed the discarded proposal, if one was pending.
-        """
+    def discard_proposal(self, decision: ProposalDecision = "rejected") -> None:
+        """Record a proposal decision once under the proposing run and invalidate results based on it."""
         proposal = self.pending_proposal
         if proposal is None:
-            return None
+            return
         self.pending_proposal = None
         self.version += 1
-        self.transcript.append(ProposalDecisionEntry(decision))
-        return proposal.run_id
+        self._add_entry(ProposalDecisionEntry(decision), proposal.run_id)
 
     def _prepare_run(
         self,
@@ -648,6 +682,7 @@ class AgentSession:
             )
             async with aclosing(agent_events):
                 async for event in agent_events:
+                    self._save_run_messages(snapshot.run_id, self.agent.state.messages)
                     wire_event = output.consume(event)
                     if wire_event is not None:
                         events.emit(wire_event)
@@ -735,15 +770,19 @@ class AgentSession:
         """Resolve the transcript, save the run record once, then publish the terminal outcome."""
         run.finishing = True
         stopped = outcome.terminal is not None and outcome.terminal["type"] == "stopped"
+        committed = outcome.status == "completed"
         if outcome.completion is None:
             stop_reason = "aborted" if outcome.status == "cancelled" else "error"
             entries = output.interrupted_entries([entries[0], *self.agent.state.messages], stop_reason)
             if stopped and outcome.keep_prompt and not run.shutdown:
                 # Keep the prompt so a follow-up can refer to it. Workspace changes and any
                 # proposal were discarded with the sandbox, which context.py accounts for.
-                runtime.store.finish(self.id, retained_entries(entries), snapshot=snapshot)
+                committed = runtime.store.finish(self.id, retained_entries(entries), snapshot=snapshot).run_saved
             else:
                 runtime.store.abort(self.id, snapshot)
+        if history_started:
+            # Messages the run loop has not saved yet, including an interrupted response.
+            self._save_run_messages(run.id, entries[1:])
         if stopped and run.shutdown:
             # The run stays running in recovery storage, so the restarted service reports
             # a restart instead of a user Stop.
@@ -754,10 +793,9 @@ class AgentSession:
         try:
             history_saved = None
             if history_started:
-                # The prompt entry was written at run start.
                 history_saved = await _complete(
                     runtime.recorder.finish_run(
-                        self.id, run.id, outcome.status, outcome.error_code, output.usage, entries[1:]
+                        self.id, run.id, outcome.status, outcome.error_code, output.usage, committed
                     )
                 )
                 if not history_saved:
@@ -801,13 +839,14 @@ class AgentSession:
 
         try:
             if recorder.enabled:
-                # Cancellation during start still waits for its matching run record.
-                history_started = True
-                history_started = await _complete(
+                prompt_seq = self.next_entry_seq
+                self.next_entry_seq += 1
+                start = asyncio.ensure_future(
                     recorder.start_run(
                         session_id,
                         run.id,
                         question,
+                        prompt_seq,
                         model=settings.provider_model,
                         attachment_count=len(snapshot.uploads),
                         kind="background" if background else "foreground",
@@ -815,6 +854,13 @@ class AgentSession:
                         credential_id=credential_id,
                     )
                 )
+                try:
+                    history_started = await _complete(start)
+                except asyncio.CancelledError:
+                    # Cancellation during start still waits for the run record. Its
+                    # messages and outcome are saved only after a saved record.
+                    history_started = start.result()
+                    raise
                 if not history_started:
                     raise HTTPException(status_code=503, detail=RECOVERY_UNAVAILABLE)
             events.emit({"type": "run_start", "trigger": "optimizer" if background else "user"})

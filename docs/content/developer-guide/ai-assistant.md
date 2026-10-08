@@ -191,7 +191,7 @@ relative to `web-frontend/src/app/experimental-ai/`.
 | --- | --- |
 | API routes<br/>`app.py` | Authenticate requests, invoke session operations, and serve HTTP and SSE responses. |
 | `SessionStore`<br/>`sessions.py` | Enforce session ownership, expiry, retained text and file budgets, and versioned conversation commits. Retain uploads and generated ZIPs between runs. Restore saved sessions and unload the least recently used idle session when storage can restore it. |
-| `SessionRecovery`<br/>`recovery.py` | Save session state in capture order with each run record and proposal decision, write published events to storage, and restore sessions after a restart or eviction. Keep a session loaded while its writes are pending or failed. |
+| `SessionRecovery`<br/>`recovery.py` | Save conversation entries as they end, session state in capture order with each run record and proposal decision, and published events. Restore sessions after a restart or eviction by rebuilding their conversation from saved entries. Keep a session loaded while its writes are pending or failed. |
 | `ChatHistory`<br/>`history.py` | Apply migrations and run bounded PostgreSQL transactions off the event loop for sessions, runs, entries, events, and Stop requests. |
 | `SessionRuns` / `AgentRun` / `RunSnapshot`<br/>`lifecycle.py` | Execute one run per session, queue background follow-ups, and keep ownership through cancellation and cleanup. Carry the conversation version used to authorize a commit. |
 | `AgentSession` / `RunOutcome`<br/>`agent_session.py` | Accept client messages and Stop requests, prepare context, execute the agent, await cleanup, save the run, queue optimizer reviews, and publish public session events. A repeated message ID returns its existing run. A saved Stop keeps its message from running. |
@@ -868,7 +868,7 @@ Each row lists shared behavior first, then what only one side has.
 | Steering queue<br/>Pi: [steer / followUp][pi-agent] | Queued input reaches the model at a boundary without starting a new run. | One queue serves both roles. It drains every message, deduplicates retried POSTs by ID, and closes atomically with the answer. Optimizer wake-ups enter `SessionRuns` as fresh runs. | Separate steering and follow-up queues, each draining one message at a time or all at once. |
 | `WorkspaceTools` / `SandboxWorkspace`<br/>Pi: [read, bash, edit, write][pi-coding-tools] | Pi's default `read`, `bash`, `edit`, and `write` contracts and output behavior, ported under `ai/pi`. | A lazy, disposable E2B VM per run with hydration, pause and resume, YAML validation after each change, and teardown before commit. A shorter `read` description, fixed image limits with a source-pixel bound, and server command timeouts. | Tools act on the user's local working directory, which persists across runs. Image resize options can follow the active model's limits. Built-in `powershell`, `find`, `grep`, and `ls` tools are available beyond the default active four. Nested calls through [`ctx.executeTool()`][pi-nested-tools] share validation and hooks and carry parent tool call IDs. |
 | `AgentSessionEvent` / `SessionEventStream`<br/>Pi: [AgentEvent][pi-events], [AgentSessionEvent][pi-session-events] | Typed text, reasoning, and tool events with call IDs and exactly one terminal outcome per run. | `AgentSession.subscribe` exposes one typed public event per publication to in-process listeners. `SessionEventStream` retains all run and job events for HTTP replay with `Last-Event-ID`. With PostgreSQL, replay continues after a restart. Disconnect detaches the reader. Explicit Stop cancels runs. | In-process subscribers receive agent, turn, message, and tool lifecycle events, including partial tool updates. Low-level `agent_end` marks the end of one loop run. `AgentSession` emits [`agent_settled`][pi-settled] after retries, compaction recovery, queued continuation work, and session boundary processing finish. |
-| `SessionRecovery` / `ChatHistory`<br/>Pi: [SessionManager][pi-session-manager], [durable storage][pi-durable] | Typed message entries saved in run order, with the prompt saved before model work. A later process continues a saved session. Client request IDs make a repeated submission return its existing run. | Optional PostgreSQL storage. A run saves its prompt at start and its other messages at the end. Each save also writes a snapshot of the schedule, pending proposal, and retained conversation, which restore loads. Published events and named Stop requests are saved too, so a restart keeps the output that a browser saw. | Appends each message when it ends, and rebuilds model context from the saved entries. Entries form a tree with branches, compaction summaries, model changes, and labels. The separate durable package stores generic tasks with explicit status. |
+| `SessionRecovery` / `ChatHistory`<br/>Pi: [SessionManager][pi-session-manager], [durable storage][pi-durable] | Typed entries saved in session order, each message when it ends. A later process rebuilds the conversation from the saved entries. Client request IDs make a repeated submission return its existing run. | Optional PostgreSQL storage. Linear entries also hold app events and proposal decisions. A run's messages join the conversation only when the run commits, so restore skips failed and stale runs and runs interrupted by a restart. The state holds the schedule, pending proposal, and a count of entries that retention trimmed instead of compaction entries. Published events and named Stop requests are saved too, so a restart keeps the output that a browser saw. | Entries form a tree with branches, compaction summaries, model changes, and labels. The separate durable package stores generic tasks with explicit status. |
 | `SessionOptimizer`<br/>Pi: no first-class built-in counterpart | Exposed to the model as one `AgentTool`. | Independent remote jobs, progress, anonymization, late-submission cleanup, and fresh review runs. | Similar behavior could be implemented through extensions. |
 | API routes / `SessionStore` / browser lifecycle<br/>Pi: nearest is [AgentSession][pi-session] | A session boundary that owns conversation lifetime. | HTTP authentication, cookie ownership, expiry, session text limits, shared SSE framing and recovery for GET and compatibility POST readers, a browser-owned schedule, and proposal approval. With PostgreSQL, a request restores a saved session for its owner cookie, and a full store unloads the least recently used idle session. | Local single-user sessions stored on disk that can be resumed and branched. |
 
@@ -1064,19 +1064,24 @@ backend Compose variants. It saves the following data:
 
 | Table | Stored data |
 | --- | --- |
-| `chat_sessions` | Owner cookie hash, credential ID, creation time, expiry, and a `state` with the schedule, pending proposal, and conversation context. |
-| `chat_runs` | Run order, kind, client `message_id`, credential ID, model, status, error code, attachment count, usage, and start and finish times. |
-| `chat_run_entries` | Each run's agent messages in order, keyed by `(run_id, seq)`, with a `type` and a JSON `payload` holding the fields of the matching `transcript.py` type. |
+| `chat_sessions` | Owner cookie hash, credential ID, creation time, expiry, and a `state` with the schedule, pending proposal, and the number of conversation entries that retention trimmed. |
+| `chat_runs` | Run order, kind, client `message_id`, credential ID, model, status, error code, whether the run's messages joined the conversation (`committed`), attachment count, usage, and start and finish times. |
+| `chat_session_entries` | Conversation entries in session order, keyed by `(session_id, seq)`: run messages, app events such as uploads and schedule changes, and proposal decisions. Run messages and decisions name their run. Each row has a `type` and a JSON `payload` holding the fields of the matching `transcript.py` type. |
 | `chat_session_events` | Replayable session events except optimizer progress. Adjacent text fragments of one run share a row covering `event_id` through `last_event_id`. |
 | `chat_run_stops` | Named Stop requests, including messages that have not arrived yet. |
 
 Sessions are saved when they are created. Each run saves the session state with
-its prompt when it starts. Its entries, status, and resulting state commit in one
-transaction when it ends. Schedule updates and proposal decisions save the state
-as well. A per-session lock commits these writes in capture order, so an older
-state never replaces a newer one. Tool results can contain schedule and attachment
-text, so entries and events can contain staff information. Raw attachment files,
-images, and generated downloads are not stored. Database access is for operators.
+its prompt when it starts. As in Pi, each later message is saved when it ends, so
+a crash keeps the finished tool calls and results of an interrupted run. App
+events and proposal decisions are saved as entries when they happen. The run's
+status and resulting state commit in one transaction when it ends. Schedule
+updates and proposal decisions save the state as well. A per-session lock commits
+these writes in capture order, so an older state never replaces a newer one. Each
+state write also saves every entry that is not saved yet, so the trimmed-entry
+count never skips an unsaved entry. Tool results can contain schedule and
+attachment text, so entries and events can contain staff information. Raw
+attachment files, images, and generated downloads are not stored. Database
+access is for operators.
 
 Published events are written after delivery, combining adjacent text fragments
 when writes fall behind. A failed batch is retried in order. A restored stream
@@ -1099,21 +1104,26 @@ of that session writes the run outcome again. JSON values replace NUL characters
 which PostgreSQL cannot store, with U+FFFD.
 
 When a request names a session that is not in memory, the service restores it
-from storage for its owner cookie. Runs whose record is still running were
-interrupted by the restart. They end with an error that names the restart, and
+from storage for its owner cookie. As Pi's `buildSessionContext` does, restore
+rebuilds the conversation from saved entries: app events, proposal decisions, and
+the messages of committed runs. It then skips the entries that retention trimmed.
+A failed, stale, or interrupted run stays in the audit record only. Runs whose
+record is still running were interrupted by the restart. They end with an error that names the restart, and
 their saved question and output remain visible. A restart does not rerun model
 calls or mutating tools. Uploads, generated downloads, and finished optimizer
 results are not restored.
 
 With PostgreSQL, a full store unloads the least recently used idle session
 instead of returning HTTP `429`. A session stays loaded while a run, optimizer
-job, state write, or event write is unfinished, and after a failed save until a
+job, state write, entry write, or event write is unfinished, and after a failed save until a
 later save succeeds. Without PostgreSQL, a full store returns HTTP `429`.
 
 Migration `002_chat_session_recovery.sql` extends the run history schema. It
 discards rows of the earlier experimental schemas, including the separate
 recovery tables of the earlier `003_chat_recovery.sql`, because they cannot be
-restored. Use the optional pgAdmin Compose profile for inspection.
+restored. Migration `003_chat_session_entries.sql` moves entries from runs to
+sessions. It discards sessions saved by `002`, whose conversation was part of the
+state. Use the optional pgAdmin Compose profile for inspection.
 [Mapping to Pi](#mapping-to-pi) compares this storage with Pi's session storage.
 
 ### Inspect chat history with pgAdmin
@@ -1143,11 +1153,11 @@ to **AI chat history** with database password `ai_history`. The server
 definition is preloaded. In **Tools > Query Tool**, inspect recent entries:
 
 ```sql
-SELECT r.started_at, r.auth_credential_id, r.kind, r.status, r.error_code,
-       r.model, e.seq, e.type, e.payload
-FROM chat_runs AS r
-JOIN chat_run_entries AS e ON e.run_id = r.id
-ORDER BY r.started_at DESC, e.seq
+SELECT e.created_at, e.session_id, e.seq, e.type, e.payload, r.kind,
+       r.status, r.error_code, r.model, r.auth_credential_id
+FROM chat_session_entries AS e
+LEFT JOIN chat_runs AS r ON r.id = e.run_id
+ORDER BY e.created_at DESC, e.seq DESC
 LIMIT 100;
 ```
 

@@ -29,9 +29,10 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from .agent_session import AgentSession, RunCompletion, schedule_revision
-from .candidate import PendingProposal, ProposalApproval
+from .candidate import PendingProposal
 from .config import AiSettings
 from .context import history_chars, project_history, projected_history, upload_event
+from .history import EntryRow
 from .lifecycle import RunSnapshot
 from .session_event_stream import SessionEventStream
 from .transcript import AgentMessage, ProposalDecision, entry_text, starts_exchange
@@ -83,11 +84,16 @@ class SessionStore:
         self._retained_bytes = 0
         self._session_bytes: dict[str, int] = {}
         self._on_retire: Callable[[str], None] | None = None
+        self._on_entry: Callable[[str, EntryRow], None] | None = None
         self._evictable: Callable[[str], bool] | None = None
 
     def on_retire(self, callback: Callable[[str], None]) -> None:
         """Register the cleanup that follows every dropped session."""
         self._on_retire = callback
+
+    def on_entry(self, callback: Callable[[str, EntryRow], None]) -> None:
+        """Register the storage that receives each new conversation entry of every session."""
+        self._on_entry = callback
 
     def allow_eviction(self, evictable: Callable[[str], bool]) -> None:
         """Let a full store unload idle sessions that recovery storage can restore."""
@@ -175,6 +181,7 @@ class SessionStore:
             return []
         removed = transcript[:end]
         del transcript[:end]
+        session.dropped_entries += end
         session.dropped_history_messages += len(projected_history(removed))
         return removed
 
@@ -210,6 +217,7 @@ class SessionStore:
             schedule_yaml=schedule_yaml,
             revision=schedule_revision(schedule_yaml),
             event_stream=self._event_stream,
+            entry_log=self._on_entry,
         )
         self._sessions[session.id] = session
         self._recount(session)
@@ -221,8 +229,17 @@ class SessionStore:
         expires_at = time.time() + max(0.0, session.expires_at - time.monotonic())
         return session.owner_token, expires_at, session.recovery_state()
 
-    def restore(self, session_id: str, owner_token: str, state: dict[str, Any], expires_at: float) -> AgentSession:
-        """Load a saved session with its stored expiry.
+    def restore(
+        self,
+        session_id: str,
+        owner_token: str,
+        state: dict[str, Any],
+        expires_at: float,
+        *,
+        entries: Sequence[AgentMessage],
+        next_entry_seq: int,
+    ) -> AgentSession:
+        """Load a saved session and its rebuilt conversation with the stored expiry.
 
         Raises:
             HTTPException: With status 404 when it expired, or 429 when no slot or retention budget is free.
@@ -239,7 +256,10 @@ class SessionStore:
             owner_token,
             time.monotonic() + remaining,
             state,
+            entries=entries,
+            next_entry_seq=next_entry_seq,
             event_stream=self._event_stream,
+            entry_log=self._on_entry,
         )
         self._require_capacity(_session_bytes(session))
         self._sessions[session_id] = session
@@ -418,14 +438,17 @@ class SessionStore:
         self._charge(session, -len(content))
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
 
-    def approve_proposal(self, session_id: str, owner_token: str | None, base_sha256: str) -> ProposalApproval:
-        """Check ownership, decide the proposal, and account for every mutation."""
+    def approve_proposal(self, session_id: str, owner_token: str | None, base_sha256: str) -> str | None:
+        """Check ownership, decide the proposal, and account for every mutation.
+
+        Returns the adopted schedule, or None when trusted validation refused the proposal.
+        """
         session = self._get_owned(session_id, owner_token)
         try:
-            approval = session.approve_proposal(base_sha256, self._settings.max_schedule_bytes)
+            approved = session.approve_proposal(base_sha256, self._settings.max_schedule_bytes)
             self._cap_history(session)
             session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
-            return approval
+            return approved
         finally:
             # A stale revision discards the proposal before raising HTTP 409.
             self._recount(session)
@@ -435,17 +458,13 @@ class SessionStore:
         session_id: str,
         owner_token: str | None,
         decision: ProposalDecision = "rejected",
-    ) -> str | None:
-        """Record a proposal decision and apply service retention limits.
-
-        Returns the run that proposed the discarded proposal, if one was pending.
-        """
+    ) -> None:
+        """Record a proposal decision and apply service retention limits."""
         session = self._get_owned(session_id, owner_token)
-        run_id = session.discard_proposal(decision)
+        session.discard_proposal(decision)
         self._cap_history(session)
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
         self._recount(session)
-        return run_id
 
     def abort(self, session_id: str, snapshot: RunSnapshot) -> None:
         """Release an owned reservation and its accounted steering messages."""

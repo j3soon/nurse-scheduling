@@ -111,10 +111,13 @@ cases ran. A passing suite with those cases skipped does not validate persistenc
   cleanup. Reset idle agent state explicitly at session run boundaries.
   Keep pending proposal YAML, rendered diff, and originating run ID together in
   one immutable value. Capture that value in the run snapshot. Revalidate and
-  adopt or discard a proposal in one synchronous session operation. Keep audit
-  writes and HTTP response mapping in the API adapter.
+  adopt or discard a proposal in one synchronous session operation. Keep state
+  saves after HTTP mutations and HTTP response mapping in the API adapter.
 - Record each run as ordered entries shaped like Pi's messages in
-  `transcript.py`. Chat history stores them all. Put the session retention
+  `transcript.py`. Chat history stores them all. As Pi's `AgentSession` appends
+  to its `SessionManager`, `AgentSession` hands each message, app event, and
+  proposal decision to its entry log when it ends. Rebuild a restored
+  conversation from saved entries, not from a saved copy of the transcript. Put the session retention
   projection and the model-facing projection and wording in `context.py`, so
   retention, model context, and audit remain separate decisions.
   Reuse one selected history projection for provider input, context usage, and
