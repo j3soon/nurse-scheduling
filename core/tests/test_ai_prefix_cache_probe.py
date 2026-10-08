@@ -26,7 +26,7 @@ import httpx
 import pytest
 
 from nurse_scheduling.ai.config import AiSettings
-from nurse_scheduling.ai.sandbox_agent import SANDBOX_SYSTEM_PROMPT
+from nurse_scheduling.ai.workspace import SANDBOX_SYSTEM_PROMPT
 from tests.ai_eval.prefix_cache_probe import benchmark, probe
 
 

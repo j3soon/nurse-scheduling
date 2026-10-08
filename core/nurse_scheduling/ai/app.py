@@ -48,7 +48,7 @@ from ..sentry import SentryClientAddressMiddleware, init_sentry
 from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry
 from ..service_logging import configure_service_logging
 from ..version import get_app_version
-from .agent import AgentProposal, AgentReasoning, AgentSteering, AgentText, AgentToolStart, AgentToolUse
+from .agent_types import AgentProposal, AgentReasoning, AgentSteering, AgentText, AgentToolStart, AgentToolUse
 from .background import (
     CANDIDATE_VALIDATION_ERROR,
     PROPOSAL_APPROVED_HISTORY,
@@ -90,20 +90,20 @@ from .provider import (
 )
 from .sandbox import SandboxError, SandboxFactory, managed_sandbox_factory
 from .sandbox.factory import create_sandbox_factory
-from .sandbox_agent import (
+from .turns import TurnJournal, append_compacted
+from .validation import new_schedule_issues, validate_frontend_schedule_yaml
+from .workspace import (
     SANDBOX_SYSTEM_PROMPT,
     AgentDownload,
     AgentScheduleChange,
-    SandboxAgentLimits,
     SandboxAttachment,
     SandboxCandidateError,
     SandboxCommandTimeoutError,
     SandboxDownloadError,
     SandboxTurnTimeoutError,
-    run_sandbox_agent,
+    WorkspaceLimits,
 )
-from .turns import TurnJournal, append_compacted
-from .validation import new_schedule_issues, validate_frontend_schedule_yaml
+from .workspace_tools import run_workspace
 
 SERVICE_NAME = "nurse-scheduling-ai-api"
 API_VERSION = "0.2.0"
@@ -1581,12 +1581,12 @@ def create_app(
                         if dropped_history:
                             yield _sse_event("history_trimmed", {"dropped": dropped_history})
                         async with concurrency_limit:
-                            agent_events = run_sandbox_agent(
+                            agent_events = run_workspace(
                                 provider,
                                 sandbox_factory,
                                 schedule_yaml,
                                 messages,
-                                SandboxAgentLimits.from_settings(settings),
+                                WorkspaceLimits.from_settings(settings),
                                 take_steering=lambda close_if_empty: store.take_steering(session_id, close_if_empty),
                                 pending_proposal_yaml=proposal_yaml,
                                 pending_proposal_diff=proposal_diff,

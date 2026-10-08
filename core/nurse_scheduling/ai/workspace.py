@@ -1,4 +1,4 @@
-"""One-turn shell agent over a disposable provider-neutral sandbox."""
+"""Lazy sandbox allocation, hydration, candidate review, and file retention."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -17,36 +17,30 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-# This code is mostly AI generated.
+# This file is mostly AI generated.
 
-import asyncio
 import json
 import logging
 import re
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from .agent import AgentEvent, AgentProposal, AgentToolBatchMetrics, AgentToolOutcome, AgentToolUse, run_tool_agent
+from .agent_types import AgentToolOutcome
 from .candidate import SCHEDULE_FILENAME, review_schedule_candidate
 from .config import AiSettings
-from .downloads import WORKSPACE_DOWNLOAD, validate_download_zip
-from .optimizer import OPTIMIZER_TOOL, WORKSPACE_OPTIMIZER_RESULT, optimizer_tool_definition
-from .pi.read import READ_TOOL
-from .provider import ChatMessage, ToolCapableChatProvider
+from .optimizer import WORKSPACE_OPTIMIZER_RESULT
 from .result_context import build_result_context
 from .sandbox import (
     SandboxBackend,
     SandboxError,
     SandboxFactory,
     SandboxFileNotFoundError,
-    SandboxFileSizeError,
     SandboxLifecycleMetrics,
     managed_sandbox,
 )
-from .sandbox_tools import SandboxPiTools
 from .schema import (
     SCHEMA_REFERENCE_FILES,
     TAIWAN_HOLIDAYS_SOURCE,
@@ -145,7 +139,7 @@ class SandboxAttachment:
 
 
 @dataclass(frozen=True)
-class SandboxAgentLimits:
+class WorkspaceLimits:
     """Trusted orchestration and AI-context limits for one sandbox turn."""
 
     max_schedule_bytes: int
@@ -158,7 +152,7 @@ class SandboxAgentLimits:
     max_download_bytes: int = 50_000_000
 
     @classmethod
-    def from_settings(cls, settings: AiSettings) -> "SandboxAgentLimits":
+    def from_settings(cls, settings: AiSettings) -> "WorkspaceLimits":
         """Collect sandbox-turn limits from validated application settings."""
         return cls(
             max_schedule_bytes=settings.max_schedule_bytes,
@@ -173,7 +167,7 @@ class SandboxAgentLimits:
 
 
 @dataclass
-class SandboxTurnMetrics:
+class WorkspaceMetrics:
     """Measured lifecycle and operation time for one disposable sandbox."""
 
     provisioning_seconds: float = 0.0
@@ -194,7 +188,7 @@ class SandboxTurnMetrics:
 async def _measured_sandbox_turn(
     factory: SandboxFactory,
     cleanup_timeout_seconds: float,
-    metrics: SandboxTurnMetrics,
+    metrics: WorkspaceMetrics,
     schedule_yaml: str,
     pending_proposal_yaml: str,
     pending_proposal_diff: str,
@@ -233,7 +227,7 @@ class _LazySandboxTurn:
         self,
         factory: SandboxFactory,
         cleanup_timeout_seconds: float,
-        metrics: SandboxTurnMetrics,
+        metrics: WorkspaceMetrics,
         stack: AsyncExitStack,
         schedule_yaml: str,
         pending_proposal_yaml: str,
@@ -343,166 +337,6 @@ class _LazySandboxTurn:
             + self._metrics.teardown_seconds
         )
         self._metrics.warm_waiting_seconds = max(0.0, self._metrics.lifetime_seconds - accounted_seconds)
-
-
-async def run_sandbox_agent(
-    provider: ToolCapableChatProvider,
-    factory: SandboxFactory,
-    schedule_yaml: str,
-    messages: Sequence[ChatMessage],
-    limits: SandboxAgentLimits,
-    metrics: SandboxTurnMetrics | None = None,
-    observe_tool_batch: Callable[[AgentToolBatchMetrics], None] | None = None,
-    take_steering: Callable[[bool], Sequence[tuple[str, str]]] | None = None,
-    pending_proposal_yaml: str = "",
-    pending_proposal_diff: str = "",
-    execute_optimizer: Callable[[str, str], Awaitable[AgentToolOutcome]] | None = None,
-    attachments: Sequence[SandboxAttachment] = (),
-    optimizer_result: bytes | None = None,
-    optimizer_context: bytes | None = None,
-) -> AsyncIterator[AgentEvent | AgentScheduleChange | AgentDownload]:
-    """Hydrate, run, read, validate, and destroy one fresh sandbox turn."""
-    metrics = metrics or SandboxTurnMetrics()
-    try:
-        async with asyncio.timeout(limits.turn_timeout_seconds):
-            async with _measured_sandbox_turn(
-                factory,
-                limits.cleanup_timeout_seconds,
-                metrics,
-                schedule_yaml,
-                pending_proposal_yaml,
-                pending_proposal_diff,
-                attachments,
-                optimizer_result,
-                optimizer_context,
-            ) as sandbox:
-                sandbox_tools = SandboxPiTools(
-                    sandbox,
-                    limits.bash_command_timeout_seconds,
-                )
-                candidate_tracker = _ScheduleCandidateTracker(
-                    sandbox,
-                    schedule_yaml,
-                    limits.max_schedule_bytes,
-                )
-                pending_schedule_change: str | None = None
-                command_timeout: str | None = None
-
-                async def execute_command(name: str, arguments: str) -> AgentToolOutcome:
-                    nonlocal pending_schedule_change, command_timeout
-                    pending_schedule_change = None
-                    if name == OPTIMIZER_TOOL and execute_optimizer is not None:
-                        try:
-                            optimizer_arguments = json.loads(arguments or "{}")
-                        except json.JSONDecodeError:
-                            optimizer_arguments = None
-                        if isinstance(optimizer_arguments, dict) and optimizer_arguments.get("action") in {
-                            "status",
-                            "finish_now",
-                        }:
-                            return await execute_optimizer("", arguments)
-                        try:
-                            current_schedule = (await sandbox.read_file(WORKSPACE_SCHEDULE)).decode("utf-8")
-                        except (SandboxFileNotFoundError, UnicodeDecodeError):
-                            return AgentToolOutcome("The current working schedule is unavailable or invalid.", False)
-                        review = review_schedule_candidate(schedule_yaml, current_schedule, limits.max_schedule_bytes)
-                        if not review.outcome.ok:
-                            return AgentToolOutcome(
-                                f"Trusted schedule check before optimizer:\n{review.outcome.text}", False
-                            )
-                        return await execute_optimizer(current_schedule, arguments)
-                    outcome = await sandbox_tools.execute(name, arguments)
-                    if outcome.terminal:
-                        command_timeout = outcome.text
-                        return outcome
-                    if name == READ_TOOL:
-                        return outcome
-                    candidate_status = await candidate_tracker.review_if_changed()
-                    if candidate_status is None:
-                        return outcome
-                    validation, pending_schedule_change = candidate_status
-                    return AgentToolOutcome(
-                        f"{outcome.text}\n\n{validation.text}",
-                        outcome.ok and validation.ok,
-                    )
-
-                async for event in run_tool_agent(
-                    provider,
-                    messages,
-                    [
-                        *sandbox_tools.definitions,
-                        *(
-                            [optimizer_tool_definition(limits.optimizer_default_timeout_seconds)]
-                            if execute_optimizer is not None
-                            else []
-                        ),
-                    ],
-                    execute_command,
-                    activity_batch=sandbox.activity_batch,
-                    parallel_tool_names=frozenset({READ_TOOL}),
-                    observe_tool_batch=observe_tool_batch,
-                    take_steering=take_steering,
-                    max_tool_rounds=limits.max_tool_rounds,
-                    max_tool_calls=limits.max_tool_calls,
-                ):
-                    yield event
-                    if isinstance(event, AgentToolUse) and pending_schedule_change is not None:
-                        yield AgentScheduleChange(pending_schedule_change)
-                        pending_schedule_change = None
-
-                if command_timeout is not None:
-                    raise SandboxCommandTimeoutError(f"{command_timeout}. The sandbox was terminated.")
-                if not sandbox.started:
-                    return
-                candidate = await _read_candidate(sandbox, limits.max_schedule_bytes)
-                review = review_schedule_candidate(schedule_yaml, candidate, limits.max_schedule_bytes)
-                logger.info(
-                    "sandbox candidate validated sandbox_id=%s valid=%s proposal=%s",
-                    sandbox.sandbox_id,
-                    review.outcome.ok,
-                    review.proposal is not None,
-                )
-                if not review.outcome.ok:
-                    raise SandboxCandidateError(
-                        "The sandbox candidate failed trusted schedule validation.", user_message=review.outcome.text
-                    )
-                try:
-                    download = await sandbox.read_file(WORKSPACE_DOWNLOAD, max_bytes=limits.max_download_bytes)
-                except SandboxFileNotFoundError:
-                    download = None
-                except SandboxFileSizeError as exc:
-                    raise SandboxDownloadValidationError(str(exc)) from exc
-                except SandboxError as exc:
-                    raise SandboxDownloadError(str(exc)) from exc
-                if download is not None:
-                    try:
-                        await asyncio.to_thread(validate_download_zip, download, limits.max_download_bytes)
-                    except ValueError as exc:
-                        raise SandboxDownloadValidationError(str(exc)) from exc
-                    yield AgentDownload(download)
-                if review.proposal is not None:
-                    yield AgentProposal(review.proposal.text, review.proposal.diff.render())
-    except TimeoutError as exc:
-        raise SandboxTurnTimeoutError(
-            f"The sandbox agent turn exceeded its {limits.turn_timeout_seconds:g}-second limit."
-        ) from exc
-    finally:
-        logger.info(
-            "sandbox timing lifetime_seconds=%.3f provisioning_seconds=%.3f execution_seconds=%.3f "
-            "pause_transition_seconds=%.3f warm_waiting_seconds=%.3f suspended_seconds=%.3f "
-            "resume_wait_seconds=%.3f teardown_seconds=%.3f pause_count=%s pause_cancel_count=%s resume_count=%s",
-            metrics.lifetime_seconds,
-            metrics.provisioning_seconds,
-            metrics.execution_seconds,
-            metrics.pause_transition_seconds,
-            metrics.warm_waiting_seconds,
-            metrics.suspended_seconds,
-            metrics.resume_wait_seconds,
-            metrics.teardown_seconds,
-            metrics.pause_count,
-            metrics.pause_cancel_count,
-            metrics.resume_count,
-        )
 
 
 async def hydrate_sandbox(

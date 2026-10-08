@@ -34,7 +34,7 @@ from uuid import uuid4
 import httpx
 from pydantic import BaseModel, Field, ValidationError
 
-from .agent import AgentToolOutcome
+from .agent_types import AgentToolOutcome
 from .optimizer_privacy import OptimizerResultError, prepare_optimizer_schedule, restore_people_ids
 from .result_context import build_request_audit, build_result_context
 

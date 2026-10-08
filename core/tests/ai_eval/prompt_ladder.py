@@ -173,7 +173,7 @@ def case_digest(case: EvalCase) -> str:
     if "pdf-find" in case.tags:
         helper_names.add("inspect_pdf.py")
     if helper_names:
-        from nurse_scheduling.ai.sandbox_agent import (
+        from nurse_scheduling.ai.workspace import (
             INSPECTION_HELPERS,
             REFERENCE_ATTACHMENT_TOOLS,
             inspection_helper_catalog,

@@ -13,8 +13,8 @@ Run commands from `core/`:
 - `pytest`: run the normal core test suite with logs captured unless a test fails.
 - `pytest <affected_test_paths>`
 - `../scripts/test_core_affected.sh`: run full Ruff checks and compact affected
-  pytest suites. AI code and bundled guidance changes run all `test_ai_*.py`
-  files. Other source, helper, dependency, and deleted-file changes run the
+  pytest suites. AI code, guidance, tests, shared AI fixtures, and deleted AI
+  files run all `test_ai_*.py` files. Other source, helper, dependency, and deleted-file changes run the
   normal local suite, excluding optional PuLP CBC, cuOpt, and mixed progress
   suites.
 - `pytest tests/real/schedule_ortools_cp_sat.py tests/real/schedule_pulp_cbc.py tests/real/schedule_pulp_cuopt.py`: run the slower bounded real-world checks.
@@ -93,6 +93,11 @@ cases ran. A passing suite with those cases skipped does not validate persistenc
   Continue only after cleanup succeeds, otherwise stop the claim loop.
 
 ## Experimental AI
+- `Agent` owns observable model-loop state. `agent_loop` executes registered
+  `AgentTool` contracts and derives concurrency from each tool's read-only flag.
+  Close the provider and agent generators before releasing execution state.
+  Keep sandbox hydration and lifetime in `workspace.py`, with tool binding and
+  candidate review in `workspace_tools.py`.
 - `SessionTurns` owns admission, execution, cancellation, and cleanup. Keep the
   owner until recovery writes finish. Stop requests cancel once, and shutdown
   joins owners before closing the sandbox factory and optimizer transport.

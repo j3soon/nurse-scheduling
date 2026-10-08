@@ -25,7 +25,7 @@ from collections.abc import AsyncIterator, Sequence
 
 import pytest
 
-from nurse_scheduling.ai.agent import (
+from nurse_scheduling.ai.agent_types import (
     AgentEvent,
     AgentProposal,
     AgentText,
@@ -41,7 +41,8 @@ from nurse_scheduling.ai.pi.write import WRITE_TOOL
 from nurse_scheduling.ai.provider import ChatMessage, ProviderError, TextDelta, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
-from nurse_scheduling.ai.sandbox_agent import (
+from nurse_scheduling.ai.schema import load_taiwan_holidays_reference, load_user_guide_references
+from nurse_scheduling.ai.workspace import (
     REFERENCE_SCHEMAS,
     REFERENCE_USER_GUIDE,
     WORKSPACE_PENDING_DIFF,
@@ -51,15 +52,14 @@ from nurse_scheduling.ai.sandbox_agent import (
     WORKSPACE_SCHEDULE,
     WORKSPACE_SOURCE_CONTEXT,
     AgentScheduleChange,
-    SandboxAgentLimits,
     SandboxAttachment,
     SandboxCandidateError,
     SandboxTurnTimeoutError,
+    WorkspaceLimits,
     attachment_path,
     hydrate_sandbox,
-    run_sandbox_agent,
 )
-from nurse_scheduling.ai.schema import load_taiwan_holidays_reference, load_user_guide_references
+from nurse_scheduling.ai.workspace_tools import run_workspace
 
 from .ai_test_helper import SCHEDULE_BYTE_LIMIT, schedule_yaml
 
@@ -84,7 +84,7 @@ def _run_call(command: str = "edit") -> list[object]:
     return [ToolCallRequest((ToolCall("call-1", BASH_TOOL, json.dumps({"command": command})),))]
 
 
-def _limits(**overrides) -> SandboxAgentLimits:
+def _limits(**overrides) -> WorkspaceLimits:
     values = {
         "max_schedule_bytes": SCHEDULE_BYTE_LIMIT,
         "turn_timeout_seconds": 2,
@@ -94,7 +94,7 @@ def _limits(**overrides) -> SandboxAgentLimits:
         "max_tool_calls": 20,
     }
     values.update(overrides)
-    return SandboxAgentLimits(**values)
+    return WorkspaceLimits(**values)
 
 
 def _rename_handler(_command: str, _timeout: float | None, backend: FakeSandboxBackend) -> CommandResult:
@@ -120,7 +120,7 @@ def _collect(
     async def collect() -> list:
         return [
             event
-            async for event in run_sandbox_agent(
+            async for event in run_workspace(
                 provider,
                 factory,
                 schedule_yaml(),
@@ -189,7 +189,7 @@ def test_optimizer_tool_receives_the_current_working_schedule() -> None:
     async def collect() -> list:
         return [
             event
-            async for event in run_sandbox_agent(
+            async for event in run_workspace(
                 provider,
                 factory,
                 schedule_yaml(),
@@ -234,7 +234,7 @@ def test_optimizer_rejects_an_invalid_working_schedule_before_submission() -> No
         return AgentToolOutcome("Started in the background.", True)
 
     async def collect() -> None:
-        async for _event in run_sandbox_agent(
+        async for _event in run_workspace(
             provider,
             FakeSandboxFactory(),
             schedule_yaml(),
@@ -276,7 +276,7 @@ def test_optimizer_job_controls_work_with_an_invalid_working_schedule(action: st
         return AgentToolOutcome("Existing job updated.", True)
 
     async def collect() -> None:
-        async for event in run_sandbox_agent(
+        async for event in run_workspace(
             provider,
             FakeSandboxFactory(),
             schedule_yaml(),
@@ -647,7 +647,7 @@ def test_cancelling_before_a_tool_call_does_not_start_a_sandbox():
         factory = FakeSandboxFactory()
 
         async def collect() -> None:
-            async for _ in run_sandbox_agent(
+            async for _ in run_workspace(
                 WaitingProvider(),
                 factory,
                 schedule_yaml(),
@@ -681,7 +681,7 @@ def test_whole_turn_timeout_before_a_tool_call_does_not_start_a_sandbox():
 
 
 def test_terminal_command_timeout_is_reported_before_any_further_sandbox_operation():
-    from nurse_scheduling.ai.sandbox_agent import SandboxCommandTimeoutError
+    from nurse_scheduling.ai.workspace import SandboxCommandTimeoutError
 
     def timeout(_command, _timeout, backend):
         backend.closed = True
@@ -703,7 +703,7 @@ def test_terminal_command_timeout_is_reported_before_any_further_sandbox_operati
 
     async def collect():
         with pytest.raises(SandboxCommandTimeoutError, match="Command timed out after 10 seconds"):
-            async for event in run_sandbox_agent(
+            async for event in run_workspace(
                 provider,
                 factory,
                 schedule_yaml(),

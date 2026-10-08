@@ -23,13 +23,20 @@ elif [[ "$run_full_suite" == false ]]; then
   for file in "${changed_files[@]}"; do
     relative="${file#core/}"
     case "$relative" in
+      tests/test_ai_*.py)
+        ai_changed=true
+        ;;
       tests/test_*.py)
-        test_paths+=("$relative")
+        if [[ -f "$CORE_DIR/$relative" ]]; then
+          test_paths+=("$relative")
+        else
+          run_full_suite=true
+        fi
         ;;
       nurse_scheduling/ai/* | nurse_scheduling/ai_serve.py)
         ai_changed=true
         ;;
-      tests/ai_eval/*)
+      tests/ai_eval/* | tests/ai_test_helper.py)
         ai_changed=true
         ai_eval_changed=true
         ;;
@@ -43,11 +50,6 @@ elif [[ "$run_full_suite" == false ]]; then
         ;;
     esac
   done
-
-  if ! git -C "$ROOT_DIR" diff --no-renames --quiet --diff-filter=D "$affected_base" -- \
-    core/nurse_scheduling core/tests; then
-    run_full_suite=true
-  fi
 
   if [[ "$ai_changed" == true && "$run_full_suite" == false ]]; then
     for path in "$CORE_DIR"/tests/test_ai_*.py; do

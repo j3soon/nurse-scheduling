@@ -96,3 +96,19 @@ def optimizer_workbook_bytes(people_ids: tuple[str, ...] = ("P1", "P2")) -> byte
     workbook.save(output)
     workbook.close()
     return output.getvalue()
+
+
+def bind_agent_tools(definitions, execute, read_only_names=frozenset()):
+    """Bind synthetic tool executors to the production AgentTool contract."""
+    from functools import partial
+
+    from nurse_scheduling.ai.agent_types import AgentTool
+
+    return [
+        AgentTool(
+            definition,
+            partial(execute, definition["function"]["name"]),
+            definition["function"]["name"] in read_only_names,
+        )
+        for definition in definitions
+    ]

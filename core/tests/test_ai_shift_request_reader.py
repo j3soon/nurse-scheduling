@@ -28,7 +28,7 @@ import pytest
 from nurse_scheduling.ai.attachment_tools.inspect_request_tiers import inspect_tiers
 from nurse_scheduling.ai.attachment_tools.inspect_shift_requests import inspect_requests
 from nurse_scheduling.ai.result_context import build_result_context
-from nurse_scheduling.ai.sandbox_agent import REFERENCE_ATTACHMENT_TOOLS
+from nurse_scheduling.ai.workspace import REFERENCE_ATTACHMENT_TOOLS
 
 from .ai_eval.runner import fixture_text
 

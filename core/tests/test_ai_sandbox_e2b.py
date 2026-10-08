@@ -29,7 +29,8 @@ import pytest
 from e2b.exceptions import FileNotFoundException, InvalidArgumentException, SandboxException, TimeoutException
 from e2b.sandbox.commands.command_handle import CommandExitException
 
-from nurse_scheduling.ai.agent import AgentToolOutcome, AgentToolUse, run_tool_agent
+from nurse_scheduling.ai.agent_loop import agent_loop
+from nurse_scheduling.ai.agent_types import AgentToolOutcome, AgentToolUse
 from nurse_scheduling.ai.provider import ChatMessage, TextDelta, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.sandbox import SandboxError, SandboxFileNotFoundError, SandboxFileSizeError, managed_sandbox
 from nurse_scheduling.ai.sandbox import e2b as e2b_module
@@ -40,6 +41,8 @@ from nurse_scheduling.ai.sandbox.e2b import (
     E2BSandboxState,
 )
 from nurse_scheduling.ai.sandbox.e2b_commands import isolated_command
+
+from .ai_test_helper import bind_agent_tools
 
 
 class FakeE2BSandbox:
@@ -571,11 +574,10 @@ def test_agent_multi_tool_batch_pauses_once_after_both_calls():
             await e2b_backend.read_file("/workspace/schedule.yaml")
             return AgentToolOutcome("schedule", True)
 
-        async for event in run_tool_agent(
+        async for event in agent_loop(
             TwoCallProvider(),
             [{"role": "user", "content": "Read twice."}],
-            [],
-            execute,
+            bind_agent_tools([{"type": "function", "function": {"name": "read"}}], execute, frozenset()),
             e2b_backend.activity_batch,
         ):
             if isinstance(event, AgentToolUse):

@@ -27,28 +27,28 @@ from contextlib import aclosing
 from dataclasses import asdict, dataclass
 from typing import Protocol
 
-from .agent import AgentProposal, AgentReasoning, AgentText, AgentToolStart, AgentToolUse
+from .agent_types import AgentProposal, AgentReasoning, AgentText, AgentToolStart, AgentToolUse
 from .config import DEFAULT_MAX_HISTORY_CHARS, AiSettings
 from .history import ChatHistory
 from .lifecycle import Turn, TurnSnapshot
 from .optimizer import WORKSPACE_OPTIMIZER_RESULT, OptimizerArtifact, SessionOptimizer
 from .provider import ChatMessage, ProviderError, TokenUsage, ToolCapableChatProvider
 from .sandbox import SandboxError, SandboxFactory
-from .sandbox_agent import (
+from .schedule_context import describe_schedule
+from .turns import append_compacted
+from .workspace import (
     SANDBOX_SYSTEM_PROMPT,
     AgentDownload,
     AgentScheduleChange,
-    SandboxAgentLimits,
     SandboxAttachment,
     SandboxCandidateError,
     SandboxCommandTimeoutError,
     SandboxDownloadError,
     SandboxTurnTimeoutError,
+    WorkspaceLimits,
     attachment_path,
-    run_sandbox_agent,
 )
-from .schedule_context import describe_schedule
-from .turns import append_compacted
+from .workspace_tools import run_workspace
 
 CANDIDATE_VALIDATION_ERROR = (
     "The candidate schedule failed trusted validation. All schedule changes made during this agent turn were "
@@ -568,12 +568,12 @@ async def run_background_turn(
         )
         await emit("model_input", model_input(messages, len(retained_history), dropped_history, "optimizer"))
         async with concurrency_limit:
-            agent_events = run_sandbox_agent(
+            agent_events = run_workspace(
                 provider,
                 sandbox_factory,
                 schedule_yaml,
                 messages,
-                SandboxAgentLimits.from_settings(settings),
+                WorkspaceLimits.from_settings(settings),
                 pending_proposal_yaml=proposal_yaml,
                 pending_proposal_diff=proposal_diff,
                 execute_optimizer=(

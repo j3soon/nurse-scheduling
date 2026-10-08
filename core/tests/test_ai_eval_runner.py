@@ -51,12 +51,6 @@ from nurse_scheduling.ai.provider import (
 )
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
-from nurse_scheduling.ai.sandbox_agent import (
-    REFERENCE_ATTACHMENT_TOOLS,
-    SANDBOX_SYSTEM_PROMPT,
-    WORKSPACE_SCHEDULE,
-    SandboxTurnMetrics,
-)
 from nurse_scheduling.ai.schema import (
     SCHEMA_REFERENCE_FILES,
     TAIWAN_HOLIDAYS_SOURCE,
@@ -64,6 +58,12 @@ from nurse_scheduling.ai.schema import (
 )
 from nurse_scheduling.ai.system_prompt import PROMPT_DIRECTORY, compose_system_prompt, load_system_prompt_sections
 from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
+from nurse_scheduling.ai.workspace import (
+    REFERENCE_ATTACHMENT_TOOLS,
+    SANDBOX_SYSTEM_PROMPT,
+    WORKSPACE_SCHEDULE,
+    WorkspaceMetrics,
+)
 from nurse_scheduling.loader import _load_yaml
 
 from .ai_eval.comparison import comparison_metrics_markdown, comparison_statistics
@@ -1538,7 +1538,7 @@ def test_metadata_hashes_selected_prompt_and_case_criteria():
 
 
 def test_summary_markdown_reports_every_sandbox_metric_per_case(tmp_path: Path):
-    metrics = SandboxTurnMetrics(
+    metrics = WorkspaceMetrics(
         provisioning_seconds=0.4,
         execution_seconds=1.0,
         pause_transition_seconds=0.3,
@@ -1654,7 +1654,7 @@ def test_recoverable_command_timeout_remains_in_a_successful_evaluation_trajecto
     ],
 )
 def test_helper_receipts_ignore_unrelated_scripts_but_bind_relevant_content(case_id, relevant, tmp_path, monkeypatch):
-    from nurse_scheduling.ai.sandbox_agent import INSPECTION_HELPERS
+    from nurse_scheduling.ai.workspace import INSPECTION_HELPERS
 
     case = CASE_BY_ID[case_id]
     before = case_digest(case)
