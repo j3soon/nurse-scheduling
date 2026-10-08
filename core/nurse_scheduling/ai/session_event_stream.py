@@ -21,7 +21,7 @@
 
 import asyncio
 import json
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from typing import TypedDict
 
@@ -32,6 +32,9 @@ from .session_events import AgentSessionEvent
 DEFAULT_SESSION_REPLAY_BYTES = 4 * 1024 * 1024
 DEFAULT_TOTAL_REPLAY_BYTES = 64 * 1024 * 1024
 REPLACEABLE_EVENTS = frozenset({"optimization_progress", "context_usage", "schedule_change"})
+# A restored stream continues this far past its last stored ID. A browser cursor from the
+# previous process can be ahead of storage, and must still fall inside the replaced range.
+RESTORE_CURSOR_GAP = 1_000_000
 
 
 class SessionEventPayload(TypedDict):
@@ -74,12 +77,47 @@ class _Replay:
     lost_through: int = 0
     incomplete: bool = False
     bytes: int = 0
+    # The last stored ID when the session was restored, or None for a session of this process.
+    restored_through: int | None = None
 
 
 def _replacement_key(event: SessionEvent) -> tuple[str, object] | None:
     if event.type not in REPLACEABLE_EVENTS:
         return None
     return event.type, event.data.get("job_id" if event.type == "optimization_progress" else "run_id")
+
+
+def _fold(recovery: list[SessionEvent], event: SessionEvent) -> list[SessionEvent]:
+    """Add one event to a recovery projection and return the updated projection."""
+    key = _replacement_key(event)
+    # Optimizer state is a checkpoint. The journal retains lifecycle transitions.
+    if event.type == "optimization":
+        recovery = [
+            old
+            for old in recovery
+            if not (old.type == "optimization" and old.data.get("job_id") == event.data.get("job_id"))
+        ]
+    elif key is not None:
+        recovery = [old for old in recovery if _replacement_key(old) != key]
+    if recovery and event.type in {"delta", "reasoning"}:
+        last = recovery[-1]
+        if last.type == event.type and last.data.get("run_id") == event.data.get("run_id"):
+            event = SessionEvent(
+                event.id,
+                event.type,
+                {**event.data, "text": str(last.data.get("text", "")) + str(event.data.get("text", ""))},
+            )
+            recovery.pop()
+    recovery.append(event)
+    return recovery
+
+
+def fold_recovery(events: Iterable[SessionEvent]) -> list[SessionEvent]:
+    """Project stored events the same way as the live recovery projection."""
+    recovery: list[SessionEvent] = []
+    for event in events:
+        recovery = _fold(recovery, event)
+    return recovery
 
 
 class SessionEventStream:
@@ -89,6 +127,10 @@ class SessionEventStream:
     and serialized JSON bytes. Their combined size also has a process-wide cap.
     IDs survive eviction. Lost required events request a reset to the recovery
     projection, while replaced progress/preview IDs do not create a replay gap.
+
+    With recovery storage, `observer` receives each publication for saving, and
+    `load_recovery` supplies a complete reset when the projection lost output or
+    the session was restored after a restart.
     """
 
     def __init__(
@@ -118,6 +160,10 @@ class SessionEventStream:
         self._sessions: dict[str, _Replay] = {}
         self._signals: dict[str, set[asyncio.Event]] = {}
         self._retained_bytes = 0
+        self.observer: Callable[[str, SessionEvent], None] | None = None
+        # Return the last covered event ID and the stored recovery events after a cursor,
+        # or None when storage cannot serve them.
+        self.load_recovery: Callable[[str, int], Awaitable[tuple[int, list[SessionEvent]] | None]] | None = None
 
     def publish(self, session_id: str, publication: AgentSessionEvent) -> None:
         if session_id not in self._sessions and len(self._sessions) >= self._max_sessions:
@@ -131,34 +177,22 @@ class SessionEventStream:
         if key is not None:
             replay.events = [old for old in replay.events if _replacement_key(old) != key]
         replay.events.append(event)
-        self._recover(replay, event)
+        replay.recovery = _fold(replay.recovery, event)
         self._trim(replay)
         self._charge(replay)
         self._trim_total()
+        if self.observer is not None:
+            self.observer(session_id, event)
         for signal in self._signals.get(session_id, ()):
             signal.set()
 
-    def _recover(self, replay: _Replay, event: SessionEvent) -> None:
-        key = _replacement_key(event)
-        # Optimizer state is a checkpoint. The journal retains lifecycle transitions.
-        if event.type == "optimization":
-            replay.recovery = [
-                old
-                for old in replay.recovery
-                if not (old.type == "optimization" and old.data.get("job_id") == event.data.get("job_id"))
-            ]
-        elif key is not None:
-            replay.recovery = [old for old in replay.recovery if _replacement_key(old) != key]
-        if replay.recovery and event.type in {"delta", "reasoning"}:
-            last = replay.recovery[-1]
-            if last.type == event.type and last.data.get("run_id") == event.data.get("run_id"):
-                event = SessionEvent(
-                    event.id,
-                    event.type,
-                    {**event.data, "text": str(last.data.get("text", "")) + str(event.data.get("text", ""))},
-                )
-                replay.recovery.pop()
-        replay.recovery.append(event)
+    def restore(self, session_id: str, stored_through: int) -> None:
+        """Continue a restored session's IDs past storage and serve every reset from storage."""
+        self.forget_session(session_id)
+        last_id = stored_through + RESTORE_CURSOR_GAP
+        self._sessions[session_id] = _Replay(
+            last_id=last_id, lost_through=last_id, incomplete=True, restored_through=stored_through
+        )
 
     def _drop(self, replay: _Replay, events: list[SessionEvent], index: int, *, recovery: bool = False) -> None:
         event = events.pop(index)
@@ -204,6 +238,22 @@ class SessionEventStream:
             self._drop(replay, events, self._eviction_index(events), recovery=recovery)
             self._charge(replay)
 
+    async def _reset(self, session_id: str, replay: _Replay, after_id: int) -> SessionEvent:
+        """Build a reset from the projection, or from storage when the projection is incomplete."""
+        stored = None
+        if self.load_recovery is not None and replay.incomplete:
+            if replay.restored_through is not None and after_id < replay.restored_through + RESTORE_CURSOR_GAP:
+                # A cursor of the previous process may include output that storage never received.
+                # Replace the newest stored run as well.
+                after_id = min(after_id, replay.restored_through - 1)
+            stored = await self.load_recovery(session_id, after_id)
+        if stored is not None:
+            last_id, events = stored
+            data: SessionResetData = {"events": [event.payload() for event in events], "incomplete": False}
+            return SessionEvent(last_id, "session_reset", dict(data))
+        data = {"events": [event.payload() for event in replay.recovery], "incomplete": replay.incomplete}
+        return SessionEvent(replay.last_id, "session_reset", dict(data))
+
     def forget_session(self, session_id: str) -> None:
         replay = self._sessions.pop(session_id, None)
         if replay is not None:
@@ -227,12 +277,9 @@ class SessionEventStream:
             while signal in self._signals.get(session_id, ()):
                 replay = self._sessions.get(session_id)
                 if replay is not None and (after_id < replay.lost_through or after_id > replay.last_id):
-                    after_id = replay.last_id
-                    reset: SessionResetData = {
-                        "events": [event.payload() for event in replay.recovery],
-                        "incomplete": replay.incomplete,
-                    }
-                    yield SessionEvent(after_id, "session_reset", dict(reset))
+                    reset = await self._reset(session_id, replay, after_id)
+                    after_id = reset.id
+                    yield reset
                     continue
                 event = next((event for event in replay.events if event.id > after_id), None) if replay else None
                 if event is not None:

@@ -313,7 +313,7 @@ test('asks about the current schedule and renders a streamed answer', async ({ p
   expect(viewport).not.toBeNull();
   expect(Math.abs(composerBox!.y + composerBox!.height - viewport!.height)).toBeLessThanOrEqual(2);
   await expect(page.getByRole('contentinfo')).toHaveCount(0);
-  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Who works first?' });
+  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Who works first?', message_id: expect.any(String) });
   expect(captured.scheduleYaml).toContain('apiVersion:');
 
   await expect(page.getByRole('button', { name: 'Stop' })).toBeHidden();
@@ -392,10 +392,13 @@ test('retries a failed text run without hiding its provisional activity', async 
   await page.getByRole('button', { name: 'Retry' }).click();
 
   await expect(page.getByText('Recovered response.')).toBeVisible();
-  expect(captured.messageBodies.map(body => JSON.parse(body))).toEqual([
-    { message: 'Who works first?' },
-    { message: 'Who works first?' },
+  const bodies = captured.messageBodies.map(body => JSON.parse(body));
+  expect(bodies).toEqual([
+    { message: 'Who works first?', message_id: expect.any(String) },
+    { message: 'Who works first?', message_id: expect.any(String) },
   ]);
+  // A retry asks again, so it is a new message rather than a reconnect to the failed run.
+  expect(bodies[0].message_id).not.toBe(bodies[1].message_id);
 });
 
 test('Stop cancels the run while keeping the session stream open', async ({ page }) => {
@@ -634,7 +637,7 @@ test('previews and sends an image attachment', async ({ page }) => {
   expect(captured.uploadContentType).toContain('multipart/form-data');
   expect(captured.uploadBody).toContain('filename="ward.png"');
   expect(captured.messageContentType).toBe('application/json');
-  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'What is shown?' });
+  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'What is shown?', message_id: expect.any(String) });
   // The bubbles follow the provider request: system prompt, upload event, then the question as typed.
   const cards = page.getByLabel('Chat messages').locator('article');
   await expect(cards.locator('> p:first-child')).toHaveText(['System', 'User · App - Files Uploaded', 'User', 'Assistant']);
@@ -684,7 +687,7 @@ test('previews and sends arbitrary file attachments', async ({ page }) => {
   expect(captured.uploadBody).toContain('notes.pdf');
   expect(captured.uploadBody).toContain('coverage.custom');
   expect(captured.uploadBody).toContain('Alice,day');
-  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Check the documents.' });
+  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Check the documents.', message_id: expect.any(String) });
 });
 
 test('downloads and removes generated files through the ZIP controls', async ({ page }) => {
@@ -769,7 +772,7 @@ test('places uploads beside desktop chat and below mobile controls and allows re
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Read this file');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Workbook inspected.')).toBeVisible();
-  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Read this file' });
+  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Read this file', message_id: expect.any(String) });
   const panel = page.getByRole('complementary', { name: 'Session files' });
   await expect(panel.getByRole('button', { name: 'Remove ward.csv' })).toBeVisible();
   const panelBox = (await panel.boundingBox())!;
@@ -809,3 +812,122 @@ test('places uploads beside desktop chat and below mobile controls and allows re
   await panel.getByRole('button', { name: 'Remove ward.csv' }).click();
   await expect(panel.getByText('No uploaded files.')).toBeVisible();
 });
+
+for (const interruption of ['network pause', 'reload', 'tab switch'] as const) {
+  test(`recovers the complete answer after a ${interruption}`, async ({ page, context }) => {
+    const origin = frontendOrigin();
+    const authToken = 'browser-ai-auth-token';
+    const messageIds: string[] = [];
+    const cursors: number[] = [];
+    const journal: string[] = [];
+    const readers = new Set<ServerResponse>();
+    let executions = 0;
+    let unauthorized = 0;
+    const headers = {
+      'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Credentials': 'true',
+      'Access-Control-Allow-Headers': 'Authorization, Content-Type, Last-Event-ID',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    };
+    const publish = (type: string, data: Record<string, unknown>) => {
+      const frame = `id: ${journal.length + 1}\nevent: ${type}\ndata: ${JSON.stringify({ ...data, run_id: 'run-1' })}\n\n`;
+      journal.push(frame);
+      for (const reader of readers) reader.write(frame);
+    };
+    const complete = () => {
+      publish('delta', { text: 'complete answer.' });
+      publish('done', {});
+    };
+    const server = createServer(async (request, response) => {
+      if (request.method === 'OPTIONS') { response.writeHead(204, headers).end(); return; }
+      const json = (body: unknown, status = 200) => response.writeHead(status, { ...headers, 'Content-Type': 'application/json' }).end(JSON.stringify(body));
+      if (request.url === '/ai/capabilities') {
+        json({
+          auth: { required: true, scheme: 'bearer' },
+          file_attachments: { enabled: true, retained: true, max_files: 8, max_bytes_per_file: 5000000 },
+          session_retention_seconds: 2592000,
+        });
+        return;
+      }
+      // Hosted deployments require the token on every session request, including reload recovery.
+      if (request.url?.startsWith('/ai/sessions') && request.headers.authorization !== `Bearer ${authToken}`) {
+        unauthorized += 1;
+        request.resume();
+        json({ detail: 'Backend credentials are invalid.' }, 401);
+        return;
+      }
+      if (request.url === '/ai/sessions' && request.method === 'POST') { request.resume(); json({ id: 'replay-session' }, 201); return; }
+      if (request.url === '/ai/sessions/replay-session') { json({ expires_in_seconds: 2592000 }); return; }
+      if (request.url === '/ai/sessions/replay-session/uploads') { json([]); return; }
+      if (request.url === '/ai/sessions/replay-session/events') {
+        const cursor = Number(request.headers['last-event-id'] ?? 0);
+        cursors.push(cursor);
+        response.writeHead(200, { ...headers, 'Cache-Control': 'no-cache', 'Content-Type': 'text/event-stream' });
+        response.flushHeaders();
+        journal.slice(cursor).forEach(frame => response.write(frame));
+        readers.add(response);
+        response.on('close', () => readers.delete(response));
+        return;
+      }
+      if (request.url === '/ai/sessions/replay-session/messages') {
+        let body = '';
+        try { for await (const chunk of request) body += chunk; } catch { return; }
+        const sent = JSON.parse(body) as { message_id: string };
+        messageIds.push(sent.message_id);
+        if (messageIds.length > 1) { json({ run_id: 'run-1' }, 202); return; }
+        executions += 1;
+        publish('run_start', { trigger: 'user' });
+        publish('delta', { text: 'First part and ' });
+        // The run is accepted, but its acknowledgement is lost. The browser asks again with the same ID.
+        response.destroy();
+        return;
+      }
+      request.resume();
+      response.writeHead(404, headers).end();
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}/ai`;
+    try {
+      await page.addInitScript(value => localStorage.setItem('nurse-scheduling-ai-server', value), endpoint);
+      await page.goto('/experimental-ai');
+      await page.getByRole('button', { name: 'Enter token for AI assistant' }).click();
+      await page.getByRole('textbox', { name: 'Token for AI assistant' }).fill(authToken);
+      await page.getByRole('checkbox', { name: /remember on this device/i }).check();
+      await page.getByRole('button', { name: 'Save token for AI assistant' }).click();
+      await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Continue while disconnected');
+      await page.getByRole('button', { name: 'Send', exact: true }).click();
+      await expect(page.getByText('First part and', { exact: true })).toBeVisible();
+      await expect.poll(() => messageIds.length).toBe(2);
+      if (interruption === 'network pause') {
+        await context.setOffline(true);
+        // Offline emulation can leave an open stream running, so close it at the server.
+        for (const reader of readers) reader.destroy();
+        complete();
+        await context.setOffline(false);
+        await page.evaluate(() => window.dispatchEvent(new Event('online')));
+      } else if (interruption === 'tab switch') {
+        const dialogs: string[] = [];
+        page.on('dialog', async dialog => { dialogs.push(dialog.message()); await dialog.accept().catch(() => {}); });
+        await page.getByRole('button', { name: '1. Dates', exact: true }).click();
+        await expect(page).toHaveURL(/\/dates$/);
+        expect(dialogs).toEqual([]);
+        complete();
+        await page.getByRole('button', { name: '12. Experimental AI', exact: true }).click();
+      } else {
+        complete();
+        await page.reload();
+      }
+      await expect(page.getByText('First part and complete answer.', { exact: true })).toBeVisible();
+      await expect(page.getByText('Continue while disconnected', { exact: true })).toHaveCount(1);
+      await expect(page.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0);
+      expect(executions).toBe(1);
+      expect(unauthorized).toBe(0);
+      expect(new Set(messageIds).size).toBe(1);
+      // The reconnecting reader continued from its saved cursor instead of replaying everything.
+      expect(cursors.at(-1)).toBeGreaterThan(0);
+    } finally {
+      await context.setOffline(false);
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+}

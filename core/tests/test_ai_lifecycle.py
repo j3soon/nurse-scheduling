@@ -256,11 +256,12 @@ def test_stop_during_history_start_waits_for_history_then_releases_the_session(m
         release = asyncio.Event()
         records = []
 
-        async def write(_self, operation, *args):
+        async def write(_self, operation, *args, **_kwargs):
             if operation == "start_run":
                 entered.set()
                 await release.wait()
-            records.append((operation, args))
+            if operation in {"start_run", "finish_run"}:
+                records.append((operation, args))
             return True
 
         monkeypatch.setattr(ChatHistory, "write", write)
@@ -300,11 +301,12 @@ def test_terminal_background_event_is_published_only_after_history_cleanup(monke
         release = asyncio.Event()
         records = []
 
-        async def write(_self, operation, *_args):
+        async def write(_self, operation, *_args, **_kwargs):
             if operation == "finish_run":
                 finalizing.set()
                 await release.wait()
-            records.append(operation)
+            if operation in {"start_run", "finish_run"}:
+                records.append(operation)
             return True
 
         monkeypatch.setattr(ChatHistory, "write", write)
@@ -343,7 +345,7 @@ def test_stop_during_completed_history_write_keeps_completed_outcome(monkeypatch
         release = asyncio.Event()
         statuses = []
 
-        async def write(_self, operation, *args):
+        async def write(_self, operation, *args, **_kwargs):
             if operation == "finish_run":
                 finalizing.set()
                 await release.wait()

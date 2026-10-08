@@ -395,17 +395,19 @@ docker compose -f compose.backend.yml up -d --build
 ```
 
 Use `compose.backend.memory.yml` in the same command when running the
-process-local optimization backend. The AI service itself remains process-local
-in both variants and listens on port `8001` inside the Compose network. Durable
-chat logging, pgAdmin inspection, and deployment details are described in the
+process-local optimization backend. The AI service itself runs as one process
+in both variants and listens on port `8001` inside the Compose network. Session
+recovery storage, pgAdmin inspection, and deployment details are described in the
 [AI assistant backend guide](https://dev.nursescheduling.org/docs/developer-guide/ai-assistant/)
 and the [deployment guide](https://dev.nursescheduling.org/docs/developer-guide/backend-deployment/).
 
 ### AI backend configuration
 
-Messages return HTTP `202` with the new `run_id`. Subscribe to session
+Messages return HTTP `202` with the new `run_id`. A repeated client
+`message_id` returns the run it already started. Subscribe to session
 `GET /events` for answers, tools, and optimizer updates, and reconnect with
-`Last-Event-ID`. Disconnect leaves work running. Use `POST /stop` to cancel.
+`Last-Event-ID`. Disconnect leaves work running. Use `POST /stop` to cancel,
+optionally naming the `message_id` whose run should stop.
 Replay and recovery each retain at most 1,000 main events, 100 progress entries,
 and 4 MiB per session, with a combined 64 MiB process limit. Expired required
 history produces `session_reset`. These are serialized event limits, separate
@@ -419,8 +421,7 @@ from session text and model context limits.
 | `AI_PROVIDER_BASE_URL` | Required | OpenAI-compatible API base URL. |
 | `AI_PROVIDER_API_KEY` | Required | Provider bearer token. Never commit it. |
 | `AI_PROVIDER_MODEL` | `local-model` | Model value sent to chat completions. |
-| `AI_HISTORY_POSTGRES_URL` | Unset | PostgreSQL connection string for durable chat logging. Compose sets its internal URL directly. |
-| `AI_HISTORY_RETENTION_DAYS` | `30` | Positive number of days to retain chat text and metadata. |
+| `AI_HISTORY_POSTGRES_URL` | Unset | PostgreSQL connection string for session recovery and run history. Compose sets its internal URL directly. |
 | `AI_REQUEST_LOG_ENABLED` | `true` | Log a question preview for each incoming message, which records chat text. |
 | `AI_PROVIDER_TIMEOUT_SECONDS` | `180` | Provider request timeout. |
 | `AI_PROVIDER_MAX_ATTEMPTS` | `3` | Total attempts for a provider request that times out before streaming begins. |
@@ -448,8 +449,8 @@ from session text and model context limits.
 | `AI_SANDBOX_REAPER_INTERVAL_SECONDS` | `30` | Interval for reconciling overdue running or paused E2B sandboxes owned by this application. |
 | `AI_BACKEND_PORT` | `8001` | Port used by the development launcher. |
 | `AI_COOKIE_SECURE` | `0` in the launcher | Use `0` for local HTTP and `1` for public HTTPS. Secure deployments use `SameSite=None` so approved cross-site frontends can retain session ownership. |
-| `AI_SESSION_TTL_SECONDS` | `172800` | Idle session lifetime. Session activity renews it. |
-| `AI_MAX_SESSIONS` | `1000` | Maximum process-local sessions. |
+| `AI_SESSION_TTL_SECONDS` | `2592000` | Idle session lifetime, 30 days. Session activity renews it. Recovery storage deletes a session and its history when it expires. |
+| `AI_MAX_SESSIONS` | `1000` | Maximum sessions loaded in memory. With PostgreSQL, a new or restored session unloads the least recently used idle session instead of getting HTTP 429. That session loses its uploads, downloads, and optimizer results, as after a restart. A session stays loaded while a response, optimizer job, or recovery write is unfinished, and after a failed save until a later save succeeds. |
 | `AI_MAX_SESSION_BYTES` | `268435456` | Text and file budget across live sessions, including retained uploads and generated ZIPs. New sessions, schedule updates, uploads, and queued steering that exceed it return HTTP 429. Completed runs trim the oldest complete exchanges while retaining the newest run. A generated ZIP that does not fit is not retained. |
 | `AI_MAX_HISTORY_MESSAGES` | `1000` | Conversation messages retained per session, with an effective minimum of two to preserve the newest exchange. |
 | `AI_MAX_HISTORY_CHARS` | `200000` | Prompt budget for retained history. The newest messages that fit are sent, so a long session cannot outgrow the model context window. Past this budget, the session drops its oldest exchanges until about half remains, so the request prefix stays unchanged between cuts. |

@@ -223,6 +223,13 @@ class SessionOptimizer:
             return job.artifact
         return None
 
+    def has_unfinished_run(self, session_id: str) -> bool:
+        """Report whether retiring the session would cancel one of its runs."""
+        owner = self._sessions.get(session_id)
+        return (owner is not None and owner.reservation is not None) or any(
+            job.session_id == session_id and not _is_terminal(job.payload) for job in self._jobs.values()
+        )
+
     def forget_session(self, session_id: str) -> None:
         """Revoke the owner synchronously. Its jobs perform their own remote cleanup."""
         for job in self._jobs.values():

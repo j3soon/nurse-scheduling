@@ -118,6 +118,29 @@ cleanup. A lost reader reconnects without cancelling server work. When
 AI chat status text, activity rows, or stream handling change, also run
 `e2e/experimental-ai-basic.spec.ts` and `e2e/experimental-ai-proposal.spec.ts`,
 because the affected E2E runner cannot infer them from source changes.
+Use the shared `savedState` for AI input and Save and Load YAML. Omit automatically
+generated export defaults from both, while preserving explicit empty or custom
+layouts. Generate workbook defaults only at the optimizer submission boundary.
+
+Each AI question carries a client message ID. Retry a lost POST acknowledgement
+with the same ID, and send the named Stop again before retrying a stopped request.
+An accepted request survives app navigation, so only unsent drafts and selected
+files block tab switches. Store the pending request with the conversation and
+reattach a remounted page by posting its ID again before the event stream opens.
+Ask for files again when the upload had not finished.
+
+For reconnect tests, verify that the active HTTP stream actually closes. Browser
+offline emulation alone can leave an existing stream open. Assert that reconnect
+uses the same client message ID and executes the accepted question only once. Mock
+`/capabilities` with the real authentication and attachment-limit contract so
+reload recovery follows the production path.
+Replay must replace existing messages in their original positions, including
+optimizer input and steering replies. Capture the message ID before queuing React
+state updates because one replay snapshot can contain several replies.
+Browser timers have a maximum delay of about 24.8 days. Schedule longer session
+expiry in bounded intervals and recheck the timestamp after each wake. Cover
+both the intermediate wake and the final expiry with a clock-controlled test.
+
 For AI chat issues involving the deployed service, test the real browser UI
 against `https://api-staging.nursescheduling.org/ai`. Run the local frontend,
 select that URL in the AI server control, and use `AI_AUTH_TOKEN` from the

@@ -20,8 +20,8 @@
 
 # This file is mostly AI generated.
 
-from dataclasses import dataclass
-from typing import Literal
+from dataclasses import asdict, dataclass
+from typing import Any, Literal
 
 # Pi's stop reasons. `tool_use` ends a response that requested tools.
 StopReason = Literal["stop", "length", "tool_use", "aborted", "error"]
@@ -105,3 +105,31 @@ def entry_text(entry: AgentMessage) -> str:
     if isinstance(entry, AssistantMessage):
         return entry.text + entry.reasoning + "".join(call.arguments for call in entry.tool_calls)
     return ""
+
+
+ENTRY_TYPES: dict[type, str] = {
+    UserMessage: "user",
+    AssistantMessage: "assistant",
+    ToolResultMessage: "tool_result",
+    ProposalDecisionEntry: "proposal_decision",
+    AppEventEntry: "app_event",
+}
+
+
+def entry_record(entry: AgentMessage) -> tuple[str, dict[str, Any]]:
+    """Return the stored type and JSON payload of an entry. Tool result images are never stored."""
+    payload = asdict(entry)
+    if isinstance(entry, ToolResultMessage):
+        payload.pop("image")
+    return ENTRY_TYPES[type(entry)], payload
+
+
+def entry_from_record(entry_type: str, payload: dict[str, Any]) -> AgentMessage:
+    """Rebuild an entry stored by `entry_record`."""
+    if entry_type == "assistant":
+        calls = tuple(ToolCall(**call) for call in payload.get("tool_calls", ()))
+        return AssistantMessage(payload["text"], payload["stop_reason"], payload.get("reasoning", ""), calls)
+    if entry_type == "tool_result":
+        return ToolResultMessage(**payload)
+    types = {"user": UserMessage, "proposal_decision": ProposalDecisionEntry, "app_event": AppEventEntry}
+    return types[entry_type](**payload)

@@ -138,6 +138,18 @@ def configured_sandbox_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AI_AUTH_REQUIRED", raising=False)
     monkeypatch.setenv("AI_SANDBOX_BACKEND", "e2b")
     monkeypatch.setenv("E2B_API_KEY", "test-e2b-key")
+    # Tests that configure a placeholder database URL stub the operations they inspect.
+    for operation in (
+        "save_session",
+        "append_events",
+        "record_decision",
+        "stop_message",
+        "message_stopped",
+        "find_message",
+        "load_session",
+        "load_events",
+    ):
+        monkeypatch.setattr(ChatHistory, operation, lambda *_args, **_kwargs: None)
 
 
 class FakeProvider:
@@ -190,11 +202,27 @@ def create_test_app(*, settings: AiSettings, provider, sandbox_factory=None, opt
 
 def test_application_initializes_sentry_for_ai_service(monkeypatch):
     calls = []
-    monkeypatch.setattr("nurse_scheduling.ai.app.init_sentry", lambda version, *, app: calls.append((version, app)))
+    monkeypatch.setattr(
+        "nurse_scheduling.ai.app.init_sentry",
+        lambda version, *, app, api_version: calls.append((version, app, api_version)),
+    )
+    monkeypatch.setattr("nurse_scheduling.ai.app.configure_service_logging", lambda _logger: calls.append("logging"))
 
-    create_test_app(settings=make_settings(), provider=FakeProvider())
+    monkeypatch.setattr("nurse_scheduling.ai.app.get_app_version", lambda: "v0.2.0-572-gbecfc27fb644")
+    app = create_test_app(settings=make_settings(), provider=FakeProvider())
 
-    assert calls == [("0.2.0", "ai-backend")]
+    assert calls == [(app.state.app_version, "ai-backend", app.version), "logging"]
+    assert app.state.app_version == "v0.2.0-572-gbecfc27fb644"
+    assert app.version == "0.2.0"
+
+
+def test_application_tags_sentry_request_address(monkeypatch):
+    requests = []
+    monkeypatch.setattr("nurse_scheduling.sentry.tag_client_address", requests.append)
+    client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
+
+    assert client.get("/health").status_code == 200
+    assert [request.url.path for request in requests] == ["/health"]
 
 
 def test_application_lifespan_runs_sandbox_cleanup_supervision():
@@ -529,8 +557,8 @@ def test_compatibility_reader_recovers_current_session_proposal_after_a_replay_g
 @pytest.mark.parametrize("wait_stage", ["provider", "command"])
 def test_client_disconnect_leaves_the_run_active_until_explicit_stop(wait_stage: str, monkeypatch) -> None:
     saved = []
-    monkeypatch.setattr(ChatHistory, "start_run", lambda *_args: None)
-    monkeypatch.setattr(ChatHistory, "finish_run", lambda _self, *args: saved.append(args))
+    monkeypatch.setattr(ChatHistory, "start_run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(ChatHistory, "finish_run", lambda _self, *args, **_kwargs: saved.append(args))
 
     async def exercise() -> tuple[FakeSandboxBackend | None, bool, bool, list[AgentMessage]]:
         operation_started = asyncio.Event()
@@ -842,8 +870,8 @@ def test_stop_before_stream_registration_cancels_the_reserved_turn(monkeypatch: 
 
 def test_disconnect_before_stream_iteration_does_not_cancel_execution(monkeypatch) -> None:
     saved = []
-    monkeypatch.setattr(ChatHistory, "start_run", lambda *_args: None)
-    monkeypatch.setattr(ChatHistory, "finish_run", lambda _self, *args: saved.append(args))
+    monkeypatch.setattr(ChatHistory, "start_run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(ChatHistory, "finish_run", lambda _self, *args, **_kwargs: saved.append(args))
 
     async def exercise() -> bool:
         app = create_test_app(settings=make_settings(history_postgres_url="test"), provider=FakeProvider())
@@ -939,7 +967,7 @@ def test_valid_owner_cookie_lifetime_is_refreshed() -> None:
     assert response.status_code == 201
     set_cookie = response.headers["set-cookie"]
     assert f"{OWNER_COOKIE}={owner}" in set_cookie
-    assert "Max-Age=172800" in set_cookie
+    assert "Max-Age=2592000" in set_cookie
 
 
 def test_invalid_owner_cookie_is_not_reflected() -> None:
@@ -951,7 +979,7 @@ def test_invalid_owner_cookie_is_not_reflected() -> None:
     assert response.status_code == 201
     set_cookie = response.headers["set-cookie"]
     assert "browser-supplied-owner" not in set_cookie
-    assert "Max-Age=172800" in set_cookie
+    assert "Max-Age=2592000" in set_cookie
 
 
 def test_capabilities_report_configured_attachment_limits(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -977,7 +1005,7 @@ def test_capabilities_report_configured_attachment_limits(monkeypatch: pytest.Mo
             "max_bytes_per_file": 4321,
             "retained": True,
         },
-        "session_retention_seconds": 172800,
+        "session_retention_seconds": 2592000,
         "auth": {"required": True, "scheme": "bearer"},
     }
 
@@ -1335,8 +1363,8 @@ def test_provider_failure_is_streamed_without_recording_a_turn() -> None:
 
 def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming(monkeypatch) -> None:
     saved = []
-    monkeypatch.setattr(ChatHistory, "start_run", lambda *_args: None)
-    monkeypatch.setattr(ChatHistory, "finish_run", lambda _self, *args: saved.append(args))
+    monkeypatch.setattr(ChatHistory, "start_run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(ChatHistory, "finish_run", lambda _self, *args, **_kwargs: saved.append(args))
 
     class ScheduleUpdatingProvider(FakeProvider):
         update_schedule = lambda self: None
@@ -1367,7 +1395,7 @@ def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming(monke
     ]
     assert len(saved) == 1
     assert saved[0][1] == "stale"
-    assert saved[0][4] == [AssistantMessage("Obsolete answer.")]
+    assert list(saved[0][4]) == [AssistantMessage("Obsolete answer.")]
 
 
 @pytest.mark.parametrize(
@@ -1565,14 +1593,14 @@ def test_environment_configuration_defaults_to_three_provider_attempts(monkeypat
     assert settings.provider_retry_backoff_seconds == 1.0
 
 
-def test_environment_configuration_defaults_to_two_day_session_retention(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_environment_configuration_defaults_to_thirty_day_session_retention(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
     monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
     monkeypatch.setenv("AI_SANDBOX_BACKEND", "e2b")
     monkeypatch.setenv("E2B_API_KEY", "e2b-key")
     monkeypatch.delenv("AI_SESSION_TTL_SECONDS", raising=False)
 
-    assert AiSettings.from_env().session_ttl_seconds == 48 * 60 * 60
+    assert AiSettings.from_env().session_ttl_seconds == 30 * 24 * 60 * 60
 
 
 def test_environment_configuration_reads_optimizer_connection(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2049,18 +2077,22 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
     history_starts: list[tuple[str, str, str | None, str, str, int]] = []
     if history_enabled:
         monkeypatch.setattr(ChatHistory, "initialize", lambda _self: None)
-        monkeypatch.setattr(ChatHistory, "finish_run", lambda *_args: None)
+        monkeypatch.setattr(ChatHistory, "finish_run", lambda *_args, **_kwargs: None)
 
         def record_start(
             _self: ChatHistory,
-            turn_id: str,
+            run_id: str,
             session_id: str,
-            credential_id: str | None,
-            question: str,
+            *,
+            state: object,
+            prompt: str,
             model: str,
             attachment_count: int,
+            kind: str,
+            message_id: str | None,
+            credential_id: str | None,
         ) -> None:
-            history_starts.append((turn_id, session_id, credential_id, question, model, attachment_count))
+            history_starts.append((run_id, session_id, credential_id, prompt, model, attachment_count))
 
         monkeypatch.setattr(ChatHistory, "start_run", record_start)
     optimizer_call = [ToolCallRequest((ToolCall("optimizer-call", OPTIMIZER_TOOL, json.dumps({"action": "start"})),))]
@@ -2296,12 +2328,12 @@ def rename_factory() -> FakeSandboxFactory:
     return FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=rename))
 
 
-def proposing_client() -> tuple[TestClient, str, str]:
+def proposing_client(**settings: object) -> tuple[TestClient, str, str]:
     """Run one proposing turn and return the client, session, and base revision."""
     provider = ScriptedToolProvider(rename_call(), [TextDelta("Renamed P1.")])
     client = AuthenticatedTestClient(
         create_test_app(
-            settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT),
+            settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT, **settings),
             provider=provider,
             sandbox_factory=rename_factory(),
         )
@@ -2602,8 +2634,9 @@ def test_rejection_drops_the_proposal() -> None:
     approved = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
     follow_up = client.post(f"/sessions/{session_id}/messages", json={"message": "Continue"})
 
-    assert rejected.status_code == 204
-    assert repeated.status_code == 204
+    assert rejected.status_code == 200
+    assert rejected.json() == {"history_saved": True}
+    assert repeated.status_code == 200
     assert approved.status_code == 404
     assert follow_up.status_code == 200
     assert provider.calls[2].count({"role": "user", "content": PROPOSAL_REJECTED_HISTORY}) == 1

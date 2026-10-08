@@ -28,6 +28,14 @@ include committed branch changes since the merge base with `REF`, `--list` to
 inspect selection without running checks, or `--full` for the normal local
 suite. Run optional solver and real-scenario suites explicitly when affected.
 
+For AI persistence checks, follow the
+[container PostgreSQL recipe](../skills/run-ci/references/postgresql.md).
+Check that `initdb` and `pg_ctl` exist in the selected binary directory. They may
+be installed outside `PATH`, or absent even when Psycopg is available. Use a fresh
+UTF-8 cluster and run the server as `postgres`, since it refuses to run as root.
+Set `AI_HISTORY_TEST_POSTGRES_URL` for the test process and confirm the database
+cases ran. A passing suite with those cases skipped does not validate persistence.
+
 ## Dependencies
 - `requirements.txt` is the minimal runtime set. Deployment images install only
   it, so a small file keeps those builds fast. Add a package there only when
@@ -53,6 +61,13 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   running one CLI solve with `--prettify` to reach the XLSX export path.
   Reading the imports is not enough, because transitive-only packages such as
   the `jinja2` that `pandas.DataFrame.style` needs have no import statement.
+
+## Service Monitoring
+- Initialize Sentry with the application build version, not the API version.
+  Standalone services use `version.get_app_version()` and keep a distinct `app`
+  tag. API services also pass their API version for event tags and log attributes.
+  Use `configure_service_logging` for the shared service logging defaults.
+  Short-lived services flush Sentry in a `finally` block before exit.
 
 ## Server Job Processes
 - `run_optimization_process` owns its optimization process tree through
@@ -137,6 +152,40 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
 - Keep attachment limits server-configured and report them through
   `/capabilities`. Attachments and the optimizer tool are always offered.
   Keep schedules and attachments separate from model instructions.
+- Keep accepted AI runs independent of the browser stream. A repeated POST with
+  the same client `message_id` returns the accepted run without repeating
+  provider or tool calls. A named Stop cancels only its message's run and stops
+  a message that arrives later. Keep complete stored output separate from the
+  bounded replay journal. Persist accepted questions and terminal state when
+  recovery storage is enabled. Optimizer progress can remain transient.
+- Deliver terminal and optimizer status events even when their recovery write
+  fails. When a call that could not fail becomes an awaited write, check every
+  caller's failure path. Each caller must still release the session and report
+  a terminal event.
+- A stored text row can cover several SSE cursors. Restore complete output with
+  a replacement snapshot of each affected run. Test a cursor inside a combined
+  row, an entry crossing the replay tail boundary, and a cursor of the previous
+  process that is ahead of storage. Save execution status with terminal output
+  and conversation context instead of inferring status from a bounded replay buffer.
+- Keep execution metadata on recovery sessions and runs. Use one expiry policy
+  for content and metadata instead of adding a second conversation log.
+- Capture recovery state inside `SessionRecovery`'s per-session lock so writes
+  commit in capture order. Keep a session loaded while its writes are pending or
+  failed, because eviction would discard the only current copy.
+- Test Stop before acceptance, during execution, and after completion but before
+  acknowledgement. Verify recovery after buffer overflow and backend restart,
+  including session ownership and expiry. Use an isolated UTF-8 PostgreSQL
+  database with fresh migrations for persistence tests.
+- Test a graceful shutdown separately from a crash. Seeded running rows cover
+  only a crash. Exit the application lifespan during a run, then check that
+  recovery reports a restart instead of a user Stop.
+- Events are saved by a background writer after delivery, and `asyncio.run`
+  cancels a run or writer that is still running when the test returns. A test
+  that runs AI runs directly must wait until `app.state.runs` is idle and
+  `app.state.recovery.flush(session_id)` returns before it checks saved records.
+- A fake provider that sleeps between fragments starts each delay only after
+  the consumer asks for the next event. A network stream keeps arriving during
+  that work. Treat such stream timings as an upper bound.
 - Bound uploads before provider calls and place them under fixed sandbox paths.
   Retain uploaded source files only until the user removes them or the session expires.
   Count retained files and generated downloads against the session memory budget.

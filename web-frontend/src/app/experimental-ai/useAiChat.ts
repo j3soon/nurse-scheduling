@@ -43,6 +43,18 @@ import { useSessionEventStream } from './useSessionEventStream';
 export type { ChatMessage } from './chatTranscript';
 export type { ActiveOptimization } from './optimizerEvents';
 
+/** A question whose run has not finished, so a remounted page can reattach to it. */
+export interface PendingRequest {
+  // The client message ID. Posting it again returns the accepted run instead of asking again.
+  messageId: string;
+  question: string;
+  questionId: string;
+  assistantId: string;
+  createdAt: number;
+  // Leaving the page cancels an unfinished upload, so recovery asks for the files again.
+  uploading: boolean;
+}
+
 /** Conversation data for tab storage. Browser I/O stays in the page. */
 export interface ChatConversation {
   sessionId: string;
@@ -57,9 +69,19 @@ export interface ChatConversation {
   contextUsage?: ContextUsage | null;
   backgroundAssistantId?: string | null;
   trimmedHistoryCount?: number;
+  pendingRequest?: PendingRequest | null;
 }
 
+export const UNSAVED_APPROVAL_WARNING = 'This approval could not be saved for recovery after a service restart.';
+export const UNSAVED_REJECTION_WARNING = 'This rejection could not be saved for recovery after a service restart.';
+// Browser timers cannot wait more than 2,147,483,647 milliseconds, about 24.8 days, at once.
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
 export function retentionLabel(seconds: number): string {
+  if (seconds % 86400 === 0) {
+    const days = seconds / 86400;
+    return `${days} ${days === 1 ? 'day' : 'days'}`;
+  }
   if (seconds % 3600 === 0) {
     const hours = seconds / 3600;
     return `${hours} ${hours === 1 ? 'hour' : 'hours'}`;
@@ -121,6 +143,8 @@ export function useAiChat({
   const [proposalDiff, setProposalDiff] = useState<string | null>(null);
   const [proposalNotice, setProposalNotice] = useState<string | null>(null);
   const [isApplyingProposal, setIsApplyingProposal] = useState(false);
+  const [pendingRequest, setPendingRequest] = useState<PendingRequest | null>(null);
+  const [isReconnecting, setIsReconnecting] = useState(false);
   const operations = useSyncExternalStore(lifecycle.subscribe, lifecycle.getSnapshot, lifecycle.getSnapshot);
   const isStreaming = Object.values(operations).some(active => active !== null && active.phase !== 'interrupted');
   const isStopping = Object.values(operations).some(active => active?.phase === 'stopping');
@@ -133,6 +157,9 @@ export function useAiChat({
   const scheduleYamlRef = useRef(scheduleYaml);
   const sandboxScheduleRef = useRef<string | null>(null);
   const queuedMessagesRef = useRef<QueuedChatMessage[]>([]);
+  // A restored request waits here until the page can post it again.
+  const resumeRef = useRef<PendingRequest | null>(null);
+  const pendingRequestRef = useRef<PendingRequest | null>(null);
   const sessionEvents = useSessionEventStream();
   scheduleYamlRef.current = scheduleYaml;
   const reset = useCallback(() => {
@@ -145,6 +172,8 @@ export function useAiChat({
     syncedScheduleRef.current = null;
     sandboxScheduleRef.current = null;
     queuedMessagesRef.current = [];
+    resumeRef.current = null;
+    pendingRequestRef.current = null;
     lifecycle.reset();
     setActiveSessionId(null);
     setSessionExpiresAt(null);
@@ -154,6 +183,8 @@ export function useAiChat({
     setIsApplyingProposal(false);
     setRemovingUploadId(null);
     setRemovingDownloadId(null);
+    setPendingRequest(null);
+    setIsReconnecting(false);
   }, [lifecycle, sessionEvents]);
   useEffect(() => () => {
     lifecycle.reset();
@@ -178,7 +209,17 @@ export function useAiChat({
     if (conversation.backgroundAssistantId) {
       lifecycle.begin('background', conversation.backgroundAssistantId, 'interrupted');
     }
-    setMessages(restoreTranscript(conversation.messages));
+    // The server keeps an accepted question running while the page is away. Reattach to it
+    // with the same message ID, unless its files never finished uploading.
+    const pending = conversation.pendingRequest ?? null;
+    const resumable = pending !== null && !pending.uploading && conversation.expiresAt > Date.now()
+      && conversation.messages.some(message => message.id === pending.assistantId);
+    setMessages(restoreTranscript(conversation.messages, resumable ? pending.assistantId : undefined).map(message => (
+      pending?.uploading && message.id === pending.assistantId
+        ? { ...message, retry: { question: pending.question, requiresAttachments: true } }
+        : message
+    )));
+    resumeRef.current = resumable ? pending : null;
     setProposalDiff(conversation.proposalDiff);
     setSessionRetentionSeconds(conversation.retentionSeconds);
     sessionEvents.cursor.current = conversation.sessionEventId ?? 0;
@@ -219,10 +260,11 @@ export function useAiChat({
       contextUsage,
       backgroundAssistantId: operations.background?.token.id,
       trimmedHistoryCount,
+      pendingRequest: pendingRequest ?? resumeRef.current,
     };
   }, [activeSessionId, sessionExpiresAt, aiEndpoint, sessionRetentionSeconds, messages,
     scheduleYaml, proposalDiff, sessionEvents, activeOptimization, contextUsage,
-    operations.background, trimmedHistoryCount]);
+    operations.background, trimmedHistoryCount, pendingRequest]);
 
   const clearConversation = useCallback(() => {
     reset();
@@ -259,13 +301,17 @@ export function useAiChat({
 
   useEffect(() => {
     if (activeSessionId === null || sessionExpiresAt === null) return;
-    const expire = () => markConversationUnavailable(expiryNotice(sessionRetentionSeconds));
-    const delay = sessionExpiresAt - Date.now();
-    if (delay <= 0) {
-      expire();
-      return;
-    }
-    const timeout = window.setTimeout(expire, delay);
+    let timeout: number | undefined;
+    const checkExpiration = () => {
+      const delay = sessionExpiresAt - Date.now();
+      if (delay > 0) {
+        // Wait in bounded steps, then check the expiry time again.
+        timeout = window.setTimeout(checkExpiration, Math.min(delay, MAX_TIMER_DELAY_MS));
+        return;
+      }
+      markConversationUnavailable(expiryNotice(sessionRetentionSeconds));
+    };
+    checkExpiration();
     return () => window.clearTimeout(timeout);
   }, [activeSessionId, sessionExpiresAt, sessionRetentionSeconds, markConversationUnavailable]);
 
@@ -321,7 +367,9 @@ export function useAiChat({
       switch (event.type) {
         case 'session_reset': {
           const { reset } = event;
-          setMessages(previous => resetRunMessages(previous, reset.runIds));
+          // The foreground handler replaces its own run in place.
+          const foregroundRunId = eventRouterRef.current.foreground?.runId;
+          setMessages(previous => resetRunMessages(previous, reset.runIds.filter(id => id !== foregroundRunId)));
           setProposalDiff(reset.proposalDiff);
           setActiveOptimization(null);
           lifecycle.finish(lifecycle.current('background'));
@@ -383,46 +431,67 @@ export function useAiChat({
         }
       }
     };
-    const handle: SessionEventHandler = event => eventRouterRef.current.dispatch(event, handleBackground, ownsConversation);
-    sessionEvents.connect(sessionId, handle, authToken, endpoint, (streamError, firstFailure) => {
-      if (firstFailure) reportRequestError(streamError, 'The AI session event stream disconnected.');
+    const handle: SessionEventHandler = event => {
+      if (ownsConversation()) setIsReconnecting(false);
+      eventRouterRef.current.dispatch(event, handleBackground, ownsConversation);
+    };
+    sessionEvents.connect(sessionId, handle, authToken, endpoint, streamError => {
+      if (!ownsConversation()) return;
+      // Reconnection continues in the background. Rejected credentials cannot succeed
+      // until the token changes, so only they are reported.
+      if (isAuthenticationError(streamError)) {
+        reportRequestError(streamError, 'The AI event stream could not authenticate.');
+      } else if (lifecycle.busy) {
+        setIsReconnecting(true);
+      }
       if (streamError instanceof AiHttpError && streamError.status === 404) {
         eventRouterRef.current.foreground?.reject(streamError);
       }
     });
   }, [authToken, lifecycle, reportRequestError, sessionEvents, sessionRetentionSeconds, setError, projectSessionState]);
 
-  useEffect(() => {
-    if (!isClientReady || activeSessionId === null || conversationUnavailable) return;
-    startSessionEventStream(activeSessionId, sessionEndpointRef.current ?? aiEndpoint);
-  }, [activeSessionId, aiEndpoint, conversationUnavailable, isClientReady, startSessionEventStream]);
-
   const sendRequest = async (
     question: string,
     files: File[],
     clearComposer: boolean,
     createdAt = Date.now(),
+    resume?: PendingRequest,
   ) => {
     if (!question || lifecycle.busy || conversationUnavailable || (authRequired && authToken === null)) return;
 
     const userMessage: ChatMessage = {
-      id: messageId(),
+      id: resume?.questionId ?? messageId(),
       role: 'user',
       createdAt,
       content: question,
     };
-    const initialAssistantId = messageId();
+    const initialAssistantId = resume?.assistantId ?? messageId();
     let activeAssistantId = initialAssistantId;
     const runMessageIds = new Set([initialAssistantId]);
     let activeAssistantHasOutput = false;
     let activeQuestion = question;
     let activeQuestionRequiresAttachments = files.length > 0;
     const responseStartedAt = Date.now();
-    setMessages(previous => [
-      ...previous,
-      userMessage,
-      createResponse(activeAssistantId, responseStartedAt),
-    ]);
+    const request: PendingRequest = resume ?? {
+      messageId: messageId(),
+      question,
+      questionId: userMessage.id,
+      assistantId: initialAssistantId,
+      createdAt,
+      uploading: files.length > 0,
+    };
+    const updateRequest = (next: PendingRequest | null) => {
+      pendingRequestRef.current = next;
+      setPendingRequest(next);
+    };
+    updateRequest(request);
+    if (resume === undefined) {
+      setMessages(previous => [
+        ...previous,
+        userMessage,
+        createResponse(activeAssistantId, responseStartedAt),
+      ]);
+    }
     onSendStart(clearComposer);
     setError(null);
     // A pending proposal stays approvable across messages until it is approved, rejected, or replaced.
@@ -431,11 +500,15 @@ export function useAiChat({
     sandboxScheduleRef.current = scheduleYaml;
     const controller = new AbortController();
     abortControllerRef.current = controller;
+    const stopRequested = () => lifecycle.getSnapshot().foreground?.phase === 'stopping';
 
     try {
       let sessionId = sessionIdRef.current;
       const sessionEndpoint = sessionEndpointRef.current ?? aiEndpoint;
-      if (sessionId === null) {
+      if (resume !== undefined) {
+        // The accepted run used the schedule of its original request.
+        if (sessionId === null) return;
+      } else if (sessionId === null) {
         sessionId = await createSession(scheduleYaml, authToken, sessionEndpoint);
         if (!lifecycle.owns(operation)) return;
         controller.signal.throwIfAborted();
@@ -454,13 +527,14 @@ export function useAiChat({
       }
       if (!lifecycle.owns(operation)) return;
       controller.signal.throwIfAborted();
-      syncedScheduleRef.current = scheduleYaml;
+      if (resume === undefined) syncedScheduleRef.current = scheduleYaml;
       renewSessionExpiration();
       if (files.length > 0) {
         const uploaded = await uploadFiles(sessionId, files, authToken, sessionEndpoint, controller.signal);
         if (!lifecycle.owns(operation)) return;
         // The upload is now its own history message, so a retry needs only the question.
         activeQuestionRequiresAttachments = false;
+        updateRequest({ ...request, uploading: false });
         if (retainsUploads) setUploadedFiles(previous => [...previous, ...uploaded]);
       }
       let runFinished = false;
@@ -558,8 +632,21 @@ export function useAiChat({
       const foreground = eventRouterRef.current.begin(handle, rejectRun);
       const aborted = () => finishRun();
       controller.signal.addEventListener('abort', aborted, { once: true });
+      // A restored request registers before its replayed events arrive.
+      if (resume !== undefined) startSessionEventStream(sessionId, sessionEndpoint);
       try {
-        const runId = await sendMessage(sessionId, question, controller.signal, authToken, sessionEndpoint);
+        if (stopRequested()) {
+          // Stop arrived before the question was sent, so the server never receives it.
+          eventRouterRef.current.finish(foreground);
+          setMessages(previous => applyResponseEvent(previous, activeAssistantId, { type: 'stopped' }, Date.now()));
+          updateRequest(null);
+          return;
+        }
+        const runId = await sendMessage(sessionId, question, controller.signal, authToken, sessionEndpoint, {
+          messageId: request.messageId,
+          shouldStop: stopRequested,
+          onConnectionChange: connected => { if (lifecycle.owns(operation)) setIsReconnecting(!connected); },
+        });
         eventRouterRef.current.acknowledge(foreground, runId, acceptedId => {
           setMessages(previous => previous.map(message => runMessageIds.has(message.id)
             ? { ...message, runId: acceptedId } : message));
@@ -573,9 +660,9 @@ export function useAiChat({
               }
             });
         }
-        if (!runFinished && lifecycle.getSnapshot().foreground?.phase === 'stopping') {
-          // Stop may have reached the server before the message was accepted.
-          await stopSession(sessionId, authToken, sessionEndpoint).catch(stopError => {
+        if (!runFinished && stopRequested()) {
+          // The named Stop can still be in flight. Send it again now that the run is known.
+          await stopSession(sessionId, authToken, sessionEndpoint, request.messageId).catch(stopError => {
             if (!lifecycle.owns(operation)) return;
             lifecycle.stopFailed([operation]);
             reportRequestError(stopError, 'The AI response could not be stopped.');
@@ -611,13 +698,37 @@ export function useAiChat({
         reportRequestError(streamError, 'The AI request failed.');
       }
     } finally {
+      // An unmounted page keeps the request, so the next page can reattach to its run.
       if (lifecycle.owns(operation)) {
         setSteeringAssistantId(null);
+        setIsReconnecting(false);
+        if (pendingRequestRef.current === request || pendingRequestRef.current?.messageId === request.messageId) {
+          updateRequest(null);
+        }
         if (abortControllerRef.current === controller) abortControllerRef.current = null;
         lifecycle.finish(operation);
       }
     }
   };
+
+  const resumeRequest = useEffectEvent(() => {
+    const pending = resumeRef.current;
+    if (pending === null || lifecycle.busy) return;
+    resumeRef.current = null;
+    void sendRequest(pending.question, [], false, pending.createdAt, pending);
+  });
+
+  // Resume before the stream opens, so the run's replayed output reaches its own answer.
+  useEffect(() => {
+    if (!isClientReady || activeSessionId === null || conversationUnavailable) return;
+    if (authRequired && authToken === null) return;
+    resumeRequest();
+  }, [activeSessionId, authRequired, authToken, conversationUnavailable, isClientReady]);
+
+  useEffect(() => {
+    if (!isClientReady || activeSessionId === null || conversationUnavailable || resumeRef.current !== null) return;
+    startSessionEventStream(activeSessionId, sessionEndpointRef.current ?? aiEndpoint);
+  }, [activeSessionId, aiEndpoint, conversationUnavailable, isClientReady, startSessionEventStream]);
 
   const sendQueuedMessage = useEffectEvent(() => {
     if (lifecycle.busy || conversationUnavailable) return;
@@ -727,7 +838,9 @@ export function useAiChat({
     }
     // The request only asks the server to stop. The run stays active until a terminal
     // event reports it ended, so every one of those clears the pending state instead.
-    void stopSession(sessionId, authToken, sessionEndpointRef.current ?? aiEndpoint)
+    // A named Stop cannot end a later run, and it stops a question that has not arrived yet.
+    const request = lifecycle.current('foreground') ? pendingRequestRef.current : null;
+    void stopSession(sessionId, authToken, sessionEndpointRef.current ?? aiEndpoint, request?.messageId)
       .catch(stopError => {
         if (!stopping.some(operation => lifecycle.owns(operation))) return;
         reportRequestError(stopError, 'The AI response could not be stopped.');
@@ -743,7 +856,7 @@ export function useAiChat({
     setIsApplyingProposal(true);
     setError(null);
     try {
-      const approvedYaml = await approveProposal(
+      const { scheduleYaml: approvedYaml, historySaved } = await approveProposal(
         sessionId,
         scheduleYaml,
         authToken,
@@ -761,6 +874,7 @@ export function useAiChat({
       renewSessionExpiration();
       setProposalDiff(null);
       setProposalNotice('The proposed schedule was applied. Undo reverts it in one step.');
+      if (!historySaved) setError(UNSAVED_APPROVAL_WARNING);
     } catch (approveError) {
       if (ownsConversation()) reportRequestError(approveError, 'The proposal could not be applied.');
     } finally {
@@ -775,9 +889,10 @@ export function useAiChat({
     setProposalNotice(null);
     if (sessionId === null) return;
     try {
-      await rejectProposal(sessionId, authToken, sessionEndpointRef.current ?? aiEndpoint);
+      const historySaved = await rejectProposal(sessionId, authToken, sessionEndpointRef.current ?? aiEndpoint);
       if (!ownsConversation()) return;
       renewSessionExpiration();
+      if (!historySaved) setError(UNSAVED_REJECTION_WARNING);
     } catch (rejectError) {
       if (ownsConversation() && isAuthenticationError(rejectError)) {
         reportRequestError(rejectError, 'The proposal could not be rejected.');
@@ -800,6 +915,7 @@ export function useAiChat({
     trimmedHistoryCount,
     isStreaming,
     isStopping,
+    isReconnecting,
     activeOptimization,
     queuedMessages,
     steeringAssistantId,

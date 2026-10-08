@@ -37,10 +37,11 @@ from pydantic import BaseModel, Field, ValidationError
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from ..sentry import init_sentry
+from ..sentry import SentryClientAddressMiddleware, init_sentry
 from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry
+from ..service_logging import configure_service_logging
 from ..version import get_app_version
-from .agent_session import AgentSession, SessionRuntime
+from .agent_session import AcceptedMessage, AgentSession, SessionRuntime
 from .config import AiSettings, validate_ai_auth_credentials
 from .history import ChatHistory, stop_maintenance
 from .lifecycle import TERMINAL_EVENTS, AgentRun, SessionRuns
@@ -52,12 +53,12 @@ from .optimizer import (
 )
 from .optimizer_http import HttpOptimizerBackend
 from .provider import OpenAiCompatibleProvider, ToolCapableChatProvider
+from .recovery import SessionRecovery
 from .sandbox import SandboxFactory, managed_sandbox_factory
 from .sandbox.factory import create_sandbox_factory
 from .session_event_stream import SessionEventStream, SessionResetData
 from .session_events import OptimizerUpdate
 from .sessions import SessionStore, schedule_revision
-from .transcript import ProposalDecision
 from .workspace import SandboxAttachment
 
 SERVICE_NAME = "nurse-scheduling-ai-api"
@@ -106,6 +107,13 @@ class ProposalResponse(BaseModel):
     """The approved schedule the browser should apply."""
 
     schedule_yaml: str
+    history_saved: bool
+
+
+class ProposalRejectionResponse(BaseModel):
+    """Whether recovery storage saved the rejection, which already took effect."""
+
+    history_saved: bool
 
 
 class ApproveProposalRequest(BaseModel):
@@ -142,6 +150,14 @@ class ChatRequest(BaseModel):
     """One user question for an existing schedule chat."""
 
     message: str = Field(min_length=1, max_length=100_000)
+    # A repeated client message ID reattaches to its run instead of asking again.
+    message_id: str | None = Field(default=None, min_length=1, max_length=100)
+
+
+class StopChatRequest(BaseModel):
+    """Identify a question that may still be arriving at the server."""
+
+    message_id: str = Field(min_length=1, max_length=100)
 
 
 class QueueChatRequest(ChatRequest):
@@ -294,7 +310,9 @@ def create_app(
     optimizer_backend: OptimizerBackend | None = None,
 ) -> FastAPI:
     """Construct the independently deployable AI application."""
-    init_sentry(API_VERSION, app="ai-backend")
+    app_version = get_app_version()
+    init_sentry(app_version, app="ai-backend", api_version=API_VERSION)
+    configure_service_logging(logger)
     settings = settings or AiSettings.from_env()
     auth_token, auth_tokens = validate_ai_auth_credentials(
         settings.auth_token,
@@ -304,19 +322,23 @@ def create_app(
     settings = replace(settings, auth_token=auth_token, auth_tokens=auth_tokens)
     configure_request_logging(settings.request_log_enabled)
     provider = provider or OpenAiCompatibleProvider(settings, include_usage=True)
-    history_log = (
-        ChatHistory(settings.history_postgres_url, settings.history_retention_days)
-        if settings.history_postgres_url
-        else None
-    )
+    history_log = ChatHistory(settings.history_postgres_url) if settings.history_postgres_url else None
     if sandbox_factory is None:
         sandbox_factory = create_sandbox_factory(settings)
     event_stream = SessionEventStream(max_sessions=settings.max_sessions)
     store = SessionStore(settings, event_stream=event_stream)
+    recovery = SessionRecovery(history_log, store, event_stream)
     runs = SessionRuns()
     concurrency_limit = asyncio.Semaphore(settings.max_concurrent_requests)
     auth_registry = create_auth_registry(settings.auth_token, settings.auth_tokens)
     require_auth = create_auth_dependency(auth_registry)
+
+    async def restore_session(request: Request, owner: str | None = Cookie(default=None, alias=OWNER_COOKIE)) -> None:
+        """Load a saved session that is not in memory after a restart or eviction."""
+        session_id = request.path_params.get("session_id")
+        if session_id is None or not recovery.enabled or owner is None or store.get(session_id) is not None:
+            return
+        await recovery.restore(session_id, owner)
 
     def refresh_owner_cookie(response: Response, owner: str | None) -> None:
         """Keep browser ownership available for the session's sliding lifetime."""
@@ -369,22 +391,25 @@ def create_app(
         max_schedule_bytes=settings.max_schedule_bytes,
     )
 
-    runtime = SessionRuntime(
-        settings, store, concurrency_limit, history_log, provider, sandbox_factory, session_optimizer
-    )
+    runtime = SessionRuntime(settings, store, concurrency_limit, recovery, provider, sandbox_factory, session_optimizer)
 
     def retire_session(session_id: str) -> None:
         """Release everything keyed by a session once the store drops it."""
         runs.stop(session_id)
         session_optimizer.forget_session(session_id)
         event_stream.forget_session(session_id)
+        recovery.forget(session_id)
 
     store.on_retire(retire_session)
-
-    async def record_decision(run_id: str | None, decision: ProposalDecision) -> None:
-        """Log a decision on the run that proposed it. It already took effect, so a failed write only logs."""
-        if history_log is not None and run_id is not None:
-            await history_log.write("record_decision", run_id, decision)
+    if recovery.enabled:
+        # A full store unloads idle sessions that storage can restore. Running work stays loaded.
+        store.allow_eviction(
+            lambda session_id: (
+                recovery.evictable(session_id)
+                and not runs.busy(session_id)
+                and not session_optimizer.has_unfinished_run(session_id)
+            )
+        )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -399,9 +424,11 @@ def create_app(
                 try:
                     yield
                 finally:
-                    # Drain runs while their sandbox factory is still available.
+                    # Drain runs while their sandbox factory is still available. Interrupted
+                    # runs stay running in recovery storage, so a restart reports them.
                     await runs.close()
                     await session_optimizer.close()
+                    await recovery.close()
         finally:
             if maintenance is not None:
                 await stop_maintenance(maintenance)
@@ -428,9 +455,12 @@ def create_app(
     app.state.runs = runs
     app.state.provider = provider
     app.state.sandbox_factory = sandbox_factory
-    app.state.app_version = get_app_version()
+    app.state.app_version = app_version
     app.state.session_optimizer = session_optimizer
     app.state.session_event_stream = event_stream
+    app.state.recovery = recovery
+
+    app.add_middleware(SentryClientAddressMiddleware)
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(_request: Request, exc: RequestValidationError) -> JSONResponse:
@@ -474,12 +504,21 @@ def create_app(
         response: Response,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ):
-        """Create a process-local chat session for the calling browser."""
+        """Create a chat session for the calling browser."""
         if len(request.schedule_yaml.encode("utf-8")) > settings.max_schedule_bytes:
             raise HTTPException(status_code=413, detail="Schedule is too large.")
         owner = owner_cookie_token(owner)
         refresh_owner_cookie(response, owner)
         session = store.create(owner, request.schedule_yaml)
+        # The client never learns this ID unless the save succeeds, so release its slot otherwise.
+        saved = False
+        try:
+            saved = await recovery.save(session.id, http_request.state.auth_credential_id)
+        finally:
+            if not saved:
+                store.discard(session.id)
+        if not saved:
+            raise HTTPException(status_code=503, detail="AI message recovery is temporarily unavailable.")
         logger.info(
             "Created AI session session_id=%s auth_credential_id=%s",
             session.id,
@@ -487,7 +526,7 @@ def create_app(
         )
         return CreateSessionResponse(id=session.id)
 
-    @app.get("/sessions/{session_id}/events", dependencies=[Depends(require_auth)])
+    @app.get("/sessions/{session_id}/events", dependencies=[Depends(require_auth), Depends(restore_session)])
     async def stream_session_events(
         session_id: str,
         request: Request,
@@ -510,20 +549,30 @@ def create_app(
     @app.post(
         "/sessions/{session_id}/stop",
         status_code=status.HTTP_202_ACCEPTED,
-        dependencies=[Depends(require_auth)],
+        dependencies=[Depends(require_auth), Depends(restore_session)],
     )
     async def stop_active_run(
         session_id: str,
+        body: StopChatRequest | None = None,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> Response:
-        """Cancel the foreground or background assistant run active in a session."""
-        store.require_owned(session_id, owner)
-        runs.stop(session_id)
+        """Cancel the named message's run, or every assistant run active in the session."""
+        session = store.require_owned(session_id, owner)
+        if body is not None:
+            # A delayed Stop must not cancel a later run. A message that has not
+            # arrived yet finds the saved request instead.
+            release = recovery.pin(session_id)
+            try:
+                await recovery.stop_message(session_id, body.message_id)
+            finally:
+                release()
+            session.stop_message(body.message_id)
+        runs.stop(session_id, None if body is None else body.message_id)
         return Response(status_code=status.HTTP_202_ACCEPTED)
 
     @app.post(
         "/sessions/{session_id}/uploads",
-        dependencies=[Depends(require_auth)],
+        dependencies=[Depends(require_auth), Depends(restore_session)],
         status_code=status.HTTP_201_CREATED,
     )
     async def add_uploads(
@@ -534,12 +583,17 @@ def create_app(
     ) -> list[dict[str, str | int]]:
         """Retain source files for later messages and return their metadata."""
         store.require_owned(session_id, owner)
-        uploads = await _parse_upload_request(request, settings)
+        # Eviction must not unload the session while its upload is read.
+        release = recovery.pin(session_id)
+        try:
+            uploads = await _parse_upload_request(request, settings)
+        finally:
+            release()
         retained = store.retain_uploads(session_id, owner, uploads)
         refresh_owner_cookie(response, owner)
         return [_upload_metadata(item) for item in retained]
 
-    @app.get("/sessions/{session_id}/uploads", dependencies=[Depends(require_auth)])
+    @app.get("/sessions/{session_id}/uploads", dependencies=[Depends(require_auth), Depends(restore_session)])
     async def list_uploads(
         session_id: str,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
@@ -550,7 +604,7 @@ def create_app(
     @app.delete(
         "/sessions/{session_id}/uploads/{upload_id}",
         status_code=status.HTTP_204_NO_CONTENT,
-        dependencies=[Depends(require_auth)],
+        dependencies=[Depends(require_auth), Depends(restore_session)],
     )
     async def remove_upload(
         session_id: str,
@@ -563,7 +617,9 @@ def create_app(
         refresh_owner_cookie(response, owner)
         return response
 
-    @app.get("/sessions/{session_id}/downloads/{download_id}", dependencies=[Depends(require_auth)])
+    @app.get(
+        "/sessions/{session_id}/downloads/{download_id}", dependencies=[Depends(require_auth), Depends(restore_session)]
+    )
     async def download_generated_zip(
         session_id: str,
         download_id: str,
@@ -579,7 +635,7 @@ def create_app(
     @app.delete(
         "/sessions/{session_id}/downloads/{download_id}",
         status_code=status.HTTP_204_NO_CONTENT,
-        dependencies=[Depends(require_auth)],
+        dependencies=[Depends(require_auth), Depends(restore_session)],
     )
     async def remove_generated_zip(
         session_id: str,
@@ -594,7 +650,7 @@ def create_app(
 
     @app.get(
         "/sessions/{session_id}/optimizations/{job_id}/xlsx",
-        dependencies=[Depends(require_auth)],
+        dependencies=[Depends(require_auth), Depends(restore_session)],
     )
     async def download_optimization(
         session_id: str,
@@ -616,7 +672,7 @@ def create_app(
     @app.get(
         "/sessions/{session_id}",
         response_model=SessionStatusResponse,
-        dependencies=[Depends(require_auth)],
+        dependencies=[Depends(require_auth), Depends(restore_session)],
     )
     async def session_status(
         session_id: str,
@@ -628,7 +684,7 @@ def create_app(
     @app.post(
         "/sessions/{session_id}/messages/queue",
         status_code=status.HTTP_202_ACCEPTED,
-        dependencies=[Depends(require_auth)],
+        dependencies=[Depends(require_auth), Depends(restore_session)],
     )
     async def queue_message(
         session_id: str,
@@ -650,7 +706,13 @@ def create_app(
         refresh_owner_cookie(response, owner)
         return response
 
-    @app.post("/sessions/{session_id}/messages", dependencies=[Depends(require_auth)])
+    def accepted_response(run_id: str, owner: str | None) -> JSONResponse:
+        """Acknowledge a repeated message without running its question again."""
+        response = JSONResponse({"run_id": run_id}, status_code=status.HTTP_202_ACCEPTED)
+        refresh_owner_cookie(response, owner)
+        return response
+
+    @app.post("/sessions/{session_id}/messages", dependencies=[Depends(require_auth), Depends(restore_session)])
     async def send_message(
         session_id: str,
         body: ChatRequest,
@@ -660,6 +722,26 @@ def create_app(
         """Start a run independently of its event subscribers."""
         question = _validate_question(body.message, settings)
         session = store.require_owned(session_id, owner)
+        if body.message_id is not None:
+            accepted = session.accepted_message(body.message_id)
+            if accepted is not None:
+                if accepted.question != question:
+                    raise HTTPException(status_code=409, detail="This message ID belongs to a different question.")
+                if await asyncio.shield(accepted.run.ready):
+                    return accepted_response(accepted.run.id, owner)
+            # Eviction must not unload the session while storage is checked.
+            release = recovery.pin(session_id)
+            try:
+                found = None if accepted is not None else await recovery.find_message(session_id, body.message_id)
+                if found is not None:
+                    run_id, accepted_question = found
+                    if accepted_question != question:
+                        raise HTTPException(status_code=409, detail="This message ID belongs to a different question.")
+                    return accepted_response(run_id, owner)
+                if await recovery.message_stopped(session_id, body.message_id):
+                    session.stop_message(body.message_id)
+            finally:
+                release()
         cursor = event_stream.cursor(session_id)
         run = runs.start(
             session_id,
@@ -670,8 +752,16 @@ def create_app(
                 owner=owner,
                 credential_id=request.state.auth_credential_id,
             ),
+            message_id=body.message_id,
         )
+        if body.message_id is not None:
+            session.latest_message = AcceptedMessage(body.message_id, question, run)
         if not await asyncio.shield(run.ready):
+            if run.cancelled and not run.shutdown:
+                # Stop arrived before acceptance. The browser reads the stopped outcome by run ID.
+                if not run.begun:
+                    session.publish({"type": "stopped", "run_id": run.id})
+                return accepted_response(run.id, owner)
             await run.wait()
         request_logger.info(
             "AI request started session_id=%s question_chars=%s question=%s files=%s",
@@ -697,7 +787,7 @@ def create_app(
     @app.put(
         "/sessions/{session_id}/schedule",
         status_code=status.HTTP_204_NO_CONTENT,
-        dependencies=[Depends(require_auth)],
+        dependencies=[Depends(require_auth), Depends(restore_session)],
     )
     async def update_schedule(
         session_id: str,
@@ -708,6 +798,9 @@ def create_app(
         if len(request.schedule_yaml.encode("utf-8")) > settings.max_schedule_bytes:
             raise HTTPException(status_code=413, detail="The schedule is too large for the AI service.")
         store.update_schedule(session_id, owner, request.schedule_yaml)
+        # A retry repeats the same update, so the browser can send it again until it is saved.
+        if not await recovery.save(session_id):
+            raise HTTPException(status_code=503, detail="AI message recovery is temporarily unavailable.")
         response = Response(status_code=status.HTTP_204_NO_CONTENT)
         refresh_owner_cookie(response, owner)
         return response
@@ -715,7 +808,7 @@ def create_app(
     @app.post(
         "/sessions/{session_id}/proposal/approve",
         response_model=ProposalResponse,
-        dependencies=[Depends(require_auth)],
+        dependencies=[Depends(require_auth), Depends(restore_session)],
     )
     async def approve_proposal(
         session_id: str,
@@ -725,25 +818,27 @@ def create_app(
     ) -> ProposalResponse:
         """Return the proposed schedule once the browser proves it holds the base revision."""
         approval = store.approve_proposal(session_id, owner, request.base_sha256)
-        await record_decision(approval.run_id, approval.decision)
+        # The decision already took effect, so a failed save is reported rather than refused.
+        history_saved = await recovery.record_decision(session_id, approval.run_id, approval.decision)
         if approval.schedule_yaml is None:
             raise HTTPException(status_code=409, detail="The proposed schedule is no longer valid.")
         refresh_owner_cookie(response, owner)
-        return ProposalResponse(schedule_yaml=approval.schedule_yaml)
+        return ProposalResponse(schedule_yaml=approval.schedule_yaml, history_saved=history_saved)
 
     @app.post(
         "/sessions/{session_id}/proposal/reject",
-        status_code=status.HTTP_204_NO_CONTENT,
-        dependencies=[Depends(require_auth)],
+        response_model=ProposalRejectionResponse,
+        dependencies=[Depends(require_auth), Depends(restore_session)],
     )
     async def reject_proposal(
         session_id: str,
+        response: Response,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
-    ) -> Response:
+    ) -> ProposalRejectionResponse:
         """Drop the pending proposal at the user's request."""
-        await record_decision(store.discard_proposal(session_id, owner), "rejected")
-        response = Response(status_code=status.HTTP_204_NO_CONTENT)
+        run_id = store.discard_proposal(session_id, owner)
+        history_saved = await recovery.record_decision(session_id, run_id, "rejected")
         refresh_owner_cookie(response, owner)
-        return response
+        return ProposalRejectionResponse(history_saved=history_saved)
 
     return app

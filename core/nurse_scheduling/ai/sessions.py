@@ -23,6 +23,7 @@ import math
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import replace
+from typing import Any
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -82,10 +83,28 @@ class SessionStore:
         self._retained_bytes = 0
         self._session_bytes: dict[str, int] = {}
         self._on_retire: Callable[[str], None] | None = None
+        self._evictable: Callable[[str], bool] | None = None
 
     def on_retire(self, callback: Callable[[str], None]) -> None:
         """Register the cleanup that follows every dropped session."""
         self._on_retire = callback
+
+    def allow_eviction(self, evictable: Callable[[str], bool]) -> None:
+        """Let a full store unload idle sessions that recovery storage can restore."""
+        self._evictable = evictable
+
+    def _make_room(self) -> None:
+        """Unload the least recently used idle session at the session limit.
+
+        Sessions live for the whole recovery period, so without eviction a month of chats
+        would hold every slot. The unloaded session loses only its uploads, downloads, and
+        finished optimizer results, as after a restart.
+        """
+        if self._evictable is None or len(self._sessions) < self._settings.max_sessions:
+            return
+        idle = [session for session in self._sessions.values() if not session.active and self._evictable(session.id)]
+        if idle:
+            self._retire(min(idle, key=lambda session: session.last_used).id)
 
     @property
     def retained_bytes(self) -> int:
@@ -180,6 +199,7 @@ class SessionStore:
     def create(self, owner_token: str, schedule_yaml: str) -> AgentSession:
         """Create a session after pruning expired entries."""
         self._prune_expired()
+        self._make_room()
         if len(self._sessions) >= self._settings.max_sessions:
             raise HTTPException(status_code=429, detail="The AI service has reached its session limit.")
         self._require_capacity(_text_bytes(schedule_yaml))
@@ -194,6 +214,42 @@ class SessionStore:
         self._sessions[session.id] = session
         self._recount(session)
         return session
+
+    def recovery_state(self, session_id: str) -> tuple[str, float, dict[str, Any]]:
+        """Capture the owner, wall-clock expiry, and state that restore needs."""
+        session = self._sessions[session_id]
+        expires_at = time.time() + max(0.0, session.expires_at - time.monotonic())
+        return session.owner_token, expires_at, session.recovery_state()
+
+    def restore(self, session_id: str, owner_token: str, state: dict[str, Any], expires_at: float) -> AgentSession:
+        """Load a saved session with its stored expiry.
+
+        Raises:
+            HTTPException: With status 404 when it expired, or 429 when no slot or retention budget is free.
+        """
+        self._prune_expired()
+        remaining = expires_at - time.time()
+        if remaining <= 0:
+            raise HTTPException(status_code=404, detail="Chat session not found.")
+        self._make_room()
+        if len(self._sessions) >= self._settings.max_sessions:
+            raise HTTPException(status_code=429, detail="The AI service has reached its session limit.")
+        session = AgentSession.restored(
+            session_id,
+            owner_token,
+            time.monotonic() + remaining,
+            state,
+            event_stream=self._event_stream,
+        )
+        self._require_capacity(_session_bytes(session))
+        self._sessions[session_id] = session
+        self._recount(session)
+        return session
+
+    def discard(self, session_id: str) -> None:
+        """Drop a session that was never handed to a client."""
+        if session_id in self._sessions:
+            self._retire(session_id)
 
     def begin(self, session_id: str, owner_token: str | None, *, run_id: str | None = None) -> RunSnapshot:
         """Reserve the current conversation version for one foreground run."""
@@ -402,13 +458,18 @@ class SessionStore:
         session = self._sessions.get(session_id)
         if session is None or owner_token is None or session.owner_token != owner_token:
             raise HTTPException(status_code=404, detail="Chat session not found.")
+        session.last_used = time.monotonic()
         return session
+
+    def _retire(self, session_id: str) -> None:
+        """Drop one session and everything keyed by it."""
+        self._sessions.pop(session_id).close_events()
+        self._forget(session_id)
+        if self._on_retire is not None:
+            self._on_retire(session_id)
 
     def _prune_expired(self) -> None:
         now = time.monotonic()
         expired_ids = [session_id for session_id, session in self._sessions.items() if session.expires_at <= now]
         for session_id in expired_ids:
-            self._sessions.pop(session_id).close_events()
-            self._forget(session_id)
-            if self._on_retire is not None:
-                self._on_retire(session_id)
+            self._retire(session_id)

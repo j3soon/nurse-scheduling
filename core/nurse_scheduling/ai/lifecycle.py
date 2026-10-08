@@ -53,11 +53,17 @@ class AgentRun:
     """One operation, from acceptance through cleanup, independent of its HTTP reader."""
 
     id: str = field(default_factory=lambda: str(uuid4()))
+    # The client message ID of a foreground run, which a named Stop and a retried POST match.
+    message_id: str | None = None
     task: asyncio.Task[None] = field(init=False)
     ready: asyncio.Future[bool] = field(default_factory=lambda: asyncio.get_running_loop().create_future())
     done: asyncio.Future[None] = field(default_factory=lambda: asyncio.get_running_loop().create_future())
     cancelled: bool = False
+    # The session started executing the run, so it publishes the run's terminal outcome.
+    begun: bool = False
     finishing: bool = False
+    # Service shutdown cancelled the run. Recovery reports it as a restart, not a user Stop.
+    shutdown: bool = False
     ready_to_start: asyncio.Event = field(default_factory=asyncio.Event)
 
     def cancel(self) -> None:
@@ -76,7 +82,8 @@ class SessionRuns:
 
     A foreground request is rejected while any run owns the session. Background
     follow-ups queue behind it. Stop cancels active and queued runs, without
-    affecting optimizer jobs that may complete later.
+    affecting optimizer jobs that may complete later. A Stop that names a client
+    message cancels only that message's run, so a delayed Stop cannot end a later run.
     """
 
     def __init__(self) -> None:
@@ -87,14 +94,19 @@ class SessionRuns:
         return bool(self._runs.get(session_id))
 
     def start(
-        self, session_id: str, execute_run: Callable[[AgentRun], Awaitable[None]], *, background: bool = False
+        self,
+        session_id: str,
+        execute_run: Callable[[AgentRun], Awaitable[None]],
+        *,
+        background: bool = False,
+        message_id: str | None = None,
     ) -> AgentRun:
         if self._closed:
             raise HTTPException(status_code=503, detail="The AI service is shutting down.")
         pending = self._runs.setdefault(session_id, [])
         if pending and not background:
             raise HTTPException(status_code=409, detail="This chat session already has an active response.")
-        run = AgentRun()
+        run = AgentRun(message_id=message_id)
         pending.append(run)
         if len(pending) == 1:
             run.ready_to_start.set()
@@ -121,13 +133,17 @@ class SessionRuns:
         run.task.add_done_callback(finished)
         return run
 
-    def stop(self, session_id: str) -> None:
+    def stop(self, session_id: str, message_id: str | None = None) -> None:
         for run in tuple(self._runs.get(session_id, ())):
-            run.cancel()
+            if message_id is None or run.message_id == message_id:
+                run.cancel()
 
     async def close(self) -> None:
         self._closed = True
         runs = [run for pending in self._runs.values() for run in pending]
         for run in runs:
-            run.cancel()
+            # A run that a user already stopped keeps its Stop outcome.
+            if not run.cancelled:
+                run.shutdown = True
+                run.cancel()
         await asyncio.gather(*(run.done for run in runs))

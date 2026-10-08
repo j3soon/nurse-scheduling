@@ -56,4 +56,22 @@ describe('chat transcript', () => {
     expect(completed[2].responseCompletedAt).toBe(40);
     expect(completed[2].status).toBeUndefined();
   });
+
+  it('replays runs in their original positions before later questions', () => {
+    const question: ChatMessage = { id: 'question', role: 'user', content: 'Optimize it.' };
+    const foreground = { ...createResponse('answer', 10, 'run'), content: 'Partial foreground reply' };
+    const background = { ...createResponse('review', 20, 'review'), content: 'Partial background reply' };
+    const later: ChatMessage = { id: 'later', role: 'user', content: 'Explain the score.' };
+    const laterAnswer = { ...createResponse('later-answer', 30, 'later-run'), status: undefined };
+    const transcript = [question, foreground, background, later, laterAnswer];
+
+    const cleared = resetRunMessages(transcript, ['review']);
+    const replayed = resetRunMessages(cleared, [], createResponse('answer', 10, 'run'), new Set(['answer']));
+    const resumed = beginResponse(replayed, createResponse('review', 40, 'review'));
+
+    expect(resumed.map(message => [message.id, message.content])).toEqual([
+      ['question', 'Optimize it.'], ['answer', ''], ['review', ''], ['later', 'Explain the score.'], ['later-answer', ''],
+    ]);
+    expect(resumed[2].status).toBe('pending');
+  });
 });

@@ -22,10 +22,11 @@
 import asyncio
 import hashlib
 import logging
-from collections.abc import AsyncGenerator, Callable, Sequence
+import time
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import aclosing
-from dataclasses import dataclass, field
-from typing import Literal, Protocol
+from dataclasses import asdict, dataclass, field
+from typing import Any, Literal, Protocol, TypeVar
 
 from fastapi import HTTPException
 from ruamel.yaml.error import YAMLError
@@ -45,7 +46,7 @@ from .context import (
     removal_event,
     retained_entries,
 )
-from .history import ChatHistory
+from .history import RECOVERY_UNAVAILABLE, RunKind, RunStatus
 from .lifecycle import AgentRun, RunSnapshot, SessionRuns
 from .optimizer import OptimizerArtifact, OptimizerCompletion, SessionOptimizer
 from .optimizer_tool import execute_optimizer_tool
@@ -67,6 +68,8 @@ from .transcript import (
     ProposalDecision,
     ProposalDecisionEntry,
     UserMessage,
+    entry_from_record,
+    entry_record,
 )
 from .validation import new_schedule_issues, validate_frontend_schedule_yaml
 from .workspace import (
@@ -91,7 +94,10 @@ SANDBOX_COMMAND_TIMEOUT_ERROR = (
 DOWNLOAD_RETENTION_WARNING = "The generated ZIP could not be retained because the service memory limit was reached."
 SANDBOX_RUN_TIMEOUT_ERROR = "The AI response timed out. Please try again."
 STALE_RUN_ERROR = "The schedule changed while this response was generated, so the response was discarded."
+BACKGROUND_RECOVERY_ERROR = "AI message recovery is unavailable, so the optimizer result was not reviewed."
+RECOVERY_SAVE_WARNING = "This response could not be saved for recovery after a service restart."
 logger = logging.getLogger("nurse_scheduling.ai")
+_Result = TypeVar("_Result")
 
 
 def schedule_revision(schedule_yaml: str) -> str:
@@ -125,6 +131,17 @@ class RunOutcome:
     completion: RunCompletion | None = None
     error_code: str | None = None
     terminal: AgentSessionTerminalEvent | None = None
+    # A Stop that arrived before its message keeps the never-run question out of the context.
+    keep_prompt: bool = True
+
+
+@dataclass(frozen=True)
+class AcceptedMessage:
+    """The newest client message ID of a session, so a retried POST reattaches to its run."""
+
+    message_id: str
+    question: str
+    run: AgentRun
 
 
 class SessionPersistence(Protocol):
@@ -150,6 +167,36 @@ class SessionPersistence(Protocol):
     def save_download(self, session_id: str, download_id: str, content: bytes) -> bool: ...
 
 
+class RunRecorder(Protocol):
+    """Run records and session state saved for restart recovery."""
+
+    @property
+    def enabled(self) -> bool: ...
+
+    async def start_run(
+        self,
+        session_id: str,
+        run_id: str,
+        prompt: str,
+        *,
+        model: str,
+        attachment_count: int,
+        kind: RunKind,
+        message_id: str | None,
+        credential_id: str | None,
+    ) -> bool: ...
+
+    async def finish_run(
+        self,
+        session_id: str,
+        run_id: str,
+        status: RunStatus,
+        error_code: str | None,
+        usage: TokenUsage | None,
+        entries: Sequence[AgentMessage],
+    ) -> bool: ...
+
+
 @dataclass(frozen=True)
 class SessionRuntime:
     """Shared service dependencies for foreground and optimizer-triggered runs."""
@@ -157,15 +204,18 @@ class SessionRuntime:
     settings: AiSettings
     store: SessionPersistence
     concurrency_limit: asyncio.Semaphore
-    history_log: ChatHistory | None
+    recorder: RunRecorder
     provider: ToolCapableChatProvider
     sandbox_factory: SandboxFactory
     session_optimizer: SessionOptimizer
 
 
-async def _write_history(history: ChatHistory, operation: str, *args) -> bool:
-    # asyncio cancellation and ASGI cancel scopes both wait for the history write.
-    task = asyncio.create_task(history.write(operation, *args))
+async def _complete(write: Awaitable[_Result]) -> _Result:
+    """Finish a recovery write even when the caller is cancelled.
+
+    asyncio cancellation and ASGI cancel scopes both wait for the write.
+    """
+    task = asyncio.ensure_future(write)
     try:
         return await asyncio.shield(task)
     except asyncio.CancelledError:
@@ -191,9 +241,58 @@ class AgentSession:
     # Retained source files keyed by upload ID, in upload order, and generated ZIPs keyed by run ID.
     uploads: dict[str, SandboxAttachment] = field(default_factory=dict)
     downloads: dict[str, bytes] = field(default_factory=dict)
+    # Last owner access, which orders eviction. A restored session keeps its stored expiry.
+    last_used: float = field(default_factory=time.monotonic)
+    latest_message: AcceptedMessage | None = None
+    # Named Stop requests, including those for messages that have not arrived yet.
+    stopped_message_ids: set[str] = field(default_factory=set)
     event_stream: SessionEventStream | None = field(default=None, repr=False)
     _listeners: list[Callable[[AgentSessionEvent], None]] = field(default_factory=list, repr=False)
     _events_closed: bool = False
+
+    def recovery_state(self) -> dict[str, Any]:
+        """Return the schedule, proposal, and conversation context that a restored session continues."""
+        return {
+            "schedule_yaml": self.schedule_yaml,
+            "transcript": [dict(zip(("type", "payload"), entry_record(entry))) for entry in self.transcript],
+            "pending_proposal": None if self.pending_proposal is None else asdict(self.pending_proposal),
+            "dropped_history_messages": self.dropped_history_messages,
+        }
+
+    @classmethod
+    def restored(
+        cls,
+        session_id: str,
+        owner_token: str,
+        expires_at: float,
+        state: dict[str, Any],
+        *,
+        event_stream: SessionEventStream | None,
+    ) -> "AgentSession":
+        """Rebuild a session from `recovery_state`. Uploads, downloads, and optimizer results are not saved."""
+        proposal = state["pending_proposal"]
+        return cls(
+            id=session_id,
+            owner_token=owner_token,
+            expires_at=expires_at,
+            schedule_yaml=state["schedule_yaml"],
+            revision=schedule_revision(state["schedule_yaml"]),
+            transcript=[entry_from_record(entry["type"], entry["payload"]) for entry in state["transcript"]],
+            dropped_history_messages=state["dropped_history_messages"],
+            pending_proposal=None if proposal is None else PendingProposal(**proposal),
+            event_stream=event_stream,
+        )
+
+    def accepted_message(self, message_id: str) -> AcceptedMessage | None:
+        """Return the newest message when it has this ID and its run started."""
+        accepted = self.latest_message
+        if accepted is None or accepted.message_id != message_id:
+            return None
+        ready = accepted.run.ready
+        return None if ready.done() and not ready.result() else accepted
+
+    def stop_message(self, message_id: str) -> None:
+        self.stopped_message_ids.add(message_id)
 
     def subscribe(self, listener: Callable[[AgentSessionEvent], None]) -> Callable[[], None]:
         """Observe public session events. HTTP serialization belongs to the caller."""
@@ -556,33 +655,36 @@ class AgentSession:
         dropped_history: int,
         background: bool,
     ) -> None:
-        """Resolve the transcript, write the audit once, then publish the terminal outcome."""
+        """Resolve the transcript, save the run record once, then publish the terminal outcome."""
         run.finishing = True
+        stopped = outcome.terminal is not None and outcome.terminal["type"] == "stopped"
         if outcome.completion is None:
             stop_reason = "aborted" if outcome.status == "cancelled" else "error"
             entries = output.interrupted_entries([entries[0], *self.agent.state.messages], stop_reason)
-            if outcome.terminal is not None and outcome.terminal["type"] == "stopped":
+            if stopped and outcome.keep_prompt and not run.shutdown:
                 # Keep the prompt so a follow-up can refer to it. Workspace changes and any
                 # proposal were discarded with the sandbox, which context.py accounts for.
                 runtime.store.finish(self.id, retained_entries(entries), snapshot=snapshot)
             else:
                 runtime.store.abort(self.id, snapshot)
+        if stopped and run.shutdown:
+            # The run stays running in recovery storage, so the restarted service reports
+            # a restart instead of a user Stop.
+            events.finish()
+            return
         if outcome.terminal is not None:
             events.emit(outcome.terminal)
         try:
             history_saved = None
             if history_started:
-                assert runtime.history_log is not None
                 # The prompt entry was written at run start.
-                history_saved = await _write_history(
-                    runtime.history_log,
-                    "finish_run",
-                    run.id,
-                    outcome.status,
-                    outcome.error_code,
-                    output.usage,
-                    entries[1:],
+                history_saved = await _complete(
+                    runtime.recorder.finish_run(
+                        self.id, run.id, outcome.status, outcome.error_code, output.usage, entries[1:]
+                    )
                 )
+                if not history_saved:
+                    events.emit({"type": "warning", "message": RECOVERY_SAVE_WARNING})
             if outcome.completion is not None:
                 self._publish_completion(
                     run, outcome.completion, output, events, runtime, dropped_history, history_saved, background
@@ -602,9 +704,9 @@ class AgentSession:
         artifact: OptimizerArtifact | None = None,
     ) -> None:
         """Own every run phase and finalize once, regardless of trigger or transport."""
+        run.begun = True
         session_id = self.id
-        settings, store = runtime.settings, runtime.store
-        history_log = runtime.history_log
+        settings, store, recorder = runtime.settings, runtime.store, runtime.recorder
         snapshot = (
             store.begin_background(session_id, run_id=run.id)
             if background
@@ -621,23 +723,29 @@ class AgentSession:
         events = RunEvents(run.id, self.publish)
 
         try:
-            if history_log is not None:
-                # Cancellation during start still waits for its matching audit finalization.
+            if recorder.enabled:
+                # Cancellation during start still waits for its matching run record.
                 history_started = True
-                history_started = await _write_history(
-                    history_log,
-                    "start_run",
-                    run.id,
-                    session_id,
-                    credential_id,
-                    question,
-                    settings.provider_model,
-                    len(snapshot.uploads),
+                history_started = await _complete(
+                    recorder.start_run(
+                        session_id,
+                        run.id,
+                        question,
+                        model=settings.provider_model,
+                        attachment_count=len(snapshot.uploads),
+                        kind="background" if background else "foreground",
+                        message_id=run.message_id,
+                        credential_id=credential_id,
+                    )
                 )
                 if not history_started:
-                    raise HTTPException(status_code=503, detail="AI chat history is temporarily unavailable.")
+                    raise HTTPException(status_code=503, detail=RECOVERY_UNAVAILABLE)
             events.emit({"type": "run_start", "trigger": "optimizer" if background else "user"})
             run.ready.set_result(True)
+            if run.message_id is not None and run.message_id in self.stopped_message_ids:
+                # A Stop for this message arrived first, so its question never runs.
+                outcome = RunOutcome(terminal={"type": "stopped"}, keep_prompt=False)
+                return
             if not background:
                 artifact = await runtime.session_optimizer.latest_result_artifact(session_id)
             messages, dropped_history, context_chars = self._prepare_run(
@@ -656,10 +764,7 @@ class AgentSession:
             outcome = RunOutcome(
                 "failed",
                 error_code="history_unavailable",
-                terminal={
-                    "type": "error",
-                    "message": "AI chat history is unavailable, so the optimizer result was not reviewed.",
-                },
+                terminal={"type": "error", "message": BACKGROUND_RECOVERY_ERROR},
             )
         except (ProviderError, SandboxError) as exc:
             if isinstance(exc, ProviderError):

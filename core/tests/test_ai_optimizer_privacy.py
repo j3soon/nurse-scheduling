@@ -85,6 +85,23 @@ def test_optimizer_submission_matches_frontend_basic_anonymization() -> None:
     assert "Bob" not in prepared.submission_yaml
 
 
+def test_optimizer_generates_default_layout_only_for_workbook_submission() -> None:
+    payload = base_schedule_payload()
+    del payload["export"]
+    payload["dates"]["groups"].append({"id": "FREEDAY", "members": ["2026-01-01"], "description": ""})
+    source = schedule_yaml(payload)
+    outbound = parse_schedule(prepare_optimizer_schedule(source, 1_000_000).submission_yaml)
+    assert "export" not in parse_schedule(source)
+    layout = outbound["export"]
+    assert any(rule.get("appendText") == " [X]" for rule in layout["formatting"])
+    assert any(rule.get("dates") == ["FREEDAY"] for rule in layout["formatting"])
+    assert [rule["header"] for rule in layout["extraRows"]] == ["D Count", "N Count", "WORK Count"]
+    assert "OFF (FREEDAY)" in [rule["header"] for rule in layout["extraColumns"]]
+    payload["export"] = {"formatting": []}
+    custom = parse_schedule(prepare_optimizer_schedule(schedule_yaml(payload), 1_000_000).submission_yaml)
+    assert custom["export"] == {"formatting": []}
+
+
 def test_optimizer_workbook_restores_ids_before_download_and_attachment() -> None:
     prepared = prepare_optimizer_schedule(named_schedule(), 1_000_000)
     restored = restore_people_ids(

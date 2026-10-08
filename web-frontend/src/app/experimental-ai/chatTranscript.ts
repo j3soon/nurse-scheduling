@@ -56,17 +56,32 @@ export function applyResponseEvent(
 
 // A recovery snapshot replaces only its runs. Extra IDs cover foreground output
 // created before POST acknowledged its run, while the original prompt stays.
+// Replayed output returns to its original position, before any later question:
+// `response` takes the place of the first replaced message, and a background
+// answer, whose ID is its run ID, stays as an empty answer that the replay fills.
 export function resetRunMessages(
   messages: ChatMessage[], runIds: readonly string[], response?: ChatMessage, messageIds?: ReadonlySet<string>,
 ): ChatMessage[] {
-  const retained = messages.filter(message => (
-    !runIds.includes(message.runId ?? message.id) && !messageIds?.has(message.id)
-  ));
-  return response ? [...retained, response] : retained;
+  const result: ChatMessage[] = [];
+  let placed = response === undefined;
+  for (const message of messages) {
+    const runId = message.runId ?? message.id;
+    if (!runIds.includes(runId) && !messageIds?.has(message.id)) {
+      result.push(message);
+    } else if (!placed) {
+      result.push(response!);
+      placed = true;
+    } else if (response === undefined && message.role === 'assistant' && message.id === runId
+      && !result.some(kept => kept.id === message.id)) {
+      result.push(createResponse(message.id, message.responseStartedAt ?? Date.now(), message.runId));
+    }
+  }
+  return placed ? result : [...result, response!];
 }
 
-export function restoreTranscript(messages: ChatMessage[]): ChatMessage[] {
-  return messages.map(message => message.status === 'pending'
+// A pending answer stopped with the old page, except the one a resumed request reattaches to.
+export function restoreTranscript(messages: ChatMessage[], resumedId?: string): ChatMessage[] {
+  return messages.map(message => message.status === 'pending' && message.id !== resumedId
     ? { ...message, status: 'failed', activity: interruptRunningTools(message.activity ?? []) }
     : message);
 }

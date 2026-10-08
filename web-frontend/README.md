@@ -75,6 +75,11 @@ environment is documented below.
 
 ## Hosting on Netlify
 
+Netlify starts with a blobless clone. The build downloads missing historical
+objects before calculating the frontend version, while preserving the selected
+commit. Every build runs the fetch, while cached builds reuse existing objects.
+This makes Git version hash lengths align with the backend's full clone.
+
 The root `netlify.toml` builds the static frontend into
 `web-frontend/out` and publishes the documentation under `/docs`. After linking
 the repository to a Netlify project, open **Project configuration → Environment

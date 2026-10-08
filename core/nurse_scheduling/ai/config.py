@@ -128,9 +128,8 @@ class AiSettings:
     optimizer_max_runs_per_session: int = 50
     optimizer_max_result_bytes: int = 10_000_000
     optimizer_result_cache_bytes: int = 100_000_000
-    session_ttl_seconds: int = 172_800
+    session_ttl_seconds: int = 30 * 24 * 60 * 60
     history_postgres_url: str = ""
-    history_retention_days: int = 30
     request_log_enabled: bool = True
     """Whether incoming question previews are logged, which records chat text."""
     max_sessions: int = 1000
@@ -211,9 +210,8 @@ class AiSettings:
             optimizer_max_runs_per_session=_read_positive_int("AI_OPTIMIZER_MAX_RUNS_PER_SESSION", 50),
             optimizer_max_result_bytes=_read_positive_int("AI_OPTIMIZER_MAX_RESULT_BYTES", 10_000_000),
             optimizer_result_cache_bytes=_read_positive_int("AI_OPTIMIZER_RESULT_CACHE_BYTES", 100_000_000),
-            session_ttl_seconds=_read_positive_int("AI_SESSION_TTL_SECONDS", 172_800),
+            session_ttl_seconds=_read_positive_int("AI_SESSION_TTL_SECONDS", 30 * 24 * 60 * 60),
             history_postgres_url=os.getenv("AI_HISTORY_POSTGRES_URL", "").strip(),
-            history_retention_days=_read_positive_int("AI_HISTORY_RETENTION_DAYS", 30),
             request_log_enabled=_read_bool("AI_REQUEST_LOG_ENABLED", True),
             max_sessions=_read_positive_int("AI_MAX_SESSIONS", 1000),
             max_session_bytes=_read_positive_int("AI_MAX_SESSION_BYTES", 256 * 1024 * 1024),

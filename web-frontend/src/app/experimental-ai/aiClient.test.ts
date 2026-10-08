@@ -95,7 +95,7 @@ describe('AI client', () => {
 
     await expect(getCapabilities()).resolves.toEqual({
       auth: null,
-      session_retention_seconds: 172800,
+      session_retention_seconds: 2592000,
       file_attachments: {
         enabled: true,
         max_files: 5,
@@ -420,7 +420,9 @@ describe('AI client', () => {
     const signal = new AbortController().signal;
 
     expect(await uploadFiles('session-id', [image], 'stream-token', undefined, signal)).toEqual([uploaded]);
-    expect(await sendMessage('session-id', 'What is shown?', signal, 'stream-token')).toBe('run-1');
+    expect(await sendMessage(
+      'session-id', 'What is shown?', signal, 'stream-token', undefined, { messageId: 'message-1' },
+    )).toBe('run-1');
 
     const [uploadUrl, uploadRequest] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(uploadUrl).toBe('https://api.nursescheduling.org/ai/sessions/session-id/uploads');
@@ -432,9 +434,55 @@ describe('AI client', () => {
       method: 'POST',
       credentials: 'include',
       headers: { Accept: 'application/json', 'Content-Type': 'application/json', Authorization: 'Bearer stream-token' },
-      body: JSON.stringify({ message: 'What is shown?' }),
-      signal,
+      body: JSON.stringify({ message: 'What is shown?', message_id: 'message-1' }),
+      signal: expect.any(AbortSignal),
     });
+  });
+
+  it('reattaches after a lost acknowledgement without asking a new question', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ run_id: 'run-1' }), { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const onConnectionChange = vi.fn();
+
+    await expect(sendMessage('session-id', 'Question', new AbortController().signal, null, undefined, {
+      messageId: 'message-1', onConnectionChange,
+    })).resolves.toBe('run-1');
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const bodies = fetchMock.mock.calls.map(([, request]) => JSON.parse((request as RequestInit).body as string));
+    expect(bodies).toEqual([
+      { message: 'Question', message_id: 'message-1' },
+      { message: 'Question', message_id: 'message-1' },
+    ]);
+    expect(onConnectionChange.mock.calls).toEqual([[false], [true]]);
+  });
+
+  it('saves Stop before retrying a request whose response never arrived', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce(new Response(null, { status: 202 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ run_id: 'run-1' }), { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(sendMessage('session-id', 'Question', new AbortController().signal, null, undefined, {
+      messageId: 'message-1', shouldStop: () => true,
+    })).resolves.toBe('run-1');
+
+    // The server reports the accepted run's outcome, or stops a question it never received.
+    expect(fetchMock.mock.calls.map(([url]) => String(url).split('/').at(-1))).toEqual(['messages', 'stop', 'messages']);
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body as string)).toEqual({ message_id: 'message-1' });
+  });
+
+  it('fails a stopped request when the server rejects its Stop', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'Chat session not found.' }), { status: 404 })));
+
+    await expect(sendMessage('session-id', 'Question', new AbortController().signal, null, undefined, {
+      messageId: 'message-1', shouldStop: () => true,
+    })).rejects.toMatchObject({ status: 404 });
   });
 
   it('rejects an upload or message the backend refuses', async () => {
@@ -836,14 +884,14 @@ describe('AI client', () => {
 
   it('approves a proposal with the revision the browser holds', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(
-      JSON.stringify({ schedule_yaml: 'description: approved\n' }),
+      JSON.stringify({ schedule_yaml: 'description: approved\n', history_saved: false }),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
     ));
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(approveProposal('session-id', 'description: test', 'proposal-token')).resolves.toBe(
-      'description: approved\n',
-    );
+    await expect(approveProposal('session-id', 'description: test', 'proposal-token')).resolves.toEqual({
+      scheduleYaml: 'description: approved\n', historySaved: false,
+    });
     expect(fetchMock).toHaveBeenCalledWith('https://api.nursescheduling.org/ai/sessions/session-id/proposal/approve', {
       method: 'POST',
       credentials: 'include',
@@ -864,10 +912,12 @@ describe('AI client', () => {
   });
 
   it('rejects a proposal and refreshes a session schedule', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ history_saved: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    await rejectProposal('session-id', 'session-token');
+    await expect(rejectProposal('session-id', 'session-token')).resolves.toBe(true);
     await updateSessionSchedule('session-id', 'description: newer', 'session-token');
 
     expect(fetchMock.mock.calls[0][0]).toBe('https://api.nursescheduling.org/ai/sessions/session-id/proposal/reject');

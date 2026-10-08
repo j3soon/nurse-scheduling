@@ -111,3 +111,45 @@ def test_reaper_requires_e2b_api_key(monkeypatch):
 
     with pytest.raises(ValueError, match="E2B_API_KEY is required"):
         asyncio.run(reap_once(manager_factory=FakeCleanupManager))
+
+
+@pytest.mark.parametrize("exit_code", [0, 1, 2])
+def test_reaper_reports_build_release_and_flushes_on_exit(monkeypatch, exit_code):
+    from nurse_scheduling.ai.sandbox import reap
+
+    calls = []
+    monkeypatch.setattr(reap, "get_app_version", lambda: "v0.2.0-572-gbecfc27fb644")
+    monkeypatch.setattr(reap, "init_sentry", lambda version, *, app: calls.append((version, app)))
+    monkeypatch.setattr(reap, "flush_sentry", lambda: calls.append("flush"))
+
+    async def fake_reap_once():
+        if exit_code == 2:
+            raise ValueError("missing configuration")
+        return exit_code
+
+    monkeypatch.setattr(reap, "reap_once", fake_reap_once)
+
+    assert reap.main() == exit_code
+    assert calls == [("v0.2.0-572-gbecfc27fb644", "ai-reaper"), "flush"]
+
+
+def test_reaper_reports_cleanup_outcomes(monkeypatch):
+    from nurse_scheduling.ai.sandbox import reap
+
+    async def fake_reap_once():
+        return 0
+
+    monkeypatch.setattr(reap, "init_sentry", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(reap, "flush_sentry", lambda: None)
+    monkeypatch.setattr(reap, "reap_once", fake_reap_once)
+    # Other tests configure the AI service loggers in this process.
+    loggers = [logging.getLogger(name) for name in ("nurse_scheduling.ai", "nurse_scheduling.ai.sandbox")]
+    previous_levels = [logger.level for logger in loggers]
+    try:
+        for logger in loggers:
+            logger.setLevel(logging.NOTSET)
+        assert reap.main() == 0
+        assert logging.getLogger("nurse_scheduling.ai.sandbox.e2b_cleanup").isEnabledFor(logging.INFO)
+    finally:
+        for logger, level in zip(loggers, previous_levels, strict=True):
+            logger.setLevel(level)

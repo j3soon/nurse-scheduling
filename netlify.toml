@@ -1,7 +1,10 @@
 [build]
   publish = "web-frontend/out"
   command = """
-  set -e
+  set -eo pipefail
+  # Fetch full Git objects so frontend version hash lengths align with the backend.
+  git rev-list --objects --all --missing=print | sed -n 's/^?//p' | git fetch --quiet --no-filter origin --stdin
+
   rm -rf web-frontend/out
   rm -rf site
 

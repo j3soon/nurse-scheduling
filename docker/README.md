@@ -105,10 +105,10 @@ deliberately serve without AI authentication, set `AI_AUTH_REQUIRED=false` in
 `docker/.env` and leave both settings empty. Native runs leave required mode
 disabled, although setting either one still enables bearer authentication.
 
-Both Compose variants enable AI chat logging through a fixed private PostgreSQL
+Both Compose variants enable AI session recovery through a fixed private PostgreSQL
 service connection. The database uses the persistent `postgres-ai-data` volume
 and is not published on a host port. See
-[durable chat logging](https://dev.nursescheduling.org/docs/developer-guide/ai-assistant/#durable-chat-logging) for
+[session recovery storage](https://dev.nursescheduling.org/docs/developer-guide/ai-assistant/#session-recovery-storage) for
 retention and failure behavior.
 
 Cloudflared and NGINX share `tunnel`. NGINX and the API share `api`, which AI

@@ -196,7 +196,7 @@ export function isAuthenticationError(error: unknown): boolean {
 
 export const PRODUCTION_AI_API_URL = 'https://api.nursescheduling.org/ai';
 export const LOCAL_AI_API_URL = 'http://localhost:8001';
-export const DEFAULT_SESSION_RETENTION_SECONDS = 48 * 60 * 60;
+export const DEFAULT_SESSION_RETENTION_SECONDS = 30 * 24 * 60 * 60;
 
 export function getAiBaseUrl(): string {
   const configuredUrl = process.env.NEXT_PUBLIC_AI_API_URL?.trim().replace(/\/$/, '');
@@ -581,30 +581,99 @@ async function postMessage(
   authToken: string | null,
   endpoint: string,
   accept: string,
+  messageId?: string,
 ): Promise<Response> {
   const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/messages`, {
     method: 'POST',
     credentials: 'include',
     headers: authorizedHeaders(authToken, { Accept: accept, 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ message }),
+    body: JSON.stringify(messageId === undefined ? { message } : { message, message_id: messageId }),
     signal,
   });
   if (!response.ok) throw await responseError(response);
   return response;
 }
 
-/** Post a question. Upload its files first with `uploadFiles`, so the backend records them as their own event. */
+class AiConnectionError extends Error {}
+
+function waitForReconnect(delay: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const abort = () => { window.clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')); };
+    const timer = window.setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, delay);
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+  });
+}
+
+export interface SendMessageOptions {
+  // The client message ID. A repeated POST with it returns the accepted run instead of asking again.
+  messageId: string;
+  shouldStop?: () => boolean;
+  onConnectionChange?: (connected: boolean) => void;
+}
+
+/**
+ * Post a question and return its run ID. Upload its files first with `uploadFiles`, so the
+ * backend records them as their own event.
+ *
+ * A lost response can hide an accepted message, so connection failures retry with the same
+ * message ID. A Stop requested meanwhile is saved before the retry, so the server reports
+ * the run's real outcome instead of running the question.
+ */
 export async function sendMessage(
   sessionId: string,
   message: string,
   signal: AbortSignal,
   authToken: string | null,
   endpoint = getAiBaseUrl(),
+  { messageId, shouldStop, onConnectionChange }: SendMessageOptions = { messageId: crypto.randomUUID() },
 ): Promise<string> {
-  const response = await postMessage(sessionId, message, signal, authToken, endpoint, 'application/json');
-  const body = await response.json() as { run_id?: unknown };
-  if (typeof body.run_id !== 'string' || !body.run_id) throw new Error('The AI backend returned an invalid run ID.');
-  return body.run_id;
+  let retries = 0;
+  let stopSaved = false;
+  while (true) {
+    signal.throwIfAborted();
+    const connection = new AbortController();
+    const abort = () => connection.abort();
+    const resume = () => { if (document.visibilityState === 'visible') connection.abort(); };
+    signal.addEventListener('abort', abort, { once: true });
+    window.addEventListener('online', abort);
+    document.addEventListener('visibilitychange', resume);
+    try {
+      if (retries > 0 && !stopSaved && shouldStop?.()) {
+        try {
+          await stopSession(sessionId, authToken, endpoint, messageId, connection.signal);
+        } catch (error) {
+          if (error instanceof AiHttpError && error.status < 500) throw error;
+          throw new AiConnectionError('The AI connection is being restored.');
+        }
+        stopSaved = true;
+      }
+      let response: Response;
+      try {
+        response = await postMessage(
+          sessionId, message, connection.signal, authToken, endpoint, 'application/json', messageId,
+        );
+      } catch (error) {
+        // A retry can find another run still active, or the service restarting.
+        const retryable = !(error instanceof AiHttpError) || (retries > 0 && (error.status >= 500 || error.status === 409));
+        if (retryable) throw new AiConnectionError('The AI connection was interrupted.');
+        throw error;
+      }
+      const body = await response.json() as { run_id?: unknown };
+      if (typeof body.run_id !== 'string' || !body.run_id) throw new Error('The AI backend returned an invalid run ID.');
+      onConnectionChange?.(true);
+      return body.run_id;
+    } catch (error) {
+      if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+      if (!(error instanceof AiConnectionError)) throw error;
+      onConnectionChange?.(false);
+      await waitForReconnect(Math.min(5000, 250 * 2 ** retries++), signal);
+    } finally {
+      signal.removeEventListener('abort', abort);
+      window.removeEventListener('online', abort);
+      document.removeEventListener('visibilitychange', resume);
+    }
+  }
 }
 
 /** Compatibility consumer. The browser uses sendMessage and the session GET stream. */
@@ -687,15 +756,20 @@ export async function queueMessage(
   if (!response.ok) throw await responseError(response);
 }
 
+/** Stop the named message's run, or every run of the session when no message is named. */
 export async function stopSession(
   sessionId: string,
   authToken: string | null,
   endpoint = getAiBaseUrl(),
+  messageId?: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/stop`, {
     method: 'POST',
     credentials: 'include',
-    headers: authorizedHeaders(authToken),
+    headers: authorizedHeaders(authToken, messageId ? { 'Content-Type': 'application/json' } : undefined),
+    ...(messageId ? { body: JSON.stringify({ message_id: messageId }) } : {}),
+    ...(signal ? { signal } : {}),
   });
   if (!response.ok) throw await responseError(response);
 }
@@ -804,7 +878,7 @@ export async function approveProposal(
   scheduleYaml: string,
   authToken: string | null,
   endpoint = getAiBaseUrl(),
-): Promise<string> {
+): Promise<{ scheduleYaml: string; historySaved: boolean }> {
   const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/proposal/approve`, {
     method: 'POST',
     credentials: 'include',
@@ -813,22 +887,26 @@ export async function approveProposal(
   });
   if (!response.ok) throw await responseError(response);
 
-  const body = await response.json() as { schedule_yaml?: unknown };
-  if (typeof body.schedule_yaml !== 'string' || !body.schedule_yaml) {
+  const body = await response.json() as { schedule_yaml?: unknown; history_saved?: unknown };
+  if (typeof body.schedule_yaml !== 'string' || !body.schedule_yaml || typeof body.history_saved !== 'boolean') {
     throw new Error('The AI backend returned an invalid proposal.');
   }
-  return body.schedule_yaml;
+  return { scheduleYaml: body.schedule_yaml, historySaved: body.history_saved };
 }
 
+/** Reject the pending proposal and return whether recovery storage saved the rejection. */
 export async function rejectProposal(
   sessionId: string,
   authToken: string | null,
   endpoint = getAiBaseUrl(),
-): Promise<void> {
+): Promise<boolean> {
   const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/proposal/reject`, {
     method: 'POST',
     credentials: 'include',
     headers: authorizedHeaders(authToken),
   });
   if (!response.ok) throw await responseError(response);
+  const body = await response.json() as { history_saved?: unknown };
+  if (typeof body.history_saved !== 'boolean') throw new Error('The AI backend returned an invalid rejection.');
+  return body.history_saved;
 }
