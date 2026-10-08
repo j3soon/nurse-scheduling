@@ -71,6 +71,10 @@ destroys that state.
 
 Experimental AI controls must follow backend `/capabilities` responses. The
 backend remains authoritative for feature enablement and input limits.
+AI operation state belongs to `ChatLifecycle`. Finish only the operation that
+owns a completion, and derive busy and Stop state from its phases. Scope stream
+callbacks to their connection and other async completions to their conversation.
+Keep queued messages waiting until foreground and background work are both idle.
 AI chat does not require compatibility with older AI backend APIs. Update the
 client and server together when their contract changes. When auth is
 required, send the AI token through the shared authorized-header helper on

@@ -646,6 +646,7 @@ describe('ExperimentalAiPage', () => {
       callbacks: typeof backgroundCallbacks,
     ) => {
       backgroundCallbacks = callbacks;
+      await new Promise<void>(() => {});
     });
     const firstRender = render(<ExperimentalAiPage />);
 
@@ -799,6 +800,7 @@ describe('ExperimentalAiPage', () => {
       callbacks: typeof backgroundCallbacks,
     ) => {
       backgroundCallbacks = callbacks;
+      await new Promise<void>(() => {});
     });
     render(<ExperimentalAiPage />);
 
@@ -828,6 +830,7 @@ describe('ExperimentalAiPage', () => {
       callbacks: typeof backgroundCallbacks,
     ) => {
       backgroundCallbacks = callbacks;
+      await new Promise<void>(() => {});
     });
     render(<ExperimentalAiPage />);
 
@@ -857,6 +860,7 @@ describe('ExperimentalAiPage', () => {
       callbacks: typeof backgroundCallbacks,
     ) => {
       backgroundCallbacks = callbacks;
+      await new Promise<void>(() => {});
     });
     window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
       sessionId: 'restored-session',
@@ -1003,7 +1007,10 @@ describe('ExperimentalAiPage', () => {
       ], syncedSchedule: 'description: current schedule\n', proposalDiff: null,
     }));
     let background: StreamCallbacks | undefined;
-    mockStreamSessionEvents.mockImplementation(async (_id: string, callbacks: StreamCallbacks) => { background = callbacks; });
+    mockStreamSessionEvents.mockImplementation((_id: string, callbacks: StreamCallbacks) => {
+      background = callbacks;
+      return new Promise<void>(() => {});
+    });
     const download = vi.spyOn(chatExport, 'downloadChatExport').mockReturnValue('');
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
@@ -1059,6 +1066,7 @@ describe('ExperimentalAiPage', () => {
       callbacks: typeof backgroundCallbacks,
     ) => {
       backgroundCallbacks = callbacks;
+      await new Promise<void>(() => {});
     });
     render(<ExperimentalAiPage />);
 
@@ -1137,6 +1145,7 @@ describe('ExperimentalAiPage', () => {
       callbacks: typeof backgroundCallbacks,
     ) => {
       backgroundCallbacks = callbacks;
+      await new Promise<void>(() => {});
     });
     render(<ExperimentalAiPage />);
 
@@ -1177,6 +1186,7 @@ describe('ExperimentalAiPage', () => {
       callbacks: typeof backgroundCallbacks,
     ) => {
       backgroundCallbacks = callbacks;
+      await new Promise<void>(() => {});
     });
     window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
       sessionId: 'restored-session',
@@ -1205,6 +1215,74 @@ describe('ExperimentalAiPage', () => {
     expect(stored.messages[0].status).toBeUndefined();
   });
 
+  it('keeps a foreground response active when an older background completion is replayed', async () => {
+    const user = userEvent.setup();
+    let background: StreamCallbacks | undefined;
+    let finishForeground: (() => void) | undefined;
+    mockStreamSessionEvents.mockImplementation(async (_id, callbacks) => {
+      background = callbacks;
+      await new Promise<void>(() => {});
+    });
+    mockStreamMessage.mockImplementation(async () => {
+      await new Promise<void>(resolve => { finishForeground = resolve; });
+    });
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Keep working');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(finishForeground).toBeDefined());
+    act(() => background?.onDone?.('previous-turn'));
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled();
+    await act(async () => finishForeground?.());
+    expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+  });
+
+  it('sends queued input after a background review finishes', async () => {
+    const user = userEvent.setup();
+    let background: StreamCallbacks | undefined;
+    mockStreamSessionEvents.mockImplementation(async (_id, callbacks) => {
+      background = callbacks;
+      await new Promise<void>(() => {});
+    });
+    mockQueueMessage.mockRejectedValue(new MockAiHttpError('Not accepting steering', 409));
+    render(<ExperimentalAiPage />);
+    const input = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+    await user.type(input, 'Optimize');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    act(() => background?.onTurnStart?.('review', 'optimizer'));
+    await user.type(input, 'Explain the result');
+    fireEvent.submit(input.closest('form')!);
+    await waitFor(() => expect(mockQueueMessage).toHaveBeenCalledOnce());
+    expect(mockStreamMessage).toHaveBeenCalledOnce();
+    act(() => background?.onDone?.('review'));
+    await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(2));
+    expect(mockStreamMessage.mock.calls[1][1]).toBe('Explain the result');
+  });
+
+  it('ignores output and proposals from the previous conversation stream', async () => {
+    const user = userEvent.setup();
+    let background: StreamCallbacks | undefined;
+    mockStreamSessionEvents.mockImplementation(async (_id, callbacks) => {
+      background = callbacks;
+      await new Promise<void>(() => {});
+    });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    await user.click(screen.getByRole('button', { name: 'Start new chat' }));
+    act(() => {
+      background?.onTurnStart?.('old', 'optimizer');
+      background?.onDelta('Leaked old answer');
+      background?.onProposal?.('Old proposal');
+      background?.onEventId?.(900);
+    });
+    expect(screen.queryByText('Leaked old answer')).not.toBeInTheDocument();
+    expect(screen.queryByText('Old proposal')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+  });
+
   it('stops a background assistant turn through the session endpoint', async () => {
     const user = userEvent.setup();
     let backgroundCallbacks: {
@@ -1217,6 +1295,7 @@ describe('ExperimentalAiPage', () => {
       callbacks: typeof backgroundCallbacks,
     ) => {
       backgroundCallbacks = callbacks;
+      await new Promise<void>(() => {});
     });
     render(<ExperimentalAiPage />);
 
@@ -1249,6 +1328,7 @@ describe('ExperimentalAiPage', () => {
         callbacks: typeof backgroundCallbacks,
       ) => {
         backgroundCallbacks = callbacks;
+      await new Promise<void>(() => {});
       });
       render(<ExperimentalAiPage />);
 
@@ -1289,6 +1369,7 @@ describe('ExperimentalAiPage', () => {
       callbacks: typeof backgroundCallbacks,
     ) => {
       backgroundCallbacks = callbacks;
+      await new Promise<void>(() => {});
     });
     render(<ExperimentalAiPage />);
 
@@ -2338,6 +2419,20 @@ describe('ExperimentalAiPage', () => {
 
       expect(await screen.findByText('The schedule changed after this proposal was created.')).toBeInTheDocument();
       expect(mockLoadFromYaml).not.toHaveBeenCalled();
+    });
+
+    it('does not apply an approval response to a new conversation', async () => {
+      let approve: ((value: { scheduleYaml: string; historySaved: boolean }) => void) | undefined;
+      mockApproveProposal.mockImplementation(() => new Promise<{ scheduleYaml: string; historySaved: boolean }>(resolve => { approve = resolve; }));
+      vi.spyOn(window, 'confirm').mockReturnValue(true);
+      const user = userEvent.setup();
+      render(<ExperimentalAiPage />);
+      await ask(user);
+      await user.click(screen.getByRole('button', { name: 'Approve' }));
+      await user.click(screen.getByRole('button', { name: 'Start new chat' }));
+      await act(async () => approve?.({ scheduleYaml: 'description: obsolete approval\n', historySaved: true }));
+      expect(mockLoadFromYaml).not.toHaveBeenCalled();
+      expect(screen.queryByText('The proposed schedule was applied. Undo reverts it in one step.')).not.toBeInTheDocument();
     });
 
     it('drops a rejected proposal', async () => {
