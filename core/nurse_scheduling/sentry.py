@@ -27,6 +27,7 @@ from urllib.parse import unquote_plus
 
 from fastapi import Request
 from fastapi.encoders import jsonable_encoder
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .anonymize_scheduling_data import anonymize_scheduling_data_in_yaml
 from .server.auth import describe_stream_token, extract_bearer_token
@@ -47,7 +48,7 @@ def _should_enable_sentry() -> bool:
     return "PYTEST_CURRENT_TEST" not in os.environ and "pytest" not in sys.modules
 
 
-def init_sentry(app_version: str, *, app: str = "backend") -> None:
+def init_sentry(app_version: str, *, app: str = "backend", api_version: str | None = None) -> None:
     """Initialize Sentry for one named application process."""
     if not _should_enable_sentry():
         return
@@ -76,6 +77,10 @@ def init_sentry(app_version: str, *, app: str = "backend") -> None:
         before_send_transaction=_redact_stream_token,
     )
     sentry_sdk.set_tag("app", app)
+    if api_version is not None:
+        # Event tags do not populate structured log attributes.
+        sentry_sdk.set_tag("api_version", api_version)
+        sentry_sdk.set_attribute("api_version", api_version)
 
 
 def _redact_stream_token(event: dict, _hint: dict) -> dict:
@@ -165,6 +170,18 @@ def tag_client_address(request: Request) -> None:
     except Exception:
         # This runs for every request, so a reporting failure must never fail one.
         sentry_logger.warning("[sentry:report] could not record a connection address", exc_info=True)
+
+
+class SentryClientAddressMiddleware:
+    """Tag HTTP requests without wrapping or buffering streamed responses."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http":
+            tag_client_address(Request(scope))
+        await self.app(scope, receive, send)
 
 
 def report_outage_recovery(operation: str, failures: int) -> None:

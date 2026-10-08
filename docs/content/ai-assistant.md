@@ -46,7 +46,7 @@ credentials are stored unencrypted per endpoint only when the user opts in.
 
 ```mermaid
 flowchart LR
-    Browser[Frontend<br/>current schedule] -->|POST schedule once| Session[AI backend<br/>in-memory session]
+    Browser[Frontend<br/>current schedule] -->|POST schedule once| Session[AI backend<br/>server-owned turn]
     Browser -->|POST question<br/>and optional attachments| Session
     Session -->|OpenAI-compatible chat request| Provider[Model provider]
     Provider -->|streamed deltas and tool calls| Session
@@ -59,17 +59,17 @@ flowchart LR
 ```
 
 The browser receives an HTTP-only owner cookie and an unguessable session UUID.
-Active sessions expire after 48 hours of inactivity by default. Sending or
+Active sessions expire after 30 days of inactivity by default. Sending or
 queueing a message, synchronizing a changed schedule, or deciding a proposal
 renews that window. The browser can retain the conversation within its current
 tab and verify the session without extending its lifetime.
 The backend stores the YAML snapshot and completed conversation turns. Each
 provider request includes a schedule summary, recent history, and the current
 question. The complete YAML stays in the sandbox until the model reads relevant
-content through a tool. Attachments are available only during the active turn. **Raw files
-and their contents are not included in subsequent chat history.** This is
-intentional to avoid retaining uploads or repeatedly consuming provider context
-tokens. History retains only attachment markers and filenames.
+content through a tool. Uploaded files remain in process memory for later turns
+until removed or the session expires. A server restart can remove them without
+prior notice. Conversation context keeps filenames and attachment markers,
+while recovery entries can retain inspected document content and tool output.
 The prompt gives the agent workspace paths for schedules and attachments.
 
 The server-side `optimizer` tool submits a copy of the current sandbox working
@@ -86,9 +86,20 @@ chat turns while retained. It is separate from user attachments. The browser
 keeps a separate replayable session event stream open for
 optimizer status and background turns. It retains the latest 1,000 background
 turn events and 100 optimizer progress updates per session for reconnects.
+Complete compacted output is kept separately. If the event cursor is too old,
+the stream sends a complete snapshot instead of an incomplete tail. PostgreSQL
+stores accepted questions and non-progress events before they are published.
+Consecutive text fragments are combined when writes fall behind the producer.
+The browser reattaches with the same client message ID and replaces partial
+output with the snapshot. It does not start another model turn.
 Foreground chat and optimization can proceed at the same time. Assistant turns
 remain serialized per session. The Stop control cancels either a foreground or
-background assistant turn. It does not cancel the independent optimizer run.
+background assistant turn and waits for the server outcome. It names the client
+message ID so a question stopped before arrival cannot start later. After a
+connection failure, the browser sends the Stop again before it reconnects. A delayed
+Stop for an earlier message does not cancel a later turn. A Stop without a
+message ID cancels every active assistant turn in the session. No Stop cancels
+the independent optimizer run.
 
 Sandbox and conversation state are separate. The backend copies the current
 schedule to `/workspace/schedule.yaml` and searchable schema documentation to
@@ -349,6 +360,12 @@ as one undo step. `POST /sessions/{id}/proposal/reject` drops it, and `PUT
 /sessions/{id}/schedule` replaces the snapshot when the schedule changed
 elsewhere in the app, which also drops any pending proposal.
 
+With PostgreSQL, each of these requests saves the session state for recovery.
+The server applies an approval or rejection before it saves it, so a failed
+save returns `history_saved: false` and the browser shows a warning. The next
+message saves the change again before it starts. A schedule update that is not
+saved returns HTTP 503, and the browser sends it again with the next message.
+
 Approval and rejection add a backend-only user-action note to model history.
 The rejection note says that every schedule change from the proposed turn was
 discarded and that the next turn starts from a fresh copy of the current
@@ -400,8 +417,7 @@ response cannot prove that the original operation did not take effect.
 | `AI_PROVIDER_BASE_URL` | Required | OpenAI-compatible API base URL. |
 | `AI_PROVIDER_API_KEY` | Required | Provider bearer token. Never commit it. |
 | `AI_PROVIDER_MODEL` | `local-model` | Model value sent to chat completions. |
-| `AI_HISTORY_POSTGRES_URL` | Unset | PostgreSQL connection string for durable chat logging. Compose sets its internal URL directly. |
-| `AI_HISTORY_RETENTION_DAYS` | `30` | Positive number of days to retain chat text and metadata. |
+| `AI_HISTORY_POSTGRES_URL` | Unset | PostgreSQL connection string for session recovery and turn metadata. Compose sets its internal URL directly. |
 | `AI_REQUEST_LOG_ENABLED` | `true` | Log a question preview for each incoming message, which records chat text. |
 | `AI_PROVIDER_TIMEOUT_SECONDS` | `180` | Provider request timeout. |
 | `AI_PROVIDER_MAX_ATTEMPTS` | `3` | Total attempts for a provider request that times out before streaming begins. |
@@ -429,8 +445,8 @@ response cannot prove that the original operation did not take effect.
 | `AI_SANDBOX_REAPER_INTERVAL_SECONDS` | `30` | Interval for reconciling overdue running or paused E2B sandboxes owned by this application. |
 | `AI_BACKEND_PORT` | `8001` | Port used by the development launcher. |
 | `AI_COOKIE_SECURE` | `0` in the launcher | Use `0` for local HTTP and `1` for public HTTPS. Secure deployments use `SameSite=None` so approved cross-site frontends can retain session ownership. |
-| `AI_SESSION_TTL_SECONDS` | `172800` | Idle session lifetime. Session activity renews it. |
-| `AI_MAX_SESSIONS` | `1000` | Maximum process-local sessions. |
+| `AI_SESSION_TTL_SECONDS` | `2592000` | Idle session lifetime. Session activity renews it. |
+| `AI_MAX_SESSIONS` | `1000` | Maximum process-local sessions. With PostgreSQL, a new or restored session unloads the least recently used idle session instead of getting HTTP 429. That session loses its uploads, downloads, and optimizer results, as after a restart. A session stays loaded while a response, optimizer run, or recovery write is unfinished, and after a failed save until a later save succeeds. |
 | `AI_MAX_SESSION_BYTES` | `268435456` | Chat text budget across live sessions. New sessions, schedule updates, and queued steering that would exceed it get HTTP 429. A completed turn instead drops its session's oldest complete exchanges and warns the browser. Size the process above this budget plus the newest turn and any pending proposal of each session. |
 | `AI_MAX_HISTORY_MESSAGES` | `1000` | Conversation messages retained per session. The effective minimum is two, so a completed question and answer survive when this is set to one. |
 | `AI_MAX_HISTORY_CHARS` | `200000` | Prompt budget for retained history. The newest messages that fit are sent, so a long session cannot outgrow the model context window. |
@@ -495,44 +511,118 @@ Use `compose.backend.memory.yml` in the same command when running the
 process-local optimization backend. The AI service itself remains process-local
 in both variants and listens on port `8001` inside the Compose network.
 
-### Durable chat logging
+### Session recovery storage
 
 Both Compose variants include PostgreSQL with the `postgres-ai-data` volume and
-no published database port. As with Redis, the private service connection is
-fixed in Compose and needs no setting in `docker/.env`. Native runs enable
-logging only when `AI_HISTORY_POSTGRES_URL` is set.
+no published database port. Native runs enable recovery storage when
+`AI_HISTORY_POSTGRES_URL` is set. Startup applies numbered migrations
+transactionally. Recovery is the only database history.
 
-Startup applies numbered SQL migrations transactionally. Chat sessions are
-recorded on their first message. Each turn stores the user text, assistant text
-(including partial answers), model, timestamps, attachment counts, available
-token usage, and a completed, failed, cancelled, or stale status. Writes reuse a
-server-generated turn UUID, also returned as `message_id`, to avoid duplicate
-rows. Sending another HTTP request creates another turn.
+Sessions store the hash of the browser owner cookie, the administrative
+credential ID when authentication is enabled, creation time, expiry, schedule,
+proposal, and conversation context. Foreground and background turns store the
+accepted question, model, credential ID, attachment count, token usage, error
+code, start and finish times, and execution status. Entries store answer text,
+reasoning, tool activity, and other replayable UI content. Binary uploads and
+downloads remain in memory. They can disappear without prior notice after a
+server restart or when a full service unloads an idle session. Keep original
+files.
 
-The database stores the administrative credential ID when authentication is
-enabled, never the owner cookie or bearer key. Raw attachments, extracted
-document text, schedule snapshots, tool arguments/results, and reasoning are
-excluded. User and assistant text can still contain staff information. Database
-access is for operators only. No history-reading API or browser viewer is added.
-Use a separate read-only database role for reporting. Question previews are
-logged separately to stdout and have their own deployment log retention. Set
-`AI_REQUEST_LOG_ENABLED=false` to stop logging chat text without silencing the
-rest of that logger, and configure the `nurse_scheduling.ai.requests` logger to
-redirect it. The built-in stdout handler is installed only when neither that
-logger nor the root logger already has one.
+This data can contain staff information, schedules, and inspected document
+content. Session and turn metadata excludes service bearer keys and the raw owner cookie. Database access
+is for operators only. Use a separate read-only role for inspection. Question
+previews are also logged to stdout when `AI_REQUEST_LOG_ENABLED` is enabled.
+Configure deployment log and backup retention separately.
 
-Startup fails if configured storage is unavailable. A failed initial write
-returns HTTP 503 before contacting the provider. A failed final write emits an
-operator error log and reports `history_saved: false` in a successful `done`
-event without discarding the live conversation. A process crash or final-write
-failure can leave a row in `running` with no final answer. These rows indicate
-incomplete logging, not a confirmed active request. There is no durable retry
-queue or recovery of partial output after a process crash.
+A session expires after `AI_SESSION_TTL_SECONDS` of inactivity, 30 days by
+default. Session activity renews the expiry. Startup and hourly maintenance
+delete expired sessions and their turns, entries, and Stop requests together.
+There is no database byte or message-count cap. A continuously active session
+can accumulate history beyond 30 days.
 
-Retention runs on startup and hourly, deleting turns older than
-`AI_HISTORY_RETENTION_DAYS` and expired empty session records. Configure backups
-and their retention separately. Active sessions, schedules, and proposals remain
-in memory, so stored history does not enable resuming a chat after restart.
+Startup fails if configured storage is unavailable. Failed initial recovery
+writes return HTTP 503 before contacting the provider. A failed final write
+keeps the live answer, emits a warning, and sets `history_saved: false` on
+`done`. This field describes recovery storage. The next save of that session
+retries the final write with the current state. A process crash recovers the
+accepted question and saved output but does not rerun interrupted model calls
+or mutating tools. Without PostgreSQL, recovery is process-local.
+
+Completed foreground replay and background snapshots have separate memory
+cache budgets, each set by `AI_MAX_SESSION_BYTES`. PostgreSQL supplies output
+that was evicted from these caches. Without PostgreSQL, the foreground cache
+keeps the newest turn of each session, and a background snapshot drops its
+oldest output. Active or unsaved foreground turns can exceed the budget. The
+caches do not limit database retention.
+
+### History entries and streaming
+
+Recovery storage separates durable content from live SSE fragments:
+
+| Table | Stored data |
+| --- | --- |
+| `chat_recovery_sessions` | Owner hash, expiry, schedule and conversation context, creation time, and credential ID. |
+| `chat_recovery_turns` | Accepted question, server turn UUID, client request ID, turn order, execution status, model, credential ID, attachment count, usage, error code, and lifecycle times. |
+| `chat_recovery_entries` | Typed content, stable `sequence`, creation time, owning turn, stream channel, first and last SSE cursors. |
+| `chat_recovery_stops` | Request IDs stopped before acceptance. |
+
+An entry keeps its identity when adjacent answer or reasoning fragments extend
+its text. Adjacent context-usage updates retain the latest value. Tool calls,
+proposals, terminal events, and writes from another channel start separate
+entries. A session row lock serializes entry writes across foreground and
+background streams. Repeated cursors do not append the same text twice.
+Terminal output, execution status, and final conversation context commit in
+one transaction. Background optimizer progress remains transient.
+
+`sequence` identifies a durable entry. `event_id` and `last_event_id` describe
+its range in one stream channel. They have different purposes. For example,
+an answer entry can cover cursors 2 through 40. Replaying its complete text as
+a delta to a browser that already received cursor 39 would duplicate output.
+Streams restored from PostgreSQL therefore send replacement snapshots when
+the browser is behind the restored cursor. Live streams still use bounded
+delta buffers. A cursor older than those buffers also receives a complete
+snapshot, loaded from PostgreSQL when necessary. Recovery selects entries by
+their last cursor so an entry crossing the replay tail boundary is retained.
+
+Migration `003_chat_recovery.sql` creates the complete recovery schema and
+drops the old audit tables, including their rows. Recovery starts with new
+sessions and accepted turns. Entries receive their identity and timestamp when
+first written. Each channel replays in cursor order.
+
+#### Alignment with Pi v1.0.0
+
+The reference is [Pi v1.0.0](https://github.com/earendil-works/pi/tree/a13d35a742c6ef8462812a28fbe1d8c8b7431c32),
+checked out locally under the ignored `artifacts/pi-v1.0.0/` directory.
+The survey covers both the coding agent and its separate durable package:
+
+- [SessionManager](https://github.com/earendil-works/pi/blob/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/coding-agent/src/core/session-manager.ts)
+  stores typed JSONL entries with an ID, parent ID, and timestamp.
+  [AgentSession](https://github.com/earendil-works/pi/blob/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/coding-agent/src/core/agent-session.ts)
+  saves regular messages on `message_end`.
+- The [agent loop](https://github.com/earendil-works/pi/blob/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/agent/src/agent-loop.ts)
+  updates the current assistant message as deltas arrive, then emits its final
+  message. The provider [EventStream](https://github.com/earendil-works/pi/blob/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/ai/src/utils/event-stream.ts)
+  queues live events and exposes a final result. That queue does not provide
+  persistent browser replay.
+- The [durable SQLite schema](https://github.com/earendil-works/pi/blob/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/durable/src/storage/sqlite/migrations.ts)
+  stores identified entries with commit order, tasks with explicit status,
+  and submissions with request IDs. Its [generation harness](https://github.com/earendil-works/pi/blob/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/durable/src/harness/generation.ts)
+  appends completed assistant messages as entries. This is a separate execution
+  framework, not the coding agent's JSONL persistence path.
+
+| Pi principle | Project choice and reason |
+| --- | --- |
+| Keep content entries separate from live deltas. | Store combined content blocks and rebuild complete replay snapshots. Retain UI event kinds so tool activity, proposals, and steering keep their existing frontend behavior. |
+| Give entries identity and order. | Use PostgreSQL identity sequences and timestamps. Keep per-channel SSE cursors for the browser protocol. |
+| Store task and submission state explicitly. | Keep accepted questions and unique client request IDs in turns. Store foreground and background execution status directly. The existing Stop records handle requests that arrive before acceptance. |
+| Save completed messages. | Also checkpoint partial content before publishing it. This preserves saved output after a crash, but still writes each published fragment and can rewrite growing JSON values. Fewer rows do not imply fewer writes. |
+| Support session branches and a general durable task framework. | Keep linear conversations and the existing agent and optimizer workers. Branches, generic tasks, watches, documents, and Pi's SQLite runtime add machinery this app does not need. |
+| Store content with associated metadata. | Keep one recovery history. Store reporting metadata on sessions and turns, without separate copies of questions and answers in audit tables. |
+
+This aligns the storage and replay principles without importing Pi's runtime
+or changing the frontend protocol. A browser disconnect leaves the accepted
+agent running. A backend process crash recovers saved content and marks
+interrupted work failed. It does not rerun model calls or mutating tools.
 
 ### Inspect chat history with pgAdmin
 
@@ -560,14 +650,14 @@ Use **Tools > Query Tool** to inspect the newest turns:
 ```sql
 SELECT
     turns.started_at,
-    sessions.auth_credential_id,
+    turns.auth_credential_id,
+    turns.kind,
+    turns.model,
     turns.status,
-    turns.user_message,
-    turns.assistant_message,
+    turns.question,
     turns.error_code,
     turns.usage
-FROM chat_turns AS turns
-JOIN chat_sessions AS sessions ON sessions.id = turns.session_id
+FROM chat_recovery_turns AS turns
 ORDER BY turns.started_at DESC
 LIMIT 100;
 ```

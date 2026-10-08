@@ -40,6 +40,7 @@ import httpx
 import redis
 
 from ..sentry import flush_sentry, init_sentry
+from ..service_logging import configure_service_logging
 from ..version import get_app_version
 from .config import DEFAULT_USAGE_METRICS_RETENTION_DAYS, MIN_USAGE_METRICS_RETENTION_DAYS
 from .usage_metrics import REPORT_LOCK_SECONDS, RedisUsageMetrics, WeeklyUsageReport, machine_timezone
@@ -586,7 +587,7 @@ def _run() -> int:
     arguments = parser.parse_args()
     if arguments.force and not arguments.once:
         parser.error("--force requires --once")
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    configure_service_logging(REPORTER_LOGGER)
     settings = UsageReportSettings.from_env()
     client = redis.Redis.from_url(
         settings.redis_url,

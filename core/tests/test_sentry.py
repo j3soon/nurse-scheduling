@@ -20,6 +20,7 @@
 # This test is mostly AI generated.
 
 import asyncio
+import subprocess
 import sys
 import types
 from datetime import datetime, timezone
@@ -239,6 +240,23 @@ def test_init_sentry_accepts_service_tag(monkeypatch):
     init_sentry("v1.2.3", app="ai-backend")
 
     assert tags == [("app", "ai-backend")]
+
+
+def test_init_sentry_adds_api_version_to_event_tags_and_log_attributes(monkeypatch):
+    tags = []
+    attributes = []
+    fake_sentry_sdk = types.SimpleNamespace(
+        init=lambda **_kwargs: None,
+        set_tag=lambda name, value: tags.append((name, value)),
+        set_attribute=lambda name, value: attributes.append((name, value)),
+    )
+    monkeypatch.setattr("nurse_scheduling.sentry._should_enable_sentry", lambda: True)
+    monkeypatch.setitem(sys.modules, "sentry_sdk", fake_sentry_sdk)
+
+    init_sentry("v1.2.3", app="ai-backend", api_version="0.2.0")
+
+    assert tags == [("app", "ai-backend"), ("api_version", "0.2.0")]
+    assert attributes == [("api_version", "0.2.0")]
 
 
 def test_stream_token_redaction_decodes_parameter_names():
@@ -475,3 +493,54 @@ def test_capture_invalid_request_ignores_unauthorized():
         monkeypatch.setitem(sys.modules, "sentry_sdk", fake_sentry_sdk)
 
         capture_invalid_request(request, 401, "Backend credentials are required.")
+
+
+def test_service_events_and_logs_include_build_release_and_api_version_with_real_sdk():
+    # A subprocess keeps SDK integrations and root logging isolated from pytest.
+    script = """
+import io
+import logging
+import os
+import sentry_sdk
+from nurse_scheduling import sentry
+from nurse_scheduling.service_logging import configure_service_logging
+
+os.environ.pop("SENTRY_RELEASE", None)
+captured = []
+captured_events = []
+original_init = sentry_sdk.init
+
+def capture_init(**kwargs):
+    original_before_send = kwargs["before_send"]
+    kwargs["before_send"] = lambda event, hint: captured_events.append(original_before_send(event, hint)) or event
+    return original_init(
+        **kwargs, transport=lambda envelope: None,
+        before_send_log=lambda log, hint: captured.append(log) or log,
+    )
+
+sentry_sdk.init = capture_init
+sentry._should_enable_sentry = lambda: True
+sentry.init_sentry("v0.2.0-572-gbecfc27f", app="ai-backend", api_version="0.2.0")
+logger = logging.getLogger("nurse_scheduling.ai")
+configure_service_logging(logger)
+assert logging.getLogger().level == logging.WARNING
+logger.info("service started")
+sentry_sdk.capture_message("service event")
+sentry.flush_sentry()
+record = next(log for log in captured if log["body"] == "service started")
+assert record["attributes"]["sentry.release"] == "nurse-scheduling@v0.2.0-572-gbecfc27f"
+assert record["attributes"]["api_version"] == "0.2.0"
+event = next(event for event in captured_events if event.get("message") == "service event")
+assert event["release"] == record["attributes"]["sentry.release"]
+assert event["tags"]["api_version"] == "0.2.0"
+
+root = logging.getLogger()
+handler = logging.StreamHandler(io.StringIO())
+root.handlers = [handler]
+root.setLevel(logging.ERROR)
+configure_service_logging(logger)
+assert root.handlers == [handler]
+assert root.level == logging.ERROR
+assert logger.level == logging.INFO
+"""
+    subprocess.run([sys.executable, "-c", script], check=True, capture_output=True, text=True)

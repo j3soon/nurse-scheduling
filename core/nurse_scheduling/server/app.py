@@ -32,7 +32,8 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from ..sentry import capture_invalid_request, init_sentry, tag_client_address
+from ..sentry import SentryClientAddressMiddleware, capture_invalid_request, init_sentry
+from ..service_logging import configure_service_logging
 from .api.optimize import events_router as optimize_events_router
 from .api.optimize import router as optimize_router
 from .auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry, create_stream_auth_dependency
@@ -71,15 +72,7 @@ UNEXPECTED_ERROR_VERSION_ADVICE = (
 ORIGIN_REGEX = r"^(http://(localhost|127\.0\.0\.1):[0-9]+|https://([a-zA-Z0-9-]+\.)?nursescheduling\.org)$"
 
 
-# Keep API output focused on server behavior. Solver progress is delivered to
-# clients through job events and remains available from the CLI's verbose logs.
-logging.basicConfig(
-    level=logging.WARNING,
-    format="%(asctime)s %(levelname)s %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 server_logger = logging.getLogger("nurse_scheduling.server")
-server_logger.setLevel(logging.INFO)
 
 
 def get_app_version() -> str:
@@ -151,6 +144,11 @@ def create_app(
 
     Explicit dependencies support isolated tests; omitted values come from configuration.
     """
+    app_version = get_app_version()
+    init_sentry(app_version, api_version=API_VERSION)
+    # Keep API output focused on server behavior. Solver progress is delivered to
+    # clients through job events and remains available from the CLI's verbose logs.
+    configure_service_logging(server_logger)
     settings = settings or ServerSettings.from_env()
     validate_solver_availability(settings.solver_ids)
     deployment_id = get_deployment_id()
@@ -158,7 +156,6 @@ def create_app(
     store = store or _create_store(settings, instance_id)
     runner = runner or OptimizationRunner()
     started_at = datetime.now(timezone.utc)
-    app_version = get_app_version()
     claimed_performance = (
         {
             "score": settings.claimed_performance.score,
@@ -205,7 +202,6 @@ def create_app(
     )
     maintenance = JobMaintenance(controller, interval_seconds=settings.maintenance_interval_seconds)
     suspicion_tracker = create_suspicion_tracker(settings, salt=suspicion_salt(settings, deployment_id))
-    init_sentry(app_version)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -299,11 +295,7 @@ def create_app(
             await run_in_threadpool(capture_invalid_request, request, exc.status_code, exc.detail)
         return await http_exception_handler(request, exc)
 
-    @app.middleware("http")
-    async def tag_sentry_client_address(request: Request, call_next):
-        """Record the connection address on every request's events."""
-        tag_client_address(request)
-        return await call_next(request)
+    app.add_middleware(SentryClientAddressMiddleware)
 
     # Added before CORS so the CORS layer stays outermost and still decorates a
     # rejected oversize request.

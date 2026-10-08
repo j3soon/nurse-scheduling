@@ -403,6 +403,12 @@ class SessionOptimizer:
                 return job.artifact
             return None
 
+    def has_unfinished_run(self, session_id: str) -> bool:
+        """Report whether retiring the session would cancel one of its runs."""
+        return session_id in self._starting or any(
+            job.session_id == session_id and not _is_terminal(job.payload) for job in self._jobs.values()
+        )
+
     def forget_session(self, session_id: str) -> None:
         """Drop every record of a retired chat session.
 

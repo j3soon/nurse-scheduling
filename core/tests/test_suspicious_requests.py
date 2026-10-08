@@ -87,6 +87,7 @@ def captured(monkeypatch):
         types.SimpleNamespace(
             # `create_app` initializes Sentry, which this fake accepts and discards.
             init=lambda **kwargs: None,
+            set_attribute=lambda name, value: None,
             # Every request records the address it connected from before routing.
             set_tag=lambda name, value: tags.__setitem__(name, value),
             new_scope=new_scope,

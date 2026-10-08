@@ -96,7 +96,16 @@ async function mockProposingBackend(page: Page): Promise<{ approvals: number; re
         status: 200,
         contentType: 'application/json',
         headers: corsHeaders,
-        body: JSON.stringify({ schedule_yaml: PROPOSED_YAML }),
+        body: JSON.stringify({ schedule_yaml: PROPOSED_YAML, history_saved: true }),
+      });
+      return;
+    }
+    if (request.url().endsWith('/proposal/reject')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: corsHeaders,
+        body: JSON.stringify({ history_saved: true }),
       });
       return;
     }

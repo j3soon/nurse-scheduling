@@ -24,7 +24,9 @@ import logging
 import os
 from collections.abc import Callable
 
-from ...sentry import init_sentry
+from ...sentry import flush_sentry, init_sentry
+from ...service_logging import configure_service_logging
+from ...version import get_app_version
 from .e2b_cleanup import E2BSandboxCleanupManager
 
 logger = logging.getLogger("nurse_scheduling.ai.sandbox.reap")
@@ -86,13 +88,16 @@ async def reap_once(
 
 def main() -> int:
     """Run one cleanup pass for use by cron or a platform scheduler."""
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    init_sentry(os.getenv("APP_VERSION", "e2b-reaper"), app="ai-backend")
+    init_sentry(get_app_version(), app="ai-reaper")
+    # The parent logger also reports each kill outcome from the cleanup manager.
+    configure_service_logging(logging.getLogger("nurse_scheduling.ai.sandbox"))
     try:
         return asyncio.run(reap_once())
     except ValueError as error:
         logger.error("E2B sandbox reaper configuration invalid error=%s", error)
         return 2
+    finally:
+        flush_sentry()
 
 
 if __name__ == "__main__":

@@ -888,5 +888,34 @@
         "note": "Adjacent full-prompt prefixes. Without the section, every attempt treated the earlier download as lost after finding no ZIP in the new VM. An earlier wording that only said the ZIP is kept also failed 0/3. Stating that the button stays available while the next VM lacks the ZIP passes 3/3."
       }
     ]
+  },
+  {
+    "id": "new-schedule-guide",
+    "file": "steps/new-schedule-guide.md",
+    "cases": [
+      "new-schedule-qualified-slots",
+      "guide-start-from-empty-schedule"
+    ],
+    "hypothesis": "Reads the real-schedule guide and explains qualified slots before constructing a new schedule.",
+    "sha256": "444893d2a22a17a3babfa6b58aa67025e9cdbbce7c5b765dfe20a99d364d6250",
+    "evidence": [
+      {
+        "case": "new-schedule-qualified-slots",
+        "input_sha256": "6091c105c949f727999aebe112c6fe69032a8d105d6e09b4c593da47fbc43b7e",
+        "before": "1/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "guide-start-from-empty-schedule",
+            "input_sha256": "420821ec433cd278f58207913181975612c40c00f985b0ec8587c2346b945ace",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Adjacent full-prompt prefixes. Without this section, two attempts did not read the real-schedule guide or explain the qualified slots. With it, all three read the guide and explained the D+, E+, and N+ pattern before editing. The empty-schedule construction control stays correct."
+      }
+    ]
   }
 ]

@@ -61,6 +61,13 @@ the smallest test input that reproduces the problem. Remove incidental names,
 dates, and roster size unless they cause the failure. Preserve the production
 tool contract and relevant turn boundaries.
 
+Reproduce transport, cancellation, and serialization defects with deterministic
+client, server, or browser tests before changing prompts. Compare accepted
+questions, completed model history, and the displayed or exported chat separately.
+A lost stream acknowledgement does not establish that execution stopped. Cover
+the relevant timing boundary and assert both recovered output and one execution
+of side effects. Use model evaluations for decisions that the model controls.
+
 Build a synthetic, non-sensitive testcase instead of copying trace data.
 Preserve the structure, ambiguity, formatting, and value relationships that
 cause the failure. Replacing names alone may leave sensitive data elsewhere.
