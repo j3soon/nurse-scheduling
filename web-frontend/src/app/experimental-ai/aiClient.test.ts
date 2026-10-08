@@ -620,6 +620,38 @@ describe('AI client', () => {
     expect(cursor).toHaveBeenCalledExactlyOnceWith(5);
   });
 
+  it.each([
+    { type: 'session_snapshot', id: 0 },
+    { type: 'session_snapshot', id: 3 },
+    { type: 'session_snapshot', id: 4 },
+    { type: 'turn_snapshot', id: 3 },
+    { type: 'turn_snapshot', id: 4 },
+  ])('accepts $type at cursor $id when the stored cursor is 4', async ({ type, id }) => {
+    const events = id === 0 ? [] : [{ type: 'delta', data: { text: 'Recovered answer' } }];
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      `id: ${id}\nevent: ${type}\ndata: ${JSON.stringify({ events })}\n\n`,
+      ...(id > 0 ? [`id: ${id}\nevent: delta\ndata: {"text":"duplicate"}\n\n`] : []),
+      `id: ${id + 1}\nevent: delta\ndata: {"text":"New answer"}\n\n`,
+      `id: ${id + 2}\nevent: done\ndata: {"message_id":"new-turn"}\n\n`,
+    ])));
+    const delta = vi.fn();
+    const replay = vi.fn();
+    const cursor = vi.fn();
+    const done = vi.fn();
+    const callbacks = { lastEventId: 4, onDelta: delta, onReplay: replay, onEventId: cursor, onDone: done };
+    const signal = new AbortController().signal;
+
+    if (type === 'session_snapshot') await streamSessionEvents('session', callbacks, signal, null);
+    else await streamMessage('session', 'Question', callbacks, signal, null);
+
+    expect(replay).toHaveBeenCalledExactlyOnceWith(events);
+    expect(delta.mock.calls.map(([text]) => text)).toEqual([
+      ...(id > 0 ? ['Recovered answer'] : []), 'New answer',
+    ]);
+    expect(cursor.mock.calls.map(([eventId]) => eventId)).toEqual([id, id + 1, id + 2]);
+    expect(done).toHaveBeenCalledExactlyOnceWith('new-turn');
+  });
+
   it('does not acknowledge a replayable event before receiving its delimiter', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
       'id: 6\r\nevent: delta\r\ndata: {"text":"complete"}\r',

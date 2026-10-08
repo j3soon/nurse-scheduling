@@ -805,6 +805,7 @@ test('restores interleaved foreground and optimizer replies in chat and export o
   await page.addInitScript(original => {
     sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
       sessionId: 'browser-session', endpoint: '/ai', expiresAt: Date.now() + 60_000, retentionSeconds: 172800,
+      sessionEventId: 50,
       messages: [
         { id: 'system', role: 'system', content: 'Mock system prompt' },
         { id: 'question', role: 'user', content: original.question, requestId: original.id },

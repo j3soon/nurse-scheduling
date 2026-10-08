@@ -1573,6 +1573,7 @@ export default function ExperimentalAiPage() {
         // The schedule can change elsewhere in the app between questions. The backend then
         // discards a proposal made for the previous schedule.
         await updateSessionSchedule(sessionId, scheduleYaml, authToken, sessionEndpoint);
+        if (!lifecycle.owns(operation)) return;
         setProposalDiff(null);
       }
       if (!lifecycle.owns(operation)) return;
@@ -1784,7 +1785,7 @@ export default function ExperimentalAiPage() {
     if (!next) return;
     queuedMessagesRef.current = queuedMessagesRef.current.slice(1);
     setQueuedMessages(queuedMessagesRef.current);
-    void sendRequest(next.content, [], false);
+    void sendRequest(next.content, [], false, next.createdAt);
   });
 
   useEffect(() => {

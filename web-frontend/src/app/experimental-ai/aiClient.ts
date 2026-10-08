@@ -396,7 +396,9 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): boolean {
     .map(line => line.slice('data:'.length).trimStart())
     .join('\n');
   if (!rawData) return false;
-  if (Number.isSafeInteger(eventId) && eventId > 0 && eventId <= (callbacks.lastEventId ?? 0)) return false;
+  const isSnapshot = eventType === 'turn_snapshot' || eventType === 'session_snapshot';
+  // Replacement snapshots can reset the cursor after server recovery.
+  if (!isSnapshot && Number.isSafeInteger(eventId) && eventId > 0 && eventId <= (callbacks.lastEventId ?? 0)) return false;
 
   let payload: SsePayload;
   try {
@@ -407,13 +409,13 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): boolean {
 
   // Acknowledge before dispatching, so a handler that throws cannot make a
   // replayed stream repeat the same event after every reconnect.
-  if (Number.isSafeInteger(eventId) && eventId > 0) {
+  if (Number.isSafeInteger(eventId) && (eventId > 0 || (isSnapshot && eventId === 0))) {
     callbacks.lastEventId = eventId;
     callbacks.onEventId?.(eventId);
   }
   if (typeof payload.turn_id === 'string') callbacks.onTurnContext?.(payload.turn_id);
 
-  if (eventType === 'turn_snapshot' || eventType === 'session_snapshot') {
+  if (isSnapshot) {
     if (!Array.isArray(payload.events) || payload.events.some(event =>
       typeof event?.type !== 'string' || typeof event?.data !== 'object' || event.data === null
       || event.type.endsWith('_snapshot'))) {

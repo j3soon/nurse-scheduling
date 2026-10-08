@@ -1238,6 +1238,7 @@ describe('ExperimentalAiPage', () => {
 
   it('sends queued input after a background review finishes', async () => {
     const user = userEvent.setup();
+    const download = vi.spyOn(chatExport, 'downloadChatExport').mockReturnValue('');
     let background: StreamCallbacks | undefined;
     mockStreamSessionEvents.mockImplementation(async (_id, callbacks) => {
       background = callbacks;
@@ -1250,13 +1251,22 @@ describe('ExperimentalAiPage', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
     act(() => background?.onTurnStart?.('review', 'optimizer'));
+    const queuedAt = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(queuedAt);
     await user.type(input, 'Explain the result');
     fireEvent.submit(input.closest('form')!);
     await waitFor(() => expect(mockQueueMessage).toHaveBeenCalledOnce());
     expect(mockStreamMessage).toHaveBeenCalledOnce();
+    clock.mockReturnValue(queuedAt + 60_000);
     act(() => background?.onDone?.('review'));
     await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(2));
     expect(mockStreamMessage.mock.calls[1][1]).toBe('Explain the result');
+    const timestamp = screen.getByText('Explain the result').closest('article')?.querySelector('time');
+    expect(timestamp).toHaveAttribute('dateTime', new Date(queuedAt).toISOString());
+    await user.click(screen.getByRole('button', { name: 'Markdown' }));
+    expect(download.mock.calls[0][1]).toContainEqual(expect.objectContaining({
+      role: 'user', content: 'Explain the result', createdAt: queuedAt,
+    }));
   });
 
   it('ignores output and proposals from the previous conversation stream', async () => {
@@ -2484,6 +2494,44 @@ describe('ExperimentalAiPage', () => {
         '/ai',
       ));
       expect(mockCreateSession).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps a new chat proposal when an unavailable chat finishes updating its schedule', async () => {
+      let finishUpdate: (() => void) | undefined;
+      let rejectStatus: ((reason: Error) => void) | undefined;
+      mockUpdateSessionSchedule.mockImplementationOnce(() => new Promise<void>(resolve => { finishUpdate = resolve; }));
+      mockGetSessionStatus.mockImplementationOnce(() => new Promise<number>((_resolve, reject) => { rejectStatus = reject; }));
+      mockCreateSession.mockResolvedValue('new-session');
+      window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+        sessionId: 'old-session', endpoint: '/ai', expiresAt: Date.now() + 60_000,
+        retentionSeconds: 2592000,
+        messages: [{ id: 'old-question', role: 'user', content: 'Old question' }],
+        syncedSchedule: 'description: old schedule\n', proposalDiff: 'Old proposal',
+      }));
+      vi.spyOn(window, 'confirm').mockReturnValue(true);
+      const user = userEvent.setup();
+      render(<ExperimentalAiPage />);
+      await waitFor(() => expect(rejectStatus).toBeDefined());
+      await ask(user);
+      await waitFor(() => expect(finishUpdate).toBeDefined());
+      expect(screen.getByRole('button', { name: 'Start new chat' })).toBeDisabled();
+
+      await act(async () => rejectStatus?.(new MockAiHttpError('Chat session not found.', 404)));
+      expect(screen.getByRole('button', { name: 'Start new chat' })).toBeEnabled();
+
+      await user.click(screen.getByRole('button', { name: 'Start new chat' }));
+      mockStreamMessage.mockImplementationOnce((_id: string, _message: string, callbacks: StreamCallbacks) => {
+        callbacks.onProposal?.('New chat proposal');
+        callbacks.onDelta('New chat reply');
+      });
+      await ask(user);
+      await screen.findByText('New chat proposal');
+
+      await act(async () => finishUpdate?.());
+
+      expect(screen.getByRole('region', { name: 'Proposed schedule change' })).toHaveTextContent('New chat proposal');
+      expect(mockStreamMessage).toHaveBeenCalledOnce();
+      expect(mockStreamMessage.mock.calls[0][0]).toBe('new-session');
     });
   });
 });
