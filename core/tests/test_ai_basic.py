@@ -40,31 +40,30 @@ import yaml
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from nurse_scheduling.ai.agent_session import configure_request_logging, request_logger
 from nurse_scheduling.ai.app import (
-    CANDIDATE_VALIDATION_ERROR,
     OWNER_COOKIE,
+    SERVICE_NAME,
+)
+from nurse_scheduling.ai.app import create_app as create_ai_app
+from nurse_scheduling.ai.config import AiSettings
+from nurse_scheduling.ai.context import (
+    CANDIDATE_VALIDATION_ERROR,
     PROPOSAL_APPROVED_HISTORY,
     PROPOSAL_INVALID_HISTORY,
     PROPOSAL_REJECTED_HISTORY,
     PROVIDER_ERROR,
     SANDBOX_COMMAND_TIMEOUT_ERROR,
     SANDBOX_TURN_TIMEOUT_ERROR,
-    SERVICE_NAME,
-    STALE_TURN_ERROR,
-    configure_request_logging,
-    request_logger,
-)
-from nurse_scheduling.ai.app import create_app as create_ai_app
-from nurse_scheduling.ai.background import (
     SCHEDULE_CHANGED_DISCARDED_EVENT,
     SCHEDULE_CHANGED_EVENT,
+    STALE_TURN_ERROR,
     STATUS_PREFIX,
     build_provider_messages,
     message_title,
     removal_event,
     upload_event,
 )
-from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.history import ChatHistory
 from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL, OptimizerArtifact, OptimizerJobPayload
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
@@ -887,7 +886,7 @@ def test_capabilities_report_configured_attachment_limits(monkeypatch: pytest.Mo
 
 def test_session_status_reports_sliding_lifetime_without_refreshing_it(monkeypatch: pytest.MonkeyPatch) -> None:
     now = 100.0
-    monkeypatch.setattr("nurse_scheduling.ai.app.time.monotonic", lambda: now)
+    monkeypatch.setattr("nurse_scheduling.ai.sessions.time.monotonic", lambda: now)
     client = AuthenticatedTestClient(
         create_test_app(settings=make_settings(session_ttl_seconds=20), provider=FakeProvider())
     )
@@ -915,7 +914,7 @@ def test_session_status_reports_sliding_lifetime_without_refreshing_it(monkeypat
 
 def test_expiring_a_session_keeps_no_turn_owner(monkeypatch: pytest.MonkeyPatch) -> None:
     now = 100.0
-    monkeypatch.setattr("nurse_scheduling.ai.app.time.monotonic", lambda: now)
+    monkeypatch.setattr("nurse_scheduling.ai.sessions.time.monotonic", lambda: now)
     app = create_test_app(settings=make_settings(session_ttl_seconds=20), provider=FakeProvider())
     client = AuthenticatedTestClient(app)
     session_id = create_session(client)
@@ -935,7 +934,7 @@ def test_expiring_a_session_keeps_no_turn_owner(monkeypatch: pytest.MonkeyPatch)
 
 def test_finishing_a_turn_keeps_the_deadline_set_when_it_started(monkeypatch: pytest.MonkeyPatch) -> None:
     now = 100.0
-    monkeypatch.setattr("nurse_scheduling.ai.app.time.monotonic", lambda: now)
+    monkeypatch.setattr("nurse_scheduling.ai.sessions.time.monotonic", lambda: now)
     app = create_test_app(settings=make_settings(session_ttl_seconds=20), provider=FakeProvider())
     store = app.state.session_store
     owner = "b6d00cf8-1c7b-49b6-ab06-e162a54de489"
@@ -952,7 +951,7 @@ def test_finishing_a_turn_keeps_the_deadline_set_when_it_started(monkeypatch: py
 
 def test_unchanged_schedule_renews_session_with_owner_cookie(monkeypatch: pytest.MonkeyPatch) -> None:
     now = 100.0
-    monkeypatch.setattr("nurse_scheduling.ai.app.time.monotonic", lambda: now)
+    monkeypatch.setattr("nurse_scheduling.ai.sessions.time.monotonic", lambda: now)
     app = create_test_app(settings=make_settings(session_ttl_seconds=20), provider=FakeProvider())
     client = AuthenticatedTestClient(app)
     schedule = schedule_yaml()
@@ -2479,7 +2478,7 @@ def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved()
     ).proposal_saved
     active_snapshot = store.begin(session.id, "browser-owner")
 
-    store.adopt_proposal(session.id, "browser-owner", session.revision)
+    store.approve_proposal(session.id, "browser-owner", session.revision)
     completion = store.finish(
         session.id,
         "Stale edit",
@@ -2495,7 +2494,7 @@ def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved()
         ChatMessage(role="user", content=PROPOSAL_APPROVED_HISTORY),
     ]
     with pytest.raises(HTTPException) as exc_info:
-        store.adopt_proposal(session.id, "browser-owner", session.revision)
+        store.approve_proposal(session.id, "browser-owner", session.revision)
     assert exc_info.value.status_code == 404
 
 
@@ -2662,7 +2661,7 @@ def test_discarding_a_stale_proposal_returns_its_share_of_the_budget() -> None:
 
     # A browser holding a different revision cannot approve, which discards the proposal.
     with pytest.raises(HTTPException) as exc_info:
-        store.peek_proposal(session.id, "browser-owner", "a" * 64)
+        store.approve_proposal(session.id, "browser-owner", "a" * 64)
 
     assert exc_info.value.status_code == 409
     assert store.retained_bytes == retained_with_proposal - 500

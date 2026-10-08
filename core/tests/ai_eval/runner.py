@@ -45,7 +45,8 @@ from nurse_scheduling.ai.agent_types import (
     AgentToolStart,
     AgentToolUse,
 )
-from nurse_scheduling.ai.background import (
+from nurse_scheduling.ai.config import AiSettings
+from nurse_scheduling.ai.context import (
     PROPOSAL_APPROVED_HISTORY,
     PROPOSAL_REJECTED_HISTORY,
     SCHEDULE_CHANGED_DISCARDED_EVENT,
@@ -53,7 +54,6 @@ from nurse_scheduling.ai.background import (
     build_provider_messages,
     upload_event,
 )
-from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.optimizer import optimizer_completion_message, optimizer_start_message
 from nurse_scheduling.ai.provider import (
     ChatMessage,

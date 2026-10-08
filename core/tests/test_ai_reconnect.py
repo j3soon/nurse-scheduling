@@ -26,9 +26,9 @@ from uuid import uuid4
 import httpx
 
 from nurse_scheduling.ai.app import OWNER_COOKIE
-from nurse_scheduling.ai.background import SessionEventBroker
 from nurse_scheduling.ai.history import ChatHistory
 from nurse_scheduling.ai.provider import TextDelta
+from nurse_scheduling.ai.session_event_stream import SessionEventBroker
 
 from . import test_ai_basic as basic
 

@@ -116,7 +116,6 @@ def test_postgres_recovery_keeps_operational_metadata(postgres_history):
 
 @pytest.mark.parametrize("failed", [False, True])
 def test_postgres_background_turn_keeps_metadata_and_entry_ownership(postgres_history, failed):
-    from nurse_scheduling.ai.background import run_background_turn
     from nurse_scheduling.ai.lifecycle import Turn
 
     class Provider:
@@ -133,20 +132,7 @@ def test_postgres_background_turn_keeps_metadata_and_entry_ownership(postgres_hi
         store = app.state.session_store
         session = store.create(str(uuid4()), basic.schedule_yaml())
         postgres_history.save_recovery_session(session.id, *store.recovery_state(session.id), "team-a")
-        await run_background_turn(
-            session.id,
-            "Review optimizer result",
-            None,
-            settings=settings,
-            store=store,
-            event_broker=app.state.session_event_broker,
-            turn=Turn(),
-            concurrency_limit=asyncio.Semaphore(1),
-            history_log=postgres_history,
-            provider=provider,
-            sandbox_factory=app.state.sandbox_factory,
-            session_optimizer=app.state.session_optimizer,
-        )
+        await session.run(app.state.runtime, Turn(), "Review optimizer result", background=True)
         with postgres_history._connect() as connection:
             row = connection.execute(
                 "SELECT id, kind, auth_credential_id, model, status, error_code, usage, finished_at FROM chat_recovery_turns"
@@ -672,7 +658,7 @@ def test_postgres_recovery_combines_fragments_without_losing_boundaries(postgres
 
 @pytest.mark.parametrize("channel", ["foreground", "background"])
 def test_postgres_restored_stream_replaces_output_for_cursor_inside_entry(postgres_history, channel):
-    from nurse_scheduling.ai.background import SessionEventBroker
+    from nurse_scheduling.ai.session_event_stream import SessionEventBroker
     from nurse_scheduling.ai.turns import TurnJournal
 
     async def exercise():
@@ -769,7 +755,7 @@ def test_postgres_recovery_commits_status_context_and_output_together(postgres_h
 
 
 def test_postgres_restored_background_keeps_entry_crossing_tail_boundary(postgres_history):
-    from nurse_scheduling.ai.background import SessionEventBroker
+    from nurse_scheduling.ai.session_event_stream import SessionEventBroker
 
     async def exercise():
         session, owner = str(uuid4()), str(uuid4())
@@ -957,7 +943,7 @@ def test_postgres_recovers_background_metadata_after_restart(postgres_history):
 
 
 def test_postgres_background_replay_loads_complete_output_after_cache_eviction(postgres_history):
-    from nurse_scheduling.ai.background import SessionEventBroker
+    from nurse_scheduling.ai.session_event_stream import SessionEventBroker
 
     async def exercise():
         session, owner = str(uuid4()), str(uuid4())

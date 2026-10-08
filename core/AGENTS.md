@@ -93,10 +93,14 @@ cases ran. A passing suite with those cases skipped does not validate persistenc
   Continue only after cleanup succeeds, otherwise stop the claim loop.
 
 ## Experimental AI
+- `AgentSession` owns conversation changes, steering, proposal decisions, and
+  the shared foreground and optimizer-review execution path. `SessionStore`
+  owns access, expiry, and retained-byte budgets. `SessionRecovery` owns legacy
+  replay, ordered recovery writes, and eviction pins. Keep HTTP routes thin.
 - `Agent` owns observable model-loop state. `agent_loop` executes registered
   `AgentTool` contracts and derives concurrency from each tool's read-only flag.
   Close the provider and agent generators before releasing execution state.
-  Keep sandbox hydration and lifetime in `workspace.py`, with tool binding and
+  Keep sandbox hydration and lifetime in `workspace.py`, tool binding and
   candidate review in `workspace_tools.py`.
 - `SessionTurns` owns admission, execution, cancellation, and cleanup. Keep the
   owner until recovery writes finish. Stop requests cancel once, and shutdown

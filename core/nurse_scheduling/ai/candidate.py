@@ -25,7 +25,7 @@ from ruamel.yaml.error import YAMLError
 
 from ..loader import _load_yaml
 from .diff import ScheduleDiff, diff_schedules
-from .validation import new_schedule_issues, validate_frontend_schedule_yaml
+from .validation import ScheduleIssue, ScheduleValidationResult, new_schedule_issues, validate_frontend_schedule_yaml
 
 SCHEDULE_FILENAME = "schedule.yaml"
 
@@ -54,14 +54,23 @@ class ScheduleCandidateReview:
     proposal: ScheduleProposal | None
 
 
+def validate_schedule_change(
+    base_text: str, candidate: str, max_bytes: int
+) -> tuple[ScheduleValidationResult, tuple[ScheduleIssue, ...]]:
+    """Allow existing incomplete input while refusing problems introduced by an edit."""
+    validation = validate_frontend_schedule_yaml(candidate, max_bytes)
+    if validation.valid:
+        return validation, ()
+    base_validation = validate_frontend_schedule_yaml(base_text, max_bytes)
+    return validation, new_schedule_issues(base_validation, validation)
+
+
 def review_schedule_candidate(base_text: str, candidate: str, max_bytes: int) -> ScheduleCandidateReview:
     """Validate and compare untrusted candidate text outside the sandbox."""
     if candidate == base_text:
         return ScheduleCandidateReview(CandidateOutcome(f"{SCHEDULE_FILENAME} is unchanged.", True), None)
 
-    base_validation = validate_frontend_schedule_yaml(base_text, max_bytes)
-    validation = validate_frontend_schedule_yaml(candidate, max_bytes)
-    introduced = () if validation.valid else new_schedule_issues(base_validation, validation)
+    validation, introduced = validate_schedule_change(base_text, candidate, max_bytes)
     if introduced:
         problems = "\n".join(f"- {issue.location}: {issue.message}" for issue in introduced)
         return ScheduleCandidateReview(
