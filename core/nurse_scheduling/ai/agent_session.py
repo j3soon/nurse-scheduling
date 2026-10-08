@@ -144,6 +144,14 @@ class AcceptedMessage:
     run: AgentRun
 
 
+@dataclass(frozen=True)
+class MessageReceipt:
+    """The run that answers a client message. `run` is set only when this request started it."""
+
+    run_id: str
+    run: AgentRun | None = None
+
+
 class SessionPersistence(Protocol):
     """Session operations needed by a foreground or background run."""
 
@@ -168,10 +176,16 @@ class SessionPersistence(Protocol):
 
 
 class RunRecorder(Protocol):
-    """Run records and session state saved for restart recovery."""
+    """Run records, Stop requests, and session state saved for restart recovery."""
 
     @property
     def enabled(self) -> bool: ...
+
+    async def find_message(self, session_id: str, message_id: str) -> tuple[str, str] | None: ...
+
+    async def message_stopped(self, session_id: str, message_id: str) -> bool: ...
+
+    async def stop_message(self, session_id: str, message_id: str) -> None: ...
 
     async def start_run(
         self,
@@ -283,17 +297,6 @@ class AgentSession:
             event_stream=event_stream,
         )
 
-    def accepted_message(self, message_id: str) -> AcceptedMessage | None:
-        """Return the newest message when it has this ID and its run started."""
-        accepted = self.latest_message
-        if accepted is None or accepted.message_id != message_id:
-            return None
-        ready = accepted.run.ready
-        return None if ready.done() and not ready.result() else accepted
-
-    def stop_message(self, message_id: str) -> None:
-        self.stopped_message_ids.add(message_id)
-
     def subscribe(self, listener: Callable[[AgentSessionEvent], None]) -> Callable[[], None]:
         """Observe public session events. HTTP serialization belongs to the caller."""
         self._listeners.append(listener)
@@ -348,6 +351,80 @@ class AgentSession:
             await run.wait()
         finally:
             run.cancel()
+
+    def _accepted_message(self, message_id: str) -> AcceptedMessage | None:
+        """Return the newest message when it has this ID and its run has not failed to start."""
+        accepted = self.latest_message
+        if accepted is None or accepted.message_id != message_id:
+            return None
+        ready = accepted.run.ready
+        return None if ready.done() and not ready.result() else accepted
+
+    async def accept_message(
+        self,
+        question: str,
+        message_id: str | None,
+        *,
+        runtime: SessionRuntime,
+        runs: SessionRuns,
+        owner: str | None,
+        credential_id: str | None,
+    ) -> MessageReceipt:
+        """Start a run for a client message, or return the run that already answers it.
+
+        A repeated message ID returns its run without calling the provider or tools again,
+        even after a restart. A Stop saved before the message arrived keeps its question
+        from running.
+
+        Raises:
+            HTTPException: With status 409 when the message ID belongs to another question or
+                a run is active, or 503 when recovery storage is unavailable.
+        """
+        if message_id is not None:
+            accepted = self._accepted_message(message_id)
+            if accepted is not None:
+                if accepted.question != question:
+                    raise HTTPException(status_code=409, detail="This message ID belongs to a different question.")
+                if await asyncio.shield(accepted.run.ready):
+                    return MessageReceipt(accepted.run.id)
+            found = None if accepted is not None else await runtime.recorder.find_message(self.id, message_id)
+            if found is not None:
+                run_id, accepted_question = found
+                if accepted_question != question:
+                    raise HTTPException(status_code=409, detail="This message ID belongs to a different question.")
+                return MessageReceipt(run_id)
+            if await runtime.recorder.message_stopped(self.id, message_id):
+                self.stopped_message_ids.add(message_id)
+        run = runs.start(
+            self.id,
+            lambda run: self.run(run, question, runtime=runtime, owner=owner, credential_id=credential_id),
+            message_id=message_id,
+        )
+        if message_id is not None:
+            self.latest_message = AcceptedMessage(message_id, question, run)
+        if not await asyncio.shield(run.ready):
+            if run.cancelled and not run.shutdown:
+                # A Stop arrived before the run reported its start. A run cancelled before
+                # it began never reaches finalization, so its stopped outcome is published here.
+                if not run.begun:
+                    self.publish({"type": "stopped", "run_id": run.id})
+                return MessageReceipt(run.id)
+            await run.wait()
+        return MessageReceipt(run.id, run)
+
+    async def stop(self, message_id: str | None, *, runtime: SessionRuntime, runs: SessionRuns) -> None:
+        """Cancel the named message's run, or every run of the session.
+
+        A named Stop is saved first, so a message that arrives later, even after a
+        restart, does not run. A delayed Stop cannot cancel a later message's run.
+
+        Raises:
+            HTTPException: With status 503 when storage cannot save a named Stop.
+        """
+        if message_id is not None:
+            await runtime.recorder.stop_message(self.id, message_id)
+            self.stopped_message_ids.add(message_id)
+        runs.stop(self.id, message_id)
 
     def publish_optimizer_update(self, update: OptimizerUpdate) -> None:
         """Project independent job updates onto the same stream as agent output."""

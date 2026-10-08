@@ -155,9 +155,11 @@ cases ran. A passing suite with those cases skipped does not validate persistenc
 - Keep accepted AI runs independent of the browser stream. A repeated POST with
   the same client `message_id` returns the accepted run without repeating
   provider or tool calls. A named Stop cancels only its message's run and stops
-  a message that arrives later. Keep complete stored output separate from the
-  bounded replay journal. Persist accepted questions and terminal state when
-  recovery storage is enabled. Optimizer progress can remain transient.
+  a message that arrives later. Keep message ID checks, saved Stop lookups, and
+  the stopped outcome of a run cancelled before it began in `AgentSession`.
+  Routes map the result to HTTP responses. Keep complete stored output separate
+  from the bounded replay journal. Persist accepted questions and terminal state
+  when recovery storage is enabled. Optimizer progress can remain transient.
 - Deliver terminal and optimizer status events even when their recovery write
   fails. When a call that could not fail becomes an awaited write, check every
   caller's failure path. Each caller must still release the session and report

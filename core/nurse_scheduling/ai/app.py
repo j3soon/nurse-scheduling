@@ -41,7 +41,7 @@ from ..sentry import SentryClientAddressMiddleware, init_sentry
 from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry
 from ..service_logging import configure_service_logging
 from ..version import get_app_version
-from .agent_session import AcceptedMessage, AgentSession, SessionRuntime
+from .agent_session import AgentSession, SessionRuntime
 from .config import AiSettings, validate_ai_auth_credentials
 from .history import ChatHistory, stop_maintenance
 from .lifecycle import TERMINAL_EVENTS, AgentRun, SessionRuns
@@ -558,16 +558,7 @@ def create_app(
     ) -> Response:
         """Cancel the named message's run, or every assistant run active in the session."""
         session = store.require_owned(session_id, owner)
-        if body is not None:
-            # A delayed Stop must not cancel a later run. A message that has not
-            # arrived yet finds the saved request instead.
-            release = recovery.pin(session_id)
-            try:
-                await recovery.stop_message(session_id, body.message_id)
-            finally:
-                release()
-            session.stop_message(body.message_id)
-        runs.stop(session_id, None if body is None else body.message_id)
+        await session.stop(None if body is None else body.message_id, runtime=runtime, runs=runs)
         return Response(status_code=status.HTTP_202_ACCEPTED)
 
     @app.post(
@@ -706,12 +697,6 @@ def create_app(
         refresh_owner_cookie(response, owner)
         return response
 
-    def accepted_response(run_id: str, owner: str | None) -> JSONResponse:
-        """Acknowledge a repeated message without running its question again."""
-        response = JSONResponse({"run_id": run_id}, status_code=status.HTTP_202_ACCEPTED)
-        refresh_owner_cookie(response, owner)
-        return response
-
     @app.post("/sessions/{session_id}/messages", dependencies=[Depends(require_auth), Depends(restore_session)])
     async def send_message(
         session_id: str,
@@ -722,65 +707,35 @@ def create_app(
         """Start a run independently of its event subscribers."""
         question = _validate_question(body.message, settings)
         session = store.require_owned(session_id, owner)
-        if body.message_id is not None:
-            accepted = session.accepted_message(body.message_id)
-            if accepted is not None:
-                if accepted.question != question:
-                    raise HTTPException(status_code=409, detail="This message ID belongs to a different question.")
-                if await asyncio.shield(accepted.run.ready):
-                    return accepted_response(accepted.run.id, owner)
-            # Eviction must not unload the session while storage is checked.
-            release = recovery.pin(session_id)
-            try:
-                found = None if accepted is not None else await recovery.find_message(session_id, body.message_id)
-                if found is not None:
-                    run_id, accepted_question = found
-                    if accepted_question != question:
-                        raise HTTPException(status_code=409, detail="This message ID belongs to a different question.")
-                    return accepted_response(run_id, owner)
-                if await recovery.message_stopped(session_id, body.message_id):
-                    session.stop_message(body.message_id)
-            finally:
-                release()
         cursor = event_stream.cursor(session_id)
-        run = runs.start(
-            session_id,
-            lambda run: session.run(
-                run,
-                question,
-                runtime=runtime,
-                owner=owner,
-                credential_id=request.state.auth_credential_id,
-            ),
-            message_id=body.message_id,
+        receipt = await session.accept_message(
+            question,
+            body.message_id,
+            runtime=runtime,
+            runs=runs,
+            owner=owner,
+            credential_id=request.state.auth_credential_id,
         )
-        if body.message_id is not None:
-            session.latest_message = AcceptedMessage(body.message_id, question, run)
-        if not await asyncio.shield(run.ready):
-            if run.cancelled and not run.shutdown:
-                # Stop arrived before acceptance. The browser reads the stopped outcome by run ID.
-                if not run.begun:
-                    session.publish({"type": "stopped", "run_id": run.id})
-                return accepted_response(run.id, owner)
-            await run.wait()
-        request_logger.info(
-            "AI request started session_id=%s question_chars=%s question=%s files=%s",
-            session_id,
-            len(question),
-            json.dumps(_question_log_preview(question), ensure_ascii=False),
-            len(session.uploads),
-        )
-
+        run = receipt.run
+        if run is not None:
+            request_logger.info(
+                "AI request started session_id=%s question_chars=%s question=%s files=%s",
+                session_id,
+                len(question),
+                json.dumps(_question_log_preview(question), ensure_ascii=False),
+                len(session.uploads),
+            )
         # Compatibility readers explicitly request SSE. They use the same journal
-        # and cannot cancel execution by leaving. New clients receive a message acknowledgement.
-        if "text/event-stream" in request.headers.get("accept", ""):
-            response = StreamingResponse(
+        # and cannot cancel execution by leaving. New clients, and a message accepted
+        # earlier or stopped before its run began, receive a message acknowledgement.
+        if run is not None and "text/event-stream" in request.headers.get("accept", ""):
+            response: Response = StreamingResponse(
                 _session_sse(session, cursor, until_run=run),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
         else:
-            response = JSONResponse({"run_id": run.id}, status_code=status.HTTP_202_ACCEPTED)
+            response = JSONResponse({"run_id": receipt.run_id}, status_code=status.HTTP_202_ACCEPTED)
         refresh_owner_cookie(response, owner)
         return response
 

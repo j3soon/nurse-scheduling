@@ -223,25 +223,41 @@ class SessionRecovery:
         Raises:
             HTTPException: With status 503 when storage cannot save the request.
         """
-        if self.history is not None and not await self.history.write("stop_message", session_id, message_id):
+        if self.history is None:
+            return
+        release = self.pin(session_id)
+        try:
+            saved = await self.history.write("stop_message", session_id, message_id)
+        finally:
+            release()
+        if not saved:
             raise HTTPException(status_code=503, detail="The stop request could not be saved. Please try again.")
 
     async def message_stopped(self, session_id: str, message_id: str) -> bool:
         if self.history is None:
             return False
-        try:
-            return bool(await self.history.read("message_stopped", session_id, message_id))
-        except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from None
+        return bool(await self._read(session_id, "message_stopped", message_id))
 
     async def find_message(self, session_id: str, message_id: str) -> tuple[str, str] | None:
         """Return the run ID and prompt of an accepted client message that memory no longer holds."""
         if self.history is None:
             return None
+        return await self._read(session_id, "find_message", message_id)
+
+    async def _read(self, session_id: str, operation: str, *args: Any) -> Any:
+        """Read storage for a loaded session, which stays loaded until the read returns.
+
+        Raises:
+            HTTPException: With status 503 when storage is unavailable.
+        """
+        assert self.history is not None
+        release = self.pin(session_id)
         try:
-            return await self.history.read("find_message", session_id, message_id)
+            return await self.history.read(operation, session_id, *args)
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from None
+        finally:
+            release()
 
     async def restore(self, session_id: str, owner: str) -> None:
         """Load a saved session after a restart or eviction, and end runs the old process left open.

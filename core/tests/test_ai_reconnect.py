@@ -21,6 +21,7 @@
 
 import asyncio
 import time
+from typing import Any, cast
 
 import httpx
 
@@ -64,6 +65,42 @@ def test_stop_before_message_arrives_prevents_provider_execution():
         assert provider.calls == []
         # The question never ran, so later context does not include it.
         assert app.state.session_store._sessions[session].transcript == []
+
+
+def test_stop_before_an_accepted_run_begins_publishes_its_stopped_outcome():
+    async def exercise():
+        app = basic.create_test_app(settings=basic.make_settings(), provider=basic.FakeProvider([["Must not run"]]))
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://testserver",
+                headers=basic.AI_AUTH_HEADERS,
+            ) as client,
+        ):
+            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            session = app.state.session_store.get(session_id)
+            published = []
+            session.subscribe(published.append)
+            accepting = asyncio.create_task(
+                session.accept_message(
+                    "Question",
+                    None,
+                    # The run never begins, so it never reads the runtime.
+                    runtime=cast(Any, None),
+                    runs=app.state.runs,
+                    owner=session.owner_token,
+                    credential_id=None,
+                )
+            )
+            # The run task exists but has not begun when Stop arrives.
+            await asyncio.sleep(0)
+            await session.stop(None, runtime=cast(Any, None), runs=app.state.runs)
+            return await accepting, published
+
+    receipt, published = asyncio.run(exercise())
+    assert receipt.run is None
+    assert published == [{"type": "stopped", "run_id": receipt.run_id}]
 
 
 def test_stop_for_an_earlier_message_leaves_the_active_run_running():
