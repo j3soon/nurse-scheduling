@@ -19,11 +19,12 @@
 
 # This test is mostly AI generated.
 
+import importlib.util
 from functools import cache
 
 import pytest
 
-from nurse_scheduling.server.solver_options import solver_is_available
+from nurse_scheduling.server.solver_options import SOLVER_RUNTIME_MODULES, solver_is_available
 
 
 def pytest_addoption(parser):
@@ -39,12 +40,17 @@ def pytest_configure(config):
 
 
 def pytest_collection_modifyitems(config, items):
-    # Without the option, a missing runtime fails its tests, so CI cannot pass with an incomplete install.
-    if not config.getoption("--skip-unavailable-solvers"):
-        return
+    skip_unavailable = config.getoption("--skip-unavailable-solvers")
     available = cache(solver_is_available)
     for item in items:
         for marker in item.iter_markers("requires_solver"):
             solver = marker.args[0]
-            if not available(solver):
+            module = SOLVER_RUNTIME_MODULES.get(solver)
+            if module is not None and importlib.util.find_spec(module) is None:
+                # The dev image never ships this package, so the test cannot pass here. Skip it
+                # without requiring the option.
+                item.add_marker(pytest.mark.skip(reason=f"{solver} runtime package {module} is not installed"))
+            elif skip_unavailable and not available(solver):
+                # Without the option, an installed but failing runtime fails its tests, so CI
+                # cannot pass with an incomplete install.
                 item.add_marker(pytest.mark.skip(reason=f"{solver} runtime is not installed"))

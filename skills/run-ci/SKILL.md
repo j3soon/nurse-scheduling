@@ -44,6 +44,13 @@ and export `AI_HISTORY_TEST_POSTGRES_URL` in the shell that starts CI. The scrip
 inherits that setting. Without it, the PostgreSQL tests skip. Report that limit
 instead of claiming that a green CI run validated database recovery.
 
+Dev images can omit optional solver packages. The Python 3.14 cuOpt image omits
+`highspy`, because no wheel exists for that version. pytest then skips the
+matching `requires_solver` checks automatically. Report that limit, and rely on
+GitHub CI or the standard dev image for that solver coverage. An installed but
+broken runtime still fails, so do not pass `--skip-unavailable-solvers` to
+silence it or build the missing package from source.
+
 Do not replace the script with affected-test commands or add excluded solver
 tests. When a check fails, diagnose and fix the underlying error while
 preserving repository conventions and unrelated user changes. Run a focused

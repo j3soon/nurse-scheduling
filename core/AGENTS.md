@@ -16,9 +16,10 @@ Run commands from `core/`:
   pytest suites. AI code, guidance, tests, shared AI fixtures, and deleted AI
   files run all `test_ai_*.py` files. Other source, helper, dependency, and deleted-file changes run the
   normal local suite, excluding optional PuLP CBC, cuOpt, and mixed progress
-  suites. The script stops when a selected test needs a missing PuLP HiGHS or
-  SCIP runtime. In a dev image that omits them, add `--skip-unavailable-solvers`
-  to skip only the tests marked `requires_solver` for the missing runtime.
+  suites. Tests marked `requires_solver` skip automatically when their optional
+  runtime package is absent. An installed runtime that fails its availability
+  check still stops the script. Use `--skip-unavailable-solvers` to skip those
+  tests too.
 - `pytest tests/real/schedule_ortools_cp_sat.py tests/real/schedule_pulp_cbc.py tests/real/schedule_pulp_cuopt.py`: run the slower bounded real-world checks.
 - `pytest tests/real/schedule_score_ground_truth.py`: replay the fixed real-world assignment and verify its exact objective score.
 - `python -m nurse_scheduling.cli tests/testcases/real/large-ward-with-87-people-2025-11.yaml --solver ortools/cp-sat --timeout 10 --show-model-build-stats`: print compact real-case model-build statistics.
