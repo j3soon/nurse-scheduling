@@ -1,6 +1,6 @@
 ---
 name: implement-change-series
-description: Implement a user-authorized batch of small repository changes with an upfront plan and self-contained commits. Group related items, validate each slice, and maintain a reviewable commit series. Do not use for single changes, planning-only requests, or requests that do not authorize commits.
+description: Implement a user-authorized batch of small repository changes with an upfront plan and self-contained commits. Group related items, validate each slice, and maintain a reviewable commit series. Do not use for single changes, planning-only requests, or when the user asks to leave changes uncommitted.
 ---
 
 # Implement Change Series
@@ -16,9 +16,9 @@ Before editing:
 1. Read the repository instructions and the instructions for every affected
    module.
 2. Inspect the worktree, current branch, configured Git identity, and the narrow
-   code paths likely involved. Record the current `HEAD` as the series base and
-   preserve existing staged and unstaged state. Track each commit created for
-   the series so unrelated commits can be excluded later.
+   code paths likely involved. Identify unrelated work and record the current
+   `HEAD` as the series base. Track each commit created for the series so
+   unrelated commits can be excluded later.
 3. Present a concise plan that maps the requested changes to proposed commits.
    Call out any grouping that depends on what the implementation reveals.
 
@@ -54,8 +54,8 @@ For each planned commit:
    test deselected is not validation. Diagnose missing tools or dependencies
    directly instead of rerunning a broad suite for more output.
    If checks and committing share a shell command, stop on a failed check.
-3. Review the diff and whitespace. Stage only files and entries belonging to
-   that slice.
+3. Review the diff and whitespace. Stage or unstage entries as needed so the
+   commit contains only the current slice. Preserve unrelated work.
 4. Commit only after the slice is coherent and its affected checks pass. Follow
    the repository's identity, message, attribution, and post-commit inspection
    rules.
