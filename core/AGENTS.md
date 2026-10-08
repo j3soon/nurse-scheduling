@@ -101,7 +101,9 @@ cases ran. A passing suite with those cases skipped does not validate persistenc
   `AgentTool` contracts and derives concurrency from each tool's read-only flag.
   Close the provider and agent generators before releasing execution state.
   Keep sandbox hydration and lifetime in `workspace.py`, tool binding and
-  candidate review in `workspace_tools.py`.
+  candidate review in `workspace_tools.py`, and model-facing optimizer arguments
+  in `optimizer_tool.py`. Optimizer job operations remain in `optimizer.py`,
+  with HTTP transport in `optimizer_http.py`.
 - `SessionTurns` owns admission, execution, cancellation, and cleanup. Keep the
   owner until recovery writes finish. Stop requests cancel once, and shutdown
   joins owners before closing the sandbox factory and optimizer transport.

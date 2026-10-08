@@ -31,7 +31,7 @@ from uuid import uuid4
 import httpx
 
 from nurse_scheduling.ai.config import AiSettings
-from nurse_scheduling.ai.optimizer import optimizer_tool_definition
+from nurse_scheduling.ai.optimizer_tool import optimizer_tool_definition
 from nurse_scheduling.ai.sandbox_tools import SandboxPiTools
 from nurse_scheduling.ai.workspace import SANDBOX_SYSTEM_PROMPT
 

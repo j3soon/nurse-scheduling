@@ -31,7 +31,8 @@ from .agent import Agent
 from .agent_types import AgentEvent, AgentProposal, AgentTool, AgentToolBatchMetrics, AgentToolOutcome, AgentToolUse
 from .candidate import review_schedule_candidate
 from .downloads import WORKSPACE_DOWNLOAD, validate_download_zip
-from .optimizer import OPTIMIZER_TOOL, optimizer_tool_definition
+from .optimizer import OPTIMIZER_TOOL
+from .optimizer_tool import optimizer_tool_definition
 from .pi.read import READ_TOOL
 from .provider import ChatMessage, ToolCapableChatProvider
 from .sandbox import SandboxError, SandboxFactory, SandboxFileNotFoundError, SandboxFileSizeError

@@ -31,15 +31,15 @@ import pytest
 from openpyxl import load_workbook
 
 from nurse_scheduling.ai.optimizer import (
-    HttpOptimizerBackend,
     OptimizerArtifact,
     OptimizerError,
     OptimizerJobPayload,
     OptimizerResultUnavailable,
     SessionOptimizer,
     optimizer_completion_message,
-    optimizer_tool_definition,
 )
+from nurse_scheduling.ai.optimizer_http import HttpOptimizerBackend
+from nurse_scheduling.ai.optimizer_tool import execute_optimizer_tool, optimizer_tool_definition
 from nurse_scheduling.ai.result_context import build_result_context
 from nurse_scheduling.ai.session_event_stream import SessionEventBroker
 
@@ -87,10 +87,10 @@ def test_completion_audits_restored_workbook_against_submitted_snapshot(custom_e
 
         optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
         try:
-            assert (await optimizer.execute("session", source, '{"action":"start"}')).ok
+            assert (await execute_optimizer_tool(optimizer, "session", source, '{"action":"start"}')).ok
             # The editor can change while optimization is running.
             changed = source.replace("weight: 11000000000", "weight: 12000000000") + "\n# New editor snapshot\n"
-            assert (await optimizer.execute("session", changed, '{"action":"status"}')).ok
+            assert (await execute_optimizer_tool(optimizer, "session", changed, '{"action":"status"}')).ok
             backend.release.set()
             await asyncio.wait_for(completed.wait(), timeout=5)
             assert result["source_sha256"] == hashlib.sha256(source.encode()).hexdigest()
@@ -500,7 +500,7 @@ def test_a_rejected_submission_reports_the_reason_to_the_model() -> None:
             return None
 
         optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
-        rejected = await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')
+        rejected = await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')
 
         assert not rejected.ok
         assert "The optimizer request failed." in rejected.text
@@ -537,7 +537,8 @@ def test_start_returns_immediately_and_completion_wakes_the_agent() -> None:
             on_update=on_update,
             max_runs_per_session=1,
         )
-        outcome = await optimizer.execute(
+        outcome = await execute_optimizer_tool(
+            optimizer,
             "session-1",
             TEST_SCHEDULE,
             json.dumps({"action": "start", "timeout_seconds": 30}),
@@ -552,7 +553,7 @@ def test_start_returns_immediately_and_completion_wakes_the_agent() -> None:
 
         backend.release.set()
         await asyncio.wait_for(completed.wait(), timeout=1)
-        limited = await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')
+        limited = await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')
 
         assert completions[0][0] == "session-1"
         assert '"score": 17' in completions[0][1]
@@ -573,7 +574,7 @@ def test_start_returns_immediately_and_completion_wakes_the_agent() -> None:
         assert artifact.content == WORKBOOK_BYTES
         assert await optimizer.latest_result_artifact("session-1") == artifact
         assert await optimizer.latest_result_artifact("session-2") is None
-        inspection = await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"inspect_result"}')
+        inspection = await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"inspect_result"}')
         assert not inspection.ok
         assert backend.deleted == ["remote-1"]
         assert not limited.ok
@@ -609,7 +610,7 @@ def test_progress_reaches_browser_updates_without_entering_the_agent_prompt() ->
         optimizer = SessionOptimizer(
             backend, poll_interval_seconds=0.001, on_completion=on_completion, on_update=on_update
         )
-        await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')
+        await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')
         await asyncio.wait_for(progress_seen.wait(), timeout=1)
         assert updates[1]["progress"] == {"currentBestScore": 23, "elapsedSeconds": 2, "source": "solver"}
         assert not prompts
@@ -640,7 +641,7 @@ def test_session_optimizer_restores_named_people_in_download_and_attached_result
             completed.set()
 
         optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
-        started = await optimizer.execute("session-1", original_yaml, '{"action":"start"}')
+        started = await execute_optimizer_tool(optimizer, "session-1", original_yaml, '{"action":"start"}')
         assert started.ok
         assert "Alice" not in backend.submissions[0][0]
         assert "description" not in backend.submissions[0][0]
@@ -672,7 +673,7 @@ def test_oversized_restored_result_is_not_attached_or_downloadable() -> None:
             on_completion=on_completion,
             max_result_bytes=1,
         )
-        started = await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')
+        started = await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')
         backend.release.set()
         await asyncio.wait_for(completed.wait(), timeout=1)
 
@@ -696,9 +697,9 @@ def test_finish_now_controls_the_active_job_and_a_second_run_waits_for_terminal_
             completed.set()
 
         optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
-        first = await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')
-        duplicate = await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')
-        finish = await optimizer.execute("session-1", "ignored", '{"action":"finish_now"}')
+        first = await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')
+        duplicate = await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')
+        finish = await execute_optimizer_tool(optimizer, "session-1", "ignored", '{"action":"finish_now"}')
 
         assert first.ok
         assert not duplicate.ok
@@ -726,7 +727,7 @@ def test_completed_artifacts_are_evicted_to_bound_process_memory() -> None:
             + len(json.dumps(build_result_context(TEST_SCHEDULE, workbook=WORKBOOK_BYTES), ensure_ascii=False).encode())
             + 100,
         )
-        first = await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')
+        first = await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')
         backend.release.set()
         await asyncio.wait_for(completions.get(), timeout=1)
         first_id = first.text.split("job ", 1)[1].split(" ", 1)[0]
@@ -734,7 +735,7 @@ def test_completed_artifacts_are_evicted_to_bound_process_memory() -> None:
         assert first_artifact.schedule_context
         assert optimizer._cached_artifact_bytes == first_artifact.retained_bytes
 
-        await optimizer.execute("session-2", TEST_SCHEDULE, '{"action":"start"}')
+        await execute_optimizer_tool(optimizer, "session-2", TEST_SCHEDULE, '{"action":"start"}')
         await asyncio.wait_for(completions.get(), timeout=1)
 
         with pytest.raises(OptimizerResultUnavailable):
@@ -793,7 +794,7 @@ def test_an_omitted_timeout_submits_the_advertised_default() -> None:
             on_completion=on_completion,
             default_timeout_seconds=420,
         )
-        assert (await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
+        assert (await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
 
         assert backend.submissions[0][1] == 420
         assert "Default: 420 seconds" in str(optimizer_tool_definition(420))
@@ -811,14 +812,14 @@ def test_a_finished_run_without_a_workbook_hides_the_previous_result() -> None:
             completions.put_nowait(None)
 
         optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
-        assert (await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
+        assert (await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
         backend.release.set()
         await asyncio.wait_for(completions.get(), timeout=1)
         assert await optimizer.latest_result_artifact("session-1") is not None
 
         backend.release.clear()
         backend.final_state = "failed"
-        assert (await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
+        assert (await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
         assert await optimizer.latest_result_artifact("session-1") is not None
         backend.release.set()
         await asyncio.wait_for(completions.get(), timeout=1)
@@ -839,15 +840,17 @@ def test_finish_now_does_not_revive_a_job_that_already_completed() -> None:
             completions.put_nowait(None)
 
         optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
-        assert (await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
-        finishing = asyncio.create_task(optimizer.execute("session-1", "ignored", '{"action":"finish_now"}'))
+        assert (await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
+        finishing = asyncio.create_task(
+            execute_optimizer_tool(optimizer, "session-1", "ignored", '{"action":"finish_now"}')
+        )
         await asyncio.wait_for(completions.get(), timeout=1)
         backend.finish_gate.set()
         assert (await asyncio.wait_for(finishing, timeout=1)).ok
 
-        status = await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"status"}')
+        status = await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"status"}')
         assert "completed" in status.text
-        assert (await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
+        assert (await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
         await optimizer.close()
 
     asyncio.run(scenario())
@@ -874,8 +877,8 @@ def test_finish_now_waits_for_workbook_before_terminal_update() -> None:
         optimizer = SessionOptimizer(
             backend, poll_interval_seconds=0.001, on_completion=on_completion, on_update=on_update
         )
-        assert (await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
-        assert (await optimizer.execute("session-1", "ignored", '{"action":"finish_now"}')).ok
+        assert (await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
+        assert (await execute_optimizer_tool(optimizer, "session-1", "ignored", '{"action":"finish_now"}')).ok
         await asyncio.wait_for(backend.result_entered.wait(), timeout=1)
         assert not [update for update in updates if update["terminal"]]
 
@@ -908,7 +911,7 @@ def test_immediately_completed_submission_waits_for_workbook_before_terminal_upd
         optimizer = SessionOptimizer(
             backend, poll_interval_seconds=0.001, on_completion=on_completion, on_update=on_update
         )
-        assert (await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
+        assert (await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
         await asyncio.wait_for(backend.result_entered.wait(), timeout=1)
         assert not updates
 
@@ -932,7 +935,7 @@ def test_a_brief_status_outage_does_not_end_a_running_job() -> None:
             completed.set()
 
         optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
-        assert (await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
+        assert (await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
         backend.release.set()
         await asyncio.wait_for(completed.wait(), timeout=1)
 
@@ -959,11 +962,13 @@ def test_a_sustained_status_outage_does_not_abandon_the_remote_job() -> None:
             on_completion=on_completion,
             status_failure_grace_seconds=0,
         )
-        assert (await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
+        assert (await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
         await asyncio.wait_for(backend.status_outage_observed.wait(), timeout=1)
         assert not completed.is_set()
-        assert (await optimizer.execute("session-1", "", '{"action":"status"}')).text.endswith("is running.")
-        assert not (await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
+        assert (await execute_optimizer_tool(optimizer, "session-1", "", '{"action":"status"}')).text.endswith(
+            "is running."
+        )
+        assert not (await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
         assert len(backend.submissions) == 1
 
         backend.release.set()
@@ -984,12 +989,14 @@ def test_a_slow_submission_does_not_block_other_sessions() -> None:
             return None
 
         optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
-        starting = asyncio.create_task(optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}'))
+        starting = asyncio.create_task(
+            execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')
+        )
         await asyncio.wait_for(backend.submit_entered.wait(), timeout=1)
 
         assert await asyncio.wait_for(optimizer.latest_result_artifact("session-2"), timeout=1) is None
         duplicate = await asyncio.wait_for(
-            optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}'),
+            execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}'),
             timeout=1,
         )
         assert not duplicate.ok
@@ -1016,14 +1023,16 @@ def test_a_cancelled_start_returns_the_reserved_run() -> None:
             on_completion=on_completion,
             max_runs_per_session=1,
         )
-        stopped = asyncio.create_task(optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}'))
+        stopped = asyncio.create_task(
+            execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')
+        )
         await asyncio.wait_for(backend.submit_entered.wait(), timeout=1)
         stopped.cancel()
         with pytest.raises(asyncio.CancelledError):
             await stopped
 
         backend.submit_gate.set()
-        assert (await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
+        assert (await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
         await optimizer.close()
 
     asyncio.run(scenario())
@@ -1043,9 +1052,9 @@ def test_a_rejected_submission_returns_the_reserved_run() -> None:
             on_completion=on_completion,
             max_runs_per_session=1,
         )
-        rejected = await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')
+        rejected = await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')
         backend.submit_error = False
-        retried = await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')
+        retried = await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')
 
         assert not rejected.ok
         assert retried.ok
@@ -1068,7 +1077,7 @@ def test_a_retired_session_releases_its_runs_and_retained_workbooks() -> None:
             on_completion=on_completion,
             max_runs_per_session=1,
         )
-        started = await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')
+        started = await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')
         backend.release.set()
         await asyncio.wait_for(completions.get(), timeout=1)
         job_id = started.text.split("job ", 1)[1].split(" ", 1)[0]
@@ -1079,7 +1088,7 @@ def test_a_retired_session_releases_its_runs_and_retained_workbooks() -> None:
         assert await optimizer.latest_result_artifact("session-1") is None
         with pytest.raises(OptimizerResultUnavailable):
             await optimizer.result_artifact("session-1", job_id)
-        assert (await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
+        assert (await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
         await optimizer.close()
 
     asyncio.run(scenario())
@@ -1101,7 +1110,9 @@ def test_retirement_during_submission_does_not_restore_session_state() -> None:
         optimizer = SessionOptimizer(
             backend, poll_interval_seconds=0.001, on_completion=on_completion, on_update=on_update
         )
-        starting = asyncio.create_task(optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}'))
+        starting = asyncio.create_task(
+            execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')
+        )
         await asyncio.wait_for(backend.submit_entered.wait(), timeout=1)
         optimizer.forget_session("session-1")
         backend.submit_gate.set()
@@ -1126,7 +1137,7 @@ def test_retirement_cancels_a_running_remote_job() -> None:
             completions.append(session_id)
 
         optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
-        assert (await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
+        assert (await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
         await asyncio.wait_for(backend.status_check_attempted.wait(), timeout=1)
         optimizer.forget_session("session-1")
         await asyncio.wait_for(backend.deleted_event.wait(), timeout=1)
@@ -1159,7 +1170,7 @@ def test_retired_session_waits_for_remote_cancellation_before_cleanup() -> None:
             completions.append(session_id)
 
         optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
-        assert (await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
+        assert (await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
         optimizer.forget_session("session-1")
         await asyncio.wait_for(backend.cancel_requested.wait(), timeout=1)
         assert not backend.deleted_event.is_set()
@@ -1184,7 +1195,7 @@ def test_retirement_during_result_download_does_not_retain_or_announce_it() -> N
             completions.append(session_id)
 
         optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
-        assert (await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
+        assert (await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
         backend.release.set()
         await asyncio.wait_for(backend.result_entered.wait(), timeout=1)
         optimizer.forget_session("session-1")
@@ -1208,10 +1219,10 @@ def test_session_limit_preserves_a_live_sessions_completed_result() -> None:
             completed.set()
 
         optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion, max_sessions=1)
-        started = await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')
+        started = await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')
         backend.release.set()
         await asyncio.wait_for(completed.wait(), timeout=1)
-        blocked = await optimizer.execute("session-2", TEST_SCHEDULE, '{"action":"start"}')
+        blocked = await execute_optimizer_tool(optimizer, "session-2", TEST_SCHEDULE, '{"action":"start"}')
         job_id = started.text.split("job ", 1)[1].split(" ", 1)[0]
 
         assert not blocked.ok
@@ -1242,7 +1253,7 @@ def test_retirement_during_preparation_revokes_submission(monkeypatch) -> None:
             pytest.fail("A retired job cannot wake the assistant")
 
         optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
-        starting = asyncio.create_task(optimizer.execute("session", TEST_SCHEDULE, "{}"))
+        starting = asyncio.create_task(execute_optimizer_tool(optimizer, "session", TEST_SCHEDULE, "{}"))
         assert await asyncio.to_thread(entered.wait, 1)
         optimizer.forget_session("session")
         release.set()
@@ -1265,13 +1276,13 @@ def test_cancelled_submission_cleans_its_late_remote_response_without_revoking_t
         optimizer = SessionOptimizer(
             backend, poll_interval_seconds=0.001, on_completion=on_completion, max_runs_per_session=1
         )
-        starting = asyncio.create_task(optimizer.execute("session", TEST_SCHEDULE, "{}"))
+        starting = asyncio.create_task(execute_optimizer_tool(optimizer, "session", TEST_SCHEDULE, "{}"))
         await backend.submit_entered.wait()
         starting.cancel()
         with pytest.raises(asyncio.CancelledError):
             await starting
         # The abandoned submission and its retry now have distinct owners.
-        retry = asyncio.create_task(optimizer.execute("session", TEST_SCHEDULE, "{}"))
+        retry = asyncio.create_task(execute_optimizer_tool(optimizer, "session", TEST_SCHEDULE, "{}"))
         backend.submit_gate.set()
         assert (await retry).ok
         await asyncio.wait_for(backend.deleted_event.wait(), timeout=1)
@@ -1297,7 +1308,7 @@ def test_shutdown_during_followup_does_not_delete_the_remote_job_twice() -> None
             await asyncio.Event().wait()
 
         optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
-        assert (await optimizer.execute("session", TEST_SCHEDULE, "{}")).ok
+        assert (await execute_optimizer_tool(optimizer, "session", TEST_SCHEDULE, "{}")).ok
         backend.release.set()
         await reviewing.wait()
         await optimizer.close()

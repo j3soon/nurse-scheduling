@@ -34,7 +34,7 @@ from ruamel.yaml import YAML
 
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.downloads import WORKSPACE_DOWNLOAD
-from nurse_scheduling.ai.optimizer import optimizer_start_message
+from nurse_scheduling.ai.optimizer_tool import optimizer_start_message
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.pi.edit import EDIT_TOOL
 from nurse_scheduling.ai.pi.read import READ_TOOL

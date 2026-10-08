@@ -54,7 +54,8 @@ from nurse_scheduling.ai.context import (
     build_provider_messages,
     upload_event,
 )
-from nurse_scheduling.ai.optimizer import optimizer_completion_message, optimizer_start_message
+from nurse_scheduling.ai.optimizer import optimizer_completion_message
+from nurse_scheduling.ai.optimizer_tool import optimizer_start_message
 from nurse_scheduling.ai.provider import (
     ChatMessage,
     ChatStreamEvent,

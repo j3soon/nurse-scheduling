@@ -44,6 +44,21 @@ credentials are stored unencrypted per endpoint only when the user opts in.
 
 ## Architecture
 
+Foreground questions and optimizer-result reviews use the same `AgentSession`
+execution path. The HTTP routes authorize and validate requests before handing
+them to the session. The model loop receives executable tool contracts with
+their concurrency policy.
+
+| Component | Responsibility |
+| --- | --- |
+| `app.py` | HTTP routes, authentication, and application startup and shutdown. |
+| `agent_session.py`, `sessions.py`, `lifecycle.py` | Conversation changes and run execution, session access and budgets, and queued ownership through cleanup. |
+| `agent.py`, `agent_loop.py`, `agent_types.py` | Observable execution state, the model loop, and executable tool contracts. |
+| `workspace.py`, `workspace_tools.py` | Lazy sandbox allocation and hydration, tool binding, and trusted schedule review. |
+| `context.py` | Existing provider request layout and application event presentation. |
+| `optimizer.py`, `optimizer_tool.py`, `optimizer_http.py` | Job ownership and operations, model-facing arguments and replies, and HTTP transport. |
+| `recovery.py`, `history.py`, `turns.py`, `session_event_stream.py` | Existing persistence, foreground replay, background events, and ordered recovery writes. |
+
 ```mermaid
 flowchart LR
     Browser[Frontend<br/>current schedule] -->|POST schedule once| Session[AI backend<br/>server-owned turn]

@@ -51,12 +51,12 @@ from .config import AiSettings, validate_ai_auth_credentials
 from .history import ChatHistory, stop_maintenance
 from .lifecycle import SessionTurns
 from .optimizer import (
-    HttpOptimizerBackend,
     OptimizerArtifact,
     OptimizerBackend,
     OptimizerResultUnavailable,
     SessionOptimizer,
 )
+from .optimizer_http import HttpOptimizerBackend
 from .provider import (
     OpenAiCompatibleProvider,
     ToolCapableChatProvider,

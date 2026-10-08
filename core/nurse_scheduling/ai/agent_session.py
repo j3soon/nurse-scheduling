@@ -59,6 +59,7 @@ from .context import (
 )
 from .lifecycle import SessionTurns, Turn, TurnSnapshot
 from .optimizer import OptimizerArtifact, SessionOptimizer
+from .optimizer_tool import execute_optimizer_tool
 from .provider import ChatMessage, ProviderError, TokenUsage, ToolCapableChatProvider
 from .recovery import SessionRecovery
 from .sandbox import SandboxError, SandboxFactory
@@ -447,8 +448,8 @@ class AgentSession:
                     take_steering=None if background else lambda close: runtime.store.take_steering(self.id, close),
                     pending_proposal_yaml=snapshot.proposal_yaml,
                     pending_proposal_diff=snapshot.proposal_diff,
-                    execute_optimizer=lambda current_yaml, arguments: runtime.session_optimizer.execute(
-                        self.id, current_yaml, arguments
+                    execute_optimizer=lambda current_yaml, arguments: execute_optimizer_tool(
+                        runtime.session_optimizer, self.id, current_yaml, arguments
                     ),
                     attachments=attachments,
                     optimizer_result=artifact.content if artifact is not None else None,
