@@ -104,6 +104,7 @@ reload recovery follows the production path.
 Replay must replace existing messages in their original positions, including
 optimizer input and steering replies. Capture the message ID before queuing React
 state updates because one replay snapshot can contain several replies.
+Use each event's `turn_id` to identify replayed messages when `turn_start` was trimmed.
 Apply replacement snapshots even when their IDs are at or below the stored cursor.
 Their cursor can reset the stream to zero after recovery.
 Browser timers have a maximum delay of about 24.8 days. Schedule longer session

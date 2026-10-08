@@ -586,6 +586,42 @@ describe('AI client', () => {
     expect(eventIds).toEqual([7, 8]);
   });
 
+  it('keeps receiving session updates across background turn completions', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(streamedResponse([
+      'id: 1\nevent: turn_start\ndata: {"message_id":"first","trigger":"optimizer"}\n\n',
+      'id: 2\nevent: done\ndata: {"message_id":"first"}\n\n',
+      'id: 3\nevent: optimization\ndata: {"job_id":"opt-1","state":"succeeded","terminal":true,"downloadable":true}\n\n',
+      'id: 4\nevent: turn_start\ndata: {"message_id":"second","trigger":"optimizer"}\n\n',
+      'id: 5\nevent: delta\ndata: {"text":"Second review","turn_id":"second"}\n\n',
+      'id: 6\nevent: stopped\ndata: {"message_id":"second"}\n\n',
+      'id: 7\nevent: error\ndata: {"message":"Recovery notice"}\n\n',
+      'id: 8\nevent: delta\ndata: {"text":"Later update"}\n\n',
+      'id: 9\nevent: delta\ndata: {"text":"Incomplete frame"}\n',
+    ]));
+    vi.stubGlobal('fetch', fetchMock);
+    const cursor = vi.fn();
+    const delta = vi.fn();
+    const done = vi.fn();
+    const stopped = vi.fn();
+    const error = vi.fn();
+    const optimization = vi.fn();
+
+    await streamSessionEvents('session', {
+      onDelta: delta, onDone: done, onStopped: stopped, onError: error,
+      onOptimization: optimization, onEventId: cursor,
+    }, new AbortController().signal, null);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(cursor.mock.calls.map(([id]) => id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(delta.mock.calls.map(([text]) => text)).toEqual(['Second review', 'Later update']);
+    expect(done).toHaveBeenCalledExactlyOnceWith('first');
+    expect(stopped).toHaveBeenCalledExactlyOnceWith('second');
+    expect(error).toHaveBeenCalledExactlyOnceWith('Recovery notice');
+    expect(optimization).toHaveBeenCalledExactlyOnceWith({
+      jobId: 'opt-1', state: 'succeeded', terminal: true, downloadable: true,
+    });
+  });
+
   it('resumes background events after the stored cursor', async () => {
     const fetchMock = vi.fn().mockResolvedValue(streamedResponse([]));
     vi.stubGlobal('fetch', fetchMock);
@@ -663,6 +699,18 @@ describe('AI client', () => {
     await streamSessionEvents('session', { onDelta: delta, onEventId: cursor }, new AbortController().signal, null);
     expect(delta).toHaveBeenCalledExactlyOnceWith('complete');
     expect(cursor).toHaveBeenCalledExactlyOnceWith(6);
+  });
+
+  it('discards an incomplete session frame when no cursor observer is registered', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      'id: 1\nevent: delta\ndata: {"text":"Complete frame"}\n\n',
+      'id: 2\nevent: delta\ndata: {"text":"Incomplete frame"}\n',
+    ])));
+    const delta = vi.fn();
+
+    await streamSessionEvents('session', { onDelta: delta }, new AbortController().signal, null);
+
+    expect(delta).toHaveBeenCalledExactlyOnceWith('Complete frame');
   });
 
   it('stops a session turn with authentication', async () => {

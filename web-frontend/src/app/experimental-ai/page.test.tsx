@@ -456,6 +456,52 @@ describe('ExperimentalAiPage', () => {
     expect(screen.getByText(/This chat expired after 30 days/)).toBeInTheDocument();
   });
 
+  it('clears foreground work and queued input when the chat timer expires', async () => {
+    vi.useFakeTimers();
+    mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, session_retention_seconds: 1 });
+    let foreground: StreamCallbacks | undefined;
+    let foregroundSignal: AbortSignal | undefined;
+    let backgroundSignal: AbortSignal | undefined;
+    let finishStream: (() => void) | undefined;
+    mockStreamMessage.mockImplementation((_id, _question, callbacks, signal) => {
+      foreground = callbacks;
+      foregroundSignal = signal;
+      return new Promise<void>(resolve => { finishStream = resolve; });
+    });
+    mockStreamSessionEvents.mockImplementation((_id, _callbacks, signal) => {
+      backgroundSignal = signal;
+      return new Promise<void>(() => {});
+    });
+    render(<ExperimentalAiPage />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+    fireEvent.change(composer, { target: { value: 'Keep working' } });
+    await act(async () => { fireEvent.submit(composer.closest('form')!); });
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled();
+    fireEvent.change(composer, { target: { value: 'Queued question' } });
+    await act(async () => { fireEvent.submit(composer.closest('form')!); });
+    expect(screen.getByText('Queued for steering')).toBeInTheDocument();
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+
+    expect(screen.getByText(/This chat expired/)).toBeInTheDocument();
+    expect(foregroundSignal?.aborted).toBe(true);
+    expect(backgroundSignal?.aborted).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Queued for steering')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Start new chat' })).toBeEnabled();
+    expect(composer).toBeDisabled();
+    act(() => {
+      foreground?.onDelta('Expired answer');
+      foreground?.onProposal?.('Expired proposal');
+    });
+    await act(async () => finishStream?.());
+    expect(screen.queryByText('Expired answer')).not.toBeInTheDocument();
+    expect(screen.queryByText('Expired proposal')).not.toBeInTheDocument();
+    expect(mockStreamMessage).toHaveBeenCalledOnce();
+    expect(window.sessionStorage.getItem('nurse-scheduling-ai-conversation')).toBeNull();
+  });
+
   it('reports an expired stored chat and requires a new conversation', async () => {
     window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
       sessionId: 'expired-session',
@@ -992,7 +1038,7 @@ describe('ExperimentalAiPage', () => {
     expect(mockStreamMessage).toHaveBeenCalledOnce();
   });
 
-  it('keeps replayed background replies before later questions in the chat and export', async () => {
+  it.each([true, false])('keeps replayed background replies in chat and export order (retained start: %s)', async retainedStart => {
     window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
       sessionId: 'restored-session', endpoint: '/ai', expiresAt: Date.now() + 60_000, retentionSeconds: 2592000,
       messages: [
@@ -1001,7 +1047,8 @@ describe('ExperimentalAiPage', () => {
         { id: 'answer', role: 'assistant', content: 'Optimizer started.' },
         { id: 'optimizer-result', role: 'optimizer', content: 'Optimization finished.' },
         { id: 'optimizer-input-background', role: 'user', source: 'optimizer', content: 'Completed optimizer result.' },
-        { id: 'background', role: 'assistant', content: 'Partial result', responseStartedAt: Date.now() - 60_000 },
+        { id: 'background', role: 'assistant', content: 'Partial result', responseStartedAt: Date.now() - 60_000,
+          activity: [{ kind: 'reasoning', text: 'Partial thought' }] },
         { id: 'later-question', role: 'user', content: 'Explain the score.' },
         { id: 'later-answer', role: 'assistant', content: 'The score explanation.' },
       ], syncedSchedule: 'description: current schedule\n', proposalDiff: null,
@@ -1017,9 +1064,16 @@ describe('ExperimentalAiPage', () => {
     await waitFor(() => expect(background).toBeDefined());
     for (let replay = 0; replay < 2; replay += 1) {
       act(() => {
-        background?.onReplay?.([{ type: 'turn_start', data: { message_id: 'background', trigger: 'optimizer' } }]);
-        background?.onTurnStart?.('background', 'optimizer');
+        background?.onReplay?.([
+          ...(retainedStart ? [{ type: 'turn_start', data: { message_id: 'background', trigger: 'optimizer' } }] : []),
+          { type: 'reasoning', data: { turn_id: 'background', text: 'Complete thought' } },
+          { type: 'delta', data: { turn_id: 'background', text: 'The result is ready.' } },
+          { type: 'done', data: { turn_id: 'background', message_id: 'background' } },
+        ]);
+        if (retainedStart) background?.onTurnStart?.('background', 'optimizer');
+        else background?.onTurnContext?.('background');
         background?.onModelInput?.({ system: 'Shared instructions', messages: [{ kind: 'optimizer', content: 'Completed optimizer result.' }] });
+        background?.onReasoning?.('Complete thought');
         background?.onDelta('The result is ready.');
         background?.onDone?.('background');
       });
@@ -1031,6 +1085,10 @@ describe('ExperimentalAiPage', () => {
       expect(download.mock.calls[replay][1].map(message => message.content)).toEqual([
         'Shared instructions', 'Optimize it.', 'Optimizer started.', 'Optimization finished.',
         'Completed optimizer result.', 'The result is ready.', 'Explain the score.', 'The score explanation.',
+      ]);
+      expect(download.mock.calls[replay][1][5].activity).toEqual([
+        { kind: 'reasoning', text: 'Complete thought' },
+        { kind: 'response', text: 'The result is ready.' },
       ]);
     }
     expect(mockStreamMessage).not.toHaveBeenCalled();

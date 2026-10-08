@@ -56,6 +56,44 @@ def test_setup_failure_releases_admission_and_the_next_request_can_run(monkeypat
     asyncio.run(exercise())
 
 
+@pytest.mark.parametrize("action", ["stop", "retire", "shutdown"])
+def test_cancellation_before_foreground_start_returns_a_response(monkeypatch, action):
+    async def exercise():
+        provider = FakeProvider()
+        app = create_test_app(settings=make_settings(), provider=provider)
+        turns = app.state.turns
+        original_start = turns.start
+        closing = None
+
+        def start_then_cancel(session_id, run, **kwargs):
+            nonlocal closing
+            if action == "shutdown":
+                # Schedule shutdown before the turn's task can begin execution.
+                closing = asyncio.create_task(turns.close())
+            turn = original_start(session_id, run, **kwargs)
+            if action == "stop":
+                turns.stop(session_id)
+            elif action == "retire":
+                turns.retire(session_id)
+            return turn
+
+        monkeypatch.setattr(turns, "start", start_then_cancel)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver", headers=AI_AUTH_HEADERS
+        ) as client:
+            session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
+            response = await client.post(f"/sessions/{session_id}/messages", json={"message": "Question"})
+            assert response.status_code == 409
+            assert response.json()["detail"] == "The response was stopped before it started."
+            assert provider.calls == []
+            assert not turns.busy(session_id)
+            assert not app.state.session_store._sessions[session_id].active
+            if closing is not None:
+                await closing
+
+    asyncio.run(exercise())
+
+
 def test_retirement_cancels_the_owner_and_queued_followups_without_recreating_events():
     async def exercise():
         started = asyncio.Event()

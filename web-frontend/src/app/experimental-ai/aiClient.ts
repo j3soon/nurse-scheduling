@@ -640,7 +640,6 @@ async function consumeStream(response: Response, callbacks: StreamCallbacks, sto
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  const replayable = stopAtTerminal || callbacks.onEventId !== undefined;
   const streamCallbacks = { ...callbacks };
   let buffer = '';
 
@@ -663,7 +662,7 @@ async function consumeStream(response: Response, callbacks: StreamCallbacks, sto
     }
 
     // A replay cursor advances only over complete frames. Reconnect replays a lost delimiter.
-    return !replayable && buffer.trim() ? consumeEvent(buffer, streamCallbacks) : false;
+    return false;
   } finally {
     void reader.cancel().catch(() => undefined);
     reader.releaseLock();
@@ -687,7 +686,7 @@ export async function streamSessionEvents(
     signal,
   });
   if (!response.ok) throw await responseError(response);
-  await consumeStream(response, callbacks, true);
+  await consumeStream(response, callbacks);
 }
 
 export async function queueMessage(

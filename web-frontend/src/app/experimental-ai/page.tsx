@@ -947,12 +947,7 @@ export default function ExperimentalAiPage() {
         timeout = window.setTimeout(checkExpiration, Math.min(delay, 2147483647));
         return;
       }
-      sessionEventsControllerRef.current?.abort();
-      sessionEventsControllerRef.current = null;
-      sessionIdRef.current = null;
-      setActiveSessionId(null);
-      setSessionExpiresAt(null);
-      setActiveOptimization(null);
+      resetRuntime();
       setConversationUnavailable(true);
       setSessionNotice(
         `This chat expired after ${retentionLabel(sessionRetentionSeconds)} of inactivity. Start a new chat to continue.`,
@@ -1302,7 +1297,10 @@ export default function ExperimentalAiPage() {
           if (lifecycle.current('background')) setIsReconnecting(false);
         },
         onReplay: events => {
-          const assistantIds = new Set(events.filter(event => event.type === 'turn_start').map(event => event.data.message_id));
+          const assistantIds = new Set(events.flatMap(event => [
+            event.data.turn_id,
+            event.type === 'turn_start' ? event.data.message_id : undefined,
+          ]).filter((id): id is string => typeof id === 'string'));
           // Replace replayed output in its original row, before any later questions.
           setMessages(previous => previous.map(message => assistantIds.has(message.id)
             ? { ...message, content: '', activity: [], status: 'pending' as const,

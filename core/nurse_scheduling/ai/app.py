@@ -1827,6 +1827,8 @@ def create_app(
         turn.task.add_done_callback(pin_session(session_id))
         try:
             if not await asyncio.shield(turn.ready):
+                if turn.task.cancelled():
+                    raise HTTPException(status_code=409, detail="The response was stopped before it started.")
                 await turn.wait()
         except asyncio.CancelledError:
             if not turn.ready.done() or not turn.ready.result():
