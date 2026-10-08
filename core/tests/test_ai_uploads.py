@@ -47,8 +47,8 @@ def test_followup_hydrates_retained_upload_and_removal_stops_hydration():
             f"/sessions/{session}/uploads", files={"files": ("notes.txt", b"ward handover", "text/plain")}
         )
         assert uploaded.status_code == 201
-        with AuthenticatedTestClient(app) as other:
-            assert other.post(f"/sessions/{session}/uploads", files={"files": ("x.txt", b"x")}).status_code == 404
+        other = AuthenticatedTestClient(app)
+        assert other.post(f"/sessions/{session}/uploads", files={"files": ("x.txt", b"x")}).status_code == 404
         files = client.get(f"/sessions/{session}/uploads").json()
         assert files == uploaded.json()
         assert len(files) == 1 and files[0]["filename"] == "notes.txt" and files[0]["bytes"] == 13
@@ -62,8 +62,8 @@ def test_followup_hydrates_retained_upload_and_removal_stops_hydration():
         assert provider.calls[2][-1]["content"] == "Read again"
         assert factory.created[0].files[path] == factory.created[1].files[path] == b"ward handover"
         assert factory.created[0].closed and factory.created[1].closed
-        with AuthenticatedTestClient(app) as other:
-            assert other.delete(f"/sessions/{session}/uploads/{files[0]['id']}").status_code == 404
+        assert other.delete(f"/sessions/{session}/uploads/{files[0]['id']}").status_code == 404
+        other.close()
         assert client.delete(f"/sessions/{session}/uploads/{files[0]['id']}").status_code == 204
         assert client.get(f"/sessions/{session}/uploads").json() == []
         client.post(f"/sessions/{session}/messages", json={"message": "Check removed file"})
@@ -134,7 +134,7 @@ def test_upload_limits_removal_and_expiry_reclaim_bytes():
     with pytest.raises(HTTPException) as error:
         store.retain_uploads(session.id, "owner", [SandboxAttachment("note", "text/plain", b"x")])
     assert error.value.status_code == 409
-    store.abort(session.id)
+    store.abort(session.id, store._sessions[session.id].turn)
     reused = store.retain_uploads(session.id, "owner", [SandboxAttachment("ward.csv", "text/csv", b"new")])[0]
     assert reused.filename == "ward (1).csv" and reused.id != second.id
     assert store.attachments(session.id) == (first, third, reused)

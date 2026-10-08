@@ -93,6 +93,11 @@ cases ran. A passing suite with those cases skipped does not validate persistenc
   Continue only after cleanup succeeds, otherwise stop the claim loop.
 
 ## Experimental AI
+- `SessionTurns` owns admission, execution, cancellation, and cleanup. Keep the
+  owner until recovery writes finish. Stop requests cancel once, and shutdown
+  joins owners before closing the sandbox factory and optimizer transport.
+  Commit and abort through the owning `TurnSnapshot`. A conversation version
+  rejects stale work even when the schedule changes back to its original text.
 - Use provider metadata for model limits instead of duplicate environment
   settings. Verify the configured endpoint before adding a provider workaround.
   Check metadata discovery and streamed usage separately. For a protected route,
@@ -124,10 +129,15 @@ cases ran. A passing suite with those cases skipped does not validate persistenc
 - Test a graceful shutdown separately from a crash. Seeded running rows cover
   only a crash. Exit the application lifespan during a turn, then check that
   recovery reports a restart instead of a user Stop.
-- A turn worker saves the outcome after the turn's event task ends, and
-  `asyncio.run` cancels a worker that is still running when the test returns.
-  A test that runs AI turns directly must wait for `app.state.turn_workers`
-  before it checks saved recovery records.
+- A turn owner saves the outcome after the event task ends, and `asyncio.run`
+  cancels an owner that is still running when the test returns. A test that runs
+  AI turns directly must wait for the owners in `app.state.turns` before it
+  checks saved recovery records.
+- Use one application lifespan when a test simulates several browsers. Entering
+  a nested `TestClient` context starts and stops the same application again.
+- Entering the AI application lifespan calls `E2BSandboxFactory.prepare`, which
+  publishes the configured remote template. Reuse the existing template in live
+  lifecycle smoke tests unless the image build is part of the check.
 - A fake provider that sleeps between fragments starts each delay only after
   the consumer asks for the next event. A network stream keeps arriving during
   that work. Treat such stream timings as an upper bound.
@@ -188,6 +198,9 @@ cases ran. A passing suite with those cases skipped does not validate persistenc
 - For AI behavior changes, run deterministic affected pytest checks first. Then
   smoke-test the smallest relevant live evaluation set with repeatable
   `./scripts/run_ai_eval.sh --case CASE_ID` selectors from the repository root.
+  Check ignored `docker/.env` and `docker/.env.staging` before reporting missing
+  credentials. Set `AI_ENV_FILE` to the existing file when evaluating a linked
+  worktree.
   Include a contrasting control for ambiguity or scope changes. Expand to a
   category or tag only when the changed behavior spans it or a selected case
   reveals a neighboring risk. A bare evaluation command exits without running

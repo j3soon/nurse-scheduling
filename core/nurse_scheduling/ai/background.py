@@ -22,15 +22,15 @@
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator, Callable, Sequence
-from contextlib import AbstractAsyncContextManager
+from collections.abc import AsyncIterator, Sequence
+from contextlib import aclosing
 from dataclasses import asdict, dataclass
 from typing import Protocol
-from uuid import uuid4
 
 from .agent import AgentProposal, AgentReasoning, AgentText, AgentToolStart, AgentToolUse
 from .config import DEFAULT_MAX_HISTORY_CHARS, AiSettings
 from .history import ChatHistory
+from .lifecycle import Turn, TurnSnapshot
 from .optimizer import WORKSPACE_OPTIMIZER_RESULT, OptimizerArtifact, SessionOptimizer
 from .provider import ChatMessage, ProviderError, TokenUsage, ToolCapableChatProvider
 from .sandbox import SandboxError, SandboxFactory
@@ -75,7 +75,7 @@ class TurnCompletion(Protocol):
 class BackgroundSessionStore(Protocol):
     """Session operations needed by a trusted background turn."""
 
-    def begin_background(self, session_id: str) -> tuple[list[ChatMessage], str, str, str, str, int] | None: ...
+    def begin_background(self, session_id: str) -> TurnSnapshot | None: ...
 
     def finish(
         self,
@@ -84,11 +84,11 @@ class BackgroundSessionStore(Protocol):
         assistant_message: str,
         proposal: tuple[str, str] | None = None,
         *,
-        base_revision: str,
+        snapshot: TurnSnapshot,
         turn_messages: Sequence[ChatMessage] = (),
     ) -> TurnCompletion: ...
 
-    def abort(self, session_id: str) -> None: ...
+    def abort(self, session_id: str, snapshot: TurnSnapshot) -> None: ...
 
     def attachments(self, session_id: str) -> tuple[SandboxAttachment, ...]: ...
 
@@ -133,14 +133,18 @@ class SessionEventBroker:
     async def emit(
         self, session_id: str, event_type: str, data: dict[str, object], *, metadata: dict | None = None
     ) -> None:
-        async with self._publish_locks.setdefault(session_id, asyncio.Lock()):
+        lock = self._publish_locks.setdefault(session_id, asyncio.Lock())
+        async with lock:
+            if self._publish_locks.get(session_id) is not lock:
+                return
             event_id = self._last_ids.get(session_id, 0) + 1
             if self.on_publish is not None and event_type != "optimization_progress":
                 if metadata is None:
                     await self.on_publish(session_id, event_id, event_type, data)
                 else:
                     await self.on_publish(session_id, event_id, event_type, data, metadata)
-            self.publish(session_id, event_type, data)
+            if self._publish_locks.get(session_id) is lock:
+                self.publish(session_id, event_type, data)
 
     def publish(self, session_id: str, event_type: str, data: dict[str, object]) -> None:
         if session_id not in self._events and len(self._events) >= self._max_sessions:
@@ -471,8 +475,7 @@ async def run_background_turn(
     settings: AiSettings,
     store: BackgroundSessionStore,
     event_broker: SessionEventBroker,
-    turn_locks: dict[str, asyncio.Lock],
-    track_active_turn: Callable[[str], AbstractAsyncContextManager[None]],
+    turn: Turn,
     concurrency_limit: asyncio.Semaphore,
     history_log: ChatHistory | None,
     provider: ToolCapableChatProvider,
@@ -480,117 +483,124 @@ async def run_background_turn(
     session_optimizer: SessionOptimizer,
 ) -> None:
     """Wake an idle agent after a background optimizer job reaches a terminal state."""
-    turn_lock = turn_locks.setdefault(session_id, asyncio.Lock())
-    async with turn_lock, track_active_turn(session_id):
-        snapshot = store.begin_background(session_id)
-        if snapshot is None:
+    snapshot = store.begin_background(session_id)
+    if snapshot is None:
+        return
+    history, schedule_yaml = snapshot.history, snapshot.schedule_yaml
+    proposal_yaml, proposal_diff = snapshot.proposal_yaml, snapshot.proposal_diff
+    previously_dropped = snapshot.dropped_history_messages
+    turn_id = turn.id
+    assistant_parts: list[str] = []
+    pending_proposal: AgentProposal | None = None
+    pending_download: bytes | None = None
+    completed = False
+
+    error_code: str | None = "internal_error"
+    usage: TokenUsage | None = None
+    last_call: TokenUsage | None = None
+
+    async def emit(event_type: str, data: dict, *, metadata: dict | None = None) -> None:
+        if not turn.retired:
+            await event_broker.emit(session_id, event_type, {**data, "turn_id": turn.id}, metadata=metadata)
+
+    async def emit_terminal(event_type: str, data: dict) -> None:
+        turn.finishing = True
+        if turn.retired:
             return
-        history, schedule_yaml, base_revision, proposal_yaml, proposal_diff, previously_dropped = snapshot
-        turn_id = str(uuid4())
-        if history_log is not None and not await history_log.write(
-            "start_recovery_turn",
-            turn_id,
-            session_id,
-            None,
-            question,
-            {
-                "kind": "background",
-                "model": settings.provider_model,
-                "attachment_count": len(store.attachments(session_id)),
+        if not completed:
+            store.abort(session_id, snapshot)
+        await emit(
+            event_type,
+            data,
+            metadata={
+                "error_code": error_code,
+                "usage": asdict(usage) if usage else None,
             },
-        ):
-            store.abort(session_id)
-            await event_broker.emit(
-                session_id,
-                "error",
-                {"message": "AI message recovery is unavailable, so the optimizer result was not reviewed."},
-            )
-            return
-        assistant_parts: list[str] = []
-        pending_proposal: AgentProposal | None = None
-        pending_download: bytes | None = None
-        completed = False
+        )
 
-        error_code: str | None = "internal_error"
-        usage: TokenUsage | None = None
-        last_call: TokenUsage | None = None
-
-        async def emit_terminal(event_type: str, data: dict) -> None:
-            await event_broker.emit(
-                session_id,
-                event_type,
-                data,
-                metadata={
-                    "error_code": error_code,
-                    "usage": asdict(usage) if usage else None,
-                },
-            )
-
+    try:
+        turn.admitting = True
         try:
-            # A failed recovery write raises from emit, so the turn must already release the session.
-            await event_broker.emit(session_id, "turn_start", {"message_id": turn_id, "trigger": "optimizer"})
-            context_chars = history_context_chars(history, settings.max_history_chars)
-            await event_broker.emit(session_id, "context_usage", context_usage(context_chars, settings))
-            retained_history = recent_history(history, settings.max_history_chars)
-            dropped_history = previously_dropped + len(history) - len(retained_history)
-            if dropped_history:
-                await event_broker.emit(
-                    session_id,
-                    "history_trimmed",
-                    {"dropped": dropped_history},
-                )
-            attachments = store.attachments(session_id)
-            messages = build_provider_messages(
-                retained_history,
-                schedule_yaml,
+            if history_log is not None and not await history_log.write(
+                "start_recovery_turn",
+                turn_id,
+                session_id,
+                None,
                 question,
-                attachments,
-                system_prompt=SANDBOX_SYSTEM_PROMPT,
-                pending_proposal=bool(proposal_yaml),
-                optimizer_result_available=artifact is not None,
-                max_history_chars=settings.max_history_chars,
-                max_download_bytes=settings.max_download_bytes,
-            )
-            await event_broker.emit(
-                session_id, "model_input", model_input(messages, len(retained_history), dropped_history, "optimizer")
-            )
-            async with concurrency_limit:
-                agent_events = run_sandbox_agent(
-                    provider,
-                    sandbox_factory,
-                    schedule_yaml,
-                    messages,
-                    SandboxAgentLimits.from_settings(settings),
-                    pending_proposal_yaml=proposal_yaml,
-                    pending_proposal_diff=proposal_diff,
-                    execute_optimizer=(
-                        lambda current_yaml, arguments: session_optimizer.execute(session_id, current_yaml, arguments)
-                    ),
-                    optimizer_result=artifact.content if artifact is not None else None,
-                    optimizer_context=artifact.schedule_context if artifact is not None else None,
-                    attachments=attachments,
+                {
+                    "kind": "background",
+                    "model": settings.provider_model,
+                    "attachment_count": len(store.attachments(session_id)),
+                },
+            ):
+                store.abort(session_id, snapshot)
+                await emit(
+                    "error",
+                    {"message": "AI message recovery is unavailable, so the optimizer result was not reviewed."},
                 )
+                return
+        finally:
+            turn.admitting = False
+        if turn.cancelled:
+            raise asyncio.CancelledError
+        # A failed recovery write raises from emit, so the turn must already release the session.
+        await emit("turn_start", {"message_id": turn_id, "trigger": "optimizer"})
+        context_chars = history_context_chars(history, settings.max_history_chars)
+        await emit("context_usage", context_usage(context_chars, settings))
+        retained_history = recent_history(history, settings.max_history_chars)
+        dropped_history = previously_dropped + len(history) - len(retained_history)
+        if dropped_history:
+            await emit(
+                "history_trimmed",
+                {"dropped": dropped_history},
+            )
+        attachments = store.attachments(session_id)
+        messages = build_provider_messages(
+            retained_history,
+            schedule_yaml,
+            question,
+            attachments,
+            system_prompt=SANDBOX_SYSTEM_PROMPT,
+            pending_proposal=bool(proposal_yaml),
+            optimizer_result_available=artifact is not None,
+            max_history_chars=settings.max_history_chars,
+            max_download_bytes=settings.max_download_bytes,
+        )
+        await emit("model_input", model_input(messages, len(retained_history), dropped_history, "optimizer"))
+        async with concurrency_limit:
+            agent_events = run_sandbox_agent(
+                provider,
+                sandbox_factory,
+                schedule_yaml,
+                messages,
+                SandboxAgentLimits.from_settings(settings),
+                pending_proposal_yaml=proposal_yaml,
+                pending_proposal_diff=proposal_diff,
+                execute_optimizer=(
+                    lambda current_yaml, arguments: session_optimizer.execute(session_id, current_yaml, arguments)
+                ),
+                optimizer_result=artifact.content if artifact is not None else None,
+                optimizer_context=artifact.schedule_context if artifact is not None else None,
+                attachments=attachments,
+            )
+            async with aclosing(agent_events):
                 async for event in agent_events:
                     if isinstance(event, AgentText):
                         assistant_parts.append(event.text)
-                        await event_broker.emit(session_id, "delta", {"text": event.text})
+                        await emit("delta", {"text": event.text})
                     elif isinstance(event, AgentReasoning):
-                        await event_broker.emit(session_id, "reasoning", {"text": event.text})
+                        await emit("reasoning", {"text": event.text})
                     elif isinstance(event, TokenUsage):
                         usage = event if usage is None else usage + event
                         last_call = event
-                        await event_broker.emit(
-                            session_id, "context_usage", context_usage(context_chars, settings, last_call, provider)
-                        )
+                        await emit("context_usage", context_usage(context_chars, settings, last_call, provider))
                     elif isinstance(event, AgentToolStart):
-                        await event_broker.emit(
-                            session_id,
+                        await emit(
                             "tool_start",
                             {"name": event.name, "arguments": event.arguments},
                         )
                     elif isinstance(event, AgentToolUse):
-                        await event_broker.emit(
-                            session_id,
+                        await emit(
                             "tool",
                             {
                                 "name": event.name,
@@ -600,8 +610,7 @@ async def run_background_turn(
                             },
                         )
                     elif isinstance(event, AgentScheduleChange):
-                        await event_broker.emit(
-                            session_id,
+                        await emit(
                             "schedule_change",
                             {"schedule_yaml": event.schedule_yaml},
                         )
@@ -609,87 +618,84 @@ async def run_background_turn(
                         pending_download = event.content
                     elif isinstance(event, AgentProposal):
                         pending_proposal = event
-            proposal = None
-            if pending_proposal is not None:
-                proposal = (pending_proposal.text, pending_proposal.diff)
-            completion = store.finish(
-                session_id,
-                question,
-                "".join(assistant_parts),
-                proposal,
-                base_revision=base_revision,
-            )
-            completed = True
-            if not completion.turn_saved:
-                error_code = None
-                await emit_terminal("stale", {"message": STALE_TURN_ERROR})
-                return
+        proposal = None
+        if pending_proposal is not None:
+            proposal = (pending_proposal.text, pending_proposal.diff)
+        completion = store.finish(
+            session_id,
+            question,
+            "".join(assistant_parts),
+            proposal,
+            snapshot=snapshot,
+        )
+        completed = True
+        turn.finishing = True
+        if not completion.turn_saved:
             error_code = None
-            if completion.history_trimmed_count and completion.history_trimmed_count != dropped_history:
-                await event_broker.emit(
-                    session_id,
-                    "history_trimmed",
-                    {"dropped": completion.history_trimmed_count},
-                )
-            if completion.proposal_saved and pending_proposal is not None:
-                await event_broker.emit(session_id, "proposal", {"diff": pending_proposal.diff})
-            if pending_download is not None:
-                if store.save_download(session_id, turn_id, pending_download):
-                    await event_broker.emit(session_id, "download", {"download_id": turn_id})
-                else:
-                    await event_broker.emit(
-                        session_id,
-                        "warning",
-                        {
-                            "message": "The generated ZIP could not be retained because the service memory limit was reached."
-                        },
-                    )
-            await event_broker.emit(
-                session_id, "context_usage", context_usage(completion.context_used_chars, settings, last_call, provider)
+            await emit_terminal("stale", {"message": STALE_TURN_ERROR})
+            return
+        error_code = None
+        if completion.history_trimmed_count and completion.history_trimmed_count != dropped_history:
+            await emit(
+                "history_trimmed",
+                {"dropped": completion.history_trimmed_count},
             )
-            await emit_terminal("done", {"message_id": turn_id})
-        except asyncio.CancelledError:
-            if completed and completion.turn_saved:
-                error_code = None
-                await emit_terminal("done", {"message_id": turn_id})
-            elif completed:
-                error_code = None
-                await emit_terminal("stale", {"message": STALE_TURN_ERROR})
+        if completion.proposal_saved and pending_proposal is not None:
+            await emit("proposal", {"diff": pending_proposal.diff})
+        if pending_download is not None:
+            if store.save_download(session_id, turn_id, pending_download):
+                await emit("download", {"download_id": turn_id})
             else:
-                error_code = None
-                await emit_terminal("stopped", {"message_id": turn_id})
-            raise
-        except ProviderError as exc:
-            error_code = "provider_error"
-            await emit_terminal("error", {"message": exc.user_message or PROVIDER_ERROR})
-        except SandboxDownloadError as exc:
-            error_code = "download_error"
-            await emit_terminal("error", {"message": str(exc)})
-        except SandboxCommandTimeoutError:
-            error_code = "sandbox_command_timeout"
-            await emit_terminal("error", {"message": SANDBOX_COMMAND_TIMEOUT_ERROR})
-        except SandboxTurnTimeoutError:
-            error_code = "sandbox_timeout"
-            await emit_terminal("error", {"message": SANDBOX_TURN_TIMEOUT_ERROR})
-        except SandboxCandidateError as exc:
-            error_code = "candidate_validation"
-            await emit_terminal(
-                "error",
-                {"message": CANDIDATE_VALIDATION_ERROR + (f"\n\n{exc.user_message}" if exc.user_message else "")},
-            )
-        except SandboxError:
-            error_code = "sandbox_error"
-            logger.exception("Background AI sandbox turn failed session_id=%s", session_id)
-            await emit_terminal(
-                "error",
-                {"message": "The temporary AI sandbox failed while reviewing optimizer results."},
-            )
-        except Exception:
-            logger.exception("Unexpected background AI turn failure session_id=%s", session_id)
-            await emit_terminal(
-                "error",
-                {"message": "The AI could not review the optimizer result."},
-            )
-        finally:
-            if not completed:
-                store.abort(session_id)
+                await emit(
+                    "warning",
+                    {
+                        "message": "The generated ZIP could not be retained because the service memory limit was reached."
+                    },
+                )
+        await emit("context_usage", context_usage(completion.context_used_chars, settings, last_call, provider))
+        await emit_terminal("done", {"message_id": turn_id})
+    except asyncio.CancelledError:
+        if completed and completion.turn_saved:
+            error_code = None
+            await emit_terminal("done", {"message_id": turn_id})
+        elif completed:
+            error_code = None
+            await emit_terminal("stale", {"message": STALE_TURN_ERROR})
+        else:
+            error_code = None
+            await emit_terminal("stopped", {"message_id": turn_id})
+        raise
+    except ProviderError as exc:
+        error_code = "provider_error"
+        await emit_terminal("error", {"message": exc.user_message or PROVIDER_ERROR})
+    except SandboxDownloadError as exc:
+        error_code = "download_error"
+        await emit_terminal("error", {"message": str(exc)})
+    except SandboxCommandTimeoutError:
+        error_code = "sandbox_command_timeout"
+        await emit_terminal("error", {"message": SANDBOX_COMMAND_TIMEOUT_ERROR})
+    except SandboxTurnTimeoutError:
+        error_code = "sandbox_timeout"
+        await emit_terminal("error", {"message": SANDBOX_TURN_TIMEOUT_ERROR})
+    except SandboxCandidateError as exc:
+        error_code = "candidate_validation"
+        await emit_terminal(
+            "error",
+            {"message": CANDIDATE_VALIDATION_ERROR + (f"\n\n{exc.user_message}" if exc.user_message else "")},
+        )
+    except SandboxError:
+        error_code = "sandbox_error"
+        logger.exception("Background AI sandbox turn failed session_id=%s", session_id)
+        await emit_terminal(
+            "error",
+            {"message": "The temporary AI sandbox failed while reviewing optimizer results."},
+        )
+    except Exception:
+        logger.exception("Unexpected background AI turn failure session_id=%s", session_id)
+        await emit_terminal(
+            "error",
+            {"message": "The AI could not review the optimizer result."},
+        )
+    finally:
+        if not completed:
+            store.abort(session_id, snapshot)

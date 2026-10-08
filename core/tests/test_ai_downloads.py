@@ -22,7 +22,6 @@
 import asyncio
 import io
 import json
-from contextlib import asynccontextmanager
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
@@ -31,6 +30,7 @@ from fastapi.testclient import TestClient
 from nurse_scheduling.ai.app import SessionStore
 from nurse_scheduling.ai.background import SessionEventBroker, build_provider_messages, run_background_turn
 from nurse_scheduling.ai.downloads import WORKSPACE_DOWNLOAD, validate_download_zip
+from nurse_scheduling.ai.lifecycle import Turn
 from nurse_scheduling.ai.provider import TextDelta, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.sandbox import CommandResult
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
@@ -165,27 +165,23 @@ def test_download_memory_failure_keeps_the_completed_turn(background):
         session_id = store.create("owner", "description: test").id
         broker = SessionEventBroker()
 
-        @asynccontextmanager
-        async def track_active_turn(_session_id):
-            yield
-
-        asyncio.run(
-            run_background_turn(
+        async def review():
+            await run_background_turn(
                 session_id,
                 "Download the CSV.",
                 None,
                 settings=settings,
                 store=store,
                 event_broker=broker,
-                turn_locks={},
-                track_active_turn=track_active_turn,
+                turn=Turn(),
                 concurrency_limit=asyncio.Semaphore(1),
                 history_log=None,
                 provider=provider,
                 sandbox_factory=factory,
                 session_optimizer=app.state.session_optimizer,
             )
-        )
+
+        asyncio.run(review())
         event_types = [event.type for event in broker.events_after(session_id)]
     else:
         with AuthenticatedTestClient(app) as client:
