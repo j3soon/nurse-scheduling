@@ -782,7 +782,13 @@ def create_app(
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> ProposalResponse:
         """Return the proposed schedule once the browser proves it holds the base revision."""
-        approved = store.approve_proposal(session_id, owner, request.base_sha256)
+        try:
+            approved = store.approve_proposal(session_id, owner, request.base_sha256)
+        except HTTPException as exc:
+            if exc.status_code == 409:
+                # A stale revision discards the proposal before refusing approval.
+                await recovery.save(session_id)
+            raise
         # The decision already took effect, so a failed save is reported rather than refused.
         history_saved = await recovery.save(session_id)
         if approved is None:

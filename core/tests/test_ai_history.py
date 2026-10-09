@@ -958,6 +958,29 @@ def test_postgres_upgrade_preserves_deployed_sessions_and_message_receipts(unini
         assert connection.execute("SELECT model FROM chat_runs").fetchone() == ("saved-model",)
 
 
+def test_postgres_discarded_stale_proposal_stays_discarded_after_restart(postgres_history):
+    client, session_id, _revision = basic.proposing_client(history_postgres_url="test")
+    with client:
+        assert client.app.state.session_store._sessions[session_id].pending_proposal is not None
+        original_schedule = client.app.state.session_store._sessions[session_id].schedule_yaml
+        refused = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": "0" * 64})
+        assert refused.status_code == 409
+        assert client.app.state.session_store._sessions[session_id].pending_proposal is None
+        owner = client.cookies[basic.OWNER_COOKIE]
+    restarted = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test", max_schedule_bytes=basic.SCHEDULE_BYTE_LIMIT),
+        provider=basic.FakeProvider(),
+    )
+    with basic.AuthenticatedTestClient(restarted, cookies={basic.OWNER_COOKIE: owner}) as restored:
+        assert restored.get(f"/sessions/{session_id}").status_code == 200
+        session = restarted.state.session_store._sessions[session_id]
+        assert session.pending_proposal is None
+        assert session.schedule_yaml == original_schedule
+        assert (
+            restored.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": "0" * 64}).status_code == 404
+        )
+
+
 def test_postgres_recovery_enforces_owner_and_session_expiry(postgres_history):
     owner, other_owner = str(uuid4()), str(uuid4())
     expired, current = str(uuid4()), str(uuid4())
