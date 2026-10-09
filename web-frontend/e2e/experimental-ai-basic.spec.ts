@@ -144,7 +144,7 @@ async function mockAiBackend(
   reportContext = true,
   // Run events published before `done`, such as a generated ZIP.
   answerEvents: { type: string; data: Record<string, unknown> }[] = [],
-): Promise<CapturedRequests> {
+): Promise<CapturedRequests & { publishEvent: (type: string, data: Record<string, unknown>) => void }> {
   const captured = {
     scheduleYaml: '',
     messageBody: '',
@@ -289,7 +289,7 @@ async function mockAiBackend(
     wakeReader = undefined;
   });
 
-  return captured;
+  return Object.assign(captured, { publishEvent: publish });
 }
 
 test('asks about the current schedule and renders a streamed answer', async ({ page }) => {
@@ -554,6 +554,32 @@ test('downloads a completed background optimization from chat', async ({ page })
   const download = await downloadEvent;
   expect(download.suggestedFilename()).toBe('optimized-schedule--browser.xlsx');
   expect(await readFile(await download.path())).toEqual(workbookBytes);
+});
+
+test('cancels the background optimizer from its status box without asking the agent', async ({ page }) => {
+  const backend = await mockAiBackend(page, ['Optimization started.'], false, undefined, [{
+    type: 'optimization', data: { job_id: 'opt-cancel', state: 'running', terminal: false, downloadable: false },
+  }]);
+  let cancellations = 0;
+  await page.route('**/ai/sessions/*/optimizations/opt-cancel/cancel', async route => {
+    expect(route.request().method()).toBe('POST');
+    cancellations += 1;
+    backend.publishEvent('optimization', {
+      job_id: 'opt-cancel', state: 'cancelled', terminal: true, downloadable: false,
+    });
+    await route.fulfill({ status: 202 });
+  });
+  await page.goto('/experimental-ai');
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Optimize this.');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('Optimization started.', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel optimizer' }).click();
+
+  await expect(page.getByRole('button', { name: /Cancel.*optimizer/i })).toHaveCount(0);
+  await expect(page.getByText('Optimization ended with status: cancelled.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
+  expect(cancellations).toBe(1);
+  expect(backend.messageBodies).toHaveLength(1);
 });
 
 test('keeps multiline optimizer errors in one field in chat and exports', async ({ page }) => {

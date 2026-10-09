@@ -31,6 +31,7 @@ const mockDownloadGeneratedZip = vi.hoisted(() => vi.fn());
 const mockRemoveGeneratedZip = vi.hoisted(() => vi.fn());
 const mockUploadFiles = vi.hoisted(() => vi.fn());
 const mockDownloadOptimization = vi.hoisted(() => vi.fn());
+const mockCancelOptimization = vi.hoisted(() => vi.fn());
 const mockGetBackendVersion = vi.hoisted(() => vi.fn());
 const mockGetCapabilities = vi.hoisted(() => vi.fn());
 const mockGetSessionStatus = vi.hoisted(() => vi.fn());
@@ -67,6 +68,7 @@ vi.mock('./aiClient', async importOriginal => {
   PRODUCTION_AI_API_URL: 'https://api.nursescheduling.org/ai',
   createSession: mockCreateSession,
   downloadOptimization: mockDownloadOptimization,
+  cancelOptimization: mockCancelOptimization,
   downloadGeneratedZip: mockDownloadGeneratedZip,
   removeGeneratedZip: mockRemoveGeneratedZip,
   getUploads: mockGetUploads,
@@ -156,6 +158,7 @@ describe('ExperimentalAiPage', () => {
     mockDownloadOptimization.mockReset().mockResolvedValue(new Blob(['workbook']));
     mockGetCapabilities.mockReset().mockResolvedValue(defaultCapabilities);
     mockGetBackendVersion.mockReset().mockResolvedValue('v0.4.3');
+    mockCancelOptimization.mockReset().mockResolvedValue(undefined);
     mockGetSessionStatus.mockReset().mockResolvedValue(172800);
     mockRunEvents.mockReset().mockImplementation(async (
       _sessionId: string,
@@ -1026,6 +1029,56 @@ describe('ExperimentalAiPage', () => {
     expect(await screen.findByRole('button', { name: 'Download result' })).toBeInTheDocument();
     expect(screen.getAllByText('The optimizer returned score 23.')).toHaveLength(1);
     expect(mockStreamSessionEvents.mock.calls.at(-1)?.[1].lastEventId).toBe(4);
+  });
+
+  it('cancels the background optimizer directly while a chat response continues', async () => {
+    const user = userEvent.setup();
+    let finishStream: (() => void) | undefined;
+    mockRunEvents.mockImplementationOnce(async () => {
+      await new Promise<void>(resolve => { finishStream = resolve; });
+    });
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(finishStream).toBeDefined());
+    const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
+    act(() => stream.onEvent({ type: 'optimization', activity: {
+      jobId: 'opt-1', state: 'running', terminal: false, downloadable: false,
+    } }));
+    await user.click(screen.getByRole('button', { name: 'Cancel optimizer' }));
+
+    expect(mockCancelOptimization).toHaveBeenCalledExactlyOnceWith('session-id', 'opt-1', null, '/ai');
+    expect(screen.getByRole('button', { name: 'Cancelling optimizer…' })).toBeDisabled();
+    expect(mockStopSession).not.toHaveBeenCalled();
+    expect(mockQueueMessage).not.toHaveBeenCalled();
+    expect(mockRunEvents).toHaveBeenCalledOnce();
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
+
+    act(() => stream.onEvent({ type: 'optimization', activity: {
+      jobId: 'opt-1', state: 'cancelled', terminal: true, downloadable: false,
+    } }));
+    expect(screen.queryByText(/Optimizer running in the background/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
+    await act(async () => finishStream?.());
+  });
+
+  it('keeps the optimizer visible after a cancel failure and allows a retry', async () => {
+    const user = userEvent.setup();
+    mockCancelOptimization.mockRejectedValueOnce(new Error('Optimizer unavailable.'));
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
+    act(() => stream.onEvent({ type: 'optimization', activity: {
+      jobId: 'opt-1', state: 'running', terminal: false, downloadable: false,
+    } }));
+    await user.click(screen.getByRole('button', { name: 'Cancel optimizer' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Optimizer unavailable.');
+    await user.click(screen.getByRole('button', { name: 'Cancel optimizer' }));
+    expect(mockCancelOptimization).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('button', { name: 'Cancelling optimizer…' })).toBeDisabled();
   });
 
   it('reopens the background event stream after it disconnects', async () => {

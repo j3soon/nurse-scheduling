@@ -23,6 +23,7 @@ import {
   AiStaleRunError,
   PRODUCTION_AI_API_URL,
   approveProposal,
+  cancelOptimization,
   createSession,
   downloadGeneratedZip,
   downloadOptimization,
@@ -919,6 +920,28 @@ describe('AI client', () => {
         body: JSON.stringify({ message_id: 'queued-1', message: 'Focus on P2.', frontend_version: CURRENT_APP_VERSION }),
       },
     );
+  });
+
+  it('cancels the displayed optimizer job with the selected backend credentials', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await cancelOptimization('session/id', 'opt/id', 'ai-token', 'https://ai.example.test');
+
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith(
+      'https://ai.example.test/sessions/session%2Fid/optimizations/opt%2Fid/cancel',
+      { method: 'POST', credentials: 'include', headers: { Authorization: 'Bearer ai-token' } },
+    );
+  });
+
+  it('reports optimizer cancellation errors without retrying the command', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ detail: 'Optimizer unavailable.' }), { status: 502 },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(cancelOptimization('session', 'job', null)).rejects.toThrow('Optimizer unavailable.');
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it('approves a proposal with the revision the browser holds', async () => {

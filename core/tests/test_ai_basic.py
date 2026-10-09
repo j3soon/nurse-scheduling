@@ -2160,6 +2160,60 @@ def rename_call() -> list[object]:
     return [ToolCallRequest((ToolCall("call_0", BASH_TOOL, arguments),))]
 
 
+def test_browser_cancels_an_optimizer_job_without_provider_or_sandbox_work() -> None:
+    async def scenario() -> None:
+        class Backend(BackgroundTestOptimizer):
+            def __init__(self):
+                super().__init__()
+                self.cancelled = []
+
+            async def cancel(self, job_id):
+                self.cancelled.append(job_id)
+                self.release.set()
+                return OptimizerJobPayload(id=job_id, state="cancelled", terminal=True)
+
+        backend = Backend()
+        provider = FakeProvider()
+        factory = FakeSandboxFactory()
+        app = create_test_app(
+            settings=make_settings(optimizer_poll_interval_seconds=0.001),
+            provider=provider,
+            sandbox_factory=factory,
+            optimizer_backend=backend,
+        )
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test", headers=AI_AUTH_HEADERS
+            ) as client,
+        ):
+            session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
+            other_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
+            job = await app.state.session_optimizer.start(session_id, schedule_yaml(), None)
+            route = f"/sessions/{session_id}/optimizations/{job.id}/cancel"
+            assert (await client.post(route, headers={"Authorization": "Bearer invalid"})).status_code == 401
+            assert (await client.post(f"/sessions/{other_id}/optimizations/{job.id}/cancel")).status_code == 404
+            assert (await client.post(f"/sessions/{session_id}/optimizations/missing/cancel")).status_code == 404
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test", headers=AI_AUTH_HEADERS
+            ) as stranger:
+                assert (await stranger.post(route)).status_code == 404
+            assert backend.cancelled == []
+            assert (await client.post(route)).status_code == 202
+            assert (await client.post(route)).status_code == 202
+            async with asyncio.timeout(2):
+                while not any(
+                    event.type == "optimization" and event.data["state"] == "cancelled"
+                    for event in app.state.session_event_stream.events_after(session_id)
+                ):
+                    await asyncio.sleep(0.001)
+            assert backend.cancelled == [job.remote_id]
+            assert provider.calls == []
+            assert factory.created == []
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("history_enabled", [False, True], ids=["without-history", "with-history"])
 def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatch, history_enabled: bool) -> None:
     history_starts: list[tuple[str, str, str | None, str, str, int]] = []

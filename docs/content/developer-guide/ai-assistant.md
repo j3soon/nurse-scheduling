@@ -194,6 +194,14 @@ The prompt gives the agent workspace paths for schedules and attachments.
 
 ### Optimizer jobs and result reviews
 
+The background status box has a **Cancel optimizer** control. It posts to
+`/sessions/{id}/optimizations/{job_id}/cancel` and uses the AI service's existing
+optimizer transport. The public job ID prevents a delayed click from cancelling
+a newer job. Authentication and browser session ownership still apply. State
+updates and the cancellation summary arrive on the session stream. Cancellation
+uses no model call or sandbox, and cancelled jobs do not start a result review.
+It leaves an active chat response running.
+
 <figure markdown="1" id="ai-optimizer">
 
 **Figure 5. Independent optimization and serialized result review.**

@@ -758,6 +758,20 @@ export async function queueMessage(
   if (!response.ok) throw await responseError(response);
 }
 
+export async function cancelOptimization(
+  sessionId: string,
+  jobId: string,
+  authToken: string | null,
+  endpoint = getAiBaseUrl(),
+): Promise<void> {
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/optimizations/${encodeURIComponent(jobId)}/cancel`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: authorizedHeaders(authToken),
+  });
+  if (!response.ok) throw await responseError(response);
+}
+
 /** Stop the named message's run, or every run of the session when no message is named. */
 export async function stopSession(
   sessionId: string,

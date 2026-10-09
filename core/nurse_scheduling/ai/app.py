@@ -48,6 +48,8 @@ from .lifecycle import TERMINAL_EVENTS, AgentRun, SessionRuns
 from .optimizer import (
     OptimizerArtifact,
     OptimizerBackend,
+    OptimizerError,
+    OptimizerJobUnavailable,
     OptimizerResultUnavailable,
     SessionOptimizer,
 )
@@ -651,6 +653,26 @@ def create_app(
         response = Response(status_code=status.HTTP_204_NO_CONTENT)
         refresh_owner_cookie(response, owner)
         return response
+
+    @app.post(
+        "/sessions/{session_id}/optimizations/{job_id}/cancel",
+        status_code=status.HTTP_202_ACCEPTED,
+        dependencies=[Depends(require_auth), Depends(restore_session)],
+    )
+    async def cancel_optimization(
+        session_id: str,
+        job_id: str,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> Response:
+        """Cancel one browser-owned optimizer job through the server-side transport."""
+        store.require_owned(session_id, owner)
+        try:
+            await session_optimizer.cancel(session_id, job_id)
+        except OptimizerJobUnavailable as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except OptimizerError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return Response(status_code=status.HTTP_202_ACCEPTED)
 
     @app.get(
         "/sessions/{session_id}/optimizations/{job_id}/xlsx",

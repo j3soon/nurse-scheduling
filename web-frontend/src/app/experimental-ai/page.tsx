@@ -44,7 +44,7 @@ import { downloadChatExport, type ChatExportFormat } from './chatExport';
 
 import { retentionLabel } from './chatPresentation';
 
-import { AiCapabilities, DEFAULT_SESSION_RETENTION_SECONDS, LOCAL_AI_API_URL, PRODUCTION_AI_API_URL, downloadOptimization, downloadGeneratedZip, getAiBaseUrl, getCapabilities, getBackendVersion, isOfficialAiEndpoint, normalizeAiEndpoint } from './aiClient';
+import { AiCapabilities, DEFAULT_SESSION_RETENTION_SECONDS, LOCAL_AI_API_URL, PRODUCTION_AI_API_URL, cancelOptimization, downloadOptimization, downloadGeneratedZip, getAiBaseUrl, getCapabilities, getBackendVersion, isOfficialAiEndpoint, normalizeAiEndpoint } from './aiClient';
 
 import { messageId } from './assistantEvents';
 
@@ -205,6 +205,7 @@ export default function ExperimentalAiPage() {
 
   const [draft, setDraft] = useState('');
   const [downloadingOptimizationId, setDownloadingOptimizationId] = useState<string | null>(null);
+  const [cancellingOptimizationId, setCancellingOptimizationId] = useState<string | null>(null);
   const [isClientReady, setIsClientReady] = useState(false);
   const [aiEndpoint, setAiEndpoint] = useState(getAiBaseUrl);
   const [serverStatus, setServerStatus] = useState<AiServerStatus>('checking');
@@ -250,7 +251,10 @@ export default function ExperimentalAiPage() {
     setError(requestError instanceof Error ? requestError.message : fallback);
   }, []);
 
-  const resetChatUi = useCallback(() => setDownloadingOptimizationId(null), []);
+  const resetChatUi = useCallback(() => {
+    setDownloadingOptimizationId(null);
+    setCancellingOptimizationId(null);
+  }, []);
   const {
     messages, uploadedFiles, removingUploadId, removingDownloadId, contextUsage, activeSessionId,
     sessionExpiresAt, sessionRetentionSeconds, conversationUnavailable, sessionNotice, trimmedHistoryCount,
@@ -282,6 +286,10 @@ export default function ExperimentalAiPage() {
     await submitMessage(draft.trim(), selectedAttachments.map(attachment => attachment.file));
   };
   hasMessagesRef.current = messages.length > 0;
+
+  useEffect(() => {
+    setCancellingOptimizationId(current => current === activeOptimization?.jobId ? current : null);
+  }, [activeOptimization?.jobId]);
 
   useTabSwitchWarning(draft.trim().length > 0 || selectedAttachments.length > 0);
 
@@ -688,6 +696,21 @@ export default function ExperimentalAiPage() {
       if (ownsConversation()) reportRequestError(downloadError, 'The optimized schedule could not be downloaded.');
     } finally {
       if (ownsConversation()) setDownloadingOptimizationId(null);
+    }
+  };
+
+  const cancelActiveOptimization = async () => {
+    const session = captureSession();
+    if (session === null || activeOptimization === null || cancellingOptimizationId !== null) return;
+    const jobId = activeOptimization.jobId;
+    setCancellingOptimizationId(jobId);
+    try {
+      await cancelOptimization(session.id, jobId, authToken, session.endpoint);
+    } catch (cancelError) {
+      if (session.ownsConversation()) {
+        setCancellingOptimizationId(current => current === jobId ? null : current);
+        reportRequestError(cancelError, 'The optimizer could not be cancelled.');
+      }
     }
   };
   const toggleDictation = () => {
@@ -1151,6 +1174,15 @@ export default function ExperimentalAiPage() {
                 {activeOptimization.points.length > 1 && <OptimizationSparkline points={activeOptimization.points} />}
               </div>
             )}
+            <button
+              type="button"
+              onClick={() => void cancelActiveOptimization()}
+              disabled={cancellingOptimizationId === activeOptimization.jobId || activeOptimization.state === 'cancelling' || isReconnecting}
+              className="ml-auto inline-flex items-center gap-1 rounded-md border border-violet-300 px-2 py-1 font-medium hover:bg-violet-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 disabled:cursor-wait disabled:opacity-60"
+            >
+              <FiSquare aria-hidden="true" className="h-3 w-3" />
+              {cancellingOptimizationId === activeOptimization.jobId || activeOptimization.state === 'cancelling' ? 'Cancelling optimizer…' : 'Cancel optimizer'}
+            </button>
           </div>
         )}
         {queuedMessages.length > 0 && (
