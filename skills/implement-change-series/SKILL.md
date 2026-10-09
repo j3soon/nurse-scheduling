@@ -39,6 +39,20 @@ Choose commit boundaries by behavior and revertability:
 - Apply the repository's plain technical English rule to commit titles and
   bodies. Explain the problem and resulting behavior before the mechanism.
 
+For a refactor that crosses interfaces, map the affected producers and consumers
+before porting code. Record the request/event fields, state ownership, stored
+formats, and behavior that must survive each commit. Include the test selectors
+that check those boundaries. Keep this map in the review artifact and limit it
+to interfaces that change.
+
+Review contract and migration decisions before implementation. Check failure
+ordering, reconnect/idempotence, data preservation, and rollback where relevant.
+Use an authorized review agent when it would help. This is a short design check,
+not an approval gate or a replacement for a requested final adversarial review.
+
+Use the reference branch as source material. Adapt one complete slice with its
+callers and tests instead of copying whole modules whose interfaces differ.
+
 ## Implement one slice at a time
 
 For each planned commit:
@@ -63,6 +77,14 @@ For each planned commit:
 If inspection changes the natural grouping, briefly update the user before
 proceeding. Do not accumulate work from later independent slices in an earlier
 commit.
+
+When integration checks fail, collect the failures from the focused deterministic
+suite once without stopping at its first failure. Group them by shared interface
+or invariant, fix each group, and rerun its failed cases and contrasting controls.
+Use this diagnostic pass on the relevant unit/integration tests, not a full CI,
+browser, or live evaluation run. Do not rerun a broad suite after each individual
+fix. Broaden validation when the slice is coherent or a failure exposes a wider
+dependency. Keep the final affected checks before committing.
 
 Check once whether repository wrapper commands honor path or test filters. If a
 wrapper always runs a broad suite, use an allowed direct narrow command for each
