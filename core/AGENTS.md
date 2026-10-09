@@ -101,6 +101,9 @@ cases ran. A passing suite with those cases skipped does not validate persistenc
   requests and retained history through `context.py`. Count retained partial text
   in session byte budgets even when model context replaces it with an interruption
   note. Release in-run tool results and images after session finalization.
+- Apply queued steering before each follow-up provider request, including requests
+  after refused tool batches. Reject conflicting provider finish reasons and any
+  further output after a completion signal.
 - `Agent` owns observable model-loop state. `agent_loop` executes registered
   `AgentTool` contracts and derives concurrency from each tool's read-only flag.
   Close the provider and agent generators before releasing execution state.

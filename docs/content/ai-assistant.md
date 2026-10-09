@@ -83,6 +83,9 @@ decisions. Tool results and reasoning belong to the current run and are released
 when it ends. Stop and failed runs retain their questions with an interruption
 note. Later model context excludes claims from their discarded workspace.
 Persistence still stores the existing text history through a conversion boundary.
+The service applies queued steering before each follow-up model request, including
+requests after refused tool calls. It requires provider completion before tools
+run and rejects conflicting finish reasons or further output after completion.
 
 The backend stores the YAML snapshot and retained conversation turns. Each
 provider request includes a schedule summary, recent history, and the current

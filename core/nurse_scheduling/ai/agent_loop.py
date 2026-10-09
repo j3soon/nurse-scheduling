@@ -43,6 +43,7 @@ from .context import prepare_provider_request
 from .provider import (
     ChatMessage,
     ReasoningDelta,
+    ResponseEnd,
     TextDelta,
     TokenUsage,
     ToolCall,
@@ -52,6 +53,11 @@ from .provider import (
 from .transcript import AgentMessage, AssistantMessage, ToolResultMessage, UserMessage
 
 logger = logging.getLogger("nurse_scheduling.ai.agent")
+
+TRUNCATED_TOOL_CALL_RESULT = (
+    "The response reached the output token limit before this tool call was complete, so it was not run. "
+    "Issue it again with shorter arguments, or split the work into smaller steps."
+)
 
 
 @asynccontextmanager
@@ -84,7 +90,14 @@ async def agent_loop(
     tool_calls = 0
     final_answer_only = False
     while True:
+        # Every follow-up request must include steering accepted during the last response,
+        # including tool refusals that continue without an execution batch.
+        if conversation and take_steering is not None:
+            for message_id, text in take_steering(False):
+                conversation.append(UserMessage(text))
+                yield AgentSteering(message_id, text)
         answer, reasoning, calls = [], [], ()
+        finish_reason = None
         provider_events = provider.stream_events(
             prepare_provider_request(messages, conversation),
             [] if final_answer_only else [tool.definition for tool in tools],
@@ -102,11 +115,13 @@ async def agent_loop(
                         yield event
                     elif isinstance(event, ToolCallRequest):
                         calls = event.calls
+                    elif isinstance(event, ResponseEnd):
+                        finish_reason = event.finish_reason
         except BaseException as exc:
             reason = "aborted" if isinstance(exc, (asyncio.CancelledError, GeneratorExit)) else "error"
             conversation.append(AssistantMessage("".join(answer), reason, "".join(reasoning), calls))
             raise
-        stop_reason = "tool_use" if calls else "stop"
+        stop_reason = "length" if finish_reason == "length" else "tool_use" if calls else "stop"
         conversation.append(AssistantMessage("".join(answer), stop_reason, "".join(reasoning), calls))
         if not calls:
             steering = tuple(take_steering(True)) if take_steering is not None else ()
@@ -134,6 +149,15 @@ async def agent_loop(
 
         tool_rounds += 1
         tool_calls += len(calls)
+        if finish_reason == "length":
+            # Even valid JSON can describe a different operation when cut short.
+            for call in calls:
+                yield AgentToolStart(call.name, call.arguments, call.id)
+                yield _record_tool_result(conversation, call, AgentToolOutcome(TRUNCATED_TOOL_CALL_RESULT, False))
+            final_answer_only = (max_tool_rounds is not None and tool_rounds >= max_tool_rounds) or (
+                max_tool_calls is not None and tool_calls >= max_tool_calls
+            )
+            continue
         batch_scope = activity_batch or _unbatched_activity
         async with batch_scope():
             terminal = False
@@ -168,10 +192,6 @@ async def agent_loop(
                 observe_tool_batch(AgentToolBatchMetrics(completed_calls, parallel, execution_seconds))
         if terminal:
             return
-        if take_steering is not None:
-            for message_id, text in take_steering(False):
-                conversation.append(UserMessage(text))
-                yield AgentSteering(message_id, text)
 
 
 def _record_tool_result(conversation: list[AgentMessage], call: ToolCall, outcome: AgentToolOutcome) -> AgentToolUse:

@@ -37,6 +37,7 @@ from nurse_scheduling.ai.provider import (
     ProviderError,
     ProviderResponseLimitError,
     ReasoningDelta,
+    ResponseEnd,
     TextDelta,
     TokenUsage,
     ToolCall,
@@ -240,7 +241,13 @@ def test_retries_pre_stream_timeouts_with_exponential_backoff(monkeypatch: pytes
         provider_retry_backoff_seconds=0.25,
     )
 
-    assert _events(provider) == [ProviderAttempt(1), ProviderAttempt(2), ProviderAttempt(3), TextDelta("Recovered")]
+    assert _events(provider) == [
+        ProviderAttempt(1),
+        ProviderAttempt(2),
+        ProviderAttempt(3),
+        TextDelta("Recovered"),
+        ResponseEnd(None),
+    ]
     assert len(attempts) == 3
     assert delays == [0.25, 0.5]
 
@@ -309,7 +316,10 @@ def test_reconstructs_one_tool_call_from_streamed_fragments(monkeypatch: pytest.
 
     events = _events(_streaming_provider(monkeypatch, body), TOOLS)
 
-    assert events == [ToolCallRequest((ToolCall(id="call_1", name="schedule_patch", arguments='{"operations":[]}'),))]
+    assert events == [
+        ToolCallRequest((ToolCall(id="call_1", name="schedule_patch", arguments='{"operations":[]}'),)),
+        ResponseEnd(None),
+    ]
 
 
 def test_reconstructs_parallel_tool_calls_in_index_order(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -391,7 +401,7 @@ def test_requests_and_streams_token_usage_when_enabled(monkeypatch: pytest.Monke
     events = _events(_streaming_provider(monkeypatch, body, requests, include_usage=True))
 
     assert json.loads(requests[-1].content)["stream_options"] == {"include_usage": True}
-    assert events == [TextDelta("Answer"), TokenUsage(120, 30, 150, 80, 12)]
+    assert events == [TextDelta("Answer"), TokenUsage(120, 30, 150, 80, 12), ResponseEnd(None)]
 
 
 @pytest.mark.parametrize(
@@ -416,7 +426,7 @@ def test_discovers_and_caches_the_configured_model_context_limit(monkeypatch, mo
         model_metadata=model_metadata,
     )
 
-    assert _events(provider) == _events(provider) == [TextDelta("Answer")]
+    assert _events(provider) == _events(provider) == [TextDelta("Answer"), ResponseEnd(None)]
 
     assert provider.context_tokens == expected
     assert [request.method for request in requests] == ["GET", "POST", "POST"]
@@ -434,7 +444,7 @@ def test_missing_model_metadata_does_not_prevent_chat_or_usage(monkeypatch, stat
         models_status=status,
     )
 
-    assert _events(provider) == [TextDelta("Answer"), TokenUsage(120, 30, 150)]
+    assert _events(provider) == [TextDelta("Answer"), TokenUsage(120, 30, 150), ResponseEnd(None)]
     assert provider.context_tokens is None
 
 
@@ -443,7 +453,7 @@ def test_skips_a_choiceless_chunk_that_carries_no_usage(monkeypatch: pytest.Monk
 
     events = _events(_streaming_provider(monkeypatch, body))
 
-    assert events == [TextDelta("Answer")]
+    assert events == [TextDelta("Answer"), ResponseEnd(None)]
 
 
 @pytest.mark.parametrize("details", [None, {}, {"cached_tokens": None}, {"cached_tokens": 0}])
@@ -451,7 +461,7 @@ def test_distinguishes_missing_cache_usage_from_zero(monkeypatch: pytest.MonkeyP
     usage = {"prompt_tokens": 120, "completion_tokens": 30, "total_tokens": 150, "prompt_tokens_details": details}
     events = _events(_streaming_provider(monkeypatch, _sse_body({"choices": [], "usage": usage}), include_usage=True))
 
-    assert events == [TokenUsage(120, 30, 150, 0 if details == {"cached_tokens": 0} else None)]
+    assert events == [TokenUsage(120, 30, 150, 0 if details == {"cached_tokens": 0} else None), ResponseEnd(None)]
 
 
 def test_missing_cache_usage_propagates_across_provider_turns() -> None:
@@ -514,7 +524,12 @@ def test_streams_reasoning_separately_from_the_answer(monkeypatch: pytest.Monkey
 
     events = _events(_streaming_provider(monkeypatch, body))
 
-    assert events == [ReasoningDelta("The ward "), ReasoningDelta("has 3 nurses."), TextDelta("Yes.")]
+    assert events == [
+        ReasoningDelta("The ward "),
+        ReasoningDelta("has 3 nurses."),
+        TextDelta("Yes."),
+        ResponseEnd(None),
+    ]
 
 
 def test_rejects_an_answer_longer_than_the_limit(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -529,3 +544,76 @@ def test_rejects_reasoning_longer_than_the_limit(monkeypatch: pytest.MonkeyPatch
 
     with pytest.raises(ProviderResponseLimitError, match="more reasoning than"):
         _events(_streaming_provider(monkeypatch, body))
+
+
+@pytest.mark.parametrize("finish_reason", [None, "stop", "tool_calls", "length", "content_filter"])
+@pytest.mark.parametrize("done", [False, True])
+def test_completion_is_checked_before_releasing_tool_calls(monkeypatch, finish_reason, done):
+    chunk = _delta_chunk({"tool_calls": [{"index": 0, "id": "edit", "function": {"name": "edit", "arguments": "{}"}}]})
+    chunk["choices"][0]["finish_reason"] = finish_reason
+    body = _sse_body(chunk)
+    if not done:
+        body = body.removesuffix("data: [DONE]\n\n")
+    provider = _streaming_provider(monkeypatch, body)
+    seen = []
+
+    async def consume():
+        async for event in provider.stream_events([{"role": "user", "content": "Edit"}], TOOLS):
+            seen.append(event)
+
+    if finish_reason == "content_filter" or (finish_reason is None and not done):
+        with pytest.raises(ProviderError):
+            asyncio.run(consume())
+        assert not any(isinstance(event, ToolCallRequest) for event in seen)
+    else:
+        asyncio.run(consume())
+        assert seen == [ToolCallRequest((ToolCall("edit", "edit", "{}"),)), ResponseEnd(finish_reason)]
+
+
+@pytest.mark.parametrize("chunk", [[], {"choices": [None]}, {"choices": [{"delta": None}]}])
+def test_malformed_stream_shapes_raise_provider_error(monkeypatch, chunk):
+    provider = _streaming_provider(monkeypatch, _sse_body(chunk))
+    with pytest.raises(ProviderError, match="invalid stream"):
+        _events(provider)
+
+
+@pytest.mark.parametrize("initial_reason", ["length", "content_filter", "tool_calls"])
+def test_conflicting_finish_reasons_cannot_release_tool_calls(monkeypatch, initial_reason):
+    first = _delta_chunk({"tool_calls": [{"index": 0, "id": "edit", "function": {"name": "edit", "arguments": "{}"}}]})
+    first["choices"][0]["finish_reason"] = initial_reason
+    second = {"choices": [{"delta": {}, "finish_reason": "stop"}]}
+    provider = _streaming_provider(monkeypatch, _sse_body(first, second))
+    seen = []
+
+    async def consume():
+        async for event in provider.stream_events([{"role": "user", "content": "Edit"}], TOOLS):
+            seen.append(event)
+
+    with pytest.raises(ProviderError, match="conflicting finish reasons"):
+        asyncio.run(consume())
+    assert not any(isinstance(event, ToolCallRequest) for event in seen)
+
+
+@pytest.mark.parametrize(
+    "delta",
+    [
+        {"content": "Late answer"},
+        {"reasoning": "Late thought"},
+        {"tool_calls": [{"index": 0, "function": {"arguments": "changed"}}]},
+    ],
+    ids=["text", "reasoning", "tool-arguments"],
+)
+def test_output_after_completion_cannot_release_tool_calls(monkeypatch, delta):
+    first = _delta_chunk({"tool_calls": [{"index": 0, "id": "edit", "function": {"name": "edit", "arguments": "{}"}}]})
+    first["choices"][0]["finish_reason"] = "tool_calls"
+    provider = _streaming_provider(monkeypatch, _sse_body(first, _delta_chunk(delta)))
+    with pytest.raises(ProviderError, match="output after completion"):
+        _events(provider, TOOLS)
+
+
+def test_duplicate_empty_completion_and_usage_chunks_are_accepted(monkeypatch):
+    final = {"choices": [{"delta": {"content": "Done"}, "finish_reason": "stop"}]}
+    repeated = {"choices": [{"delta": {}, "finish_reason": "stop"}]}
+    usage = {"choices": [], "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}}
+    provider = _streaming_provider(monkeypatch, _sse_body(final, repeated, usage))
+    assert _events(provider) == [TextDelta("Done"), TokenUsage(1, 1, 2), ResponseEnd("stop")]

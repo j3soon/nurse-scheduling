@@ -41,6 +41,7 @@ from .transcript import (
     AppEventEntry,
     AssistantMessage,
     ProposalDecisionEntry,
+    ToolCall,
     ToolResultMessage,
     UserMessage,
     starts_exchange,
@@ -286,7 +287,14 @@ def prepare_provider_request(prefix: Sequence[ChatMessage], entries: Sequence[Ag
         flush_images()
         if isinstance(entry, AssistantMessage):
             if entry.tool_calls:
-                request.append(assistant_tool_call_message(entry.tool_calls, entry.text))
+                # A truncated response is an audit record of raw model output. The
+                # provider sees placeholder arguments so it can safely reissue calls.
+                calls = (
+                    tuple(ToolCall(call.id, call.name, "{}") for call in entry.tool_calls)
+                    if entry.stop_reason == "length"
+                    else entry.tool_calls
+                )
+                request.append(assistant_tool_call_message(calls, entry.text))
             else:
                 request.append(ChatMessage(role="assistant", content=entry.text))
         elif isinstance(entry, UserMessage):
