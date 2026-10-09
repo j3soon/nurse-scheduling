@@ -226,6 +226,66 @@ def test_application_tags_sentry_request_address(monkeypatch):
     assert [request.url.path for request in requests] == ["/health"]
 
 
+@pytest.mark.parametrize(
+    ("frontend_version", "backend_version", "mismatch"),
+    [
+        ("v0.4.3", "v0.4.3", False),
+        ("v0.4.2", "v0.4.3", True),
+        ("v0.4.3-dirty", "v0.4.3-dirty", True),
+        (None, "v0.4.3", False),
+    ],
+)
+def test_frontend_build_version_reports_a_mismatch_once_per_session(
+    frontend_version, backend_version, mismatch, monkeypatch, caplog
+):
+    monkeypatch.setattr("nurse_scheduling.ai.app.get_app_version", lambda: backend_version)
+    app = create_test_app(settings=make_settings(), provider=FakeProvider())
+    with AuthenticatedTestClient(app) as client:
+        body = {"schedule_yaml": schedule_yaml()}
+        if frontend_version is not None:
+            body["frontend_version"] = frontend_version
+        created = client.post("/sessions", json=body)
+        assert created.status_code == 201
+        session_id = created.json()["id"]
+        session = app.state.session_store.get(session_id)
+        assert session.frontend_version == frontend_version
+        response = client.post(
+            f"/sessions/{session_id}/messages",
+            json={"message": "Hello", "message_id": "version-message", "frontend_version": frontend_version},
+            headers={"Accept": "application/json"},
+        )
+        assert response.status_code == 202
+
+    errors = [record for record in caplog.records if record.levelno == logging.ERROR]
+    assert len(errors) == int(mismatch)
+    if mismatch:
+        assert errors[0].frontend_version == frontend_version
+        assert errors[0].backend_version == backend_version
+        assert session_id in errors[0].message
+
+
+@pytest.mark.parametrize("queued", [False, True], ids=["foreground", "queued"])
+def test_chat_requests_report_the_frontend_build_after_session_creation(queued, monkeypatch, caplog):
+    monkeypatch.setattr("nurse_scheduling.ai.app.get_app_version", lambda: "v0.4.3")
+    provider = FakeProvider()
+    app = create_test_app(settings=make_settings(), provider=provider)
+    with AuthenticatedTestClient(app) as client:
+        session_id = client.post("/sessions", json={"schedule_yaml": schedule_yaml()}).json()["id"]
+        session = app.state.session_store.get(session_id)
+        if queued:
+            session.begin_run(accepting_steering=True)
+        response = client.post(
+            f"/sessions/{session_id}/messages" + ("/queue" if queued else ""),
+            json={"message": "Hello", "message_id": "version-message", "frontend_version": "v0.4.2"},
+            headers={"Accept": "application/json"},
+        )
+        assert response.status_code == 202
+        assert session.frontend_version == "v0.4.2"
+        if queued:
+            assert provider.calls == []
+    assert "frontend_version=v0.4.2 backend_version=v0.4.3" in caplog.text
+
+
 def test_application_lifespan_runs_sandbox_cleanup_supervision():
     class LifecycleFactory(FakeSandboxFactory):
         starts = 0

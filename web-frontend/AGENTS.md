@@ -93,9 +93,12 @@ every session request, including the fetch-based event stream. Store it only
 when the user explicitly opts in to unencrypted device storage.
 The AI page defaults to the hosted `/ai` path on the production API and calls
 the selected backend directly. Production NGINX must strip the `/ai`
-prefix and disable response buffering. Read the shared backend app version from
-the parent `/info` endpoint when AI is mounted at `/ai`. Older AI capabilities
-may omit `app_version`. Keep credentials scoped to their endpoint and lock the
+prefix and disable response buffering. Read the AI service build version from
+`/capabilities`. Fall back to the
+parent `/info` endpoint when AI is mounted at `/ai` and capabilities omit
+`app_version`. Send the frontend build version on session creation and every
+chat message, including queued messages. Keep credentials scoped to their
+endpoint and lock the
 endpoint after a conversation creates a session. A self-hosted build may set another default with `NEXT_PUBLIC_AI_API_URL`. When a
 capability-gated control is missing, inspect the capabilities request from the
 exact browser origin. A loopback-only browser check can miss CORS failures.

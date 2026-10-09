@@ -26,6 +26,7 @@ import {
   type AuthRequirement,
 } from '@/utils/backendAuth';
 import type { OptimizationProgressPoint } from '@/components/OptimizationProgressChart';
+import { CURRENT_APP_VERSION } from '@/utils/version';
 
 export interface ToolActivity {
   toolCallId?: string;
@@ -301,7 +302,7 @@ export async function createSession(
     method: 'POST',
     credentials: 'include',
     headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ schedule_yaml: scheduleYaml }),
+    body: JSON.stringify({ schedule_yaml: scheduleYaml, frontend_version: CURRENT_APP_VERSION }),
   });
   if (!response.ok) throw await responseError(response);
 
@@ -587,7 +588,7 @@ async function postMessage(
     method: 'POST',
     credentials: 'include',
     headers: authorizedHeaders(authToken, { Accept: accept, 'Content-Type': 'application/json' }),
-    body: JSON.stringify(messageId === undefined ? { message } : { message, message_id: messageId }),
+    body: JSON.stringify({ message, message_id: messageId, frontend_version: CURRENT_APP_VERSION }),
     signal,
   });
   if (!response.ok) throw await responseError(response);
@@ -752,7 +753,7 @@ export async function queueMessage(
     method: 'POST',
     credentials: 'include',
     headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ message_id: messageId, message }),
+    body: JSON.stringify({ message_id: messageId, message, frontend_version: CURRENT_APP_VERSION }),
   });
   if (!response.ok) throw await responseError(response);
 }

@@ -313,7 +313,7 @@ test('asks about the current schedule and renders a streamed answer', async ({ p
   expect(viewport).not.toBeNull();
   expect(Math.abs(composerBox!.y + composerBox!.height - viewport!.height)).toBeLessThanOrEqual(2);
   await expect(page.getByRole('contentinfo')).toHaveCount(0);
-  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Who works first?', message_id: expect.any(String) });
+  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Who works first?', message_id: expect.any(String), frontend_version: expect.any(String) });
   expect(captured.scheduleYaml).toContain('apiVersion:');
 
   await expect(page.getByRole('button', { name: 'Stop' })).toBeHidden();
@@ -383,6 +383,12 @@ test('authenticates AI session requests with an explicitly remembered token', as
   await page.getByRole('checkbox', { name: /remember on this device/i }).check();
   await page.getByRole('button', { name: 'Save token for AI assistant' }).click();
 
+  const versions = page.getByRole('group', { name: 'AI versions' });
+  await expect(versions).toContainText('Frontend and backend versions do not match. If nothing breaks, you can continue.');
+  const tokenStatus = await page.getByText('Token saved on this device').boundingBox();
+  const versionsBox = await versions.boundingBox();
+  expect(versionsBox!.y).toBeGreaterThan(tokenStatus!.y + tokenStatus!.height);
+
   await expect(composer).toBeEnabled();
   await composer.fill('Use the protected service.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
@@ -415,8 +421,8 @@ test('retries a failed text run without hiding its provisional activity', async 
   await expect(page.getByText('Recovered response.')).toBeVisible();
   const bodies = captured.messageBodies.map(body => JSON.parse(body));
   expect(bodies).toEqual([
-    { message: 'Who works first?', message_id: expect.any(String) },
-    { message: 'Who works first?', message_id: expect.any(String) },
+    { message: 'Who works first?', message_id: expect.any(String), frontend_version: expect.any(String) },
+    { message: 'Who works first?', message_id: expect.any(String), frontend_version: expect.any(String) },
   ]);
   // A retry asks again, so it is a new message rather than a reconnect to the failed run.
   expect(bodies[0].message_id).not.toBe(bodies[1].message_id);
@@ -667,7 +673,7 @@ test('previews and sends an image attachment', async ({ page }) => {
   expect(captured.uploadContentType).toContain('multipart/form-data');
   expect(captured.uploadBody).toContain('filename="ward.png"');
   expect(captured.messageContentType).toBe('application/json');
-  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'What is shown?', message_id: expect.any(String) });
+  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'What is shown?', message_id: expect.any(String), frontend_version: expect.any(String) });
   // The bubbles follow the provider request: system prompt, upload event, then the question as typed.
   const cards = page.getByLabel('Chat messages').locator('article');
   await expect(cards.locator('> p:first-child')).toHaveText(['System', 'User · App - Files Uploaded', 'User', 'Assistant']);
@@ -717,7 +723,7 @@ test('previews and sends arbitrary file attachments', async ({ page }) => {
   expect(captured.uploadBody).toContain('notes.pdf');
   expect(captured.uploadBody).toContain('coverage.custom');
   expect(captured.uploadBody).toContain('Alice,day');
-  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Check the documents.', message_id: expect.any(String) });
+  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Check the documents.', message_id: expect.any(String), frontend_version: expect.any(String) });
 });
 
 test('downloads and removes generated files through the ZIP controls', async ({ page }) => {
@@ -802,7 +808,7 @@ test('places uploads beside desktop chat and below mobile controls and allows re
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Read this file');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Workbook inspected.')).toBeVisible();
-  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Read this file', message_id: expect.any(String) });
+  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Read this file', message_id: expect.any(String), frontend_version: expect.any(String) });
   const panel = page.getByRole('complementary', { name: 'Session files' });
   await expect(panel.getByRole('button', { name: 'Remove ward.csv' })).toBeVisible();
   const panelBox = (await panel.boundingBox())!;

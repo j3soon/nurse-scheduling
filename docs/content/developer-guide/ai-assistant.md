@@ -655,6 +655,14 @@ FastAPI.
 
 ## HTTP API
 
+Session creation and both foreground and queued messages include
+`frontend_version`, the browser's build version. The AI service compares it with
+its own build, logs a mismatch once per loaded session, and includes both versions
+in the error record sent through Sentry's logging integration. The request still
+runs. The browser shows the same warning as Optimize and Export below its token
+controls. `/capabilities.app_version` identifies the AI service. The parent
+`/info` version is a fallback for older deployments.
+
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /health` | Process and service identity check. |

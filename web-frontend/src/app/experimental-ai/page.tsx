@@ -36,7 +36,7 @@ import PageDocumentationLink from '@/components/PageDocumentationLink';
 import { DOCUMENTATION_URLS, FIREFOX_NIGHTLY_URL, FIREFOX_SPEECH_RECOGNITION_STATUS_URL, GITHUB_AI_BETA_ACCESS_URL, GITHUB_PRIVACY_URL, GITHUB_TAGS_URL } from '@/constants/urls';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
-import { CURRENT_APP_VERSION } from '@/utils/version';
+import { CURRENT_APP_VERSION, hasAppVersionMismatch } from '@/utils/version';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
 import yaml from 'js-yaml';
 
@@ -343,6 +343,7 @@ export default function ExperimentalAiPage() {
     if (!isClientReady) return;
     const capabilitiesController = new AbortController();
     setServerStatus('checking');
+    setBackendVersion(undefined);
     setCapabilitiesError(null);
     getCapabilities(capabilitiesController.signal, aiEndpoint)
       .then(async capabilities => {
@@ -353,8 +354,8 @@ export default function ExperimentalAiPage() {
         setSessionRetentionSeconds(
           capabilities.session_retention_seconds ?? DEFAULT_SESSION_RETENTION_SECONDS,
         );
-        const version = await getBackendVersion(capabilitiesController.signal, aiEndpoint);
-        if (!capabilitiesController.signal.aborted) setBackendVersion(version ?? capabilities.app_version);
+        const version = capabilities.app_version ?? await getBackendVersion(capabilitiesController.signal, aiEndpoint);
+        if (!capabilitiesController.signal.aborted) setBackendVersion(version);
       })
       .catch((capabilityError: unknown) => {
         if (!capabilitiesController.signal.aborted) {
@@ -762,6 +763,7 @@ export default function ExperimentalAiPage() {
     setIsDraggingFiles(false);
     if (!attachmentPickerDisabled) addAttachments(Array.from(event.dataTransfer.files));
   };
+  const hasVersionMismatch = backendVersion !== undefined && hasAppVersionMismatch(CURRENT_APP_VERSION, backendVersion);
   const serverLocked = activeSessionId !== null || messages.length > 0;
 
   // The Session files panel is fixed on the right at xl, so the chat and composer reserve
@@ -774,24 +776,6 @@ export default function ExperimentalAiPage() {
           <PageDocumentationLink href={DOCUMENTATION_URLS.experimentalAi} label="Experimental AI" />
           <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800">
             Experimental
-          </span>
-          <span className="text-xs text-gray-400">
-            Frontend{' '}
-            <AppVersionText
-              version={CURRENT_APP_VERSION}
-              versionHref={GITHUB_TAGS_URL}
-              versionClassName="hover:text-gray-600"
-              commitClassName="hover:text-gray-600"
-            />
-          </span>
-          <span className="text-xs text-gray-400">
-            Backend{' '}
-            <AppVersionText
-              version={backendVersion ?? 'unknown'}
-              versionHref={GITHUB_TAGS_URL}
-              versionClassName="hover:text-gray-600"
-              commitClassName="hover:text-gray-600"
-            />
           </span>
         </div>
         <p className="text-sm text-gray-600">
@@ -983,6 +967,33 @@ export default function ExperimentalAiPage() {
             )}
           </div>
         )}
+        <div role="group" aria-label="AI versions" className={`mt-3 rounded-md border px-3 py-2 text-xs ${hasVersionMismatch ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-gray-200 bg-gray-50 text-gray-600'}`}>
+          <div className="flex flex-wrap gap-x-4 gap-y-1">
+            <span>
+              Frontend{' '}
+              <AppVersionText
+                version={CURRENT_APP_VERSION}
+                versionHref={GITHUB_TAGS_URL}
+                versionClassName="hover:text-gray-600"
+                commitClassName="hover:text-gray-600"
+              />
+            </span>
+            <span>
+              Backend{' '}
+              <AppVersionText
+                version={backendVersion ?? 'unknown'}
+                versionHref={GITHUB_TAGS_URL}
+                versionClassName="hover:text-gray-600"
+                commitClassName="hover:text-gray-600"
+              />
+            </span>
+          </div>
+          {hasVersionMismatch && (
+            <p className="mt-1 font-medium text-amber-700">
+              Frontend and backend versions do not match. If nothing breaks, you can continue.
+            </p>
+          )}
+        </div>
       </div>
 
       {fileCapability.retained && (

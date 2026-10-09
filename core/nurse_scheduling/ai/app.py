@@ -144,6 +144,7 @@ class CreateSessionRequest(BaseModel):
     """The schedule snapshot owned by a new chat session."""
 
     schedule_yaml: str = Field(min_length=1)
+    frontend_version: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class ChatRequest(BaseModel):
@@ -152,6 +153,7 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=100_000)
     # A repeated client message ID reattaches to its run instead of asking again.
     message_id: str | None = Field(default=None, min_length=1, max_length=100)
+    frontend_version: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class StopChatRequest(BaseModel):
@@ -519,6 +521,7 @@ def create_app(
         owner = owner_cookie_token(owner)
         refresh_owner_cookie(response, owner)
         session = store.create(owner, request.schedule_yaml)
+        session.observe_frontend_version(request.frontend_version, app.state.app_version)
         # The client never learns this ID unless the save succeeds, so release its slot otherwise.
         saved = False
         try:
@@ -695,6 +698,8 @@ def create_app(
     ) -> Response:
         """Queue a follow-up for the next boundary in an active agent run."""
         message = _validate_question(request.message, settings)
+        session = store.require_owned(session_id, owner)
+        session.observe_frontend_version(request.frontend_version, app.state.app_version)
         store.queue_steering(session_id, owner, request.message_id, message)
         request_logger.info(
             "AI steering queued session_id=%s message_chars=%s message=%s auth_credential_id=%s",
@@ -717,6 +722,7 @@ def create_app(
         """Start a run independently of its event subscribers."""
         question = _validate_question(body.message, settings)
         session = store.require_owned(session_id, owner)
+        session.observe_frontend_version(body.frontend_version, app.state.app_version)
         cursor = event_stream.cursor(session_id)
         receipt = await session.accept_message(
             question,

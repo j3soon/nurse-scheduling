@@ -50,7 +50,7 @@ import {
   type OptimizationOptionsResponse,
   type ServerInfoResponse,
 } from '@/app/optimize-and-export/serverSelection';
-import { CURRENT_APP_VERSION, parseVersionParts } from '@/utils/version';
+import { CURRENT_APP_VERSION, hasAppVersionMismatch } from '@/utils/version';
 
 type ServerStatus = 'unchecked' | 'checking' | 'online' | 'offline' | 'incompatible' | 'degraded' | 'unauthorized';
 type ServerSelection = 'auto' | string;
@@ -322,14 +322,6 @@ function persistServerOptions(servers: OptimizeServerEntry[], selectedServerEndp
 
 function deleteStoredServerOptions(): void {
   window.localStorage.removeItem(SERVER_OPTIONS_STORAGE_KEY);
-}
-
-function isDirtyAppVersion(version: string): boolean {
-  return parseVersionParts(version).dirty;
-}
-
-function hasAppVersionMismatch(frontendVersion: string, backendVersion: string): boolean {
-  return frontendVersion !== backendVersion || isDirtyAppVersion(frontendVersion) || isDirtyAppVersion(backendVersion);
 }
 
 function parseClaimedPerformance(value: unknown): ServerInfoResponse['claimed_performance'] {

@@ -53,7 +53,8 @@ vi.mock('@/utils/restorePeopleIdsInXlsx', () => ({
   restorePeopleIdsInXlsx: mockRestorePeopleIdsInXlsx,
 }));
 
-vi.mock('@/utils/version', () => ({
+vi.mock('@/utils/version', async importOriginal => ({
+  ...await importOriginal<typeof import('@/utils/version')>(),
   get CURRENT_APP_VERSION() {
     return mockCurrentAppVersion.value;
   },

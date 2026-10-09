@@ -57,6 +57,7 @@ function streamedResponse(chunks: string[]): Response {
 }
 
 import type { SessionEvent } from './sessionEvents';
+import { CURRENT_APP_VERSION } from '@/utils/version';
 
 describe('AI client', () => {
   beforeEach(() => {
@@ -80,7 +81,7 @@ describe('AI client', () => {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ai-client-token' },
-      body: JSON.stringify({ schedule_yaml: 'description: test' }),
+      body: JSON.stringify({ schedule_yaml: 'description: test', frontend_version: CURRENT_APP_VERSION }),
     });
   });
 
@@ -345,7 +346,7 @@ describe('AI client', () => {
     expect(fetchMock).toHaveBeenCalledWith(
       'https://api.nursescheduling.org/ai/sessions/session%2Fid/messages',
       expect.objectContaining({
-        body: JSON.stringify({ message: 'Who works?' }),
+        body: JSON.stringify({ message: 'Who works?', frontend_version: CURRENT_APP_VERSION }),
         credentials: 'include',
         headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json', Authorization: 'Bearer stream-token' },
       }),
@@ -434,7 +435,7 @@ describe('AI client', () => {
       method: 'POST',
       credentials: 'include',
       headers: { Accept: 'application/json', 'Content-Type': 'application/json', Authorization: 'Bearer stream-token' },
-      body: JSON.stringify({ message: 'What is shown?', message_id: 'message-1' }),
+      body: JSON.stringify({ message: 'What is shown?', message_id: 'message-1', frontend_version: CURRENT_APP_VERSION }),
       signal: expect.any(AbortSignal),
     });
   });
@@ -453,8 +454,8 @@ describe('AI client', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const bodies = fetchMock.mock.calls.map(([, request]) => JSON.parse((request as RequestInit).body as string));
     expect(bodies).toEqual([
-      { message: 'Question', message_id: 'message-1' },
-      { message: 'Question', message_id: 'message-1' },
+      { message: 'Question', message_id: 'message-1', frontend_version: CURRENT_APP_VERSION },
+      { message: 'Question', message_id: 'message-1', frontend_version: CURRENT_APP_VERSION },
     ]);
     expect(onConnectionChange.mock.calls).toEqual([[false], [true]]);
   });
@@ -915,7 +916,7 @@ describe('AI client', () => {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer stream-token' },
-        body: JSON.stringify({ message_id: 'queued-1', message: 'Focus on P2.' }),
+        body: JSON.stringify({ message_id: 'queued-1', message: 'Focus on P2.', frontend_version: CURRENT_APP_VERSION }),
       },
     );
   });

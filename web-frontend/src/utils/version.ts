@@ -22,6 +22,12 @@ import { GITHUB_TAGS_API_URL, GITHUB_BRANCHES_API_URL } from '@/constants/urls';
 // Current application version from environment variable.
 export const CURRENT_APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION || 'unknown';
 
+export function hasAppVersionMismatch(frontendVersion: string, backendVersion: string): boolean {
+  return frontendVersion !== backendVersion
+    || parseVersionParts(frontendVersion).dirty
+    || parseVersionParts(backendVersion).dirty;
+}
+
 // Type for release branch entries
 export type BuildEntry = { label: string; url: string };
 

@@ -367,6 +367,26 @@ describe('ExperimentalAiPage', () => {
     expect(mockGetBackendVersion).toHaveBeenCalledWith(expect.any(AbortSignal), '/ai');
   });
 
+  it('warns about the AI service version even when the parent backend reports another build', async () => {
+    mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, app_version: 'v0.4.2-ai' });
+    render(<ExperimentalAiPage />);
+
+    const versions = screen.getByRole('group', { name: 'AI versions' });
+    await waitFor(() => expect(versions).toHaveTextContent('Backend v0.4.2-ai'));
+    expect(versions).toHaveTextContent('Frontend and backend versions do not match. If nothing breaks, you can continue.');
+  });
+
+  it('shows an unknown backend version without declaring a mismatch', async () => {
+    mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, app_version: undefined });
+    mockGetBackendVersion.mockResolvedValue(undefined);
+    render(<ExperimentalAiPage />);
+
+    await waitFor(() => expect(mockGetBackendVersion).toHaveBeenCalled());
+    const versions = screen.getByRole('group', { name: 'AI versions' });
+    expect(versions).toHaveTextContent('Backend unknown');
+    expect(versions).not.toHaveTextContent('versions do not match');
+  });
+
   it('keeps chat export downloads available and releases replaced files on cleanup', async () => {
     const user = userEvent.setup();
     vi.spyOn(URL, 'createObjectURL').mockReturnValueOnce('blob:html-export').mockReturnValueOnce('blob:markdown-export');
@@ -2259,6 +2279,9 @@ describe('ExperimentalAiPage', () => {
     await user.click(screen.getByRole('button', { name: 'Save token for AI assistant' }));
 
     expect(screen.getByText('Token saved on this device')).toBeInTheDocument();
+    expect(screen.getByText('Token saved on this device').compareDocumentPosition(
+      screen.getByRole('group', { name: 'AI versions' }),
+    ) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(JSON.parse(window.localStorage.getItem('nurse-scheduling-ai-auth') ?? '{}')).toEqual({
       tokens: { '/ai': 'remembered-ai-token' },
     });
