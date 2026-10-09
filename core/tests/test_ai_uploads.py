@@ -97,7 +97,7 @@ def test_upload_history_is_charged_before_retaining_files():
 
     assert error.value.status_code == 429
     assert store.retained_bytes == original
-    assert store.attachments(session.id) == ()
+    assert store.attachments(session.id, session.owner_token) == ()
     assert session.history == []
     assert store.retain_uploads(session.id, "owner", [SandboxAttachment("ward.csv", "text/csv", b"x")])
     assert store.retained_bytes <= 500
@@ -115,7 +115,7 @@ def test_upload_limits_removal_and_expiry_reclaim_bytes():
     )
     assert [first.filename, second.filename, third.filename] == ["ward.csv", "ward (1).csv", "ward (2).csv"]
     assert len({first.id, second.id, third.id}) == 3
-    assert store.attachments(session.id) == (first, second, third)
+    assert store.attachments(session.id, session.owner_token) == (first, second, third)
     events = store._sessions[session.id].history
     assert [event["content"] for event in events] == [upload_event([first]), upload_event([second, third], 2)]
     assert store.retained_bytes == original + 9 + sum(len(event["content"]) for event in events)
@@ -126,7 +126,7 @@ def test_upload_limits_removal_and_expiry_reclaim_bytes():
     with pytest.raises(HTTPException) as error:
         store.retain_uploads(session.id, "owner", [SandboxAttachment("note", "text/plain", b"x" * 2000)])
     assert error.value.status_code == 429
-    assert store.attachments(session.id) == (first, third)
+    assert store.attachments(session.id, session.owner_token) == (first, third)
     store.begin(session.id, "owner")
     with pytest.raises(HTTPException) as error:
         store.remove_upload(session.id, "owner", first.id)
@@ -134,10 +134,10 @@ def test_upload_limits_removal_and_expiry_reclaim_bytes():
     with pytest.raises(HTTPException) as error:
         store.retain_uploads(session.id, "owner", [SandboxAttachment("note", "text/plain", b"x")])
     assert error.value.status_code == 409
-    store.abort(session.id, store._sessions[session.id].turn)
+    store.abort(session.id, store._sessions[session.id].snapshot)
     reused = store.retain_uploads(session.id, "owner", [SandboxAttachment("ward.csv", "text/csv", b"new")])[0]
     assert reused.filename == "ward (1).csv" and reused.id != second.id
-    assert store.attachments(session.id) == (first, third, reused)
+    assert store.attachments(session.id, session.owner_token) == (first, third, reused)
     store.remove_upload(session.id, "owner", first.id)
     store.remove_upload(session.id, "owner", third.id)
     store.remove_upload(session.id, "owner", reused.id)
@@ -147,5 +147,7 @@ def test_upload_limits_removal_and_expiry_reclaim_bytes():
     assert store._sessions[session.id].history[-1]["content"] == removal_event(reused, 3)
     store.retain_uploads(session.id, "owner", [first])
     session.expires_at = 0
-    assert store.attachments(session.id) == ()
+    with pytest.raises(HTTPException) as error:
+        store.attachments(session.id, session.owner_token)
+    assert error.value.status_code == 404
     assert store.retained_bytes == 0

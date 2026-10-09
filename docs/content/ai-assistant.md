@@ -57,7 +57,8 @@ their concurrency policy.
 | `workspace.py`, `workspace_tools.py` | Lazy sandbox allocation and hydration, tool binding, and trusted schedule review. |
 | `transcript.py`, `context.py` | Typed conversation entries, provider requests, history selection, and application event presentation. |
 | `optimizer.py`, `optimizer_tool.py`, `optimizer_http.py` | Job ownership and operations, model-facing arguments and replies, and HTTP transport. |
-| `recovery.py`, `history.py`, `turns.py`, `session_event_stream.py` | Existing persistence, foreground replay, background events, and ordered recovery writes. |
+| `session_events.py`, `session_event_projection.py` | Typed public events, tool call identity, text batching, and terminal publication after finalization. |
+| `recovery.py`, `history.py`, `session_event_stream.py` | Ordered persistence, bounded session replay, and restart recovery. |
 
 ```mermaid
 flowchart LR
@@ -84,6 +85,13 @@ when it ends. Stop and failed runs retain their questions with an interruption
 note. Later model context excludes claims from their discarded workspace.
 Recovery stores typed entries, including their origin and interruption state.
 Existing text history remains readable when the service restores older sessions.
+New questions receive a JSON acknowledgement with their `run_id`. Foreground and
+optimizer output use the same session GET event stream. Repeated requests with the
+same `message_id` return the accepted run without executing the question again.
+The browser buffers events received before acknowledgement and routes them by
+`run_id`. A disconnected reader reconnects without cancelling server work.
+Expired cursors receive a replacement `session_reset` snapshot. Replay has separate
+event-count and serialized-byte limits for each session and for the process.
 The service applies queued steering before each follow-up model request, including
 requests after refused tool calls. It requires provider completion before tools
 run and rejects conflicting finish reasons or further output after completion.
@@ -108,15 +116,16 @@ remote optimizer job, and starts a new assistant turn with result metadata.
 The restored workbook is copied to
 `/workspace/optimizer-results/optimized-schedule.xlsx` in that turn and later
 chat turns while retained. It is separate from user attachments. The browser
-keeps a separate replayable session event stream open for
-optimizer status and background turns. It retains the latest 1,000 background
-turn events and 100 optimizer progress updates per session for reconnects.
-Complete compacted output is kept separately. If the event cursor is too old,
-the stream sends a complete snapshot instead of an incomplete tail. PostgreSQL
-stores accepted questions and non-progress events before they are published.
-Consecutive text fragments are combined when writes fall behind the producer.
-The browser reattaches with the same client message ID and replaces partial
-output with the snapshot. It does not start another model turn.
+keeps one replayable session stream open for foreground answers, optimizer status,
+and background reviews. The event journal and recovery projection each retain up
+to 1,000 required events, with a separate limit of 100 transient progress updates.
+Their combined serialized size is limited to 4 MiB per session and 64 MiB across
+the process. Expired cursors receive a replacement snapshot. PostgreSQL stores
+accepted questions before execution and saves non-progress publications through
+an asynchronous writer. It stores completed model entries before tool execution.
+Consecutive text fragments can share a storage row. The browser reattaches with
+the same client message ID and replaces partial output with the snapshot.
+It does not start another model run.
 Foreground chat and optimization can proceed at the same time. Assistant turns
 remain serialized per session. The Stop control cancels either a foreground or
 background assistant turn and waits for the server outcome. It names the client
@@ -137,9 +146,9 @@ pending validated proposal remain in application state.
 
 When a turn fails, its provisional activity remains visible but is not added to
 model conversation history. Optional PostgreSQL logging retains failed turns
-for operators. **Retry** resends the original text in a fresh sandbox. For a
-request with attachments, **Prepare retry** restores the text and requires the
-files to be attached again before sending.
+for operators. **Retry** resends the original text in a fresh sandbox. Uploaded
+files stay available for that retry. If an upload did not finish, **Prepare retry**
+restores the text and requires the files to be attached again before sending.
 
 ## Reasoning and tool activity
 
@@ -169,6 +178,28 @@ event contains that validated working copy. The browser compares it with the
 previous working copy and renders the changed lines in red and green. These
 intermediate previews do not create or apply a proposal. The final validated
 candidate still follows the separate proposal and approval lifecycle.
+
+## Recovery database upgrade
+
+Deploy the matching client and server together for the session stream contract.
+Migration `004_unified_session_recovery.sql` preserves the existing recovery
+sessions, owners, expiry, schedules, proposals, accepted message IDs, named Stop
+requests, and saved output. It converts independent foreground and background
+cursors into publication order. Restored streams replace old browser cursors.
+Typed snapshots preserve entry origin. Older text histories retain the information
+available in their saved format, which cannot distinguish user text identical to
+an application event.
+
+Before upgrading, stop every old AI service instance and back up the PostgreSQL
+database. Apply the migration through service initialization, then start the matching
+frontend. The migration runs in one transaction under the existing advisory lock.
+Verify restoration of a saved session and retry its accepted message ID before
+allowing traffic.
+
+Reverting code alone cannot restore the old table layout. To roll back, stop the
+new AI instances, restore the backup into an isolated database, and deploy the old
+server and frontend against it. The backup does not include conversations written
+after the upgrade. Keep the upgraded database until those records are no longer needed.
 
 ## Evaluation
 

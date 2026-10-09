@@ -27,6 +27,7 @@ import pytest
 
 from nurse_scheduling.ai.agent_types import (
     AgentEvent,
+    AgentMessageEnd,
     AgentProposal,
     AgentText,
     AgentToolOutcome,
@@ -161,7 +162,9 @@ def test_one_turn_hydrates_runs_reads_validates_proposes_and_closes():
         EDIT_TOOL,
         WRITE_TOOL,
     ]
-    assert isinstance(events[0], AgentToolStart)
+    assert isinstance(events[0], AgentMessageEnd)
+    assert events[0].message.tool_calls[0].id == "call-1"
+    assert isinstance(events[1], AgentToolStart)
     tool_use = next(event for event in events if isinstance(event, AgentToolUse))
     assert tool_use.ok
     assert "Trusted schedule check after this command" in tool_use.result

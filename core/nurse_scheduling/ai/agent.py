@@ -52,11 +52,56 @@ class Agent:
 
     def __init__(self) -> None:
         self.state = AgentState()
+        self._accepting_steering = False
+        self._steering_queue: list[tuple[str, str]] = []
+        self._steering_ids: set[str] = set()
+
+    @property
+    def accepting_steering(self) -> bool:
+        return self._accepting_steering
+
+    @property
+    def steered_count(self) -> int:
+        """Messages accepted during this run, including those already delivered."""
+        return len(self._steering_ids)
+
+    @property
+    def queued_steering(self) -> tuple[str, ...]:
+        """Texts waiting for the next model boundary."""
+        return tuple(text for _message_id, text in self._steering_queue)
+
+    def has_steered(self, message_id: str) -> bool:
+        return message_id in self._steering_ids
+
+    def open_steering(self, accepting: bool) -> None:
+        self.close_steering()
+        self._accepting_steering = accepting
+
+    def close_steering(self) -> None:
+        self._accepting_steering = False
+        self._steering_queue.clear()
+        self._steering_ids.clear()
+
+    def steer(self, message_id: str, text: str) -> None:
+        """Queue already accepted input. The session enforces ownership and limits."""
+        if not self._accepting_steering:
+            raise RuntimeError("The active run is no longer accepting messages.")
+        if message_id not in self._steering_ids:
+            self._steering_queue.append((message_id, text))
+            self._steering_ids.add(message_id)
+
+    def take_steering(self, close_if_empty: bool) -> list[tuple[str, str]]:
+        queued = list(self._steering_queue)
+        self._steering_queue.clear()
+        if close_if_empty and not queued:
+            self._accepting_steering = False
+        return queued
 
     def reset(self) -> None:
         """Release recorded run data after its caller finishes using it."""
         if self.state.is_streaming:
             raise RuntimeError("Agent is already running. Wait for cleanup before resetting.")
+        self.close_steering()
         self.state.messages.clear()
         self.state.pending_tool_calls.clear()
 

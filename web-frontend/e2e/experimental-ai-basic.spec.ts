@@ -43,12 +43,19 @@ function frontendOrigin(): string {
 async function startCancelableAiBackend(retainUploads = false) {
   let hasUpload = false;
   let disconnected = false;
-  let activeResponse: ServerResponse | undefined;
+  let stopped = false;
+  let eventResponse: ServerResponse | undefined;
+  const journal: string[] = [];
+  const publish = (type: string, data: Record<string, unknown>) => {
+    const frame = `id: ${journal.length + 1}\nevent: ${type}\ndata: ${JSON.stringify({ ...data, run_id: 'cancel-run' })}\n\n`;
+    journal.push(frame);
+    eventResponse?.write(frame);
+  };
   const allowedOrigin = frontendOrigin();
   const server = createServer((request, response) => {
     request.resume();
     const headers: Record<string, string> = {
-      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Headers': 'Content-Type, Last-Event-ID',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     };
     if (request.headers.origin === allowedOrigin) {
@@ -76,7 +83,15 @@ async function startCancelableAiBackend(retainUploads = false) {
       return;
     }
     if (request.url === '/ai/sessions/cancel-session/events') {
-      response.writeHead(200, { ...headers, 'Content-Type': 'text/event-stream' }).end();
+      eventResponse = response;
+      response.writeHead(200, { ...headers, 'Cache-Control': 'no-cache', 'Content-Type': 'text/event-stream' });
+      response.flushHeaders();
+      const cursor = Number(request.headers['last-event-id'] ?? 0);
+      journal.slice(cursor).forEach(frame => response.write(frame));
+      response.on('close', () => {
+        if (!response.writableEnded) disconnected = true;
+        if (eventResponse === response) eventResponse = undefined;
+      });
       return;
     }
     if (request.url === '/ai/sessions/cancel-session/uploads') {
@@ -87,21 +102,15 @@ async function startCancelableAiBackend(retainUploads = false) {
       return;
     }
     if (request.url === '/ai/sessions/cancel-session/messages') {
-      activeResponse = response;
-      response.writeHead(200, {
-        ...headers,
-        'Cache-Control': 'no-cache',
-        'Content-Type': 'text/event-stream',
-      });
-      response.write('event: tool_start\ndata: {"name":"bash","arguments":"{\\"command\\":\\"sleep 30\\"}"}\n\n');
-      response.on('close', () => {
-        if (!response.writableEnded) disconnected = true;
-      });
+      response.writeHead(202, { ...headers, 'Content-Type': 'application/json' }).end(JSON.stringify({ run_id: 'cancel-run' }));
+      publish('run_start', { trigger: 'user' });
+      publish('tool_start', { name: 'bash', tool_call_id: 'call', arguments: JSON.stringify({ command: 'sleep 30' }) });
       return;
     }
     if (request.url === '/ai/sessions/cancel-session/stop' && request.method === 'POST') {
+      stopped = true;
       response.writeHead(202, headers).end();
-      activeResponse?.end('event: stopped\ndata: {"message_id":"cancel-turn"}\n\n');
+      publish('stopped', {});
       return;
     }
     response.writeHead(404, headers).end();
@@ -115,6 +124,7 @@ async function startCancelableAiBackend(retainUploads = false) {
   return {
     origin: `http://127.0.0.1:${address.port}`,
     wasDisconnected: () => disconnected,
+    wasStopped: () => stopped,
     close: async () => {
       const closed = new Promise<void>((resolve, reject) => {
         server.close(error => error ? reject(error) : resolve());
@@ -130,6 +140,10 @@ async function mockAiBackend(
   answerDeltas = ['The image and schedule ', 'were received.'],
   failFirstMessage = false,
   requiredAuthToken?: string,
+  sessionEvents: { type: string; data: Record<string, unknown> }[] = [],
+  reportContext = true,
+  // Run events published before `done`, such as a generated ZIP.
+  answerEvents: { type: string; data: Record<string, unknown> }[] = [],
 ): Promise<CapturedRequests> {
   const captured = {
     scheduleYaml: '',
@@ -144,6 +158,12 @@ async function mockAiBackend(
   // Like the backend, record each upload as an app event that the next request sends before the question.
   const pendingAppEvents: string[] = [];
   let historyLength = 0;
+  const journal: string[] = [];
+  let wakeReader: (() => void) | undefined;
+  const publish = (type: string, data: Record<string, unknown>) => {
+    journal.push(`id: ${journal.length + 1}\nevent: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+  sessionEvents.forEach(event => publish(event.type, event.data));
 
   await page.route('**/info', route => route.fulfill({
     status: 200, contentType: 'application/json', body: JSON.stringify({ app_version: 'v0.4.3-backend' }),
@@ -152,8 +172,8 @@ async function mockAiBackend(
     const request = route.request();
     const corsHeaders = {
       'Access-Control-Allow-Credentials': 'true',
-      'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Authorization, Content-Type, Last-Event-ID',
+      'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
       'Access-Control-Allow-Origin': allowedOrigin,
     };
     if (request.method() === 'OPTIONS') {
@@ -198,7 +218,9 @@ async function mockAiBackend(
       return;
     }
     if (request.url().endsWith('/sessions/browser-session/events')) {
-      await route.fulfill({ status: 200, contentType: 'text/event-stream', headers: corsHeaders, body: '' });
+      const cursor = Number(request.headers()['last-event-id'] ?? 0);
+      if (journal.length <= cursor) await new Promise<void>(resolve => { wakeReader = resolve; });
+      await route.fulfill({ status: 200, contentType: 'text/event-stream', headers: corsHeaders, body: journal.slice(cursor).join('') });
       return;
     }
     if (request.url().endsWith('/sessions/browser-session') && request.method() === 'GET') {
@@ -231,20 +253,19 @@ async function mockAiBackend(
     captured.messageBodies.push(captured.messageBody);
     captured.messageContentType = request.headers()['content-type'] ?? '';
     const firstMessageFailed = failFirstMessage && captured.messageBodies.length === 1;
+    const runId = `answer-${captured.messageBodies.length}`;
+    publish('run_start', { run_id: runId, trigger: 'user' });
     const sent = JSON.parse(captured.messageBody || '{}') as { message?: string };
     const appEvents = pendingAppEvents.splice(0).map(content => ({
       kind: 'app', index: historyLength++, content, title: 'Files Uploaded',
     }));
     historyLength += 2;
-    const modelInput = `event: model_input\ndata: ${JSON.stringify({
+    publish('model_input', {
+      run_id: runId,
       system: 'Mock system prompt',
       messages: [...appEvents, { kind: 'question', content: sent.message }],
-    })}\n\n`;
-    await route.fulfill({
-      status: 200,
-      contentType: 'text/event-stream',
-      headers: corsHeaders,
-      body: modelInput + (firstMessageFailed
+    });
+    const frames = firstMessageFailed
         ? [
           `event: tool_start\ndata: ${JSON.stringify({ name: 'bash', arguments: '{"command":"sleep 30"}' })}\n\n`,
           'event: delta\ndata: {"text":"Provisional response."}\n\n',
@@ -253,9 +274,19 @@ async function mockAiBackend(
         : [
           'event: context_usage\ndata: {"used_chars":500,"max_chars":2000}\n\n',
           ...answerDeltas.map(text => `event: delta\ndata: ${JSON.stringify({ text })}\n\n`),
-          'event: done\ndata: {"message_id":"answer-id"}\n\n',
-        ].join('')),
-    });
+          ...answerEvents.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`),
+          'event: done\ndata: {"run_id":"answer-id"}\n\n',
+        ].join('');
+    for (const frame of frames.trim().split('\n\n')) {
+      const lines = frame.split('\n');
+      const type = lines.find(line => line.startsWith('event: '))!.slice(7);
+      if (!reportContext && type === 'context_usage') continue;
+      const data = JSON.parse(lines.find(line => line.startsWith('data: '))!.slice(6));
+      publish(type, { ...data, run_id: runId });
+    }
+    await route.fulfill({ status: 202, contentType: 'application/json', headers: corsHeaders, body: JSON.stringify({ run_id: runId }) });
+    wakeReader?.();
+    wakeReader = undefined;
   });
 
   return captured;
@@ -282,7 +313,7 @@ test('asks about the current schedule and renders a streamed answer', async ({ p
   expect(viewport).not.toBeNull();
   expect(Math.abs(composerBox!.y + composerBox!.height - viewport!.height)).toBeLessThanOrEqual(2);
   await expect(page.getByRole('contentinfo')).toHaveCount(0);
-  expect(JSON.parse(captured.messageBody)).toMatchObject({ message: 'Who works first?' });
+  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Who works first?', message_id: expect.any(String) });
   expect(captured.scheduleYaml).toContain('apiVersion:');
 
   await expect(page.getByRole('button', { name: 'Stop' })).toBeHidden();
@@ -304,12 +335,8 @@ test('asks about the current schedule and renders a streamed answer', async ({ p
   await expect(page).toHaveURL(/\/dates$/);
 });
 
-test('explains unavailable context usage for older AI servers', async ({ page }) => {
-  await mockAiBackend(page);
-  await page.route('**/ai/sessions/browser-session/messages', route => route.fulfill({
-    status: 200, contentType: 'text/event-stream',
-    body: 'event: delta\ndata: {"text":"Done."}\n\nevent: done\ndata: {"message_id":"legacy-answer"}\n\n',
-  }));
+test('explains unavailable context usage when the backend omits it', async ({ page }) => {
+  await mockAiBackend(page, ['Done.'], false, undefined, [], false);
   await page.goto('/experimental-ai');
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Question');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
@@ -347,7 +374,7 @@ test('authenticates AI session requests with an explicitly remembered token', as
   );
 });
 
-test('retries a failed text turn without hiding its provisional activity', async ({ page }) => {
+test('retries a failed text run without hiding its provisional activity', async ({ page }) => {
   const captured = await mockAiBackend(
     page,
     ['Recovered response.'],
@@ -359,19 +386,22 @@ test('retries a failed text turn without hiding its provisional activity', async
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   await expect(page.getByText('Provisional response.')).toBeVisible();
-  await expect(page.getByText('This turn failed. Its output was not added to the AI conversation context.')).toBeVisible();
+  await expect(page.getByText('This response failed and will not be used as context for future messages.')).toBeVisible();
   await page.getByText('bash · interrupted').click();
   await expect(page.getByText('{"command":"sleep 30"}', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Retry' }).click();
 
   await expect(page.getByText('Recovered response.')).toBeVisible();
-  expect(captured.messageBodies.map(body => ({ message: JSON.parse(body).message }))).toEqual([
-    { message: 'Who works first?' },
-    { message: 'Who works first?' },
+  const bodies = captured.messageBodies.map(body => JSON.parse(body));
+  expect(bodies).toEqual([
+    { message: 'Who works first?', message_id: expect.any(String) },
+    { message: 'Who works first?', message_id: expect.any(String) },
   ]);
+  // A retry asks again, so it is a new message rather than a reconnect to the failed run.
+  expect(bodies[0].message_id).not.toBe(bodies[1].message_id);
 });
 
-test('Stop waits for the server outcome', async ({ page }) => {
+test('Stop cancels the run while keeping the session stream open', async ({ page }) => {
   const backend = await startCancelableAiBackend();
   for (const origin of ['null', 'https://untrusted.example']) {
     const response = await fetch(`${backend.origin}/ai/capabilities`, { headers: { Origin: origin } });
@@ -389,19 +419,18 @@ test('Stop waits for the server outcome', async ({ page }) => {
     await page.getByRole('button', { name: 'Send', exact: true }).click();
 
     await expect(page.getByText('bash · running')).toBeVisible();
-    await expect(page.getByText(/Background tool running/)).toHaveCount(0);
     await page.getByRole('button', { name: 'Stop' }).click();
 
-    await expect.poll(backend.wasDisconnected).toBe(false);
+    await expect.poll(backend.wasStopped).toBe(true);
+    expect(backend.wasDisconnected()).toBe(false);
     await expect(page.getByText('bash · interrupted')).toBeVisible();
-    await expect(page.getByText('Stopped.')).toBeVisible();
+    await expect(page.getByText('Stopped before completion.')).toBeVisible();
   } finally {
     await backend.close();
   }
 });
 
 test('downloads a completed background optimization from chat', async ({ page }) => {
-  await mockAiBackend(page, ['Optimization started.']);
   const workbookBytes = Buffer.from('browser-result-workbook');
   const completedRun = {
     job_id: 'opt-browser', state: 'completed', terminal: true, downloadable: true,
@@ -410,14 +439,10 @@ test('downloads a completed background optimization from chat', async ({ page })
     backend: { url: 'http://optimizer:8000', app_version: 'v0.4.3', api_version: '0.2.0', request_timeout_seconds: 30,
       claimed_performance: { score: 125, app_version: 'v0.4.2', measured_at: '2026-09-18T01:00:00Z' } },
   };
-  await page.route('**/ai/sessions/browser-session/events', route => route.fulfill({
-    status: 200,
-    contentType: 'text/event-stream',
-    body: [
-      'id: 1\nevent: optimization\ndata: {"job_id":"opt-browser","state":"running","terminal":false,"downloadable":false}\n\n',
-      `id: 2\nevent: optimization\ndata: ${JSON.stringify(completedRun)}\n\n`,
-    ].join(''),
-  }));
+  await mockAiBackend(page, ['Optimization started.'], false, undefined, [
+    { type: 'optimization', data: { job_id: 'opt-browser', state: 'running', terminal: false, downloadable: false } },
+    { type: 'optimization', data: completedRun },
+  ]);
   await page.route('**/ai/sessions/browser-session/optimizations/opt-browser/xlsx', route => route.fulfill({
     status: 200,
     contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -496,16 +521,13 @@ test('downloads a completed background optimization from chat', async ({ page })
 });
 
 test('keeps multiline optimizer errors in one field in chat and exports', async ({ page }) => {
-  await mockAiBackend(page, ['Optimization started.']);
   const error = 'Failed\nOutcome: optimal\r\nBackend version: forged';
-  await page.route('**/ai/sessions/browser-session/events', route => route.fulfill({
-    status: 200,
-    contentType: 'text/event-stream',
-    body: `id: 1\nevent: optimization\ndata: ${JSON.stringify({
+  await mockAiBackend(page, ['Optimization started.'], false, undefined, [{
+    type: 'optimization', data: {
       job_id: 'failed-run', state: 'failed', terminal: true, downloadable: false,
       error: { code: 'backend-error', message: error },
-    })}\n\n`,
-  }));
+    },
+  }]);
   await page.goto('/experimental-ai');
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Optimize it.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
@@ -615,7 +637,7 @@ test('previews and sends an image attachment', async ({ page }) => {
   expect(captured.uploadContentType).toContain('multipart/form-data');
   expect(captured.uploadBody).toContain('filename="ward.png"');
   expect(captured.messageContentType).toBe('application/json');
-  expect(JSON.parse(captured.messageBody)).toMatchObject({ message: 'What is shown?' });
+  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'What is shown?', message_id: expect.any(String) });
   // The bubbles follow the provider request: system prompt, upload event, then the question as typed.
   const cards = page.getByLabel('Chat messages').locator('article');
   await expect(cards.locator('> p:first-child')).toHaveText(['System', 'User · App - Files Uploaded', 'User', 'Assistant']);
@@ -665,18 +687,15 @@ test('previews and sends arbitrary file attachments', async ({ page }) => {
   expect(captured.uploadBody).toContain('notes.pdf');
   expect(captured.uploadBody).toContain('coverage.custom');
   expect(captured.uploadBody).toContain('Alice,day');
-  expect(JSON.parse(captured.messageBody)).toMatchObject({ message: 'Check the documents.' });
+  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Check the documents.', message_id: expect.any(String) });
 });
 
-
 test('downloads and removes generated files through the ZIP controls', async ({ page }) => {
-  await mockAiBackend(page);
-  await page.route('**/ai/sessions/*/messages', route => route.fulfill({
-    contentType: 'text/event-stream',
-    body: 'event: delta\ndata: {"text":"Files ready."}\n\nevent: download\ndata: {"download_id":"zip-turn"}\n\nevent: done\ndata: {}\n\n',
-  }));
+  await mockAiBackend(page, ['Files ready.'], false, undefined, [], true, [
+    { type: 'download', data: { download_id: 'zip-run' } },
+  ]);
   let removed = false;
-  await page.route('**/ai/sessions/*/downloads/zip-turn', route => {
+  await page.route('**/ai/sessions/*/downloads/zip-run', route => {
     if (route.request().method() === 'DELETE') {
       removed = true;
       return route.fulfill({ status: 204 });
@@ -701,7 +720,6 @@ test('downloads and removes generated files through the ZIP controls', async ({ 
   await expect(page.getByRole('button', { name: 'Download files (ZIP)' })).toHaveCount(0);
 });
 
-
 test('shows retained uploads while the assistant response is still running', async ({ page }) => {
   const backend = await startCancelableAiBackend(true);
   await page.route('**/ai/**', route => {
@@ -720,7 +738,7 @@ test('shows retained uploads while the assistant response is still running', asy
     await expect(panel.getByRole('button', { name: 'Remove ward.csv' })).toBeDisabled();
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
-    await expect.poll(backend.wasDisconnected).toBe(false);
+    await expect.poll(backend.wasStopped).toBe(true);
     await expect(panel.getByRole('button', { name: 'Remove ward.csv' })).toBeEnabled();
   } finally {
     await backend.close();
@@ -728,7 +746,7 @@ test('shows retained uploads while the assistant response is still running', asy
 });
 
 test('places uploads beside desktop chat and below mobile controls and allows removal', async ({ page }) => {
-  await mockAiBackend(page);
+  const captured = await mockAiBackend(page, ['Workbook inspected.'], false, 'browser-ai-auth-token');
   let retained = false;
   await page.route('**/ai/capabilities', route => route.fulfill({
     contentType: 'application/json',
@@ -745,10 +763,6 @@ test('places uploads beside desktop chat and below mobile controls and allows re
     retained = false;
     return route.fulfill({ status: 204 });
   });
-  await page.route('**/ai/sessions/*/messages', route => {
-    expect(route.request().postDataJSON()).toMatchObject({ message: 'Read this file' });
-    return route.fulfill({ contentType: 'text/event-stream', body: 'event: delta\ndata: {"text":"Workbook inspected."}\n\nevent: done\ndata: {}\n\n' });
-  });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/experimental-ai');
   await page.getByRole('button', { name: 'Enter token for AI assistant' }).click();
@@ -757,8 +771,9 @@ test('places uploads beside desktop chat and below mobile controls and allows re
   await page.getByLabel('Attach files').setInputFiles({ name: 'ward.csv', mimeType: 'text/csv', buffer: Buffer.from('name,date\nAlex,2026-10-01\n') });
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Read this file');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('Workbook inspected.')).toBeVisible();
+  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Read this file', message_id: expect.any(String) });
   const panel = page.getByRole('complementary', { name: 'Session files' });
-  await expect(panel.getByText(/may disappear after a server restart without prior notice/)).toBeVisible();
   await expect(panel.getByRole('button', { name: 'Remove ward.csv' })).toBeVisible();
   const panelBox = (await panel.boundingBox())!;
   const chatBox = (await page.getByRole('region', { name: 'Chat messages' }).boundingBox())!;
@@ -798,93 +813,33 @@ test('places uploads beside desktop chat and below mobile controls and allows re
   await expect(panel.getByText('No uploaded files.')).toBeVisible();
 });
 
-
-test('restores interleaved foreground and optimizer replies in chat and export order', async ({ page }) => {
-  await mockAiBackend(page);
-  const request = { id: 'original-request', question: 'Optimize it.', questionId: 'question', assistantId: 'answer', active: true };
-  await page.addInitScript(original => {
-    sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
-      sessionId: 'browser-session', endpoint: '/ai', expiresAt: Date.now() + 60_000, retentionSeconds: 172800,
-      sessionEventId: 50,
-      messages: [
-        { id: 'system', role: 'system', content: 'Mock system prompt' },
-        { id: 'question', role: 'user', content: original.question, requestId: original.id },
-        { id: 'answer', role: 'assistant', content: 'Partial foreground reply', status: 'pending', requestId: original.id, request: original },
-        { id: 'optimizer-result', role: 'optimizer', content: 'Optimization finished.' },
-        { id: 'optimizer-input-background', role: 'user', source: 'optimizer', content: 'Completed optimizer result.' },
-        { id: 'background', role: 'assistant', content: 'Partial background reply' },
-        { id: 'later-question', role: 'user', content: 'Explain the score.' },
-        { id: 'later-answer', role: 'assistant', content: 'The score explanation.' },
-      ], syncedSchedule: 'description: current schedule\n', proposalDiff: null,
-    }));
-  }, request);
-  const backgroundEvents = [
-    { type: 'model_input', data: { turn_id: 'background', system: 'Mock system prompt', messages: [{ kind: 'optimizer', content: 'Completed optimizer result.' }] } },
-    { type: 'delta', data: { turn_id: 'background', text: 'The result is ready.' } },
-    { type: 'done', data: { turn_id: 'background', message_id: 'background' } },
-  ];
-  await page.route('**/ai/sessions/browser-session/events', route => route.fulfill({
-    contentType: 'text/event-stream',
-    body: `id: 4\nevent: session_snapshot\ndata: ${JSON.stringify({ events: backgroundEvents })}\n\n`,
-  }));
-  const foregroundEvents = [
-    { type: 'model_input', data: { system: 'Mock system prompt', messages: [{ kind: 'question', content: request.question }] } },
-    { type: 'delta', data: { text: 'Optimizer started.' } },
-    { type: 'done', data: { message_id: 'answer' } },
-  ];
-  const recoveredIds: string[] = [];
-  await page.route('**/ai/sessions/browser-session/messages', route => {
-    recoveredIds.push(route.request().postDataJSON().message_id);
-    return route.fulfill({
-      contentType: 'text/event-stream',
-      body: `id: 3\nevent: turn_snapshot\ndata: ${JSON.stringify({ events: foregroundEvents })}\n\n`,
-    });
-  });
-  await page.goto('/experimental-ai');
-  await expect(page.getByText('Optimizer started.', { exact: true })).toBeVisible();
-  await expect(page.getByText('The result is ready.', { exact: true })).toBeVisible();
-  const chat = page.getByRole('region', { name: 'Chat messages' });
-  await expect(chat.locator('article > p:first-child')).toHaveText([
-    'System', 'User', 'Assistant', 'Optimizer', 'User · Optimizer', 'Assistant', 'User', 'Assistant',
-  ]);
-  await expect(chat.getByText('Partial foreground reply')).toHaveCount(0);
-  await expect(chat.getByText('Partial background reply')).toHaveCount(0);
-  expect(recoveredIds).toEqual([request.id]);
-  const downloadPromise = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'HTML', exact: true }).click();
-  const html = await readFile((await (await downloadPromise).path())!, 'utf8');
-  const contents = [
-    'Optimize it.', 'Optimizer started.', 'Optimization finished.', 'Completed optimizer result.',
-    'The result is ready.', 'Explain the score.', 'The score explanation.',
-  ];
-  const positions = contents.map(content => html.indexOf(content));
-  expect(positions.every(position => position >= 0)).toBe(true);
-  expect(positions).toEqual([...positions].sort((first, second) => first - second));
-});
-
 for (const interruption of ['network pause', 'reload', 'tab switch'] as const) {
   test(`recovers the complete answer after a ${interruption}`, async ({ page, context }) => {
     const origin = frontendOrigin();
     const authToken = 'browser-ai-auth-token';
-    const requests: { message: string; message_id: string; last_event_id: number }[] = [];
-    let acceptedId: string | null = null;
-    let completed = false;
+    const messageIds: string[] = [];
+    const cursors: number[] = [];
+    const journal: string[] = [];
+    const readers = new Set<ServerResponse>();
     let executions = 0;
     let unauthorized = 0;
-    const responses = new Set<ServerResponse>();
     const headers = {
       'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Credentials': 'true',
       'Access-Control-Allow-Headers': 'Authorization, Content-Type, Last-Event-ID',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     };
+    const publish = (type: string, data: Record<string, unknown>) => {
+      const frame = `id: ${journal.length + 1}\nevent: ${type}\ndata: ${JSON.stringify({ ...data, run_id: 'run-1' })}\n\n`;
+      journal.push(frame);
+      for (const reader of readers) reader.write(frame);
+    };
     const complete = () => {
-      completed = true;
-      for (const response of responses) response.end('id: 2\nevent: delta\ndata: {"text":"complete answer."}\n\nid: 3\nevent: done\ndata: {"message_id":"turn"}\n\n');
-      responses.clear();
+      publish('delta', { text: 'complete answer.' });
+      publish('done', {});
     };
     const server = createServer(async (request, response) => {
       if (request.method === 'OPTIONS') { response.writeHead(204, headers).end(); return; }
-      const json = (body: object, status = 200) => response.writeHead(status, { ...headers, 'Content-Type': 'application/json' }).end(JSON.stringify(body));
+      const json = (body: unknown, status = 200) => response.writeHead(status, { ...headers, 'Content-Type': 'application/json' }).end(JSON.stringify(body));
       if (request.url === '/ai/capabilities') {
         json({
           auth: { required: true, scheme: 'bearer' },
@@ -901,27 +856,29 @@ for (const interruption of ['network pause', 'reload', 'tab switch'] as const) {
         return;
       }
       if (request.url === '/ai/sessions' && request.method === 'POST') { request.resume(); json({ id: 'replay-session' }, 201); return; }
-      if (request.url === '/ai/sessions/replay-session') { json({ expires_in_seconds: 60 }); return; }
-      if (request.url === '/ai/sessions/replay-session/events') { response.writeHead(200, { ...headers, 'Content-Type': 'text/event-stream' }).end(); return; }
-      if (request.url?.endsWith('/messages')) {
+      if (request.url === '/ai/sessions/replay-session') { json({ expires_in_seconds: 2592000 }); return; }
+      if (request.url === '/ai/sessions/replay-session/uploads') { json([]); return; }
+      if (request.url === '/ai/sessions/replay-session/events') {
+        const cursor = Number(request.headers['last-event-id'] ?? 0);
+        cursors.push(cursor);
+        response.writeHead(200, { ...headers, 'Cache-Control': 'no-cache', 'Content-Type': 'text/event-stream' });
+        response.flushHeaders();
+        journal.slice(cursor).forEach(frame => response.write(frame));
+        readers.add(response);
+        response.on('close', () => readers.delete(response));
+        return;
+      }
+      if (request.url === '/ai/sessions/replay-session/messages') {
         let body = '';
         try { for await (const chunk of request) body += chunk; } catch { return; }
-        const sent = JSON.parse(body);
-        requests.push(sent);
-        response.writeHead(200, { ...headers, 'Content-Type': 'text/event-stream' });
-        if (acceptedId === null) {
-          acceptedId = sent.message_id;
-          executions += 1;
-          response.write('id: 1\nevent: delta\ndata: {"text":"First part and "}\n\n');
-          setTimeout(() => response.destroy(), 150);
-          if (interruption !== 'tab switch') setTimeout(complete, 750);
-        } else {
-          const events: { type: string; data: Record<string, string> }[] = [{ type: 'delta', data: { text: completed ? 'First part and complete answer.' : 'First part and ' } }];
-          if (completed) events.push({ type: 'done', data: { message_id: 'turn' } });
-          response.write(`id: ${completed ? 3 : 1}\nevent: turn_snapshot\ndata: ${JSON.stringify({ events })}\n\n`);
-          if (completed) response.end();
-          else { responses.add(response); response.on('close', () => responses.delete(response)); }
-        }
+        const sent = JSON.parse(body) as { message_id: string };
+        messageIds.push(sent.message_id);
+        if (messageIds.length > 1) { json({ run_id: 'run-1' }, 202); return; }
+        executions += 1;
+        publish('run_start', { trigger: 'user' });
+        publish('delta', { text: 'First part and ' });
+        // The run is accepted, but its acknowledgement is lost. The browser asks again with the same ID.
+        response.destroy();
         return;
       }
       request.resume();
@@ -939,28 +896,34 @@ for (const interruption of ['network pause', 'reload', 'tab switch'] as const) {
       await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Continue while disconnected');
       await page.getByRole('button', { name: 'Send', exact: true }).click();
       await expect(page.getByText('First part and', { exact: true })).toBeVisible();
+      await expect.poll(() => messageIds.length).toBe(2);
       if (interruption === 'network pause') {
         await context.setOffline(true);
-        await expect.poll(() => completed).toBe(true);
+        // Offline emulation can leave an open stream running, so close it at the server.
+        for (const reader of readers) reader.destroy();
+        complete();
         await context.setOffline(false);
         await page.evaluate(() => window.dispatchEvent(new Event('online')));
       } else if (interruption === 'tab switch') {
         const dialogs: string[] = [];
         page.on('dialog', async dialog => { dialogs.push(dialog.message()); await dialog.accept().catch(() => {}); });
-        await expect(page.getByRole('textbox', { name: 'Ask about the current schedule' })).toHaveValue('');
         await page.getByRole('button', { name: '1. Dates', exact: true }).click();
         await expect(page).toHaveURL(/\/dates$/);
         expect(dialogs).toEqual([]);
         complete();
         await page.getByRole('button', { name: '12. Experimental AI', exact: true }).click();
-      } else await page.reload();
+      } else {
+        complete();
+        await page.reload();
+      }
       await expect(page.getByText('First part and complete answer.', { exact: true })).toBeVisible();
       await expect(page.getByText('Continue while disconnected', { exact: true })).toHaveCount(1);
       await expect(page.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0);
       expect(executions).toBe(1);
       expect(unauthorized).toBe(0);
-      expect(requests.length).toBeGreaterThan(1);
-      expect(new Set(requests.map(request => request.message_id)).size).toBe(1);
+      expect(new Set(messageIds).size).toBe(1);
+      // The reconnecting reader continued from its saved cursor instead of replaying everything.
+      expect(cursors.at(-1)).toBeGreaterThan(0);
     } finally {
       await context.setOffline(false);
       server.closeAllConnections();

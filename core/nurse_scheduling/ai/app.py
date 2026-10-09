@@ -22,10 +22,11 @@
 import asyncio
 import json
 import logging
+import sys
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from dataclasses import replace
-from typing import Literal
+from typing import Literal, cast
 from uuid import UUID, uuid4
 
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response, status
@@ -40,16 +41,10 @@ from ..sentry import SentryClientAddressMiddleware, init_sentry
 from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry
 from ..service_logging import configure_service_logging
 from ..version import get_app_version
-from .agent_session import (
-    ProposalValidationError,
-    SessionRuntime,
-    _question_log_preview,
-    configure_request_logging,
-    request_logger,
-)
+from .agent_session import AgentSession, SessionRuntime
 from .config import AiSettings, validate_ai_auth_credentials
 from .history import ChatHistory, stop_maintenance
-from .lifecycle import SessionTurns
+from .lifecycle import TERMINAL_EVENTS, AgentRun, SessionRuns
 from .optimizer import (
     OptimizerArtifact,
     OptimizerBackend,
@@ -57,21 +52,17 @@ from .optimizer import (
     SessionOptimizer,
 )
 from .optimizer_http import HttpOptimizerBackend
-from .provider import (
-    OpenAiCompatibleProvider,
-    ToolCapableChatProvider,
-)
+from .provider import OpenAiCompatibleProvider, ToolCapableChatProvider
 from .recovery import SessionRecovery
 from .sandbox import SandboxFactory, managed_sandbox_factory
 from .sandbox.factory import create_sandbox_factory
-from .session_event_stream import SessionEventBroker
-from .sessions import SessionStore
-from .turns import TurnJournal
-from .workspace import (
-    SandboxAttachment,
-)
+from .session_event_stream import SessionEventStream, SessionResetData
+from .session_events import OptimizerUpdate
+from .sessions import SessionStore, schedule_revision
+from .workspace import SandboxAttachment
 
 SERVICE_NAME = "nurse-scheduling-ai-api"
+__all__ = ("SessionStore", "schedule_revision")
 API_VERSION = "0.2.0"
 OWNER_COOKIE = "nurse_scheduling_ai_owner"
 ORIGIN_REGEX = (
@@ -80,6 +71,36 @@ ORIGIN_REGEX = (
     r"https://([a-zA-Z0-9-]+\.)?nursescheduling\.org)$"
 )
 logger = logging.getLogger("nurse_scheduling.ai")
+request_logger = logging.getLogger("nurse_scheduling.ai.requests")
+
+
+def configure_request_logging(enabled: bool) -> None:
+    """Route question previews to stdout by default without seizing the logger.
+
+    The previews carry chat text, so a deployment must be able to silence or redirect
+    them. An operator's own handler wins, and `AI_REQUEST_LOG_ENABLED=false` turns the
+    previews off without losing the rest of this logger's records.
+    """
+    if not enabled:
+        request_logger.setLevel(logging.WARNING)
+        return
+    request_logger.setLevel(logging.INFO)
+    if request_logger.handlers or logging.getLogger().handlers:
+        return
+    request_handler = logging.StreamHandler(sys.stdout)
+    request_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    request_logger.addHandler(request_handler)
+
+
+QUESTION_LOG_PREVIEW_CHARS = 200
+
+
+def _question_log_preview(question: str) -> str:
+    """Return a compact, single-line question preview for request logs."""
+    preview = " ".join(question.split())
+    if len(preview) > QUESTION_LOG_PREVIEW_CHARS:
+        return f"{preview[: QUESTION_LOG_PREVIEW_CHARS - 3]}..."
+    return preview
 
 
 class ProposalResponse(BaseModel):
@@ -87,11 +108,10 @@ class ProposalResponse(BaseModel):
 
     schedule_yaml: str
     history_saved: bool
-    """Whether recovery storage saved the approval. It is already applied in the live session."""
 
 
 class ProposalRejectionResponse(BaseModel):
-    """The outcome of a rejection, which is already applied in the live session."""
+    """Whether recovery storage saved the rejection, which already took effect."""
 
     history_saved: bool
 
@@ -130,8 +150,8 @@ class ChatRequest(BaseModel):
     """One user question for an existing schedule chat."""
 
     message: str = Field(min_length=1, max_length=100_000)
+    # A repeated client message ID reattaches to its run instead of asking again.
     message_id: str | None = Field(default=None, min_length=1, max_length=100)
-    last_event_id: int = Field(default=0, ge=0)
 
 
 class StopChatRequest(BaseModel):
@@ -182,9 +202,38 @@ def owner_cookie_token(owner: str | None) -> str:
     return str(uuid4())
 
 
-def _sse_event(event_type: str, data: dict[str, object]) -> str:
-    """Serialize one server-sent event."""
-    return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+async def _session_sse(
+    session: AgentSession, after_id: int, *, until_run: AgentRun | None = None
+) -> AsyncIterator[str]:
+    """Frame the shared replay journal. A compatibility reader ends with its own run."""
+    async with aclosing(session.events(after_id)) as reader:
+        async for event in reader:
+            if event is None:
+                yield ": keepalive\n\n"
+                continue
+            data = event.data
+            reset = cast(SessionResetData, data) if event.type == "session_reset" else None
+            if reset is not None:
+                data = {
+                    **data,
+                    "proposal_diff": session.pending_proposal.diff if session.pending_proposal else "",
+                    "active_run_id": session.snapshot.run_id if session.snapshot else None,
+                }
+            yield f"id: {event.id}\nevent: {event.type}\ndata: {json.dumps(data)}\n\n"
+            if until_run is not None and (
+                (data.get("run_id") == until_run.id and event.type in TERMINAL_EVENTS)
+                or (
+                    reset is not None
+                    and (
+                        until_run.done.done()
+                        or any(
+                            item["type"] in TERMINAL_EVENTS and item["data"].get("run_id") == until_run.id
+                            for item in reset["events"]
+                        )
+                    )
+                )
+            ):
+                return
 
 
 async def _read_files(uploads: list[UploadFile], settings: AiSettings) -> list[SandboxAttachment]:
@@ -232,10 +281,14 @@ async def _parse_upload_request(request: Request, settings: AiSettings) -> list[
         async with request.form(max_files=settings.max_attachment_files, max_fields=0) as form:
             if any(key != "files" for key in form):
                 raise HTTPException(status_code=422, detail="Unexpected multipart field.")
-            file_values = form.getlist("files")
-            if not file_values:
+            uploads: list[UploadFile] = []
+            for value in form.getlist("files"):
+                if not isinstance(value, UploadFile):
+                    raise HTTPException(status_code=422, detail="Attachments must be uploaded as files.")
+                uploads.append(value)
+            if not uploads:
                 raise HTTPException(status_code=422, detail="Upload at least one file.")
-            return await _read_files(file_values, settings)
+            return await _read_files(uploads, settings)
     except StarletteHTTPException as exc:
         if exc.status_code == 400 and str(exc.detail).startswith("Too many files"):
             raise HTTPException(status_code=413, detail="Too many file attachments.") from exc
@@ -272,22 +325,25 @@ def create_app(
     history_log = ChatHistory(settings.history_postgres_url) if settings.history_postgres_url else None
     if sandbox_factory is None:
         sandbox_factory = create_sandbox_factory(settings)
-    store = SessionStore(settings)
-    event_broker = SessionEventBroker(max_sessions=settings.max_sessions, max_snapshot_bytes=settings.max_session_bytes)
-    turn_journal = TurnJournal(history_log, settings.max_session_bytes)
-    turns = SessionTurns()
-    recovery = SessionRecovery(store, history_log, event_broker, turn_journal)
+    event_stream = SessionEventStream(max_sessions=settings.max_sessions)
+    store = SessionStore(settings, event_stream=event_stream)
+    recovery = SessionRecovery(history_log, store, event_stream)
+    runs = SessionRuns()
     concurrency_limit = asyncio.Semaphore(settings.max_concurrent_requests)
     auth_registry = create_auth_registry(settings.auth_token, settings.auth_tokens)
     require_auth = create_auth_dependency(auth_registry)
 
     async def restore_session(request: Request, owner: str | None = Cookie(default=None, alias=OWNER_COOKIE)) -> None:
+        """Load a saved session that is not in memory after a restart or eviction."""
         session_id = request.path_params.get("session_id")
-        if session_id is not None:
-            await recovery.restore_session(session_id, owner)
+        if session_id is None or not recovery.enabled or owner is None or store.get(session_id) is not None:
+            return
+        await recovery.restore(session_id, owner)
 
-    def refresh_owner_cookie(response: Response, owner: str) -> None:
+    def refresh_owner_cookie(response: Response, owner: str | None) -> None:
         """Keep browser ownership available for the session's sliding lifetime."""
+        if owner is None:
+            return
         try:
             normalized_owner = str(UUID(owner))
         except ValueError:
@@ -312,23 +368,24 @@ def create_app(
         )
 
     async def optimizer_completed(session_id: str, prompt: str, artifact: OptimizerArtifact | None) -> None:
-        session = store._sessions.get(session_id)
+        session = store.get(session_id)
         if session is None:
             return
-        turn = turns.start(
+        run = runs.start(
             session_id,
-            lambda turn: session.run(runtime, turn, prompt, background=True, artifact=artifact),
+            lambda run: session.run(run, prompt, runtime=runtime, background=True, artifact=artifact),
             background=True,
         )
-        turn.task.add_done_callback(recovery.pin_session(session_id))
-        await turn.wait()
+        run.task.add_done_callback(recovery.pin(session_id))
+        try:
+            await run.wait()
+        finally:
+            run.cancel()
 
-    async def optimizer_updated(session_id: str, update: dict[str, object]) -> None:
-        await event_broker.emit(
-            session_id,
-            "optimization_progress" if "progress" in update else "optimization",
-            update,
-        )
+    async def optimizer_updated(session_id: str, update: OptimizerUpdate) -> None:
+        session = store.get(session_id)
+        if session is not None:
+            session.publish_optimizer_update(update)
 
     session_optimizer = SessionOptimizer(
         optimizer_backend,
@@ -343,22 +400,22 @@ def create_app(
         max_schedule_bytes=settings.max_schedule_bytes,
     )
 
-    runtime = SessionRuntime(
-        settings, store, turns, recovery, provider, sandbox_factory, session_optimizer, concurrency_limit
-    )
+    runtime = SessionRuntime(settings, store, concurrency_limit, recovery, provider, sandbox_factory, session_optimizer)
 
     def retire_session(session_id: str) -> None:
         """Release everything keyed by a session once the store drops it."""
-        turns.retire(session_id)
+        runs.stop(session_id)
         session_optimizer.forget_session(session_id)
-        recovery.forget_session(session_id)
+        event_stream.forget_session(session_id)
+        recovery.forget(session_id)
 
     store.on_retire(retire_session)
-    if history_log is not None:
+    if recovery.enabled:
+        # A full store unloads idle sessions that storage can restore. Running work stays loaded.
         store.allow_eviction(
             lambda session_id: (
                 recovery.evictable(session_id)
-                and not turns.busy(session_id)
+                and not runs.busy(session_id)
                 and not session_optimizer.has_unfinished_run(session_id)
             )
         )
@@ -376,10 +433,11 @@ def create_app(
                 try:
                     yield
                 finally:
-                    # Interrupted turns stay running in storage. Join their cleanup before sandbox teardown.
-                    recovery.shutting_down = True
-                    await turns.close()
+                    # Drain runs while their sandbox factory is still available. Interrupted
+                    # runs stay running in recovery storage, so a restart reports them.
+                    await runs.close()
                     await session_optimizer.close()
+                    await recovery.close()
         finally:
             if maintenance is not None:
                 await stop_maintenance(maintenance)
@@ -403,15 +461,13 @@ def create_app(
     app.state.settings = settings
     app.state.auth_registry = auth_registry
     app.state.session_store = store
-    app.state.turns = turns
+    app.state.runs = runs
     app.state.provider = provider
     app.state.sandbox_factory = sandbox_factory
     app.state.app_version = app_version
     app.state.session_optimizer = session_optimizer
-    app.state.session_event_broker = event_broker
-    app.state.turn_journal = turn_journal
+    app.state.session_event_stream = event_stream
     app.state.recovery = recovery
-    app.state.runtime = runtime
 
     app.add_middleware(SentryClientAddressMiddleware)
 
@@ -449,7 +505,7 @@ def create_app(
         "/sessions",
         response_model=CreateSessionResponse,
         status_code=status.HTTP_201_CREATED,
-        dependencies=[Depends(require_auth), Depends(restore_session)],
+        dependencies=[Depends(require_auth)],
     )
     async def create_session(
         request: CreateSessionRequest,
@@ -466,7 +522,7 @@ def create_app(
         # The client never learns this ID unless the save succeeds, so release its slot otherwise.
         saved = False
         try:
-            saved = await recovery.save_session(session.id, http_request.state.auth_credential_id)
+            saved = await recovery.save(session.id, http_request.state.auth_credential_id)
         finally:
             if not saved:
                 store.discard(session.id)
@@ -485,23 +541,16 @@ def create_app(
         request: Request,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> StreamingResponse:
-        """Replay and stream assistant turns triggered by background work."""
-        store.require_owned(session_id, owner)
+        """Replay every session event. Disconnect only detaches this reader."""
+        session = store.require_owned(session_id, owner)
         raw_cursor = request.headers.get("last-event-id", "0")
         try:
             after_id = max(0, int(raw_cursor))
         except ValueError:
             raise HTTPException(status_code=400, detail="Last-Event-ID must be an integer.") from None
 
-        async def generate_session_events():
-            async for event in event_broker.stream(session_id, after_id):
-                if event is None:
-                    yield ": keepalive\n\n"
-                else:
-                    yield f"id: {event.id}\n{_sse_event(event.type, event.data)}"
-
         return StreamingResponse(
-            generate_session_events(),
+            _session_sse(session, after_id),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
@@ -511,22 +560,14 @@ def create_app(
         status_code=status.HTTP_202_ACCEPTED,
         dependencies=[Depends(require_auth), Depends(restore_session)],
     )
-    async def stop_active_turn(
+    async def stop_active_run(
         session_id: str,
         body: StopChatRequest | None = None,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> Response:
-        """Cancel the named foreground turn, or every assistant turn active in the session."""
-        store.require_owned(session_id, owner)
-        if body is not None:
-            try:
-                await turn_journal.request_stop(session_id, body.message_id)
-            except RuntimeError as exc:
-                raise HTTPException(status_code=503, detail=str(exc)) from None
-            turns.stop(session_id, body.message_id)
-            return Response(status_code=status.HTTP_202_ACCEPTED)
-        turns.stop(session_id)
-        return Response(status_code=status.HTTP_202_ACCEPTED)
+        """Cancel the named message's run, or every assistant run active in the session."""
+        session = store.require_owned(session_id, owner)
+        await session.stop(None if body is None else body.message_id, runtime=runtime, runs=runs)
         return Response(status_code=status.HTTP_202_ACCEPTED)
 
     @app.post(
@@ -539,35 +580,41 @@ def create_app(
         request: Request,
         response: Response,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
-    ):
+    ) -> list[dict[str, str | int]]:
         """Retain source files for later messages and return their metadata."""
         store.require_owned(session_id, owner)
-        uploads = await _parse_upload_request(request, settings)
+        # Eviction must not unload the session while its upload is read.
+        release = recovery.pin(session_id)
+        try:
+            uploads = await _parse_upload_request(request, settings)
+        finally:
+            release()
         retained = store.retain_uploads(session_id, owner, uploads)
         refresh_owner_cookie(response, owner)
         return [_upload_metadata(item) for item in retained]
 
     @app.get("/sessions/{session_id}/uploads", dependencies=[Depends(require_auth), Depends(restore_session)])
-    async def list_uploads(session_id: str, owner: str | None = Cookie(default=None, alias=OWNER_COOKIE)):
+    async def list_uploads(
+        session_id: str,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> list[dict[str, str | int]]:
         """List source-file metadata without returning file contents."""
-        store.require_owned(session_id, owner)
-        return [_upload_metadata(item) for item in store.attachments(session_id)]
+        return [_upload_metadata(item) for item in store.attachments(session_id, owner)]
 
     @app.delete(
         "/sessions/{session_id}/uploads/{upload_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
         dependencies=[Depends(require_auth), Depends(restore_session)],
-        status_code=204,
     )
     async def remove_upload(
         session_id: str,
         upload_id: str,
-        response: Response,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> Response:
         """Remove one retained source file from the session."""
         store.remove_upload(session_id, owner, upload_id)
+        response = Response(status_code=status.HTTP_204_NO_CONTENT)
         refresh_owner_cookie(response, owner)
-        response.status_code = 204
         return response
 
     @app.get(
@@ -587,19 +634,18 @@ def create_app(
 
     @app.delete(
         "/sessions/{session_id}/downloads/{download_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
         dependencies=[Depends(require_auth), Depends(restore_session)],
-        status_code=204,
     )
     async def remove_generated_zip(
         session_id: str,
         download_id: str,
-        response: Response,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> Response:
         """Remove one generated ZIP from the owning session."""
         store.remove_download(session_id, owner, download_id)
+        response = Response(status_code=status.HTTP_204_NO_CONTENT)
         refresh_owner_cookie(response, owner)
-        response.status_code = 204
         return response
 
     @app.get(
@@ -646,7 +692,7 @@ def create_app(
         http_request: Request,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> Response:
-        """Queue a follow-up for the next boundary in an active agent turn."""
+        """Queue a follow-up for the next boundary in an active agent run."""
         message = _validate_question(request.message, settings)
         store.queue_steering(session_id, owner, request.message_id, message)
         request_logger.info(
@@ -660,35 +706,47 @@ def create_app(
         refresh_owner_cookie(response, owner)
         return response
 
-    def turn_response(turn, cursor: int, owner: str, snapshot: bool = False) -> StreamingResponse:
-        async def events():
-            async for event in turn.stream(cursor, snapshot=snapshot):
-                if event is None:
-                    yield ": keepalive\n\n"
-                else:
-                    event_id, event_type, data = event
-                    yield f"id: {event_id}\n{_sse_event(event_type, data)}"
-
-        response = StreamingResponse(
-            events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
-        )
-        refresh_owner_cookie(response, owner)
-        return response
-
     @app.post("/sessions/{session_id}/messages", dependencies=[Depends(require_auth), Depends(restore_session)])
-    async def stream_message(
+    async def send_message(
         session_id: str,
         body: ChatRequest,
         request: Request,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
-    ) -> StreamingResponse:
-        """Stream one answer and retain only text after successful completion."""
+    ) -> Response:
+        """Start a run independently of its event subscribers."""
         question = _validate_question(body.message, settings)
-        session = store.get_owned(session_id, owner)
-        replay_turn, replayed = await session.accept_message(
-            question, body.message_id, owner, request.state.auth_credential_id, runtime
+        session = store.require_owned(session_id, owner)
+        cursor = event_stream.cursor(session_id)
+        receipt = await session.accept_message(
+            question,
+            body.message_id,
+            runtime=runtime,
+            runs=runs,
+            owner=owner,
+            credential_id=request.state.auth_credential_id,
         )
-        return turn_response(replay_turn, body.last_event_id, owner, snapshot=replayed)
+        run = receipt.run
+        if run is not None:
+            request_logger.info(
+                "AI request started session_id=%s question_chars=%s question=%s files=%s",
+                session_id,
+                len(question),
+                json.dumps(_question_log_preview(question), ensure_ascii=False),
+                len(session.uploads),
+            )
+        # Compatibility readers explicitly request SSE. They use the same journal
+        # and cannot cancel execution by leaving. New clients, and a message accepted
+        # earlier or stopped before its run began, receive a message acknowledgement.
+        if run is not None and "text/event-stream" in request.headers.get("accept", ""):
+            response: Response = StreamingResponse(
+                _session_sse(session, cursor, until_run=run),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+        else:
+            response = JSONResponse({"run_id": receipt.run_id}, status_code=status.HTTP_202_ACCEPTED)
+        refresh_owner_cookie(response, owner)
+        return response
 
     @app.put(
         "/sessions/{session_id}/schedule",
@@ -704,8 +762,8 @@ def create_app(
         if len(request.schedule_yaml.encode("utf-8")) > settings.max_schedule_bytes:
             raise HTTPException(status_code=413, detail="The schedule is too large for the AI service.")
         store.update_schedule(session_id, owner, request.schedule_yaml)
-        # A retry repeats the same update, so the browser can resend it until it is saved.
-        if not await recovery.save_session(session_id):
+        # A retry repeats the same update, so the browser can send it again until it is saved.
+        if not await recovery.save(session_id):
             raise HTTPException(status_code=503, detail="AI message recovery is temporarily unavailable.")
         response = Response(status_code=status.HTTP_204_NO_CONTENT)
         refresh_owner_cookie(response, owner)
@@ -723,20 +781,13 @@ def create_app(
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> ProposalResponse:
         """Return the proposed schedule once the browser proves it holds the base revision."""
-        try:
-            schedule_yaml = store.approve_proposal(session_id, owner, request.base_sha256)
-        except ProposalValidationError:
-            logger.error("Approved proposal failed revalidation session_id=%s", session_id)
-            await recovery.save_session(session_id)
-            raise
-        except HTTPException as exc:
-            if exc.status_code == 409:
-                await recovery.save_session(session_id)
-            raise
-        # The proposal is gone once adopted, so a failed save is reported rather than refused.
-        history_saved = await recovery.save_session(session_id)
+        approved = store.approve_proposal(session_id, owner, request.base_sha256)
+        # The decision already took effect, so a failed save is reported rather than refused.
+        history_saved = await recovery.save(session_id)
+        if approved is None:
+            raise HTTPException(status_code=409, detail="The proposed schedule is no longer valid.")
         refresh_owner_cookie(response, owner)
-        return ProposalResponse(schedule_yaml=schedule_yaml, history_saved=history_saved)
+        return ProposalResponse(schedule_yaml=approved, history_saved=history_saved)
 
     @app.post(
         "/sessions/{session_id}/proposal/reject",
@@ -750,7 +801,7 @@ def create_app(
     ) -> ProposalRejectionResponse:
         """Drop the pending proposal at the user's request."""
         store.discard_proposal(session_id, owner)
-        history_saved = await recovery.save_session(session_id)
+        history_saved = await recovery.save(session_id)
         refresh_owner_cookie(response, owner)
         return ProposalRejectionResponse(history_saved=history_saved)
 

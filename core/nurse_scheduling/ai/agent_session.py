@@ -1,4 +1,4 @@
-"""Application session state and execution above the agent and workspace."""
+"""Application session state and transactional agent run finalization."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -19,56 +19,57 @@
 
 # This file is mostly AI generated.
 
-from __future__ import annotations
-
 import asyncio
 import hashlib
-import json
 import logging
-import sys
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import aclosing
 from dataclasses import asdict, dataclass, field
-from typing import TYPE_CHECKING
+from typing import Any, Literal, Protocol, TypeVar
 
 from fastapi import HTTPException
 from ruamel.yaml.error import YAMLError
 
 from ..loader import _load_yaml
 from .agent import Agent
-from .agent_types import AgentProposal, AgentReasoning, AgentSteering, AgentText, AgentToolStart, AgentToolUse
-from .candidate import validate_schedule_change
+from .candidate import PendingProposal
 from .config import AiSettings
 from .context import (
-    CANDIDATE_VALIDATION_ERROR,
-    PROPOSAL_INVALID_HISTORY,
-    PROPOSAL_REJECTED_HISTORY,
-    PROVIDER_ERROR,
-    SANDBOX_COMMAND_TIMEOUT_ERROR,
-    SANDBOX_TURN_TIMEOUT_ERROR,
     SCHEDULE_CHANGED_DISCARDED_EVENT,
     SCHEDULE_CHANGED_EVENT,
-    STALE_TURN_ERROR,
     build_provider_messages,
     context_usage,
-    interrupted_entries,
     model_input,
     project_history,
-    projected_history,
+    removal_event,
+    retained_entries,
 )
-from .lifecycle import SessionTurns, Turn, TurnSnapshot
+from .history import RECOVERY_UNAVAILABLE, EntryRow, RunKind, RunStatus
+from .lifecycle import AgentRun, RunSnapshot, SessionRuns
 from .optimizer import OptimizerArtifact, SessionOptimizer
 from .optimizer_tool import execute_optimizer_tool
 from .provider import ChatMessage, ProviderError, TokenUsage, ToolCapableChatProvider
-from .recovery import SessionRecovery
 from .sandbox import SandboxError, SandboxFactory
-from .transcript import AgentMessage, AppEventEntry, ProposalDecisionEntry, UserMessage
-from .turns import TERMINAL_EVENTS, ReplayTurn, append_compacted
+from .session_event_projection import RunEvents, RunOutput
+from .session_event_stream import SessionEvent, SessionEventStream
+from .session_events import (
+    AgentSessionEvent,
+    AgentSessionTerminalEvent,
+    OptimizationEvent,
+    OptimizationProgressEvent,
+    OptimizerUpdate,
+    RunDoneEvent,
+)
+from .transcript import (
+    AgentMessage,
+    AppEventEntry,
+    ProposalDecision,
+    ProposalDecisionEntry,
+    UserMessage,
+)
+from .validation import new_schedule_issues, validate_frontend_schedule_yaml
 from .workspace import (
-    SANDBOX_SYSTEM_PROMPT,
-    AgentDownload,
-    AgentScheduleChange,
     SandboxAttachment,
     SandboxCandidateError,
     SandboxCommandTimeoutError,
@@ -78,42 +79,26 @@ from .workspace import (
 )
 from .workspace_tools import run_workspace
 
-if TYPE_CHECKING:
-    from .sessions import SessionStore
-
+CANDIDATE_VALIDATION_ERROR = (
+    "The candidate schedule failed trusted validation. All schedule changes made during this agent run were "
+    "discarded. The current schedule was not changed."
+)
+PROVIDER_ERROR = "The AI provider failed. Please try again."
+SANDBOX_COMMAND_TIMEOUT_ERROR = (
+    "An AI shell command timed out. The temporary workspace was discarded. Please try again."
+)
+DOWNLOAD_RETENTION_WARNING = "The generated ZIP could not be retained because the service memory limit was reached."
+SANDBOX_RUN_TIMEOUT_ERROR = "The AI response timed out. Please try again."
+STALE_RUN_ERROR = "The schedule changed while this response was generated, so the response was discarded."
+BACKGROUND_RECOVERY_ERROR = "AI message recovery is unavailable, so the optimizer result was not reviewed."
+RECOVERY_SAVE_WARNING = "This response could not be saved for recovery after a service restart."
 logger = logging.getLogger("nurse_scheduling.ai")
+_Result = TypeVar("_Result")
 
 
-request_logger = logging.getLogger("nurse_scheduling.ai.requests")
-
-
-def configure_request_logging(enabled: bool) -> None:
-    """Route question previews to stdout by default without seizing the logger.
-
-    The previews carry chat text, so a deployment must be able to silence or redirect
-    them. An operator's own handler wins, and `AI_REQUEST_LOG_ENABLED=false` turns the
-    previews off without losing the rest of this logger's records.
-    """
-    if not enabled:
-        request_logger.setLevel(logging.WARNING)
-        return
-    request_logger.setLevel(logging.INFO)
-    if request_logger.handlers or logging.getLogger().handlers:
-        return
-    request_handler = logging.StreamHandler(sys.stdout)
-    request_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-    request_logger.addHandler(request_handler)
-
-
-QUESTION_LOG_PREVIEW_CHARS = 200
-
-
-def _question_log_preview(question: str) -> str:
-    """Return a compact, single-line question preview for request logs."""
-    preview = " ".join(question.split())
-    if len(preview) > QUESTION_LOG_PREVIEW_CHARS:
-        return f"{preview[: QUESTION_LOG_PREVIEW_CHARS - 3]}..."
-    return preview
+def schedule_revision(schedule_yaml: str) -> str:
+    """Identify one exact schedule snapshot, so a stale proposal cannot be applied."""
+    return hashlib.sha256(schedule_yaml.encode("utf-8")).hexdigest()
 
 
 def _schedule_data(schedule_yaml: str) -> object:
@@ -124,16 +109,127 @@ def _schedule_data(schedule_yaml: str) -> object:
         return schedule_yaml
 
 
-def schedule_revision(schedule_yaml: str) -> str:
-    """Identify one exact schedule snapshot, so a stale proposal cannot be applied."""
-    return hashlib.sha256(schedule_yaml.encode("utf-8")).hexdigest()
+@dataclass(frozen=True)
+class RunCompletion:
+    """Whether a completed run and its optional proposal were retained."""
+
+    run_saved: bool
+    proposal_saved: bool
+    history_trimmed_count: int = 0
+    context_used_chars: int = 0
 
 
-class ProposalValidationError(HTTPException):
-    """An invalid pending proposal was discarded before it could become current."""
+@dataclass(frozen=True)
+class RunOutcome:
+    """One execution result, finalized after workspace cleanup and before releasing the run."""
 
-    def __init__(self) -> None:
-        super().__init__(status_code=409, detail="The proposed schedule is no longer valid.")
+    status: Literal["completed", "stale", "cancelled", "failed"] = "cancelled"
+    completion: RunCompletion | None = None
+    error_code: str | None = None
+    terminal: AgentSessionTerminalEvent | None = None
+
+
+@dataclass(frozen=True)
+class AcceptedMessage:
+    """The newest client message ID of a session, so a retried POST reattaches to its run."""
+
+    message_id: str
+    question: str
+    run: AgentRun
+
+
+@dataclass(frozen=True)
+class MessageReceipt:
+    """The run that answers a client message. `run` is set only when this request started it."""
+
+    run_id: str
+    run: AgentRun | None = None
+
+
+class SessionPersistence(Protocol):
+    """Session operations needed by a foreground or background run."""
+
+    def begin(self, session_id: str, owner_token: str | None, *, run_id: str | None = None) -> RunSnapshot: ...
+
+    def take_steering(self, session_id: str, close_if_empty: bool) -> list[tuple[str, str]]: ...
+
+    def begin_background(self, session_id: str, *, run_id: str | None = None) -> RunSnapshot | None: ...
+
+    def finish(
+        self,
+        session_id: str,
+        entries: Sequence[AgentMessage],
+        proposal: tuple[str, str] | None = None,
+        *,
+        snapshot: RunSnapshot,
+    ) -> RunCompletion: ...
+
+    def abort(self, session_id: str, snapshot: RunSnapshot) -> None: ...
+
+    def save_download(self, session_id: str, download_id: str, content: bytes) -> bool: ...
+
+
+class RunRecorder(Protocol):
+    """Run records, Stop requests, and session state saved for restart recovery."""
+
+    @property
+    def enabled(self) -> bool: ...
+
+    async def find_message(self, session_id: str, message_id: str) -> tuple[str, str] | None: ...
+
+    async def message_stopped(self, session_id: str, message_id: str) -> bool: ...
+
+    async def stop_message(self, session_id: str, message_id: str) -> None: ...
+
+    async def start_run(
+        self,
+        session_id: str,
+        run_id: str,
+        prompt: str,
+        prompt_seq: int,
+        *,
+        model: str,
+        attachment_count: int,
+        kind: RunKind,
+        message_id: str | None,
+        credential_id: str | None,
+    ) -> bool: ...
+
+    async def finish_run(
+        self,
+        session_id: str,
+        run_id: str,
+        status: RunStatus,
+        error_code: str | None,
+        usage: TokenUsage | None,
+        committed: bool,
+    ) -> bool: ...
+
+
+@dataclass(frozen=True)
+class SessionRuntime:
+    """Shared service dependencies for foreground and optimizer-triggered runs."""
+
+    settings: AiSettings
+    store: SessionPersistence
+    concurrency_limit: asyncio.Semaphore
+    recorder: RunRecorder
+    provider: ToolCapableChatProvider
+    sandbox_factory: SandboxFactory
+    session_optimizer: SessionOptimizer
+
+
+async def _complete(write: Awaitable[_Result]) -> _Result:
+    """Finish a recovery write even when the caller is cancelled.
+
+    asyncio cancellation and ASGI cancel scopes both wait for the write.
+    """
+    task = asyncio.ensure_future(write)
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        await task
+        raise
 
 
 @dataclass
@@ -147,577 +243,667 @@ class AgentSession:
     revision: str
     transcript: list[AgentMessage] = field(default_factory=list)
     dropped_history_messages: int = 0
+    # Conversation entries that retention trimmed from the front, which a restore skips.
+    dropped_entries: int = 0
+    # Saved entries are numbered in session order, as Pi's session entries.
+    next_entry_seq: int = 0
     version: int = 0
-    turn: TurnSnapshot | None = None
-
-    proposal_yaml: str = ""
-    proposal_diff: str = ""
-    downloads: dict[str, bytes] = field(default_factory=dict)
+    snapshot: RunSnapshot | None = None
+    agent: Agent = field(default_factory=Agent)
+    pending_proposal: PendingProposal | None = None
+    # Retained source files keyed by upload ID, in upload order, and generated ZIPs keyed by run ID.
     uploads: dict[str, SandboxAttachment] = field(default_factory=dict)
+    downloads: dict[str, bytes] = field(default_factory=dict)
+    # Last owner access, which orders eviction. A restored session keeps its stored expiry.
     last_used: float = field(default_factory=time.monotonic)
-    """Last owner access, which orders eviction. A restored session keeps its stored expiry."""
-
-    agent: Agent = field(default_factory=Agent, repr=False)
+    latest_message: AcceptedMessage | None = None
+    # Named Stop requests, including those for messages that have not arrived yet.
+    stopped_message_ids: set[str] = field(default_factory=set)
+    event_stream: SessionEventStream | None = field(default=None, repr=False)
+    # Recovery storage, which receives each new entry as Pi's SessionManager does.
+    entry_log: Callable[[str, EntryRow], None] | None = field(default=None, repr=False)
+    _saved_run_messages: int = field(default=0, repr=False)
+    _listeners: list[Callable[[AgentSessionEvent], None]] = field(default_factory=list, repr=False)
+    _events_closed: bool = False
 
     @property
     def history(self) -> list[ChatMessage]:
-        """Expose the legacy text view at the persistence compatibility boundary."""
+        """Render the retained transcript for callers that inspect conversation text."""
+        from .context import projected_history
+
         return projected_history(self.transcript)
 
-    @property
-    def active(self) -> bool:
-        return self.turn is not None
+    def recovery_state(self) -> dict[str, Any]:
+        """Return the schedule, proposal, and retention counts that a restored session continues.
 
-    def begin_run(self, *, accepting_steering: bool) -> TurnSnapshot:
-        if self.active:
-            raise HTTPException(status_code=409, detail="This chat session already has an active response.")
-        snapshot = TurnSnapshot(
-            list(self.transcript),
-            self.schedule_yaml,
-            self.version,
-            self.proposal_yaml,
-            self.proposal_diff,
-            accepting_steering,
-            self.dropped_history_messages,
+        The conversation itself is rebuilt from saved entries.
+        """
+        return {
+            "schedule_yaml": self.schedule_yaml,
+            "pending_proposal": None if self.pending_proposal is None else asdict(self.pending_proposal),
+            "dropped_history_messages": self.dropped_history_messages,
+            "dropped_entries": self.dropped_entries,
+        }
+
+    @classmethod
+    def restored(
+        cls,
+        session_id: str,
+        owner_token: str,
+        expires_at: float,
+        state: dict[str, Any],
+        *,
+        entries: Sequence[AgentMessage],
+        next_entry_seq: int,
+        event_stream: SessionEventStream | None,
+        entry_log: Callable[[str, EntryRow], None] | None,
+    ) -> "AgentSession":
+        """Rebuild a session from `recovery_state` and its saved conversation entries.
+
+        Uploads, downloads, and optimizer results are not saved.
+        """
+        proposal = state["pending_proposal"]
+        return cls(
+            id=session_id,
+            owner_token=owner_token,
+            expires_at=expires_at,
+            schedule_yaml=state["schedule_yaml"],
+            revision=schedule_revision(state["schedule_yaml"]),
+            transcript=retained_entries(entries),
+            dropped_history_messages=state["dropped_history_messages"],
+            dropped_entries=state["dropped_entries"],
+            next_entry_seq=next_entry_seq,
+            pending_proposal=None if proposal is None else PendingProposal(**proposal),
+            event_stream=event_stream,
+            entry_log=entry_log,
         )
-        self.turn = snapshot
-        return snapshot
 
-    def commit_turn(
-        self, snapshot: TurnSnapshot, messages: Sequence[AgentMessage], proposal: tuple[str, str] | None
-    ) -> bool:
-        if self.turn is not snapshot:
-            return False
-        self.turn = None
-        if self.version != snapshot.version:
-            return False
-        self.transcript.extend(messages)
-        if proposal is not None:
-            self.proposal_yaml, self.proposal_diff = proposal
-        return True
+    def _append_entries(self, run_id: str | None, entries: Sequence[AgentMessage]) -> None:
+        """Number new entries in session order and hand them to recovery storage."""
+        for entry in entries:
+            if self.entry_log is not None:
+                self.entry_log(self.id, (self.next_entry_seq, run_id, entry))
+            self.next_entry_seq += 1
 
-    def abort(self, snapshot: TurnSnapshot) -> None:
-        if self.turn is snapshot:
-            self.turn = None
+    def _add_entry(self, entry: AgentMessage, run_id: str | None = None) -> None:
+        """Add an app event or proposal decision to the conversation and save it."""
+        self.transcript.append(entry)
+        self._append_entries(run_id, [entry])
 
-    def check_steering(self, message_id: str, max_messages: int) -> bool:
-        turn = self.turn
-        if turn is None or not turn.accepting_steering:
-            raise HTTPException(status_code=409, detail="The active response is no longer accepting messages.")
-        if message_id in turn.steering_ids:
-            return False
-        # Seen IDs bound the whole response, including input already consumed by the model.
-        if len(turn.steering_ids) >= max_messages:
-            raise HTTPException(status_code=429, detail="Too many messages are already queued.")
-        return True
+    def _save_run_messages(self, run_id: str | None, messages: Sequence[AgentMessage]) -> None:
+        """Save the run messages that ended since the last call, as Pi saves each one on `message_end`."""
+        self._append_entries(run_id, messages[self._saved_run_messages :])
+        self._saved_run_messages = len(messages)
 
-    def queue_steering(self, message_id: str, message: str) -> None:
-        self.turn.steering_queue.append((message_id, message))
-        self.turn.steering_ids.add(message_id)
+    def subscribe(self, listener: Callable[[AgentSessionEvent], None]) -> Callable[[], None]:
+        """Observe public session events. HTTP serialization belongs to the caller."""
+        self._listeners.append(listener)
+        removed = False
 
-    def take_steering(self, close_if_empty: bool) -> list[tuple[str, str]]:
-        if self.turn is None:
-            return []
-        queued = list(self.turn.steering_queue)
-        self.turn.steering_queue.clear()
-        if close_if_empty and not queued:
-            self.turn.accepting_steering = False
-        return queued
+        def unsubscribe() -> None:
+            nonlocal removed
+            if not removed:
+                removed = True
+                if listener in self._listeners:
+                    self._listeners.remove(listener)
 
-    def update_schedule(self, schedule_yaml: str) -> None:
-        data_changed = _schedule_data(self.schedule_yaml) != _schedule_data(schedule_yaml)
-        had_proposal = bool(self.proposal_yaml)
-        if self.schedule_yaml != schedule_yaml or had_proposal:
-            self.version += 1
-        self.schedule_yaml = schedule_yaml
-        self.revision = schedule_revision(schedule_yaml)
-        self.proposal_yaml = ""
-        self.proposal_diff = ""
-        if data_changed or had_proposal:
-            self.transcript.append(
-                AppEventEntry(SCHEDULE_CHANGED_DISCARDED_EVENT if had_proposal else SCHEDULE_CHANGED_EVENT)
-            )
+        return unsubscribe
 
-    def require_proposal(self, base_sha256: str) -> None:
-        if not self.proposal_yaml:
-            raise HTTPException(status_code=404, detail="No proposal is waiting for approval.")
-        if self.revision != base_sha256:
-            self.proposal_yaml = ""
-            self.proposal_diff = ""
-            self.version += 1
-            raise HTTPException(
-                status_code=409, detail="The schedule changed after this proposal was created, so it was discarded."
-            )
+    def publish(self, event: AgentSessionEvent) -> None:
+        if self._events_closed:
+            return
+        if self.event_stream is not None:
+            self.event_stream.publish(self.id, event)
+        for listener in tuple(self._listeners):
+            listener(event)
 
-    def approve_proposal(self, base_sha256: str, max_bytes: int) -> str:
-        self.require_proposal(base_sha256)
-        _, introduced = validate_schedule_change(self.schedule_yaml, self.proposal_yaml, max_bytes)
-        if introduced:
-            self.discard_proposal(PROPOSAL_INVALID_HISTORY)
-            raise ProposalValidationError
-        approved = self.proposal_yaml
-        self.proposal_yaml = ""
-        self.proposal_diff = ""
-        self.version += 1
-        self.schedule_yaml = approved
-        self.revision = schedule_revision(approved)
-        self.transcript.append(ProposalDecisionEntry("approved"))
-        return approved
+    async def events(self, after_id: int) -> AsyncGenerator[SessionEvent | None]:
+        if self._events_closed:
+            return
+        assert self.event_stream is not None
+        async with aclosing(self.event_stream.stream(self.id, after_id)) as reader:
+            async for event in reader:
+                yield event
 
-    def discard_proposal(self, history_event: str = PROPOSAL_REJECTED_HISTORY) -> None:
-        had_proposal = bool(self.proposal_yaml)
-        self.proposal_yaml = ""
-        self.proposal_diff = ""
-        if had_proposal:
-            self.version += 1
-            self.transcript.append(
-                ProposalDecisionEntry("invalid" if history_event == PROPOSAL_INVALID_HISTORY else "rejected")
-            )
+    def close_events(self) -> None:
+        self._events_closed = True
+        self._listeners.clear()
+        if self.event_stream is not None:
+            self.event_stream.forget_session(self.id)
+
+    def _accepted_message(self, message_id: str) -> AcceptedMessage | None:
+        """Return the newest message when it has this ID and its run has not failed to start."""
+        accepted = self.latest_message
+        if accepted is None or accepted.message_id != message_id:
+            return None
+        ready = accepted.run.ready
+        return None if ready.done() and not ready.result() else accepted
 
     async def accept_message(
         self,
         question: str,
         message_id: str | None,
+        *,
+        runtime: SessionRuntime,
+        runs: SessionRuns,
         owner: str | None,
         credential_id: str | None,
-        runtime: SessionRuntime,
-    ) -> tuple[ReplayTurn, bool]:
-        """Admit one question or reconnect to the already accepted response."""
-        journal = runtime.recovery.turn_journal
-        try:
-            existing = await journal.get(self.id, message_id) if message_id is not None else None
-        except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from None
-        if existing is not None:
-            if existing.question != question:
-                raise HTTPException(status_code=409, detail="This message ID belongs to a different question.")
-            return existing, True
-        replay: ReplayTurn | None = None
+    ) -> MessageReceipt:
+        """Start a run for a client message, or return the run that already answers it.
 
-        def accepted(value: ReplayTurn) -> None:
-            nonlocal replay
-            replay = value
+        A repeated message ID returns its run without calling the provider or tools again,
+        even after a restart. A Stop saved before the message arrived keeps its question
+        from running.
 
-        turn = runtime.turns.start(
+        Raises:
+            HTTPException: With status 409 when the message ID belongs to another question or
+                a run is active, or 503 when recovery storage is unavailable.
+        """
+        if message_id is not None:
+            accepted = self._accepted_message(message_id)
+            if accepted is not None:
+                if accepted.question != question:
+                    raise HTTPException(status_code=409, detail="This message ID belongs to a different question.")
+                if await asyncio.shield(accepted.run.ready):
+                    return MessageReceipt(accepted.run.id)
+            found = None if accepted is not None else await runtime.recorder.find_message(self.id, message_id)
+            if found is not None:
+                run_id, accepted_question = found
+                if accepted_question != question:
+                    raise HTTPException(status_code=409, detail="This message ID belongs to a different question.")
+                return MessageReceipt(run_id)
+            if await runtime.recorder.message_stopped(self.id, message_id):
+                self.stopped_message_ids.add(message_id)
+        run = runs.start(
             self.id,
-            lambda turn: self.run(
-                runtime,
-                turn,
-                question,
-                owner=owner,
-                message_id=message_id,
-                credential_id=credential_id,
-                accepted=accepted,
-            ),
+            lambda run: self.run(run, question, runtime=runtime, owner=owner, credential_id=credential_id),
             message_id=message_id,
         )
-        turn.task.add_done_callback(runtime.recovery.pin_session(self.id))
+        if message_id is not None:
+            self.latest_message = AcceptedMessage(message_id, question, run)
+        if not await asyncio.shield(run.ready):
+            if run.cancelled and not run.shutdown:
+                # A Stop arrived before the run reported its start. A run cancelled before
+                # it began never reaches finalization, so its stopped outcome is published here.
+                if not run.begun:
+                    self.publish({"type": "stopped", "run_id": run.id})
+                return MessageReceipt(run.id)
+            await run.wait()
+        return MessageReceipt(run.id, run)
+
+    async def stop(self, message_id: str | None, *, runtime: SessionRuntime, runs: SessionRuns) -> None:
+        """Cancel the named message's run, or every run of the session.
+
+        A named Stop is saved first, so a message that arrives later, even after a
+        restart, does not run. A delayed Stop cannot cancel a later message's run.
+
+        Raises:
+            HTTPException: With status 503 when storage cannot save a named Stop.
+        """
+        if message_id is not None:
+            await runtime.recorder.stop_message(self.id, message_id)
+            self.stopped_message_ids.add(message_id)
+        runs.stop(self.id, message_id)
+
+    def publish_optimizer_update(self, update: OptimizerUpdate) -> None:
+        """Project independent job updates onto the same stream as agent output."""
+        if "progress" in update:
+            self.publish(OptimizationProgressEvent(type="optimization_progress", **update))
+        else:
+            self.publish(OptimizationEvent(type="optimization", **update))
+
+    @property
+    def active(self) -> bool:
+        return self.snapshot is not None
+
+    def begin_run(self, *, accepting_steering: bool, run_id: str | None = None) -> RunSnapshot:
+        """Reserve this conversation version and open its steering queue."""
+        if self.active:
+            raise HTTPException(status_code=409, detail="This chat session already has an active response.")
+        self.agent.reset()
+        self.agent.open_steering(accepting_steering)
+        self._saved_run_messages = 0
+        self.snapshot = RunSnapshot(
+            list(self.transcript),
+            self.schedule_yaml,
+            self.version,
+            self.pending_proposal,
+            previously_dropped=self.dropped_history_messages,
+            run_id=run_id,
+            uploads=tuple(self.uploads.values()),
+        )
+        return self.snapshot
+
+    def finish_run(
+        self,
+        snapshot: RunSnapshot,
+        entries: Sequence[AgentMessage],
+        proposal: tuple[str, str] | None,
+    ) -> RunCompletion:
+        """Commit only the current reservation, releasing it even when its version is stale."""
+        if not self.abort_run(snapshot):
+            return RunCompletion(False, False)
+        if self.version != snapshot.version:
+            return RunCompletion(False, False)
+        self.transcript.extend(entries)
+        if proposal is not None:
+            self.pending_proposal = PendingProposal(proposal[0], proposal[1], snapshot.run_id)
+        return RunCompletion(True, proposal is not None)
+
+    def abort_run(self, snapshot: RunSnapshot) -> bool:
+        """Only the owner of a reservation may release it."""
+        if self.snapshot is not snapshot:
+            return False
+        self.snapshot = None
+        self.agent.reset()
+        return True
+
+    def check_steering(self, message_id: str, max_messages: int) -> bool:
+        """Check a queued message against the active run. False means a retried duplicate."""
+        if not self.active or not self.agent.accepting_steering:
+            raise HTTPException(status_code=409, detail="The active response is no longer accepting messages.")
+        if self.agent.has_steered(message_id):
+            return False
+        # Counted over the whole run, not the drained queue, so retries stay idempotent.
+        if self.agent.steered_count >= max_messages:
+            raise HTTPException(status_code=429, detail="Too many messages are already queued.")
+        return True
+
+    def steer(self, message_id: str, text: str) -> None:
+        self.agent.steer(message_id, text)
+
+    def take_steering(self, close_if_empty: bool) -> list[tuple[str, str]]:
+        """Drain queued messages, closing the queue if the answer is ending without any."""
+        return self.agent.take_steering(close_if_empty) if self.active else []
+
+    @property
+    def queued_steering(self) -> tuple[str, ...]:
+        return self.agent.queued_steering if self.active else ()
+
+    def update_schedule(self, schedule_yaml: str) -> None:
+        """Replace the session schedule, invalidate proposals and in-flight results, and record the change."""
+        if self.schedule_yaml == schedule_yaml:
+            return
+        data_changed = _schedule_data(self.schedule_yaml) != _schedule_data(schedule_yaml)
+        had_proposal = self.pending_proposal is not None
+        self.version += 1
+        self.schedule_yaml = schedule_yaml
+        self.revision = schedule_revision(schedule_yaml)
+        self.pending_proposal = None
+        if data_changed or had_proposal:
+            self._add_entry(AppEventEntry(SCHEDULE_CHANGED_DISCARDED_EVENT if had_proposal else SCHEDULE_CHANGED_EVENT))
+
+    def require_idle(self, action: str) -> None:
+        """Refuse a file change while a run may still read the session files."""
+        if self.active:
+            raise HTTPException(status_code=409, detail=f"Wait for the active response before {action}.")
+
+    def add_uploads(self, uploads: Sequence[SandboxAttachment], event: str) -> None:
+        """Retain uploads with their IDs assigned and record their `upload_event` once in history."""
+        self.uploads.update((upload.id, upload) for upload in uploads)
+        self._add_entry(AppEventEntry(event))
+
+    def remove_upload(self, upload_id: str) -> SandboxAttachment:
+        """Drop one retained source file and record its removal in history."""
+        if upload_id not in self.uploads:
+            raise HTTPException(status_code=404, detail="The uploaded file is no longer available.")
+        index = list(self.uploads).index(upload_id) + 1
+        upload = self.uploads.pop(upload_id)
+        self._add_entry(AppEventEntry(removal_event(upload, index)))
+        return upload
+
+    def require_proposal(self, base_sha256: str) -> PendingProposal:
+        """Reject a missing or stale proposal before it can be applied."""
+        if self.pending_proposal is None:
+            raise HTTPException(status_code=404, detail="No proposal is waiting for approval.")
+        if self.revision != base_sha256:
+            self.version += 1
+            self.pending_proposal = None
+            raise HTTPException(
+                status_code=409,
+                detail="The schedule changed after this proposal was created, so it was discarded.",
+            )
+        return self.pending_proposal
+
+    def approve_proposal(self, base_sha256: str, max_schedule_bytes: int) -> str | None:
+        """Revalidate, then adopt or discard the proposal in one synchronous operation.
+
+        Returns the adopted schedule, or None when trusted validation refused the proposal.
+        """
+        proposal = self.require_proposal(base_sha256)
+        approved = proposal.schedule_yaml
+        # Revalidate before adopting, so a refused proposal never becomes the
+        # session schedule that later runs are hydrated from.
+        validation = validate_frontend_schedule_yaml(approved, max_schedule_bytes)
+        if not validation.valid:
+            # A user can approve while their schedule is still incomplete, so only
+            # a problem this proposal introduces blocks it.
+            replaced_validation = validate_frontend_schedule_yaml(self.schedule_yaml, max_schedule_bytes)
+            if new_schedule_issues(replaced_validation, validation):
+                logger.error("Approved proposal failed revalidation session_id=%s", self.id)
+                self.discard_proposal("invalid")
+                return None
+        self.pending_proposal = None
+        self.version += 1
+        self.schedule_yaml = approved
+        self.revision = schedule_revision(approved)
+        self._add_entry(ProposalDecisionEntry("approved"), proposal.run_id)
+        return approved
+
+    def discard_proposal(self, decision: ProposalDecision = "rejected") -> None:
+        """Record a proposal decision once under the proposing run and invalidate results based on it."""
+        proposal = self.pending_proposal
+        if proposal is None:
+            return
+        self.pending_proposal = None
+        self.version += 1
+        self._add_entry(ProposalDecisionEntry(decision), proposal.run_id)
+
+    def _prepare_run(
+        self,
+        snapshot: RunSnapshot,
+        question: str,
+        artifact: OptimizerArtifact | None,
+        settings: AiSettings,
+        events: RunEvents,
+        background: bool,
+    ) -> tuple[list[ChatMessage], int, int]:
+        """Project the reserved transcript and report the model input and its context usage."""
+        history = project_history(snapshot.transcript, settings.max_history_chars)
+        dropped_history = snapshot.previously_dropped + history.dropped_messages
+        messages = build_provider_messages(
+            history,
+            snapshot.schedule_yaml,
+            question,
+            snapshot.uploads,
+            pending_proposal=snapshot.pending_proposal is not None,
+            optimizer_result_available=artifact is not None,
+            max_download_bytes=settings.max_download_bytes,
+        )
+        events.emit(
+            {
+                "type": "model_input",
+                **model_input(
+                    messages, len(history.messages), dropped_history, "optimizer" if background else "question"
+                ),
+            }
+        )
+        events.emit({"type": "context_usage", **context_usage(history.used_chars, settings)})
+        if dropped_history:
+            events.emit({"type": "history_trimmed", "dropped": dropped_history})
+        return messages, dropped_history, history.used_chars
+
+    async def _execute_run(
+        self,
+        snapshot: RunSnapshot,
+        messages: Sequence[ChatMessage],
+        artifact: OptimizerArtifact | None,
+        runtime: SessionRuntime,
+        background: bool,
+        output: RunOutput,
+        events: RunEvents,
+        context_chars: int,
+    ) -> None:
+        """Execute the agent and await workspace cleanup before returning."""
+        async with runtime.concurrency_limit:
+            agent_events = run_workspace(
+                runtime.provider,
+                runtime.sandbox_factory,
+                snapshot.schedule_yaml,
+                messages,
+                WorkspaceLimits.from_settings(runtime.settings),
+                take_steering=None if background else lambda close: runtime.store.take_steering(self.id, close),
+                execute_optimizer=lambda current_yaml, arguments: execute_optimizer_tool(
+                    runtime.session_optimizer, self.id, current_yaml, arguments
+                ),
+                pending_proposal_yaml=snapshot.pending_proposal.schedule_yaml if snapshot.pending_proposal else "",
+                pending_proposal_diff=snapshot.pending_proposal.diff if snapshot.pending_proposal else "",
+                attachments=snapshot.uploads,
+                optimizer_result=artifact.content if artifact is not None else None,
+                optimizer_context=artifact.schedule_context if artifact is not None else None,
+                agent=self.agent,
+            )
+            async with aclosing(agent_events):
+                async for event in agent_events:
+                    self._save_run_messages(snapshot.run_id, self.agent.state.messages)
+                    wire_event = output.consume(event)
+                    if wire_event is not None:
+                        events.emit(wire_event)
+                    elif isinstance(event, TokenUsage):
+                        events.emit(
+                            {
+                                "type": "context_usage",
+                                **context_usage(context_chars, runtime.settings, event, runtime.provider),
+                            }
+                        )
+
+    def _commit_run(
+        self,
+        run: AgentRun,
+        snapshot: RunSnapshot,
+        entries: Sequence[AgentMessage],
+        output: RunOutput,
+        store: SessionPersistence,
+    ) -> RunCompletion:
+        # The outcome is fixed once cleanup has finished and the session commit
+        # begins. Stop must not turn a committed answer into a stopped response
+        # while its history write is still pending.
+        run.finishing = True
+        completion = store.finish(
+            self.id,
+            retained_entries(entries),
+            (output.proposal.text, output.proposal.diff) if output.proposal is not None else None,
+            snapshot=snapshot,
+        )
+        return completion
+
+    def _publish_completion(
+        self,
+        run: AgentRun,
+        completion: RunCompletion,
+        output: RunOutput,
+        events: RunEvents,
+        runtime: SessionRuntime,
+        dropped_history: int,
+        history_saved: bool | None,
+        background: bool,
+    ) -> None:
+        """Publish the committed result after its history write finishes."""
+        if not completion.run_saved:
+            events.emit({"type": "stale", "message": STALE_RUN_ERROR})
+            return
+        if completion.history_trimmed_count and completion.history_trimmed_count != dropped_history:
+            events.emit({"type": "history_trimmed", "dropped": completion.history_trimmed_count})
+        if completion.proposal_saved and output.proposal is not None:
+            events.emit({"type": "proposal", "diff": output.proposal.diff})
+        if output.download is not None:
+            # A ZIP that does not fit the session memory budget leaves the answer intact.
+            if runtime.store.save_download(self.id, run.id, output.download.content):
+                events.emit({"type": "download", "download_id": run.id})
+            else:
+                events.emit({"type": "warning", "message": DOWNLOAD_RETENTION_WARNING})
+        done: RunDoneEvent = {"type": "done"}
+        if history_saved is not None and not background:
+            done["history_saved"] = history_saved
+        events.emit(
+            {
+                "type": "context_usage",
+                **context_usage(completion.context_used_chars, runtime.settings, output.last_call, runtime.provider),
+            }
+        )
+        events.emit(done)
+
+    async def _finalize_run(
+        self,
+        run: AgentRun,
+        snapshot: RunSnapshot,
+        entries: Sequence[AgentMessage],
+        output: RunOutput,
+        outcome: RunOutcome,
+        events: RunEvents,
+        runtime: SessionRuntime,
+        history_started: bool,
+        dropped_history: int,
+        background: bool,
+    ) -> None:
+        """Resolve the transcript, save the run record once, then publish the terminal outcome."""
+        run.finishing = True
+        stopped = outcome.terminal is not None and outcome.terminal["type"] == "stopped"
+        committed = outcome.status == "completed"
+        if outcome.completion is None:
+            stop_reason = "aborted" if outcome.status == "cancelled" else "error"
+            entries = output.interrupted_entries([entries[0], *self.agent.state.messages], stop_reason)
+            if not run.shutdown and outcome.status in {"cancelled", "failed"}:
+                # Keep the prompt so a follow-up can refer to it. Workspace changes and any
+                # proposal were discarded with the sandbox, which context.py accounts for.
+                committed = runtime.store.finish(self.id, retained_entries(entries), snapshot=snapshot).run_saved
+            else:
+                runtime.store.abort(self.id, snapshot)
+        if history_started:
+            # Messages the run loop has not saved yet, including an interrupted response.
+            self._save_run_messages(run.id, entries[1:])
+        if stopped and run.shutdown:
+            # The run stays running in recovery storage, so the restarted service reports
+            # a restart instead of a user Stop.
+            events.finish()
+            return
+        if outcome.terminal is not None:
+            events.emit(outcome.terminal)
         try:
-            if not await asyncio.shield(turn.ready):
-                if turn.task.cancelled():
-                    raise HTTPException(status_code=409, detail="The response was stopped before it started.")
-                await turn.wait()
-        except asyncio.CancelledError:
-            if not turn.ready.done() or not turn.ready.result():
-                turn.cancel()
-                await asyncio.shield(turn.done)
-            raise
-        except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from None
-        if replay is None:
-            raise RuntimeError("The foreground response was not accepted.")
-        return replay, False
+            history_saved = None
+            if history_started:
+                history_saved = await _complete(
+                    runtime.recorder.finish_run(
+                        self.id, run.id, outcome.status, outcome.error_code, output.usage, committed
+                    )
+                )
+                if not history_saved:
+                    events.emit({"type": "warning", "message": RECOVERY_SAVE_WARNING})
+            if outcome.completion is not None:
+                self._publish_completion(
+                    run, outcome.completion, output, events, runtime, dropped_history, history_saved, background
+                )
+        finally:
+            events.finish()
 
     async def run(
         self,
-        runtime: SessionRuntime,
-        turn: Turn,
+        run: AgentRun,
         question: str,
         *,
+        runtime: SessionRuntime,
         background: bool = False,
         owner: str | None = None,
-        message_id: str | None = None,
         credential_id: str | None = None,
         artifact: OptimizerArtifact | None = None,
-        accepted: Callable[[ReplayTurn], None] | None = None,
     ) -> None:
-        """Execute either trigger under one snapshot and one finalization path."""
-        store, recovery, settings = runtime.store, runtime.recovery, runtime.settings
-        snapshot = store.begin_background(self.id) if background else store.begin(self.id, owner)
+        """Own every run phase and finalize once, regardless of trigger or transport."""
+        run.begun = True
+        session_id = self.id
+        settings, store, recorder = runtime.settings, runtime.store, runtime.recorder
+        snapshot = (
+            store.begin_background(session_id, run_id=run.id)
+            if background
+            else store.begin(session_id, owner, run_id=run.id)
+        )
         if snapshot is None:
             return
+        # History keeps the question as typed. Upload and removal events are separate history entries.
         output = RunOutput()
-        replay: ReplayTurn | None = None
-        try:
-            attachments = store.attachments(self.id)
-            turn.admitting = True
-            if background:
-                if recovery.history_log is not None and not await recovery.history_log.write(
-                    "start_recovery_turn",
-                    turn.id,
-                    self.id,
-                    None,
-                    question,
-                    {"kind": "background", "model": settings.provider_model, "attachment_count": len(attachments)},
-                ):
-                    output.error_code = "internal_error"
-                    await self._finish_background(
-                        runtime,
-                        turn,
-                        snapshot,
-                        output,
-                        (
-                            "error",
-                            {
-                                "message": "AI message recovery is unavailable, so the optimizer result was not reviewed."
-                            },
-                        ),
-                    )
-                    return
-            else:
-                request_logger.info(
-                    "AI request started session_id=%s question_chars=%s question=%s files=%s",
-                    self.id,
-                    len(question),
-                    json.dumps(_question_log_preview(question), ensure_ascii=False),
-                    len(attachments),
-                )
-                if not await recovery.save_session(self.id):
-                    raise RuntimeError("AI message recovery is temporarily unavailable.")
-                replay = await recovery.turn_journal.start(
-                    self.id,
-                    turn.id,
-                    message_id or turn.id,
-                    question,
-                    {
-                        "model": settings.provider_model,
-                        "auth_credential_id": credential_id,
-                        "attachment_count": len(attachments),
-                    },
-                )
-                if accepted is not None:
-                    accepted(replay)
-                turn.ready.set_result(True)
-            turn.admitting = False
-            events = self._generate(runtime, turn, snapshot, question, attachments, artifact, output, background)
-            if background:
-                await self._deliver_background(runtime, turn, snapshot, events, output)
-            else:
-                await self._deliver_foreground(runtime, turn, events, output, replay)
-        finally:
-            turn.admitting = False
-            store.abort(self.id, snapshot)
-            self.agent.reset()
+        run_entries: list[AgentMessage] = [UserMessage(question)]
+        history_started = False
+        outcome = RunOutcome()
+        dropped_history = 0
+        events = RunEvents(run.id, self.publish)
 
-    async def _generate(self, runtime, turn, snapshot, question, attachments, artifact, output, background):
-        settings = runtime.settings
-        history, schedule_yaml = snapshot.transcript, snapshot.schedule_yaml
         try:
-            if turn.cancelled or (
-                not background and await runtime.recovery.turn_journal.was_stopped(self.id, turn.message_id or turn.id)
-            ):
-                raise asyncio.CancelledError
-            if background:
-                yield "turn_start", {"message_id": turn.id, "trigger": "optimizer"}
-            else:
-                artifact = await runtime.session_optimizer.latest_result_artifact(self.id)
-            selected = project_history(history, settings.max_history_chars)
-            retained = selected.messages
-            dropped = snapshot.dropped_history_messages + selected.dropped_messages
-            messages = build_provider_messages(
-                selected,
-                schedule_yaml,
-                question,
-                attachments,
-                system_prompt=SANDBOX_SYSTEM_PROMPT,
-                pending_proposal=bool(snapshot.proposal_yaml),
-                optimizer_result_available=artifact is not None,
-                max_history_chars=settings.max_history_chars,
-                max_download_bytes=settings.max_download_bytes,
-            )
-            context_chars = selected.used_chars
-            if background:
-                yield "context_usage", context_usage(context_chars, settings)
-                if dropped:
-                    yield "history_trimmed", {"dropped": dropped}
-                yield "model_input", model_input(messages, len(retained), dropped, "optimizer")
-            else:
-                yield "model_input", model_input(messages, len(retained), dropped, "question")
-                yield "context_usage", context_usage(context_chars, settings)
-                if dropped:
-                    yield "history_trimmed", {"dropped": dropped}
-            async with runtime.concurrency_limit:
-                agent_events = run_workspace(
-                    runtime.provider,
-                    runtime.sandbox_factory,
-                    schedule_yaml,
-                    messages,
-                    WorkspaceLimits.from_settings(settings),
-                    take_steering=None if background else lambda close: runtime.store.take_steering(self.id, close),
-                    pending_proposal_yaml=snapshot.proposal_yaml,
-                    pending_proposal_diff=snapshot.proposal_diff,
-                    execute_optimizer=lambda current_yaml, arguments: execute_optimizer_tool(
-                        runtime.session_optimizer, self.id, current_yaml, arguments
-                    ),
-                    attachments=attachments,
-                    optimizer_result=artifact.content if artifact is not None else None,
-                    optimizer_context=artifact.schedule_context if artifact is not None else None,
-                    agent=self.agent,
+            if recorder.enabled:
+                prompt_seq = self.next_entry_seq
+                self.next_entry_seq += 1
+                start = asyncio.ensure_future(
+                    recorder.start_run(
+                        session_id,
+                        run.id,
+                        question,
+                        prompt_seq,
+                        model=settings.provider_model,
+                        attachment_count=len(snapshot.uploads),
+                        kind="background" if background else "foreground",
+                        message_id=run.message_id,
+                        credential_id=credential_id,
+                    )
                 )
-                async with aclosing(agent_events):
-                    async for event in agent_events:
-                        projected = output.apply(event)
-                        if isinstance(event, TokenUsage):
-                            projected = (
-                                "context_usage",
-                                context_usage(context_chars, settings, event, runtime.provider),
-                            )
-                        if projected is not None:
-                            yield projected
-            completion = runtime.store.finish(
-                self.id,
-                question,
-                output.text,
-                (output.proposal.text, output.proposal.diff) if output.proposal is not None else None,
-                snapshot=snapshot,
-                turn_messages=[UserMessage(question), *self.agent.state.messages],
-            )
-            output.completed = True
-            turn.finishing = True
-            output.saved_outcome = (
-                ("done", {"message_id": turn.id}) if completion.turn_saved else ("stale", {"message": STALE_TURN_ERROR})
-            )
-            if not completion.turn_saved:
-                yield output.saved_outcome
+                try:
+                    history_started = await _complete(start)
+                except asyncio.CancelledError:
+                    # Cancellation during start still waits for the run record. Its
+                    # messages and outcome are saved only after a saved record.
+                    history_started = start.result()
+                    raise
+                if not history_started:
+                    raise HTTPException(status_code=503, detail=RECOVERY_UNAVAILABLE)
+            events.emit({"type": "run_start", "trigger": "optimizer" if background else "user"})
+            run.ready.set_result(True)
+            if run.message_id is not None and run.message_id in self.stopped_message_ids:
+                # A Stop for this message arrived first, so its question never runs.
+                outcome = RunOutcome(terminal={"type": "stopped"})
                 return
-            if completion.history_trimmed_count and completion.history_trimmed_count != dropped:
-                yield "history_trimmed", {"dropped": completion.history_trimmed_count}
-            if completion.proposal_saved:
-                yield "proposal", {"diff": output.proposal.diff}
-            if output.download is not None:
-                if runtime.store.save_download(self.id, turn.id, output.download):
-                    yield "download", {"download_id": turn.id}
-                else:
-                    yield (
-                        "warning",
-                        {
-                            "message": "The generated ZIP could not be retained because the service memory limit was reached."
-                        },
-                    )
-            yield (
-                "context_usage",
-                context_usage(completion.context_used_chars, settings, output.last_call, runtime.provider),
+            if not background:
+                artifact = await runtime.session_optimizer.latest_result_artifact(session_id)
+            messages, dropped_history, context_chars = self._prepare_run(
+                snapshot, question, artifact, settings, events, background
             )
-            yield output.saved_outcome
+            await self._execute_run(snapshot, messages, artifact, runtime, background, output, events, context_chars)
+            run_entries = [run_entries[0], *self.agent.state.messages]
+            completion = self._commit_run(run, snapshot, run_entries, output, store)
+            outcome = RunOutcome("completed" if completion.run_saved else "stale", completion=completion)
         except asyncio.CancelledError:
-            yield output.saved_outcome or ("stopped", {"message_id": turn.id})
-        except ProviderError as exc:
-            output.error_code = "provider_error"
-            yield "error", {"message": exc.user_message or PROVIDER_ERROR}
-        except SandboxDownloadError as exc:
-            output.error_code = "download_error"
-            yield "error", {"message": str(exc)}
-        except SandboxCommandTimeoutError:
-            output.error_code = "sandbox_command_timeout"
-            yield "error", {"message": SANDBOX_COMMAND_TIMEOUT_ERROR}
-        except SandboxTurnTimeoutError:
-            output.error_code = "sandbox_timeout"
-            yield "error", {"message": SANDBOX_TURN_TIMEOUT_ERROR}
-        except SandboxCandidateError as exc:
-            output.error_code = "candidate_validation"
-            logger.warning("AI candidate validation failed: %s", exc)
-            yield (
-                "error",
-                {"message": CANDIDATE_VALIDATION_ERROR + (f"\n\n{exc.user_message}" if exc.user_message else "")},
+            outcome = RunOutcome(terminal={"type": "stopped"})
+            raise
+        except HTTPException:
+            if not background:
+                raise
+            outcome = RunOutcome(
+                "failed",
+                error_code="history_unavailable",
+                terminal={"type": "error", "message": BACKGROUND_RECOVERY_ERROR},
             )
-        except SandboxError:
-            output.error_code = "sandbox_error"
-            logger.exception("AI sandbox turn failed session_id=%s", self.id)
-            yield (
-                "error",
-                {
-                    "message": "The temporary AI sandbox failed while reviewing optimizer results."
-                    if background
-                    else "The temporary AI sandbox failed. Please try again."
-                },
-            )
+        except (ProviderError, SandboxError) as exc:
+            if isinstance(exc, ProviderError):
+                error_code, message = "provider_error", exc.user_message or PROVIDER_ERROR
+            elif isinstance(exc, SandboxDownloadError):
+                error_code, message = "download_error", str(exc)
+            elif isinstance(exc, SandboxCommandTimeoutError):
+                error_code, message = "sandbox_command_timeout", SANDBOX_COMMAND_TIMEOUT_ERROR
+            elif isinstance(exc, SandboxTurnTimeoutError):
+                error_code, message = "sandbox_timeout", SANDBOX_RUN_TIMEOUT_ERROR
+            elif isinstance(exc, SandboxCandidateError):
+                error_code = "candidate_validation"
+                message = CANDIDATE_VALIDATION_ERROR + (f"\n\n{exc.user_message}" if exc.user_message else "")
+            else:
+                error_code, message = "sandbox_error", "The temporary AI sandbox failed. Please try again."
+                logger.exception("AI sandbox run failed session_id=%s", session_id)
+            outcome = RunOutcome("failed", error_code=error_code, terminal={"type": "error", "message": message})
         except Exception:
-            output.error_code = "internal_error"
-            logger.exception("Unexpected AI stream failure session_id=%s", self.id)
-            yield (
-                "error",
-                {
-                    "message": "The AI could not review the optimizer result."
-                    if background
-                    else "The AI response failed unexpectedly."
-                },
+            logger.exception("Unexpected AI run failure session_id=%s", session_id)
+            outcome = RunOutcome(
+                "failed",
+                error_code="internal_error",
+                terminal={"type": "error", "message": "The AI response failed unexpectedly."},
             )
         finally:
-            if not output.completed:
-                reason = "error" if output.error_code is not None else "aborted"
-                runtime.store.finish(
-                    self.id,
-                    question,
-                    "",
-                    snapshot=snapshot,
-                    turn_messages=interrupted_entries([UserMessage(question), *self.agent.state.messages], reason),
-                )
-                runtime.store.abort(self.id, snapshot)
-
-    async def _deliver_background(self, runtime, turn, snapshot, events, output):
-        terminal = None
-        try:
-            async with aclosing(events):
-                async for kind, data in events:
-                    if kind in TERMINAL_EVENTS:
-                        terminal = kind, data
-                    elif not turn.retired:
-                        await runtime.recovery.event_broker.emit(self.id, kind, {**data, "turn_id": turn.id})
-        except asyncio.CancelledError:
-            terminal = output.saved_outcome or ("stopped", {"message_id": turn.id})
-        except Exception:
-            output.error_code = "internal_error"
-            logger.exception("Background AI recovery failed session_id=%s", self.id)
-            terminal = ("error", {"message": "The AI could not review the optimizer result."})
-        finally:
-            if terminal is not None:
-                await self._finish_background(runtime, turn, snapshot, output, terminal)
-        if terminal is not None and terminal[0] == "stopped":
-            raise asyncio.CancelledError
-
-    async def _finish_background(self, runtime, turn, snapshot, output, terminal):
-        turn.finishing = True
-        if turn.retired:
-            return
-        if not output.completed:
-            runtime.store.abort(self.id, snapshot)
-        kind, data = terminal
-        await runtime.recovery.event_broker.emit(self.id, kind, {**data, "turn_id": turn.id}, metadata=output.metadata)
-
-    async def _deliver_foreground(self, runtime, turn, events, output, replay):
-        queue = asyncio.Queue(maxsize=64)
-        terminal = None
-
-        async def collect():
             try:
-                async with aclosing(events):
-                    async for event in events:
-                        await queue.put(event)
-            except asyncio.CancelledError:
-                await queue.put(output.saved_outcome or ("stopped", {"message_id": turn.id}))
+                await self._finalize_run(
+                    run,
+                    snapshot,
+                    run_entries,
+                    output,
+                    outcome,
+                    events,
+                    runtime,
+                    history_started,
+                    dropped_history,
+                    background,
+                )
             finally:
-                await queue.put(None)
-
-        collector = asyncio.create_task(collect(), name=f"ai-output-{turn.id}")
-        try:
-            ended = False
-            while not ended:
-                batch = []
-                event = await queue.get()
-                while True:
-                    if event is None:
-                        ended = True
-                        break
-                    if event[0] in {"delta", "reasoning"}:
-                        append_compacted(batch, *event)
-                    else:
-                        batch.append({"type": event[0], "data": event[1]})
-                    if queue.empty():
-                        break
-                    event = queue.get_nowait()
-                for event in batch:
-                    if event["type"] in TERMINAL_EVENTS:
-                        terminal = event["type"], event["data"]
-                    else:
-                        await runtime.recovery.turn_journal.publish(replay, event["type"], event["data"])
-        except asyncio.CancelledError:
-            terminal = output.saved_outcome or terminal
-            if terminal is None and not runtime.recovery.shutting_down:
-                terminal = ("stopped", {"message_id": turn.id})
-        except Exception:
-            logger.exception("AI turn recovery failed session_id=%s", self.id)
-            terminal = (
-                "error",
-                {"message": "AI message recovery is temporarily unavailable. Reconnect to check the saved response."},
-            )
-        finally:
-            turn.finishing = True
-            if not collector.done():
-                collector.cancel()
-            # Free a producer blocked by the queue before joining its cleanup.
-            while not queue.empty():
-                event = queue.get_nowait()
-                if terminal is None and event and event[0] in TERMINAL_EVENTS:
-                    terminal = event
-            await asyncio.gather(collector, return_exceptions=True)
-            if self.id in runtime.store._sessions:
-                if runtime.recovery.shutting_down and terminal is not None and terminal[0] == "stopped":
-                    terminal = None
-                if terminal is not None:
-                    async with runtime.recovery.state_write_lock(self.id):
-                        if self.id in runtime.store._sessions:
-                            saved = await runtime.recovery.turn_journal.finish(
-                                replay, *terminal, state=runtime.store.recovery_state(self.id), metadata=output.metadata
-                            )
-                            runtime.recovery.record_save(self.id, saved)
-                else:
-                    await runtime.recovery.save_session(self.id)
-
-
-@dataclass(frozen=True)
-class SessionRuntime:
-    """Shared execution dependencies, separate from session-owned state."""
-
-    settings: AiSettings
-    store: SessionStore
-    turns: SessionTurns
-    recovery: SessionRecovery
-    provider: ToolCapableChatProvider
-    sandbox_factory: SandboxFactory
-    session_optimizer: SessionOptimizer
-    concurrency_limit: asyncio.Semaphore
-
-
-@dataclass
-class RunOutput:
-    """Collect one transaction and project model events onto the existing API."""
-
-    assistant_parts: list[str] = field(default_factory=list)
-    proposal: AgentProposal | None = None
-    download: bytes | None = None
-    usage: TokenUsage | None = None
-    last_call: TokenUsage | None = None
-    completed: bool = False
-    saved_outcome: tuple[str, dict] | None = None
-    error_code: str | None = None
-
-    @property
-    def text(self) -> str:
-        return "".join(self.assistant_parts)
-
-    @property
-    def metadata(self) -> dict:
-        return {"error_code": self.error_code, "usage": asdict(self.usage) if self.usage else None}
-
-    def apply(self, event):
-        if isinstance(event, AgentText):
-            self.assistant_parts.append(event.text)
-            return "delta", {"text": event.text}
-        if isinstance(event, AgentReasoning):
-            return "reasoning", {"text": event.text}
-        if isinstance(event, TokenUsage):
-            self.usage = event if self.usage is None else self.usage + event
-            self.last_call = event
-        elif isinstance(event, AgentToolStart):
-            return "tool_start", {"name": event.name, "arguments": event.arguments}
-        elif isinstance(event, AgentToolUse):
-            return "tool", {"name": event.name, "arguments": event.arguments, "result": event.result, "ok": event.ok}
-        elif isinstance(event, AgentSteering):
-            return "steering", {"message_id": event.message_id, "message": event.text}
-        elif isinstance(event, AgentScheduleChange):
-            return "schedule_change", {"schedule_yaml": event.schedule_yaml}
-        elif isinstance(event, AgentDownload):
-            self.download = event.content
-        elif isinstance(event, AgentProposal):
-            self.proposal = event
-        return None
+                self.agent.reset()

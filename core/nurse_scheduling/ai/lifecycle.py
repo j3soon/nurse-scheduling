@@ -1,4 +1,4 @@
-"""Event-loop-owned turn admission, cancellation, and cleanup."""
+"""Event-loop-owned run scheduling, cancellation and owned cleanup."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -17,7 +17,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-# This file is mostly AI generated.
+# This code is mostly AI generated.
 
 import asyncio
 from collections.abc import Awaitable, Callable
@@ -26,120 +26,124 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
+from .candidate import PendingProposal
 from .transcript import AgentMessage
+from .workspace import SandboxAttachment
+
+# Each run publishes exactly one of these, after its cleanup, whichever transport carries it.
+TERMINAL_EVENTS = frozenset({"done", "stopped", "stale", "error"})
 
 
 @dataclass(eq=False)
-class TurnSnapshot:
+class RunSnapshot:
     """A capability to commit one conversation version and accept its steering."""
 
     transcript: list[AgentMessage]
     schedule_yaml: str
     version: int
-    proposal_yaml: str
-    proposal_diff: str
-    accepting_steering: bool
-    dropped_history_messages: int = 0
-    steering_queue: list[tuple[str, str]] = field(default_factory=list)
-    steering_ids: set[str] = field(default_factory=set)
+    pending_proposal: PendingProposal | None
+    previously_dropped: int = 0
+    run_id: str | None = None
+    # Uploads cannot change while a run is active, so this stays valid for the whole run.
+    uploads: tuple[SandboxAttachment, ...] = ()
 
 
 @dataclass(eq=False)
-class Turn:
-    """One operation, from admission through cleanup, independent of its HTTP reader."""
+class AgentRun:
+    """One operation, from acceptance through cleanup, independent of its HTTP reader."""
 
     id: str = field(default_factory=lambda: str(uuid4()))
+    # The client message ID of a foreground run, which a named Stop and a retried POST match.
+    message_id: str | None = None
     task: asyncio.Task[None] = field(init=False)
     ready: asyncio.Future[bool] = field(default_factory=lambda: asyncio.get_running_loop().create_future())
     done: asyncio.Future[None] = field(default_factory=lambda: asyncio.get_running_loop().create_future())
     cancelled: bool = False
-    retired: bool = False
+    # The session started executing the run, so it publishes the run's terminal outcome.
+    begun: bool = False
     finishing: bool = False
-    admitting: bool = False
-    message_id: str | None = None
-    admitted: asyncio.Event = field(default_factory=asyncio.Event)
+    # Service shutdown cancelled the run. Recovery reports it as a restart, not a user Stop.
+    shutdown: bool = False
+    ready_to_start: asyncio.Event = field(default_factory=asyncio.Event)
 
     def cancel(self) -> None:
         # Cancellation is an edge, not a repeated interrupt of resource cleanup.
         if not self.cancelled and not self.finishing:
             self.cancelled = True
-            # Let an admission write finish so a saved question always gets an outcome.
-            if not self.admitting:
-                self.task.cancel()
+            self.task.cancel()
 
     async def wait(self) -> None:
         await asyncio.shield(self.done)
         self.task.result()
 
 
-class SessionTurns:
-    """Event-loop-owned FIFO admission. No transition below suspends.
+class SessionRuns:
+    """Event-loop-owned FIFO execution. No transition below suspends.
 
-    A foreground request is rejected while any turn owns the session. Background
-    follow-ups queue behind it. Stop cancels the admitted generation, including
-    queued turns, without affecting optimizer jobs that may complete later.
+    A foreground request is rejected while any run owns the session. Background
+    follow-ups queue behind it. Stop cancels active and queued runs, without
+    affecting optimizer jobs that may complete later. A Stop that names a client
+    message cancels only that message's run, so a delayed Stop cannot end a later run.
     """
 
     def __init__(self) -> None:
-        self._turns: dict[str, list[Turn]] = {}
+        self._runs: dict[str, list[AgentRun]] = {}
         self._closed = False
 
     def busy(self, session_id: str) -> bool:
-        return bool(self._turns.get(session_id))
+        return bool(self._runs.get(session_id))
 
     def start(
         self,
         session_id: str,
-        run: Callable[[Turn], Awaitable[None]],
+        execute_run: Callable[[AgentRun], Awaitable[None]],
         *,
         background: bool = False,
         message_id: str | None = None,
-    ) -> Turn:
+    ) -> AgentRun:
         if self._closed:
             raise HTTPException(status_code=503, detail="The AI service is shutting down.")
-        pending = self._turns.setdefault(session_id, [])
+        pending = self._runs.setdefault(session_id, [])
         if pending and not background:
             raise HTTPException(status_code=409, detail="This chat session already has an active response.")
-        turn = Turn(message_id=message_id)
-        pending.append(turn)
+        run = AgentRun(message_id=message_id)
+        pending.append(run)
         if len(pending) == 1:
-            turn.admitted.set()
+            run.ready_to_start.set()
 
         async def execute() -> None:
-            await turn.admitted.wait()
-            await run(turn)
+            await run.ready_to_start.wait()
+            await execute_run(run)
 
         def finished(task: asyncio.Task[None]) -> None:
-            was_head = pending[0] is turn
-            pending.remove(turn)
+            was_head = pending[0] is run
+            pending.remove(run)
             if not pending:
-                self._turns.pop(session_id, None)
+                self._runs.pop(session_id, None)
             elif was_head:
-                pending[0].admitted.set()
-            if not turn.ready.done():
-                turn.ready.set_result(False)
-            turn.done.set_result(None)
+                pending[0].ready_to_start.set()
+            if not run.ready.done():
+                run.ready.set_result(False)
+            run.done.set_result(None)
             if not task.cancelled():
                 # Retrieve even failures whose HTTP reader has already disconnected.
                 task.exception()
 
-        turn.task = asyncio.create_task(execute(), name=f"ai-turn-{turn.id}")
-        turn.task.add_done_callback(finished)
-        return turn
+        run.task = asyncio.create_task(execute(), name=f"ai-run-{run.id}")
+        run.task.add_done_callback(finished)
+        return run
 
     def stop(self, session_id: str, message_id: str | None = None) -> None:
-        for turn in tuple(self._turns.get(session_id, ())):
-            if message_id is None or turn.message_id == message_id:
-                turn.cancel()
-
-    def retire(self, session_id: str) -> None:
-        for turn in tuple(self._turns.get(session_id, ())):
-            turn.retired = True
-            turn.cancel()
+        for run in tuple(self._runs.get(session_id, ())):
+            if message_id is None or run.message_id == message_id:
+                run.cancel()
 
     async def close(self) -> None:
         self._closed = True
-        turns = [turn for pending in self._turns.values() for turn in pending]
-        for turn in turns:
-            turn.cancel()
-        await asyncio.gather(*(turn.done for turn in turns))
+        runs = [run for pending in self._runs.values() for run in pending]
+        for run in runs:
+            # A run that a user already stopped keeps its Stop outcome.
+            if not run.cancelled:
+                run.shutdown = True
+                run.cancel()
+        await asyncio.gather(*(run.done for run in runs))

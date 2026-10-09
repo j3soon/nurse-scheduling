@@ -37,7 +37,7 @@ export interface ChatExportMessage {
   content: string;
   createdAt?: number;
   activity?: ActivityEntry[];
-  status?: 'pending' | 'failed';
+  status?: 'pending' | 'failed' | 'stopped';
   responseStartedAt?: number;
   responseCompletedAt?: number;
 }

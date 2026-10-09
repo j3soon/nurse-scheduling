@@ -36,6 +36,7 @@ export interface ReasoningEntry {
 
 export interface ToolEntry {
   kind: 'tool';
+  toolCallId?: string;
   name: string;
   arguments: string;
   result: string;

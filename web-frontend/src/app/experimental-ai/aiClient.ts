@@ -19,6 +19,7 @@
 
 // This code is mostly AI generated.
 
+import type { SessionEvent, SessionStreamOptions } from './sessionEvents';
 import {
   buildAuthHeaders,
   parseAuthRequirement,
@@ -27,13 +28,14 @@ import {
 import type { OptimizationProgressPoint } from '@/components/OptimizationProgressChart';
 
 export interface ToolActivity {
+  toolCallId?: string;
   name: string;
   arguments: string;
   result: string;
   ok: boolean;
 }
 
-export type ToolStartActivity = Pick<ToolActivity, 'name' | 'arguments'>;
+export type ToolStartActivity = Pick<ToolActivity, 'toolCallId' | 'name' | 'arguments'>;
 
 export interface OptimizationActivity {
   jobId: string;
@@ -68,34 +70,12 @@ export interface ContextUsage {
   maxTokens?: number;
 }
 
-export interface StreamCallbacks {
-  onUploaded?: (files: UploadedFile[]) => void;
-  onModelInput?: (input: ModelInput) => void;
-  onAccepted?: () => void;
-  onConnectionChange?: (connected: boolean) => void;
-  onReplay?: (events: ReplayEvent[]) => void;
-  shouldStop?: () => boolean;
-  lastEventId?: number;
-  onEventId?: (id: number) => void;
-  onTurnStart?: (messageId: string, trigger: string) => void;
-  onTurnContext?: (messageId: string) => void;
-  onDelta: (text: string) => void;
-  onReasoning?: (text: string) => void;
-  onToolStart?: (activity: ToolStartActivity) => void;
-  onTool?: (activity: ToolActivity) => void;
-  onSteering?: (messageId: string, message: string) => void;
-  onScheduleChange?: (scheduleYaml: string) => void;
-  onProposal?: (diff: string) => void;
-  onDownload?: (downloadId: string) => void;
-  onWarning?: (message: string) => void;
-  onOptimization?: (activity: OptimizationActivity) => void;
-  onOptimizationProgress?: (activity: OptimizationProgressActivity) => void;
-  onDone?: (messageId?: string) => void;
-  onStopped?: (messageId?: string) => void;
-  onStale?: (message: string) => void;
-  onContextUsage?: (usage: ContextUsage) => void;
-  onHistoryTrimmed?: (dropped: number) => void;
-  onError?: (message: string) => void;
+export interface SessionReset {
+  runIds: string[];
+  activeRunId: string | null;
+  terminalRunIds: string[];
+  incomplete: boolean;
+  proposalDiff: string | null;
 }
 
 export interface AiCapabilities {
@@ -115,16 +95,6 @@ export interface UploadedFile {
   filename: string;
   media_type: string;
   bytes: number;
-}
-
-export interface MessageAttachments {
-  files?: File[];
-  messageId?: string;
-}
-
-export interface ReplayEvent {
-  type: string;
-  data: Record<string, unknown>;
 }
 
 // The request messages added since the last assistant reply, in the order the model receives them.
@@ -162,7 +132,6 @@ interface SessionStatusResponse {
 }
 
 interface SsePayload {
-  events?: unknown;
   text?: unknown;
   message?: unknown;
   name?: unknown;
@@ -177,7 +146,8 @@ interface SsePayload {
   used_tokens?: unknown;
   max_tokens?: unknown;
   message_id?: unknown;
-  turn_id?: unknown;
+  tool_call_id?: unknown;
+  run_id?: unknown;
   trigger?: unknown;
   job_id?: unknown;
   state?: unknown;
@@ -190,6 +160,17 @@ interface SsePayload {
   used_chars?: unknown;
   max_chars?: unknown;
   dropped?: unknown;
+  events?: unknown;
+  incomplete?: unknown;
+  active_run_id?: unknown;
+  proposal_diff?: unknown;
+}
+
+// Older backends omit the ID, so callers fall back to matching by tool name.
+function toolCallIdentity(payload: SsePayload): Pick<ToolActivity, 'toolCallId'> {
+  return typeof payload.tool_call_id === 'string' && payload.tool_call_id
+    ? { toolCallId: payload.tool_call_id }
+    : {};
 }
 
 export class AiHttpError extends Error {
@@ -199,11 +180,18 @@ export class AiHttpError extends Error {
   }
 }
 
-export class AiStaleTurnError extends Error {
+export class AiStaleRunError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'AiStaleTurnError';
+    this.name = 'AiStaleRunError';
   }
+}
+
+export function isAuthenticationError(error: unknown): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && 'status' in error
+    && error.status === 401;
 }
 
 export const PRODUCTION_AI_API_URL = 'https://api.nursescheduling.org/ai';
@@ -342,6 +330,10 @@ export async function getSessionStatus(
   return body.expires_in_seconds as number;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 function record(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null ? value as Record<string, unknown> : {};
 }
@@ -387,7 +379,7 @@ function optimizationDetails(payload: SsePayload): Partial<OptimizationActivity>
   };
 }
 
-function consumeEvent(block: string, callbacks: StreamCallbacks): boolean {
+function consumeEvent(block: string, callbacks: SessionStreamOptions): void {
   const lines = block.split('\n');
   const eventId = Number(lines.find(line => line.startsWith('id:'))?.slice('id:'.length).trim());
   const eventType = lines.find(line => line.startsWith('event:'))?.slice('event:'.length).trim() ?? 'message';
@@ -395,78 +387,111 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): boolean {
     .filter(line => line.startsWith('data:'))
     .map(line => line.slice('data:'.length).trimStart())
     .join('\n');
-  if (!rawData) return false;
-  const isSnapshot = eventType === 'turn_snapshot' || eventType === 'session_snapshot';
-  // Replacement snapshots can reset the cursor after server recovery.
-  if (!isSnapshot && Number.isSafeInteger(eventId) && eventId > 0 && eventId <= (callbacks.lastEventId ?? 0)) return false;
+  if (!rawData) return;
+  if (eventType !== 'session_reset' && Number.isSafeInteger(eventId) && eventId > 0
+    && eventId <= (callbacks.lastEventId ?? 0)) return;
 
   let payload: SsePayload;
   try {
-    payload = JSON.parse(rawData) as SsePayload;
+    const parsed: unknown = JSON.parse(rawData);
+    if (!isRecord(parsed)) throw new Error();
+    payload = parsed;
   } catch {
     throw new Error('The AI backend returned an invalid stream.');
   }
 
-  // Acknowledge before dispatching, so a handler that throws cannot make a
-  // replayed stream repeat the same event after every reconnect.
-  if (Number.isSafeInteger(eventId) && (eventId > 0 || (isSnapshot && eventId === 0))) {
+  let events: SessionEvent[];
+  if (eventType === 'session_reset') {
+    if (!Array.isArray(payload.events)) throw new Error('The AI backend returned an invalid recovery snapshot.');
+    const recovery = payload.events.map((entry: unknown) => {
+      if (!isRecord(entry) || typeof entry.type !== 'string' || !isRecord(entry.data)) {
+        throw new Error('The AI backend returned an invalid recovery snapshot.');
+      }
+      return { type: entry.type, data: entry.data };
+    });
+    const recoveredEvents = recovery.flatMap(event => decodeEvent(event.type, event.data));
+    const runIds = [...new Set(recovery.flatMap(event =>
+      typeof event.data.run_id === 'string' ? [event.data.run_id] : []))];
+    const reset = {
+      runIds,
+      terminalRunIds: recovery.flatMap(event =>
+        ['done', 'stopped', 'stale', 'error'].includes(event.type) && typeof event.data.run_id === 'string'
+          ? [event.data.run_id] : []),
+      activeRunId: typeof payload.active_run_id === 'string' ? payload.active_run_id : null,
+      incomplete: payload.incomplete === true,
+      proposalDiff: typeof payload.proposal_diff === 'string' && payload.proposal_diff ? payload.proposal_diff : null,
+    };
+    events = [
+      { type: 'session_reset', reset },
+      ...recoveredEvents,
+      // Proposal ownership may have changed since the retained run produced it.
+      { type: 'proposal', diff: reset.proposalDiff ?? '' },
+    ];
+  } else {
+    events = decodeEvent(eventType, payload);
+  }
+
+  // Validate the whole frame before acknowledging or applying it. Acknowledge
+  // before handlers so a failing handler cannot repeat an event on every reconnect.
+  if (Number.isSafeInteger(eventId) && eventId >= 0) {
     callbacks.lastEventId = eventId;
     callbacks.onEventId?.(eventId);
   }
-  if (typeof payload.turn_id === 'string') callbacks.onTurnContext?.(payload.turn_id);
+  for (const event of events) callbacks.onEvent(event);
+}
 
-  if (isSnapshot) {
-    if (!Array.isArray(payload.events) || payload.events.some(event =>
-      typeof event?.type !== 'string' || typeof event?.data !== 'object' || event.data === null
-      || event.type.endsWith('_snapshot'))) {
-      throw new Error('The AI backend returned an invalid replay snapshot.');
-    }
-    const events = payload.events as ReplayEvent[];
-    callbacks.onReplay?.(events);
-    let terminal = false;
-    for (const event of events) {
-      if (event.type === 'turn_start') terminal = false;
-      terminal = consumeEvent(`event: ${event.type}\ndata: ${JSON.stringify(event.data)}`, callbacks) || terminal;
-    }
-    return terminal;
-  }
+function decodeEvent(eventType: string, payload: SsePayload): SessionEvent[] {
+  const events: SessionEvent[] = [];
+  const runId = typeof payload.run_id === 'string' ? payload.run_id : undefined;
+  const emit = (event: SessionEvent) => events.push(runId === undefined ? event : { ...event, runId });
+  if (runId) emit({ type: 'run_context', runId });
 
-  if (eventType === 'turn_start' && typeof payload.message_id === 'string') {
-    callbacks.onTurnStart?.(
-      payload.message_id,
-      typeof payload.trigger === 'string' ? payload.trigger : 'background work',
-    );
+  if (eventType === 'run_start' && typeof payload.run_id === 'string') {
+    emit({
+      type: 'run_start', runId: payload.run_id,
+      trigger: typeof payload.trigger === 'string' ? payload.trigger : 'background work',
+    });
   } else if (eventType === 'delta' && typeof payload.text === 'string') {
-    callbacks.onDelta(payload.text);
+    emit({ type: 'delta', text: payload.text });
   } else if (eventType === 'reasoning' && typeof payload.text === 'string') {
-    callbacks.onReasoning?.(payload.text);
+    emit({ type: 'reasoning', text: payload.text });
+  } else if (eventType === 'truncated') {
+    emit({ type: 'truncated' });
   } else if (eventType === 'tool_start' && typeof payload.name === 'string') {
-    callbacks.onToolStart?.({
-      name: payload.name,
-      arguments: typeof payload.arguments === 'string' ? payload.arguments : '',
+    emit({
+      type: 'tool_start',
+      activity: {
+        ...toolCallIdentity(payload),
+        name: payload.name,
+        arguments: typeof payload.arguments === 'string' ? payload.arguments : '',
+      },
     });
   } else if (eventType === 'tool' && typeof payload.name === 'string') {
-    callbacks.onTool?.({
-      name: payload.name,
-      arguments: typeof payload.arguments === 'string' ? payload.arguments : '',
-      result: typeof payload.result === 'string' ? payload.result : '',
-      ok: payload.ok !== false,
+    emit({
+      type: 'tool',
+      activity: {
+        ...toolCallIdentity(payload),
+        name: payload.name,
+        arguments: typeof payload.arguments === 'string' ? payload.arguments : '',
+        result: typeof payload.result === 'string' ? payload.result : '',
+        ok: payload.ok !== false,
+      },
     });
   } else if (
     eventType === 'steering'
     && typeof payload.message_id === 'string'
     && typeof payload.message === 'string'
   ) {
-    callbacks.onSteering?.(payload.message_id, payload.message);
+    emit({ type: 'steering', messageId: payload.message_id, message: payload.message });
   } else if (eventType === 'schedule_change') {
     if (typeof payload.schedule_yaml !== 'string') {
       throw new Error('The AI backend returned an invalid schedule change.');
     }
-    callbacks.onScheduleChange?.(payload.schedule_yaml);
+    emit({ type: 'schedule_change', scheduleYaml: payload.schedule_yaml });
   } else if (eventType === 'download' && typeof payload.download_id === 'string') {
-    callbacks.onDownload?.(payload.download_id);
+    emit({ type: 'download', downloadId: payload.download_id });
   } else if (eventType === 'proposal' && typeof payload.diff === 'string') {
-    callbacks.onProposal?.(payload.diff);
+    emit({ type: 'proposal', diff: payload.diff });
   } else if (
     eventType === 'optimization'
     && typeof payload.job_id === 'string'
@@ -474,12 +499,15 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): boolean {
     && typeof payload.terminal === 'boolean'
     && typeof payload.downloadable === 'boolean'
   ) {
-    callbacks.onOptimization?.({
-      jobId: payload.job_id,
-      state: payload.state,
-      terminal: payload.terminal,
-      downloadable: payload.downloadable,
-      ...optimizationDetails(payload),
+    emit({
+      type: 'optimization',
+      activity: {
+        jobId: payload.job_id,
+        state: payload.state,
+        terminal: payload.terminal,
+        downloadable: payload.downloadable,
+        ...optimizationDetails(payload),
+      },
     });
   } else if (eventType === 'optimization_progress' && typeof payload.job_id === 'string') {
     const point = payload.progress as Record<string, unknown> | null | undefined;
@@ -489,14 +517,17 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): boolean {
       && typeof point.elapsedSeconds === 'number' && Number.isFinite(point.elapsedSeconds)
       && point.elapsedSeconds >= 0
     ) {
-      callbacks.onOptimizationProgress?.({
-        jobId: payload.job_id,
-        point: {
-          currentBestScore: point.currentBestScore,
-          elapsedSeconds: point.elapsedSeconds,
-          commentCount: typeof point.commentCount === 'number' ? point.commentCount : null,
-          solutionIndex: typeof point.solutionIndex === 'number' ? point.solutionIndex : null,
-          source: typeof point.source === 'string' ? point.source : undefined,
+      emit({
+        type: 'optimization_progress',
+        activity: {
+          jobId: payload.job_id,
+          point: {
+            currentBestScore: point.currentBestScore,
+            elapsedSeconds: point.elapsedSeconds,
+            commentCount: typeof point.commentCount === 'number' ? point.commentCount : null,
+            solutionIndex: typeof point.solutionIndex === 'number' ? point.solutionIndex : null,
+            source: typeof point.source === 'string' ? point.source : undefined,
+          },
         },
       });
     }
@@ -505,15 +536,14 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): boolean {
       || !payload.messages.every(isModelInputMessage)) {
       throw new Error('The AI backend returned an invalid model input.');
     }
-    callbacks.onModelInput?.({ system: payload.system, messages: payload.messages });
+    emit({ type: 'model_input', input: { system: payload.system, messages: payload.messages } });
   } else if (eventType === 'done') {
-    callbacks.onDone?.(typeof payload.message_id === 'string' ? payload.message_id : undefined);
+    emit({ type: 'done' });
   } else if (eventType === 'stopped') {
-    callbacks.onStopped?.(typeof payload.message_id === 'string' ? payload.message_id : undefined);
+    emit({ type: 'stopped' });
   } else if (eventType === 'stale') {
     const message = typeof payload.message === 'string' ? payload.message : 'The AI response became stale.';
-    if (callbacks.onStale) callbacks.onStale(message);
-    else throw new AiStaleTurnError(message);
+    emit({ type: 'stale', message });
   } else if (eventType === 'context_usage') {
     if (Number.isSafeInteger(payload.used_chars) && (payload.used_chars as number) >= 0
       && Number.isSafeInteger(payload.max_chars) && (payload.max_chars as number) > 0
@@ -525,21 +555,43 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): boolean {
           tokens.maxTokens = payload.max_tokens as number;
         }
       }
-      callbacks.onContextUsage?.({ usedChars: payload.used_chars as number, maxChars: payload.max_chars as number, ...tokens });
+      emit({
+        type: 'context_usage',
+        usage: { usedChars: payload.used_chars as number, maxChars: payload.max_chars as number, ...tokens },
+      });
     }
   } else if (eventType === 'history_trimmed') {
     const dropped = payload.dropped;
     if (typeof dropped === 'number' && Number.isInteger(dropped) && dropped > 0) {
-      callbacks.onHistoryTrimmed?.(dropped);
+      emit({ type: 'history_trimmed', dropped });
     }
   } else if (eventType === 'warning' && typeof payload.message === 'string') {
-    callbacks.onWarning?.(payload.message);
+    emit({ type: 'warning', message: payload.message });
   } else if (eventType === 'error') {
     const message = typeof payload.message === 'string' ? payload.message : 'The AI response failed.';
-    if (callbacks.onError) callbacks.onError(message);
-    else throw new Error(message);
+    emit({ type: 'error', message });
   }
-  return ['done', 'stopped', 'stale', 'error'].includes(eventType);
+  return events;
+}
+
+async function postMessage(
+  sessionId: string,
+  message: string,
+  signal: AbortSignal,
+  authToken: string | null,
+  endpoint: string,
+  accept: string,
+  messageId?: string,
+): Promise<Response> {
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/messages`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: authorizedHeaders(authToken, { Accept: accept, 'Content-Type': 'application/json' }),
+    body: JSON.stringify(messageId === undefined ? { message } : { message, message_id: messageId }),
+    signal,
+  });
+  if (!response.ok) throw await responseError(response);
+  return response;
 }
 
 class AiConnectionError extends Error {}
@@ -553,30 +605,33 @@ function waitForReconnect(delay: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-export async function streamMessage(
+export interface SendMessageOptions {
+  // The client message ID. A repeated POST with it returns the accepted run instead of asking again.
+  messageId: string;
+  shouldStop?: () => boolean;
+  onConnectionChange?: (connected: boolean) => void;
+}
+
+/**
+ * Post a question and return its run ID. Upload its files first with `uploadFiles`, so the
+ * backend records them as their own event.
+ *
+ * A lost response can hide an accepted message, so connection failures retry with the same
+ * message ID. A Stop requested meanwhile is saved before the retry, so the server reports
+ * the run's real outcome instead of running the question.
+ */
+export async function sendMessage(
   sessionId: string,
   message: string,
-  callbacks: StreamCallbacks,
   signal: AbortSignal,
   authToken: string | null,
-  attachments: MessageAttachments = {},
   endpoint = getAiBaseUrl(),
-): Promise<void> {
-  const files = attachments.files ?? [];
-  const uploaded = files.length > 0 ? await uploadFiles(sessionId, files, authToken, endpoint, signal) : [];
-  // The backend records the upload as its own history message, so the question stays as typed.
-  if (uploaded.length > 0) callbacks.onUploaded?.(uploaded);
-
-  if (callbacks.shouldStop?.()) {
-    callbacks.onStopped?.();
-    return;
-  }
-  const requestId = attachments.messageId ?? crypto.randomUUID();
-  let cursor = callbacks.lastEventId ?? 0;
+  { messageId, shouldStop, onConnectionChange }: SendMessageOptions = { messageId: crypto.randomUUID() },
+): Promise<string> {
   let retries = 0;
-  let accepted = false;
   let stopSaved = false;
-  while (!signal.aborted) {
+  while (true) {
+    signal.throwIfAborted();
     const connection = new AbortController();
     const abort = () => connection.abort();
     const resume = () => { if (document.visibilityState === 'visible') connection.abort(); };
@@ -584,11 +639,9 @@ export async function streamMessage(
     window.addEventListener('online', abort);
     document.addEventListener('visibilitychange', resume);
     try {
-      // The server may have started the turn even when no response arrived. Save Stop before a
-      // retry, so the server reports the turn's real outcome instead of running the question.
-      if (retries > 0 && !stopSaved && callbacks.shouldStop?.()) {
+      if (retries > 0 && !stopSaved && shouldStop?.()) {
         try {
-          await stopSession(sessionId, authToken, endpoint, requestId, connection.signal);
+          await stopSession(sessionId, authToken, endpoint, messageId, connection.signal);
         } catch (error) {
           if (error instanceof AiHttpError && error.status < 500) throw error;
           throw new AiConnectionError('The AI connection is being restored.');
@@ -597,34 +650,23 @@ export async function streamMessage(
       }
       let response: Response;
       try {
-        response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/messages`, {
-          method: 'POST', credentials: 'include',
-          headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
-          body: JSON.stringify({ message, message_id: requestId, last_event_id: cursor }),
-          signal: connection.signal,
-        });
-      } catch {
-        throw new AiConnectionError('The AI connection was interrupted.');
+        response = await postMessage(
+          sessionId, message, connection.signal, authToken, endpoint, 'application/json', messageId,
+        );
+      } catch (error) {
+        // A retry can find another run still active, or the service restarting.
+        const retryable = !(error instanceof AiHttpError) || (retries > 0 && (error.status >= 500 || error.status === 409));
+        if (retryable) throw new AiConnectionError('The AI connection was interrupted.');
+        throw error;
       }
-      if (!response.ok) {
-        if ((accepted || retries > 0) && (response.status >= 500 || response.status === 409)) {
-          throw new AiConnectionError('The AI connection is being restored.');
-        }
-        throw await responseError(response);
-      }
-      if (!accepted) callbacks.onAccepted?.();
-      accepted = true;
-      callbacks.onConnectionChange?.(true);
-      const terminal = await consumeStream(response, {
-        ...callbacks,
-        onEventId: id => { cursor = id; retries = 0; callbacks.onEventId?.(id); },
-      }, true);
-      if (terminal) return;
-      throw new AiConnectionError('The AI connection ended before the response finished.');
+      const body = await response.json() as { run_id?: unknown };
+      if (typeof body.run_id !== 'string' || !body.run_id) throw new Error('The AI backend returned an invalid run ID.');
+      onConnectionChange?.(true);
+      return body.run_id;
     } catch (error) {
       if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
       if (!(error instanceof AiConnectionError)) throw error;
-      callbacks.onConnectionChange?.(false);
+      onConnectionChange?.(false);
       await waitForReconnect(Math.min(5000, 250 * 2 ** retries++), signal);
     } finally {
       signal.removeEventListener('abort', abort);
@@ -632,11 +674,23 @@ export async function streamMessage(
       document.removeEventListener('visibilitychange', resume);
     }
   }
-  throw new DOMException('Aborted', 'AbortError');
 }
 
-async function consumeStream(response: Response, callbacks: StreamCallbacks, stopAtTerminal = false): Promise<boolean> {
-  if (!response.body) throw new AiConnectionError('The AI backend returned an empty stream.');
+/** Compatibility consumer. The browser uses sendMessage and the session GET stream. */
+export async function streamMessage(
+  sessionId: string,
+  message: string,
+  callbacks: SessionStreamOptions,
+  signal: AbortSignal,
+  authToken: string | null,
+  endpoint = getAiBaseUrl(),
+): Promise<void> {
+  const response = await postMessage(sessionId, message, signal, authToken, endpoint, 'text/event-stream');
+  await consumeStream(response, callbacks);
+}
+
+async function consumeStream(response: Response, callbacks: SessionStreamOptions, replayable = false): Promise<void> {
+  if (!response.body) throw new Error('The AI backend returned an empty stream.');
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -645,33 +699,30 @@ async function consumeStream(response: Response, callbacks: StreamCallbacks, sto
 
   try {
     while (true) {
-      let chunk: ReadableStreamReadResult<Uint8Array>;
-      try { chunk = await reader.read(); } catch { throw new AiConnectionError('The AI connection was interrupted.'); }
-      const { done, value } = chunk;
+      const { done, value } = await reader.read();
       buffer = (buffer + decoder.decode(value, { stream: !done })).replace(/\r\n/g, '\n');
 
       let boundary = buffer.indexOf('\n\n');
       while (boundary >= 0) {
-        const terminal = consumeEvent(buffer.slice(0, boundary), streamCallbacks);
-        if (terminal && stopAtTerminal) return true;
+        consumeEvent(buffer.slice(0, boundary), streamCallbacks);
         buffer = buffer.slice(boundary + 2);
         boundary = buffer.indexOf('\n\n');
       }
 
       if (done) break;
     }
-
-    // A replay cursor advances only over complete frames. Reconnect replays a lost delimiter.
-    return false;
+    // A replay cursor only advances over complete frames. The next connection
+    // must replay an event whose delimiter was lost in transit.
+    if (!replayable && buffer.trim()) consumeEvent(buffer, streamCallbacks);
   } finally {
-    void reader.cancel().catch(() => undefined);
+    await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
 }
 
 export async function streamSessionEvents(
   sessionId: string,
-  callbacks: StreamCallbacks,
+  callbacks: SessionStreamOptions,
   signal: AbortSignal,
   authToken: string | null,
   endpoint = getAiBaseUrl(),
@@ -686,7 +737,7 @@ export async function streamSessionEvents(
     signal,
   });
   if (!response.ok) throw await responseError(response);
-  await consumeStream(response, callbacks);
+  await consumeStream(response, callbacks, true);
 }
 
 export async function queueMessage(
@@ -705,6 +756,7 @@ export async function queueMessage(
   if (!response.ok) throw await responseError(response);
 }
 
+/** Stop the named message's run, or every run of the session when no message is named. */
 export async function stopSession(
   sessionId: string,
   authToken: string | null,
@@ -842,6 +894,7 @@ export async function approveProposal(
   return { scheduleYaml: body.schedule_yaml, historySaved: body.history_saved };
 }
 
+/** Reject the pending proposal and return whether recovery storage saved the rejection. */
 export async function rejectProposal(
   sessionId: string,
   authToken: string | null,
