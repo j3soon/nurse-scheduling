@@ -23,7 +23,7 @@ import posixpath
 import secrets
 from typing import Any
 
-from .agent import AgentToolOutcome
+from .agent_types import AgentToolOutcome
 from .pi.bash import (
     BASH_TOOL,
     BASH_TOOL_DESCRIPTION,

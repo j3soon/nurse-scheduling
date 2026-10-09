@@ -36,7 +36,7 @@ from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.provider import OpenAiCompatibleProvider
 from nurse_scheduling.ai.sandbox import SandboxError, SandboxFileNotFoundError, managed_sandbox_factory
 from nurse_scheduling.ai.sandbox.e2b import E2BSandboxFactory
-from nurse_scheduling.ai.sandbox_agent import SANDBOX_SYSTEM_PROMPT
+from nurse_scheduling.ai.workspace import SANDBOX_SYSTEM_PROMPT
 
 from .comparison import METRICS, _distribution, _metric
 from .grading import load_cases

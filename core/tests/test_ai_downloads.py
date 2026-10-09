@@ -27,13 +27,14 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import pytest
 from fastapi.testclient import TestClient
 
-from nurse_scheduling.ai.app import SessionStore
-from nurse_scheduling.ai.background import SessionEventBroker, build_provider_messages, run_background_turn
+from nurse_scheduling.ai.context import build_provider_messages
 from nurse_scheduling.ai.downloads import WORKSPACE_DOWNLOAD, validate_download_zip
 from nurse_scheduling.ai.lifecycle import Turn
 from nurse_scheduling.ai.provider import TextDelta, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.sandbox import CommandResult
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
+from nurse_scheduling.ai.session_event_stream import SessionEventBroker
+from nurse_scheduling.ai.sessions import SessionStore
 
 from .test_ai_basic import AuthenticatedTestClient, ScriptedToolProvider, create_session, create_test_app, make_settings
 
@@ -165,21 +166,10 @@ def test_download_memory_failure_keeps_the_completed_turn(background):
         session_id = store.create("owner", "description: test").id
         broker = SessionEventBroker()
 
+        broker = app.state.session_event_broker
+
         async def review():
-            await run_background_turn(
-                session_id,
-                "Download the CSV.",
-                None,
-                settings=settings,
-                store=store,
-                event_broker=broker,
-                turn=Turn(),
-                concurrency_limit=asyncio.Semaphore(1),
-                history_log=None,
-                provider=provider,
-                sandbox_factory=factory,
-                session_optimizer=app.state.session_optimizer,
-            )
+            await store._sessions[session_id].run(app.state.runtime, Turn(), "Download the CSV.", background=True)
 
         asyncio.run(review())
         event_types = [event.type for event in broker.events_after(session_id)]

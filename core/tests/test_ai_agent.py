@@ -25,14 +25,15 @@ from contextlib import asynccontextmanager
 
 import pytest
 
-from nurse_scheduling.ai.agent import (
+from nurse_scheduling.ai.agent import Agent
+from nurse_scheduling.ai.agent_loop import agent_loop
+from nurse_scheduling.ai.agent_types import (
     AgentReasoning,
     AgentSteering,
     AgentText,
     AgentToolOutcome,
     AgentToolStart,
     AgentToolUse,
-    run_tool_agent,
 )
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.pi.read import READ_TOOL
@@ -44,6 +45,8 @@ from nurse_scheduling.ai.provider import (
     ToolCallRequest,
     ToolResultImage,
 )
+
+from .ai_test_helper import bind_agent_tools
 
 QUESTION: list[ChatMessage] = [{"role": "user", "content": "Who works on the first day?"}]
 TOOLS = [
@@ -88,13 +91,7 @@ def _run(provider: FakeProvider, *, tool_ok: bool = True, **limits: int) -> list
     async def collect() -> list:
         return [
             event
-            async for event in run_tool_agent(
-                provider,
-                QUESTION,
-                TOOLS,
-                execute,
-                **limits,
-            )
+            async for event in agent_loop(provider, QUESTION, bind_agent_tools(TOOLS, execute, frozenset()), **limits)
         ]
 
     return asyncio.run(collect())
@@ -107,14 +104,93 @@ def test_a_question_only_run_streams_text():
     assert len(provider.requests) == 1
 
 
+def test_agent_closing_a_stream_releases_provider_before_reuse():
+    async def exercise():
+        closed = []
+
+        class Provider:
+            async def stream_events(self, _messages, tools=None):
+                try:
+                    yield TextDelta("First fragment")
+                    await asyncio.Event().wait()
+                finally:
+                    closed.append(True)
+
+        agent = Agent()
+        first = agent.prompt(Provider(), QUESTION, [])
+        assert await anext(first) == AgentText("First fragment")
+        assert agent.state.is_streaming
+        overlapping = agent.prompt(FakeProvider(_text("Overlapping")), QUESTION, [])
+        with pytest.raises(RuntimeError, match="already running"):
+            await anext(overlapping)
+        assert agent.state.is_streaming
+        await first.aclose()
+        assert closed == [True]
+        assert not agent.state.is_streaming
+        assert [event async for event in agent.prompt(FakeProvider(_text("Next")), QUESTION, [])] == [AgentText("Next")]
+
+    asyncio.run(exercise())
+
+
+def test_agent_cancellation_joins_tool_cleanup_before_releasing_state():
+    async def exercise():
+        started, cleaning, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+        async def execute(_name, _arguments):
+            try:
+                started.set()
+                await asyncio.Event().wait()
+            finally:
+                cleaning.set()
+                await release.wait()
+
+        agent = Agent()
+        provider = FakeProvider(_calls(), _text("Done"))
+
+        async def consume():
+            async for _event in agent.prompt(provider, QUESTION, bind_agent_tools(TOOLS, execute)):
+                pass
+
+        running = asyncio.create_task(consume())
+        await started.wait()
+        assert agent.state.pending_tool_calls == {"call_0"}
+        running.cancel()
+        await cleaning.wait()
+        assert agent.state.is_streaming and not running.done()
+        release.set()
+        await asyncio.gather(running, return_exceptions=True)
+        assert not agent.state.is_streaming
+        assert not agent.state.pending_tool_calls
+
+    asyncio.run(exercise())
+
+
+def test_unregistered_tool_never_reaches_an_executor():
+    executed = []
+
+    async def execute(name, _arguments):
+        executed.append(name)
+        return AgentToolOutcome("Executed", True)
+
+    async def exercise():
+        provider = FakeProvider([ToolCallRequest((ToolCall("missing", "unregistered", "{}"),))], _text("Done"))
+        events = [event async for event in agent_loop(provider, QUESTION, bind_agent_tools(TOOLS, execute))]
+        outcome = next(event for event in events if isinstance(event, AgentToolUse))
+        assert not outcome.ok and outcome.tool_call_id == "missing"
+        assert provider.requests[1][0][-1]["tool_call_id"] == "missing"
+
+    asyncio.run(exercise())
+    assert executed == []
+
+
 def test_a_tool_call_is_executed_and_returned_to_the_provider():
     provider = FakeProvider(_calls(), _text("Two people."))
 
     events = _run(provider)
 
     assert events[:2] == [
-        AgentToolStart(BASH_TOOL, '{"command":"rg people"}'),
-        AgentToolUse(BASH_TOOL, '{"command":"rg people"}', "command result", True),
+        AgentToolStart(BASH_TOOL, '{"command":"rg people"}', "call_0"),
+        AgentToolUse(BASH_TOOL, '{"command":"rg people"}', "command result", True, "call_0"),
     ]
     second_request = provider.requests[1][0]
     assert second_request[-2]["tool_calls"][0]["function"]["name"] == BASH_TOOL
@@ -133,7 +209,7 @@ def test_an_image_tool_result_is_returned_as_multimodal_content():
         return AgentToolOutcome("Read image.", True, ToolResultImage("image/png", image))
 
     async def collect() -> None:
-        async for _event in run_tool_agent(provider, QUESTION, TOOLS, execute):
+        async for _event in agent_loop(provider, QUESTION, bind_agent_tools(TOOLS, execute, frozenset())):
             pass
 
     asyncio.run(collect())
@@ -159,7 +235,7 @@ def test_image_tool_results_follow_all_tool_replies():
         return AgentToolOutcome("Read image.", True, ToolResultImage("image/png", b"image"))
 
     async def collect() -> None:
-        async for _event in run_tool_agent(provider, QUESTION, TOOLS, execute):
+        async for _event in agent_loop(provider, QUESTION, bind_agent_tools(TOOLS, execute, frozenset())):
             pass
 
     asyncio.run(collect())
@@ -190,12 +266,8 @@ def test_all_queued_steering_is_injected_after_the_next_tool_batch():
     async def collect() -> list:
         return [
             event
-            async for event in run_tool_agent(
-                provider,
-                QUESTION,
-                TOOLS,
-                execute,
-                take_steering=take_steering,
+            async for event in agent_loop(
+                provider, QUESTION, bind_agent_tools(TOOLS, execute, frozenset()), take_steering=take_steering
             )
         ]
 
@@ -251,13 +323,7 @@ def test_allowed_tool_batch_executes_concurrently_and_reports_in_call_order():
     async def collect() -> list:
         return [
             event
-            async for event in run_tool_agent(
-                provider,
-                QUESTION,
-                TOOLS,
-                execute,
-                parallel_tool_names=frozenset({BASH_TOOL}),
-            )
+            async for event in agent_loop(provider, QUESTION, bind_agent_tools(TOOLS, execute, frozenset({BASH_TOOL})))
         ]
 
     events = asyncio.run(collect())
@@ -289,13 +355,7 @@ def test_parallel_tool_failure_cancels_siblings_without_wrapping_the_error():
             raise
 
     async def collect() -> None:
-        async for _event in run_tool_agent(
-            provider,
-            QUESTION,
-            TOOLS,
-            execute,
-            parallel_tool_names=frozenset({BASH_TOOL}),
-        ):
+        async for _event in agent_loop(provider, QUESTION, bind_agent_tools(TOOLS, execute, frozenset({BASH_TOOL}))):
             pass
 
     with pytest.raises(ValueError, match="tool failed"):
@@ -311,9 +371,11 @@ def test_mixed_tool_batch_remains_sequential():
     provider = FakeProvider([ToolCallRequest(calls)], _text("Done."))
     active = 0
     max_active = 0
+    executed = []
 
     async def execute(_name: str, _arguments: str) -> AgentToolOutcome:
         nonlocal active, max_active
+        executed.append(_name)
         active += 1
         max_active = max(max_active, active)
         await asyncio.sleep(0.01)
@@ -321,18 +383,19 @@ def test_mixed_tool_batch_remains_sequential():
         return AgentToolOutcome("result", True)
 
     async def collect() -> None:
-        async for _event in run_tool_agent(
+        async for _event in agent_loop(
             provider,
             QUESTION,
-            TOOLS,
-            execute,
-            parallel_tool_names=frozenset({READ_TOOL}),
+            bind_agent_tools(
+                [*TOOLS, {"type": "function", "function": {"name": READ_TOOL}}], execute, frozenset({READ_TOOL})
+            ),
         ):
             pass
 
     asyncio.run(collect())
 
     assert max_active == 1
+    assert executed == [READ_TOOL, BASH_TOOL]
 
 
 def test_one_activity_batch_contains_all_calls_from_a_model_response():
@@ -355,7 +418,9 @@ def test_one_activity_batch_contains_all_calls_from_a_model_response():
         return AgentToolOutcome("command result", True)
 
     async def collect() -> None:
-        async for _event in run_tool_agent(provider, QUESTION, TOOLS, execute, activity_batch):
+        async for _event in agent_loop(
+            provider, QUESTION, bind_agent_tools(TOOLS, execute, frozenset()), activity_batch
+        ):
             pass
 
     asyncio.run(collect())
@@ -409,6 +474,6 @@ def test_a_failed_tool_call_is_reported_as_such():
     events = _run(provider, tool_ok=False)
 
     assert events[:2] == [
-        AgentToolStart(BASH_TOOL, '{"command":"rg people"}'),
-        AgentToolUse(BASH_TOOL, '{"command":"rg people"}', "command result", False),
+        AgentToolStart(BASH_TOOL, '{"command":"rg people"}', "call_0"),
+        AgentToolUse(BASH_TOOL, '{"command":"rg people"}', "command result", False, "call_0"),
     ]

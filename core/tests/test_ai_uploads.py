@@ -24,11 +24,11 @@ import json
 import pytest
 from fastapi import HTTPException
 
-from nurse_scheduling.ai.app import SessionStore, _unique_filename
-from nurse_scheduling.ai.background import removal_event, upload_event
+from nurse_scheduling.ai.context import removal_event, upload_event
 from nurse_scheduling.ai.provider import TextDelta, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxFactory
-from nurse_scheduling.ai.sandbox_agent import SandboxAttachment
+from nurse_scheduling.ai.sessions import SessionStore, _unique_filename
+from nurse_scheduling.ai.workspace import SandboxAttachment
 
 from .test_ai_basic import AuthenticatedTestClient, ScriptedToolProvider, create_session, create_test_app, make_settings
 

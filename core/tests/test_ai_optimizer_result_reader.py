@@ -28,7 +28,7 @@ from openpyxl import load_workbook
 
 from nurse_scheduling.ai.attachment_tools.inspect_optimizer_result import _assigned, inspect_result, load_context
 from nurse_scheduling.ai.result_context import MAX_REQUEST_AUDIT_BYTES, build_request_audit, build_result_context
-from nurse_scheduling.ai.sandbox_agent import INSPECTION_HELPERS, REFERENCE_ATTACHMENT_TOOLS, inspection_helper_catalog
+from nurse_scheduling.ai.workspace import INSPECTION_HELPERS, REFERENCE_ATTACHMENT_TOOLS, inspection_helper_catalog
 
 from .ai_eval.optimizer_fixtures import FIXTURE, RESULT_SOURCES, completion_result
 from .ai_test_helper import parse_schedule, schedule_yaml

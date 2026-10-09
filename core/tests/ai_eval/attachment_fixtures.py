@@ -32,7 +32,7 @@ from PIL import Image, ImageDraw, ImageFont
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
-from nurse_scheduling.ai.sandbox_agent import SandboxAttachment
+from nurse_scheduling.ai.workspace import SandboxAttachment
 
 
 def _label_image(label: str) -> bytes:

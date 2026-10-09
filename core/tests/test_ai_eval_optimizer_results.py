@@ -30,8 +30,8 @@ from openpyxl import load_workbook
 
 from nurse_scheduling.ai.optimizer import WORKSPACE_OPTIMIZER_RESULT, optimizer_completion_message
 from nurse_scheduling.ai.provider import TextDelta, ToolCall, ToolCallRequest
-from nurse_scheduling.ai.sandbox_agent import WORKSPACE_RESULT_CONTEXT, WORKSPACE_SCHEDULE
 from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
+from nurse_scheduling.ai.workspace import WORKSPACE_RESULT_CONTEXT, WORKSPACE_SCHEDULE
 
 from .ai_eval.grading import EvalCase, RunOutcome, grade
 from .ai_eval.optimizer_fixtures import ASSIGNMENTS, FIXTURE, completion_result
@@ -363,7 +363,7 @@ def test_pending_result_review_must_not_create_another_proposal(review_changes_w
 
 
 def test_current_request_fingerprint_ignores_unrelated_result_cli_changes(tmp_path, monkeypatch):
-    from nurse_scheduling.ai import sandbox_agent
+    from nurse_scheduling.ai import workspace
     from nurse_scheduling.ai.attachment_tools import inspect_optimizer_result as reader
 
     current = CASE_BY_ID["request-tier-counts-large"]
@@ -371,8 +371,8 @@ def test_current_request_fingerprint_ignores_unrelated_result_cli_changes(tmp_pa
     before = case_digest(current), case_digest(completed)
     key = "/reference/tools/inspect_optimizer_result.py"
     changed = tmp_path / "inspect_optimizer_result.py"
-    changed.write_text(sandbox_agent.REFERENCE_ATTACHMENT_TOOLS[key].read_text() + "\n# Changed result CLI\n")
-    monkeypatch.setitem(sandbox_agent.REFERENCE_ATTACHMENT_TOOLS, key, changed)
+    changed.write_text(workspace.REFERENCE_ATTACHMENT_TOOLS[key].read_text() + "\n# Changed result CLI\n")
+    monkeypatch.setitem(workspace.REFERENCE_ATTACHMENT_TOOLS, key, changed)
     assert case_digest(current) == before[0]
     assert case_digest(completed) != before[1]
 

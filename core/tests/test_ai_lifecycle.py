@@ -25,8 +25,8 @@ import httpx
 import pytest
 from fastapi import HTTPException
 
-from nurse_scheduling.ai.app import SessionStore
 from nurse_scheduling.ai.lifecycle import SessionTurns
+from nurse_scheduling.ai.sessions import SessionStore
 
 from .ai_test_helper import schedule_yaml
 from .test_ai_basic import AI_AUTH_HEADERS, FakeProvider, create_test_app, make_settings
@@ -267,7 +267,7 @@ def test_discarding_a_proposal_revokes_a_turn_that_was_using_it(decision):
         store.discard_proposal(session.id, "owner")
     else:
         with pytest.raises(HTTPException) as stale:
-            store.adopt_proposal(session.id, "owner", "0" * 64)
+            store.approve_proposal(session.id, "owner", "0" * 64)
         assert stale.value.status_code == 409
     assert not store.finish(session.id, "Revise", "Revised", proposal, snapshot=revising).turn_saved
     assert session.proposal_yaml == ""
@@ -359,7 +359,7 @@ def test_stop_during_completed_recovery_write_preserves_the_completed_outcome(mo
 
 
 def test_retirement_during_an_event_write_does_not_recreate_replay_state():
-    from nurse_scheduling.ai.background import SessionEventBroker
+    from nurse_scheduling.ai.session_event_stream import SessionEventBroker
 
     async def exercise():
         entered, release = asyncio.Event(), asyncio.Event()
