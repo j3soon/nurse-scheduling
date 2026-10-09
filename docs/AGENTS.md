@@ -148,6 +148,8 @@
   narrow viewport when formulas or wide tables are involved.
 - Use Playwright or browser developer tools to capture and inspect rendered
   figures and formulas.
+- Wait for `div.mermaid` before capturing a Mermaid diagram. Zensical puts the
+  SVG in a closed shadow root, so an SVG locator cannot detect it.
 - Run `zensical build --clean --strict` and `git diff --check` before
   finishing.
 - When changing the link checker, run

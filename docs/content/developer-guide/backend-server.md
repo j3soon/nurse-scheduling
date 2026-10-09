@@ -33,6 +33,8 @@ schema at `$API_URL/openapi.json`.
 
 ## Architecture
 
+<figure markdown="1">
+
 **Figure 1. Optimization API, execution, and storage owners.**
 
 ```mermaid
@@ -70,6 +72,8 @@ flowchart TB
     Memory ~~~ Redis
 ```
 
+</figure>
+
 | Component | Control-flow role | Responsibility |
 | --- | --- | --- |
 | `server/app.py` | Bootstrap | Constructs the FastAPI app, dependencies, background services, health checks, and error handlers. |
@@ -91,6 +95,8 @@ orchestration. The process executor owns child process supervision. The runner
 owns one scheduler invocation and its output conversion.
 
 ## Job Lifecycle
+
+<figure markdown="1">
 
 **Figure 2. Optimization job lifecycle.**
 
@@ -115,6 +121,8 @@ stateDiagram-v2
     class cancelled cancelledState
     class failed failedState
 ```
+
+</figure>
 
 `completed`, `cancelled`, and `failed` are terminal states. A completed job may
 be optimal, feasible, or infeasible. An XLSX artifact is available only when a

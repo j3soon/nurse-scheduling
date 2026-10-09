@@ -7,6 +7,8 @@ memory variant uses four. Both connect services by name.
 Docker assigns their addresses. Only the optional inspection UIs publish ports,
 and those bind to host loopback. The frontend is deployed separately.
 
+<figure markdown="1">
+
 **Figure 1. Backend services and container networks.**
 
 ```mermaid
@@ -35,6 +37,8 @@ flowchart TB
     RedisUI -.->|redis| Redis
     PostgresUI -.->|postgres| Postgres
 ```
+
+</figure>
 
 Solid lines show normal traffic. Dotted lines show optional inspection or
 diagnostic profiles. The `api` and `ai` labels are distinct networks even though
