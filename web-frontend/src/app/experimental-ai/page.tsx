@@ -1306,7 +1306,6 @@ export default function ExperimentalAiPage() {
             ? { ...message, content: '', activity: [], status: 'pending' as const,
                 downloadId: undefined, retry: undefined, responseCompletedAt: undefined }
             : message));
-          lifecycle.finish(lifecycle.current('background'));
         },
         onTurnContext: id => {
           if (lifecycle.current('background')?.id !== id) beginBackgroundMessage(id);

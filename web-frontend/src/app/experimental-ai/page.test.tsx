@@ -1094,6 +1094,34 @@ describe('ExperimentalAiPage', () => {
     expect(mockStreamMessage).not.toHaveBeenCalled();
   });
 
+  it('keeps queued input waiting when a replay snapshot has no terminal event', async () => {
+    const user = userEvent.setup();
+    let background: StreamCallbacks | undefined;
+    mockStreamSessionEvents.mockImplementation((_id, callbacks) => {
+      background = callbacks;
+      return new Promise<void>(() => {});
+    });
+    mockQueueMessage.mockRejectedValue(new MockAiHttpError('Not accepting steering', 409));
+    render(<ExperimentalAiPage />);
+    const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+    await user.type(composer, 'Optimize');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    act(() => background?.onTurnStart?.('review', 'optimizer'));
+    await user.type(composer, 'Explain the result');
+    fireEvent.submit(composer.closest('form')!);
+    await waitFor(() => expect(mockQueueMessage).toHaveBeenCalledOnce());
+
+    act(() => background?.onReplay?.([]));
+
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled();
+    expect(screen.getByText('Queued for steering')).toBeInTheDocument();
+    expect(mockStreamMessage).toHaveBeenCalledOnce();
+    act(() => background?.onDone?.('review'));
+    await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(2));
+    expect(mockStreamMessage.mock.calls[1][1]).toBe('Explain the result');
+  });
+
   it('does not submit a question stopped while the session is being created', async () => {
     let finishSession!: (id: string) => void;
     mockCreateSession.mockImplementation(() => new Promise<string>(resolve => { finishSession = resolve; }));
@@ -1424,6 +1452,42 @@ describe('ExperimentalAiPage', () => {
       expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled();
     },
   );
+
+  it.each([true, false])('keeps Stop pending through replacement replay (retained start: %s)', async retainedStart => {
+    const user = userEvent.setup();
+    let background: StreamCallbacks | undefined;
+    mockStreamSessionEvents.mockImplementation((_id, callbacks) => {
+      background = callbacks;
+      return new Promise<void>(() => {});
+    });
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    act(() => {
+      background?.onTurnStart?.('review', 'optimizer');
+      background?.onDelta('Partial answer');
+    });
+    await user.click(screen.getByRole('button', { name: 'Stop' }));
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeDisabled();
+
+    act(() => {
+      background?.onReplay?.([
+        ...(retainedStart ? [{ type: 'turn_start', data: { message_id: 'review', trigger: 'optimizer' } }] : []),
+        { type: 'delta', data: { turn_id: 'review', text: 'Recovered answer' } },
+      ]);
+      if (retainedStart) background?.onTurnStart?.('review', 'optimizer');
+      background?.onTurnContext?.('review');
+      background?.onDelta('Recovered answer');
+    });
+
+    expect(screen.getByText('Recovered answer')).toBeInTheDocument();
+    expect(screen.queryByText('Partial answer')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeDisabled();
+    expect(mockStopSession).toHaveBeenCalledOnce();
+    act(() => background?.onStopped?.('review'));
+    expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+  });
 
   it('re-enables Stop when the stop request itself fails', async () => {
     const user = userEvent.setup();

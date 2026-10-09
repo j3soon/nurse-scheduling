@@ -74,6 +74,7 @@ backend remains authoritative for feature enablement and input limits.
 AI operation state belongs to `ChatLifecycle`. Finish only the operation that
 owns a completion, and derive busy and Stop state from its phases. Scope stream
 callbacks to their connection and other async completions to their conversation.
+Replay snapshots replace output without completing active operations.
 Keep queued messages waiting until foreground and background work are both idle.
 AI chat does not require compatibility with older AI backend APIs. Update the
 client and server together when their contract changes. When auth is
