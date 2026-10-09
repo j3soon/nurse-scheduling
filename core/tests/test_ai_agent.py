@@ -40,11 +40,13 @@ from nurse_scheduling.ai.pi.read import READ_TOOL
 from nurse_scheduling.ai.provider import (
     ChatMessage,
     ReasoningDelta,
+    ResponseEnd,
     TextDelta,
     ToolCall,
     ToolCallRequest,
     ToolResultImage,
 )
+from nurse_scheduling.ai.transcript import AssistantMessage
 
 from .ai_test_helper import bind_agent_tools
 
@@ -477,3 +479,113 @@ def test_a_failed_tool_call_is_reported_as_such():
         AgentToolStart(BASH_TOOL, '{"command":"rg people"}', "call_0"),
         AgentToolUse(BASH_TOOL, '{"command":"rg people"}', "command result", False, "call_0"),
     ]
+
+
+@pytest.mark.parametrize("arguments", ['{"command":"echo partial"}', '{"command":'])
+def test_output_limit_refuses_tool_calls_and_reissues_with_safe_arguments(arguments):
+    call = ToolCall("cut", BASH_TOOL, arguments)
+    complete = ToolCall("complete", BASH_TOOL, '{"command":"echo complete"}')
+    provider = FakeProvider(
+        [ToolCallRequest((call,)), ResponseEnd("length")],
+        [ToolCallRequest((complete,)), ResponseEnd("tool_calls")],
+        _text("Done"),
+    )
+    executed = []
+    agent = Agent()
+
+    async def execute(name, raw):
+        executed.append((name, raw))
+        return AgentToolOutcome("complete result", True)
+
+    async def collect():
+        return [
+            event
+            async for event in agent.prompt(provider, QUESTION, bind_agent_tools(TOOLS, execute), max_tool_rounds=3)
+        ]
+
+    events = asyncio.run(collect())
+    assert executed == [(BASH_TOOL, complete.arguments)]
+    refused = next(event for event in events if isinstance(event, AgentToolUse))
+    assert not refused.ok
+    assert "output token limit" in refused.result
+    replay = provider.requests[1][0]
+    assert replay[-2]["tool_calls"][0]["function"]["arguments"] == "{}"
+    assert replay[-1]["tool_call_id"] == "cut"
+    assert agent.state.messages[0].tool_calls == (call,)
+    assert agent.state.messages[0].stop_reason == "length"
+
+
+@pytest.mark.parametrize("limits", [{"max_tool_rounds": 1}, {"max_tool_calls": 1}])
+def test_repeated_truncated_calls_end_at_the_trusted_budget(limits):
+    provider = FakeProvider([*_calls(), ResponseEnd("length")], _text("Final answer"))
+    events = _run(provider, **limits)
+    assert len(provider.requests) == 2
+    assert provider.requests[-1][1] == []
+    assert [event for event in events if isinstance(event, AgentText)] == [AgentText("Final answer")]
+
+
+def test_agent_keeps_partial_output_when_closed_and_releases_it_on_reset():
+    async def exercise():
+        agent = Agent()
+        stream = agent.prompt(FakeProvider(_text("Partial", "not delivered")), QUESTION, [])
+        assert await anext(stream) == AgentText("Partial")
+        with pytest.raises(RuntimeError, match="cleanup"):
+            agent.reset()
+        await stream.aclose()
+        assert agent.state.messages == [AssistantMessage("Partial", "aborted")]
+        agent.reset()
+        assert agent.state.messages == []
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize(
+    ("call_count", "finish_reason", "limits"),
+    [
+        (1, "length", {"max_tool_rounds": 4}),
+        (1, "length", {"max_tool_rounds": 1}),
+        (2, "tool_calls", {"max_tool_calls": 1}),
+    ],
+    ids=["truncated-retry", "truncated-final-answer", "budget-refusal"],
+)
+def test_refused_tools_consume_steering_before_the_next_provider_request(call_count, finish_reason, limits):
+    queued, executed, requests = [], [], []
+    instruction = "Do not edit. Only explain."
+    calls = tuple(ToolCall(f"call-{index}", BASH_TOOL, '{"command":"edit schedule"}') for index in range(call_count))
+
+    class Provider:
+        async def stream_events(self, messages, tools=None):
+            requests.append(list(messages))
+            if len(requests) == 1:
+                queued.append(("cancel-edit", instruction))
+                yield ToolCallRequest(calls)
+                yield ResponseEnd(finish_reason)
+            elif messages[-1]["content"] == instruction:
+                yield TextDelta("I will only explain.")
+            else:
+                yield ToolCallRequest((ToolCall("retry", BASH_TOOL, calls[0].arguments),))
+
+    def take_steering(_close_if_empty):
+        messages = list(queued)
+        queued.clear()
+        return messages
+
+    async def execute(_name, arguments):
+        executed.append(arguments)
+        return AgentToolOutcome("Edited", True)
+
+    async def collect():
+        return [
+            event
+            async for event in agent_loop(
+                Provider(), QUESTION, bind_agent_tools(TOOLS, execute), take_steering=take_steering, **limits
+            )
+        ]
+
+    events = asyncio.run(collect())
+    assert requests[1][-1] == {"role": "user", "content": instruction}
+    assert [message["tool_call_id"] for message in requests[1][2:-1]] == [call.id for call in calls]
+    assert not executed
+    assert len(requests) == 2
+    assert events.count(AgentSteering("cancel-edit", instruction)) == 1
+    assert events[-1] == AgentText("I will only explain.")

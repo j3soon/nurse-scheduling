@@ -216,7 +216,10 @@ def test_stop_before_message_arrives_prevents_provider_execution():
         result = client.post(f"/sessions/{session}/messages", json=request)
         assert basic.parse_sse(result.text, include_model_input=True)[-1][0] == "stopped"
         assert provider.calls == []
-        assert app.state.session_store._sessions[session].history == []
+        assert app.state.session_store._sessions[session].history == [
+            {"role": "user", "content": "Original question"},
+            {"role": "assistant", "content": basic.ABORTED_RESPONSE_HISTORY},
+        ]
 
 
 def test_stop_for_an_earlier_message_leaves_the_active_turn_running():

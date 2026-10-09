@@ -33,6 +33,7 @@ import httpx
 from typing_extensions import Required
 
 from .config import AiSettings
+from .transcript import ToolCall, ToolResultImage
 
 logger = logging.getLogger("nurse_scheduling.ai.provider")
 BEARER_TOKEN_PATTERN = re.compile(r"(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]+")
@@ -47,6 +48,7 @@ MAX_RESPONSE_REASONING_CHARS = 400_000
 MAX_PROVIDER_ERROR_EXCERPT_CHARS = 1_000
 MAX_PROVIDER_CONTENT_TYPE_CHARS = 100
 PROVIDER_ERROR_TRUNCATION_MARKER = "...[truncated]"
+SUPPORTED_FINISH_REASONS = frozenset({"stop", "end", "length", "tool_calls", "function_call"})
 
 
 class TextContentPart(TypedDict):
@@ -85,23 +87,6 @@ class ChatMessage(TypedDict, total=False):
 
 
 @dataclass(frozen=True)
-class ToolCall:
-    """One complete tool call reconstructed from the response stream."""
-
-    id: str
-    name: str
-    arguments: str
-
-
-@dataclass(frozen=True)
-class ToolResultImage:
-    """One bounded image returned by a model-facing tool."""
-
-    media_type: str
-    data: bytes
-
-
-@dataclass(frozen=True)
 class TextDelta:
     """One streamed fragment of assistant text."""
 
@@ -125,6 +110,18 @@ class ToolCallRequest:
     """The tool calls an assistant turn ended with."""
 
     calls: tuple[ToolCall, ...]
+
+
+@dataclass(frozen=True)
+class ResponseEnd:
+    """The confirmed end of a response, with its reason when the provider reported one.
+
+    `length` means the output token limit cut the response off, so its text and
+    any tool call arguments may be incomplete. `None` means the endpoint sent
+    `[DONE]` without a finish reason.
+    """
+
+    finish_reason: str | None
 
 
 @dataclass(frozen=True)
@@ -159,7 +156,7 @@ class ProviderAttempt:
     number: int
 
 
-ChatStreamEvent = TextDelta | ReasoningDelta | ToolCallRequest | TokenUsage | ProviderAttempt
+ChatStreamEvent = TextDelta | ReasoningDelta | ToolCallRequest | ResponseEnd | TokenUsage | ProviderAttempt
 
 
 class ChatProvider(Protocol):
@@ -387,6 +384,8 @@ class OpenAiCompatibleProvider:
                 )
 
             partial_calls: dict[int, _PartialToolCall] = {}
+            finish_reason: str | None = None
+            done_received = False
             text_chars = 0
             reasoning_chars = 0
             async for line in response.aiter_lines():
@@ -394,11 +393,14 @@ class OpenAiCompatibleProvider:
                     continue
                 raw_data = line.removeprefix("data:").strip()
                 if raw_data == "[DONE]":
+                    done_received = True
                     break
                 if not raw_data:
                     continue
                 try:
                     event = json.loads(raw_data)
+                    if not isinstance(event, dict):
+                        raise TypeError
                     choices = event["choices"]
                     if not isinstance(choices, list):
                         raise TypeError
@@ -409,9 +411,24 @@ class OpenAiCompatibleProvider:
                     # providers omit usage from it.
                     if not choices:
                         continue
-                    delta = choices[0]["delta"]
+                    choice = choices[0]
+                    if not isinstance(choice, dict):
+                        raise TypeError
+                    delta = choice["delta"]
+                    if not isinstance(delta, dict):
+                        raise TypeError
                     content = delta.get("content")
-                except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
+                    reported_reason = choice.get("finish_reason")
+                    if finish_reason is not None:
+                        if reported_reason is not None and reported_reason != finish_reason:
+                            raise ProviderError.for_user("The AI provider returned conflicting finish reasons.")
+                        if any(
+                            delta.get(field) for field in ("content", "reasoning_content", "reasoning", "tool_calls")
+                        ):
+                            raise ProviderError.for_user("The AI provider returned output after completion.")
+                    if isinstance(reported_reason, str):
+                        finish_reason = reported_reason
+                except (json.JSONDecodeError, KeyError, TypeError) as exc:
                     raise ProviderError.for_user("The AI provider returned an invalid stream.") from exc
                 if isinstance(content, str) and content:
                     text_chars += len(content)
@@ -430,8 +447,17 @@ class OpenAiCompatibleProvider:
                         )
                     yield ReasoningDelta(reasoning)
                 _merge_tool_call_fragments(partial_calls, delta.get("tool_calls"))
+            # Pi checks completion before releasing tools. Accept [DONE] for endpoints
+            # that omit finish_reason, but never infer completion from HTTP EOF alone.
+            if finish_reason is None and not done_received:
+                raise ProviderError.for_user("The AI provider stream ended before completion.")
+            if finish_reason is not None and finish_reason not in SUPPORTED_FINISH_REASONS:
+                raise ProviderError.for_user(
+                    f"The AI provider returned an unsuccessful finish reason: {finish_reason}."
+                )
             if partial_calls:
                 yield ToolCallRequest(tuple(partial.complete() for _, partial in sorted(partial_calls.items())))
+            yield ResponseEnd(finish_reason)
 
 
 def _parse_token_usage(raw_usage: object) -> TokenUsage:

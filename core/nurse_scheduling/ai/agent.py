@@ -19,6 +19,7 @@
 
 # This file is mostly AI generated.
 
+import asyncio
 from collections.abc import AsyncIterator, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass, field
@@ -34,6 +35,7 @@ from .agent_types import (
     ToolBatchScope,
 )
 from .provider import ChatMessage, ToolCapableChatProvider
+from .transcript import AgentMessage, AssistantMessage
 
 
 @dataclass
@@ -42,6 +44,7 @@ class AgentState:
 
     is_streaming: bool = False
     pending_tool_calls: set[str] = field(default_factory=set)
+    messages: list[AgentMessage] = field(default_factory=list)
 
 
 class Agent:
@@ -49,6 +52,13 @@ class Agent:
 
     def __init__(self) -> None:
         self.state = AgentState()
+
+    def reset(self) -> None:
+        """Release recorded run data after its caller finishes using it."""
+        if self.state.is_streaming:
+            raise RuntimeError("Agent is already running. Wait for cleanup before resetting.")
+        self.state.messages.clear()
+        self.state.pending_tool_calls.clear()
 
     async def prompt(
         self,
@@ -65,6 +75,7 @@ class Agent:
         if self.state.is_streaming:
             raise RuntimeError("Agent is already running. Queue steering instead.")
         self.state.is_streaming = True
+        self.state.messages.clear()
         events = agent_loop(
             provider,
             messages,
@@ -74,6 +85,7 @@ class Agent:
             take_steering=take_steering,
             max_tool_rounds=max_tool_rounds,
             max_tool_calls=max_tool_calls,
+            run_messages=self.state.messages,
         )
         try:
             async with aclosing(events):
@@ -83,6 +95,12 @@ class Agent:
                     elif isinstance(event, AgentToolUse):
                         self.state.pending_tool_calls.discard(event.tool_call_id)
                     yield event
+        except BaseException as exc:
+            reason = "aborted" if isinstance(exc, (asyncio.CancelledError, GeneratorExit)) else "error"
+            last = self.state.messages[-1] if self.state.messages else None
+            if not isinstance(last, AssistantMessage) or last.stop_reason not in {"aborted", "error"}:
+                self.state.messages.append(AssistantMessage("", reason))
+            raise
         finally:
             self.state.is_streaming = False
             self.state.pending_tool_calls.clear()

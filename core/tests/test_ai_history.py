@@ -110,8 +110,24 @@ def test_postgres_recovery_keeps_operational_metadata(postgres_history):
         assert rows[1][:5] == ("Second", "test-model", "failed", "provider_error", None)
         assert credential and created
         assert all(row[5] == credential and row[6] == 0 and row[7] <= row[8] for row in rows)
-        assert postgres_history.load_recovery_session(session, owner)["state"]["history"][-1]["content"] == "Answer"
+        state = postgres_history.load_recovery_session(session, owner)["state"]
+        assert state["history"] == [
+            {"role": "user", "content": "First"},
+            {"role": "assistant", "content": "Answer"},
+            {"role": "user", "content": "Second"},
+            {"role": "assistant", "content": basic.ABORTED_RESPONSE_HISTORY},
+        ]
         assert "private detail" not in repr(rows)
+
+    restored_provider = basic.FakeProvider([["Recovered"]])
+    restored = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test"), provider=restored_provider
+    )
+    with basic.AuthenticatedTestClient(restored) as client:
+        client.cookies.set(basic.OWNER_COOKIE, owner)
+        response = client.post(f"/sessions/{session}/messages", json={"message": "Retry"})
+        assert response.status_code == 200
+        assert restored_provider.calls[0][1:5] == state["history"]
 
 
 @pytest.mark.parametrize("failed", [False, True])
@@ -1092,7 +1108,20 @@ def test_postgres_stop_before_message_arrival_survives_restart(postgres_history)
         )
         assert basic.parse_sse(result.text, include_model_input=True)[-1][0] == "stopped"
         assert provider.calls == []
-        assert restarted.state.session_store._sessions[session].history == []
+        assert restarted.state.session_store._sessions[session].history == [
+            {"role": "user", "content": "Original question"},
+            {"role": "assistant", "content": basic.ABORTED_RESPONSE_HISTORY},
+        ]
+    restored_provider = basic.FakeProvider()
+    restored = basic.create_test_app(settings=settings, provider=restored_provider)
+    with basic.AuthenticatedTestClient(restored) as client:
+        client.cookies.update(cookies)
+        response = client.post(f"/sessions/{session}/messages", json={"message": "Retry"})
+        assert basic.parse_sse(response.text)[-1][0] == "done"
+        assert restored_provider.calls[0][1:3] == [
+            {"role": "user", "content": "Original question"},
+            {"role": "assistant", "content": basic.ABORTED_RESPONSE_HISTORY},
+        ]
 
 
 @pytest.mark.parametrize("kind", ["foreground", "background"])

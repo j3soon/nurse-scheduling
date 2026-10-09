@@ -55,7 +55,7 @@ their concurrency policy.
 | `agent_session.py`, `sessions.py`, `lifecycle.py` | Conversation changes and run execution, session access and budgets, and queued ownership through cleanup. |
 | `agent.py`, `agent_loop.py`, `agent_types.py` | Observable execution state, the model loop, and executable tool contracts. |
 | `workspace.py`, `workspace_tools.py` | Lazy sandbox allocation and hydration, tool binding, and trusted schedule review. |
-| `context.py` | Existing provider request layout and application event presentation. |
+| `transcript.py`, `context.py` | Typed conversation entries, provider requests, history selection, and application event presentation. |
 | `optimizer.py`, `optimizer_tool.py`, `optimizer_http.py` | Job ownership and operations, model-facing arguments and replies, and HTTP transport. |
 | `recovery.py`, `history.py`, `turns.py`, `session_event_stream.py` | Existing persistence, foreground replay, background events, and ordered recovery writes. |
 
@@ -78,7 +78,16 @@ Active sessions expire after 30 days of inactivity by default. Sending or
 queueing a message, synchronizing a changed schedule, or deciding a proposal
 renews that window. The browser can retain the conversation within its current
 tab and verify the session without extending its lifetime.
-The backend stores the YAML snapshot and completed conversation turns. Each
+The session records typed questions, assistant responses, app events, and proposal
+decisions. Tool results and reasoning belong to the current run and are released
+when it ends. Stop and failed runs retain their questions with an interruption
+note. Later model context excludes claims from their discarded workspace.
+Persistence still stores the existing text history through a conversion boundary.
+The service applies queued steering before each follow-up model request, including
+requests after refused tool calls. It requires provider completion before tools
+run and rejects conflicting finish reasons or further output after completion.
+
+The backend stores the YAML snapshot and retained conversation turns. Each
 provider request includes a schedule summary, recent history, and the current
 question. The complete YAML stays in the sandbox until the model reads relevant
 content through a tool. Uploaded files remain in process memory for later turns
@@ -386,15 +395,17 @@ The rejection note says that every schedule change from the proposed turn was
 discarded and that the next turn starts from a fresh copy of the current
 schedule. It never includes the discarded YAML.
 
-A run that fails, is cancelled, or is abandoned does not commit its user
-message, assistant response, or candidate proposal. Its provisional activity
-may remain visible in the browser, but the next turn starts from the last
-successfully committed history and current schedule. A successful run that
-only answers a question never creates a proposal.
+A run that fails, is cancelled, or is abandoned retains its user message and
+an interrupted assistant entry. It discards its candidate proposal and
+workspace changes. Its provisional activity may remain visible in the browser.
+Later model context replaces the interrupted assistant entry with
+`ABORTED_RESPONSE_HISTORY` and excludes discarded workspace claims. A successful
+run that only answers a question never creates a proposal.
 
 If the final candidate fails trusted validation, the UI reports that every
 schedule change from the turn was discarded and that the current schedule
-was not changed. The failed turn does not add a history note.
+was not changed. The failed turn retains its question and an interrupted
+assistant entry, which later model context replaces with `ABORTED_RESPONSE_HISTORY`.
 
 After a Bash command changes the candidate, the trusted application returns an
 intermediate validation result so the model can repair it. The backend reads
@@ -830,7 +841,9 @@ curl -H "Authorization: Bearer ${AI_AUTH_TOKEN}" \
 - Provider HTTP errors return a searchable error ID to the browser. The backend
   logs the upstream response body under that ID after redacting common
   credential forms.
-- A failed or cancelled answer is not added to conversation history.
+- A failed or cancelled turn retains its question and an interrupted assistant
+  entry. Later model context uses `ABORTED_RESPONSE_HISTORY` instead of partial
+  output and discarded workspace activity.
 
 ## Troubleshoot local development
 
@@ -839,7 +852,7 @@ curl -H "Authorization: Bearer ${AI_AUTH_TOKEN}" \
 | Send fails immediately | Start the AI backend and request `http://localhost:8001/health`. |
 | Provider unavailable | Check `AI_PROVIDER_BASE_URL`, `AI_PROVIDER_API_KEY`, and provider availability. |
 | An attachment is rejected | Check the configured file count, byte limit, and public reverse-proxy body limit. |
-| An answer stops early | Retry it. Cancelled and failed answers are not added to backend history. |
+| An answer stops early | Retry it. Cancelled and failed turns retain the question and an interruption note in later model context. |
 
 For a provider HTTP failure, search the AI backend log using the error ID shown
 in the browser. If the logged response is a Cloudflare `520`, inspect the
