@@ -22,7 +22,7 @@
 'use client';
 
 import Image from 'next/image';
-import { ChatTranscript } from './ChatTranscript';
+import { ChatTranscriptView } from './ChatTranscriptView';
 import { useAiChat } from './useAiChat';
 import { readStoredConversation } from './chatConversation';
 import { isAuthenticationError } from './aiClient';
@@ -995,7 +995,7 @@ export default function ExperimentalAiPage() {
         </aside>
       )}
 
-      <ChatTranscript
+      <ChatTranscriptView
         messages={messages}
         showReasoning={showReasoning}
         showTools={showTools}

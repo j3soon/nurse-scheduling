@@ -46,7 +46,7 @@ function ThinkingIndicator() {
   );
 }
 
-interface ChatTranscriptProps {
+interface ChatTranscriptViewProps {
   messages: ChatMessage[];
   showReasoning: boolean;
   showTools: boolean;
@@ -66,7 +66,7 @@ interface ChatTranscriptProps {
 }
 
 /** Render the transcript with the same activity and retry rules as the page. */
-export function ChatTranscript({
+export function ChatTranscriptView({
   messages,
   showReasoning,
   showTools,
@@ -83,7 +83,7 @@ export function ChatTranscript({
   activeSessionId,
   sessionExpiresAt,
   sessionRetentionSeconds,
-}: ChatTranscriptProps) {
+}: ChatTranscriptViewProps) {
   return (
       <section
         aria-label="Chat messages"

@@ -138,6 +138,9 @@ To test specific source files from the repository root, run:
   block, using `// This test is mostly AI generated.` in a test and
   `// This code is mostly AI generated.` in any other new file.
 - Use `PascalCase` for component files and components.
+- Keep source filename stems distinct after lowercasing, including files with
+  different extensions. On case-insensitive filesystems, a `.ts` helper can
+  resolve before a `.tsx` component that shares its name.
 - Prefix hooks with `use`.
 - Follow the existing Next.js App Router and shared-code patterns under `src/`.
 - Validate the whole CSV field before converting an integer count. `parseInt`
