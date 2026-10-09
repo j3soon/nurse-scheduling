@@ -97,6 +97,10 @@ cases ran. A passing suite with those cases skipped does not validate persistenc
   the shared foreground and optimizer-review execution path. `SessionStore`
   owns access, expiry, and retained-byte budgets. `SessionRecovery` owns legacy
   replay, ordered recovery writes, and eviction pins. Keep HTTP routes thin.
+- Keep conversation entries independent of provider wire messages. Derive model
+  requests and retained history through `context.py`. Count retained partial text
+  in session byte budgets even when model context replaces it with an interruption
+  note. Release in-run tool results and images after session finalization.
 - `Agent` owns observable model-loop state. `agent_loop` executes registered
   `AgentTool` contracts and derives concurrency from each tool's read-only flag.
   Close the provider and agent generators before releasing execution state.

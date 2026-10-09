@@ -33,6 +33,7 @@ import httpx
 from typing_extensions import Required
 
 from .config import AiSettings
+from .transcript import ToolCall, ToolResultImage
 
 logger = logging.getLogger("nurse_scheduling.ai.provider")
 BEARER_TOKEN_PATTERN = re.compile(r"(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]+")
@@ -82,23 +83,6 @@ class ChatMessage(TypedDict, total=False):
     content: ChatContent | None
     tool_calls: list[dict[str, Any]]
     tool_call_id: str
-
-
-@dataclass(frozen=True)
-class ToolCall:
-    """One complete tool call reconstructed from the response stream."""
-
-    id: str
-    name: str
-    arguments: str
-
-
-@dataclass(frozen=True)
-class ToolResultImage:
-    """One bounded image returned by a model-facing tool."""
-
-    media_type: str
-    data: bytes
 
 
 @dataclass(frozen=True)

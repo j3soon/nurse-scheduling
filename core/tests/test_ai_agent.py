@@ -45,6 +45,7 @@ from nurse_scheduling.ai.provider import (
     ToolCallRequest,
     ToolResultImage,
 )
+from nurse_scheduling.ai.transcript import AssistantMessage
 
 from .ai_test_helper import bind_agent_tools
 
@@ -477,3 +478,18 @@ def test_a_failed_tool_call_is_reported_as_such():
         AgentToolStart(BASH_TOOL, '{"command":"rg people"}', "call_0"),
         AgentToolUse(BASH_TOOL, '{"command":"rg people"}', "command result", False, "call_0"),
     ]
+
+
+def test_agent_keeps_partial_output_when_closed_and_releases_it_on_reset():
+    async def exercise():
+        agent = Agent()
+        stream = agent.prompt(FakeProvider(_text("Partial", "not delivered")), QUESTION, [])
+        assert await anext(stream) == AgentText("Partial")
+        with pytest.raises(RuntimeError, match="cleanup"):
+            agent.reset()
+        await stream.aclose()
+        assert agent.state.messages == [AssistantMessage("Partial", "aborted")]
+        agent.reset()
+        assert agent.state.messages == []
+
+    asyncio.run(exercise())

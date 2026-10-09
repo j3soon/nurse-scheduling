@@ -31,15 +31,19 @@ from fastapi import HTTPException
 from .agent_session import AgentSession, ProposalValidationError, schedule_revision
 from .config import AiSettings
 from .context import (
+    PROPOSAL_DECISION_HISTORY,
     PROPOSAL_REJECTED_HISTORY,
-    history_chars,
-    history_context_chars,
-    recent_history,
+    cap_transcript,
+    drop_oldest_exchange,
+    entries_from_legacy_history,
+    project_history,
+    projected_history,
     removal_event,
+    retained_entries,
     upload_event,
 )
 from .lifecycle import TurnSnapshot
-from .provider import ChatMessage
+from .transcript import AgentMessage, AppEventEntry, AssistantMessage, ProposalDecisionEntry, UserMessage, entry_text
 from .workspace import SandboxAttachment
 
 SESSION_MEMORY_LIMIT_MESSAGE = "The AI service has reached its memory limit."
@@ -54,10 +58,20 @@ def _text_bytes(value: object) -> int:
     return 0
 
 
+def _transcript_bytes(entries: Sequence[AgentMessage]) -> int:
+    # Count retained partial output even when model context replaces it with a note.
+    return sum(
+        _text_bytes(
+            PROPOSAL_DECISION_HISTORY[entry.decision] if isinstance(entry, ProposalDecisionEntry) else entry_text(entry)
+        )
+        for entry in entries
+    )
+
+
 def _session_bytes(session: "AgentSession") -> int:
     """Return the text and file bytes one session retains."""
     total = _text_bytes(session.schedule_yaml) + _text_bytes(session.proposal_yaml) + _text_bytes(session.proposal_diff)
-    total += sum(_text_bytes(message.get("content")) for message in session.history)
+    total += _transcript_bytes(session.transcript)
     return (
         total
         + sum(_text_bytes(text) for _message_id, text in (session.turn.steering_queue if session.turn else ()))
@@ -174,52 +188,23 @@ class SessionStore:
         one turn and any pending proposal per session.
         """
         while self._retained_bytes > self._settings.max_session_bytes:
-            oldest_answer = next(
-                (index for index, message in enumerate(session.history) if message["role"] == "assistant"),
-                None,
-            )
-            if oldest_answer is None or len(session.history) - oldest_answer - 1 < protected_messages:
+            removed = drop_oldest_exchange(session.transcript, protected_messages)
+            if not removed:
                 break
-            removed = session.history[: oldest_answer + 1]
-            del session.history[: oldest_answer + 1]
-            self._charge(session, -sum(_text_bytes(message.get("content")) for message in removed))
-            session.dropped_history_messages += len(removed)
+            self._charge(session, -_transcript_bytes(removed))
+            session.dropped_history_messages += len(projected_history(removed))
 
     def _effective_trimmed_count(self, session: AgentSession) -> int:
         """Count retained-history and prompt-budget omissions visible to a client."""
         return (
             session.dropped_history_messages
-            + len(session.history)
-            - len(recent_history(session.history, self._settings.max_history_chars))
+            + project_history(session.transcript, self._settings.max_history_chars).dropped_messages
         )
 
-    def _cap_history(self, session: AgentSession) -> None:
-        """Limit retained messages without leaving an assistant reply at the front.
-
-        Past the prompt history budget, drop the oldest messages until half the budget remains.
-        Cutting in large steps keeps the prompt prefix unchanged for many turns, so the provider
-        can reuse its cache. Cutting one message per turn would change the prefix every time.
-        """
-        overflow = max(0, len(session.history) - max(2, self._settings.max_history_messages))
-        if history_chars(session.history) > self._settings.max_history_chars:
-            # Never cut into the newest completed exchange. Per-request trimming covers what still overflows.
-            last_reply = max(
-                (index for index, message in enumerate(session.history) if message["role"] == "assistant"), default=0
-            )
-            newest_exchange = max(
-                (index for index in range(last_reply) if session.history[index]["role"] == "user"), default=0
-            )
-            remaining = history_chars(session.history[overflow:])
-            while overflow < newest_exchange and remaining > self._settings.max_history_chars // 2:
-                remaining -= history_chars(session.history[overflow : overflow + 1])
-                overflow += 1
-            while overflow < newest_exchange and session.history[overflow]["role"] != "user":
-                overflow += 1
-        if overflow:
-            while overflow < len(session.history) and session.history[overflow]["role"] != "user":
-                overflow += 1
-            del session.history[:overflow]
-            session.dropped_history_messages += overflow
+    def _cap_history(self, session: AgentSession, keep_entries: int = 0) -> None:
+        session.dropped_history_messages += cap_transcript(
+            session.transcript, self._settings.max_history_messages, self._settings.max_history_chars, keep_entries
+        )
 
     def create(self, owner_token: str, schedule_yaml: str) -> AgentSession:
         """Create a session after pruning expired entries."""
@@ -293,7 +278,8 @@ class SessionStore:
             self._make_room()
             if len(self._sessions) >= self._settings.max_sessions:
                 raise HTTPException(status_code=429, detail="The AI service has reached its session limit.")
-            state = record["state"]
+            state = dict(record["state"])
+            state["transcript"] = entries_from_legacy_history(state.pop("history"))
             session = AgentSession(
                 id=session_id,
                 owner_token=owner,
@@ -404,29 +390,30 @@ class SessionStore:
         proposal: tuple[str, str] | None = None,
         *,
         snapshot: TurnSnapshot,
-        turn_messages: Sequence[ChatMessage] = (),
+        turn_messages: Sequence[AgentMessage] = (),
     ) -> TurnCompletion:
         """Save a completed turn only while its conversation version is current."""
         with self._lock:
             session = self._sessions.get(session_id)
             if session is None:
                 return TurnCompletion(turn_saved=False, proposal_saved=False)
-            completed_turn = turn_messages or (
-                ChatMessage(role="user", content=user_message),
-                ChatMessage(role="assistant", content=assistant_message),
+            completed_turn = (
+                retained_entries(turn_messages)
+                if turn_messages
+                else [UserMessage(user_message), AssistantMessage(assistant_message)]
             )
             if not session.commit_turn(snapshot, completed_turn, proposal):
                 self._recount(session)
                 return TurnCompletion(turn_saved=False, proposal_saved=False)
-            self._cap_history(session)
+            self._cap_history(session, len(completed_turn))
             proposal_saved = proposal is not None
             self._recount(session)
-            self._trim_history_to_budget(session, min(len(completed_turn), len(session.history)))
+            self._trim_history_to_budget(session, min(len(completed_turn), len(session.transcript)))
             return TurnCompletion(
                 turn_saved=True,
                 proposal_saved=proposal_saved,
                 history_trimmed_count=self._effective_trimmed_count(session),
-                context_used_chars=history_context_chars(session.history, self._settings.max_history_chars),
+                context_used_chars=project_history(session.transcript, self._settings.max_history_chars).used_chars,
             )
 
     def queue_steering(
@@ -517,7 +504,7 @@ class SessionStore:
 
     def _append_history_event(self, session: AgentSession, content: str) -> None:
         """Append one trusted application event within the caller's lock."""
-        session.history.append(ChatMessage(role="user", content=content))
+        session.transcript.append(AppEventEntry(content))
         self._cap_history(session)
 
     def _get_owned(self, session_id: str, owner_token: str | None) -> AgentSession:

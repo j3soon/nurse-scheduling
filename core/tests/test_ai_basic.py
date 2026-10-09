@@ -48,6 +48,7 @@ from nurse_scheduling.ai.app import (
 from nurse_scheduling.ai.app import create_app as create_ai_app
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.context import (
+    ABORTED_RESPONSE_HISTORY,
     CANDIDATE_VALIDATION_ERROR,
     PROPOSAL_APPROVED_HISTORY,
     PROPOSAL_INVALID_HISTORY,
@@ -71,6 +72,7 @@ from nurse_scheduling.ai.pi.read import READ_TOOL
 from nurse_scheduling.ai.provider import ChatMessage, ProviderError, TextDelta, TokenUsage, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
+from nurse_scheduling.ai.transcript import AssistantMessage, UserMessage
 from nurse_scheduling.ai.workspace import (
     SANDBOX_SYSTEM_PROMPT,
     WORKSPACE_PENDING_DIFF,
@@ -604,7 +606,10 @@ def test_disconnected_turn_keeps_running_until_explicit_stop(wait_stage: str, mo
         assert backend.closed
         assert backend.close_calls == 1
     assert not session_active
-    assert history == []
+    assert history == [
+        {"role": "user", "content": "Wait for me"},
+        {"role": "assistant", "content": ABORTED_RESPONSE_HISTORY},
+    ]
     assert len(saved) == 1
     assert saved[0][6] == "stopped"
 
@@ -613,9 +618,14 @@ def test_stop_endpoint_cancels_an_active_assistant_turn() -> None:
     async def exercise() -> tuple[int, bool]:
         started = asyncio.Event()
         cancelled = asyncio.Event()
+        requests = []
 
         class WaitingProvider:
             async def stream_events(self, _messages, tools=None):
+                requests.append(list(_messages))
+                if len(requests) > 1:
+                    yield TextDelta("Recovered")
+                    return
                 started.set()
                 try:
                     await asyncio.Event().wait()
@@ -642,7 +652,16 @@ def test_stop_endpoint_cancels_an_active_assistant_turn() -> None:
             stopped = await client.post(f"/sessions/{session_id}/stop")
             await asyncio.wait_for(cancelled.wait(), timeout=1)
             await asyncio.gather(turn, return_exceptions=True)
-            return stopped.status_code, app.state.session_store._sessions[session_id].active
+            session = app.state.session_store._sessions[session_id]
+            assert session.agent.state.messages == []
+            retried = await client.post(f"/sessions/{session_id}/messages", json={"message": "Retry"})
+            assert retried.status_code == 200
+            assert requests[-1][1:3] == [
+                {"role": "user", "content": "Keep working"},
+                {"role": "assistant", "content": ABORTED_RESPONSE_HISTORY},
+            ]
+            assert session.agent.state.messages == []
+            return stopped.status_code, session.active
 
     status_code, session_active = asyncio.run(exercise())
 
@@ -1204,7 +1223,7 @@ def test_session_uuid_alone_does_not_bypass_browser_ownership() -> None:
     assert response.json()["detail"] == "Chat session not found."
 
 
-def test_provider_failure_is_streamed_without_recording_a_turn() -> None:
+def test_provider_failure_retains_question_with_safe_interruption_context() -> None:
     private_error = "Traceback from /srv/provider.py: secret-token"
     provider = FakeProvider([["Provisional answer.", ProviderError(private_error)], ["Recovered"]])
     client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=provider))
@@ -1227,7 +1246,8 @@ def test_provider_failure_is_streamed_without_recording_a_turn() -> None:
     assert private_error not in failed.text
     assert recovered.status_code == 200
     recovered_prompt = json.dumps(provider.calls[1])
-    assert "Failed question" not in recovered_prompt
+    assert "Failed question" in recovered_prompt
+    assert ABORTED_RESPONSE_HISTORY in recovered_prompt
     assert "Provisional answer." not in recovered_prompt
 
 
@@ -2225,7 +2245,8 @@ def test_sandbox_cleanup_failure_does_not_commit_provisional_turn_or_proposal() 
 
     assert ("delta", {"text": "Recovered."}) in parse_sse(recovered.text)
     recovered_prompt = json.dumps(provider.calls[2])
-    assert "Failed edit" not in recovered_prompt
+    assert "Failed edit" in recovered_prompt
+    assert ABORTED_RESPONSE_HISTORY in recovered_prompt
     assert "Provisional answer." not in recovered_prompt
 
 
@@ -2256,7 +2277,7 @@ def test_sandbox_command_failure_still_streams_the_requested_command() -> None:
 
 
 @pytest.mark.parametrize("invalid_kind", ["yaml", "history-list"])
-def test_final_validation_failure_discards_the_turn_without_a_history_note(invalid_kind) -> None:
+def test_final_validation_failure_discards_edits_and_records_interruption(invalid_kind) -> None:
     provider = ScriptedToolProvider(
         rename_call(),
         [TextDelta("Provisional invalid answer.")],
@@ -2296,7 +2317,8 @@ def test_final_validation_failure_discards_the_turn_without_a_history_note(inval
 
     assert ("delta", {"text": "Recovered."}) in parse_sse(recovered.text)
     recovered_prompt = json.dumps(provider.calls[2])
-    assert "Invalid edit" not in recovered_prompt
+    assert "Invalid edit" in recovered_prompt
+    assert ABORTED_RESPONSE_HISTORY in recovered_prompt
     assert "Provisional invalid answer." not in recovered_prompt
     assert len(factory.created) == 1
 
@@ -2514,10 +2536,10 @@ def test_session_store_queues_steering_once_and_retains_it_with_the_turn() -> No
         "P2 is the better target.",
         snapshot=snapshot,
         turn_messages=[
-            ChatMessage(role="user", content="Inspect P1."),
-            ChatMessage(role="assistant", content="P1 needs review."),
-            ChatMessage(role="user", content="Focus on P2 instead."),
-            ChatMessage(role="assistant", content="P2 is the better target."),
+            UserMessage("Inspect P1."),
+            AssistantMessage("P1 needs review."),
+            UserMessage("Focus on P2 instead."),
+            AssistantMessage("P2 is the better target."),
         ],
     ).turn_saved
     assert session.history == [
@@ -2576,7 +2598,7 @@ def test_session_store_bounds_retained_chat_text_across_sessions() -> None:
     assert store.retained_bytes == 550 + len(SCHEDULE_CHANGED_EVENT)
 
 
-def test_proposal_history_event_counts_the_exchange_removed_by_the_cap() -> None:
+def test_proposal_decision_keeps_its_exchange_when_it_exceeds_message_cap() -> None:
     app = create_test_app(settings=make_settings(max_history_messages=2), provider=FakeProvider())
     store = app.state.session_store
     session = store.create("browser-owner", "description: test")
@@ -2585,8 +2607,9 @@ def test_proposal_history_event_counts_the_exchange_removed_by_the_cap() -> None
 
     store.discard_proposal(session.id, "browser-owner")
 
-    assert [message["role"] for message in store._sessions[session.id].history] == ["user"]
-    assert store.begin(session.id, "browser-owner").dropped_history_messages == 2
+    assert [message["role"] for message in session.history] == ["user", "assistant", "user"]
+    assert session.history[-1]["content"] == PROPOSAL_REJECTED_HISTORY
+    assert store.begin(session.id, "browser-owner").dropped_history_messages == 0
 
 
 @pytest.mark.parametrize("message_cap", [1, 3], ids=["below-exchange-size", "odd-overflow"])

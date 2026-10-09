@@ -42,7 +42,6 @@ from .candidate import validate_schedule_change
 from .config import AiSettings
 from .context import (
     CANDIDATE_VALIDATION_ERROR,
-    PROPOSAL_APPROVED_HISTORY,
     PROPOSAL_INVALID_HISTORY,
     PROPOSAL_REJECTED_HISTORY,
     PROVIDER_ERROR,
@@ -53,9 +52,10 @@ from .context import (
     STALE_TURN_ERROR,
     build_provider_messages,
     context_usage,
-    history_context_chars,
+    interrupted_entries,
     model_input,
-    recent_history,
+    project_history,
+    projected_history,
 )
 from .lifecycle import SessionTurns, Turn, TurnSnapshot
 from .optimizer import OptimizerArtifact, SessionOptimizer
@@ -63,6 +63,7 @@ from .optimizer_tool import execute_optimizer_tool
 from .provider import ChatMessage, ProviderError, TokenUsage, ToolCapableChatProvider
 from .recovery import SessionRecovery
 from .sandbox import SandboxError, SandboxFactory
+from .transcript import AgentMessage, AppEventEntry, ProposalDecisionEntry, UserMessage
 from .turns import TERMINAL_EVENTS, ReplayTurn, append_compacted
 from .workspace import (
     SANDBOX_SYSTEM_PROMPT,
@@ -144,7 +145,7 @@ class AgentSession:
     expires_at: float
     schedule_yaml: str
     revision: str
-    history: list[ChatMessage] = field(default_factory=list)
+    transcript: list[AgentMessage] = field(default_factory=list)
     dropped_history_messages: int = 0
     version: int = 0
     turn: TurnSnapshot | None = None
@@ -159,6 +160,11 @@ class AgentSession:
     agent: Agent = field(default_factory=Agent, repr=False)
 
     @property
+    def history(self) -> list[ChatMessage]:
+        """Expose the legacy text view at the persistence compatibility boundary."""
+        return projected_history(self.transcript)
+
+    @property
     def active(self) -> bool:
         return self.turn is not None
 
@@ -166,7 +172,7 @@ class AgentSession:
         if self.active:
             raise HTTPException(status_code=409, detail="This chat session already has an active response.")
         snapshot = TurnSnapshot(
-            list(self.history),
+            list(self.transcript),
             self.schedule_yaml,
             self.version,
             self.proposal_yaml,
@@ -178,14 +184,14 @@ class AgentSession:
         return snapshot
 
     def commit_turn(
-        self, snapshot: TurnSnapshot, messages: Sequence[ChatMessage], proposal: tuple[str, str] | None
+        self, snapshot: TurnSnapshot, messages: Sequence[AgentMessage], proposal: tuple[str, str] | None
     ) -> bool:
         if self.turn is not snapshot:
             return False
         self.turn = None
         if self.version != snapshot.version:
             return False
-        self.history.extend(messages)
+        self.transcript.extend(messages)
         if proposal is not None:
             self.proposal_yaml, self.proposal_diff = proposal
         return True
@@ -228,10 +234,8 @@ class AgentSession:
         self.proposal_yaml = ""
         self.proposal_diff = ""
         if data_changed or had_proposal:
-            self.history.append(
-                ChatMessage(
-                    role="user", content=SCHEDULE_CHANGED_DISCARDED_EVENT if had_proposal else SCHEDULE_CHANGED_EVENT
-                )
+            self.transcript.append(
+                AppEventEntry(SCHEDULE_CHANGED_DISCARDED_EVENT if had_proposal else SCHEDULE_CHANGED_EVENT)
             )
 
     def require_proposal(self, base_sha256: str) -> None:
@@ -257,7 +261,7 @@ class AgentSession:
         self.version += 1
         self.schedule_yaml = approved
         self.revision = schedule_revision(approved)
-        self.history.append(ChatMessage(role="user", content=PROPOSAL_APPROVED_HISTORY))
+        self.transcript.append(ProposalDecisionEntry("approved"))
         return approved
 
     def discard_proposal(self, history_event: str = PROPOSAL_REJECTED_HISTORY) -> None:
@@ -266,7 +270,9 @@ class AgentSession:
         self.proposal_diff = ""
         if had_proposal:
             self.version += 1
-            self.history.append(ChatMessage(role="user", content=history_event))
+            self.transcript.append(
+                ProposalDecisionEntry("invalid" if history_event == PROPOSAL_INVALID_HISTORY else "rejected")
+            )
 
     async def accept_message(
         self,
@@ -340,7 +346,7 @@ class AgentSession:
         snapshot = store.begin_background(self.id) if background else store.begin(self.id, owner)
         if snapshot is None:
             return
-        output = RunOutput([ChatMessage(role="user", content=question)])
+        output = RunOutput()
         replay: ReplayTurn | None = None
         try:
             attachments = store.attachments(self.id)
@@ -401,10 +407,11 @@ class AgentSession:
         finally:
             turn.admitting = False
             store.abort(self.id, snapshot)
+            self.agent.reset()
 
     async def _generate(self, runtime, turn, snapshot, question, attachments, artifact, output, background):
         settings = runtime.settings
-        history, schedule_yaml = snapshot.history, snapshot.schedule_yaml
+        history, schedule_yaml = snapshot.transcript, snapshot.schedule_yaml
         try:
             if turn.cancelled or (
                 not background and await runtime.recovery.turn_journal.was_stopped(self.id, turn.message_id or turn.id)
@@ -414,10 +421,11 @@ class AgentSession:
                 yield "turn_start", {"message_id": turn.id, "trigger": "optimizer"}
             else:
                 artifact = await runtime.session_optimizer.latest_result_artifact(self.id)
-            retained = recent_history(history, settings.max_history_chars)
-            dropped = snapshot.dropped_history_messages + len(history) - len(retained)
+            selected = project_history(history, settings.max_history_chars)
+            retained = selected.messages
+            dropped = snapshot.dropped_history_messages + selected.dropped_messages
             messages = build_provider_messages(
-                retained,
+                selected,
                 schedule_yaml,
                 question,
                 attachments,
@@ -427,7 +435,7 @@ class AgentSession:
                 max_history_chars=settings.max_history_chars,
                 max_download_bytes=settings.max_download_bytes,
             )
-            context_chars = history_context_chars(history, settings.max_history_chars)
+            context_chars = selected.used_chars
             if background:
                 yield "context_usage", context_usage(context_chars, settings)
                 if dropped:
@@ -466,14 +474,13 @@ class AgentSession:
                             )
                         if projected is not None:
                             yield projected
-            output.messages.append(ChatMessage(role="assistant", content="".join(output.assistant_segment)))
             completion = runtime.store.finish(
                 self.id,
                 question,
                 output.text,
                 (output.proposal.text, output.proposal.diff) if output.proposal is not None else None,
                 snapshot=snapshot,
-                turn_messages=output.messages,
+                turn_messages=[UserMessage(question), *self.agent.state.messages],
             )
             output.completed = True
             turn.finishing = True
@@ -547,6 +554,15 @@ class AgentSession:
             )
         finally:
             if not output.completed:
+                if self.agent.state.messages:
+                    reason = "error" if output.error_code is not None else "aborted"
+                    runtime.store.finish(
+                        self.id,
+                        question,
+                        "",
+                        snapshot=snapshot,
+                        turn_messages=interrupted_entries([UserMessage(question), *self.agent.state.messages], reason),
+                    )
                 runtime.store.abort(self.id, snapshot)
 
     async def _deliver_background(self, runtime, turn, snapshot, events, output):
@@ -667,9 +683,7 @@ class SessionRuntime:
 class RunOutput:
     """Collect one transaction and project model events onto the existing API."""
 
-    messages: list[ChatMessage]
     assistant_parts: list[str] = field(default_factory=list)
-    assistant_segment: list[str] = field(default_factory=list)
     proposal: AgentProposal | None = None
     download: bytes | None = None
     usage: TokenUsage | None = None
@@ -689,7 +703,6 @@ class RunOutput:
     def apply(self, event):
         if isinstance(event, AgentText):
             self.assistant_parts.append(event.text)
-            self.assistant_segment.append(event.text)
             return "delta", {"text": event.text}
         if isinstance(event, AgentReasoning):
             return "reasoning", {"text": event.text}
@@ -701,10 +714,6 @@ class RunOutput:
         elif isinstance(event, AgentToolUse):
             return "tool", {"name": event.name, "arguments": event.arguments, "result": event.result, "ok": event.ok}
         elif isinstance(event, AgentSteering):
-            if self.assistant_segment:
-                self.messages.append(ChatMessage(role="assistant", content="".join(self.assistant_segment)))
-            self.messages.append(ChatMessage(role="user", content=event.text))
-            self.assistant_segment.clear()
             return "steering", {"message_id": event.message_id, "message": event.text}
         elif isinstance(event, AgentScheduleChange):
             return "schedule_change", {"schedule_yaml": event.schedule_yaml}

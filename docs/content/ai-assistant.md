@@ -55,7 +55,7 @@ their concurrency policy.
 | `agent_session.py`, `sessions.py`, `lifecycle.py` | Conversation changes and run execution, session access and budgets, and queued ownership through cleanup. |
 | `agent.py`, `agent_loop.py`, `agent_types.py` | Observable execution state, the model loop, and executable tool contracts. |
 | `workspace.py`, `workspace_tools.py` | Lazy sandbox allocation and hydration, tool binding, and trusted schedule review. |
-| `context.py` | Existing provider request layout and application event presentation. |
+| `transcript.py`, `context.py` | Typed conversation entries, provider requests, history selection, and application event presentation. |
 | `optimizer.py`, `optimizer_tool.py`, `optimizer_http.py` | Job ownership and operations, model-facing arguments and replies, and HTTP transport. |
 | `recovery.py`, `history.py`, `turns.py`, `session_event_stream.py` | Existing persistence, foreground replay, background events, and ordered recovery writes. |
 
@@ -78,7 +78,13 @@ Active sessions expire after 30 days of inactivity by default. Sending or
 queueing a message, synchronizing a changed schedule, or deciding a proposal
 renews that window. The browser can retain the conversation within its current
 tab and verify the session without extending its lifetime.
-The backend stores the YAML snapshot and completed conversation turns. Each
+The session records typed questions, assistant responses, app events, and proposal
+decisions. Tool results and reasoning belong to the current run and are released
+when it ends. Stop and failed runs retain their questions with an interruption
+note. Later model context excludes claims from their discarded workspace.
+Persistence still stores the existing text history through a conversion boundary.
+
+The backend stores the YAML snapshot and retained conversation turns. Each
 provider request includes a schedule summary, recent history, and the current
 question. The complete YAML stays in the sandbox until the model reads relevant
 content through a tool. Uploaded files remain in process memory for later turns

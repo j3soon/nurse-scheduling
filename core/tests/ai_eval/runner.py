@@ -36,6 +36,7 @@ from typing import Any
 
 from ruamel.yaml import YAML
 
+from nurse_scheduling.ai.agent import Agent
 from nurse_scheduling.ai.agent_types import (
     AgentProposal,
     AgentReasoning,
@@ -47,11 +48,12 @@ from nurse_scheduling.ai.agent_types import (
 )
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.context import (
-    PROPOSAL_APPROVED_HISTORY,
-    PROPOSAL_REJECTED_HISTORY,
     SCHEDULE_CHANGED_DISCARDED_EVENT,
     SCHEDULE_CHANGED_EVENT,
     build_provider_messages,
+    cap_transcript,
+    project_history,
+    retained_entries,
     upload_event,
 )
 from nurse_scheduling.ai.optimizer import optimizer_completion_message
@@ -75,6 +77,13 @@ from nurse_scheduling.ai.schema import (
     load_schedule_reference,
     load_taiwan_holidays_reference,
     load_user_guide_references,
+)
+from nurse_scheduling.ai.transcript import (
+    AgentMessage,
+    AppEventEntry,
+    AssistantMessage,
+    ProposalDecisionEntry,
+    UserMessage,
 )
 from nurse_scheduling.ai.workspace import (
     REFERENCE_ATTACHMENT_TOOLS,
@@ -262,7 +271,7 @@ async def run_case(
     initial_text = text
     counting = _CountingProvider(provider)
 
-    history: list[ChatMessage] = []
+    history: list[AgentMessage] = []
     prompt_messages: list[list[ChatMessage]] = []
     answers: list[str] = []
     intermediate_proposals: list[bool] = []
@@ -279,7 +288,7 @@ async def run_case(
     case_attachments = load_attachment_fixtures(case.attachments)
     if case_attachments:
         # Production records uploads as their own history message before the question that uses them.
-        history.append(ChatMessage(role="user", content=upload_event(case_attachments)))
+        history.append(AppEventEntry(upload_event(case_attachments)))
     optimizer_started = False
     optimizer_source = ""
 
@@ -349,9 +358,7 @@ async def run_case(
                 answers.append(acknowledgement)
                 proposal_turns.append(False)
                 intermediate_proposals.append(False)
-                history.extend(
-                    [ChatMessage(role="user", content=question), ChatMessage(role="assistant", content=acknowledgement)]
-                )
+                history.extend([UserMessage(question), AssistantMessage(acknowledgement)])
                 continue
             optimizer_result = None
             optimizer_context = None
@@ -375,7 +382,7 @@ async def run_case(
                 optimizer_started = False
             attachments = case_attachments
             messages = build_provider_messages(
-                history,
+                project_history(history, settings.max_history_chars),
                 text,
                 question,
                 attachments,
@@ -390,6 +397,7 @@ async def run_case(
             stopped_on_limit = False
             turn_event_offset = len(events)
             events.append({"kind": "optimizer" if completion else "user", "turn": turn_index + 1, "text": question})
+            agent = Agent()
             agent_events = run_workspace(
                 counting,
                 sandbox_factory,
@@ -404,6 +412,7 @@ async def run_case(
                 attachments=attachments,
                 optimizer_result=optimizer_result,
                 optimizer_context=optimizer_context,
+                agent=agent,
             )
             async with aclosing(agent_events):
                 async for event in agent_events:
@@ -480,9 +489,10 @@ async def run_case(
                 intermediate_proposals.append(turn_proposal is not None)
             if turn_index + 1 == case.proposal_turn:
                 proposal_event = turn_proposal
-            history.extend(
-                [ChatMessage(role="user", content=question), ChatMessage(role="assistant", content=answer_text)]
-            )
+            completed = retained_entries([UserMessage(question), *agent.state.messages])
+            history.extend(completed)
+            cap_transcript(history, settings.max_history_messages, settings.max_history_chars, len(completed))
+            agent.reset()
             if stopped_on_limit:
                 break
             if fail_fast and turn_proposal is not None and turn_index + 1 not in case.proposal_turns:
@@ -575,7 +585,7 @@ def _apply_turn_action(
     action: Any,
     text: str,
     pending: AgentProposal | None,
-    history: list[ChatMessage],
+    history: list[AgentMessage],
     events: list[dict[str, Any]],
 ) -> tuple[str, AgentProposal | None]:
     """Apply one trusted proposal lifecycle action between user turns."""
@@ -584,9 +594,9 @@ def _apply_turn_action(
         return text, None
     if action.action == "approve":
         text = pending.text
-        history.append(ChatMessage(role="user", content=PROPOSAL_APPROVED_HISTORY))
+        history.append(ProposalDecisionEntry("approved"))
     elif action.action == "reject":
-        history.append(ChatMessage(role="user", content=PROPOSAL_REJECTED_HISTORY))
+        history.append(ProposalDecisionEntry("rejected"))
     else:
         schedule = _load_yaml(text.encode("utf-8"))
         schedule.update(dict(action.schedule_patch))
@@ -594,9 +604,7 @@ def _apply_turn_action(
         YAML().dump(schedule, stream)
         text = stream.getvalue()
         history.append(
-            ChatMessage(
-                role="user", content=SCHEDULE_CHANGED_DISCARDED_EVENT if pending is not None else SCHEDULE_CHANGED_EVENT
-            )
+            AppEventEntry(SCHEDULE_CHANGED_DISCARDED_EVENT if pending is not None else SCHEDULE_CHANGED_EVENT)
         )
     events.append({"kind": "turn_action", "turn": action.after_turn, "action": action.action, "ok": True})
     return text, None
