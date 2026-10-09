@@ -81,6 +81,7 @@ export interface SessionReset {
 
 export interface AiCapabilities {
   app_version?: string;
+  saved_chat_export?: boolean;
   auth: AuthRequirement | null;
   session_retention_seconds: number;
   file_attachments: {
@@ -265,6 +266,7 @@ export async function getCapabilities(signal?: AbortSignal, endpoint = getAiBase
     || !Number.isInteger(files.max_bytes_per_file)
     || files.max_bytes_per_file <= 0
     || (files.retained !== undefined && typeof files.retained !== 'boolean')
+    || (body.saved_chat_export !== undefined && typeof body.saved_chat_export !== 'boolean')
   ) {
     throw new Error('The AI backend returned invalid capabilities.');
   }
@@ -302,7 +304,7 @@ export async function createSession(
     method: 'POST',
     credentials: 'include',
     headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ schedule_yaml: scheduleYaml, frontend_version: CURRENT_APP_VERSION }),
+    body: JSON.stringify({ schedule_yaml: scheduleYaml, frontend_version: CURRENT_APP_VERSION, ai_endpoint: endpoint }),
   });
   if (!response.ok) throw await responseError(response);
 
@@ -441,7 +443,7 @@ function consumeEvent(block: string, callbacks: SessionStreamOptions): void {
   for (const event of events) callbacks.onEvent(event);
 }
 
-function decodeEvent(eventType: string, payload: SsePayload): SessionEvent[] {
+export function decodeEvent(eventType: string, payload: SsePayload): SessionEvent[] {
   const events: SessionEvent[] = [];
   const runId = typeof payload.run_id === 'string' ? payload.run_id : undefined;
   const emit = (event: SessionEvent) => events.push(runId === undefined ? event : { ...event, runId });
@@ -770,6 +772,14 @@ export async function cancelOptimization(
     headers: authorizedHeaders(authToken),
   });
   if (!response.ok) throw await responseError(response);
+}
+
+export async function getSavedChatSnapshot(sessionId: string, authToken: string | null, endpoint = getAiBaseUrl()): Promise<unknown> {
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/export`, {
+    credentials: 'include', headers: authorizedHeaders(authToken),
+  });
+  if (!response.ok) throw await responseError(response);
+  return response.json();
 }
 
 /** Stop the named message's run, or every run of the session when no message is named. */

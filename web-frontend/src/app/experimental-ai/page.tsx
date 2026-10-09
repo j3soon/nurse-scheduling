@@ -40,11 +40,12 @@ import { CURRENT_APP_VERSION, hasAppVersionMismatch } from '@/utils/version';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
 import yaml from 'js-yaml';
 
-import { downloadChatExport, type ChatExportFormat } from './chatExport';
+import { downloadChatExport, downloadChatExportDocument, type ChatExportFormat } from './chatExport';
+import { buildSavedChatExport, parseSavedChatSnapshot } from './savedChatExport';
 
 import { retentionLabel } from './chatPresentation';
 
-import { AiCapabilities, DEFAULT_SESSION_RETENTION_SECONDS, LOCAL_AI_API_URL, PRODUCTION_AI_API_URL, cancelOptimization, downloadOptimization, downloadGeneratedZip, getAiBaseUrl, getCapabilities, getBackendVersion, isOfficialAiEndpoint, normalizeAiEndpoint } from './aiClient';
+import { AiCapabilities, DEFAULT_SESSION_RETENTION_SECONDS, LOCAL_AI_API_URL, PRODUCTION_AI_API_URL, cancelOptimization, getSavedChatSnapshot, downloadOptimization, downloadGeneratedZip, getAiBaseUrl, getCapabilities, getBackendVersion, isOfficialAiEndpoint, normalizeAiEndpoint } from './aiClient';
 
 import { messageId } from './assistantEvents';
 
@@ -219,6 +220,8 @@ export default function ExperimentalAiPage() {
   const [authRejected, setAuthRejected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [capabilitiesError, setCapabilitiesError] = useState<string | null>(null);
+  const [savedChatExportEnabled, setSavedChatExportEnabled] = useState(false);
+  const [isExportingChat, setIsExportingChat] = useState(false);
   const [fileCapability, setFileCapability] = useState(DISABLED_FILE_CAPABILITY);
   const [selectedAttachments, setSelectedAttachments] = useState<SelectedAttachment[]>([]);
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
@@ -254,6 +257,7 @@ export default function ExperimentalAiPage() {
   const resetChatUi = useCallback(() => {
     setDownloadingOptimizationId(null);
     setCancellingOptimizationId(null);
+    setIsExportingChat(false);
   }, []);
   const {
     messages, uploadedFiles, removingUploadId, removingDownloadId, contextUsage, activeSessionId,
@@ -359,6 +363,7 @@ export default function ExperimentalAiPage() {
         setServerStatus('online');
         setAuthRequired(capabilities.auth?.required ?? false);
         setFileCapability(capabilities.file_attachments);
+        setSavedChatExportEnabled(capabilities.saved_chat_export === true);
         setSessionRetentionSeconds(
           capabilities.session_retention_seconds ?? DEFAULT_SESSION_RETENTION_SECONDS,
         );
@@ -651,22 +656,37 @@ export default function ExperimentalAiPage() {
     }
   };
 
-  const exportChat = (format: ChatExportFormat) => {
-    const previousUrl = chatExportUrlRef.current;
-    chatExportUrlRef.current = downloadChatExport(format, messages, sessionEndpoint, new Date(), {
-      backendVersion,
-      pendingProposalDiff: proposalDiff ?? undefined,
-      runningOptimization: activeOptimization !== null && !activeOptimization.terminal
-        ? {
-          jobId: activeOptimization.jobId,
-          state: activeOptimization.state,
-          solver: activeOptimization.request?.solver,
-          timeoutSeconds: activeOptimization.request?.timeoutSeconds,
-        }
-        : undefined,
-      uploadedFiles: fileCapability.retained ? uploadedFiles : undefined,
-    });
-    if (previousUrl) URL.revokeObjectURL(previousUrl);
+  const exportChat = async (format: ChatExportFormat) => {
+    if (isExportingChat) return;
+    const session = captureSession();
+    setIsExportingChat(true);
+    try {
+      const previousUrl = chatExportUrlRef.current;
+      if (savedChatExportEnabled && session !== null) {
+        const snapshot = parseSavedChatSnapshot(await getSavedChatSnapshot(session.id, authToken, session.endpoint));
+        if (!session.ownsConversation()) return;
+        chatExportUrlRef.current = downloadChatExportDocument(format, buildSavedChatExport(snapshot, format), new Date(snapshot.snapshot_at));
+      } else {
+        chatExportUrlRef.current = downloadChatExport(format, messages, sessionEndpoint, new Date(), {
+          backendVersion,
+          pendingProposalDiff: proposalDiff ?? undefined,
+          runningOptimization: activeOptimization !== null && !activeOptimization.terminal
+            ? {
+              jobId: activeOptimization.jobId,
+              state: activeOptimization.state,
+              solver: activeOptimization.request?.solver,
+              timeoutSeconds: activeOptimization.request?.timeoutSeconds,
+            }
+            : undefined,
+          uploadedFiles: fileCapability.retained ? uploadedFiles : undefined,
+        });
+      }
+      if (previousUrl) URL.revokeObjectURL(previousUrl);
+    } catch (exportError) {
+      if (session === null || session.ownsConversation()) reportRequestError(exportError, 'The chat could not be exported.');
+    } finally {
+      if (session === null || session.ownsConversation()) setIsExportingChat(false);
+    }
   };
 
   const downloadOptimizationResult = async (jobId: string) => {
@@ -948,14 +968,14 @@ export default function ExperimentalAiPage() {
               <span>Export chat:</span>
               <button
                 type="button"
-                onClick={() => exportChat('html')}
+                onClick={() => void exportChat('html')}
                 className="font-medium text-gray-700 underline underline-offset-2 hover:text-gray-900"
               >
                 HTML
               </button>
               <button
                 type="button"
-                onClick={() => exportChat('markdown')}
+                onClick={() => void exportChat('markdown')}
                 className="font-medium text-gray-700 underline underline-offset-2 hover:text-gray-900"
               >
                 Markdown

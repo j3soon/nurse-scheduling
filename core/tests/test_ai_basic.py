@@ -1073,6 +1073,7 @@ def test_capabilities_report_configured_attachment_limits(monkeypatch: pytest.Mo
     assert response.status_code == 200
     assert response.json() == {
         "app_version": "v0.4.2-backend",
+        "saved_chat_export": False,
         "file_attachments": {
             "enabled": True,
             "max_files": 5,
@@ -1239,6 +1240,7 @@ def test_uploads_and_removals_are_history_messages_before_the_question() -> None
         "model_input",
         {
             "system": provider.calls[0][0]["content"],
+            "schedule_yaml": "description: test",
             "messages": [
                 {"kind": "app", "index": 0, "content": uploaded, "title": "Files Uploaded"},
                 {"kind": "app", "index": 1, "content": removed, "title": "File Removed"},
@@ -2348,6 +2350,7 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         assert all("message_id" not in event.data for event in events[3:])
         assert events[4].data == {
             "system": provider.calls[3][0]["content"],
+            "schedule_yaml": schedule_yaml(),
             "messages": [
                 {"kind": "optimizer", "content": provider.calls[3][-2]["content"]},
                 {"kind": "status", "content": provider.calls[3][-1]["content"], "title": "Optimizer Result"},

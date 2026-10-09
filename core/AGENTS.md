@@ -126,6 +126,11 @@ skipped does not validate persistence.
 - Keep attachment limits server-configured and report them through
   `/capabilities`. Attachments and the optimizer tool are always offered.
   Keep schedules and attachments separate from model instructions.
+- Put shared AI test data under `tests/ai_fixtures/`, so affected checks select
+  AI suites without running unrelated scheduling tests.
+- Keep saved chat exports on the shared frontend formatter. Read a consistent
+  PostgreSQL snapshot and use stored timestamps in UTC. Verify downloaded browser
+  bytes against the command output with a rich saved-event fixture.
 - Keep accepted AI runs independent of the browser stream. Reconnect with the
   same `message_id` to replay output, without repeating provider or tool calls.
   Keep complete replay snapshots separate from the bounded event buffer. Persist

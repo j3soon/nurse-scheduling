@@ -46,7 +46,7 @@ export interface ChatExportMessage {
   responseCompletedAt?: number;
 }
 
-interface ChatExportMetadata {
+export interface ChatExportMetadata {
   endpoint: string;
   exportedAt: Date;
   frontendVersion: string;
@@ -57,6 +57,7 @@ interface ChatExportMetadata {
   runningOptimization?: { jobId: string; state: string; solver?: string; timeoutSeconds?: number };
   // Files kept in the chat session at export time. The export lists them without their contents.
   uploadedFiles?: { filename: string; bytes: number }[];
+  timeZone?: 'UTC';
 }
 
 type ChatExportSessionState = Pick<
@@ -237,7 +238,7 @@ function renderAssistantTimelineHtml(message: ChatExportMessage): string {
   return `<div class="assistant-activity" aria-label="Assistant activity">${activity}</div>`;
 }
 
-function renderHtmlMessageDetails(message: ChatExportMessage): string {
+function renderHtmlMessageDetails(message: ChatExportMessage, timeZone?: 'UTC'): string {
   const status = message.status === 'pending' && !message.content
     ? '<p class="message-status" role="status">Thinking</p>'
     : message.status === 'failed'
@@ -249,8 +250,11 @@ function renderHtmlMessageDetails(message: ChatExportMessage): string {
   const duration = message.responseStartedAt !== undefined && message.responseCompletedAt !== undefined
     ? ` · ${formatResponseDuration(message.responseStartedAt, message.responseCompletedAt)}`
     : '';
+  const displayTime = timestamp === undefined ? '' : timeZone === undefined
+    ? new Date(timestamp).toLocaleString()
+    : new Date(timestamp).toISOString().replace('T', ' ').replace('Z', ' UTC');
   const timing = timestamp !== undefined
-    ? `<time datetime="${new Date(timestamp).toISOString()}" title="${escapeHtml(new Date(timestamp).toLocaleString())}">${escapeHtml(new Date(timestamp).toLocaleString())}${duration}</time>`
+    ? `<time datetime="${new Date(timestamp).toISOString()}" title="${escapeHtml(displayTime)}">${escapeHtml(displayTime)}${duration}</time>`
     : '';
   return `${status}${timing}`;
 }
@@ -326,7 +330,7 @@ export function buildHtmlChatExport(
       <article class="message ${message.role}${message.source ? ` ${message.source}` : ''}">
         <div class="label">${escapeHtml(messageLabel(message))}</div>
         ${timeline}
-        ${renderHtmlMessageDetails(message)}
+        ${renderHtmlMessageDetails(message, metadata.timeZone)}
       </article>`;
   }).join('');
   return `<!doctype html>
@@ -440,6 +444,10 @@ export function downloadChatExport(
   const content = format === 'html'
     ? buildHtmlChatExport(messages, metadata)
     : buildMarkdownChatExport(messages, metadata);
+  return downloadChatExportDocument(format, content, exportedAt);
+}
+
+export function downloadChatExportDocument(format: ChatExportFormat, content: string, exportedAt: Date): string {
   const extension = format === 'html' ? 'html' : 'md';
   const type = format === 'html' ? 'text/html;charset=utf-8' : 'text/markdown;charset=utf-8';
   const url = URL.createObjectURL(new Blob([content], { type }));

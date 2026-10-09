@@ -30,6 +30,7 @@ from typing import Any, Literal
 
 import anyio
 import psycopg
+from psycopg.conninfo import conninfo_to_dict
 from psycopg.types.json import Jsonb
 
 from ..sentry import report_outage_recovery
@@ -79,10 +80,11 @@ class ChatHistory:
         self._database_url = database_url
 
     def _connect(self):
+        options = conninfo_to_dict(self._database_url).get("options", "")
         return psycopg.connect(
             self._database_url,
             connect_timeout=5,
-            options="-c statement_timeout=5000 -c lock_timeout=5000",
+            options=f"{options} -c statement_timeout=5000 -c lock_timeout=5000".strip(),
         )
 
     def initialize(self) -> None:
@@ -341,6 +343,52 @@ class ChatHistory:
             (first, last, None if run_id is None else str(run_id), kind, data)
             for first, last, run_id, kind, data in rows
         ]
+
+    def export_snapshot(self, session_id: str) -> dict[str, Any] | None:
+        """Read complete saved events and metadata in one consistent, read-only transaction."""
+        with self._connect() as connection:
+            connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            session = connection.execute(
+                "SELECT state, extract(epoch FROM created_at) FROM chat_sessions WHERE id = %s", (session_id,)
+            ).fetchone()
+            if session is None:
+                return None
+            runs = connection.execute(
+                "SELECT r.id, r.kind, r.status, extract(epoch FROM r.started_at), "
+                "extract(epoch FROM r.finished_at), "
+                "(SELECT payload->>'text' FROM chat_session_entries WHERE run_id = r.id AND type = 'user' "
+                "ORDER BY seq LIMIT 1) FROM chat_runs r WHERE r.session_id = %s ORDER BY r.sequence",
+                (session_id,),
+            ).fetchall()
+            events = connection.execute(
+                "SELECT type, data, extract(epoch FROM created_at) FROM chat_session_events "
+                "WHERE session_id = %s ORDER BY event_id",
+                (session_id,),
+            ).fetchall()
+        state, created_at = session
+        milliseconds = lambda timestamp: round(float(timestamp) * 1000)
+        return {
+            "schema_version": 1,
+            "session_id": session_id,
+            "snapshot_at": milliseconds(max([created_at, *(row[2] for row in events)])),
+            "frontend_version": state.get("frontend_version") or "unknown",
+            "metadata": state.get("export_metadata", {}),
+            "pending_proposal_diff": (state.get("pending_proposal") or {}).get("diff"),
+            "runs": [
+                {
+                    "id": str(run_id),
+                    "kind": kind,
+                    "status": run_status,
+                    "started_at": milliseconds(started),
+                    "finished_at": None if finished is None else milliseconds(finished),
+                    "prompt": prompt or "",
+                }
+                for run_id, kind, run_status, started, finished, prompt in runs
+            ],
+            "events": [
+                {"type": kind, "data": data, "occurred_at": milliseconds(created)} for kind, data, created in events
+            ],
+        }
 
     async def read(self, operation: str, *args):
         """Run a lookup. A failure becomes a RuntimeError that callers map to HTTP 503."""

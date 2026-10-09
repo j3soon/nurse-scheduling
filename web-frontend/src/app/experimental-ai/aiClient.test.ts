@@ -31,6 +31,7 @@ import {
   getCapabilities,
   getBackendVersion,
   getSessionStatus,
+  getSavedChatSnapshot,
   getUploads,
   isOfficialAiEndpoint,
   queueMessage,
@@ -82,7 +83,7 @@ describe('AI client', () => {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ai-client-token' },
-      body: JSON.stringify({ schedule_yaml: 'description: test', frontend_version: CURRENT_APP_VERSION }),
+      body: JSON.stringify({ schedule_yaml: 'description: test', frontend_version: CURRENT_APP_VERSION, ai_endpoint: 'https://api.nursescheduling.org/ai' }),
     });
   });
 
@@ -903,6 +904,15 @@ describe('AI client', () => {
         headers: { Authorization: 'Bearer result-token' },
       },
     );
+  });
+
+  it('fetches the saved export snapshot with scoped credentials', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ schema_version: 1 })));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(getSavedChatSnapshot('session/id', 'ai-token', 'https://ai.example.test')).resolves.toEqual({ schema_version: 1 });
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith('https://ai.example.test/sessions/session%2Fid/export', {
+      credentials: 'include', headers: { Authorization: 'Bearer ai-token' },
+    });
   });
 
   it('queues a steering message without cancelling the active stream', async () => {

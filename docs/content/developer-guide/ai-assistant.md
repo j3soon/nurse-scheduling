@@ -661,6 +661,14 @@ The Cloudflare public hostname must target `http://nginx:8080`. The trailing
 slash on `proxy_pass` removes the public `/ai` prefix before the request reaches
 FastAPI.
 
+## Export saved chats
+
+The HTML and Markdown controls use saved PostgreSQL history when available.
+The operator command produces the same bytes from the same saved snapshot.
+See [Export saved AI chats](reproduce/core.md#export-saved-ai-chats) for the
+one-command Docker and native database workflow. Builds without PostgreSQL keep
+the browser transcript export.
+
 ## HTTP API
 
 Session creation and both foreground and queued messages include

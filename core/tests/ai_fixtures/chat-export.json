@@ -1,0 +1,665 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later; SPDX-FileCopyrightText: 2026 Johnson Sun",
+  "_comment": "This test is mostly AI generated.",
+  "schema_version": 1,
+  "session_id": "10000000-0000-4000-8000-000000000001",
+  "snapshot_at": 1789693210200,
+  "frontend_version": "v0.4.3",
+  "metadata": {
+    "endpoint": "https://ai.example.test/ai",
+    "backend_version": "v0.4.3",
+    "uploaded_files": [
+      {
+        "filename": "staff.csv",
+        "bytes": 1000
+      },
+      {
+        "filename": "ward.png",
+        "bytes": 255
+      }
+    ]
+  },
+  "pending_proposal_diff": "- description: Original -> Updated",
+  "runs": [
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "kind": "foreground",
+      "status": "completed",
+      "prompt": "Inspect staff.csv and prepare a schedule.",
+      "started_at": 1789693200000,
+      "finished_at": 1789693204600
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "kind": "background",
+      "status": "completed",
+      "prompt": "Optimizer job finished. Review the workbook.",
+      "started_at": 1789693205000,
+      "finished_at": 1789693206000
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000003",
+      "kind": "foreground",
+      "status": "failed",
+      "prompt": "Check missing.txt.",
+      "started_at": 1789693206200,
+      "finished_at": 1789693207000
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000004",
+      "kind": "foreground",
+      "status": "cancelled",
+      "prompt": "Run a slow command.",
+      "started_at": 1789693207200,
+      "finished_at": 1789693208000
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000005",
+      "kind": "foreground",
+      "status": "running",
+      "prompt": "Continue the optimization.",
+      "started_at": 1789693208200,
+      "finished_at": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000006",
+      "kind": "foreground",
+      "status": "stale",
+      "prompt": "Edit the current schedule.",
+      "started_at": 1789693209400,
+      "finished_at": 1789693210200
+    }
+  ],
+  "events": [
+    {
+      "type": "run_start",
+      "data": {
+        "trigger": "user",
+        "run_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "occurred_at": 1789693200000
+    },
+    {
+      "type": "model_input",
+      "data": {
+        "system": "You are the scheduling assistant. <script>unsafe()</script>",
+        "messages": [
+          {
+            "kind": "app",
+            "index": 0,
+            "title": "Files Uploaded",
+            "content": "[App event] The user uploaded files: [\"staff.csv\",\"ward.png\"]"
+          },
+          {
+            "kind": "question",
+            "content": "Inspect staff.csv and prepare a schedule."
+          },
+          {
+            "kind": "status",
+            "title": "Pending Proposal",
+            "content": "[Current status]\nCheck the original names."
+          }
+        ],
+        "schedule_yaml": "description: Original\n",
+        "run_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "occurred_at": 1789693200200
+    },
+    {
+      "type": "reasoning",
+      "data": {
+        "text": "I will preserve names & inspect the attachment. 🏥",
+        "run_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "occurred_at": 1789693200400
+    },
+    {
+      "type": "tool_start",
+      "data": {
+        "name": "read",
+        "arguments": "{\"path\": \"/workspace/attachments/staff.csv\"}",
+        "tool_call_id": "1-read-3",
+        "run_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "occurred_at": 1789693200600
+    },
+    {
+      "type": "tool",
+      "data": {
+        "name": "read",
+        "arguments": "{\"path\": \"/workspace/attachments/staff.csv\"}",
+        "result": "Name,Shift\nAlice,Day\nBob,Night",
+        "ok": true,
+        "tool_call_id": "1-read-3",
+        "run_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "occurred_at": 1789693200800
+    },
+    {
+      "type": "tool_start",
+      "data": {
+        "name": "read",
+        "arguments": "{\"path\": \"/workspace/attachments/ward.png\"}",
+        "tool_call_id": "1-read-5",
+        "run_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "occurred_at": 1789693201000
+    },
+    {
+      "type": "tool",
+      "data": {
+        "name": "read",
+        "arguments": "{\"path\": \"/workspace/attachments/ward.png\"}",
+        "result": "Read image file [image/png]",
+        "ok": true,
+        "tool_call_id": "1-read-5",
+        "run_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "occurred_at": 1789693201200
+    },
+    {
+      "type": "tool_start",
+      "data": {
+        "name": "bash",
+        "arguments": "{\"command\": \"rg missing staff.csv\"}",
+        "tool_call_id": "1-bash-7",
+        "run_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "occurred_at": 1789693201400
+    },
+    {
+      "type": "tool",
+      "data": {
+        "name": "bash",
+        "arguments": "{\"command\": \"rg missing staff.csv\"}",
+        "result": "partial output\n\nCommand exited with code 7",
+        "ok": false,
+        "tool_call_id": "1-bash-7",
+        "run_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "occurred_at": 1789693201600
+    },
+    {
+      "type": "tool_start",
+      "data": {
+        "name": "edit",
+        "arguments": "{\"path\": \"schedule.yaml\", \"edits\": [{\"oldText\": \"Original\", \"newText\": \"Updated\"}]}",
+        "tool_call_id": "1-edit-9",
+        "run_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "occurred_at": 1789693201800
+    },
+    {
+      "type": "tool",
+      "data": {
+        "name": "edit",
+        "arguments": "{\"path\": \"schedule.yaml\", \"edits\": [{\"oldText\": \"Original\", \"newText\": \"Updated\"}]}",
+        "result": "Successfully replaced 1 block(s) in schedule.yaml.",
+        "ok": true,
+        "tool_call_id": "1-edit-9",
+        "run_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "occurred_at": 1789693202000
+    },
+    {
+      "type": "schedule_change",
+      "data": {
+        "schedule_yaml": "description: Updated\n",
+        "run_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "occurred_at": 1789693202200
+    },
+    {
+      "type": "tool_start",
+      "data": {
+        "name": "write",
+        "arguments": "{\"path\": \"notes.md\", \"content\": \"# Schedule notes\"}",
+        "tool_call_id": "1-write-12",
+        "run_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "occurred_at": 1789693202400
+    },
+    {
+      "type": "tool",
+      "data": {
+        "name": "write",
+        "arguments": "{\"path\": \"notes.md\", \"content\": \"# Schedule notes\"}",
+        "result": "Successfully wrote to notes.md",
+        "ok": true,
+        "tool_call_id": "1-write-12",
+        "run_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "occurred_at": 1789693202600
+    },
+    {
+      "type": "tool_start",
+      "data": {
+        "name": "optimizer",
+        "arguments": "{\"action\": \"start\"}",
+        "tool_call_id": "1-optimizer-14",
+        "run_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "occurred_at": 1789693202800
+    },
+    {
+      "type": "tool",
+      "data": {
+        "name": "optimizer",
+        "arguments": "{\"action\": \"start\"}",
+        "result": "Started optimizer job opt-1 in the background.",
+        "ok": true,
+        "tool_call_id": "1-optimizer-14",
+        "run_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "occurred_at": 1789693203000
+    },
+    {
+      "type": "optimization",
+      "data": {
+        "job_id": "opt-1",
+        "state": "running",
+        "terminal": false,
+        "downloadable": false,
+        "request": {
+          "solver": "ortools/cp-sat",
+          "timeout_seconds": 300
+        },
+        "backend": {
+          "url": "http://optimizer:8000",
+          "app_version": "v0.4.3",
+          "api_version": "0.2.0"
+        }
+      },
+      "occurred_at": 1789693203200
+    },
+    {
+      "type": "optimization_progress",
+      "data": {
+        "job_id": "opt-1",
+        "progress": {
+          "currentBestScore": 12,
+          "elapsedSeconds": 2
+        }
+      },
+      "occurred_at": 1789693203400
+    },
+    {
+      "type": "delta",
+      "data": {
+        "text": "## Schedule summary\n\n**Alice** stays on Day.\n\n- Keep names\n- [Guide](https://example.test/guide)\n\n| Nurse | Shift |\n| --- | --- |\n| Alice | Day |\n\n```python\nprint(\"<safe>\")\n```\n\n![Ward](https://example.test/ward.png)\n<script>unsafe()</script>",
+        "run_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "occurred_at": 1789693203600
+    },
+    {
+      "type": "steering",
+      "data": {
+        "message_id": "queued-1",
+        "message": "Keep the original names.",
+        "run_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "occurred_at": 1789693203800
+    },
+    {
+      "type": "delta",
+      "data": {
+        "text": "Original names kept. Download the generated files (ZIP).",
+        "run_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "occurred_at": 1789693204000
+    },
+    {
+      "type": "download",
+      "data": {
+        "download_id": "zip-1",
+        "run_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "occurred_at": 1789693204200
+    },
+    {
+      "type": "proposal",
+      "data": {
+        "diff": "- description: Original -> Updated",
+        "run_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "occurred_at": 1789693204400
+    },
+    {
+      "type": "done",
+      "data": {
+        "run_id": "00000000-0000-4000-8000-000000000001"
+      },
+      "occurred_at": 1789693204600
+    },
+    {
+      "type": "optimization",
+      "data": {
+        "job_id": "opt-1",
+        "state": "completed",
+        "terminal": true,
+        "downloadable": true,
+        "result": {
+          "outcome": "feasible",
+          "score": 17,
+          "solver_status": "FEASIBLE"
+        },
+        "request": {
+          "solver": "ortools/cp-sat",
+          "timeout_seconds": 300
+        },
+        "backend": {
+          "url": "http://optimizer:8000",
+          "app_version": "v0.4.3",
+          "api_version": "0.2.0"
+        }
+      },
+      "occurred_at": 1789693204800
+    },
+    {
+      "type": "run_start",
+      "data": {
+        "trigger": "optimizer",
+        "run_id": "00000000-0000-4000-8000-000000000002"
+      },
+      "occurred_at": 1789693205000
+    },
+    {
+      "type": "model_input",
+      "data": {
+        "system": "You are the scheduling assistant. <script>unsafe()</script>",
+        "messages": [
+          {
+            "kind": "optimizer",
+            "content": "Optimizer job finished. Review the workbook."
+          },
+          {
+            "kind": "status",
+            "title": "Pending Proposal",
+            "content": "[Current status]\nCheck the original names."
+          }
+        ],
+        "schedule_yaml": "description: Original\n",
+        "run_id": "00000000-0000-4000-8000-000000000002"
+      },
+      "occurred_at": 1789693205200
+    },
+    {
+      "type": "tool_start",
+      "data": {
+        "name": "read",
+        "arguments": "{\"path\": \"/workspace/optimizer-results/optimized-schedule.xlsx\"}",
+        "tool_call_id": "2-read-27",
+        "run_id": "00000000-0000-4000-8000-000000000002"
+      },
+      "occurred_at": 1789693205400
+    },
+    {
+      "type": "tool",
+      "data": {
+        "name": "read",
+        "arguments": "{\"path\": \"/workspace/optimizer-results/optimized-schedule.xlsx\"}",
+        "result": "Workbook result: score 17.",
+        "ok": true,
+        "tool_call_id": "2-read-27",
+        "run_id": "00000000-0000-4000-8000-000000000002"
+      },
+      "occurred_at": 1789693205600
+    },
+    {
+      "type": "delta",
+      "data": {
+        "text": "The solver returned **score 17**. Download the optimized schedule.",
+        "run_id": "00000000-0000-4000-8000-000000000002"
+      },
+      "occurred_at": 1789693205800
+    },
+    {
+      "type": "done",
+      "data": {
+        "run_id": "00000000-0000-4000-8000-000000000002"
+      },
+      "occurred_at": 1789693206000
+    },
+    {
+      "type": "run_start",
+      "data": {
+        "trigger": "user",
+        "run_id": "00000000-0000-4000-8000-000000000003"
+      },
+      "occurred_at": 1789693206200
+    },
+    {
+      "type": "model_input",
+      "data": {
+        "system": "You are the scheduling assistant. <script>unsafe()</script>",
+        "messages": [
+          {
+            "kind": "question",
+            "content": "Check missing.txt."
+          },
+          {
+            "kind": "status",
+            "title": "Pending Proposal",
+            "content": "[Current status]\nCheck the original names."
+          }
+        ],
+        "schedule_yaml": "description: Original\n",
+        "run_id": "00000000-0000-4000-8000-000000000003"
+      },
+      "occurred_at": 1789693206400
+    },
+    {
+      "type": "tool_start",
+      "data": {
+        "name": "read",
+        "arguments": "{\"path\": \"missing.txt\"}",
+        "tool_call_id": "3-read-33",
+        "run_id": "00000000-0000-4000-8000-000000000003"
+      },
+      "occurred_at": 1789693206600
+    },
+    {
+      "type": "tool",
+      "data": {
+        "name": "read",
+        "arguments": "{\"path\": \"missing.txt\"}",
+        "result": "Sandbox file not found: /workspace/missing.txt",
+        "ok": false,
+        "tool_call_id": "3-read-33",
+        "run_id": "00000000-0000-4000-8000-000000000003"
+      },
+      "occurred_at": 1789693206800
+    },
+    {
+      "type": "error",
+      "data": {
+        "message": "The file could not be read.",
+        "run_id": "00000000-0000-4000-8000-000000000003"
+      },
+      "occurred_at": 1789693207000
+    },
+    {
+      "type": "run_start",
+      "data": {
+        "trigger": "user",
+        "run_id": "00000000-0000-4000-8000-000000000004"
+      },
+      "occurred_at": 1789693207200
+    },
+    {
+      "type": "model_input",
+      "data": {
+        "system": "You are the scheduling assistant. <script>unsafe()</script>",
+        "messages": [
+          {
+            "kind": "question",
+            "content": "Run a slow command."
+          },
+          {
+            "kind": "status",
+            "title": "Pending Proposal",
+            "content": "[Current status]\nCheck the original names."
+          }
+        ],
+        "schedule_yaml": "description: Original\n",
+        "run_id": "00000000-0000-4000-8000-000000000004"
+      },
+      "occurred_at": 1789693207400
+    },
+    {
+      "type": "reasoning",
+      "data": {
+        "text": "Waiting for the command.",
+        "run_id": "00000000-0000-4000-8000-000000000004"
+      },
+      "occurred_at": 1789693207600
+    },
+    {
+      "type": "tool_start",
+      "data": {
+        "name": "bash",
+        "arguments": "{\"command\":\"sleep 30\"}",
+        "tool_call_id": "slow-command",
+        "run_id": "00000000-0000-4000-8000-000000000004"
+      },
+      "occurred_at": 1789693207800
+    },
+    {
+      "type": "stopped",
+      "data": {
+        "run_id": "00000000-0000-4000-8000-000000000004"
+      },
+      "occurred_at": 1789693208000
+    },
+    {
+      "type": "run_start",
+      "data": {
+        "trigger": "user",
+        "run_id": "00000000-0000-4000-8000-000000000005"
+      },
+      "occurred_at": 1789693208200
+    },
+    {
+      "type": "model_input",
+      "data": {
+        "system": "You are the scheduling assistant. <script>unsafe()</script>",
+        "messages": [
+          {
+            "kind": "question",
+            "content": "Continue the optimization."
+          },
+          {
+            "kind": "status",
+            "title": "Pending Proposal",
+            "content": "[Current status]\nCheck the original names."
+          }
+        ],
+        "schedule_yaml": "description: Original\n",
+        "run_id": "00000000-0000-4000-8000-000000000005"
+      },
+      "occurred_at": 1789693208400
+    },
+    {
+      "type": "tool_start",
+      "data": {
+        "name": "optimizer",
+        "arguments": "{\"action\": \"status\"}",
+        "tool_call_id": "5-optimizer-43",
+        "run_id": "00000000-0000-4000-8000-000000000005"
+      },
+      "occurred_at": 1789693208600
+    },
+    {
+      "type": "tool",
+      "data": {
+        "name": "optimizer",
+        "arguments": "{\"action\": \"status\"}",
+        "result": "Optimizer job opt-2: running.",
+        "ok": true,
+        "tool_call_id": "5-optimizer-43",
+        "run_id": "00000000-0000-4000-8000-000000000005"
+      },
+      "occurred_at": 1789693208800
+    },
+    {
+      "type": "optimization",
+      "data": {
+        "job_id": "opt-2",
+        "state": "running",
+        "terminal": false,
+        "downloadable": false,
+        "request": {
+          "solver": "ortools/cp-sat",
+          "timeout_seconds": 120
+        }
+      },
+      "occurred_at": 1789693209000
+    },
+    {
+      "type": "delta",
+      "data": {
+        "text": "The optimization is still running.",
+        "run_id": "00000000-0000-4000-8000-000000000005"
+      },
+      "occurred_at": 1789693209200
+    },
+    {
+      "type": "run_start",
+      "data": {
+        "trigger": "user",
+        "run_id": "00000000-0000-4000-8000-000000000006"
+      },
+      "occurred_at": 1789693209400
+    },
+    {
+      "type": "model_input",
+      "data": {
+        "system": "You are the scheduling assistant. <script>unsafe()</script> Revised.",
+        "messages": [
+          {
+            "kind": "question",
+            "content": "Edit the current schedule."
+          },
+          {
+            "kind": "status",
+            "title": "Pending Proposal",
+            "content": "[Current status]\nCheck the original names."
+          }
+        ],
+        "schedule_yaml": "description: Original\n",
+        "run_id": "00000000-0000-4000-8000-000000000006"
+      },
+      "occurred_at": 1789693209600
+    },
+    {
+      "type": "tool_start",
+      "data": {
+        "name": "edit",
+        "arguments": "{\"path\": \"schedule.yaml\", \"edits\": [{\"oldText\": \"missing\", \"newText\": \"x\"}]}",
+        "tool_call_id": "6-edit-49",
+        "run_id": "00000000-0000-4000-8000-000000000006"
+      },
+      "occurred_at": 1789693209800
+    },
+    {
+      "type": "tool",
+      "data": {
+        "name": "edit",
+        "arguments": "{\"path\": \"schedule.yaml\", \"edits\": [{\"oldText\": \"missing\", \"newText\": \"x\"}]}",
+        "result": "Could not find the exact text.",
+        "ok": false,
+        "tool_call_id": "6-edit-49",
+        "run_id": "00000000-0000-4000-8000-000000000006"
+      },
+      "occurred_at": 1789693210000
+    },
+    {
+      "type": "stale",
+      "data": {
+        "message": "The current schedule changed. Ask again.",
+        "run_id": "00000000-0000-4000-8000-000000000006"
+      },
+      "occurred_at": 1789693210200
+    }
+  ]
+}

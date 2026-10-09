@@ -147,6 +147,7 @@ class CreateSessionRequest(BaseModel):
 
     schedule_yaml: str = Field(min_length=1)
     frontend_version: str | None = Field(default=None, min_length=1, max_length=200)
+    ai_endpoint: str | None = Field(default=None, min_length=1, max_length=2048)
 
 
 class ChatRequest(BaseModel):
@@ -194,6 +195,7 @@ class CapabilitiesResponse(BaseModel):
     file_attachments: FileAttachmentCapability
     session_retention_seconds: int
     auth: dict[str, bool | str]
+    saved_chat_export: bool
 
 
 def owner_cookie_token(owner: str | None) -> str:
@@ -496,6 +498,7 @@ def create_app(
         """Report optional features without exposing provider configuration."""
         return CapabilitiesResponse(
             app_version=app.state.app_version,
+            saved_chat_export=recovery.enabled,
             file_attachments=FileAttachmentCapability(
                 enabled=True,
                 max_files=settings.max_attachment_files,
@@ -524,6 +527,7 @@ def create_app(
         refresh_owner_cookie(response, owner)
         session = store.create(owner, request.schedule_yaml)
         session.observe_frontend_version(request.frontend_version, app.state.app_version)
+        session.export_metadata["endpoint"] = request.ai_endpoint or str(http_request.base_url).rstrip("/")
         # The client never learns this ID unless the save succeeds, so release its slot otherwise.
         saved = False
         try:
@@ -539,6 +543,30 @@ def create_app(
             http_request.state.auth_credential_id,
         )
         return CreateSessionResponse(id=session.id)
+
+    @app.get("/sessions/{session_id}/export", dependencies=[Depends(require_auth), Depends(restore_session)])
+    async def export_session(
+        session_id: str,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> dict:
+        """Return one saved snapshot for the browser and administrator export formatter."""
+        store.require_owned(session_id, owner)
+        if recovery.history is None:
+            raise HTTPException(status_code=409, detail="Saved chat export requires PostgreSQL history.")
+        release = recovery.pin(session_id)
+        try:
+            async with asyncio.timeout(5):
+                if not await recovery.save(session_id):
+                    raise HTTPException(status_code=503, detail="The chat snapshot could not be saved.")
+                await recovery.flush(session_id)
+                snapshot = await recovery.history.read("export_snapshot", session_id)
+        except TimeoutError as exc:
+            raise HTTPException(status_code=503, detail="The chat snapshot is still being saved. Try again.") from exc
+        finally:
+            release()
+        if snapshot is None:
+            raise HTTPException(status_code=503, detail="The saved chat snapshot is unavailable.")
+        return snapshot
 
     @app.get("/sessions/{session_id}/events", dependencies=[Depends(require_auth), Depends(restore_session)])
     async def stream_session_events(
@@ -596,6 +624,7 @@ def create_app(
         finally:
             release()
         retained = store.retain_uploads(session_id, owner, uploads)
+        await recovery.save(session_id)
         refresh_owner_cookie(response, owner)
         return [_upload_metadata(item) for item in retained]
 
@@ -619,6 +648,7 @@ def create_app(
     ) -> Response:
         """Remove one retained source file from the session."""
         store.remove_upload(session_id, owner, upload_id)
+        await recovery.save(session_id)
         response = Response(status_code=status.HTTP_204_NO_CONTENT)
         refresh_owner_cookie(response, owner)
         return response

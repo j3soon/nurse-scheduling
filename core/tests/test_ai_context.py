@@ -144,7 +144,14 @@ def test_legacy_recovery_preserves_the_next_provider_request_after_decisions_and
     store.finish(session.id, entries, snapshot=snapshot)
     expected = build_provider_messages(project_history(session.transcript), session.schedule_yaml, "Retry")
     owner, expires, state = store.recovery_state(session.id)
-    assert set(state) == {"schedule_yaml", "pending_proposal", "dropped_history_messages", "dropped_entries"}
+    assert set(state) == {
+        "schedule_yaml",
+        "pending_proposal",
+        "dropped_history_messages",
+        "dropped_entries",
+        "frontend_version",
+        "export_metadata",
+    }
     records = [entry_record(entry) for entry in session.transcript]
     assert ("proposal_decision", {"decision": "approved"}) in records
     recovered = SessionStore(make_settings())
