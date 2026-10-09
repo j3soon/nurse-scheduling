@@ -58,4 +58,44 @@ describe('saved chat export', () => {
     expect(() => buildSavedChatExport({ ...snapshot, schema_version: 2 }, 'html')).toThrow('invalid saved chat snapshot');
     expect(() => buildSavedChatExport({ ...snapshot, snapshot_at: Number.NaN }, 'html')).toThrow('invalid saved chat snapshot');
   });
+
+  it.each([1, 2])('keeps %s steering messages before one assistant when no output has started', count => {
+    const runId = snapshot.runs[0].id;
+    const events = [
+      { type: 'run_start', data: { run_id: runId }, occurred_at: 1 },
+      { type: 'delta', data: { run_id: runId, text: '' }, occurred_at: 2 },
+      { type: 'truncated', data: { run_id: runId }, occurred_at: 3 },
+      ...Array.from({ length: count }, (_, index) => ({
+        type: 'steering', data: { run_id: runId, message_id: `queued-${index}`, message: `Queued ${index}` }, occurred_at: 4 + index,
+      })),
+      { type: 'delta', data: { run_id: runId, text: 'Answer' }, occurred_at: 7 },
+      { type: 'done', data: { run_id: runId }, occurred_at: 8 },
+    ];
+    const { messages } = projectSavedChat(parseSavedChatSnapshot({
+      ...snapshot, runs: [{ ...snapshot.runs[0], prompt: 'First' }], events,
+    }));
+    expect(messages.map(message => [message.role, message.content])).toEqual([
+      ['user', 'First'], ...Array.from({ length: count }, (_, index) => ['user', `Queued ${index}`]), ['assistant', 'Answer'],
+    ]);
+    expect(messages.at(-1)?.truncated).toBe(true);
+  });
+
+  it('inserts a steering reply after its previous output when an optimizer notice arrived meanwhile', () => {
+    const runId = snapshot.runs[0].id;
+    const events = [
+      { type: 'run_start', data: { run_id: runId }, occurred_at: 1 },
+      { type: 'reasoning', data: { run_id: runId, text: 'Checking' }, occurred_at: 2 },
+      { type: 'optimization', data: { job_id: 'job-1', state: 'cancelled', terminal: true, downloadable: false }, occurred_at: 3 },
+      { type: 'steering', data: { run_id: runId, message_id: 'queued', message: 'Queued' }, occurred_at: 4 },
+      { type: 'delta', data: { run_id: runId, text: 'Answer' }, occurred_at: 5 },
+      { type: 'done', data: { run_id: runId }, occurred_at: 6 },
+    ];
+    const { messages } = projectSavedChat(parseSavedChatSnapshot({
+      ...snapshot, runs: [{ ...snapshot.runs[0], prompt: 'First' }], events,
+    }));
+    expect(messages.map(message => message.role)).toEqual(['user', 'assistant', 'user', 'assistant', 'optimizer']);
+    expect(messages[1].activity).toEqual([{ kind: 'reasoning', text: 'Checking' }]);
+    expect(messages[1].responseCompletedAt).toBe(4);
+    expect(messages[3].content).toBe('Answer');
+  });
 });

@@ -32,6 +32,8 @@ initialization, such as loaded backend options enabling Optimize.
 When comparing chat exports with the live transcript, identify the same message
 by its label or content. A foreground stream can prepend a system message after
 the export snapshot, so message position is not stable.
+Check saved transcript reconstruction against live message order as well as export
+byte parity. Include steering before output and optimizer events between replies.
 
 Both affected commands accept `--base REF` to include committed branch changes
 since the merge base with `REF`, `--list` to inspect selection, and `--full` to

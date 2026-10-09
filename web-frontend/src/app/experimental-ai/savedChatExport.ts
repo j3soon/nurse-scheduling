@@ -19,7 +19,7 @@
 
 // This code is mostly AI generated.
 
-import { applyAssistantEvent, toAssistantEvent } from './assistantEvents';
+import { applyAssistantEvent, startsVisibleOutput, toAssistantEvent } from './assistantEvents';
 import { applyModelInput, type ChatMessage } from './chatTranscript';
 import { decodeEvent } from './aiClient';
 import { applyOptimizationEvent, appendOptimizationResult, type ActiveOptimization } from './optimizerEvents';
@@ -61,14 +61,14 @@ export function projectSavedChat(snapshot: SavedChatSnapshot): { messages: ChatM
   let messages: ChatMessage[] = [];
   let activeOptimization: ActiveOptimization | null = null;
   const runs = new Map(snapshot.runs.map(run => [run.id, run]));
-  const turns = new Map<string, { assistantId: string; questionId: string | null; segment: number; workingSchedule: { current: string | null }; schedule: { current: string } }>();
+  const turns = new Map<string, { assistantId: string; questionId: string | null; segment: number; hasOutput: boolean; workingSchedule: { current: string | null }; schedule: { current: string } }>();
   const ensureTurn = (runId: string, at: number) => {
     let turn = turns.get(runId);
     if (turn) return turn;
     const run = runs.get(runId);
     const questionId = run?.kind === 'foreground' ? `question-${runId}` : null;
     if (questionId !== null) messages.push({ id: questionId, role: 'user', content: run?.prompt ?? '', createdAt: run?.started_at ?? at });
-    turn = { assistantId: `assistant-${runId}`, questionId, segment: 0, workingSchedule: { current: null }, schedule: { current: '' } };
+    turn = { assistantId: `assistant-${runId}`, questionId, segment: 0, hasOutput: false, workingSchedule: { current: null }, schedule: { current: '' } };
     messages.push({ id: turn.assistantId, role: 'assistant', content: '', status: 'pending', responseStartedAt: run?.started_at ?? at });
     turns.set(runId, turn);
     return turn;
@@ -87,20 +87,30 @@ export function projectSavedChat(snapshot: SavedChatSnapshot): { messages: ChatM
         if (typeof raw.data.schedule_yaml === 'string') turn.schedule.current = raw.data.schedule_yaml;
         messages = applyModelInput(messages, event.input, turn);
       } else if (event.type === 'steering') {
-        messages = messages.map(message => message.id === turn.assistantId ? applyAssistantEvent(message, { type: 'done' }, raw.occurred_at) : message);
-        turn.segment += 1;
-        turn.questionId = `question-${event.messageId}`;
-        turn.assistantId = `assistant-${event.runId}-${turn.segment}`;
-        messages.push({ id: turn.questionId, role: 'user', content: event.message, createdAt: raw.occurred_at });
-        messages.push({ id: turn.assistantId, role: 'assistant', content: '', status: 'pending', responseStartedAt: raw.occurred_at });
+        const assistantIndex = messages.findIndex(message => message.id === turn.assistantId);
+        const question: ChatMessage = { id: `question-${event.messageId}`, role: 'user', content: event.message, createdAt: raw.occurred_at };
+        if (turn.hasOutput) {
+          messages[assistantIndex] = applyAssistantEvent(messages[assistantIndex], { type: 'done' }, raw.occurred_at);
+          turn.segment += 1;
+          turn.assistantId = `assistant-${event.runId}-${turn.segment}`;
+          messages.splice(assistantIndex + 1, 0, question, {
+            id: turn.assistantId, role: 'assistant', content: '', status: 'pending', responseStartedAt: raw.occurred_at,
+          });
+          turn.hasOutput = false;
+        } else {
+          messages.splice(assistantIndex, 0, question);
+        }
       } else if (event.type === 'download') {
         messages = messages.map(message => message.id === turn.assistantId ? { ...message, downloadId: event.downloadId } : message);
       } else {
         const assistantEvent = ['done', 'stopped', 'error', 'stale'].includes(event.type)
           ? event as Extract<typeof event, { type: 'done' | 'stopped' | 'error' | 'stale' }>
           : toAssistantEvent(event, turn.workingSchedule, turn.schedule);
-        if (assistantEvent !== null) messages = messages.map(message => message.id === turn.assistantId
-          ? applyAssistantEvent(message, assistantEvent, raw.occurred_at) : message);
+        if (assistantEvent !== null) {
+          if (startsVisibleOutput(assistantEvent)) turn.hasOutput = true;
+          messages = messages.map(message => message.id === turn.assistantId
+            ? applyAssistantEvent(message, assistantEvent, raw.occurred_at) : message);
+        }
       }
     }
   }

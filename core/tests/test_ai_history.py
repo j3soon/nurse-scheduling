@@ -324,6 +324,24 @@ def test_recovery_read_failure_during_message_lookup_returns_503(recorded_histor
     assert provider.calls == []
 
 
+def test_saved_export_read_failure_returns_503_and_allows_retry(recorded_history, monkeypatch):
+    monkeypatch.setattr(ChatHistory, "export_snapshot", unavailable)
+    provider = basic.FakeProvider()
+    app = basic.create_test_app(settings=basic.make_settings(history_postgres_url="test"), provider=provider)
+    with basic.AuthenticatedTestClient(app) as client:
+        session_id = basic.create_session(client)
+        response = client.get(f"/sessions/{session_id}/export")
+        assert response.status_code == 503
+        assert "secret-database-url" not in response.text
+        assert not app.state.recovery._pins
+        snapshot = json.loads(
+            Path(__file__).with_name("ai_fixtures").joinpath("chat-export.json").read_text(encoding="utf-8")
+        )
+        monkeypatch.setattr(ChatHistory, "export_snapshot", lambda *_args: snapshot)
+        assert client.get(f"/sessions/{session_id}/export").json() == snapshot
+    assert provider.calls == []
+
+
 @asynccontextmanager
 async def serving(app, owner: str | None = None):
     """Run the application lifespan with an HTTP client that receives JSON acknowledgements."""

@@ -560,6 +560,8 @@ def create_app(
                     raise HTTPException(status_code=503, detail="The chat snapshot could not be saved.")
                 await recovery.flush(session_id)
                 snapshot = await recovery.history.read("export_snapshot", session_id)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from None
         except TimeoutError as exc:
             raise HTTPException(status_code=503, detail="The chat snapshot is still being saved. Try again.") from exc
         finally:

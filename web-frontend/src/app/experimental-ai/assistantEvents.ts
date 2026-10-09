@@ -44,6 +44,11 @@ export type AssistantEvent =
   | { type: 'tool'; activity: ToolActivity }
   | { type: 'schedule_change'; before: string; after: string };
 
+export function startsVisibleOutput(event: AssistantEvent): boolean {
+  return event.type === 'tool_start' || event.type === 'tool' || event.type === 'schedule_change'
+    || ((event.type === 'delta' || event.type === 'reasoning') && event.text.length > 0);
+}
+
 function appendResponseActivity(entries: ActivityEntry[], text: string): ActivityEntry[] {
   const last = entries[entries.length - 1];
   if (last?.kind === 'response') {

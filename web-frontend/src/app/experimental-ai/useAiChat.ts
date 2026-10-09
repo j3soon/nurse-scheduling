@@ -66,6 +66,7 @@ import {
   stopResponse,
   messageId,
   interruptRunningTools,
+  startsVisibleOutput,
   type AssistantEvent,
 } from './assistantEvents';
 import { AI_CONVERSATION_STORAGE_KEY, type StoredChatConversation } from './chatConversation';
@@ -122,11 +123,6 @@ function dispatchPageEvent(event: SessionEvent, callbacks: StreamCallbacks): voi
     case 'context_usage': callbacks.onContextUsage?.(event.usage); break;
     case 'history_trimmed': callbacks.onHistoryTrimmed?.(event.dropped); break;
   }
-}
-
-function startsVisibleOutput(event: AssistantEvent): boolean {
-  return event.type === 'tool_start' || event.type === 'tool' || event.type === 'schedule_change'
-    || ((event.type === 'delta' || event.type === 'reasoning') && event.text.length > 0);
 }
 
 function assistantEventCallbacks(
