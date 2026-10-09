@@ -1306,7 +1306,7 @@ export default function ExperimentalAiPage() {
     });
   };
 
-  const startSessionEventStream = useCallback((sessionId: string, endpoint: string) => {
+  const startSessionEventStream = useCallback((sessionId: string, endpoint: string, resetReplay = false) => {
     sessionEventsControllerRef.current?.abort();
     if (sessionEventsTimerRef.current !== null) {
       window.clearTimeout(sessionEventsTimerRef.current);
@@ -1336,23 +1336,12 @@ export default function ExperimentalAiPage() {
       // The server renews the session when it starts this turn.
       setSessionExpiresAt(Date.now() + sessionRetentionSeconds * 1000);
       sandboxScheduleRef.current = scheduleYamlRef.current;
-      setMessages(previous => previous.some(message => message.id === runId)
-        // A restored or reconnected turn resumes its own message, so clear the
-        // interrupted state rather than stacking a second response beside it.
-        ? previous.map(message => message.id === runId
-          ? { ...message, status: 'pending' as const, responseCompletedAt: undefined }
-          : message)
-        : [
-          ...previous,
-          {
-            id: runId,
-            runId,
-            role: 'assistant',
-            content: '',
-            status: 'pending',
-            responseStartedAt: Date.now(),
-          },
-        ]);
+      setMessages(previous => {
+        const existing = [...previous].reverse().find(message => message.role === 'assistant' && (message.runId ?? message.id) === runId);
+        return existing ? previous.map(message => message.id === existing.id
+          ? { ...message, runId, status: 'pending' as const, responseCompletedAt: undefined } : message)
+          : [...previous, { id: runId, runId, role: 'assistant', content: '', status: 'pending', responseStartedAt: Date.now() }];
+      });
     };
     // A reconnect replays only retained events, so a long turn can lose its own
     // turn_start. Adopt the remaining output instead of discarding the answer.
@@ -1363,7 +1352,10 @@ export default function ExperimentalAiPage() {
     const updateBackgroundMessage = (update: (message: ChatMessage) => ChatMessage, messageId?: string) => {
       const activeId = lifecycle.current('background')?.id ?? messageId;
       if (activeId === undefined) return;
-      setMessages(previous => previous.map(message => message.id === activeId ? update(message) : message));
+      setMessages(previous => {
+        const answer = [...previous].reverse().find(message => message.role === 'assistant' && (message.runId ?? message.id) === activeId);
+        return previous.map(message => message.id === answer?.id ? update(message) : message);
+      });
     };
     const failBackgroundTurn = (message: string) => {
       updateBackgroundMessage(entry => ({
@@ -1385,12 +1377,21 @@ export default function ExperimentalAiPage() {
         setIsReconnecting(false);
       },
       onReset: reset => {
-        setMessages(previous => previous.filter(message => !reset.runIds.includes(message.runId ?? message.id)));
+        setMessages(previous => {
+          const keptRuns = new Set<string>();
+          return previous.flatMap(message => {
+            const runId = message.runId ?? message.id;
+            if (!reset.runIds.includes(runId)) return [message];
+            if (message.role !== 'assistant' || keptRuns.has(runId)) return [];
+            keptRuns.add(runId);
+            return [{ ...message, runId, content: '', activity: [], status: 'pending' as const, responseCompletedAt: undefined }];
+          });
+        });
         setProposalDiff(reset.proposalDiff);
         setActiveOptimization(null);
         lifecycle.finish(lifecycle.current('background'));
         const foreground = eventRouterRef.current.foreground;
-        if (foreground?.runId && !reset.terminalRunIds.includes(foreground.runId)
+        if (foreground?.runId && !reset.runIds.includes(foreground.runId) && !reset.terminalRunIds.includes(foreground.runId)
           && reset.activeRunId !== foreground.runId) {
           foreground.reject(new Error('This response expired from event replay. Start a new question.'));
         }
@@ -1403,20 +1404,17 @@ export default function ExperimentalAiPage() {
       onSteering: (queuedId, content) => {
         const runId = lifecycle.current('background')?.id;
         if (!runId) return;
+        const nextId = messageId();
         setMessages(previous => {
           if (previous.some(message => message.id === queuedId)) return previous;
-          const answer = previous.find(message => message.id === runId);
+          const answer = [...previous].reverse().find(message => message.role === 'assistant' && (message.runId ?? message.id) === runId);
+          const index = previous.findIndex(message => message.id === answer?.id);
           const user: ChatMessage = { id: queuedId, runId, role: 'user', content, createdAt: Date.now() };
           if (answer && (answer.content || answer.activity?.length)) {
-            return [
-              ...previous.map(message => message.id === runId
-                ? { ...message, id: `${runId}:${queuedId}`, status: undefined, responseCompletedAt: Date.now() }
-                : message),
-              user,
-              { id: runId, runId, role: 'assistant', content: '', status: 'pending', responseStartedAt: Date.now() },
-            ];
+            const finished = { ...answer, status: undefined, responseCompletedAt: Date.now() };
+            const next: ChatMessage = { id: nextId, runId, role: 'assistant', content: '', status: 'pending', responseStartedAt: Date.now() };
+            return [...previous.slice(0, index), finished, user, next, ...previous.slice(index + 1)];
           }
-          const index = previous.findIndex(message => message.id === runId);
           return index < 0 ? [...previous, user] : [...previous.slice(0, index), user, ...previous.slice(index)];
         });
       },
@@ -1493,7 +1491,16 @@ export default function ExperimentalAiPage() {
       },
       onDownload: id => updateBackgroundMessage(entry => ({ ...entry, downloadId: id })),
       onWarning: setError,
-      onModelInput: input => setMessages(previous => applyModelInput(previous, input, { questionId: null, assistantId: lifecycle.current('background')?.id ?? messageId() })),
+      onModelInput: input => {
+        const runId = lifecycle.current('background')?.id;
+        setMessages(previous => {
+        const answer = [...previous].reverse().find(message => message.role === 'assistant' && (message.runId ?? message.id) === runId);
+        if (!answer) return previous;
+        const index = previous.findIndex(message => message.id === answer.id);
+        const question = [...previous.slice(0, index)].reverse().find(message => message.role === 'user' && message.source === undefined);
+        return applyModelInput(previous, input, { questionId: question?.id ?? null, assistantId: answer.id });
+        });
+      },
       onContextUsage: updateContextUsage,
       onHistoryTrimmed: setTrimmedHistoryCount,
       onError: failBackgroundTurn,
@@ -1503,6 +1510,7 @@ export default function ExperimentalAiPage() {
       sessionId,
       {
         lastEventId: callbacks.lastEventId,
+        reset: resetReplay,
         onEventId: callbacks.onEventId,
         onEvent: event => {
           if (sessionEventsControllerRef.current === controller && !controller.signal.aborted) {
@@ -1654,10 +1662,15 @@ export default function ExperimentalAiPage() {
           activeAssistantId = initialAssistantId;
           activeAssistantHasOutput = false;
           activeQuestion = question;
-          setMessages(previous => [
-            ...previous.filter(message => !runMessageIds.has(message.id)),
-            { id: initialAssistantId, runId, requestId: request.id, role: 'assistant', content: '', status: 'pending', responseStartedAt },
-          ]);
+          const resetIds = new Set(runMessageIds);
+          setMessages(previous => {
+            const first = previous.findIndex(message => resetIds.has(message.id));
+            const position = first < 0 ? previous.findIndex(message => message.id === userMessage.id) + 1
+              : previous.slice(0, first).filter(message => !resetIds.has(message.id)).length;
+            const retained = previous.filter(message => !resetIds.has(message.id));
+            retained.splice(position, 0, { id: initialAssistantId, runId, requestId: request.id, role: 'assistant', content: '', status: 'pending', responseStartedAt });
+            return retained;
+          });
           runMessageIds.clear();
           runMessageIds.add(initialAssistantId);
         },
@@ -1719,12 +1732,18 @@ export default function ExperimentalAiPage() {
         },
         onDownload: id => setMessages(previous => previous.map(message => message.id === activeAssistantId ? { ...message, downloadId: id } : message)),
         onWarning: setError,
-        onModelInput: input => setMessages(previous => applyModelInput(previous, input, { questionId: userMessage.id, assistantId: activeAssistantId })),
+        onModelInput: input => {
+          const assistantId = activeAssistantId;
+          setMessages(previous => applyModelInput(previous, input, { questionId: userMessage.id, assistantId }));
+        },
         onProposal: diff => setProposalDiff(diff),
         onContextUsage: updateContextUsage,
         onHistoryTrimmed: setTrimmedHistoryCount,
       }, () => lifecycle.owns(operation) && !controller.signal.aborted);
-      const foreground = eventRouterRef.current.begin(event => dispatchPageEvent(event, callbacks), rejectRun);
+      const foreground = eventRouterRef.current.begin(
+        event => dispatchPageEvent(event, callbacks), rejectRun,
+        () => startSessionEventStream(sessionId, sessionEndpoint, true),
+      );
       if (sessionEventsControllerRef.current === null) startSessionEventStream(sessionId, sessionEndpoint);
       const aborted = () => finishRun();
       controller.signal.addEventListener('abort', aborted, { once: true });

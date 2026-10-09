@@ -270,12 +270,20 @@ class SessionEventStream:
         replay = self._sessions.get(session_id)
         return replay.last_id if replay is not None else 0
 
-    async def stream(self, session_id: str, after_id: int) -> AsyncGenerator[SessionEvent | None]:
+    async def stream(
+        self, session_id: str, after_id: int, *, force_reset: bool = False
+    ) -> AsyncGenerator[SessionEvent | None]:
         signal = asyncio.Event()
         self._signals.setdefault(session_id, set()).add(signal)
         try:
             while signal in self._signals.get(session_id, ()):
                 replay = self._sessions.get(session_id)
+                if force_reset:
+                    replay = self._sessions.setdefault(session_id, _Replay())
+                    reset = await self._reset(session_id, replay, 0)
+                    after_id, force_reset = reset.id, False
+                    yield reset
+                    continue
                 if replay is not None and (after_id < replay.lost_through or after_id > replay.last_id):
                     reset = await self._reset(session_id, replay, after_id)
                     after_id = reset.id

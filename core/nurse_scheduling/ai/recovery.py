@@ -326,7 +326,7 @@ class SessionRecovery:
             unfinished_runs = record["unfinished_runs"]
             interrupted = [run for run in unfinished_runs if run["status"] == "running"]
             for run in interrupted:
-                if not await self.history.write("interrupt_run", session_id, run["id"]):
+                if not await self.history.write("recover_run", session_id, run["id"]):
                     raise HTTPException(status_code=503, detail="AI message recovery is temporarily unavailable.")
             if interrupted:
                 try:
@@ -347,6 +347,8 @@ class SessionRecovery:
             release = self.pin(session_id)
             try:
                 for run in unfinished_runs:
+                    if run["terminal_type"] is not None:
+                        continue
                     await self._end_unfinished_run(session, run["id"], run["kind"], run["status"])
             finally:
                 release()
@@ -424,11 +426,15 @@ class SessionRecovery:
 
     async def close(self) -> None:
         """Give pending entry and event writes a bounded chance to finish during shutdown."""
+        retries = [asyncio.create_task(self.save(session_id)) for session_id in self._unsaved_outcomes]
         writers = [
-            writer
-            for writers in (self._entry_writers, self._writers)
-            for writer in writers.values()
-            if not writer.done()
+            *retries,
+            *(
+                writer
+                for writers in (self._entry_writers, self._writers)
+                for writer in writers.values()
+                if not writer.done()
+            ),
         ]
         if writers:
             await asyncio.wait(writers, timeout=FLUSH_TIMEOUT_SECONDS)

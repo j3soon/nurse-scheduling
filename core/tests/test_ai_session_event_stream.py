@@ -140,3 +140,24 @@ def test_publication_does_not_share_mutable_payloads_with_replay():
 
     assert stream.events_after("s")[0].data["progress"]["currentBestScore"] == 12
     assert stream._sessions["s"].recovery[0].data["progress"]["currentBestScore"] == 12
+
+
+def test_explicit_reset_covers_output_before_the_acknowledged_cursor():
+    async def exercise():
+        stream = SessionEventStream()
+        stream.publish("s", {"type": "delta", "run_id": "run", "text": "Complete output"})
+        stream.publish("s", {"type": "done", "run_id": "run"})
+        reader = stream.stream("s", stream.cursor("s"), force_reset=True)
+        reset = await anext(reader)
+        assert reset.type == "session_reset"
+        assert reset.id == 2
+        assert [(event["type"], event["data"].get("text")) for event in reset.data["events"]] == [
+            ("delta", "Complete output"),
+            ("done", None),
+        ]
+        stream.publish("s", {"type": "delta", "run_id": "next", "text": "Next output"})
+        event = await anext(reader)
+        assert event.id == 3 and event.data["text"] == "Next output"
+        await reader.aclose()
+
+    asyncio.run(exercise())

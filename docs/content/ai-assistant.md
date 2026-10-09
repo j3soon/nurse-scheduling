@@ -92,6 +92,10 @@ The browser buffers events received before acknowledgement and routes them by
 `run_id`. A disconnected reader reconnects without cancelling server work.
 Expired cursors receive a replacement `session_reset` snapshot. Replay has separate
 event-count and serialized-byte limits for each session and for the process.
+When an earlier snapshot cannot prove an acknowledged run is active or complete,
+the browser requests `GET /sessions/{session_id}/events?reset=true`. The fresh
+snapshot resolves expiry without rejecting a run accepted after the earlier reset.
+Replacement replay keeps answers beside their original questions.
 The service applies queued steering before each follow-up model request, including
 requests after refused tool calls. It requires provider completion before tools
 run and rejects conflicting finish reasons or further output after completion.
@@ -122,7 +126,7 @@ to 1,000 required events, with a separate limit of 100 transient progress update
 Their combined serialized size is limited to 4 MiB per session and 64 MiB across
 the process. Expired cursors receive a replacement snapshot. PostgreSQL stores
 accepted questions before execution and saves non-progress publications through
-an asynchronous writer. It stores completed model entries before tool execution.
+an asynchronous writer. It queues completed model entries before tool execution.
 Consecutive text fragments can share a storage row. The browser reattaches with
 the same client message ID and replaces partial output with the snapshot.
 It does not start another model run.
@@ -673,7 +677,7 @@ The survey covers both the coding agent and its separate durable package:
 | Keep content entries separate from live deltas. | Store combined content blocks and rebuild complete replay snapshots. Retain UI event kinds so tool activity, proposals, and steering keep their existing frontend behavior. |
 | Give entries identity and order. | Use PostgreSQL identity sequences and timestamps. Keep per-channel SSE cursors for the browser protocol. |
 | Store task and submission state explicitly. | Keep accepted questions and unique client request IDs in turns. Store foreground and background execution status directly. The existing Stop records handle requests that arrive before acceptance. |
-| Save completed messages. | Also checkpoint partial content before publishing it. This preserves saved output after a crash, but still writes each published fragment and can rewrite growing JSON values. Fewer rows do not imply fewer writes. |
+| Save completed messages. | Queue typed session entries when model responses end and save live publications through an asynchronous replay writer. Final outcome writes include the resulting state and pending entries. A failed recovery write produces a warning and remains eligible for retry. |
 | Support session branches and a general durable task framework. | Keep linear conversations and the existing agent and optimizer workers. Branches, generic tasks, watches, documents, and Pi's SQLite runtime add machinery this app does not need. |
 | Store content with associated metadata. | Keep one recovery history. Store reporting metadata on sessions and turns, without separate copies of questions and answers in audit tables. |
 

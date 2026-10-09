@@ -231,7 +231,7 @@ class ChatHistory:
             ).fetchone()
         return None if row is None else (str(row[0]), row[1])
 
-    def interrupt_run(self, session_id: str, run_id: str) -> None:
+    def recover_run(self, session_id: str, run_id: str) -> None:
         """Retain safe context for an accepted run that a dead process left unfinished."""
         with self._connect() as connection:
             connection.execute("SELECT id FROM chat_sessions WHERE id = %s FOR UPDATE", (session_id,))
@@ -247,15 +247,22 @@ class ChatHistory:
                 "AND type IN ('model_input', 'delta', 'reasoning', 'tool_start', 'tool', 'steering'))",
                 (session_id, run[1], session_id, run_id),
             ).fetchone()[0]
-            if not stopped_before_work:
+            terminal = connection.execute(
+                "SELECT type FROM chat_session_events WHERE session_id = %s AND run_id = %s "
+                "AND type IN ('done', 'stopped', 'error', 'stale') ORDER BY event_id DESC LIMIT 1",
+                (session_id, run_id),
+            ).fetchone()
+            kind = terminal[0] if terminal is not None else None
+            status = {"done": "completed", "stopped": "cancelled", "stale": "stale"}.get(kind, "failed")
+            committed = kind == "done" or (kind != "stale" and not stopped_before_work)
+            if committed and kind != "done":
                 seq = connection.execute(
                     "SELECT coalesce(max(seq) + 1, 0) FROM chat_session_entries WHERE session_id = %s", (session_id,)
                 ).fetchone()[0]
                 _insert_entries(connection, session_id, [(seq, run_id, AssistantMessage("", "error"))])
             connection.execute(
-                "UPDATE chat_runs SET status = 'failed', error_code = 'service_restart', committed = %s, "
-                "finished_at = now() WHERE id = %s",
-                (not stopped_before_work, run_id),
+                "UPDATE chat_runs SET status = %s, error_code = %s, committed = %s, finished_at = now() WHERE id = %s",
+                (status, "service_restart" if kind is None else None, committed, run_id),
             )
 
     def load_session(self, session_id: str, owner: str) -> dict[str, Any] | None:
@@ -288,9 +295,12 @@ class ChatHistory:
                 (session_id,),
             ).fetchone()
             unfinished = connection.execute(
-                "SELECT r.id, r.kind, r.status FROM chat_runs r WHERE r.session_id = %s AND NOT EXISTS ("
+                "SELECT r.id, r.kind, r.status, (SELECT e.type FROM chat_session_events e "
+                "WHERE e.session_id = r.session_id AND e.run_id = r.id "
+                "AND e.type IN ('done', 'stopped', 'stale', 'error') ORDER BY e.event_id DESC LIMIT 1) "
+                "FROM chat_runs r WHERE r.session_id = %s AND (r.status = 'running' OR NOT EXISTS ("
                 "SELECT 1 FROM chat_session_events e WHERE e.session_id = r.session_id AND e.run_id = r.id "
-                "AND e.type IN ('done', 'stopped', 'stale', 'error')) ORDER BY r.sequence",
+                "AND e.type IN ('done', 'stopped', 'stale', 'error'))) ORDER BY r.sequence",
                 (session_id,),
             ).fetchall()
         return {
@@ -306,7 +316,8 @@ class ChatHistory:
             "next_entry_seq": int(next_entry_seq),
             "last_event_id": int(last_event_id),
             "unfinished_runs": [
-                {"id": str(run_id), "kind": kind, "status": status} for run_id, kind, status in unfinished
+                {"id": str(run_id), "kind": kind, "status": status, "terminal_type": terminal}
+                for run_id, kind, status, terminal in unfinished
             ],
         }
 

@@ -332,7 +332,9 @@ async def serving(app, owner: str | None = None):
         yield client
 
 
-async def read_events(app, session_id: str, owner: str, cursor: int = 0, until: str = "done") -> list[tuple]:
+async def read_events(
+    app, session_id: str, owner: str, cursor: int = 0, until: str = "done", *, reset: bool = False
+) -> list[tuple]:
     """Read the session stream from a cursor until an event type arrives, and return its frames."""
     requests = asyncio.Queue()
     await requests.put({"type": "http.request", "body": b"", "more_body": False})
@@ -353,7 +355,7 @@ async def read_events(app, session_id: str, owner: str, cursor: int = 0, until: 
         "scheme": "http",
         "path": path,
         "raw_path": path.encode(),
-        "query_string": b"",
+        "query_string": b"reset=true" if reset else b"",
         "root_path": "",
         "headers": [
             (b"authorization", f"Bearer {basic.AI_AUTH_TOKEN}".encode()),
@@ -1422,3 +1424,144 @@ def test_postgres_retries_a_final_outcome_that_failed_to_save(postgres_history, 
     assert reset_text(frames) == "Saved answer"
     assert "service restarted" not in json.dumps(reset)
     assert provider.calls == []
+
+
+def test_postgres_shutdown_retries_a_failed_final_outcome(postgres_history, monkeypatch):
+    async def exercise():
+        app = basic.create_test_app(
+            settings=basic.make_settings(history_postgres_url="test"), provider=basic.FakeProvider([["Saved answer"]])
+        )
+        async with serving(app) as client:
+            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            with monkeypatch.context() as patch:
+                patch.setattr(ChatHistory, "finish_run", unavailable)
+                await client.post(
+                    f"/sessions/{session_id}/messages", json={"message": "Question", "message_id": "accepted"}
+                )
+                while app.state.runs.busy(session_id):
+                    await asyncio.sleep(0.01)
+                await app.state.recovery.flush(session_id)
+            owner = client.cookies[basic.OWNER_COOKIE]
+        return session_id, owner
+
+    session_id, owner = asyncio.run(exercise())
+    with postgres_history._connect() as connection:
+        assert connection.execute("SELECT status, committed FROM chat_runs").fetchone() == ("completed", True)
+    assert postgres_history.load_session(session_id, owner)["entries"] == [
+        UserMessage("Question"),
+        AssistantMessage("Saved answer"),
+    ]
+
+
+def test_postgres_restart_recovers_a_saved_terminal_with_an_unfinished_status(postgres_history):
+    session_id, owner, run_id = str(uuid4()), str(uuid4()), str(uuid4())
+    state = session_state(owner)
+    postgres_history.save_session(session_id, state)
+    postgres_history.start_run(
+        run_id, session_id, state, "Question", 0, model="model", attachment_count=0, message_id="accepted"
+    )
+    postgres_history.append_entries(session_id, [(1, run_id, AssistantMessage("Saved answer"))])
+    postgres_history.append_events(session_id, [(1, 1, run_id, "done", {"run_id": run_id, "history_saved": False})])
+
+    async def restarted():
+        provider = basic.FakeProvider([["Must not execute"]])
+        app = basic.create_test_app(settings=basic.make_settings(history_postgres_url="test"), provider=provider)
+        async with serving(app, owner) as client:
+            response = await client.post(
+                f"/sessions/{session_id}/messages", json={"message": "Question", "message_id": "accepted"}
+            )
+            assert response.json() == {"run_id": run_id}
+            assert provider.calls == []
+            assert app.state.session_store._sessions[session_id].transcript == [
+                UserMessage("Question"),
+                AssistantMessage("Saved answer"),
+            ]
+
+    asyncio.run(restarted())
+    with postgres_history._connect() as connection:
+        assert connection.execute("SELECT status, committed FROM chat_runs").fetchone() == ("completed", True)
+        assert connection.execute("SELECT count(*) FROM chat_session_events WHERE type = 'done'").fetchone() == (1,)
+
+
+def test_postgres_explicit_reset_recovers_output_at_the_current_cursor(postgres_history):
+    async def exercise():
+        app = basic.create_test_app(
+            settings=basic.make_settings(history_postgres_url="test"),
+            provider=basic.FakeProvider([["Complete answer"]]),
+        )
+        async with serving(app) as client:
+            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            await client.post(f"/sessions/{session_id}/messages", json={"message": "Question"})
+            while app.state.runs.busy(session_id):
+                await asyncio.sleep(0.01)
+            cursor = app.state.session_event_stream.cursor(session_id)
+            frames = await read_events(
+                app, session_id, client.cookies[basic.OWNER_COOKIE], cursor, until="session_reset", reset=True
+            )
+            assert reset_text(frames) == "Complete answer"
+            assert frames[0][2]["events"][-1]["type"] == "done"
+
+    asyncio.run(exercise())
+
+
+def test_reset_covers_output_when_the_run_finishes_during_its_storage_read(postgres_history, monkeypatch):
+    captured = threading.Event()
+    return_rows = threading.Event()
+    original_load = ChatHistory.load_events
+
+    def delayed_load(self, session_id, after_id):
+        rows = original_load(self, session_id, after_id)
+        captured.set()
+        assert return_rows.wait(5)
+        return rows
+
+    async def scenario():
+        started = asyncio.Event()
+        complete = asyncio.Event()
+
+        class WaitingProvider:
+            async def stream_events(self, messages, tools=None):
+                yield TextDelta("Partial answer")
+                started.set()
+                await complete.wait()
+                yield TextDelta(" completed")
+
+        app = basic.create_test_app(
+            settings=basic.make_settings(history_postgres_url="test"), provider=WaitingProvider()
+        )
+        app.state.session_event_stream._max_bytes = 1
+        async with serving(app) as client:
+            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            run_id = (
+                await client.post(
+                    f"/sessions/{session_id}/messages", json={"message": "Question", "message_id": "accepted"}
+                )
+            ).json()["run_id"]
+            await asyncio.wait_for(started.wait(), 5)
+            await asyncio.sleep(0.05)
+            await app.state.recovery.flush(session_id)
+            monkeypatch.setattr(ChatHistory, "load_events", delayed_load)
+            reader = asyncio.create_task(
+                read_events(app, session_id, client.cookies[basic.OWNER_COOKIE], until="session_reset", reset=True)
+            )
+            assert await asyncio.to_thread(captured.wait, 5)
+            complete.set()
+            while app.state.runs.busy(session_id):
+                await asyncio.sleep(0.01)
+            await app.state.recovery.flush(session_id)
+            return_rows.set()
+            frames = await reader
+            first = next(data for _id, kind, data in frames if kind == "session_reset")
+            assert first["active_run_id"] is None
+            assert any(event["data"].get("run_id") == run_id for event in first["events"])
+            assert not any(event["type"] == "done" for event in first["events"])
+            current = await read_events(
+                app, session_id, client.cookies[basic.OWNER_COOKIE], until="session_reset", reset=True
+            )
+            latest = next(data for _id, kind, data in current if kind == "session_reset")
+            assert any(event["type"] == "done" and event["data"].get("run_id") == run_id for event in latest["events"])
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        return_rows.set()

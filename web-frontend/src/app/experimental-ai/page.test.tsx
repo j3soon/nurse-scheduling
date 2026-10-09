@@ -175,9 +175,11 @@ describe('ExperimentalAiPage', () => {
       void Promise.resolve(mockRunEvents(id, message, callbacks, signal, token, endpoint))
         .then(() => {
           if (pendingForegroundRunId === runId) pendingForegroundRunId = null;
+          if (signal.aborted) return;
           callbacks.onEvent({ type: 'done', runId });
         }, (error: Error) => {
           if (pendingForegroundRunId === runId) pendingForegroundRunId = null;
+          if (signal.aborted) return;
           if (error instanceof MockAiStaleRunError) callbacks.onEvent({ type: 'stale', message: error.message });
           else callbacks.onEvent({ type: 'error', message: error.message });
         });
@@ -1983,6 +1985,7 @@ describe('ExperimentalAiPage', () => {
 
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Keep working.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Partial answer.');
     await user.click(await screen.findByRole('button', { name: 'Stop' }));
 
     // The Stop names its message, so it cannot end a later run.
@@ -2548,4 +2551,63 @@ describe('ExperimentalAiPage', () => {
       expect(mockCreateSession).toHaveBeenCalledTimes(1);
     });
   });
+  it('keeps replayed completed answers beside their original questions', async () => {
+    mockRunEvents.mockImplementation(async (_session: string, question: string, callbacks: SessionStreamOptions) => {
+      callbacks.onEvent({ type: 'delta', text: `Answer to ${question}` });
+    });
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    for (const question of ['Q1', 'Q2']) {
+      await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), question);
+      await user.click(screen.getByRole('button', { name: 'Send' }));
+      await screen.findByText(`Answer to ${question}`);
+      await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument());
+    }
+    const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
+    act(() => {
+      stream.onEvent({ type: 'session_reset', reset: { runIds: ['user-run-1', 'user-run-2'], activeRunId: null, terminalRunIds: ['user-run-1', 'user-run-2'], incomplete: false, proposalDiff: null } });
+      for (const [runId, question] of [['user-run-1', 'Q1'], ['user-run-2', 'Q2']]) {
+        stream.onEvent({ type: 'run_start', runId, trigger: 'user' });
+        stream.onEvent({ type: 'delta', runId, text: `Answer to ${question}` });
+        stream.onEvent({ type: 'done', runId });
+      }
+    });
+    act(() => window.dispatchEvent(new Event('pagehide')));
+    const saved = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
+    const order = saved.messages.filter((entry: { role: string; source?: string }) => !entry.source && ['user', 'assistant'].includes(entry.role)).map((entry: { content: string }) => entry.content);
+    console.log({ replayedOrder: order });
+    expect(order).toEqual(['Q1', 'Answer to Q1', 'Q2', 'Answer to Q2']);
+  });
+  it('applies each replayed model input to the correct run in one reset', async () => {
+    mockRunEvents.mockImplementation(async (_session: string, question: string, callbacks: SessionStreamOptions) => {
+      callbacks.onEvent({ type: 'delta', text: `Answer to ${question}` });
+    });
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    for (const question of ['Q1', 'Q2']) {
+      await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), question);
+      await user.click(screen.getByRole('button', { name: 'Send' }));
+      await screen.findByText(`Answer to ${question}`);
+      await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument());
+    }
+    const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
+    act(() => {
+      stream.onEvent({ type: 'session_reset', reset: { runIds: ['user-run-1', 'user-run-2'], activeRunId: null, terminalRunIds: ['user-run-1', 'user-run-2'], incomplete: false, proposalDiff: null } });
+      for (const [runId, question] of [['user-run-1', 'Q1'], ['user-run-2', 'Q2']]) {
+        stream.onEvent({ type: 'run_context', runId });
+        stream.onEvent({ type: 'run_start', runId, trigger: 'user' });
+        stream.onEvent({ type: 'model_input', runId, input: { system: `Recovered system ${question}`, messages: [{ kind: 'question', content: `Recovered ${question}` }] } });
+        stream.onEvent({ type: 'delta', runId, text: `Recovered answer ${question}` });
+        stream.onEvent({ type: 'done', runId });
+      }
+    });
+    act(() => window.dispatchEvent(new Event('pagehide')));
+    const saved = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
+    const contents = saved.messages.map((entry: { content: string }) => entry.content);
+    expect(contents).toContain('Recovered Q1');
+    expect(contents).toContain('Recovered Q2');
+    expect(contents).toContain('Recovered system Q1');
+    expect(contents).toContain('Recovered system Q2');
+  });
+
 });

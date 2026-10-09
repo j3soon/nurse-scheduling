@@ -132,7 +132,9 @@ cases ran. A passing suite with those cases skipped does not validate persistenc
   Optimizer progress can remain transient.
 - Publish foreground and optimizer review output through the session GET stream.
   Attach `run_id` before publication and delay terminal events until cleanup and
-  outcome persistence finish. Save completed model entries before executing tools.
+  outcome persistence finish. Queue completed model entries for storage before tools.
+  Recover unfinished status even when a terminal publication was saved. Retry failed
+  final outcome writes during shutdown while recovery storage is still available.
 - Append database migrations without renaming previously applied files. Test an
   upgrade from the deployed schema with saved sessions, message IDs, and Stop
   requests. Document backup and rollback when the old code cannot read the new schema.

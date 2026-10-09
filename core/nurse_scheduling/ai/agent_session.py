@@ -361,11 +361,11 @@ class AgentSession:
         for listener in tuple(self._listeners):
             listener(event)
 
-    async def events(self, after_id: int) -> AsyncGenerator[SessionEvent | None]:
+    async def events(self, after_id: int, *, force_reset: bool = False) -> AsyncGenerator[SessionEvent | None]:
         if self._events_closed:
             return
         assert self.event_stream is not None
-        async with aclosing(self.event_stream.stream(self.id, after_id)) as reader:
+        async with aclosing(self.event_stream.stream(self.id, after_id, force_reset=force_reset)) as reader:
             async for event in reader:
                 yield event
 

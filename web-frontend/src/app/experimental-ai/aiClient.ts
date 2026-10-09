@@ -727,7 +727,7 @@ export async function streamSessionEvents(
   authToken: string | null,
   endpoint = getAiBaseUrl(),
 ): Promise<void> {
-  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/events`, {
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/events${callbacks.reset ? '?reset=true' : ''}`, {
     method: 'GET',
     credentials: 'include',
     headers: authorizedHeaders(

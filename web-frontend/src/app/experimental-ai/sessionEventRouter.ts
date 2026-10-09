@@ -33,14 +33,16 @@ interface ForegroundRun {
   handle: SessionEventHandler;
   deferred: DeferredEvent[];
   reject: (error: Error) => void;
+  refresh: () => void;
+  pendingReset?: SessionReset;
 }
 
 /** Route one session stream independently of React and HTTP response timing. */
 export class SessionEventRouter {
   foreground: ForegroundRun | null = null;
 
-  begin(handle: SessionEventHandler, reject: (error: Error) => void): ForegroundRun {
-    const run = { handle, reject, deferred: [] as DeferredEvent[] };
+  begin(handle: SessionEventHandler, reject: (error: Error) => void, refresh: () => void): ForegroundRun {
+    const run = { handle, reject, refresh, deferred: [] as DeferredEvent[] };
     this.foreground = run;
     return run;
   }
@@ -65,18 +67,28 @@ export class SessionEventRouter {
   }
 
   acknowledge(run: ForegroundRun, runId: string, identify: (id: string) => void): void {
+    if (this.foreground !== run) return;
     run.runId = runId;
     identify(runId);
+    const terminalBuffered = run.deferred.some(({ event }) => event.runId === runId
+      && ['done', 'stopped', 'stale', 'error'].includes(event.type));
     for (const { event, background, ownsConversation } of run.deferred.splice(0)) {
       if (ownsConversation()) {
         (event.runId === runId ? run.handle : background)(event);
       }
     }
+    // An earlier snapshot may predate acceptance. Refresh it after identifying the
+    // run instead of treating missing output as proof that a new run expired.
+    if (run.pendingReset && !terminalBuffered && !run.pendingReset.terminalRunIds.includes(runId)
+      && run.pendingReset.activeRunId !== runId) run.refresh();
+    run.pendingReset = undefined;
   }
 
   reset(reset: SessionReset): void {
     const run = this.foreground;
-    if (run?.runId && !reset.terminalRunIds.includes(run.runId) && reset.activeRunId !== run.runId) {
+    if (run && !run.runId) run.pendingReset = reset;
+    if (run?.runId && !reset.runIds.includes(run.runId)
+      && !reset.terminalRunIds.includes(run.runId) && reset.activeRunId !== run.runId) {
       run.reject(new Error('This response expired from event replay. Start a new question.'));
     }
   }

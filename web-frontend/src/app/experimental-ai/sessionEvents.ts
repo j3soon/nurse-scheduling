@@ -57,5 +57,6 @@ export type SessionEventHandler = (event: SessionEvent) => void;
 export interface SessionStreamOptions {
   onEvent: SessionEventHandler;
   lastEventId?: number;
+  reset?: boolean;
   onEventId?: (id: number) => void;
 }

@@ -77,6 +77,9 @@ callbacks to their connection and other async completions to their conversation.
 Route session output by `run_id`, including events received before POST acceptance
 is acknowledged. Buffer those events until acknowledgement identifies their run.
 Keep accepted deferred events scoped to the conversation when their reader closes.
+If a reset arrives before acceptance is acknowledged, request a covering snapshot
+after the run is identified before deciding that its output expired. Preserve each
+answer's original position when replacement replay rebuilds its output.
 Replay snapshots replace output without completing unrelated active operations.
 Keep queued messages waiting until foreground and background work are both idle.
 AI chat does not require compatibility with older AI backend APIs. Update the

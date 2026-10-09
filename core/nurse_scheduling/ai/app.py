@@ -203,10 +203,10 @@ def owner_cookie_token(owner: str | None) -> str:
 
 
 async def _session_sse(
-    session: AgentSession, after_id: int, *, until_run: AgentRun | None = None
+    session: AgentSession, after_id: int, *, until_run: AgentRun | None = None, force_reset: bool = False
 ) -> AsyncIterator[str]:
     """Frame the shared replay journal. A compatibility reader ends with its own run."""
-    async with aclosing(session.events(after_id)) as reader:
+    async with aclosing(session.events(after_id, force_reset=force_reset)) as reader:
         async for event in reader:
             if event is None:
                 yield ": keepalive\n\n"
@@ -539,6 +539,7 @@ def create_app(
     async def stream_session_events(
         session_id: str,
         request: Request,
+        reset: bool = False,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> StreamingResponse:
         """Replay every session event. Disconnect only detaches this reader."""
@@ -550,7 +551,7 @@ def create_app(
             raise HTTPException(status_code=400, detail="Last-Event-ID must be an integer.") from None
 
         return StreamingResponse(
-            _session_sse(session, after_id),
+            _session_sse(session, after_id, force_reset=reset),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
