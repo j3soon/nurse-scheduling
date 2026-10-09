@@ -648,19 +648,19 @@ export async function sendMessage(
         }
         stopSaved = true;
       }
-      let response: Response;
+      let body: { run_id?: unknown };
       try {
-        response = await postMessage(
+        const response = await postMessage(
           sessionId, message, connection.signal, authToken, endpoint, 'application/json', messageId,
         );
+        body = await response.json() as { run_id?: unknown };
       } catch (error) {
         // A retry can find another run still active, or the service restarting.
         const retryable = !(error instanceof AiHttpError) || (retries > 0 && (error.status >= 500 || error.status === 409));
         if (retryable) throw new AiConnectionError('The AI connection was interrupted.');
         throw error;
       }
-      const body = await response.json() as { run_id?: unknown };
-      if (typeof body.run_id !== 'string' || !body.run_id) throw new Error('The AI backend returned an invalid run ID.');
+      if (typeof body?.run_id !== 'string' || !body.run_id) throw new Error('The AI backend returned an invalid run ID.');
       onConnectionChange?.(true);
       return body.run_id;
     } catch (error) {

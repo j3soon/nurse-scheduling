@@ -475,6 +475,29 @@ describe('AI client', () => {
     expect(JSON.parse(fetchMock.mock.calls[1][1].body as string)).toEqual({ message_id: 'message-1' });
   });
 
+  it.each([false, true])('retries a dropped acknowledgement body with the same ID, with Stop=%s', async stopped => {
+    const interrupted = new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"run_'));
+        controller.error(new TypeError('The response body connection closed'));
+      },
+    }), { status: 202 });
+    const fetchMock = vi.fn().mockResolvedValueOnce(interrupted);
+    if (stopped) fetchMock.mockResolvedValueOnce(new Response(null, { status: 202 }));
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ run_id: 'accepted-run' }), { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(sendMessage('session', 'Question', new AbortController().signal, null, undefined, {
+      messageId: 'original-id', shouldStop: () => stopped,
+    })).resolves.toBe('accepted-run');
+    expect(fetchMock.mock.calls.map(([url]) => String(url).split('/').at(-1)))
+      .toEqual(stopped ? ['messages', 'stop', 'messages'] : ['messages', 'messages']);
+    for (const [url, request] of fetchMock.mock.calls) {
+      const body = JSON.parse(request.body as string);
+      expect(body.message_id).toBe('original-id');
+      if (!String(url).endsWith('/stop')) expect(body.message).toBe('Question');
+    }
+  });
+
   it('fails a stopped request when the server rejects its Stop', async () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockRejectedValueOnce(new TypeError('Failed to fetch'))
