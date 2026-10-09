@@ -2,12 +2,27 @@
 
 Use these pages to develop, operate, or extend Nurse Scheduling.
 
-- [Repository setup and development workflow](https://github.com/j3soon/nurse-scheduling#how-to-run)
-- [Backend server](../backend-server.md)
-- [Backend containers and networks](../containers.md)
-- [Experimental AI assistant backend](../ai-assistant.md)
-- [Solver behavior](../solvers.md)
-- [System design](../design.md)
+## Reproduce
+
+These pages reuse the repository READMEs so commands have one source:
+
+- [Setup and run](reproduce/setup.md): prerequisites and development containers.
+- [Core](reproduce/core.md): CLI, optimization backend, AI service, and tests.
+- [Web frontend](reproduce/frontend.md): development, browser tests, and Netlify.
+- [Documentation](reproduce/docs.md): local preview and strict builds.
+
+## Backend deployment
+
+The [deployment guide](backend-deployment.md) covers Compose services,
+authentication, storage, Sentry, usage reports, and diagnostics.
+
+## Architecture
+
+- [Backend server](backend-server.md)
+- [Backend containers and networks](containers.md)
+- [Experimental AI assistant backend](ai-assistant.md)
+- [Solver behavior](solvers.md)
+- [Design rationale](design-rationale.md)
 - [Project timeline](../timeline.md)
 
 For product use, start with the [User Guide](../user-guide/get-started.md).
@@ -25,7 +40,7 @@ multiple servers for the same component in its project and distinguish
 production from staging with environments.
 
 Configure the static frontend in its build provider. For Netlify, follow the
-[repository hosting instructions](https://github.com/j3soon/nurse-scheduling#hosting-on-netlify)
+[repository hosting instructions](reproduce/frontend.md#hosting-on-netlify)
 for the exact UI location, scope, sensitivity settings, and missing-token
 behavior:
 
@@ -45,4 +60,4 @@ send events with their public DSNs and do not need this token.
 
 Backend Docker deployments configure `SENTRY_BACKEND_DSN` and
 `SENTRY_ENVIRONMENT` in the selected `docker/.env` file. See the
-[backend deployment instructions](https://github.com/j3soon/nurse-scheduling/blob/dev/docker/README.md#sentry).
+[backend deployment instructions](backend-deployment.md#sentry).

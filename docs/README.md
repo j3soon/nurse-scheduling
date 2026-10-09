@@ -6,6 +6,9 @@ SPDX-FileCopyrightText: 2026 Johnson Sun -->
 
 The documentation uses Zensical. Source pages live under `docs/content/`.
 Run these commands from the repository root. They are tested on Linux only.
+The developer-guide reproduction pages reuse module READMEs through symlinks.
+On Windows, enable Git symlink support or build in Linux or WSL. A checkout that
+replaces symlinks with plain text does not render those pages correctly.
 
 ```sh
 # create virtual environment
@@ -22,4 +25,5 @@ For building static site, run:
 
 ```sh
 zensical build --clean --strict
+python scripts/check_docs_links.py
 ```

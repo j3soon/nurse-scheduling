@@ -114,6 +114,17 @@
   simple declaration cannot produce a clear result.
 - Use text or tables below a figure for detail.
 
+## Reproduce pages and links
+
+- Keep module commands in their READMEs. The developer-guide reproduction pages
+  and backend deployment page are symlinks to those files.
+- Use absolute links in symlinked READMEs so repository and site views resolve
+  them from the same place. State each shell block's working directory.
+- Move page paths, navigation entries, and inbound links together. Add permanent
+  redirects for published paths and preserve existing heading IDs.
+- Git on Windows can check out symlinks as plain text. Enable symlink support
+  or use Linux or WSL when building the documentation.
+
 ## Validation
 
 - For walkthroughs that claim a GUI can reproduce a bundled schedule, start
@@ -132,6 +143,7 @@
   figures and formulas.
 - Run `zensical build --clean --strict` and `git diff --check` before
   finishing.
-- Verify internal links and referenced assets resolve without 404 responses.
+- Run `python scripts/check_docs_links.py` after the build. It checks pages,
+  assets, anchors, README references, and redirect targets without network access.
 - After renaming a heading, update inbound anchor links and let the Zensical
   build check for stale anchors.

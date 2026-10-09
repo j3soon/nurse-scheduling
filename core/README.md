@@ -18,7 +18,7 @@ The main solver paths are:
 - `pulp/cuopt`, labeled **PuLP | cuOpt**, is the experimental GPU solver. It
   requires the NVIDIA cuOpt runtime and a supported GPU.
 
-See the [solver reference](https://nursescheduling.org/docs/solvers/) for the
+See the [solver reference](https://dev.nursescheduling.org/docs/developer-guide/solvers/) for the
 full experimental solver matrix, platform requirements, runtime capabilities,
 and test coverage.
 
@@ -290,5 +290,5 @@ Start the AI backend and frontend in separate terminals:
 Open `http://localhost:3000/experimental-ai`, select **Change**, then select
 **Use localhost**. The local AI backend listens on `http://localhost:8001`.
 The page otherwise uses `https://api.nursescheduling.org/ai` by default. See the
-[AI assistant backend guide](https://nursescheduling.org/docs/ai-assistant/)
+[AI assistant backend guide](https://dev.nursescheduling.org/docs/developer-guide/ai-assistant/)
 for container commands, configuration, security notes, and focused tests.
