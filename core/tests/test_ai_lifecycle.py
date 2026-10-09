@@ -25,8 +25,10 @@ import httpx
 import pytest
 from fastapi import HTTPException
 
+from nurse_scheduling.ai.context import ABORTED_RESPONSE_HISTORY
 from nurse_scheduling.ai.lifecycle import SessionTurns
 from nurse_scheduling.ai.sessions import SessionStore
+from nurse_scheduling.ai.transcript import AssistantMessage, UserMessage
 
 from .ai_test_helper import schedule_yaml
 from .test_ai_basic import AI_AUTH_HEADERS, FakeProvider, create_test_app, make_settings
@@ -34,7 +36,8 @@ from .test_ai_basic import AI_AUTH_HEADERS, FakeProvider, create_test_app, make_
 
 def test_setup_failure_releases_admission_and_the_next_request_can_run(monkeypatch):
     async def exercise():
-        app = create_test_app(settings=make_settings(), provider=FakeProvider())
+        provider = FakeProvider()
+        app = create_test_app(settings=make_settings(), provider=provider)
         original = app.state.session_optimizer.latest_result_artifact
 
         async def fail(_session_id):
@@ -48,10 +51,17 @@ def test_setup_failure_releases_admission_and_the_next_request_can_run(monkeypat
             response = await client.post(f"/sessions/{session_id}/messages", json={"message": "Question"})
             assert "event: error" in response.text
             assert not app.state.turns.busy(session_id)
-            assert not app.state.session_store._sessions[session_id].active
+            session = app.state.session_store._sessions[session_id]
+            assert not session.active
+            assert provider.calls == []
+            assert session.transcript == [UserMessage("Question"), AssistantMessage("", "error")]
             monkeypatch.setattr(app.state.session_optimizer, "latest_result_artifact", original)
             response = await client.post(f"/sessions/{session_id}/messages", json={"message": "Retry"})
             assert "event: done" in response.text
+            assert provider.calls[0][1:3] == [
+                {"role": "user", "content": "Question"},
+                {"role": "assistant", "content": ABORTED_RESPONSE_HISTORY},
+            ]
 
     asyncio.run(exercise())
 

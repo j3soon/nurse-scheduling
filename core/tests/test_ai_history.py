@@ -1108,7 +1108,20 @@ def test_postgres_stop_before_message_arrival_survives_restart(postgres_history)
         )
         assert basic.parse_sse(result.text, include_model_input=True)[-1][0] == "stopped"
         assert provider.calls == []
-        assert restarted.state.session_store._sessions[session].history == []
+        assert restarted.state.session_store._sessions[session].history == [
+            {"role": "user", "content": "Original question"},
+            {"role": "assistant", "content": basic.ABORTED_RESPONSE_HISTORY},
+        ]
+    restored_provider = basic.FakeProvider()
+    restored = basic.create_test_app(settings=settings, provider=restored_provider)
+    with basic.AuthenticatedTestClient(restored) as client:
+        client.cookies.update(cookies)
+        response = client.post(f"/sessions/{session}/messages", json={"message": "Retry"})
+        assert basic.parse_sse(response.text)[-1][0] == "done"
+        assert restored_provider.calls[0][1:3] == [
+            {"role": "user", "content": "Original question"},
+            {"role": "assistant", "content": basic.ABORTED_RESPONSE_HISTORY},
+        ]
 
 
 @pytest.mark.parametrize("kind", ["foreground", "background"])

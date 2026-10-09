@@ -730,11 +730,12 @@ def test_stop_cancels_background_turn_waiting_behind_foreground_turn() -> None:
 
 
 def test_stop_before_stream_registration_cancels_the_reserved_turn(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def exercise() -> tuple[int, bool, int]:
+    async def exercise() -> None:
         waiting_for_artifact = asyncio.Event()
         release_artifact = asyncio.Event()
         provider = FakeProvider()
         app = create_test_app(settings=make_settings(), provider=provider)
+        original_artifact = app.state.session_optimizer.latest_result_artifact
 
         async def delayed_artifact(_session_id: str) -> None:
             waiting_for_artifact.set()
@@ -753,16 +754,25 @@ def test_stop_before_stream_registration_cancels_the_reserved_turn(monkeypatch: 
             session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
             turn = asyncio.create_task(client.post(f"/sessions/{session_id}/messages", json={"message": "Stop now"}))
             await asyncio.wait_for(waiting_for_artifact.wait(), timeout=1)
+            owner = app.state.turns._turns[session_id][0]
             stopped = await client.post(f"/sessions/{session_id}/stop")
             release_artifact.set()
             await asyncio.gather(turn, return_exceptions=True)
-            return stopped.status_code, app.state.session_store._sessions[session_id].active, len(provider.calls)
+            await asyncio.wait_for(owner.wait(), timeout=1)
+            session = app.state.session_store._sessions[session_id]
+            assert stopped.status_code == 202
+            assert not session.active
+            assert provider.calls == []
+            assert session.transcript == [UserMessage("Stop now"), AssistantMessage("", "aborted")]
+            monkeypatch.setattr(app.state.session_optimizer, "latest_result_artifact", original_artifact)
+            retried = await client.post(f"/sessions/{session_id}/messages", json={"message": "Retry"})
+            assert parse_sse(retried.text)[-1][0] == "done"
+            assert provider.calls[0][1:3] == [
+                {"role": "user", "content": "Stop now"},
+                {"role": "assistant", "content": ABORTED_RESPONSE_HISTORY},
+            ]
 
-    status_code, session_active, provider_calls = asyncio.run(exercise())
-
-    assert status_code == 202
-    assert not session_active
-    assert provider_calls == 0
+    asyncio.run(exercise())
 
 
 def test_disconnect_before_stream_iteration_keeps_the_accepted_turn(monkeypatch) -> None:

@@ -554,15 +554,14 @@ class AgentSession:
             )
         finally:
             if not output.completed:
-                if self.agent.state.messages:
-                    reason = "error" if output.error_code is not None else "aborted"
-                    runtime.store.finish(
-                        self.id,
-                        question,
-                        "",
-                        snapshot=snapshot,
-                        turn_messages=interrupted_entries([UserMessage(question), *self.agent.state.messages], reason),
-                    )
+                reason = "error" if output.error_code is not None else "aborted"
+                runtime.store.finish(
+                    self.id,
+                    question,
+                    "",
+                    snapshot=snapshot,
+                    turn_messages=interrupted_entries([UserMessage(question), *self.agent.state.messages], reason),
+                )
                 runtime.store.abort(self.id, snapshot)
 
     async def _deliver_background(self, runtime, turn, snapshot, events, output):
