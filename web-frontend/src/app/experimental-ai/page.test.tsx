@@ -202,6 +202,32 @@ describe('ExperimentalAiPage', () => {
     window.sessionStorage.clear();
   });
 
+  it('renews a reconnected background run with the current retention period', async () => {
+    let resolveCapabilities!: (value: typeof defaultCapabilities) => void;
+    mockGetCapabilities.mockImplementation(() => new Promise(resolve => { resolveCapabilities = resolve; }));
+    const readers: { callbacks: SessionStreamOptions; end: () => void }[] = [];
+    mockStreamSessionEvents.mockImplementation((_id, callbacks) => new Promise<void>(resolve => {
+      readers.push({ callbacks, end: resolve });
+    }));
+    window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'session-id', endpoint: '/ai', expiresAt: Date.now() + 300000,
+      retentionSeconds: 10, messages: [], syncedSchedule: 'description: current schedule\n', proposalDiff: null,
+    }));
+    render(<ExperimentalAiPage />);
+    await waitFor(() => expect(readers).toHaveLength(1));
+    await act(async () => resolveCapabilities({ ...defaultCapabilities, session_retention_seconds: 100 }));
+    readers[0].end();
+    await waitFor(() => expect(readers).toHaveLength(2), { timeout: 4000 });
+    const started = Date.now();
+    act(() => readers[1].callbacks.onEvent({ type: 'run_start', runId: 'background-run', trigger: 'optimization' }));
+    await waitFor(() => {
+      const saved = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation')!);
+      expect(saved.messages.some((message: { id: string }) => message.id === 'background-run')).toBe(true);
+      expect(saved.retentionSeconds).toBe(100);
+      expect(saved.expiresAt).toBeGreaterThanOrEqual(started + 99000);
+    });
+  });
+
   it('lists uploads before the assistant responds and removes an unused file', async () => {
     mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, file_attachments: { ...defaultCapabilities.file_attachments, retained: true } });
     mockRemoveUpload.mockImplementation(async () => { mockGetUploads.mockResolvedValue([]); });

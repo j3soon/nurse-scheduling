@@ -25,9 +25,11 @@ import type { SessionEvent } from './sessionEvents';
 import type { ChatExportMessage } from './chatExport';
 
 export function messageId(): string {
-  return typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random()}`;
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return Array.from(
+    crypto.getRandomValues(new Uint8Array(16)),
+    byte => byte.toString(16).padStart(2, '0'),
+  ).join('');
 }
 
 // Streamed output of one assistant response. Foreground and replayed background

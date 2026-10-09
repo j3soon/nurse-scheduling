@@ -25,6 +25,8 @@ const detailLabels = new Set([
   'Backend request timeout', 'Claimed performance', 'Error code', 'Error',
 ]);
 
+import type { OptimizationActivity } from './aiClient';
+
 export function parseOptimizerMessage(content: string): {
   summary: string;
   details: { label: string; value: string }[];
@@ -43,4 +45,39 @@ export function parseOptimizerMessage(content: string): {
     }
   }
   return { summary: summary.join('\n'), details };
+}
+
+export function optimizationMessage(activity: OptimizationActivity): string {
+  const summary = activity.state === 'completed'
+    ? activity.downloadable
+      ? 'Optimization finished. Download the optimized schedule to review it.'
+      : 'Optimization finished, but no result workbook is available to download.'
+    : `Optimization ended with status: ${activity.state}.`;
+  const details: string[] = [];
+  const add = (label: string, value: string | number | undefined) => {
+    // Indent continuation lines so field values cannot introduce another label.
+    if (value !== undefined) details.push(`${label}: ${String(value).replace(/\r\n?|\n/g, '\n ')}`);
+  };
+  add('Outcome', activity.result?.outcome);
+  add('Final score', activity.result?.score);
+  add('Solver', activity.request?.solver);
+  add('Solver status', activity.result?.solverStatus);
+  add('Termination reason', activity.result?.terminationReason);
+  if (activity.request?.timeoutSeconds !== undefined) add('Solver timeout', `${activity.request.timeoutSeconds}s`);
+  if (activity.backend) {
+    add('Backend URL', activity.backend.url ?? 'unknown');
+    add('Backend version', activity.backend.appVersion ?? 'unknown');
+    add('API version', activity.backend.apiVersion);
+    add('Service', activity.backend.serviceName);
+    add('Deployment', activity.backend.deploymentId);
+    add('Instance', activity.backend.instanceId);
+    if (activity.backend.requestTimeoutSeconds !== undefined) {
+      add('Backend request timeout', `${activity.backend.requestTimeoutSeconds}s`);
+    }
+    const claimed = activity.backend.claimedPerformance;
+    add('Claimed performance', claimed ? `${claimed.score} (version ${claimed.appVersion}, measured ${claimed.measuredAt})` : 'unavailable');
+  }
+  add('Error code', activity.error?.code);
+  add('Error', activity.error?.message);
+  return [summary, ...details].join('\n');
 }
