@@ -1904,6 +1904,55 @@ describe('ExperimentalAiPage', () => {
     }
   });
 
+  it('returns to the top and stops following streamed text until the bottom shortcut is used', async () => {
+    const user = userEvent.setup();
+    let sendDelta: ((text: string) => void) | undefined;
+    let finishStream: (() => void) | undefined;
+    mockRunEvents.mockImplementationOnce(async (
+      _sessionId: string,
+      _message: string,
+      callbacks: SessionStreamOptions,
+    ) => {
+      sendDelta = text => callbacks.onEvent({ type: 'delta', text });
+      await new Promise<void>(resolve => {
+        finishStream = resolve;
+      });
+    });
+    const scrollTo = vi.mocked(window.scrollTo);
+    const scrollHeight = vi.spyOn(document.documentElement, 'scrollHeight', 'get').mockReturnValue(1300);
+    const innerHeight = vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(800);
+    let scrollYPosition = 500;
+    const scrollY = vi.spyOn(window, 'scrollY', 'get').mockImplementation(() => scrollYPosition);
+
+    try {
+      render(<ExperimentalAiPage />);
+      await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Stream details.');
+      await user.click(screen.getByRole('button', { name: 'Send' }));
+      await waitFor(() => expect(sendDelta).toBeDefined());
+      await waitFor(() => expect(scrollTo).toHaveBeenCalled());
+
+      act(() => window.dispatchEvent(new Event('scroll')));
+      await user.click(screen.getByRole('button', { name: 'Back to top' }));
+      scrollYPosition = 0;
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 0, behavior: 'instant' });
+      act(() => window.dispatchEvent(new Event('scroll')));
+      expect(screen.queryByRole('button', { name: 'Back to top' })).not.toBeInTheDocument();
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Scroll to bottom' })).toBeInTheDocument());
+      const callsBeforeDelta = scrollTo.mock.calls.length;
+      act(() => sendDelta?.('More streamed content.'));
+
+      await waitFor(() => expect(screen.getByText('More streamed content.')).toBeInTheDocument());
+      expect(scrollTo).toHaveBeenCalledTimes(callsBeforeDelta);
+      await user.click(screen.getByRole('button', { name: 'Scroll to bottom' }));
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 1300, behavior: 'instant' });
+      await act(async () => finishStream?.());
+    } finally {
+      scrollHeight.mockRestore();
+      innerHeight.mockRestore();
+      scrollY.mockRestore();
+    }
+  });
+
   it('resumes following streamed text when the user scrolls to the current bottom', async () => {
     const user = userEvent.setup();
     let sendDelta: ((text: string) => void) | undefined;

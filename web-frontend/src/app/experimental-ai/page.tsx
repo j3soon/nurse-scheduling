@@ -226,6 +226,7 @@ export default function ExperimentalAiPage() {
   const [isListening, setIsListening] = useState(false);
   const [speechLanguage, setSpeechLanguage] = useState('');
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [showScrollToTop, setShowScrollToTop] = useState(false);
   const [showReasoning, setShowReasoning] = useState(true);
   const [showTools, setShowTools] = useState(true);
   const authTokensRef = useRef<Record<string, string>>({});
@@ -409,6 +410,7 @@ export default function ExperimentalAiPage() {
       }, 200);
     };
     const handleScroll = () => {
+      setShowScrollToTop(window.scrollY > 128);
       if (!userScrollPending && !pointerScrollActive) return;
       const pageBottom = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
       setFollowPageBottom(window.scrollY >= pageBottom);
@@ -436,6 +438,7 @@ export default function ExperimentalAiPage() {
 
     const pageBottom = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
     setFollowPageBottom(window.scrollY >= pageBottom);
+    setShowScrollToTop(window.scrollY > 128);
     window.addEventListener('scroll', handleScroll, { passive: true });
     window.addEventListener('scrollend', handleScrollEnd, { passive: true });
     window.addEventListener('wheel', handleWheel, { passive: true });
@@ -475,6 +478,13 @@ export default function ExperimentalAiPage() {
     followPageBottomRef.current = true;
     setShowScrollToBottom(false);
     window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' });
+  };
+
+  const scrollToPageTop = () => {
+    followPageBottomRef.current = false;
+    setShowScrollToBottom(hasMessagesRef.current);
+    setShowScrollToTop(false);
+    window.scrollTo({ top: 0, behavior: 'instant' });
   };
 
   const saveAuthToken = (token: string, remember: boolean) => {
@@ -1082,16 +1092,31 @@ export default function ExperimentalAiPage() {
             Drop files to attach
           </div>
         )}
-        {showScrollToBottom && (
-          <button
-            type="button"
-            onClick={scrollToPageBottom}
-            aria-label="Scroll to bottom"
-            title="Scroll to bottom"
-            className="absolute -top-10 left-1/2 -translate-x-1/2 rounded-full border border-gray-300 bg-white/95 p-2 text-gray-700 shadow-md backdrop-blur hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
-          >
-            <FiArrowDown aria-hidden="true" className="h-4 w-4" />
-          </button>
+        {(showScrollToTop || showScrollToBottom) && (
+          <div role="group" aria-label="Chat navigation" className="absolute -top-10 left-1/2 flex -translate-x-1/2 gap-2">
+            {showScrollToTop && (
+              <button
+                type="button"
+                onClick={scrollToPageTop}
+                aria-label="Back to top"
+                title="Back to top"
+                className="rounded-full border border-gray-300 bg-white/95 p-2 text-gray-700 shadow-md backdrop-blur hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+              >
+                <FiArrowUp aria-hidden="true" className="h-4 w-4" />
+              </button>
+            )}
+            {showScrollToBottom && (
+              <button
+                type="button"
+                onClick={scrollToPageBottom}
+                aria-label="Scroll to bottom"
+                title="Scroll to bottom"
+                className="rounded-full border border-gray-300 bg-white/95 p-2 text-gray-700 shadow-md backdrop-blur hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+              >
+                <FiArrowDown aria-hidden="true" className="h-4 w-4" />
+              </button>
+            )}
+          </div>
         )}
         {isReconnecting && (
           <div role="status" className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">

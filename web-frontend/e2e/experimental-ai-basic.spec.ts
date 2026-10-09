@@ -345,6 +345,27 @@ test('explains unavailable context usage when the backend omits it', async ({ pa
   await expect(usage).toHaveAttribute('title', /The AI server has not reported context usage/);
 });
 
+test('returns to the top of a long chat on desktop and mobile', async ({ page }) => {
+  await mockAiBackend(page, [Array.from({ length: 80 }, (_, i) => `Chat line ${i + 1}.`).join('\n\n')]);
+  await page.goto('/experimental-ai');
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Show details.');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('Chat line 80.', { exact: true })).toBeVisible();
+
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.evaluate(() => window.scrollTo({ top: document.documentElement.scrollHeight }));
+    const shortcut = page.getByRole('button', { name: 'Back to top' });
+    await expect(shortcut).toBeVisible();
+    await shortcut.click();
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+    await expect(shortcut).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Schedule AI Chat' })).toBeVisible();
+    await page.getByRole('button', { name: 'Scroll to bottom' }).click();
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(128);
+  }
+});
+
 test('authenticates AI session requests with an explicitly remembered token', async ({ page }) => {
   const authToken = 'browser-ai-auth-token';
   const captured = await mockAiBackend(
@@ -616,7 +637,7 @@ test('offers a shortcut when the reader scrolls away from the latest message', a
   await expect(scrollButton).toHaveText('');
   await expect
     .poll(async () => {
-      const buttonBox = await scrollButton.boundingBox();
+      const buttonBox = await page.getByRole('group', { name: 'Chat navigation' }).boundingBox();
       return buttonBox ? buttonBox.x + buttonBox.width / 2 : null;
     })
     .toBe(page.viewportSize()!.width / 2);
