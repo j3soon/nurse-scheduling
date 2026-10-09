@@ -94,6 +94,8 @@ skipped does not validate persistence.
   Continue only after cleanup succeeds, otherwise stop the claim loop.
 
 ## Experimental AI
+- Prioritize maintainability, readability, and simplicity. Avoid over-engineering.
+  Use Pi agent v1.0.0 as a reference for AI chat architecture and design philosophy.
 - `AgentSession` owns conversation changes, steering, proposal decisions, and
   the shared foreground and optimizer-review execution path. `SessionStore`
   owns access, expiry, and retained-byte budgets. `SessionRecovery` owns ordered
