@@ -169,9 +169,13 @@ def test_database_unavailable_releases_session_before_provider_call(recorded_his
         response = client.post(f"/sessions/{session_id}/messages", json={"message": "Question"})
         assert response.status_code == 503
         assert provider.calls == []
+        session = app.state.session_store._sessions[session_id]
+        assert session.transcript == []
+        assert session.dropped_entries == 0
         monkeypatch.setattr(ChatHistory, "start_run", lambda *_args, **_kwargs: None)
-        response = client.post(f"/sessions/{session_id}/messages", json={"message": "Retry"})
+        response = client.post(f"/sessions/{session_id}/messages", json={"message": "Question"})
         assert basic.parse_sse(response.text)[-1][0] == "done"
+        assert session.transcript.count(UserMessage("Question")) == 1
 
 
 def test_final_write_failure_preserves_successful_conversation(recorded_history, monkeypatch, caplog):
@@ -610,15 +614,17 @@ def test_background_recovery_outage_releases_session_and_reports_status(recorded
         await optimizer._on_update(session.id, {"job_id": "job", "state": "completed", "terminal": True})
         await optimizer._on_completion(session.id, "Review the optimizer result.", None)
         events = app.state.session_event_stream.events_after(session.id)
-        return events, session.active
+        return events, session
 
-    events, active = asyncio.run(exercise())
+    events, session = asyncio.run(exercise())
     assert events[0].type == "optimization"
     # Terminal and optimizer status events are delivered even when they cannot be saved.
     assert events[-1].type in {"done", "error"}
     if "start_run" in failing:
         assert events[-1].data["message"] == BACKGROUND_RECOVERY_ERROR
-    assert not active
+        assert session.transcript == []
+        assert session.dropped_entries == 0
+    assert not session.active
 
 
 def record(entry) -> tuple[str, dict]:
@@ -1075,6 +1081,31 @@ def test_postgres_background_run_keeps_metadata_and_event_ownership(postgres_his
         assert row[6]["total_tokens"] == 3 and row[7] is not None
         assert connection.execute("SELECT DISTINCT run_id FROM chat_session_events").fetchall() == [(row[0],)]
     assert postgres_history.load_events(session_id, 0)[-1][3] == ("error" if failed else "done")
+
+
+def test_postgres_rejected_question_does_not_shift_trimmed_history_after_restart(postgres_history, monkeypatch):
+    settings = basic.make_settings(history_postgres_url="test", max_history_messages=2)
+    provider = basic.FakeProvider([["First answer"], ["Latest answer"]])
+    app = basic.create_test_app(settings=settings, provider=provider)
+    with basic.AuthenticatedTestClient(app) as client:
+        session_id = basic.create_session(client)
+        path = f"/sessions/{session_id}/messages"
+        with monkeypatch.context() as patch:
+            patch.setattr(ChatHistory, "start_run", unavailable)
+            refused = client.post(path, json={"message": "Question", "message_id": "question"})
+            assert refused.status_code == 503
+        for question in ("Question", "Next question"):
+            response = client.post(path, json={"message": question, "message_id": question})
+            assert basic.parse_sse(response.text)[-1][0] == "done"
+        owner = client.cookies[basic.OWNER_COOKIE]
+        session = app.state.session_store._sessions[session_id]
+        assert session.dropped_entries == 2
+        expected = [UserMessage("Next question"), AssistantMessage("Latest answer")]
+        assert session.transcript == expected
+    restarted = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
+    with basic.AuthenticatedTestClient(restarted, cookies={basic.OWNER_COOKIE: owner}) as client:
+        assert client.get(f"/sessions/{session_id}").status_code == 200
+        assert restarted.state.session_store._sessions[session_id].transcript == expected
 
 
 def test_postgres_recovers_complete_message_and_history_after_backend_restart(postgres_history):

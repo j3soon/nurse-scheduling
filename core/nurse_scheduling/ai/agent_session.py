@@ -768,7 +768,8 @@ class AgentSession:
         if outcome.completion is None:
             stop_reason = "aborted" if outcome.status == "cancelled" else "error"
             entries = output.interrupted_entries([entries[0], *self.agent.state.messages], stop_reason)
-            if not run.shutdown and outcome.status in {"cancelled", "failed"}:
+            history_unavailable = runtime.recorder.enabled and not history_started
+            if not run.shutdown and not history_unavailable and outcome.status in {"cancelled", "failed"}:
                 # Keep the prompt so a follow-up can refer to it. Workspace changes and any
                 # proposal were discarded with the sandbox, which context.py accounts for.
                 committed = runtime.store.finish(self.id, retained_entries(entries), snapshot=snapshot).run_saved
