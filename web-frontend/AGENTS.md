@@ -74,7 +74,13 @@ backend remains authoritative for feature enablement and input limits.
 AI operation state belongs to `ChatLifecycle`. Finish only the operation that
 owns a completion, and derive busy and Stop state from its phases. Scope stream
 callbacks to their connection and other async completions to their conversation.
-Replay snapshots replace output without completing active operations.
+Route session output by `run_id`, including events received before POST acceptance
+is acknowledged. Buffer those events until acknowledgement identifies their run.
+Keep accepted deferred events scoped to the conversation when their reader closes.
+If a reset arrives before acceptance is acknowledged, request a covering snapshot
+after the run is identified before deciding that its output expired. Preserve each
+answer's original position when replacement replay rebuilds its output.
+Replay snapshots replace output without completing unrelated active operations.
 Keep queued messages waiting until foreground and background work are both idle.
 AI chat does not require compatibility with older AI backend APIs. Update the
 client and server together when their contract changes. When auth is
@@ -105,9 +111,10 @@ reload recovery follows the production path.
 Replay must replace existing messages in their original positions, including
 optimizer input and steering replies. Capture the message ID before queuing React
 state updates because one replay snapshot can contain several replies.
-Use each event's `turn_id` to identify replayed messages when `turn_start` was trimmed.
-Apply replacement snapshots even when their IDs are at or below the stored cursor.
-Their cursor can reset the stream to zero after recovery.
+Use each event's `run_id` to identify replayed messages when `run_start` was trimmed.
+Validate the whole SSE frame and every recovery entry before updating the cursor
+or transcript. Acknowledge validated frames before consumer callbacks. Apply
+replacement snapshots even when their IDs are at or below the stored cursor.
 Browser timers have a maximum delay of about 24.8 days. Schedule longer session
 expiry in bounded intervals and recheck the timestamp after each wake. Cover
 both the intermediate wake and the final expiry with a clock-controlled test.

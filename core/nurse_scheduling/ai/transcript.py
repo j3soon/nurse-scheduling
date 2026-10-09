@@ -19,8 +19,8 @@
 
 # This file is mostly AI generated.
 
-from dataclasses import dataclass
-from typing import Literal
+from dataclasses import asdict, dataclass, replace
+from typing import Any, Literal
 
 # Pi's stop reasons. `tool_use` ends a response that requested tools.
 StopReason = Literal["stop", "length", "tool_use", "aborted", "error"]
@@ -90,6 +90,40 @@ class AppEventEntry:
 
 
 AgentMessage = UserMessage | AssistantMessage | ToolResultMessage | ProposalDecisionEntry | AppEventEntry
+
+ENTRY_TYPES = {
+    UserMessage: "user",
+    AssistantMessage: "assistant",
+    ToolResultMessage: "tool_result",
+    ProposalDecisionEntry: "proposal_decision",
+    AppEventEntry: "app_event",
+}
+
+
+def entry_record(entry: AgentMessage) -> tuple[str, dict[str, Any]]:
+    """Store an entry's origin and fields without storing tool images."""
+    payload = asdict(replace(entry, image=None) if isinstance(entry, ToolResultMessage) else entry)
+    if isinstance(entry, ToolResultMessage):
+        payload.pop("image")
+    return ENTRY_TYPES[type(entry)], payload
+
+
+def entry_from_record(entry_type: str, payload: dict[str, Any]) -> AgentMessage:
+    """Restore an entry without inferring its origin from user-controlled text."""
+    if entry_type == "assistant":
+        return AssistantMessage(
+            payload["text"],
+            payload["stop_reason"],
+            payload.get("reasoning", ""),
+            tuple(ToolCall(**call) for call in payload.get("tool_calls", ())),
+        )
+    types = {
+        "user": UserMessage,
+        "tool_result": ToolResultMessage,
+        "proposal_decision": ProposalDecisionEntry,
+        "app_event": AppEventEntry,
+    }
+    return types[entry_type](**payload)
 
 
 def starts_exchange(entry: AgentMessage) -> bool:

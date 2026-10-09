@@ -41,7 +41,7 @@ from nurse_scheduling.ai.optimizer import (
 from nurse_scheduling.ai.optimizer_http import HttpOptimizerBackend
 from nurse_scheduling.ai.optimizer_tool import execute_optimizer_tool, optimizer_tool_definition
 from nurse_scheduling.ai.result_context import build_result_context
-from nurse_scheduling.ai.session_event_stream import SessionEventBroker
+from nurse_scheduling.ai.session_event_stream import SessionEventStream
 
 from .ai_eval.optimizer_fixtures import FIXTURE, completion_result
 from .ai_test_helper import base_schedule_payload, optimizer_workbook_bytes, parse_schedule, schedule_yaml
@@ -398,54 +398,33 @@ def test_http_backend_replays_an_optimizer_event_cut_off_before_its_delimiter() 
     asyncio.run(scenario())
 
 
-def test_optimizer_progress_replay_does_not_displace_background_turn_events() -> None:
-    broker = SessionEventBroker(max_events_per_session=2, max_progress_events_per_session=2)
-    broker.publish("session-1", "turn_start", {"message_id": "turn-1"})
+def test_optimizer_progress_does_not_displace_run_replay() -> None:
+    stream = SessionEventStream(max_events_per_session=2, max_progress_events_per_session=2)
+    stream.publish("session", {"type": "run_start", "run_id": "run", "trigger": "user"})
     for score in (1, 2, 3):
-        broker.publish("session-1", "optimization_progress", {"score": score})
-    broker.publish("session-1", "done", {"message_id": "turn-1"})
-
-    events = broker.events_after("session-1")
-    assert [(event.id, event.type) for event in events] == [
-        (1, "turn_start"),
-        (3, "optimization_progress"),
-        (4, "optimization_progress"),
-        (5, "done"),
-    ]
-
-
-def test_background_and_progress_replay_have_separate_default_limits() -> None:
-    broker = SessionEventBroker()
-    for index in range(1001):
-        broker.publish("session-1", "text_delta", {"index": index})
-    for index in range(101):
-        broker.publish("session-1", "optimization_progress", {"index": index})
-
-    events = broker.events_after("session-1")
-    assert len(events) == 1100
-    assert events[0].data["index"] == 1
-    assert events[999].data["index"] == 1000
-    assert events[1000].data["index"] == 1
-    assert events[-1].data["index"] == 100
+        stream.publish("session", {"type": "optimization_progress", "job_id": "job", "progress": {"score": score}})
+    stream.publish("session", {"type": "done", "run_id": "run"})
+    events = stream.events_after("session")
+    assert [(event.id, event.type) for event in events] == [(1, "run_start"), (4, "optimization_progress"), (5, "done")]
+    assert events[1].data["progress"]["score"] == 3
 
 
 def test_retiring_a_session_ends_its_open_event_stream() -> None:
     async def scenario() -> None:
-        broker = SessionEventBroker()
-        received: list[str | None] = []
+        stream = SessionEventStream()
+        received = []
 
-        async def consume() -> None:
-            async for event in broker.stream("session-1", 0):
+        async def consume():
+            async for event in stream.stream("session", 0):
                 received.append(event.type if event is not None else None)
 
         reader = asyncio.create_task(consume())
-        broker.publish("session-1", "turn_start", {"message_id": "turn-1"})
+        stream.publish("session", {"type": "run_start", "run_id": "run", "trigger": "user"})
         await asyncio.sleep(0)
-        broker.forget_session("session-1")
+        stream.forget_session("session")
         await asyncio.wait_for(reader, timeout=1)
-
-        assert received == ["turn_start"]
-        assert "session-1" not in broker._signals
+        assert received == ["run_start"]
+        assert "session" not in stream._signals
 
     asyncio.run(scenario())
 

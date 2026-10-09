@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .provider import TokenUsage, ToolResultImage
+from .transcript import AssistantMessage
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,13 @@ class AgentReasoning:
     """One streamed fragment of the model's reasoning, for the reader only."""
 
     text: str
+
+
+@dataclass(frozen=True)
+class AgentMessageEnd:
+    """A completed model response, ready for a durable entry checkpoint."""
+
+    message: AssistantMessage
 
 
 @dataclass(frozen=True)
@@ -78,7 +86,16 @@ class AgentProposal:
     diff: str
 
 
-AgentEvent = AgentText | AgentReasoning | AgentToolStart | AgentToolUse | AgentSteering | AgentProposal | TokenUsage
+AgentEvent = (
+    AgentMessageEnd
+    | AgentText
+    | AgentReasoning
+    | AgentToolStart
+    | AgentToolUse
+    | AgentSteering
+    | AgentProposal
+    | TokenUsage
+)
 ToolExecutor = Callable[[str, str], Awaitable["AgentToolOutcome"]]
 ToolBatchScope = Callable[[], AbstractAsyncContextManager[None]]
 SteeringSource = Callable[[bool], Sequence[tuple[str, str]]]

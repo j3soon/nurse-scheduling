@@ -49,7 +49,7 @@ import { parseOptimizerMessage } from './optimizerMessage';
 import {
   AiCapabilities,
   AiHttpError,
-  AiStaleTurnError,
+  AiStaleRunError,
   DEFAULT_SESSION_RETENTION_SECONDS,
   LOCAL_AI_API_URL,
   OptimizationActivity,
@@ -73,19 +73,105 @@ import {
   normalizeAiEndpoint,
   queueMessage,
   rejectProposal,
-  streamMessage,
+  sendMessage,
   streamSessionEvents,
   stopSession,
   updateSessionSchedule,
+  uploadFiles,
 } from './aiClient';
+import type { SessionReset, ToolStartActivity, OptimizationProgressActivity } from './aiClient';
+import type { SessionEvent } from './sessionEvents';
+import { SessionEventRouter } from './sessionEventRouter';
+import { applyAssistantEvent, stopResponse, type AssistantEvent } from './assistantEvents';
+
+interface StreamCallbacks {
+  onDownload?: (id: string) => void;
+  onWarning?: (message: string) => void;
+  onModelInput?: (input: ModelInput) => void;
+  forRun?: (runId: string, trigger?: string) => StreamCallbacks | undefined;
+  onReset?: (reset: SessionReset) => void;
+  lastEventId?: number;
+  onEventId?: (id: number) => void;
+  onRunStart?: (runId: string, trigger: string) => void;
+  onRunContext?: (runId: string) => void;
+  onDelta: (text: string) => void;
+  onReasoning?: (text: string) => void;
+  onTruncated?: () => void;
+  onToolStart?: (activity: ToolStartActivity) => void;
+  onTool?: (activity: ToolActivity) => void;
+  onSteering?: (messageId: string, message: string) => void;
+  onScheduleChange?: (scheduleYaml: string) => void;
+  onProposal?: (diff: string) => void;
+  onOptimization?: (activity: OptimizationActivity) => void;
+  onOptimizationProgress?: (activity: OptimizationProgressActivity) => void;
+  onDone?: (runId?: string) => void;
+  onStopped?: (runId?: string) => void;
+  onStale?: (message: string) => void;
+  onContextUsage?: (usage: ContextUsage) => void;
+  onHistoryTrimmed?: (dropped: number) => void;
+  onError?: (message: string) => void;
+}
+
+function dispatchPageEvent(event: SessionEvent, callbacks: StreamCallbacks): void {
+  if (event.runId && event.type !== 'run_context' && event.type !== 'session_reset') callbacks.onRunContext?.(event.runId);
+  switch (event.type) {
+    case 'session_reset': callbacks.onReset?.(event.reset); break;
+    case 'run_context': callbacks.onRunContext?.(event.runId); break;
+    case 'run_start': callbacks.onRunStart?.(event.runId, event.trigger); break;
+    case 'delta': callbacks.onDelta(event.text); break;
+    case 'reasoning': callbacks.onReasoning?.(event.text); break;
+    case 'truncated': callbacks.onTruncated?.(); break;
+    case 'tool_start': callbacks.onToolStart?.(event.activity); break;
+    case 'tool': callbacks.onTool?.(event.activity); break;
+    case 'steering': callbacks.onSteering?.(event.messageId, event.message); break;
+    case 'schedule_change': callbacks.onScheduleChange?.(event.scheduleYaml); break;
+    case 'proposal': callbacks.onProposal?.(event.diff); break;
+    case 'download': callbacks.onDownload?.(event.downloadId); break;
+    case 'warning': callbacks.onWarning?.(event.message); break;
+    case 'model_input': callbacks.onModelInput?.(event.input); break;
+    case 'optimization': callbacks.onOptimization?.(event.activity); break;
+    case 'optimization_progress': callbacks.onOptimizationProgress?.(event.activity); break;
+    case 'done': callbacks.onDone?.(event.runId); break;
+    case 'stopped': callbacks.onStopped?.(event.runId); break;
+    case 'stale': callbacks.onStale?.(event.message); break;
+    case 'error': callbacks.onError?.(event.message); break;
+    case 'context_usage': callbacks.onContextUsage?.(event.usage); break;
+    case 'history_trimmed': callbacks.onHistoryTrimmed?.(event.dropped); break;
+  }
+}
+
+function startsVisibleOutput(event: AssistantEvent): boolean {
+  return event.type === 'tool_start' || event.type === 'tool' || event.type === 'schedule_change'
+    || ((event.type === 'delta' || event.type === 'reasoning') && event.text.length > 0);
+}
+
+function assistantEventCallbacks(
+  apply: (event: AssistantEvent) => void,
+  workingSchedule: { current: string | null },
+  browserSchedule: { readonly current: string },
+): Required<Pick<StreamCallbacks, 'onDelta' | 'onReasoning' | 'onTruncated' | 'onToolStart' | 'onTool' | 'onScheduleChange'>> {
+  return {
+    onDelta: text => apply({ type: 'delta', text }),
+    onReasoning: text => apply({ type: 'reasoning', text }),
+    onTruncated: () => apply({ type: 'truncated' }),
+    onToolStart: activity => apply({ type: 'tool_start', activity }),
+    onTool: activity => apply({ type: 'tool', activity }),
+    onScheduleChange: after => {
+      const before = workingSchedule.current ?? browserSchedule.current;
+      workingSchedule.current = after;
+      apply({ type: 'schedule_change', before, after });
+    },
+  };
+}
 
 interface ChatMessage extends ChatExportMessage {
   id: string;
   requestId?: string;
-  request?: { id: string; question: string; questionId: string; assistantId: string; active: boolean; uploading?: boolean };
+  request?: { id: string; question: string; questionId: string; assistantId: string; activeAssistantId?: string; active: boolean; uploading?: boolean };
   downloadId?: string;
   // Absolute history position of an app event, so a retried turn does not show it twice.
   historyIndex?: number;
+  runId?: string;
   retry?: {
     question: string;
     requiresAttachments: boolean;
@@ -235,6 +321,9 @@ interface StoredChatConversation {
   contextUsage?: ContextUsage | null;
   backgroundAssistantId?: string | null;
   trimmedHistoryCount?: number;
+  pendingRequest?: {
+    messageId: string; question: string; questionId: string; assistantId: string; activeAssistantId?: string; createdAt: number; uploading?: boolean;
+  } | null;
 }
 
 const DISABLED_FILE_CAPABILITY: AiCapabilities['file_attachments'] = {
@@ -281,7 +370,7 @@ function isChatMessage(value: unknown): value is ChatMessage {
     && (message.title === undefined || typeof message.title === 'string')
     && (message.activity === undefined
       || (Array.isArray(message.activity) && message.activity.every(isActivityEntry)))
-    && (message.status === undefined || message.status === 'pending' || message.status === 'failed')
+    && (message.status === undefined || message.status === 'pending' || message.status === 'failed' || message.status === 'stopped')
     && (message.createdAt === undefined || Number.isFinite(message.createdAt))
     && (message.responseStartedAt === undefined || Number.isFinite(message.responseStartedAt))
     && (message.responseCompletedAt === undefined || Number.isFinite(message.responseCompletedAt))
@@ -295,6 +384,7 @@ function isChatMessage(value: unknown): value is ChatMessage {
     && (message.request === undefined || (typeof message.request === 'object' && message.request !== null
       && typeof message.request.id === 'string' && typeof message.request.question === 'string'
       && typeof message.request.questionId === 'string' && typeof message.request.assistantId === 'string'
+      && (message.request.activeAssistantId === undefined || typeof message.request.activeAssistantId === 'string')
       && typeof message.request.active === 'boolean'
       && (message.request.uploading === undefined || typeof message.request.uploading === 'boolean')))
     && (message.downloadId === undefined || typeof message.downloadId === 'string')
@@ -347,6 +437,16 @@ function readStoredConversation(): StoredChatConversation | null {
       || (value.backgroundAssistantId !== undefined && value.backgroundAssistantId !== null
         && typeof value.backgroundAssistantId !== 'string')
     ) return null;
+    const pending = value.pendingRequest;
+    if (pending != null) {
+      if (typeof pending.messageId !== 'string' || !pending.messageId || typeof pending.question !== 'string'
+        || typeof pending.questionId !== 'string' || typeof pending.assistantId !== 'string'
+        || (pending.activeAssistantId !== undefined && typeof pending.activeAssistantId !== 'string')
+        || !Number.isFinite(pending.createdAt) || (pending.uploading !== undefined && typeof pending.uploading !== 'boolean')) return null;
+      value.messages = value.messages.map(message => message.id === pending.questionId
+        ? { ...message, request: { id: pending.messageId, question: pending.question, questionId: pending.questionId,
+          assistantId: pending.assistantId, activeAssistantId: pending.activeAssistantId, active: true, uploading: pending.uploading } } : message);
+    }
     return {
       ...value,
       endpoint: value.endpoint === '/ai' ? value.endpoint : normalizeAiEndpoint(value.endpoint),
@@ -441,16 +541,6 @@ function isAuthenticationError(error: unknown): boolean {
     && error.status === 401;
 }
 
-function finishToolActivity(entries: ActivityEntry[], result: ToolActivity): ActivityEntry[] {
-  let runningIndex = -1;
-  entries.forEach((entry, index) => {
-    if (entry.kind === 'tool' && entry.state === 'running') runningIndex = index;
-  });
-  const completed = { kind: 'tool' as const, ...result };
-  if (runningIndex < 0) return [...entries, completed];
-  return entries.map((entry, index) => (index === runningIndex ? completed : entry));
-}
-
 // Show the request messages added since the last reply, in the order the model receives them:
 // a changed system prompt, app events, the question, and a status message just before the reply.
 function applyModelInput(
@@ -513,14 +603,6 @@ function interruptRunningTools(entries: ActivityEntry[]): ActivityEntry[] {
       ? { ...entry, state: 'interrupted' as const }
       : entry
   ));
-}
-
-function appendResponseActivity(entries: ActivityEntry[], text: string): ActivityEntry[] {
-  const last = entries[entries.length - 1];
-  if (last?.kind === 'response') {
-    return [...entries.slice(0, -1), { ...last, text: last.text + text }];
-  }
-  return [...entries, { kind: 'response', text }];
 }
 
 function OptimizationSparkline({ points }: { points: OptimizationProgressPoint[] }) {
@@ -632,6 +714,7 @@ export default function ExperimentalAiPage() {
   const sessionEndpointRef = useRef<string | null>(null);
   const authTokensRef = useRef<Record<string, string>>({});
   const abortControllerRef = useRef<AbortController | null>(null);
+  const eventRouterRef = useRef(new SessionEventRouter());
   const sessionEventsControllerRef = useRef<AbortController | null>(null);
   const sessionEventsRetryRef = useRef(0);
   const sessionEventsTimerRef = useRef<number | null>(null);
@@ -838,6 +921,13 @@ export default function ExperimentalAiPage() {
           contextUsage,
           backgroundAssistantId: lifecycle.current('background')?.id,
           trimmedHistoryCount,
+          pendingRequest: (() => {
+            const request = messages.find(message => message.request?.active)?.request;
+            return request ? { messageId: request.id, question: request.question, questionId: request.questionId,
+              assistantId: request.assistantId, activeAssistantId: request.activeAssistantId,
+              createdAt: messages.find(message => message.id === request.questionId)?.createdAt ?? Date.now(),
+              uploading: request.uploading } : null;
+          })(),
         };
         window.sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify(stored));
       } catch {
@@ -976,7 +1066,7 @@ export default function ExperimentalAiPage() {
   }, [selectedAttachments]);
 
   useEffect(() => {
-    const hasTransientInput = isStreaming || draft.trim().length > 0 || selectedAttachments.length > 0;
+    const hasTransientInput = draft.trim().length > 0 || selectedAttachments.length > 0;
     if (!hasTransientInput) return;
     const warnBeforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault();
@@ -984,7 +1074,7 @@ export default function ExperimentalAiPage() {
     };
     window.addEventListener('beforeunload', warnBeforeUnload);
     return () => window.removeEventListener('beforeunload', warnBeforeUnload);
-  }, [draft, isStreaming, selectedAttachments.length]);
+  }, [draft, selectedAttachments.length]);
 
   useEffect(() => {
     // Scroll events do not identify their source, so only user input may change the follow flag.
@@ -1219,7 +1309,7 @@ export default function ExperimentalAiPage() {
     });
   };
 
-  const startBackgroundEventStream = useCallback((sessionId: string, endpoint: string) => {
+  const startSessionEventStream = useCallback((sessionId: string, endpoint: string, resetReplay = false) => {
     sessionEventsControllerRef.current?.abort();
     if (sessionEventsTimerRef.current !== null) {
       window.clearTimeout(sessionEventsTimerRef.current);
@@ -1236,6 +1326,7 @@ export default function ExperimentalAiPage() {
       if (controller.signal.aborted) return;
       // Back off only for repeated rapid failures, not for a stream that held for a while.
       if (Date.now() - openedAt >= SESSION_EVENTS_MAX_RETRY_MS) sessionEventsRetryRef.current = 0;
+      if (lifecycle.busy) setIsReconnecting(true);
       const delay = Math.min(SESSION_EVENTS_MAX_RETRY_MS, SESSION_EVENTS_RETRY_MS * 2 ** sessionEventsRetryRef.current);
       sessionEventsRetryRef.current += 1;
       sessionEventsTimerRef.current = window.setTimeout(() => {
@@ -1243,27 +1334,17 @@ export default function ExperimentalAiPage() {
         setSessionEventsAttempt(attempt => attempt + 1);
       }, delay);
     };
-    const beginBackgroundMessage = (assistantId: string) => {
-      lifecycle.begin('background', assistantId);
+    const beginBackgroundMessage = (runId: string) => {
+      lifecycle.begin('background', runId);
       // The server renews the session when it starts this turn.
       setSessionExpiresAt(Date.now() + sessionRetentionSeconds * 1000);
       sandboxScheduleRef.current = scheduleYamlRef.current;
-      setMessages(previous => previous.some(message => message.id === assistantId)
-        // A restored or reconnected turn resumes its own message, so clear the
-        // interrupted state rather than stacking a second response beside it.
-        ? previous.map(message => message.id === assistantId
-          ? { ...message, status: 'pending' as const, responseCompletedAt: undefined }
-          : message)
-        : [
-          ...previous,
-          {
-            id: assistantId,
-            role: 'assistant',
-            content: '',
-            status: 'pending',
-            responseStartedAt: Date.now(),
-          },
-        ]);
+      setMessages(previous => {
+        const existing = [...previous].reverse().find(message => message.role === 'assistant' && (message.runId ?? message.id) === runId);
+        return existing ? previous.map(message => message.id === existing.id
+          ? { ...message, runId, status: 'pending' as const, responseCompletedAt: undefined } : message)
+          : [...previous, { id: runId, runId, role: 'assistant', content: '', status: 'pending', responseStartedAt: Date.now() }];
+      });
     };
     // A reconnect replays only retained events, so a long turn can lose its own
     // turn_start. Adopt the remaining output instead of discarding the answer.
@@ -1274,7 +1355,10 @@ export default function ExperimentalAiPage() {
     const updateBackgroundMessage = (update: (message: ChatMessage) => ChatMessage, messageId?: string) => {
       const activeId = lifecycle.current('background')?.id ?? messageId;
       if (activeId === undefined) return;
-      setMessages(previous => previous.map(message => message.id === activeId ? update(message) : message));
+      setMessages(previous => {
+        const answer = [...previous].reverse().find(message => message.role === 'assistant' && (message.runId ?? message.id) === activeId);
+        return previous.map(message => message.id === answer?.id ? update(message) : message);
+      });
     };
     const failBackgroundTurn = (message: string) => {
       updateBackgroundMessage(entry => ({
@@ -1287,166 +1371,156 @@ export default function ExperimentalAiPage() {
       lifecycle.finish(lifecycle.current('background'));
       setError(message);
     };
+    const ownsConversation = lifecycle.capture();
+    const handlers: StreamCallbacks = {
+      lastEventId: lastSessionEventIdRef.current,
+      onEventId: id => {
+        lastSessionEventIdRef.current = id;
+        sessionEventsRetryRef.current = 0;
+        setIsReconnecting(false);
+      },
+      onReset: reset => {
+        setMessages(previous => {
+          const keptRuns = new Set<string>();
+          return previous.flatMap(message => {
+            const runId = message.runId ?? message.id;
+            if (!reset.runIds.includes(runId)) return [message];
+            if (message.role !== 'assistant' || keptRuns.has(runId)) return [];
+            keptRuns.add(runId);
+            return [{ ...message, runId, content: '', activity: [], status: 'pending' as const, responseCompletedAt: undefined }];
+          });
+        });
+        setProposalDiff(reset.proposalDiff);
+        setActiveOptimization(null);
+        lifecycle.finish(lifecycle.current('background'));
+        const foreground = eventRouterRef.current.foreground;
+        if (foreground?.runId && !reset.runIds.includes(foreground.runId) && !reset.terminalRunIds.includes(foreground.runId)
+          && reset.activeRunId !== foreground.runId) {
+          foreground.reject(new Error('This response expired from event replay. Start a new question.'));
+        }
+        if (reset.incomplete) setSessionNotice('Some earlier response output expired from event replay.');
+      },
+      onRunContext: id => {
+        if (lifecycle.current('background')?.id !== id) beginBackgroundMessage(id);
+      },
+      onRunStart: beginBackgroundMessage,
+      onSteering: (queuedId, content) => {
+        const runId = lifecycle.current('background')?.id;
+        if (!runId) return;
+        const nextId = messageId();
+        setMessages(previous => {
+          if (previous.some(message => message.id === queuedId)) return previous;
+          const answer = [...previous].reverse().find(message => message.role === 'assistant' && (message.runId ?? message.id) === runId);
+          const index = previous.findIndex(message => message.id === answer?.id);
+          const user: ChatMessage = { id: queuedId, runId, role: 'user', content, createdAt: Date.now() };
+          if (answer && (answer.content || answer.activity?.length)) {
+            const finished = { ...answer, status: undefined, responseCompletedAt: Date.now() };
+            const next: ChatMessage = { id: nextId, runId, role: 'assistant', content: '', status: 'pending', responseStartedAt: Date.now() };
+            return [...previous.slice(0, index), finished, user, next, ...previous.slice(index + 1)];
+          }
+          return index < 0 ? [...previous, user] : [...previous.slice(0, index), user, ...previous.slice(index)];
+        });
+      },
+      ...assistantEventCallbacks(event => {
+        resumeBackgroundMessage();
+        updateBackgroundMessage(message => applyAssistantEvent(message, event));
+      }, sandboxScheduleRef, scheduleYamlRef),
+      onProposal: diff => setProposalDiff(diff),
+      onOptimization: activity => {
+        if (!activity.terminal) {
+          setActiveOptimization(current => ({
+            ...activity,
+            points: current?.jobId === activity.jobId ? current.points : [],
+          }));
+          return;
+        }
+        setActiveOptimization(current => current?.jobId === activity.jobId ? null : current);
+        const content = optimizationMessage(activity);
+        setMessages(previous => previous.some(message => message.id === `optimizer-${activity.jobId}`)
+          ? previous
+          : [
+            ...previous,
+            {
+              id: `optimizer-${activity.jobId}`,
+              role: 'optimizer',
+              createdAt: Date.now(),
+              content,
+              optimizerJob: { jobId: activity.jobId, downloadable: activity.downloadable },
+            },
+          ]);
+      },
+      onOptimizationProgress: ({ jobId, point }) => {
+        setActiveOptimization(current => {
+          if (current !== null && current.jobId !== jobId) return current;
+          const previous = current?.points ?? [];
+          const last = previous.at(-1);
+          if (last?.elapsedSeconds === point.elapsedSeconds && last.currentBestScore === point.currentBestScore) {
+            return current;
+          }
+          const retained = previous.length >= OPTIMIZATION_PROGRESS_POINT_LIMIT
+            ? previous.filter((_, index) => index % 2 === 0 || index === previous.length - 1)
+            : previous;
+          return {
+            jobId,
+            state: current?.state ?? 'running',
+            terminal: false,
+            downloadable: false,
+            points: [...retained, point],
+          };
+        });
+      },
+      onDone: runId => {
+        updateBackgroundMessage(message => ({
+          ...message,
+          status: undefined,
+          responseCompletedAt: Date.now(),
+        }), runId);
+        lifecycle.finish(lifecycle.current('background'));
+      },
+      onStopped: runId => {
+        updateBackgroundMessage(stopResponse, runId);
+        lifecycle.finish(lifecycle.current('background'));
+      },
+      onStale: message => {
+        updateBackgroundMessage(entry => ({
+          ...entry,
+          content: message,
+          status: 'failed',
+          responseCompletedAt: Date.now(),
+          activity: [{ kind: 'response', text: message }],
+        }));
+        lifecycle.finish(lifecycle.current('background'));
+        setError(message);
+      },
+      onDownload: id => updateBackgroundMessage(entry => ({ ...entry, downloadId: id })),
+      onWarning: setError,
+      onModelInput: input => {
+        const runId = lifecycle.current('background')?.id;
+        setMessages(previous => {
+        const answer = [...previous].reverse().find(message => message.role === 'assistant' && (message.runId ?? message.id) === runId);
+        if (!answer) return previous;
+        const index = previous.findIndex(message => message.id === answer.id);
+        const question = [...previous.slice(0, index)].reverse().find(message => message.role === 'user' && message.source === undefined);
+        return applyModelInput(previous, input, { questionId: question?.id ?? null, assistantId: answer.id });
+        });
+      },
+      onContextUsage: updateContextUsage,
+      onHistoryTrimmed: setTrimmedHistoryCount,
+      onError: failBackgroundTurn,
+    };
+    const callbacks = scopedCallbacks(handlers, () => sessionEventsControllerRef.current === controller && !controller.signal.aborted);
     void streamSessionEvents(
       sessionId,
-      scopedCallbacks({
-        lastEventId: lastSessionEventIdRef.current,
-        onEventId: id => {
-          lastSessionEventIdRef.current = id;
-          sessionEventsRetryRef.current = 0;
-          if (lifecycle.current('background')) setIsReconnecting(false);
-        },
-        onReplay: events => {
-          const assistantIds = new Set(events.flatMap(event => [
-            event.data.turn_id,
-            event.type === 'turn_start' ? event.data.message_id : undefined,
-          ]).filter((id): id is string => typeof id === 'string'));
-          // Replace replayed output in its original row, before any later questions.
-          setMessages(previous => previous.map(message => assistantIds.has(message.id)
-            ? { ...message, content: '', activity: [], status: 'pending' as const,
-                downloadId: undefined, retry: undefined, responseCompletedAt: undefined }
-            : message));
-        },
-        onTurnContext: id => {
-          if (lifecycle.current('background')?.id !== id) beginBackgroundMessage(id);
-        },
-        onTurnStart: beginBackgroundMessage,
-        onModelInput: input => {
-          resumeBackgroundMessage();
-          const assistantId = lifecycle.current('background')?.id;
-          if (assistantId !== undefined) {
-            setMessages(previous => applyModelInput(previous, input, { questionId: null, assistantId }));
+      {
+        lastEventId: callbacks.lastEventId,
+        reset: resetReplay,
+        onEventId: callbacks.onEventId,
+        onEvent: event => {
+          if (sessionEventsControllerRef.current === controller && !controller.signal.aborted) {
+            eventRouterRef.current.dispatch(event, value => dispatchPageEvent(value, handlers), ownsConversation);
           }
         },
-        onDelta: text => {
-          resumeBackgroundMessage();
-          updateBackgroundMessage(message => ({
-            ...message,
-            content: message.content + text,
-            activity: appendResponseActivity(message.activity ?? [], text),
-          }));
-        },
-        onReasoning: text => {
-          resumeBackgroundMessage();
-          updateBackgroundMessage(message => {
-            const activity = message.activity ?? [];
-            const last = activity[activity.length - 1];
-            if (last?.kind === 'reasoning') {
-              return { ...message, activity: [...activity.slice(0, -1), { ...last, text: last.text + text }] };
-            }
-            return { ...message, activity: [...activity, { kind: 'reasoning', text }] };
-          });
-        },
-        onToolStart: activity => {
-          resumeBackgroundMessage();
-          updateBackgroundMessage(message => ({
-            ...message,
-            activity: [
-              ...(message.activity ?? []),
-              { kind: 'tool' as const, ...activity, result: '', ok: true, state: 'running' as const },
-            ],
-          }));
-        },
-        onTool: activity => {
-          resumeBackgroundMessage();
-          updateBackgroundMessage(message => ({
-            ...message,
-            activity: finishToolActivity(message.activity ?? [], activity),
-          }));
-        },
-        onScheduleChange: candidate => {
-          resumeBackgroundMessage();
-          const before = sandboxScheduleRef.current ?? scheduleYamlRef.current;
-          sandboxScheduleRef.current = candidate;
-          updateBackgroundMessage(message => ({
-            ...message,
-            activity: [
-              ...(message.activity ?? []),
-              { kind: 'schedule-change' as const, before, after: candidate },
-            ],
-          }));
-        },
-        onDownload: downloadId => updateBackgroundMessage(message => ({ ...message, downloadId })),
-        onWarning: setError,
-        onProposal: diff => setProposalDiff(diff),
-        onOptimization: activity => {
-          if (!activity.terminal) {
-            setActiveOptimization(current => ({
-              ...activity,
-              points: current?.jobId === activity.jobId ? current.points : [],
-            }));
-            return;
-          }
-          setActiveOptimization(current => current?.jobId === activity.jobId ? null : current);
-          const content = optimizationMessage(activity);
-          setMessages(previous => previous.some(message => message.id === `optimizer-${activity.jobId}`)
-            ? previous
-            : [
-              ...previous,
-              {
-                id: `optimizer-${activity.jobId}`,
-                role: 'optimizer',
-                createdAt: Date.now(),
-                content,
-                optimizerJob: { jobId: activity.jobId, downloadable: activity.downloadable },
-              },
-            ]);
-        },
-        onOptimizationProgress: ({ jobId, point }) => {
-          setActiveOptimization(current => {
-            if (current !== null && current.jobId !== jobId) return current;
-            const previous = current?.points ?? [];
-            const last = previous.at(-1);
-            if (last?.elapsedSeconds === point.elapsedSeconds && last.currentBestScore === point.currentBestScore) {
-              return current;
-            }
-            const retained = previous.length >= OPTIMIZATION_PROGRESS_POINT_LIMIT
-              ? previous.filter((_, index) => index % 2 === 0 || index === previous.length - 1)
-              : previous;
-            return {
-              jobId,
-              state: current?.state ?? 'running',
-              terminal: false,
-              downloadable: false,
-              points: [...retained, point],
-            };
-          });
-        },
-        onDone: messageId => {
-          updateBackgroundMessage(message => ({
-            ...message,
-            status: undefined,
-            responseCompletedAt: Date.now(),
-          }), messageId);
-          lifecycle.finish(lifecycle.current('background'));
-        },
-        onStopped: messageId => {
-          updateBackgroundMessage(message => ({
-            ...message,
-            content: message.content || 'Stopped.',
-            status: undefined,
-            responseCompletedAt: Date.now(),
-            activity: message.content
-              ? interruptRunningTools(message.activity ?? [])
-              : [...interruptRunningTools(message.activity ?? []), { kind: 'response', text: 'Stopped.' }],
-          }), messageId);
-          lifecycle.finish(lifecycle.current('background'));
-        },
-        onStale: message => {
-          updateBackgroundMessage(entry => ({
-            ...entry,
-            content: message,
-            status: 'failed',
-            responseCompletedAt: Date.now(),
-            activity: [{ kind: 'response', text: message }],
-          }));
-          lifecycle.finish(lifecycle.current('background'));
-          setError(message);
-        },
-        onContextUsage: updateContextUsage,
-        onHistoryTrimmed: setTrimmedHistoryCount,
-        onError: failBackgroundTurn,
-      }, () => sessionEventsControllerRef.current === controller && !controller.signal.aborted),
+      },
       controller.signal,
       authToken,
       endpoint,
@@ -1455,30 +1529,25 @@ export default function ExperimentalAiPage() {
         reconnect();
         return;
       }
-      if (lifecycle.current('background')) setIsReconnecting(true);
-      // Rejected credentials cannot succeed until the token changes, which restarts
-      // this stream through the effect below.
-      if (streamError instanceof AiHttpError && (streamError.status === 401 || streamError.status === 403)) {
-        reportRequestError(streamError, 'The AI event stream could not authenticate.');
-        if (sessionEventsControllerRef.current === controller) sessionEventsControllerRef.current = null;
-        return;
-      }
+      if (isAuthenticationError(streamError)) reportRequestError(streamError, 'The AI session could not reconnect.');
       reconnect();
     });
   }, [authToken, lifecycle, reportRequestError, sessionRetentionSeconds, updateContextUsage]);
 
   useEffect(() => {
     if (!isClientReady || activeSessionId === null || conversationUnavailable) return;
+    if (messages.some(message => message.request?.active) && eventRouterRef.current.foreground === null) return;
     if (sessionEventsControllerRef.current === null) {
-      startBackgroundEventStream(activeSessionId, sessionEndpointRef.current ?? aiEndpoint);
+      startSessionEventStream(activeSessionId, sessionEndpointRef.current ?? aiEndpoint);
     }
   }, [
     activeSessionId,
     aiEndpoint,
     conversationUnavailable,
     isClientReady,
+    messages,
     sessionEventsAttempt,
-    startBackgroundEventStream,
+    startSessionEventStream,
   ]);
 
   const sendRequest = async (
@@ -1486,7 +1555,7 @@ export default function ExperimentalAiPage() {
     attachmentsForMessage: SelectedAttachment[],
     clearComposer: boolean,
     createdAt = Date.now(),
-    resume?: { id: string; questionId: string; assistantId: string; recover?: boolean },
+    resume?: { id: string; questionId: string; assistantId: string; activeAssistantId?: string; recover?: boolean },
   ) => {
     if (!question || lifecycle.busy || conversationUnavailable || (authRequired && authToken === null)) return;
 
@@ -1505,36 +1574,47 @@ export default function ExperimentalAiPage() {
     currentRequestRef.current = { id: request.id, stopped: false };
     const currentRequest = currentRequestRef.current;
     userMessage.requestId = request.id;
-    let activeAssistantId = request.assistantId;
-    let activeAssistantHasOutput = false;
-    let activeQuestion = question;
+    // Cursor recovery continues the active reply. Replacement snapshots rebuild from the original reply.
+    let activeAssistantId = resume?.recover ? resume.activeAssistantId ?? request.assistantId : request.assistantId;
+    const initialAssistantId = request.assistantId;
+    const runMessageIds = new Set([
+      initialAssistantId, activeAssistantId,
+      ...messages.filter(message => resume?.recover && message.requestId === request.id && message.id !== userMessage.id)
+        .map(message => message.id),
+    ]);
+    const recoveredAssistant = resume?.recover ? messages.find(message => message.id === activeAssistantId) : undefined;
+    let activeAssistantHasOutput = Boolean(recoveredAssistant?.content || recoveredAssistant?.activity?.length);
+    let activeQuestion = resume?.recover
+      ? messages.slice(0, messages.findIndex(message => message.id === activeAssistantId))
+        .findLast(message => message.role === 'user' && message.requestId === request.id)?.content ?? question
+      : question;
     let activeQuestionRequiresAttachments = attachmentsForMessage.length > 0;
     const responseStartedAt = Date.now();
     followPageBottomRef.current = true;
     setShowScrollToBottom(false);
+    const withActiveAssistant = (message: ChatMessage, assistantId: string): ChatMessage => (
+      message.request?.id === request.id
+        ? { ...message, request: { ...message.request, activeAssistantId: assistantId } } : message
+    );
     const resetResponse = () => {
-      activeAssistantId = request.assistantId;
-      activeAssistantHasOutput = false;
-      activeQuestion = question;
+      const assistantId = activeAssistantId;
       setMessages(previous => {
-        const original = previous.find(message => message.id === request.assistantId);
+        const original = previous.find(message => message.id === assistantId);
         const assistant: ChatMessage = {
-          id: request.assistantId, role: 'assistant', content: '', status: 'pending',
-          responseStartedAt: original?.responseStartedAt ?? responseStartedAt, requestId: request.id, request,
+          id: assistantId, role: 'assistant', content: '', status: 'pending',
+          responseStartedAt: original?.responseStartedAt ?? responseStartedAt, requestId: request.id,
+          request: { ...request, activeAssistantId: assistantId },
+          ...(resume?.recover && original ? { content: original.content, activity: original.activity, runId: original.runId } : {}),
         };
-        const retained = previous.filter(message => message.id !== `status-${request.assistantId}`
-          && (message.requestId !== request.id || message.id === userMessage.id || message.id === request.assistantId));
-        if (original) return retained.map(message => message.id === request.assistantId ? assistant : message);
+        const retained = previous.filter(message => message.id !== `status-${assistantId}`
+          && (resume?.recover || message.requestId !== request.id || message.id === userMessage.id || message.id === assistantId))
+          .map(message => withActiveAssistant(message, assistantId));
+        if (original) return retained.map(message => message.id === assistantId ? assistant : message);
         const questionIndex = retained.findIndex(message => message.id === userMessage.id);
         if (questionIndex < 0) return [...retained, userMessage, assistant];
         retained.splice(questionIndex + 1, 0, assistant);
         return retained;
       });
-    };
-    const updateActiveMessage = (update: (message: ChatMessage) => ChatMessage) => {
-      // A snapshot can dispatch steering before React applies earlier event updates.
-      const assistantId = activeAssistantId;
-      setMessages(previous => previous.map(message => message.id === assistantId ? update(message) : message));
     };
     resetResponse();
     if (clearComposer) {
@@ -1561,7 +1641,7 @@ export default function ExperimentalAiPage() {
         controller.signal.throwIfAborted();
         sessionIdRef.current = sessionId;
         sessionEndpointRef.current = sessionEndpoint;
-        startBackgroundEventStream(sessionId, sessionEndpoint);
+        startSessionEventStream(sessionId, sessionEndpoint);
         checkedSessionRef.current = sessionId;
         setActiveSessionId(sessionId);
         setConversationUnavailable(false);
@@ -1577,169 +1657,168 @@ export default function ExperimentalAiPage() {
       controller.signal.throwIfAborted();
       if (!resume?.recover) syncedScheduleRef.current = scheduleYaml;
       renewSessionExpiration();
-      if (currentRequest.stopped) {
-        setMessages(previous => previous.map(message => message.id === request.assistantId
-          ? { ...message, content: 'Stopped.', status: undefined, responseCompletedAt: Date.now(),
-              activity: [{ kind: 'response' as const, text: 'Stopped.' }] } : message));
-        return;
-      }
-      await streamMessage(
-        sessionId,
-        question,
-        scopedCallbacks({
-          onReplay: resetResponse,
-          shouldStop: () => currentRequest.stopped,
-          onConnectionChange: connected => setIsReconnecting(!connected),
-          onModelInput: input => {
-            const assistantId = activeAssistantId;
-            setMessages(previous => applyModelInput(previous, input, { questionId: userMessage.id, assistantId }));
-          },
-          onUploaded: files => {
-            // The upload is now its own history message, so a retry needs only the question.
-            activeQuestionRequiresAttachments = false;
-            request.uploading = false;
-            setMessages(previous => previous.map(message => message.request?.id === request.id
-              ? { ...message, request: { ...message.request, uploading: false } } : message));
-            if (fileCapability.retained) setUploadedFiles(previous => [...previous, ...files]);
-          },
-          onAccepted: () => {
-            if (!fileCapability.retained) return;
-            getUploads(sessionId, authToken, sessionEndpoint, controller.signal)
-              .then(files => {
-                if (!controller.signal.aborted && abortControllerRef.current === controller) setUploadedFiles(files);
-              })
-              .catch(uploadError => {
-                if (!controller.signal.aborted && abortControllerRef.current === controller) {
-                  reportRequestError(uploadError, 'Uploaded files could not be listed.');
-                }
-              });
-          },
-          onDelta: text => {
-            if (text) {
-              activeAssistantHasOutput = true;
-              setSteeringAssistantId(null);
-            }
-            updateActiveMessage(message => ({
-              ...message,
-              content: message.content + text,
-              activity: appendResponseActivity(message.activity ?? [], text),
-            }));
-          },
-          onReasoning: text => {
-            if (text) {
-              activeAssistantHasOutput = true;
-              setSteeringAssistantId(null);
-            }
-            updateActiveMessage(message => {
-              const activity = message.activity ?? [];
-              const last = activity[activity.length - 1];
-              // Consecutive reasoning belongs to one entry, so the order of work stays readable.
-              if (last?.kind === 'reasoning') {
-                return { ...message, activity: [...activity.slice(0, -1), { ...last, text: last.text + text }] };
-              }
-              return { ...message, activity: [...activity, { kind: 'reasoning', text }] };
+      let runFinished = false;
+      let finishRun!: () => void;
+      let rejectRun!: (error: Error) => void;
+      const finished = new Promise<void>((resolve, reject) => {
+        finishRun = () => { runFinished = true; resolve(); };
+        rejectRun = reject;
+      });
+      void finished.catch(() => {});
+      // Subscribe before submitting. Neither a fast terminal event nor a reconnect
+      // should finish a different operation.
+      const callbacks = scopedCallbacks<StreamCallbacks>({
+        onDone: finishRun,
+        onStopped: () => { controller.abort(); finishRun(); },
+        onError: message => rejectRun(new Error(message)),
+        onStale: message => rejectRun(new AiStaleRunError(message)),
+        onReset: () => {
+          const runId = eventRouterRef.current.foreground?.runId;
+          activeAssistantId = initialAssistantId;
+          activeAssistantHasOutput = false;
+          activeQuestion = question;
+          const resetIds = new Set(runMessageIds);
+          setMessages(previous => {
+            const first = previous.findIndex(message => resetIds.has(message.id));
+            const position = first < 0 ? previous.findIndex(message => message.id === userMessage.id) + 1
+              : previous.slice(0, first).filter(message => !resetIds.has(message.id)).length;
+            const retained = previous.filter(message => !resetIds.has(message.id))
+              .map(message => withActiveAssistant(message, initialAssistantId));
+            retained.splice(position, 0, {
+              id: initialAssistantId, runId, requestId: request.id, request: { ...request, activeAssistantId: initialAssistantId },
+              role: 'assistant', content: '', status: 'pending', responseStartedAt,
             });
-          },
-          onToolStart: activity => {
+            return retained;
+          });
+          runMessageIds.clear();
+          runMessageIds.add(initialAssistantId);
+        },
+        ...assistantEventCallbacks(event => {
+          if (startsVisibleOutput(event)) {
             activeAssistantHasOutput = true;
             setSteeringAssistantId(null);
-            updateActiveMessage(message => ({
-              ...message,
-              activity: [
-                ...(message.activity ?? []),
-                { kind: 'tool' as const, ...activity, result: '', ok: true, state: 'running' as const },
-              ],
-            }));
-          },
-          onTool: activity => updateActiveMessage(message => ({
-            ...message, activity: finishToolActivity(message.activity ?? [], activity),
-          })),
-          onSteering: (queuedId, queuedMessage) => {
-            const createdAt = queuedMessagesRef.current.find(message => message.id === queuedId)?.createdAt ?? Date.now();
-            queuedMessagesRef.current = queuedMessagesRef.current.filter(message => message.id !== queuedId);
-            setQueuedMessages(queuedMessagesRef.current);
-            const steeringStartedAt = Date.now();
-            if (activeAssistantHasOutput) {
-              const completedAssistantId = activeAssistantId;
-              const nextAssistantId = messageId();
-              setMessages(previous => {
-                const result = previous.map(message => (
-                  message.id === completedAssistantId
-                    ? { ...message, status: undefined, responseCompletedAt: steeringStartedAt }
-                    : message
-                ));
-                const completedIndex = result.findIndex(message => message.id === completedAssistantId);
-                result.splice(completedIndex < 0 ? result.length : completedIndex + 1, 0,
-                  { id: queuedId, role: 'user', content: queuedMessage, createdAt, requestId: request.id },
-                  {
-                    id: nextAssistantId,
-                    role: 'assistant',
-                    content: '',
-                    status: 'pending',
-                    responseStartedAt: steeringStartedAt,
-                    requestId: request.id,
-                  });
-                return result;
-              });
-              activeAssistantId = nextAssistantId;
-              setSteeringAssistantId(nextAssistantId);
-              activeAssistantHasOutput = false;
-            } else {
-              const pendingAssistantId = activeAssistantId;
-              setMessages(previous => {
-                const pendingIndex = previous.findIndex(message => message.id === pendingAssistantId);
-                if (pendingIndex < 0) return [...previous, { id: queuedId, role: 'user', content: queuedMessage, createdAt, requestId: request.id }];
-                return [
-                  ...previous.slice(0, pendingIndex),
-                  { id: queuedId, role: 'user', content: queuedMessage, createdAt, requestId: request.id },
-                  ...previous.slice(pendingIndex),
-                ];
-              });
-              setSteeringAssistantId(pendingAssistantId);
-            }
-            activeQuestion = queuedMessage;
-            activeQuestionRequiresAttachments = false;
-          },
-          onDownload: downloadId => updateActiveMessage(message => ({ ...message, downloadId })),
-          onWarning: setError,
-          onScheduleChange: candidate => {
-            const before = sandboxScheduleRef.current ?? scheduleYaml;
-            sandboxScheduleRef.current = candidate;
-            updateActiveMessage(message => ({
-              ...message,
-              activity: [
-                ...(message.activity ?? []),
-                { kind: 'schedule-change' as const, before, after: candidate },
-              ],
-            }));
-          },
-          onProposal: diff => setProposalDiff(diff),
-          onContextUsage: updateContextUsage,
-          onHistoryTrimmed: setTrimmedHistoryCount,
-          onStopped: () => updateActiveMessage(message => ({
-            ...message, content: message.content || 'Stopped.', status: undefined,
-            activity: message.content ? interruptRunningTools(message.activity ?? [])
-              : [...interruptRunningTools(message.activity ?? []), { kind: 'response' as const, text: 'Stopped.' }],
-            responseCompletedAt: Date.now(),
-          })),
-        }, () => lifecycle.owns(operation) && !controller.signal.aborted),
-        controller.signal,
-        authToken,
-        {
-          files: attachmentsForMessage.map(attachment => attachment.file),
-          messageId: request.id,
+          }
+          const assistantId = activeAssistantId;
+          setMessages(previous => previous.map(message => (
+            message.id === assistantId ? applyAssistantEvent(message, event) : message
+          )));
+        }, sandboxScheduleRef, scheduleYamlRef),
+        onSteering: (queuedId, queuedMessage) => {
+          const runId = eventRouterRef.current.foreground?.runId;
+          const createdAt = queuedMessagesRef.current.find(message => message.id === queuedId)?.createdAt ?? Date.now();
+          queuedMessagesRef.current = queuedMessagesRef.current.filter(message => message.id !== queuedId);
+          setQueuedMessages(queuedMessagesRef.current);
+          runMessageIds.add(queuedId);
+          const steeringStartedAt = Date.now();
+          if (activeAssistantHasOutput) {
+            const completedAssistantId = activeAssistantId;
+            const nextAssistantId = messageId();
+            runMessageIds.add(nextAssistantId);
+            setMessages(previous => {
+              const completedIndex = previous.findIndex(message => message.id === completedAssistantId);
+              const completed = previous.map(message => withActiveAssistant(
+                message.id === completedAssistantId
+                  ? { ...message, runId, status: undefined, responseCompletedAt: steeringStartedAt }
+                  : message, nextAssistantId,
+              ));
+              const queued: ChatMessage = { id: queuedId, runId, requestId: request.id, role: 'user', content: queuedMessage, createdAt };
+              const next: ChatMessage = {
+                id: nextAssistantId,
+                runId,
+                requestId: request.id,
+                request: { ...request, activeAssistantId: nextAssistantId },
+                role: 'assistant',
+                content: '',
+                status: 'pending',
+                responseStartedAt: steeringStartedAt,
+              };
+              const position = completedIndex < 0 ? completed.length : completedIndex + 1;
+              return [...completed.slice(0, position), queued, next, ...completed.slice(position)];
+            });
+            activeAssistantId = nextAssistantId;
+            setSteeringAssistantId(nextAssistantId);
+            activeAssistantHasOutput = false;
+          } else {
+            const pendingAssistantId = activeAssistantId;
+            setMessages(previous => {
+              const pendingIndex = previous.findIndex(message => message.id === pendingAssistantId);
+              const queued: ChatMessage = { id: queuedId, runId, requestId: request.id, role: 'user', content: queuedMessage, createdAt };
+              if (pendingIndex < 0) return [...previous, queued];
+              return [
+                ...previous.slice(0, pendingIndex),
+                queued,
+                ...previous.slice(pendingIndex),
+              ];
+            });
+            setSteeringAssistantId(pendingAssistantId);
+          }
+          activeQuestion = queuedMessage;
+          activeQuestionRequiresAttachments = false;
         },
-        sessionEndpoint,
+        onDownload: id => setMessages(previous => previous.map(message => message.id === activeAssistantId ? { ...message, downloadId: id } : message)),
+        onWarning: setError,
+        onModelInput: input => {
+          const assistantId = activeAssistantId;
+          setMessages(previous => applyModelInput(previous, input, { questionId: userMessage.id, assistantId }));
+        },
+        onProposal: diff => setProposalDiff(diff),
+        onContextUsage: updateContextUsage,
+        onHistoryTrimmed: setTrimmedHistoryCount,
+      }, () => lifecycle.owns(operation) && !controller.signal.aborted);
+      const foreground = eventRouterRef.current.begin(
+        event => dispatchPageEvent(event, callbacks), rejectRun,
+        () => startSessionEventStream(sessionId, sessionEndpoint, true),
       );
+      if (sessionEventsControllerRef.current === null) startSessionEventStream(sessionId, sessionEndpoint);
+      const aborted = () => finishRun();
+      controller.signal.addEventListener('abort', aborted, { once: true });
+      try {
+        if (attachmentsForMessage.length > 0) {
+          const uploaded = await uploadFiles(sessionId, attachmentsForMessage.map(attachment => attachment.file), authToken, sessionEndpoint, controller.signal);
+          setUploadedFiles(previous => [...previous, ...uploaded]);
+          activeQuestionRequiresAttachments = false;
+          request.uploading = false;
+          setMessages(previous => previous.map(message => message.request?.id === request.id
+            ? { ...message, request: { ...message.request, uploading: false } } : message));
+        }
+        if (currentRequest.stopped) {
+          controller.abort();
+          setMessages(previous => previous.map(message => message.id === activeAssistantId ? stopResponse(message) : message));
+          finishRun();
+          return;
+        }
+        const runId = await sendMessage(sessionId, question, controller.signal, authToken, sessionEndpoint, {
+          messageId: request.id,
+          shouldStop: () => currentRequest.stopped,
+          onConnectionChange: connected => setIsReconnecting(!connected),
+        });
+        eventRouterRef.current.acknowledge(foreground, runId, id => {
+          setMessages(previous => previous.map(message => runMessageIds.has(message.id)
+            ? { ...message, runId: id, requestId: request.id } : message));
+        });
+        if (!runFinished && lifecycle.getSnapshot().foreground?.phase === 'stopping') {
+          // Stop may have reached the server before the message was admitted.
+          await stopSession(sessionId, authToken, sessionEndpoint, request.id).catch(stopError => {
+            if (!lifecycle.owns(operation)) return;
+            lifecycle.stopFailed([operation]);
+            reportRequestError(stopError, 'The AI response could not be stopped.');
+          });
+        }
+        await finished;
+      } finally {
+        controller.signal.removeEventListener('abort', aborted);
+        eventRouterRef.current.finish(foreground);
+      }
       if (!lifecycle.owns(operation)) return;
       setMessages(previous => previous.map(message => (
         message.id === activeAssistantId
-          ? { ...message, status: undefined, responseCompletedAt: Date.now() }
+          ? controller.signal.aborted ? stopResponse(message)
+            : { ...message, status: undefined, responseCompletedAt: Date.now() }
           : message
       )));
     } catch (streamError) {
       if (!lifecycle.owns(operation)) return;
-      const staleTurnMessage = streamError instanceof AiStaleTurnError ? streamError.message : null;
+      const staleTurnMessage = streamError instanceof AiStaleRunError ? streamError.message : null;
       setMessages(previous => previous.map(message => {
         if (message.id !== activeAssistantId) return message;
         return {
@@ -1763,10 +1842,8 @@ export default function ExperimentalAiPage() {
       }
     } finally {
       if (lifecycle.owns(operation)) {
-        if (!controller.signal.aborted) {
-          setMessages(previous => previous.map(message => message.request?.id === request.id
-            ? { ...message, request: { ...message.request, active: false } } : message));
-        }
+        setMessages(previous => previous.map(message => message.request?.id === request.id
+          ? { ...message, request: { ...message.request, active: false } } : message));
         if (currentRequestRef.current === currentRequest) currentRequestRef.current = null;
         setIsReconnecting(false);
         setSteeringAssistantId(null);
@@ -1842,12 +1919,14 @@ export default function ExperimentalAiPage() {
 
   // Leaving the page aborted this upload before the question was sent, so its files must be attached again.
   const failInterruptedUpload = (pending: NonNullable<ChatMessage['request']>) => {
-    setMessages(previous => previous.map(message => message.id === pending.assistantId
-      ? {
-          ...message, status: 'failed', responseCompletedAt: Date.now(), request: { ...pending, active: false },
-          retry: { question: pending.question, requiresAttachments: true },
-        }
-      : message));
+    setMessages(previous => previous.map(message => ({
+      ...message,
+      ...(message.request?.id === pending.id ? { request: { ...message.request, active: false } } : {}),
+      ...(message.id === pending.assistantId ? {
+        status: 'failed' as const, responseCompletedAt: Date.now(), request: { ...pending, active: false },
+        retry: { question: pending.question, requiresAttachments: true },
+      } : {}),
+    })));
   };
 
   const prepareAttachmentRetry = (question: string) => {
@@ -1863,6 +1942,7 @@ export default function ExperimentalAiPage() {
     setQueuedMessages([]);
     const sessionId = sessionIdRef.current;
     if (sessionId === null) {
+      abortControllerRef.current?.abort();
       return;
     }
     // The request only asks the server to stop. The turn keeps running until a terminal
@@ -2428,9 +2508,12 @@ export default function ExperimentalAiPage() {
                   )}
                 </time>
               )}
+              {message.role === 'assistant' && message.status === 'stopped' && (
+                <p className="mt-2 text-sm text-gray-500">Stopped before completion.</p>
+              )}
               {message.role === 'assistant' && message.status === 'failed' && message.retry && (
                 <div className="mt-3 border-t border-red-200 pt-3 text-sm text-red-700">
-                  <p>This turn failed. Its output was not added to the AI conversation context.</p>
+                  <p>This response failed and will not be used as context for future messages.</p>
                   {message.retry.requiresAttachments ? (
                     <>
                       <p className="mt-1 text-xs">Prepare the question, then reattach its files before sending.</p>

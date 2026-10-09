@@ -28,6 +28,7 @@ import pytest
 from nurse_scheduling.ai.agent import Agent
 from nurse_scheduling.ai.agent_loop import agent_loop
 from nurse_scheduling.ai.agent_types import (
+    AgentMessageEnd,
     AgentReasoning,
     AgentSteering,
     AgentText,
@@ -94,6 +95,7 @@ def _run(provider: FakeProvider, *, tool_ok: bool = True, **limits: int) -> list
         return [
             event
             async for event in agent_loop(provider, QUESTION, bind_agent_tools(TOOLS, execute, frozenset()), **limits)
+            if not isinstance(event, AgentMessageEnd)
         ]
 
     return asyncio.run(collect())
@@ -129,7 +131,10 @@ def test_agent_closing_a_stream_releases_provider_before_reuse():
         await first.aclose()
         assert closed == [True]
         assert not agent.state.is_streaming
-        assert [event async for event in agent.prompt(FakeProvider(_text("Next")), QUESTION, [])] == [AgentText("Next")]
+        assert [event async for event in agent.prompt(FakeProvider(_text("Next")), QUESTION, [])] == [
+            AgentText("Next"),
+            AgentMessageEnd(AssistantMessage("Next")),
+        ]
 
     asyncio.run(exercise())
 
@@ -333,7 +338,7 @@ def test_allowed_tool_batch_executes_concurrently_and_reports_in_call_order():
 
     assert max_active == 2
     assert [event.result for event in uses] == ['{"command":"first"}', '{"command":"second"}']
-    assert all(isinstance(event, AgentToolStart) for event in events[:2])
+    assert all(isinstance(event, AgentToolStart) for event in events[1:3])
 
 
 def test_parallel_tool_failure_cancels_siblings_without_wrapping_the_error():
@@ -588,4 +593,4 @@ def test_refused_tools_consume_steering_before_the_next_provider_request(call_co
     assert not executed
     assert len(requests) == 2
     assert events.count(AgentSteering("cancel-edit", instruction)) == 1
-    assert events[-1] == AgentText("I will only explain.")
+    assert events[-2:] == [AgentText("I will only explain."), AgentMessageEnd(AssistantMessage("I will only explain."))]

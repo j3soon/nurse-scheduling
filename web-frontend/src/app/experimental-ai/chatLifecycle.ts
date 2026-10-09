@@ -19,7 +19,6 @@
 
 // This code is mostly AI generated.
 
-import type { StreamCallbacks } from './aiClient';
 
 type Kind = 'foreground' | 'background';
 export interface Operation {
@@ -128,11 +127,11 @@ export class ChatLifecycle {
 }
 
 /** Revoke every callback together when a connection or conversation is replaced. */
-export function scopedCallbacks(callbacks: StreamCallbacks, owns: () => boolean): StreamCallbacks {
+export function scopedCallbacks<T extends object>(callbacks: T, owns: () => boolean): T {
   return Object.fromEntries(Object.entries(callbacks).map(([name, value]) => [
     name,
     typeof value === 'function'
       ? (...args: unknown[]) => { if (owns()) return (value as (...args: unknown[]) => unknown)(...args); }
       : value,
-  ])) as StreamCallbacks;
+   ])) as T;
 }

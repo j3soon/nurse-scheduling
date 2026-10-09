@@ -20,27 +20,29 @@
 // This test is mostly AI generated.
 
 import {
-  AiStaleTurnError,
+  AiStaleRunError,
   PRODUCTION_AI_API_URL,
   approveProposal,
   createSession,
-  downloadOptimization,
   downloadGeneratedZip,
-  removeGeneratedZip,
-  getUploads,
-  removeUpload,
+  downloadOptimization,
   getAiBaseUrl,
   getCapabilities,
   getBackendVersion,
   getSessionStatus,
+  getUploads,
   isOfficialAiEndpoint,
   queueMessage,
   rejectProposal,
+  removeGeneratedZip,
+  removeUpload,
   scheduleRevision,
   streamMessage,
+  sendMessage,
   streamSessionEvents,
   stopSession,
   updateSessionSchedule,
+  uploadFiles,
 } from './aiClient';
 
 function streamedResponse(chunks: string[]): Response {
@@ -53,6 +55,8 @@ function streamedResponse(chunks: string[]): Response {
   });
   return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
 }
+
+import type { SessionEvent } from './sessionEvents';
 
 describe('AI client', () => {
   beforeEach(() => {
@@ -169,51 +173,183 @@ describe('AI client', () => {
     });
   });
 
+  it('submits a message and returns its active run ID without reading SSE', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ run_id: 'r' }), { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await sendMessage('s', 'Hello', new AbortController().signal, 'token')).toBe('r');
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching('/s/messages'), expect.objectContaining({
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', Authorization: 'Bearer token' },
+    }));
+  });
+
+  it('recovers a run once through session_reset and continues with the next event', async () => {
+    const recovery = {
+      events: [
+        { type: 'run_start', data: { run_id: 'r', trigger: 'user' } },
+        { type: 'delta', data: { run_id: 'r', text: 'Recovered answer.' } },
+        { type: 'tool', data: { run_id: 'r', tool_call_id: 't', name: 'read', result: 'Read', ok: true } },
+      ],
+      active_run_id: 'r', incomplete: true, proposal_diff: '',
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      `id: 8\nevent: session_reset\ndata: ${JSON.stringify(recovery)}\n\n`,
+      'id: 9\nevent: done\ndata: {"run_id":"r"}\n\n',
+      'id: 9\nevent: done\ndata: {"run_id":"r"}\n\n',
+    ])));
+    const events: SessionEvent[] = [];
+    const cursor = vi.fn();
+    await streamSessionEvents('s', {
+      lastEventId: 5, onEvent: event => events.push(event), onEventId: cursor,
+    }, new AbortController().signal, null);
+    expect(events).toEqual([
+      { type: 'session_reset', reset: { runIds: ['r'], terminalRunIds: [], activeRunId: 'r', incomplete: true, proposalDiff: null } },
+      { type: 'run_context', runId: 'r' },
+      { type: 'run_start', runId: 'r', trigger: 'user' },
+      { type: 'run_context', runId: 'r' },
+      { type: 'delta', runId: 'r', text: 'Recovered answer.' },
+      { type: 'run_context', runId: 'r' },
+      { type: 'tool', runId: 'r', activity: { toolCallId: 't', name: 'read', arguments: '', result: 'Read', ok: true } },
+      { type: 'proposal', diff: '' },
+      { type: 'run_context', runId: 'r' },
+      { type: 'done', runId: 'r' },
+    ]);
+    expect(cursor.mock.calls.map(([id]) => id)).toEqual([8, 9]);
+  });
+
+  it.each([null, [], 42, true, 'text'])(
+    'rejects a non-object stream payload without acknowledging it (%j)',
+    async payload => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+        `id: 8\nevent: delta\ndata: ${JSON.stringify(payload)}\n\n`,
+      ])));
+      const onEvent = vi.fn();
+      const cursor = vi.fn();
+
+      await expect(streamSessionEvents('s', {
+        lastEventId: 5, onEvent, onEventId: cursor,
+      }, new AbortController().signal, null)).rejects.toThrow('The AI backend returned an invalid stream.');
+
+      expect(onEvent).not.toHaveBeenCalled();
+      expect(cursor).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ['null entry', null],
+    ['array entry', []],
+    ['missing type', { data: {} }],
+    ['invalid type', { type: 1, data: {} }],
+    ['missing data', { type: 'delta' }],
+    ['null data', { type: 'delta', data: null }],
+    ['array data', { type: 'delta', data: [] }],
+  ])('rejects a recovery snapshot before applying any entries (%s)', async (_label, entry) => {
+    const recovery = {
+      events: [{ type: 'delta', data: { run_id: 'r', text: 'Do not apply this.' } }, entry],
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      `id: 8\nevent: session_reset\ndata: ${JSON.stringify(recovery)}\n\n`,
+    ])));
+    const onEvent = vi.fn();
+    const cursor = vi.fn();
+
+    await expect(streamSessionEvents('s', {
+      lastEventId: 5, onEvent, onEventId: cursor,
+    }, new AbortController().signal, null)).rejects.toThrow('The AI backend returned an invalid recovery snapshot.');
+
+    expect(onEvent).not.toHaveBeenCalled();
+    expect(cursor).not.toHaveBeenCalled();
+  });
+
+  it('validates recovered event content before applying the snapshot', async () => {
+    const recovery = {
+      events: [
+        { type: 'delta', data: { run_id: 'r', text: 'Do not apply this.' } },
+        { type: 'schedule_change', data: { run_id: 'r', schedule_yaml: 42 } },
+      ],
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      `id: 8\nevent: session_reset\ndata: ${JSON.stringify(recovery)}\n\n`,
+    ])));
+    const onEvent = vi.fn();
+    const cursor = vi.fn();
+
+    await expect(streamSessionEvents('s', {
+      lastEventId: 5, onEvent, onEventId: cursor,
+    }, new AbortController().signal, null)).rejects.toThrow('The AI backend returned an invalid schedule change.');
+
+    expect(onEvent).not.toHaveBeenCalled();
+    expect(cursor).not.toHaveBeenCalled();
+  });
+
+  it('accepts recovery entries with unknown event types', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      'id: 8\nevent: session_reset\ndata: {"events":[{"type":"future_event","data":{"extra":true}}]}\n\n',
+    ])));
+    const onEvent = vi.fn();
+    const cursor = vi.fn();
+
+    await streamSessionEvents('s', {
+      lastEventId: 5, onEvent, onEventId: cursor,
+    }, new AbortController().signal, null);
+
+    expect(onEvent.mock.calls).toEqual([
+      [{ type: 'session_reset', reset: {
+        runIds: [], terminalRunIds: [], activeRunId: null, incomplete: false, proposalDiff: null,
+      } }],
+      [{ type: 'proposal', diff: '' }],
+    ]);
+    expect(cursor).toHaveBeenCalledExactlyOnceWith(8);
+  });
+
+  it('acknowledges a validated event before invoking a failing handler', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      'id: 8\nevent: delta\ndata: {"text":"Answer"}\n\n',
+    ])));
+    const cursor = vi.fn();
+    const onEvent = vi.fn(() => {
+      expect(cursor).toHaveBeenCalledExactlyOnceWith(8);
+      throw new Error('Handler failed.');
+    });
+
+    await expect(streamSessionEvents('s', {
+      onEvent, onEventId: cursor,
+    }, new AbortController().signal, null)).rejects.toThrow('Handler failed.');
+
+    expect(onEvent).toHaveBeenCalledExactlyOnceWith({ type: 'delta', text: 'Answer' });
+  });
+
   it('parses deltas split across network chunks', async () => {
     const fetchMock = vi.fn().mockResolvedValue(streamedResponse([
       'event: delta\ndata: {"text":"Hel',
       'lo"}\n\nevent: delta\ndata: {"text":" world"}\n\n',
-      'event: done\ndata: {"message_id":"message-id"}\n\n',
+      'event: done\ndata: {"run_id":"message-id"}\n\n',
     ]));
     vi.stubGlobal('fetch', fetchMock);
-    const deltas: string[] = [];
-    const onDone = vi.fn();
+    const events: SessionEvent[] = [];
     const controller = new AbortController();
 
     await streamMessage(
       'session/id',
       'Who works?',
-      { onDelta: delta => deltas.push(delta), onDone },
+      { onEvent: event => events.push(event) },
       controller.signal,
       'stream-token',
     );
 
-    expect(deltas).toEqual(['Hello', ' world']);
-    expect(onDone).toHaveBeenCalledOnce();
+    expect(events).toEqual([
+      { type: 'delta', text: 'Hello' },
+      { type: 'delta', text: ' world' },
+      { type: 'run_context', runId: 'message-id' },
+      { type: 'done', runId: 'message-id' },
+    ]);
     expect(fetchMock).toHaveBeenCalledWith(
       'https://api.nursescheduling.org/ai/sessions/session%2Fid/messages',
       expect.objectContaining({
-        body: expect.any(String),
+        body: JSON.stringify({ message: 'Who works?' }),
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer stream-token' },
+        headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json', Authorization: 'Bearer stream-token' },
       }),
     );
-  });
-
-  it('reattaches after a lost completion without resubmitting a new question', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(streamedResponse(['id: 1\nevent: delta\ndata: {"text":"Saved answer"}\n\n']))
-      .mockResolvedValueOnce(streamedResponse(['id: 2\nevent: done\ndata: {"message_id":"turn-1"}\n\n']));
-    vi.stubGlobal('fetch', fetchMock);
-    const deltas: string[] = [];
-    const onDone = vi.fn();
-    await streamMessage('session-id', 'Question', { onDelta: text => deltas.push(text), onDone },
-      new AbortController().signal, null, { messageId: 'question-1' });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ message: 'Question', message_id: 'question-1', last_event_id: 0 });
-    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ message: 'Question', message_id: 'question-1', last_event_id: 1 });
-    expect(deltas).toEqual(['Saved answer']);
-    expect(onDone).toHaveBeenCalledOnce();
   });
 
   it('delivers a streamed delta before the response completes', async () => {
@@ -225,59 +361,23 @@ describe('AI client', () => {
       },
     }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response));
-    const deltas: string[] = [];
-    const onDone = vi.fn();
-    const onAccepted = vi.fn();
+    const onEvent = vi.fn();
 
     const streaming = streamMessage(
       'session-id',
       'Question',
-      { onDelta: delta => deltas.push(delta), onDone, onAccepted },
+      { onEvent },
       new AbortController().signal,
       null,
     );
-    await vi.waitFor(() => expect(onAccepted).toHaveBeenCalledOnce());
-    expect(deltas).toEqual([]);
-    expect(onDone).not.toHaveBeenCalled();
     streamController?.enqueue(encoder.encode('event: delta\ndata: {"text":"First"}\n\n'));
 
-    await vi.waitFor(() => expect(deltas).toEqual(['First']));
-    expect(onDone).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(onEvent).toHaveBeenCalledExactlyOnceWith({ type: 'delta', text: 'First' }));
 
-    streamController?.enqueue(encoder.encode('event: done\ndata: {"message_id":"message-id"}\n\n'));
+    streamController?.enqueue(encoder.encode('event: done\ndata: {"run_id":"message-id"}\n\n'));
     streamController?.close();
     await streaming;
-    expect(onDone).toHaveBeenCalledOnce();
-  });
-
-  it('reports a download warning without failing the completed turn', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
-      'event: delta\ndata: {"text":"Your files are ready."}\n\n',
-      'event: warning\ndata: {"message":"The generated ZIP could not be retained."}\n\n',
-      'event: done\ndata: {"message_id":"completed-turn"}\n\n',
-    ])));
-    const onWarning = vi.fn();
-    const onDone = vi.fn();
-
-    await expect(streamMessage(
-      'session-id', 'Download the CSV.', { onDelta: vi.fn(), onWarning, onDone },
-      new AbortController().signal, null,
-    )).resolves.toBeUndefined();
-
-    expect(onWarning).toHaveBeenCalledWith('The generated ZIP could not be retained.');
-    expect(onDone).toHaveBeenCalledWith('completed-turn');
-  });
-
-  it('does not accept a rejected message', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(
-      JSON.stringify({ detail: 'Too many retained files.' }),
-      { status: 413, headers: { 'Content-Type': 'application/json' } },
-    )));
-    const onAccepted = vi.fn();
-    await expect(streamMessage(
-      'session-id', 'Question', { onDelta: vi.fn(), onAccepted }, new AbortController().signal, null,
-    )).rejects.toThrow('Too many retained files.');
-    expect(onAccepted).not.toHaveBeenCalled();
+    expect(onEvent).toHaveBeenLastCalledWith({ type: 'done', runId: 'message-id' });
   });
 
   it('surfaces a provider status with its backend error ID', async () => {
@@ -289,7 +389,7 @@ describe('AI client', () => {
     await expect(streamMessage(
       'session-id',
       'Question',
-      { onDelta: vi.fn() },
+      { onEvent: event => { if (event.type === 'error') throw new Error(event.message); } },
       new AbortController().signal,
       null,
     )).rejects.toThrow(providerError);
@@ -304,27 +404,25 @@ describe('AI client', () => {
     await expect(streamMessage(
       'session-id',
       'Question',
-      { onDelta: vi.fn() },
+      { onEvent: event => { if (event.type === 'stale') throw new AiStaleRunError(event.message); } },
       new AbortController().signal,
       null,
-    )).rejects.toEqual(new AiStaleTurnError('The schedule changed.'));
+    )).rejects.toEqual(new AiStaleRunError('The schedule changed.'));
   });
 
-  it('uploads files before sending the question as typed', async () => {
+  it('uploads files as multipart form data and sends the question as typed', async () => {
     const uploaded = { id: 'file-1', filename: 'ward.png', media_type: 'image/png', bytes: 11 };
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify([uploaded]), { status: 201 }))
-      .mockResolvedValueOnce(streamedResponse(['event: done\ndata: {"message_id":"message-id"}\n\n']));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ run_id: 'run-1' }), { status: 202 }));
     vi.stubGlobal('fetch', fetchMock);
     const image = new File(['image bytes'], 'ward.png', { type: 'image/png' });
     const signal = new AbortController().signal;
 
-    const onUploaded = vi.fn();
-
-    await streamMessage(
-      'session-id', 'What is shown?', { onDelta: vi.fn(), onUploaded }, signal, 'stream-token',
-      { files: [image] },
-    );
+    expect(await uploadFiles('session-id', [image], 'stream-token', undefined, signal)).toEqual([uploaded]);
+    expect(await sendMessage(
+      'session-id', 'What is shown?', signal, 'stream-token', undefined, { messageId: 'message-1' },
+    )).toBe('run-1');
 
     const [uploadUrl, uploadRequest] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(uploadUrl).toBe('https://api.nursescheduling.org/ai/sessions/session-id/uploads');
@@ -335,105 +433,216 @@ describe('AI client', () => {
     expect(fetchMock).toHaveBeenLastCalledWith('https://api.nursescheduling.org/ai/sessions/session-id/messages', {
       method: 'POST',
       credentials: 'include',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer stream-token' },
-      body: expect.any(String),
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', Authorization: 'Bearer stream-token' },
+      body: JSON.stringify({ message: 'What is shown?', message_id: 'message-1' }),
       signal: expect.any(AbortSignal),
     });
-    expect(onUploaded).toHaveBeenCalledWith([uploaded]);
+  });
+
+  it('reattaches after a lost acknowledgement without asking a new question', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ run_id: 'run-1' }), { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const onConnectionChange = vi.fn();
+
+    await expect(sendMessage('session-id', 'Question', new AbortController().signal, null, undefined, {
+      messageId: 'message-1', onConnectionChange,
+    })).resolves.toBe('run-1');
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const bodies = fetchMock.mock.calls.map(([, request]) => JSON.parse((request as RequestInit).body as string));
+    expect(bodies).toEqual([
+      { message: 'Question', message_id: 'message-1' },
+      { message: 'Question', message_id: 'message-1' },
+    ]);
+    expect(onConnectionChange.mock.calls).toEqual([[false], [true]]);
+  });
+
+  it('rejects a complete invalid JSON acknowledgement without retrying', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('not JSON', { status: 202 }))
+      .mockResolvedValue(new Response(JSON.stringify({ run_id: 'unexpected-retry' }), { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const onConnectionChange = vi.fn();
+
+    await expect(sendMessage('session-id', 'Question', new AbortController().signal, null, undefined, {
+      messageId: 'message-1', onConnectionChange,
+    })).rejects.toThrow('The AI backend returned an invalid run ID.');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(onConnectionChange).not.toHaveBeenCalled();
+  });
+
+  it('saves Stop before retrying a request whose response never arrived', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce(new Response(null, { status: 202 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ run_id: 'run-1' }), { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(sendMessage('session-id', 'Question', new AbortController().signal, null, undefined, {
+      messageId: 'message-1', shouldStop: () => true,
+    })).resolves.toBe('run-1');
+
+    // The server reports the accepted run's outcome, or stops a question it never received.
+    expect(fetchMock.mock.calls.map(([url]) => String(url).split('/').at(-1))).toEqual(['messages', 'stop', 'messages']);
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body as string)).toEqual({ message_id: 'message-1' });
+  });
+
+  it.each([false, true])('retries a dropped acknowledgement body with the same ID, with Stop=%s', async stopped => {
+    const interrupted = new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"run_'));
+        controller.error(new TypeError('The response body connection closed'));
+      },
+    }), { status: 202 });
+    const fetchMock = vi.fn().mockResolvedValueOnce(interrupted);
+    if (stopped) fetchMock.mockResolvedValueOnce(new Response(null, { status: 202 }));
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ run_id: 'accepted-run' }), { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(sendMessage('session', 'Question', new AbortController().signal, null, undefined, {
+      messageId: 'original-id', shouldStop: () => stopped,
+    })).resolves.toBe('accepted-run');
+    expect(fetchMock.mock.calls.map(([url]) => String(url).split('/').at(-1)))
+      .toEqual(stopped ? ['messages', 'stop', 'messages'] : ['messages', 'messages']);
+    for (const [url, request] of fetchMock.mock.calls) {
+      const body = JSON.parse(request.body as string);
+      expect(body.message_id).toBe('original-id');
+      if (!String(url).endsWith('/stop')) expect(body.message).toBe('Question');
+    }
+  });
+
+  it('fails a stopped request when the server rejects its Stop', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'Chat session not found.' }), { status: 404 })));
+
+    await expect(sendMessage('session-id', 'Question', new AbortController().signal, null, undefined, {
+      messageId: 'message-1', shouldStop: () => true,
+    })).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('rejects an upload or message the backend refuses', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({ detail: 'File attachment is too large.' }),
+        { status: 413, headers: { 'Content-Type': 'application/json' } },
+      ))
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({ detail: 'Too many retained files.' }),
+        { status: 413, headers: { 'Content-Type': 'application/json' } },
+      )));
+
+    await expect(uploadFiles('session-id', [new File(['data'], 'large.bin')], null))
+      .rejects.toThrow('File attachment is too large.');
+    await expect(sendMessage('session-id', 'Question', new AbortController().signal, null))
+      .rejects.toThrow('Too many retained files.');
   });
 
   it('forwards the model input and rejects a malformed one', async () => {
-    const onModelInput = vi.fn();
-    vi.stubGlobal('fetch', vi.fn()
-      .mockResolvedValueOnce(streamedResponse([
-        `event: model_input\ndata: ${JSON.stringify({
-          system: 'System',
-          messages: [
-            { kind: 'app', index: 3, content: '[App event] Upload' },
-            { kind: 'question', content: 'Question' },
-            { kind: 'status', content: '[Current status]' },
-          ],
-        })}\n\n`,
-        'event: done\ndata: {"message_id":"1"}\n\n',
-      ]))
-      .mockResolvedValueOnce(streamedResponse([
-        'event: model_input\ndata: {"system":"System","messages":[{"kind":"app","content":"No index"}]}\n\n',
-      ])));
-
-    await streamMessage('session-id', 'Question', { onDelta: vi.fn(), onModelInput }, new AbortController().signal, null);
-    await expect(streamMessage(
-      'session-id', 'Question', { onDelta: vi.fn(), onModelInput }, new AbortController().signal, null,
-    )).rejects.toThrow('The AI backend returned an invalid model input.');
-
-    expect(onModelInput).toHaveBeenCalledOnce();
-    expect(onModelInput).toHaveBeenCalledWith({
+    const input = {
       system: 'System',
       messages: [
         { kind: 'app', index: 3, content: '[App event] Upload' },
         { kind: 'question', content: 'Question' },
         { kind: 'status', content: '[Current status]' },
       ],
-    });
+    };
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(streamedResponse([
+        `event: model_input\ndata: ${JSON.stringify(input)}\n\n`,
+        'event: done\ndata: {"run_id":"1"}\n\n',
+      ]))
+      .mockResolvedValueOnce(streamedResponse([
+        'event: model_input\ndata: {"system":"System","messages":[{"kind":"app","content":"No index"}]}\n\n',
+      ])));
+    const onEvent = vi.fn();
+
+    await streamMessage('session-id', 'Question', { onEvent }, new AbortController().signal, null);
+    await expect(streamMessage('session-id', 'Question', { onEvent }, new AbortController().signal, null))
+      .rejects.toThrow('The AI backend returned an invalid model input.');
+
+    expect(onEvent.mock.calls.filter(([event]) => event.type === 'model_input')).toEqual([[{ type: 'model_input', input }]]);
   });
 
-  it('does not send a message when its upload is rejected', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(
-      JSON.stringify({ detail: 'File attachment is too large.' }),
-      { status: 413, headers: { 'Content-Type': 'application/json' } },
-    ));
-    vi.stubGlobal('fetch', fetchMock);
-    const onAccepted = vi.fn();
+  it('reports a generated ZIP and a retention warning without failing the completed run', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      'event: delta\ndata: {"text":"Your files are ready."}\n\n',
+      'event: download\ndata: {"download_id":"zip-run"}\n\n',
+      'event: warning\ndata: {"message":"The generated ZIP could not be retained."}\n\n',
+      'event: done\ndata: {"run_id":"completed-run"}\n\n',
+    ])));
+    const onEvent = vi.fn();
 
     await expect(streamMessage(
-      'session-id', 'Question', { onDelta: vi.fn(), onAccepted }, new AbortController().signal, null,
-      { files: [new File(['data'], 'large.bin')] },
-    )).rejects.toThrow('File attachment is too large.');
-    expect(fetchMock).toHaveBeenCalledOnce();
-    expect(onAccepted).not.toHaveBeenCalled();
+      'session-id', 'Download the CSV.', { onEvent }, new AbortController().signal, null,
+    )).resolves.toBeUndefined();
+
+    expect(onEvent).toHaveBeenCalledWith({ type: 'download', downloadId: 'zip-run' });
+    expect(onEvent).toHaveBeenCalledWith({ type: 'warning', message: 'The generated ZIP could not be retained.' });
+    expect(onEvent).toHaveBeenLastCalledWith({ type: 'done', runId: 'completed-run' });
   });
 
   it('forwards tool use and a proposal to the caller', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
       'event: reasoning\ndata: {"text":"Checking people."}\n\n',
-      'event: tool_start\ndata: {"name":"bash","arguments":"{\\"command\\":\\"sed -n 1p schedule.yaml\\"}"}\n\n',
-      'event: tool\ndata: {"name":"bash","arguments":"{\\"command\\":\\"sed -n 1p schedule.yaml\\"}","result":"exit_code: 0","ok":true}\n\n',
+      'event: tool_start\ndata: {"tool_call_id":"call-1","name":"bash","arguments":"{\\"command\\":\\"sed -n 1p schedule.yaml\\"}"}\n\n',
+      'event: tool\ndata: {"tool_call_id":"call-1","name":"bash","arguments":"{\\"command\\":\\"sed -n 1p schedule.yaml\\"}","result":"exit_code: 0","ok":true}\n\n',
       'event: steering\ndata: {"message_id":"queued-1","message":"Focus on P2."}\n\n',
       'event: schedule_change\ndata: {"schedule_yaml":"people:\\n  - id: Head\\n"}\n\n',
       'event: delta\ndata: {"text":"Renamed P1."}\n\n',
+      'event: truncated\ndata: {}\n\n',
       'event: proposal\ndata: {"diff":"- people.items[0].id"}\n\n',
-      'event: done\ndata: {"message_id":"1"}\n\n',
+      'event: done\ndata: {"run_id":"1"}\n\n',
     ])));
-    const toolStarts: string[] = [];
-    const tools: string[] = [];
-    const reasoning: string[] = [];
-    const scheduleChanges: string[] = [];
-    const steering: string[] = [];
-    const diffs: string[] = [];
-    const texts: string[] = [];
+    const events: SessionEvent[] = [];
 
     await streamMessage(
       'session-id',
       'Rename P1.',
-      {
-        onDelta: text => texts.push(text),
-        onReasoning: text => reasoning.push(text),
-        onToolStart: activity => toolStarts.push(`${activity.name}:${activity.arguments}`),
-        onTool: activity => tools.push(`${activity.name}:${activity.ok}:${activity.result}`),
-        onSteering: (messageId, message) => steering.push(`${messageId}:${message}`),
-        onScheduleChange: scheduleYaml => scheduleChanges.push(scheduleYaml),
-        onProposal: diff => diffs.push(diff),
-      },
+      { onEvent: event => events.push(event) },
       new AbortController().signal,
       null,
     );
 
-    expect(toolStarts).toEqual(['bash:{"command":"sed -n 1p schedule.yaml"}']);
-    expect(tools).toEqual(['bash:true:exit_code: 0']);
-    expect(steering).toEqual(['queued-1:Focus on P2.']);
-    expect(reasoning).toEqual(['Checking people.']);
-    expect(scheduleChanges).toEqual(['people:\n  - id: Head\n']);
-    expect(texts).toEqual(['Renamed P1.']);
-    expect(diffs).toEqual(['- people.items[0].id']);
+    expect(events).toEqual([
+      { type: 'reasoning', text: 'Checking people.' },
+      { type: 'tool_start', activity: { toolCallId: 'call-1', name: 'bash', arguments: '{"command":"sed -n 1p schedule.yaml"}' } },
+      { type: 'tool', activity: { toolCallId: 'call-1', name: 'bash', arguments: '{"command":"sed -n 1p schedule.yaml"}', result: 'exit_code: 0', ok: true } },
+      { type: 'steering', messageId: 'queued-1', message: 'Focus on P2.' },
+      { type: 'schedule_change', scheduleYaml: 'people:\n  - id: Head\n' },
+      { type: 'delta', text: 'Renamed P1.' },
+      { type: 'truncated' },
+      { type: 'proposal', diff: '- people.items[0].id' },
+      { type: 'run_context', runId: '1' },
+      { type: 'done', runId: '1' },
+    ]);
+  });
+
+  it('keeps run lifecycle identity separate from queued user message identity', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      'id: 1\nevent: run_start\ndata: {"run_id":"run-1","trigger":"optimizer"}\n\n',
+      'id: 2\nevent: steering\ndata: {"run_id":"run-1","message_id":"queued-1","message":"Focus on P2."}\n\n',
+      'id: 3\nevent: stopped\ndata: {"run_id":"run-1"}\n\n',
+    ])));
+    const events: SessionEvent[] = [];
+
+    await streamSessionEvents(
+      'session/id',
+      { onEvent: event => events.push(event) },
+      new AbortController().signal,
+      null,
+    );
+
+    expect(events).toEqual([
+      { type: 'run_context', runId: 'run-1' },
+      { type: 'run_start', runId: 'run-1', trigger: 'optimizer' },
+      { type: 'run_context', runId: 'run-1' },
+      { type: 'steering', runId: 'run-1', messageId: 'queued-1', message: 'Focus on P2.' },
+      { type: 'run_context', runId: 'run-1' },
+      { type: 'stopped', runId: 'run-1' },
+    ]);
   });
 
   it('receives latest request tokens with context usage and drops invalid token fields', async () => {
@@ -442,12 +651,12 @@ describe('AI client', () => {
       'event: context_usage\ndata: {"used_chars":250,"max_chars":1000,"used_tokens":4321}\n\n',
       'event: context_usage\ndata: {"used_chars":250,"max_chars":1000,"used_tokens":-5,"max_tokens":131072}\n\n',
     ])));
-    const onContextUsage = vi.fn();
-    await streamSessionEvents('session', { onDelta: vi.fn(), onContextUsage }, new AbortController().signal, null);
-    expect(onContextUsage.mock.calls).toEqual([
-      [{ usedChars: 250, maxChars: 1000, usedTokens: 4321, maxTokens: 131072 }],
-      [{ usedChars: 250, maxChars: 1000, usedTokens: 4321 }],
-      [{ usedChars: 250, maxChars: 1000 }],
+    const onEvent = vi.fn();
+    await streamSessionEvents('session', { onEvent }, new AbortController().signal, null);
+    expect(onEvent.mock.calls).toEqual([
+      [{ type: 'context_usage', usage: { usedChars: 250, maxChars: 1000, usedTokens: 4321, maxTokens: 131072 } }],
+      [{ type: 'context_usage', usage: { usedChars: 250, maxChars: 1000, usedTokens: 4321 } }],
+      [{ type: 'context_usage', usage: { usedChars: 250, maxChars: 1000 } }],
     ]);
   });
 
@@ -459,9 +668,9 @@ describe('AI client', () => {
       'event: context_usage\ndata: {"used_chars":101,"max_chars":100}\n\n',
       'event: context_usage\ndata: {"used_chars":"25","max_chars":100}\n\n',
     ])));
-    const onContextUsage = vi.fn();
-    await streamSessionEvents('session', { onDelta: vi.fn(), onContextUsage }, new AbortController().signal, null);
-    expect(onContextUsage).toHaveBeenCalledExactlyOnceWith({ usedChars: 250, maxChars: 1000 });
+    const onEvent = vi.fn();
+    await streamSessionEvents('session', { onEvent }, new AbortController().signal, null);
+    expect(onEvent).toHaveBeenCalledExactlyOnceWith({ type: 'context_usage', usage: { usedChars: 250, maxChars: 1000 } });
   });
 
   it('reports a trimmed prompt history and ignores a meaningless count', async () => {
@@ -469,20 +678,23 @@ describe('AI client', () => {
       'id: 1\nevent: history_trimmed\ndata: {"dropped":0}\n\n',
       'id: 2\nevent: history_trimmed\ndata: {"dropped":"many"}\n\n',
       'id: 3\nevent: history_trimmed\ndata: {"dropped":6}\n\n',
-      'id: 4\nevent: done\ndata: {"message_id":"background-1"}\n\n',
+      'id: 4\nevent: done\ndata: {"run_id":"background-1"}\n\n',
     ]));
     vi.stubGlobal('fetch', fetchMock);
-    const trimmed = vi.fn();
+    const onEvent = vi.fn();
 
     await streamSessionEvents(
       'session/id',
-      { onDelta: () => {}, onHistoryTrimmed: trimmed },
+      { onEvent },
       new AbortController().signal,
       null,
     );
 
-    expect(trimmed).toHaveBeenCalledTimes(1);
-    expect(trimmed).toHaveBeenCalledWith(6);
+    expect(onEvent.mock.calls).toEqual([
+      [{ type: 'history_trimmed', dropped: 6 }],
+      [{ type: 'run_context', runId: 'background-1' }],
+      [{ type: 'done', runId: 'background-1' }],
+    ]);
   });
 
   it('decodes optimizer provenance and preserves a zero final score', async () => {
@@ -496,66 +708,50 @@ describe('AI client', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
       `event: optimization\ndata: ${JSON.stringify(payload)}\n\n`,
     ])));
-    const onOptimization = vi.fn();
-    await streamSessionEvents('session', { onDelta: vi.fn(), onOptimization }, new AbortController().signal, null);
-    expect(onOptimization).toHaveBeenCalledWith(expect.objectContaining({
+    const onEvent = vi.fn();
+    await streamSessionEvents('session', { onEvent }, new AbortController().signal, null);
+    expect(onEvent).toHaveBeenCalledExactlyOnceWith({ type: 'optimization', activity: expect.objectContaining({
       result: { outcome: 'optimal', score: 0, solverStatus: 'OPTIMAL', terminationReason: 'completed' },
       request: { solver: 'ortools/cp-sat', timeoutSeconds: 300 },
       backend: expect.objectContaining({ url: 'http://optimizer:8000', appVersion: 'v0.4.3', requestTimeoutSeconds: 30,
         claimedPerformance: { score: 125, appVersion: 'v0.4.2', measuredAt: '2026-09-18T01:00:00Z' } }),
-    }));
+    }) });
   });
 
-  it('streams optimizer-triggered turns with authentication', async () => {
+  it('streams optimizer-triggered runs with authentication', async () => {
     const fetchMock = vi.fn().mockResolvedValue(streamedResponse([
       'id: 1\nevent: optimization\ndata: {"job_id":"opt-1","state":"running","terminal":false,"downloadable":false}\n\n',
       'id: 2\nevent: optimization_progress\ndata: {"job_id":"opt-1","progress":{"currentBestScore":23,"elapsedSeconds":2,"source":"solver"}}\n\n',
-      'id: 3\nevent: turn_start\ndata: {"message_id":"background-1","trigger":"optimizer"}\n\n',
+      'id: 3\nevent: run_start\ndata: {"run_id":"background-1","trigger":"optimizer"}\n\n',
       'id: 4\nevent: delta\ndata: {"text":"Score 23."}\n\n',
-      'id: 5\nevent: done\ndata: {"message_id":"background-1"}\n\n',
+      'id: 5\nevent: done\ndata: {"run_id":"background-1"}\n\n',
     ]));
     vi.stubGlobal('fetch', fetchMock);
-    const starts: string[] = [];
-    const texts: string[] = [];
-    const done = vi.fn();
-    const optimizations = vi.fn();
-    const progress = vi.fn();
+    const events: SessionEvent[] = [];
     const eventIds: number[] = [];
 
     await streamSessionEvents(
       'session/id',
       {
-        onTurnStart: (messageId, trigger) => starts.push(`${messageId}:${trigger}`),
-        onDelta: text => texts.push(text),
-        onOptimization: optimizations,
-        onOptimizationProgress: progress,
-        onDone: done,
+        onEvent: event => events.push(event),
         onEventId: id => eventIds.push(id),
       },
       new AbortController().signal,
       'event-token',
     );
 
-    expect(starts).toEqual(['background-1:optimizer']);
-    expect(texts).toEqual(['Score 23.']);
-    expect(done).toHaveBeenCalledWith('background-1');
     expect(eventIds).toEqual([1, 2, 3, 4, 5]);
-    expect(optimizations).toHaveBeenCalledWith({
-      jobId: 'opt-1',
-      state: 'running',
-      terminal: false,
-      downloadable: false,
-    });
-    expect(progress).toHaveBeenCalledWith({
-      jobId: 'opt-1',
-      point: {
-        currentBestScore: 23,
-        elapsedSeconds: 2,
-        source: 'solver',
-        solutionIndex: null,
-        commentCount: null,
-      },
-    });
+    expect(events).toEqual([
+      { type: 'optimization', activity: { jobId: 'opt-1', state: 'running', terminal: false, downloadable: false } },
+      { type: 'optimization_progress', activity: {
+        jobId: 'opt-1', point: { currentBestScore: 23, elapsedSeconds: 2, source: 'solver', solutionIndex: null, commentCount: null },
+      } },
+      { type: 'run_context', runId: 'background-1' },
+      { type: 'run_start', runId: 'background-1', trigger: 'optimizer' },
+      { type: 'delta', text: 'Score 23.' },
+      { type: 'run_context', runId: 'background-1' },
+      { type: 'done', runId: 'background-1' },
+    ]);
     expect(fetchMock).toHaveBeenCalledWith(
       'https://api.nursescheduling.org/ai/sessions/session%2Fid/events',
       {
@@ -572,54 +768,18 @@ describe('AI client', () => {
       'id: 7\nevent: delta\ndata: {"text":"Obsolete"}\n\n',
       'id: 8\nevent: stale\ndata: {"message":"The schedule changed."}\n\n',
     ])));
-    const stale = vi.fn();
+    const onEvent = vi.fn();
     const eventIds: number[] = [];
 
     await streamSessionEvents(
       'session-id',
-      { onDelta: vi.fn(), onStale: stale, onEventId: id => eventIds.push(id) },
+      { onEvent, onEventId: id => eventIds.push(id) },
       new AbortController().signal,
       null,
     );
 
-    expect(stale).toHaveBeenCalledWith('The schedule changed.');
+    expect(onEvent).toHaveBeenCalledWith({ type: 'stale', message: 'The schedule changed.' });
     expect(eventIds).toEqual([7, 8]);
-  });
-
-  it('keeps receiving session updates across background turn completions', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(streamedResponse([
-      'id: 1\nevent: turn_start\ndata: {"message_id":"first","trigger":"optimizer"}\n\n',
-      'id: 2\nevent: done\ndata: {"message_id":"first"}\n\n',
-      'id: 3\nevent: optimization\ndata: {"job_id":"opt-1","state":"succeeded","terminal":true,"downloadable":true}\n\n',
-      'id: 4\nevent: turn_start\ndata: {"message_id":"second","trigger":"optimizer"}\n\n',
-      'id: 5\nevent: delta\ndata: {"text":"Second review","turn_id":"second"}\n\n',
-      'id: 6\nevent: stopped\ndata: {"message_id":"second"}\n\n',
-      'id: 7\nevent: error\ndata: {"message":"Recovery notice"}\n\n',
-      'id: 8\nevent: delta\ndata: {"text":"Later update"}\n\n',
-      'id: 9\nevent: delta\ndata: {"text":"Incomplete frame"}\n',
-    ]));
-    vi.stubGlobal('fetch', fetchMock);
-    const cursor = vi.fn();
-    const delta = vi.fn();
-    const done = vi.fn();
-    const stopped = vi.fn();
-    const error = vi.fn();
-    const optimization = vi.fn();
-
-    await streamSessionEvents('session', {
-      onDelta: delta, onDone: done, onStopped: stopped, onError: error,
-      onOptimization: optimization, onEventId: cursor,
-    }, new AbortController().signal, null);
-
-    expect(fetchMock).toHaveBeenCalledOnce();
-    expect(cursor.mock.calls.map(([id]) => id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
-    expect(delta.mock.calls.map(([text]) => text)).toEqual(['Second review', 'Later update']);
-    expect(done).toHaveBeenCalledExactlyOnceWith('first');
-    expect(stopped).toHaveBeenCalledExactlyOnceWith('second');
-    expect(error).toHaveBeenCalledExactlyOnceWith('Recovery notice');
-    expect(optimization).toHaveBeenCalledExactlyOnceWith({
-      jobId: 'opt-1', state: 'succeeded', terminal: true, downloadable: true,
-    });
   });
 
   it('resumes background events after the stored cursor', async () => {
@@ -628,7 +788,7 @@ describe('AI client', () => {
 
     await streamSessionEvents(
       'session-id',
-      { lastEventId: 4, onDelta: vi.fn() },
+      { lastEventId: 4, onEvent: vi.fn() },
       new AbortController().signal,
       null,
     );
@@ -641,51 +801,20 @@ describe('AI client', () => {
 
   it('deduplicates replay and identifies a turn without its retained start event', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
-      'id: 4\nevent: delta\ndata: {"text":"old","turn_id":"old-turn"}\n\n',
-      'id: 5\nevent: delta\ndata: {"text":"new","turn_id":"new-turn"}\n\n',
-      'id: 5\nevent: delta\ndata: {"text":"duplicate","turn_id":"new-turn"}\n\n',
+      'id: 4\nevent: delta\ndata: {"text":"old","run_id":"old-turn"}\n\n',
+      'id: 5\nevent: delta\ndata: {"text":"new","run_id":"new-turn"}\n\n',
+      'id: 5\nevent: delta\ndata: {"text":"duplicate","run_id":"new-turn"}\n\n',
     ])));
-    const delta = vi.fn();
-    const context = vi.fn();
+    const onEvent = vi.fn();
     const cursor = vi.fn();
     await streamSessionEvents('session', {
-      lastEventId: 4, onDelta: delta, onTurnContext: context, onEventId: cursor,
+      lastEventId: 4, onEvent, onEventId: cursor,
     }, new AbortController().signal, null);
-    expect(delta).toHaveBeenCalledExactlyOnceWith('new');
-    expect(context).toHaveBeenCalledExactlyOnceWith('new-turn');
-    expect(cursor).toHaveBeenCalledExactlyOnceWith(5);
-  });
-
-  it.each([
-    { type: 'session_snapshot', id: 0 },
-    { type: 'session_snapshot', id: 3 },
-    { type: 'session_snapshot', id: 4 },
-    { type: 'turn_snapshot', id: 3 },
-    { type: 'turn_snapshot', id: 4 },
-  ])('accepts $type at cursor $id when the stored cursor is 4', async ({ type, id }) => {
-    const events = id === 0 ? [] : [{ type: 'delta', data: { text: 'Recovered answer' } }];
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
-      `id: ${id}\nevent: ${type}\ndata: ${JSON.stringify({ events })}\n\n`,
-      ...(id > 0 ? [`id: ${id}\nevent: delta\ndata: {"text":"duplicate"}\n\n`] : []),
-      `id: ${id + 1}\nevent: delta\ndata: {"text":"New answer"}\n\n`,
-      `id: ${id + 2}\nevent: done\ndata: {"message_id":"new-turn"}\n\n`,
-    ])));
-    const delta = vi.fn();
-    const replay = vi.fn();
-    const cursor = vi.fn();
-    const done = vi.fn();
-    const callbacks = { lastEventId: 4, onDelta: delta, onReplay: replay, onEventId: cursor, onDone: done };
-    const signal = new AbortController().signal;
-
-    if (type === 'session_snapshot') await streamSessionEvents('session', callbacks, signal, null);
-    else await streamMessage('session', 'Question', callbacks, signal, null);
-
-    expect(replay).toHaveBeenCalledExactlyOnceWith(events);
-    expect(delta.mock.calls.map(([text]) => text)).toEqual([
-      ...(id > 0 ? ['Recovered answer'] : []), 'New answer',
+    expect(onEvent.mock.calls).toEqual([
+      [{ type: 'run_context', runId: 'new-turn' }],
+      [{ type: 'delta', runId: 'new-turn', text: 'new' }],
     ]);
-    expect(cursor.mock.calls.map(([eventId]) => eventId)).toEqual([id, id + 1, id + 2]);
-    expect(done).toHaveBeenCalledExactlyOnceWith('new-turn');
+    expect(cursor).toHaveBeenCalledExactlyOnceWith(5);
   });
 
   it('does not acknowledge a replayable event before receiving its delimiter', async () => {
@@ -694,23 +823,11 @@ describe('AI client', () => {
       '\n\r\n',
       'id: 7\nevent: delta\ndata: {"text":"replay me"}\n',
     ])));
-    const delta = vi.fn();
+    const onEvent = vi.fn();
     const cursor = vi.fn();
-    await streamSessionEvents('session', { onDelta: delta, onEventId: cursor }, new AbortController().signal, null);
-    expect(delta).toHaveBeenCalledExactlyOnceWith('complete');
+    await streamSessionEvents('session', { onEvent, onEventId: cursor }, new AbortController().signal, null);
+    expect(onEvent).toHaveBeenCalledExactlyOnceWith({ type: 'delta', text: 'complete' });
     expect(cursor).toHaveBeenCalledExactlyOnceWith(6);
-  });
-
-  it('discards an incomplete session frame when no cursor observer is registered', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
-      'id: 1\nevent: delta\ndata: {"text":"Complete frame"}\n\n',
-      'id: 2\nevent: delta\ndata: {"text":"Incomplete frame"}\n',
-    ])));
-    const delta = vi.fn();
-
-    await streamSessionEvents('session', { onDelta: delta }, new AbortController().signal, null);
-
-    expect(delta).toHaveBeenCalledExactlyOnceWith('Complete frame');
   });
 
   it('stops a session turn with authentication', async () => {
@@ -744,10 +861,10 @@ describe('AI client', () => {
   it('downloads a generated ZIP with authentication', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('zip-data', { headers: { 'Content-Type': 'application/zip' } }));
     vi.stubGlobal('fetch', fetchMock);
-    const zip = await downloadGeneratedZip('session/id', 'turn/id', 'zip-token');
+    const zip = await downloadGeneratedZip('session/id', 'run/id', 'zip-token');
     expect(await zip.text()).toBe('zip-data');
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://api.nursescheduling.org/ai/sessions/session%2Fid/downloads/turn%2Fid',
+      'https://api.nursescheduling.org/ai/sessions/session%2Fid/downloads/run%2Fid',
       { credentials: 'include', headers: { Authorization: 'Bearer zip-token' } },
     );
   });
@@ -756,11 +873,11 @@ describe('AI client', () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(new Response(null, { status: 204 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'The ZIP is no longer available.' }), { status: 404 }));
     vi.stubGlobal('fetch', fetchMock);
-    await removeGeneratedZip('session/id', 'turn/id', 'zip-token');
-    expect(fetchMock).toHaveBeenLastCalledWith('https://api.nursescheduling.org/ai/sessions/session%2Fid/downloads/turn%2Fid', {
+    await removeGeneratedZip('session/id', 'run/id', 'zip-token');
+    expect(fetchMock).toHaveBeenLastCalledWith('https://api.nursescheduling.org/ai/sessions/session%2Fid/downloads/run%2Fid', {
       method: 'DELETE', credentials: 'include', headers: { Authorization: 'Bearer zip-token' },
     });
-    await expect(removeGeneratedZip('session/id', 'turn/id', 'zip-token')).rejects.toThrow('The ZIP is no longer available.');
+    await expect(removeGeneratedZip('session/id', 'run/id', 'zip-token')).rejects.toThrow('The ZIP is no longer available.');
   });
 
   it('downloads an optimizer result with authentication', async () => {
@@ -834,11 +951,11 @@ describe('AI client', () => {
 
   it('rejects a proposal and refreshes a session schedule', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ history_saved: false }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ history_saved: true }), { status: 200 }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(rejectProposal('session-id', 'session-token')).resolves.toBe(false);
+    await expect(rejectProposal('session-id', 'session-token')).resolves.toBe(true);
     await updateSessionSchedule('session-id', 'description: newer', 'session-token');
 
     expect(fetchMock.mock.calls[0][0]).toBe('https://api.nursescheduling.org/ai/sessions/session-id/proposal/reject');
@@ -856,14 +973,14 @@ describe('AI client', () => {
   it('treats a tool event without detail as a successful call', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
       'event: tool\ndata: {"name":"bash"}\n\n',
-      'event: done\ndata: {"message_id":"1"}\n\n',
+      'event: done\ndata: {"run_id":"1"}\n\n',
     ])));
-    const tools: { name: string; ok: boolean; result: string }[] = [];
+    const onEvent = vi.fn();
 
-    await streamMessage('session-id', 'Look.', { onDelta: () => {}, onTool: activity => tools.push(activity) },
+    await streamMessage('session-id', 'Look.', { onEvent },
       new AbortController().signal, null);
 
-    expect(tools).toEqual([{ name: 'bash', arguments: '', result: '', ok: true }]);
+    expect(onEvent).toHaveBeenCalledWith({ type: 'tool', activity: { name: 'bash', arguments: '', result: '', ok: true } });
   });
 
   it('rejects malformed schedule change events', async () => {
@@ -874,7 +991,7 @@ describe('AI client', () => {
     await expect(streamMessage(
       'session-id',
       'Look.',
-      { onDelta: () => {} },
+      { onEvent: vi.fn() },
       new AbortController().signal,
       null,
     )).rejects.toThrow('The AI backend returned an invalid schedule change.');
@@ -887,107 +1004,24 @@ describe('AI client', () => {
     expect(isOfficialAiEndpoint('https://ai.example.test')).toBe(false);
     expect(isOfficialAiEndpoint('')).toBe(false);
   });
-  it('replaces a partial answer with a complete replay and uploads files only once', async () => {
-    const events = [
-      { type: 'delta', data: { text: 'Complete answer' } },
-      { type: 'done', data: { message_id: 'turn' } },
-    ];
-    const uploaded = { id: 'file', filename: 'notes.txt', media_type: 'text/plain', bytes: 1 };
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify([uploaded]), { status: 200 }))
-      .mockResolvedValueOnce(streamedResponse(['id: 1\nevent: delta\ndata: {"text":"Partial"}\n\n']))
-      .mockResolvedValueOnce(streamedResponse([`id: 1205\nevent: turn_snapshot\ndata: ${JSON.stringify({ events })}\n\n`]));
-    vi.stubGlobal('fetch', fetchMock);
-    let answer = '';
-    const onReplay = vi.fn(() => { answer = ''; });
-    await streamMessage('session-id', 'Question', {
-      onDelta: text => { answer += text; }, onReplay,
-    }, new AbortController().signal, null, {
-      files: [new File(['x'], 'notes.txt')], messageId: 'same-request',
-    });
-    expect(answer).toBe('Complete answer');
-    expect(onReplay).toHaveBeenCalledWith(events);
-    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/uploads'))).toHaveLength(1);
-    expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({
-      message: 'Question', message_id: 'same-request', last_event_id: 1,
-    });
-  });
-
-  it('rejects recursive replay snapshots', async () => {
+  it('delivers parsed run identity and tool identity through one typed handler', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
-      'event: turn_snapshot\ndata: {"events":[{"type":"turn_snapshot","data":{}}]}\n\n',
+      'id: 1\nevent: delta\ndata: {"run_id":"run","text":"Answer"}\n\n',
+      'id: 2\nevent: tool_start\ndata: {"run_id":"run","tool_call_id":"call","name":"read"}\n\n',
+      'id: 3\nevent: done\ndata: {"run_id":"run"}\n\n',
     ])));
-    await expect(streamMessage('session', 'Question', { onDelta: vi.fn() },
-      new AbortController().signal, null)).rejects.toThrow('invalid replay snapshot');
-  });
-
-  it('does not submit a question stopped during upload', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify([{ id: 'file', filename: 'notes.txt', media_type: 'text/plain', bytes: 1 }]), { status: 201 }))
-      .mockResolvedValueOnce(streamedResponse(['event: done\ndata: {}\n\n']));
-    vi.stubGlobal('fetch', fetchMock);
-    const onStopped = vi.fn();
-    await streamMessage('session', 'Original question', {
-      onDelta: vi.fn(), onStopped, shouldStop: () => true,
-    }, new AbortController().signal, null, { files: [new File(['x'], 'notes.txt')] });
-    expect(fetchMock).toHaveBeenCalledOnce();
-    expect(onStopped).toHaveBeenCalledOnce();
-  });
-
-  it('saves Stop before retrying a request whose response never arrived', async () => {
-    let stopped = false;
-    const fetchMock = vi.fn()
-      .mockImplementationOnce(async () => {
-        stopped = true;
-        throw new TypeError('Failed to fetch');
-      })
-      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
-      .mockResolvedValueOnce(new Response(null, { status: 202 }))
-      .mockResolvedValueOnce(streamedResponse(['id: 1\nevent: stopped\ndata: {"message_id":"turn"}\n\n']));
-    vi.stubGlobal('fetch', fetchMock);
-    const onStopped = vi.fn();
-    await streamMessage('session', 'Question', {
-      onDelta: vi.fn(), onStopped, shouldStop: () => stopped,
-    }, new AbortController().signal, null, { messageId: 'request' });
-    // The server may have started the turn, so only its own outcome can end the request.
-    expect(fetchMock.mock.calls.map(([url]) => String(url).split('/').at(-1))).toEqual([
-      'messages', 'stop', 'stop', 'messages',
-    ]);
-    expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({ message_id: 'request' });
-    expect(onStopped).toHaveBeenCalledOnce();
-  });
-
-  it('reconnects a stopped request the server accepted to replay its outcome', async () => {
-    let stopped = false;
-    const fetchMock = vi.fn()
-      .mockImplementationOnce(async () => {
-        stopped = true;
-        return streamedResponse(['id: 1\nevent: delta\ndata: {"text":"Partial"}\n\n']);
-      })
-      .mockResolvedValueOnce(new Response(null, { status: 202 }))
-      .mockResolvedValueOnce(streamedResponse(['id: 2\nevent: stopped\ndata: {"message_id":"turn"}\n\n']));
-    vi.stubGlobal('fetch', fetchMock);
-    const onStopped = vi.fn();
-    await streamMessage('session', 'Question', {
-      onDelta: vi.fn(), onStopped, shouldStop: () => stopped,
+    const events: SessionEvent[] = [];
+    await streamSessionEvents('session', {
+      onEvent: event => events.push(event),
     }, new AbortController().signal, null);
-    expect(fetchMock.mock.calls.map(([url]) => String(url).split('/').at(-1))).toEqual(['messages', 'stop', 'messages']);
-    expect(onStopped).toHaveBeenCalledOnce();
-  });
-
-  it('fails a stopped request when the server rejects its Stop', async () => {
-    let stopped = false;
-    const fetchMock = vi.fn()
-      .mockImplementationOnce(async () => {
-        stopped = true;
-        throw new TypeError('Failed to fetch');
-      })
-      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'Chat session not found.' }), { status: 404 }));
-    vi.stubGlobal('fetch', fetchMock);
-    await expect(streamMessage('session', 'Question', {
-      onDelta: vi.fn(), shouldStop: () => stopped,
-    }, new AbortController().signal, null)).rejects.toThrow('Chat session not found.');
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(events).toEqual([
+      { type: 'run_context', runId: 'run' },
+      { type: 'delta', runId: 'run', text: 'Answer' },
+      { type: 'run_context', runId: 'run' },
+      { type: 'tool_start', runId: 'run', activity: { toolCallId: 'call', name: 'read', arguments: '' } },
+      { type: 'run_context', runId: 'run' },
+      { type: 'done', runId: 'run' },
+    ]);
   });
 
 });

@@ -26,6 +26,7 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import aclosing, asynccontextmanager
 
 from .agent_types import (
+    AgentMessageEnd,
     AgentReasoning,
     AgentSteering,
     AgentText,
@@ -122,7 +123,9 @@ async def agent_loop(
             conversation.append(AssistantMessage("".join(answer), reason, "".join(reasoning), calls))
             raise
         stop_reason = "length" if finish_reason == "length" else "tool_use" if calls else "stop"
-        conversation.append(AssistantMessage("".join(answer), stop_reason, "".join(reasoning), calls))
+        response = AssistantMessage("".join(answer), stop_reason, "".join(reasoning), calls)
+        conversation.append(response)
+        yield AgentMessageEnd(response)
         if not calls:
             steering = tuple(take_steering(True)) if take_steering is not None else ()
             if not steering:

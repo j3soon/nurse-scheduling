@@ -28,7 +28,7 @@ write_fixture() {
 mkdir -p -- "$fixture_root/scripts"
 cp -- "$script_dir/affected_test_common.sh" "$script_dir/test_core_affected.sh" \
   "$script_dir/test_frontend_affected.sh" "$script_dir/test_frontend_e2e_affected.sh" \
-  "$script_dir/check_terminology.sh" "$fixture_root/scripts/"
+  "$script_dir/check_terminology.sh" "$script_dir/test_ai_postgres.sh" "$fixture_root/scripts/"
 for path in \
   core/nurse_scheduling/ai/pi/read.py \
   core/nurse_scheduling/ai/prompts/steps/role-and-truthfulness.md \
@@ -173,6 +173,12 @@ rm -- "$fixture_root/web-frontend/src/utils/spaced file.ts"
 output="$("$fixture_root/scripts/test_core_affected.sh" --list \
   "$fixture_root/core/tests/test_scheduler.py")"
 assert_line "$output" 'test: tests/test_scheduler.py'
+output="$(AI_TEST_POSTGRES_BIN=/missing "$fixture_root/scripts/test_ai_postgres.sh" --list)"
+assert_line "$output" 'test: tests/test_ai_history.py'
+assert_line "$output" 'test: tests/test_ai_reconnect.py'
+output="$(AI_TEST_POSTGRES_BIN=/missing "$fixture_root/scripts/test_ai_postgres.sh" --list \
+  core/tests/test_ai_history.py::selected_case)"
+assert_line "$output" 'test: tests/test_ai_history.py::selected_case'
 output="$("$fixture_root/scripts/test_frontend_e2e_affected.sh" --list --full)"
 assert_line "$output" 'tests: full Playwright suite (isolated server)'
 

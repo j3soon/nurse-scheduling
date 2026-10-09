@@ -33,13 +33,14 @@ include committed branch changes since the merge base with `REF`, `--list` to
 inspect selection without running checks, or `--full` for the normal local
 suite. Run optional solver and real-scenario suites explicitly when affected.
 
-For AI persistence checks, follow the
-[container PostgreSQL recipe](../skills/run-ci/references/postgresql.md).
-Check that `initdb` and `pg_ctl` exist in the selected binary directory. They may
-be installed outside `PATH`, or absent even when Psycopg is available. Use a fresh
-UTF-8 cluster and run the server as `postgres`, since it refuses to run as root.
-Set `AI_HISTORY_TEST_POSTGRES_URL` for the test process and confirm the database
-cases ran. A passing suite with those cases skipped does not validate persistence.
+For AI refactor slices, use the
+[AI validation ladder](../skills/implement-change-series/references/ai-validation.md)
+to choose focused, affected, browser, and selected live checks. For AI persistence
+checks, use `../scripts/test_ai_postgres.sh` with explicit test paths or `--base REF`.
+It creates a fresh UTF-8 cluster, stops it on exit, and retains compact logs. See
+the [PostgreSQL wrapper guide](../skills/run-ci/references/postgresql.md) for tool
+requirements. Confirm that database cases ran. A passing suite with those cases
+skipped does not validate persistence.
 
 ## Dependencies
 - `requirements.txt` is the minimal runtime set. Deployment images install only
@@ -95,8 +96,9 @@ cases ran. A passing suite with those cases skipped does not validate persistenc
 ## Experimental AI
 - `AgentSession` owns conversation changes, steering, proposal decisions, and
   the shared foreground and optimizer-review execution path. `SessionStore`
-  owns access, expiry, and retained-byte budgets. `SessionRecovery` owns legacy
-  replay, ordered recovery writes, and eviction pins. Keep HTTP routes thin.
+  owns access, expiry, and retained-byte budgets. `SessionRecovery` owns ordered
+  recovery writes and eviction pins. `SessionEventStream` owns bounded replay.
+  Keep HTTP routes thin.
 - Keep conversation entries independent of provider wire messages. Derive model
   requests and retained history through `context.py`. Count retained partial text
   in session byte budgets even when model context replaces it with an interruption
@@ -111,10 +113,10 @@ cases ran. A passing suite with those cases skipped does not validate persistenc
   candidate review in `workspace_tools.py`, and model-facing optimizer arguments
   in `optimizer_tool.py`. Optimizer job operations remain in `optimizer.py`,
   with HTTP transport in `optimizer_http.py`.
-- `SessionTurns` owns admission, execution, cancellation, and cleanup. Keep the
+- `SessionRuns` owns admission, execution, cancellation, and cleanup. Keep the
   owner until recovery writes finish. Stop requests cancel once, and shutdown
   joins owners before closing the sandbox factory and optimizer transport.
-  Commit and abort through the owning `TurnSnapshot`. A conversation version
+  Commit and abort through the owning `RunSnapshot`. A conversation version
   rejects stale work even when the schedule changes back to its original text.
 - Use provider metadata for model limits instead of duplicate environment
   settings. Verify the configured endpoint before adding a provider workaround.
@@ -124,11 +126,19 @@ cases ran. A passing suite with those cases skipped does not validate persistenc
 - Keep attachment limits server-configured and report them through
   `/capabilities`. Attachments and the optimizer tool are always offered.
   Keep schedules and attachments separate from model instructions.
-- Keep accepted AI turns independent of the browser stream. Reconnect with the
+- Keep accepted AI runs independent of the browser stream. Reconnect with the
   same `message_id` to replay output, without repeating provider or tool calls.
   Keep complete replay snapshots separate from the bounded event buffer. Persist
   accepted questions and terminal state when recovery storage is enabled.
   Optimizer progress can remain transient.
+- Publish foreground and optimizer review output through the session GET stream.
+  Attach `run_id` before publication and delay terminal events until cleanup and
+  outcome persistence finish. Queue completed model entries for storage before tools.
+  Recover unfinished status even when a terminal publication was saved. Retry failed
+  final outcome writes during shutdown while recovery storage is still available.
+- Append database migrations without renaming previously applied files. Test an
+  upgrade from the deployed schema with saved sessions, message IDs, and Stop
+  requests. Document backup and rollback when the old code cannot read the new schema.
 - Deliver terminal and optimizer status events even when their recovery write
   fails. When a call that could not fail becomes an awaited write, check every
   caller's failure path. Each caller must still release the session and report
@@ -138,7 +148,7 @@ cases ran. A passing suite with those cases skipped does not validate persistenc
   inside a combined entry and an entry crossing the replay tail boundary.
   Save execution status with terminal output and conversation context instead
   of inferring status from a bounded replay buffer.
-- Keep execution metadata on recovery sessions and turns. Use one expiry policy
+- Keep execution metadata on recovery sessions and runs. Use one expiry policy
   for content and metadata instead of adding a second conversation log.
 - Test Stop before acceptance, during execution, and after completion but before
   acknowledgement. Verify recovery after buffer overflow and backend restart,
@@ -149,7 +159,7 @@ cases ran. A passing suite with those cases skipped does not validate persistenc
   recovery reports a restart instead of a user Stop.
 - A turn owner saves the outcome after the event task ends, and `asyncio.run`
   cancels an owner that is still running when the test returns. A test that runs
-  AI turns directly must wait for the owners in `app.state.turns` before it
+  AI turns directly must wait for the owners in `app.state.runs` before it
   checks saved recovery records.
 - Use one application lifespan when a test simulates several browsers. Entering
   a nested `TestClient` context starts and stops the same application again.

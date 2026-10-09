@@ -30,6 +30,7 @@ import subprocess
 import threading
 import time
 from collections.abc import AsyncIterator, Sequence
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import ANY, AsyncMock
 from uuid import uuid4
@@ -40,28 +41,34 @@ import yaml
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from nurse_scheduling.ai.agent_session import configure_request_logging, request_logger
+from nurse_scheduling.ai.agent_session import (
+    CANDIDATE_VALIDATION_ERROR,
+    PROVIDER_ERROR,
+    SANDBOX_COMMAND_TIMEOUT_ERROR,
+    SANDBOX_RUN_TIMEOUT_ERROR,
+    STALE_RUN_ERROR,
+)
 from nurse_scheduling.ai.app import (
     OWNER_COOKIE,
     SERVICE_NAME,
+    SessionStore,
+    configure_request_logging,
+    request_logger,
 )
 from nurse_scheduling.ai.app import create_app as create_ai_app
+from nurse_scheduling.ai.candidate import PendingProposal
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.context import (
     ABORTED_RESPONSE_HISTORY,
-    CANDIDATE_VALIDATION_ERROR,
     PROPOSAL_APPROVED_HISTORY,
     PROPOSAL_INVALID_HISTORY,
     PROPOSAL_REJECTED_HISTORY,
-    PROVIDER_ERROR,
-    SANDBOX_COMMAND_TIMEOUT_ERROR,
-    SANDBOX_TURN_TIMEOUT_ERROR,
     SCHEDULE_CHANGED_DISCARDED_EVENT,
     SCHEDULE_CHANGED_EVENT,
-    STALE_TURN_ERROR,
     STATUS_PREFIX,
     build_provider_messages,
     message_title,
+    project_history,
     removal_event,
     upload_event,
 )
@@ -69,10 +76,24 @@ from nurse_scheduling.ai.history import ChatHistory
 from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL, OptimizerArtifact, OptimizerJobPayload
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.pi.read import READ_TOOL
-from nurse_scheduling.ai.provider import ChatMessage, ProviderError, TextDelta, TokenUsage, ToolCall, ToolCallRequest
+from nurse_scheduling.ai.provider import (
+    ChatMessage,
+    ProviderError,
+    ResponseEnd,
+    TextDelta,
+    TokenUsage,
+    ToolCallRequest,
+)
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
-from nurse_scheduling.ai.transcript import AssistantMessage, UserMessage
+from nurse_scheduling.ai.transcript import (
+    AgentMessage,
+    AppEventEntry,
+    AssistantMessage,
+    ProposalDecisionEntry,
+    ToolCall,
+    UserMessage,
+)
 from nurse_scheduling.ai.workspace import (
     SANDBOX_SYSTEM_PROMPT,
     WORKSPACE_PENDING_DIFF,
@@ -96,7 +117,7 @@ PNG_BYTES = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
 AI_AUTH_TOKEN = "ai-shared-test-token"
-AI_AUTH_HEADERS = {"Authorization": f"Bearer {AI_AUTH_TOKEN}"}
+AI_AUTH_HEADERS = {"Authorization": f"Bearer {AI_AUTH_TOKEN}", "Accept": "text/event-stream"}
 AI_AUTH_TOKENS = (
     AuthCredential(id="institution-a", token="institution-a-ai-token"),
     AuthCredential(id="person_b", token="person-b-ai-token"),
@@ -118,16 +139,18 @@ def configured_sandbox_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AI_AUTH_REQUIRED", raising=False)
     monkeypatch.setenv("AI_SANDBOX_BACKEND", "e2b")
     monkeypatch.setenv("E2B_API_KEY", "test-e2b-key")
+    # Tests that configure a placeholder database URL stub the operations they inspect.
     for operation in (
-        "save_recovery_session",
-        "start_recovery_turn",
-        "append_recovery_event",
-        "finish_recovery_turn",
-        "load_recovery_turn",
-        "stop_recovery_request",
-        "recovery_request_stopped",
+        "save_session",
+        "append_entries",
+        "append_events",
+        "stop_message",
+        "message_stopped",
+        "find_message",
+        "load_session",
+        "load_events",
     ):
-        monkeypatch.setattr(ChatHistory, operation, lambda *_args: None)
+        monkeypatch.setattr(ChatHistory, operation, lambda *_args, **_kwargs: None)
 
 
 class FakeProvider:
@@ -379,7 +402,7 @@ def test_active_session_drains_all_queued_steering_messages() -> None:
     client = AuthenticatedTestClient(app)
     session_id = create_session(client)
     owner = client.cookies[OWNER_COOKIE]
-    app.state.session_store.begin(session_id, owner)
+    snapshot = app.state.session_store.begin(session_id, owner)
 
     first_response = client.post(
         f"/sessions/{session_id}/messages/queue",
@@ -395,7 +418,7 @@ def test_active_session_drains_all_queued_steering_messages() -> None:
         ("queued-1", "Focus on P2 instead."),
         ("queued-2", "Also compare P3."),
     ]
-    app.state.session_store.abort(session_id, app.state.session_store._sessions[session_id].turn)
+    app.state.session_store.abort(session_id, snapshot)
 
 
 def test_message_request_logs_question_to_stdout(caplog: pytest.LogCaptureFixture) -> None:
@@ -487,30 +510,58 @@ def test_insecure_local_ai_owner_cookie_stays_same_site() -> None:
     assert "Secure" not in cookie
 
 
+def exchange(question: str, answer: str) -> list[AgentMessage]:
+    """Return the transcript entries one completed question and answer commit."""
+    return [UserMessage(question), AssistantMessage(answer)]
+
+
 def parse_sse(response_text: str, *, include_model_input: bool = False) -> list[tuple[str, dict[str, str]]]:
     """Parse the small SSE subset emitted by the service.
 
-    Every turn stream starts with `model_input`. It is checked and dropped unless a test asks for it.
+    Every run reports `model_input` right after `run_start`. It is checked and dropped unless a test asks for it.
     """
     events: list[tuple[str, dict[str, str]]] = []
     for block in response_text.strip().split("\n\n"):
         lines = block.splitlines()
+        if not any(line.startswith("event: ") for line in lines):
+            continue
         event_type = next(line.removeprefix("event: ") for line in lines if line.startswith("event: "))
         data = next(json.loads(line.removeprefix("data: ")) for line in lines if line.startswith("data: "))
         events.append((event_type, data))
     if include_model_input:
         return events
-    assert events[0][0] == "model_input"
-    return events[1:]
+    for index, (event_type, _data) in enumerate(events):
+        if event_type == "model_input":
+            assert index > 0 and events[index - 1][0] == "run_start"
+    return [event for event in events if event[0] != "model_input"]
+
+
+def test_compatibility_reader_recovers_current_session_proposal_after_a_replay_gap():
+    app = create_test_app(settings=make_settings(), provider=FakeProvider())
+    app.state.session_event_stream._max_events = 1
+    client = AuthenticatedTestClient(app)
+    session_id = create_session(client)
+    session = app.state.session_store._sessions[session_id]
+    session.pending_proposal = PendingProposal(schedule_yaml(), "Pending schedule changes", None)
+
+    response = client.post(f"/sessions/{session_id}/messages", json={"message": "Explain"})
+
+    assert response.status_code == 200
+    resets = [data for kind, data in parse_sse(response.text) if kind == "session_reset"]
+    assert resets
+    assert all(data["proposal_diff"] == "Pending schedule changes" for data in resets)
+    assert resets[-1]["active_run_id"] is None
+    assert any(item["type"] == "done" for item in resets[-1]["events"])
+    assert not session.active
 
 
 @pytest.mark.parametrize("wait_stage", ["provider", "command"])
-def test_disconnected_turn_keeps_running_until_explicit_stop(wait_stage: str, monkeypatch) -> None:
+def test_client_disconnect_leaves_the_run_active_until_explicit_stop(wait_stage: str, monkeypatch) -> None:
     saved = []
-    monkeypatch.setattr(ChatHistory, "start_recovery_turn", lambda *_args: None)
-    monkeypatch.setattr(ChatHistory, "finish_recovery_turn", lambda _self, *args: saved.append(args))
+    monkeypatch.setattr(ChatHistory, "start_run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(ChatHistory, "finish_run", lambda _self, *args, **_kwargs: saved.append(args))
 
-    async def exercise() -> tuple[FakeSandboxBackend | None, bool, bool, list[ChatMessage]]:
+    async def exercise() -> tuple[FakeSandboxBackend | None, bool, bool, list[AgentMessage]]:
         operation_started = asyncio.Event()
         operation_cancelled = asyncio.Event()
 
@@ -571,6 +622,7 @@ def test_disconnected_turn_keeps_running_until_explicit_stop(wait_stage: str, mo
             "headers": [
                 (b"authorization", f"Bearer {AI_AUTH_TOKEN}".encode()),
                 (b"content-type", b"application/json"),
+                (b"accept", b"text/event-stream"),
                 (b"cookie", f"{OWNER_COOKIE}=browser-owner".encode()),
             ],
             "client": ("127.0.0.1", 12345),
@@ -584,17 +636,10 @@ def test_disconnected_turn_keeps_running_until_explicit_stop(wait_stage: str, mo
 
         assert session.active
         assert not operation_cancelled.is_set()
-        if factory.created:
-            assert not factory.created[0].closed
-        task = app.state.turns._turns[session.id][0].task
-        task.cancel()
-        # The turn worker saves the stopped outcome after this event task ends.
-        await asyncio.wait_for(
-            asyncio.gather(*(turn.done for pending in app.state.turns._turns.values() for turn in pending)), timeout=1
-        )
-
+        app.state.runs.stop(session.id)
+        await app.state.runs.close()
         backend = factory.created[0] if factory.created else None
-        return backend, operation_cancelled.is_set(), session.active, list(session.history)
+        return backend, operation_cancelled.is_set(), session.active, list(session.transcript)
 
     backend, operation_cancelled, session_active, history = asyncio.run(exercise())
 
@@ -606,26 +651,25 @@ def test_disconnected_turn_keeps_running_until_explicit_stop(wait_stage: str, mo
         assert backend.closed
         assert backend.close_calls == 1
     assert not session_active
+    # The interrupted prompt stays for a follow-up. Its sandbox work does not.
+    responses = [AssistantMessage("", "tool_use")] if wait_stage == "command" else []
     assert history == [
-        {"role": "user", "content": "Wait for me"},
-        {"role": "assistant", "content": ABORTED_RESPONSE_HISTORY},
+        UserMessage("Wait for me"),
+        *[replace(response, stop_reason="aborted") for response in responses],
+        AssistantMessage("", "aborted"),
     ]
     assert len(saved) == 1
-    assert saved[0][6] == "stopped"
+    assert saved[0][1] == "cancelled"
 
 
 def test_stop_endpoint_cancels_an_active_assistant_turn() -> None:
-    async def exercise() -> tuple[int, bool]:
+    async def exercise() -> tuple[int, bool, list[tuple[str, dict[str, str]]]]:
         started = asyncio.Event()
         cancelled = asyncio.Event()
-        requests = []
 
         class WaitingProvider:
             async def stream_events(self, _messages, tools=None):
-                requests.append(list(_messages))
-                if len(requests) > 1:
-                    yield TextDelta("Recovered")
-                    return
+                yield TextDelta("Partial answer.")
                 started.set()
                 try:
                     await asyncio.Event().wait()
@@ -641,7 +685,7 @@ def test_stop_endpoint_cancels_an_active_assistant_turn() -> None:
             httpx.AsyncClient(
                 transport=transport,
                 base_url="http://testserver",
-                headers={"Authorization": f"Bearer {AI_AUTH_TOKEN}"},
+                headers=AI_AUTH_HEADERS,
             ) as client,
         ):
             session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
@@ -651,22 +695,84 @@ def test_stop_endpoint_cancels_an_active_assistant_turn() -> None:
             await asyncio.wait_for(started.wait(), timeout=1)
             stopped = await client.post(f"/sessions/{session_id}/stop")
             await asyncio.wait_for(cancelled.wait(), timeout=1)
-            await asyncio.gather(turn, return_exceptions=True)
-            session = app.state.session_store._sessions[session_id]
-            assert session.agent.state.messages == []
-            retried = await client.post(f"/sessions/{session_id}/messages", json={"message": "Retry"})
-            assert retried.status_code == 200
-            assert requests[-1][1:3] == [
-                {"role": "user", "content": "Keep working"},
-                {"role": "assistant", "content": ABORTED_RESPONSE_HISTORY},
-            ]
-            assert session.agent.state.messages == []
-            return stopped.status_code, session.active
+            response = await turn
+            return stopped.status_code, app.state.session_store._sessions[session_id].active, parse_sse(response.text)
 
-    status_code, session_active = asyncio.run(exercise())
+    status_code, session_active, events = asyncio.run(exercise())
 
     assert status_code == 202
     assert not session_active
+    # Stop is a typed terminal outcome, not synthetic answer text.
+    assert events[0][0] == "run_start"
+    assert events[1][0] == "context_usage"
+    assert events[2] == ("delta", {"text": "Partial answer.", "run_id": events[-1][1]["run_id"]})
+    assert events[-1][0] == "stopped"
+    assert [name for name, _ in events].count("stopped") == 1
+
+
+def test_a_stopped_prompt_stays_in_context_for_the_next_run() -> None:
+    async def exercise() -> tuple[list[AgentMessage], list[ChatMessage]]:
+        started = asyncio.Event()
+
+        class StoppableProvider:
+            def __init__(self) -> None:
+                self.calls: list[list[ChatMessage]] = []
+
+            async def stream_events(self, messages, tools=None):
+                self.calls.append(list(messages))
+                if len(self.calls) == 1:
+                    yield TextDelta("I renamed P1 to")
+                    started.set()
+                    await asyncio.Event().wait()
+                yield TextDelta("Renaming P2.")
+
+        provider = StoppableProvider()
+        app = create_test_app(settings=make_settings(), provider=provider)
+        transport = httpx.ASGITransport(app=app)
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=transport,
+                base_url="http://testserver",
+                headers=AI_AUTH_HEADERS,
+            ) as client,
+        ):
+            session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
+            turn = asyncio.create_task(client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P1."}))
+            await asyncio.wait_for(started.wait(), timeout=1)
+            await client.post(f"/sessions/{session_id}/stop")
+            await turn
+            transcript = list(app.state.session_store._sessions[session_id].transcript)
+            await client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P2 instead."})
+            return transcript, provider.calls[1]
+
+    transcript, follow_up_prompt = asyncio.run(exercise())
+
+    assert transcript == [UserMessage("Rename P1."), AssistantMessage("I renamed P1 to", "aborted")]
+    assert follow_up_prompt[1:] == [
+        ChatMessage(role="user", content="Rename P1."),
+        ChatMessage(role="assistant", content=ABORTED_RESPONSE_HISTORY),
+        ChatMessage(role="user", content="Rename P2 instead."),
+    ]
+
+
+def test_an_answer_cut_off_by_the_output_limit_is_saved_with_its_stop_reason() -> None:
+    class TruncatingProvider:
+        async def stream_events(self, _messages, tools=None):
+            yield TextDelta("The first half")
+            yield ResponseEnd("length")
+
+    app = create_test_app(settings=make_settings(), provider=TruncatingProvider())
+    client = AuthenticatedTestClient(app)
+    session_id = create_session(client)
+
+    events = parse_sse(client.post(f"/sessions/{session_id}/messages", json={"message": "Explain."}).text)
+
+    assert [name for name, _ in events] == ["run_start", "delta", "truncated", "context_usage", "done"]
+    assert app.state.session_store._sessions[session_id].transcript == [
+        UserMessage("Explain."),
+        AssistantMessage("The first half", "length"),
+    ]
 
 
 def test_stop_cancels_background_turn_waiting_behind_foreground_turn() -> None:
@@ -696,7 +802,7 @@ def test_stop_cancels_background_turn_waiting_behind_foreground_turn() -> None:
             httpx.AsyncClient(
                 transport=transport,
                 base_url="http://testserver",
-                headers={"Authorization": f"Bearer {AI_AUTH_TOKEN}"},
+                headers=AI_AUTH_HEADERS,
             ) as client,
         ):
             session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
@@ -705,7 +811,7 @@ def test_stop_cancels_background_turn_waiting_behind_foreground_turn() -> None:
             )
             await asyncio.wait_for(foreground_started.wait(), timeout=1)
             background = asyncio.create_task(
-                app.state.session_optimizer._on_completion(session_id, "Optimizer finished", None)
+                app.state.session_optimizer._on_completion(session_id, "Review the optimizer result.", None)
             )
             await asyncio.sleep(0)
 
@@ -718,7 +824,7 @@ def test_stop_cancels_background_turn_waiting_behind_foreground_turn() -> None:
                 stopped.status_code,
                 app.state.session_store._sessions[session_id].active,
                 provider.calls,
-                app.state.turns.busy(session_id),
+                app.state.runs.busy(session_id),
             )
 
     status_code, session_active, provider_calls, lock_held = asyncio.run(exercise())
@@ -748,17 +854,18 @@ def test_stop_before_stream_registration_cancels_the_reserved_turn(monkeypatch: 
             httpx.AsyncClient(
                 transport=transport,
                 base_url="http://testserver",
-                headers={"Authorization": f"Bearer {AI_AUTH_TOKEN}"},
+                headers=AI_AUTH_HEADERS,
             ) as client,
         ):
             session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
             turn = asyncio.create_task(client.post(f"/sessions/{session_id}/messages", json={"message": "Stop now"}))
             await asyncio.wait_for(waiting_for_artifact.wait(), timeout=1)
-            owner = app.state.turns._turns[session_id][0]
+            owner = app.state.runs._runs[session_id][0]
             stopped = await client.post(f"/sessions/{session_id}/stop")
             release_artifact.set()
             await asyncio.gather(turn, return_exceptions=True)
-            await asyncio.wait_for(owner.wait(), timeout=1)
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(owner.wait(), timeout=1)
             session = app.state.session_store._sessions[session_id]
             assert stopped.status_code == 202
             assert not session.active
@@ -775,10 +882,10 @@ def test_stop_before_stream_registration_cancels_the_reserved_turn(monkeypatch: 
     asyncio.run(exercise())
 
 
-def test_disconnect_before_stream_iteration_keeps_the_accepted_turn(monkeypatch) -> None:
+def test_disconnect_before_stream_iteration_does_not_cancel_execution(monkeypatch) -> None:
     saved = []
-    monkeypatch.setattr(ChatHistory, "start_recovery_turn", lambda *_args: None)
-    monkeypatch.setattr(ChatHistory, "finish_recovery_turn", lambda _self, *args: saved.append(args))
+    monkeypatch.setattr(ChatHistory, "start_run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(ChatHistory, "finish_run", lambda _self, *args, **_kwargs: saved.append(args))
 
     async def exercise() -> bool:
         app = create_test_app(settings=make_settings(history_postgres_url="test"), provider=FakeProvider())
@@ -814,6 +921,7 @@ def test_disconnect_before_stream_iteration_keeps_the_accepted_turn(monkeypatch)
             "headers": [
                 (b"authorization", f"Bearer {AI_AUTH_TOKEN}".encode()),
                 (b"content-type", b"application/json"),
+                (b"accept", b"text/event-stream"),
                 (b"cookie", f"{OWNER_COOKIE}=browser-owner".encode()),
             ],
             "client": ("127.0.0.1", 12345),
@@ -821,12 +929,13 @@ def test_disconnect_before_stream_iteration_keeps_the_accepted_turn(monkeypatch)
         }
 
         await app(scope, receive, send)
-        await asyncio.gather(*(turn.done for pending in app.state.turns._turns.values() for turn in pending))
+        while app.state.runs.busy(session.id):
+            await asyncio.sleep(0)
         return session.active
 
     assert not asyncio.run(exercise())
     assert len(saved) == 1
-    assert saved[0][6] == "done"
+    assert saved[0][1] == "completed"
 
 
 def test_health_and_streamed_schedule_question() -> None:
@@ -846,11 +955,13 @@ def test_health_and_streamed_schedule_question() -> None:
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
     events = parse_sse(response.text)
-    assert "".join(data["text"] for event, data in events if event == "delta") == "Hello from AI"
-    assert [(event, data) for event, data in events if event != "delta"] == [
-        ("context_usage", {"used_chars": 0, "max_chars": 200_000}),
-        ("context_usage", {"used_chars": 97, "max_chars": 200_000}),
-        ("done", {"message_id": ANY}),
+    run_id = events[-1][1]["run_id"]
+    assert isinstance(run_id, str) and run_id
+    assert events == [
+        ("run_start", {"trigger": "user", "run_id": run_id}),
+        ("delta", {"text": "Hello from AI", "run_id": run_id}),
+        ("context_usage", {"used_chars": 97, "max_chars": 200_000, "run_id": run_id}),
+        ("done", {"run_id": run_id}),
     ]
     prompt = provider.calls[0]
     assert prompt[-1] == {"role": "user", "content": "Who works Monday?"}
@@ -941,7 +1052,7 @@ def test_session_status_reports_sliding_lifetime_without_refreshing_it(monkeypat
     assert expired.json()["detail"] == "Chat session not found."
 
 
-def test_expiring_a_session_keeps_no_turn_owner(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_idle_and_expired_sessions_retain_no_turn_tasks(monkeypatch: pytest.MonkeyPatch) -> None:
     now = 100.0
     monkeypatch.setattr("nurse_scheduling.ai.sessions.time.monotonic", lambda: now)
     app = create_test_app(settings=make_settings(session_ttl_seconds=20), provider=FakeProvider())
@@ -950,15 +1061,15 @@ def test_expiring_a_session_keeps_no_turn_owner(monkeypatch: pytest.MonkeyPatch)
 
     active = client.post(f"/sessions/{session_id}/messages", json={"message": "Keep this chat active."})
     assert active.status_code == 200
-    assert not app.state.turns.busy(session_id)
+    assert not app.state.runs.busy(session_id)
 
     now = 131.0
     assert client.get(f"/sessions/{session_id}").status_code == 404
-    assert app.state.turns._turns == {}
+    assert app.state.runs._runs == {}
 
     unknown = client.post(f"/sessions/{uuid4()}/messages", json={"message": "No such chat."})
     assert unknown.status_code == 404
-    assert app.state.turns._turns == {}
+    assert app.state.runs._runs == {}
 
 
 def test_finishing_a_turn_keeps_the_deadline_set_when_it_started(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -970,11 +1081,11 @@ def test_finishing_a_turn_keeps_the_deadline_set_when_it_started(monkeypatch: py
     session = store.create(owner, schedule_yaml())
 
     now = 105.0
-    snapshot = store.begin(session.id, owner)
+    revision = store.begin(session.id, owner)
     assert session.expires_at == 125.0
 
     now = 115.0
-    assert store.finish(session.id, "Question", "Answer", snapshot=snapshot).turn_saved
+    assert store.finish(session.id, exchange("Question", "Answer"), snapshot=revision).run_saved
     assert session.expires_at == 125.0
 
 
@@ -1064,7 +1175,7 @@ def test_uploads_and_removals_are_history_messages_before_the_question() -> None
         {"role": "user", "content": "Read"},
     ]
     assert provider.calls[1][1:4] == provider.calls[0][1:4]
-    assert parse_sse(first.text, include_model_input=True)[0] == (
+    assert parse_sse(first.text, include_model_input=True)[1] == (
         "model_input",
         {
             "system": provider.calls[0][0]["content"],
@@ -1073,9 +1184,10 @@ def test_uploads_and_removals_are_history_messages_before_the_question() -> None
                 {"kind": "app", "index": 1, "content": removed, "title": "File Removed"},
                 {"kind": "question", "content": "Read"},
             ],
+            "run_id": ANY,
         },
     )
-    assert parse_sse(second.text, include_model_input=True)[0][1]["messages"] == [
+    assert parse_sse(second.text, include_model_input=True)[1][1]["messages"] == [
         {"kind": "question", "content": "Read again"}
     ]
 
@@ -1083,7 +1195,7 @@ def test_uploads_and_removals_are_history_messages_before_the_question() -> None
 def test_status_lists_only_uploads_that_the_sent_history_does_not_show() -> None:
     hidden = SandboxAttachment("hidden.csv", "text/csv", b"a,b", id="hidden")
     listed = SandboxAttachment("listed.csv", "text/csv", b"c,d", id="listed")
-    history = [ChatMessage(role="user", content=upload_event([listed], 2))]
+    history = project_history([AppEventEntry(upload_event([listed], 2))])
 
     messages = build_provider_messages(history, "description: test", "Question", (hidden, listed))
 
@@ -1117,7 +1229,9 @@ def test_every_app_event_and_status_line_has_a_chat_title() -> None:
         PROPOSAL_REJECTED_HISTORY: "Proposal Rejected",
         PROPOSAL_INVALID_HISTORY: "Proposal Invalid",
     }
-    status = build_provider_messages([], "description: test", "Q", (attachment,), pending_proposal=True)[-1]["content"]
+    status = build_provider_messages(
+        project_history([]), "description: test", "Q", (attachment,), pending_proposal=True
+    )[-1]["content"]
 
     assert {message_title("app", content) for content in events} == set(events.values())
     assert all(message_title("app", content) == title for content, title in events.items())
@@ -1233,7 +1347,7 @@ def test_session_uuid_alone_does_not_bypass_browser_ownership() -> None:
     assert response.json()["detail"] == "Chat session not found."
 
 
-def test_provider_failure_retains_question_with_safe_interruption_context() -> None:
+def test_provider_failure_retains_safe_context_for_retry() -> None:
     private_error = "Traceback from /srv/provider.py: secret-token"
     provider = FakeProvider([["Provisional answer.", ProviderError(private_error)], ["Recovered"]])
     client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=provider))
@@ -1249,9 +1363,10 @@ def test_provider_failure_retains_question_with_safe_interruption_context() -> N
     )
 
     assert parse_sse(failed.text) == [
-        ("context_usage", {"used_chars": 0, "max_chars": 200_000}),
-        ("delta", {"text": "Provisional answer."}),
-        ("error", {"message": PROVIDER_ERROR}),
+        ("run_start", {"trigger": "user", "run_id": ANY}),
+        ("context_usage", {"used_chars": 0, "max_chars": 200_000, "run_id": ANY}),
+        ("delta", {"text": "Provisional answer.", "run_id": ANY}),
+        ("error", {"message": PROVIDER_ERROR, "run_id": ANY}),
     ]
     assert private_error not in failed.text
     assert recovered.status_code == 200
@@ -1263,8 +1378,17 @@ def test_provider_failure_retains_question_with_safe_interruption_context() -> N
 
 def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming(monkeypatch) -> None:
     saved = []
-    monkeypatch.setattr(ChatHistory, "start_recovery_turn", lambda *_args: None)
-    monkeypatch.setattr(ChatHistory, "finish_recovery_turn", lambda _self, *args: saved.append(args))
+    saved_entries = []
+
+    def finish_run(_self, *args, entries=(), **_kwargs):
+        saved.append(args)
+        saved_entries.extend(entries)
+
+    monkeypatch.setattr(ChatHistory, "start_run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        ChatHistory, "append_entries", lambda _self, _session_id, entries: saved_entries.extend(entries)
+    )
+    monkeypatch.setattr(ChatHistory, "finish_run", finish_run)
 
     class ScheduleUpdatingProvider(FakeProvider):
         update_schedule = lambda self: None
@@ -1288,18 +1412,24 @@ def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming(monke
     response = client.post(f"/sessions/{session_id}/messages", json={"message": "Edit it"})
 
     assert parse_sse(response.text) == [
-        ("context_usage", {"used_chars": 0, "max_chars": 200_000}),
-        ("delta", {"text": "Obsolete answer."}),
-        ("stale", {"message": STALE_TURN_ERROR}),
+        ("run_start", {"trigger": "user", "run_id": ANY}),
+        ("context_usage", {"used_chars": 0, "max_chars": 200_000, "run_id": ANY}),
+        ("delta", {"text": "Obsolete answer.", "run_id": ANY}),
+        ("stale", {"message": STALE_RUN_ERROR, "run_id": ANY}),
     ]
     assert len(saved) == 1
-    assert saved[0][6] == "stale"
+    assert saved[0][1] == "stale"
+    # The answer is saved for audit but never joins the conversation.
+    assert saved[0][4] is False
+    assert [entry for _seq, run_id, entry in saved_entries if run_id is not None] == [
+        AssistantMessage("Obsolete answer.")
+    ]
 
 
 @pytest.mark.parametrize(
     ("exception", "message"),
     [
-        (SandboxTurnTimeoutError, SANDBOX_TURN_TIMEOUT_ERROR),
+        (SandboxTurnTimeoutError, SANDBOX_RUN_TIMEOUT_ERROR),
         (SandboxCommandTimeoutError, SANDBOX_COMMAND_TIMEOUT_ERROR),
     ],
 )
@@ -1312,8 +1442,9 @@ def test_sandbox_timeout_does_not_expose_exception_details(exception, message) -
     response = client.post(f"/sessions/{session_id}/messages", json={"message": "Wait"})
 
     assert parse_sse(response.text) == [
-        ("context_usage", {"used_chars": 0, "max_chars": 200_000}),
-        ("error", {"message": message}),
+        ("run_start", {"trigger": "user", "run_id": ANY}),
+        ("context_usage", {"used_chars": 0, "max_chars": 200_000, "run_id": ANY}),
+        ("error", {"message": message, "run_id": ANY}),
     ]
     assert private_error not in response.text
 
@@ -1608,9 +1739,9 @@ def test_schedule_edit_is_recorded_only_when_its_data_changes() -> None:
     session = store.create("owner", "description: old\n")
 
     store.update_schedule(session.id, "owner", "description:   old\n")
-    assert store._sessions[session.id].history == []
+    assert store._sessions[session.id].transcript == []
     store.update_schedule(session.id, "owner", "description: new\n")
-    assert store._sessions[session.id].history == [{"role": "user", "content": SCHEDULE_CHANGED_EVENT}]
+    assert store._sessions[session.id].transcript == [AppEventEntry(SCHEDULE_CHANGED_EVENT)]
 
 
 @pytest.mark.parametrize("window_tokens", [None, 1000], ids=["unknown-limit", "provider-limit"])
@@ -1626,16 +1757,19 @@ def test_context_usage_reports_the_latest_request_tokens_and_provider_limit(wind
     app = create_test_app(settings=make_settings(), provider=Provider())
     client = AuthenticatedTestClient(app)
     session_id = create_session(client)
+    # Replay keeps only the newest usage of a run, so observe every publication.
+    published = []
+    app.state.session_store._sessions[session_id].subscribe(published.append)
 
-    response = client.post(f"/sessions/{session_id}/messages", json={"message": "Question"})
+    client.post(f"/sessions/{session_id}/messages", json={"message": "Question"})
 
-    usage = [payload for event, payload in parse_sse(response.text) if event == "context_usage"]
+    usage = [event for event in published if event["type"] == "context_usage"]
     assert [payload.get("used_tokens") for payload in usage] == [None, 120, 180, 180]
     assert usage[-1].get("max_tokens") == window_tokens
     assert usage[-1]["used_chars"] > usage[0]["used_chars"] == 0
 
 
-def test_context_usage_reports_selected_history_before_and_after_each_turn() -> None:
+def test_context_usage_reports_selected_history_before_and_after_each_run() -> None:
     provider = FakeProvider([["First answer."], ["Second answer."]])
     app = create_test_app(settings=make_settings(max_history_chars=140), provider=provider)
     client = AuthenticatedTestClient(app)
@@ -1643,8 +1777,16 @@ def test_context_usage_reports_selected_history_before_and_after_each_turn() -> 
 
     first = client.post(f"/sessions/{session_id}/messages", json={"message": "A" * 50})
     second = client.post(f"/sessions/{session_id}/messages", json={"message": "B" * 50})
-    first_usage = [payload for event, payload in parse_sse(first.text) if event == "context_usage"]
-    second_usage = [payload for event, payload in parse_sse(second.text) if event == "context_usage"]
+    first_usage = [
+        {key: value for key, value in payload.items() if key != "run_id"}
+        for event, payload in parse_sse(first.text)
+        if event == "context_usage"
+    ]
+    second_usage = [
+        {key: value for key, value in payload.items() if key != "run_id"}
+        for event, payload in parse_sse(second.text)
+        if event == "context_usage"
+    ]
 
     # Only the newest exchange fits after the second turn.
     first_chars = len(json.dumps(ChatMessage(role="user", content="A" * 50), ensure_ascii=False)) + len(
@@ -1653,8 +1795,8 @@ def test_context_usage_reports_selected_history_before_and_after_each_turn() -> 
     second_chars = len(json.dumps(ChatMessage(role="user", content="B" * 50), ensure_ascii=False)) + len(
         json.dumps(ChatMessage(role="assistant", content="Second answer."), ensure_ascii=False)
     )
-    assert first_usage == [{"used_chars": 0, "max_chars": 140}, {"used_chars": first_chars, "max_chars": 140}]
-    assert second_usage == [first_usage[-1], {"used_chars": second_chars, "max_chars": 140}]
+    assert first_usage[-1] == {"used_chars": first_chars, "max_chars": 140}
+    assert second_usage[-1] == {"used_chars": second_chars, "max_chars": 140}
 
 
 def test_session_budget_keeps_the_latest_exchange_and_reports_all_dropped_messages() -> None:
@@ -1674,11 +1816,7 @@ def test_session_budget_keeps_the_latest_exchange_and_reports_all_dropped_messag
         2,
         4,
     ]
-    history = app.state.session_store._sessions[session_id].history
-    assert [(message["role"], message["content"]) for message in history] == [
-        ("user", "C" * 10),
-        ("assistant", "Z" * 20),
-    ]
+    assert app.state.session_store._sessions[session_id].transcript == exchange("C" * 10, "Z" * 20)
     latest_prompt = json.dumps(provider.calls[-1])
     assert "B" * 10 in latest_prompt
     assert "A" * 10 not in latest_prompt
@@ -1693,26 +1831,68 @@ def test_history_prompt_budget_default(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_a_long_history_is_trimmed_to_the_newest_messages_that_fit_the_prompt() -> None:
-    history = [ChatMessage(role="user", content=f"{index:03d} {'x' * 200}") for index in range(50)]
+    history = [UserMessage(f"{index:03d} {'x' * 200}") for index in range(50)]
 
-    messages = build_provider_messages(history, "description: schedule\n", "Latest question.", max_history_chars=1000)
+    context = project_history(history, max_chars=1000)
+    messages = build_provider_messages(context, "description: schedule\n", "Latest question.")
 
     assert messages[0]["role"] == "system"
     assert messages[-1]["content"] == "Latest question."
     retained = messages[1:-1]
     assert 0 < len(retained) < len(history)
     # The newest messages survive so the model keeps the most relevant context.
-    assert retained[-1]["content"] == history[-1]["content"]
-    assert retained[0]["content"] == history[len(history) - len(retained)]["content"]
-    assert sum(len(json.dumps(message, ensure_ascii=False)) for message in retained) <= 1000
+    assert retained[-1]["content"] == history[-1].text
+    assert retained[0]["content"] == history[len(history) - len(retained)].text
+    assert context.used_chars == sum(len(json.dumps(message, ensure_ascii=False)) for message in retained)
+    assert context.used_chars <= 1000
+    assert context.dropped_messages == len(history) - len(retained)
 
 
 def test_a_short_history_reaches_the_prompt_unchanged() -> None:
-    history = [ChatMessage(role="user", content="Who works Monday?"), ChatMessage(role="assistant", content="Alice.")]
+    history = exchange("Who works Monday?", "Alice.")
 
-    messages = build_provider_messages(history, "description: schedule\n", "And Tuesday?")
+    messages = build_provider_messages(project_history(history), "description: schedule\n", "And Tuesday?")
 
-    assert messages[1:-1] == history
+    assert messages[1:-1] == [
+        ChatMessage(role="user", content="Who works Monday?"),
+        ChatMessage(role="assistant", content="Alice."),
+    ]
+
+
+def test_context_merges_one_exchange_into_the_answer_the_user_saw() -> None:
+    history = [
+        UserMessage("Rename P1."),
+        AssistantMessage("Checking. ", "tool_use"),
+        AssistantMessage("Renamed P1."),
+        UserMessage("Now P2."),
+        AssistantMessage("Checking. ", "tool_use"),
+        AssistantMessage("", "aborted"),
+    ]
+
+    messages = build_provider_messages(project_history(history), "description: schedule\n", "Try again.")
+
+    assert messages[1:-1] == [
+        ChatMessage(role="user", content="Rename P1."),
+        ChatMessage(role="assistant", content="Checking. Renamed P1."),
+        ChatMessage(role="user", content="Now P2."),
+        ChatMessage(role="assistant", content=ABORTED_RESPONSE_HISTORY),
+    ]
+
+
+def test_context_projects_typed_entries_without_replaying_aborted_output() -> None:
+    history = [
+        UserMessage("Rename P1."),
+        AssistantMessage("I renamed P1 to", "aborted"),
+        ProposalDecisionEntry("rejected"),
+    ]
+
+    messages = build_provider_messages(project_history(history), "description: schedule\n", "Rename P2 instead.")
+
+    assert messages[1:-1] == [
+        ChatMessage(role="user", content="Rename P1."),
+        ChatMessage(role="assistant", content=ABORTED_RESPONSE_HISTORY),
+        ChatMessage(role="user", content=PROPOSAL_REJECTED_HISTORY),
+    ]
 
 
 def test_optimizer_tool_is_offered_without_an_availability_capability() -> None:
@@ -1844,6 +2024,27 @@ class ScriptedToolProvider:
             yield event
 
 
+def review_run_events(app, session_id: str, timeout: float = 2.0) -> list:
+    """Wait for the first optimizer-triggered run to end and return its published events."""
+    deadline = time.monotonic() + timeout
+    review: list = []
+    while time.monotonic() < deadline:
+        events = app.state.session_event_stream.events_after(session_id)
+        run_id = next(
+            (
+                event.data["run_id"]
+                for event in events
+                if event.type == "run_start" and event.data["trigger"] == "optimizer"
+            ),
+            None,
+        )
+        review = [event for event in events if run_id is not None and event.data.get("run_id") == run_id]
+        if any(event.type in {"done", "stopped", "stale", "error"} for event in review):
+            break
+        time.sleep(0.01)
+    return review
+
+
 class BackgroundTestOptimizer:
     """Hold a fake optimization open until a foreground follow-up completes."""
 
@@ -1904,21 +2105,26 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
     history_starts: list[tuple[str, str, str | None, str, str, int]] = []
     if history_enabled:
         monkeypatch.setattr(ChatHistory, "initialize", lambda _self: None)
-        monkeypatch.setattr(ChatHistory, "finish_recovery_turn", lambda *_args: None)
+        monkeypatch.setattr(ChatHistory, "finish_run", lambda *_args, **_kwargs: None)
 
-        def record_start(_self, turn_id, session_id, request_id, question, metadata):
-            history_starts.append(
-                (
-                    turn_id,
-                    session_id,
-                    metadata.get("auth_credential_id"),
-                    question,
-                    metadata["model"],
-                    metadata["attachment_count"],
-                )
-            )
+        def record_start(
+            _self: ChatHistory,
+            run_id: str,
+            session_id: str,
+            *,
+            state: object,
+            prompt: str,
+            prompt_seq: int,
+            model: str,
+            attachment_count: int,
+            kind: str,
+            message_id: str | None,
+            credential_id: str | None,
+            entries: object,
+        ) -> None:
+            history_starts.append((run_id, session_id, credential_id, prompt, model, attachment_count))
 
-        monkeypatch.setattr(ChatHistory, "start_recovery_turn", record_start)
+        monkeypatch.setattr(ChatHistory, "start_run", record_start)
     optimizer_call = [ToolCallRequest((ToolCall("optimizer-call", OPTIMIZER_TOOL, json.dumps({"action": "start"})),))]
     provider = ScriptedToolProvider(
         optimizer_call,
@@ -1984,17 +2190,32 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         optimizer.release.set()
         deadline = time.monotonic() + 2
         while time.monotonic() < deadline:
-            events = app.state.session_event_broker.events_after(session_id)
-            if any(event.type == "done" for event in events):
+            events = app.state.session_event_stream.events_after(session_id)
+            if any(
+                event.type == "done"
+                and event.data.get("run_id")
+                == next(
+                    (
+                        item.data["run_id"]
+                        for item in events
+                        if item.type == "run_start" and item.data["trigger"] == "optimizer"
+                    ),
+                    None,
+                )
+                for event in events
+            ):
                 break
             time.sleep(0.01)
 
+        user_run_ids = {
+            event.data["run_id"] for event in events if event.type == "run_start" and event.data["trigger"] == "user"
+        }
+        events = [event for event in events if event.data.get("run_id") not in user_run_ids]
         assert [event.type for event in events] == [
             "optimization",
             "optimization_progress",
             "optimization",
-            "turn_start",
-            "context_usage",
+            "run_start",
             "model_input",
             "tool_start",
             "tool",
@@ -2007,22 +2228,26 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         assert events[1].data["progress"] == {"currentBestScore": 23, "elapsedSeconds": 2}
         assert events[2].data["state"] == "completed"
         assert events[2].data["downloadable"] is True
-        assert events[4].data["max_chars"] == 200_000
-        assert all(event.data["turn_id"] == events[3].data["message_id"] for event in events[3:])
-        assert events[5].data == {
-            "turn_id": events[3].data["message_id"],
+        run_id = events[3].data["run_id"]
+        assert events[3].data == {"trigger": "optimizer", "run_id": run_id}
+        assert all(event.data["run_id"] == run_id for event in events[3:])
+        assert all("message_id" not in event.data for event in events[3:])
+        assert events[4].data == {
             "system": provider.calls[3][0]["content"],
             "messages": [
                 {"kind": "optimizer", "content": provider.calls[3][-2]["content"]},
                 {"kind": "status", "content": provider.calls[3][-1]["content"], "title": "Optimizer Result"},
             ],
+            "run_id": run_id,
         }
         assert provider.calls[3][0] == provider.calls[0][0]
-        assert events[8].data == {"text": "The optimizer returned score 23.", "turn_id": events[3].data["message_id"]}
-        assert events[9].data["used_chars"] > events[4].data["used_chars"]
+        assert events[7].data == {"text": "The optimizer returned score 23.", "run_id": run_id}
+        assert events[8].data["max_chars"] == 200_000
+        assert events[8].data["used_chars"] > 0
         if history_enabled:
             assert len(history_starts) == 3
             assert history_starts[-1][1] == session_id
+            # The review run hydrates the retained upload too.
             assert history_starts[-1][4:] == ("test-model", 1)
         assert '"score": 23' in str(provider.calls[3][-2]["content"])
         assert provider.calls[3][-1]["content"] == (
@@ -2104,13 +2329,7 @@ def test_optimizer_inspection_keeps_submitted_context_after_editor_changes():
         client.post(f"/sessions/{session_id}/messages", json={"message": "Optimize."})
         assert client.put(f"/sessions/{session_id}/schedule", json={"schedule_yaml": changed}).status_code == 204
         optimizer.release.set()
-        deadline = time.monotonic() + 2
-        while time.monotonic() < deadline:
-            events = app.state.session_event_broker.events_after(session_id)
-            if any(event.type in {"done", "error"} for event in events):
-                break
-            time.sleep(0.01)
-        assert any(event.type == "done" for event in events)
+        assert review_run_events(app, session_id)[-1].type == "done"
         assert (
             "Reviewed again."
             in client.post(f"/sessions/{session_id}/messages", json={"message": "Inspect the earlier result."}).text
@@ -2199,7 +2418,9 @@ def test_a_tool_run_streams_tool_use_and_a_proposal() -> None:
     response = client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P1."})
 
     events = parse_sse(response.text)
+    tool_start = next(data for name, data in events if name == "tool_start")
     tool = next(data for name, data in events if name == "tool")
+    assert tool_start["tool_call_id"] == tool["tool_call_id"] == "call_0"
     assert tool["name"] == BASH_TOOL
     assert tool["ok"] is True
     assert "Head" in tool["arguments"]
@@ -2245,7 +2466,15 @@ def test_sandbox_cleanup_failure_does_not_commit_provisional_turn_or_proposal() 
     failed = client.post(f"/sessions/{session_id}/messages", json={"message": "Failed edit"})
 
     events = parse_sse(failed.text)
-    assert [name for name, _ in events] == ["context_usage", "tool_start", "tool", "schedule_change", "delta", "error"]
+    assert [name for name, _ in events] == [
+        "run_start",
+        "context_usage",
+        "tool_start",
+        "tool",
+        "schedule_change",
+        "delta",
+        "error",
+    ]
     assert events[-1][1]["message"] == "The temporary AI sandbox failed. Please try again."
     revision = hashlib.sha256(schedule.encode("utf-8")).hexdigest()
     approval = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
@@ -2253,7 +2482,7 @@ def test_sandbox_cleanup_failure_does_not_commit_provisional_turn_or_proposal() 
 
     recovered = client.post(f"/sessions/{session_id}/messages", json={"message": "Retry"})
 
-    assert ("delta", {"text": "Recovered."}) in parse_sse(recovered.text)
+    assert ("delta", {"text": "Recovered.", "run_id": ANY}) in parse_sse(recovered.text)
     recovered_prompt = json.dumps(provider.calls[2])
     assert "Failed edit" in recovered_prompt
     assert ABORTED_RESPONSE_HISTORY in recovered_prompt
@@ -2279,15 +2508,17 @@ def test_sandbox_command_failure_still_streams_the_requested_command() -> None:
     failed = client.post(f"/sessions/{session_id}/messages", json={"message": "Run an edit"})
 
     events = parse_sse(failed.text)
-    assert [name for name, _ in events] == ["context_usage", "tool_start", "error"]
-    assert events[1][1] == {
+    assert [name for name, _ in events] == ["run_start", "context_usage", "tool_start", "error"]
+    assert events[2][1] == {
+        "run_id": events[-1][1]["run_id"],
+        "tool_call_id": "call_0",
         "name": BASH_TOOL,
         "arguments": json.dumps({"command": "python3 -c 'set P1 description to Head'"}),
     }
 
 
 @pytest.mark.parametrize("invalid_kind", ["yaml", "history-list"])
-def test_final_validation_failure_discards_edits_and_records_interruption(invalid_kind) -> None:
+def test_final_validation_failure_discards_edits_and_retains_safe_context(invalid_kind) -> None:
     provider = ScriptedToolProvider(
         rename_call(),
         [TextDelta("Provisional invalid answer.")],
@@ -2317,15 +2548,15 @@ def test_final_validation_failure_discards_edits_and_records_interruption(invali
     failed = client.post(f"/sessions/{session_id}/messages", json={"message": "Invalid edit"})
 
     events = parse_sse(failed.text)
-    assert [name for name, _ in events] == ["context_usage", "tool_start", "tool", "delta", "error"]
-    assert events[2][1]["ok"] is False
+    assert [name for name, _ in events] == ["run_start", "context_usage", "tool_start", "tool", "delta", "error"]
+    assert events[3][1]["ok"] is False
     assert events[-1][1]["message"].startswith(CANDIDATE_VALIDATION_ERROR)
     assert "schedule.yaml introduces problems" in events[-1][1]["message"]
     assert ("not readable YAML" if invalid_kind == "yaml" else "people.items[0].history") in events[-1][1]["message"]
 
     recovered = client.post(f"/sessions/{session_id}/messages", json={"message": "Retry"})
 
-    assert ("delta", {"text": "Recovered."}) in parse_sse(recovered.text)
+    assert ("delta", {"text": "Recovered.", "run_id": ANY}) in parse_sse(recovered.text)
     recovered_prompt = json.dumps(provider.calls[2])
     assert "Invalid edit" in recovered_prompt
     assert ABORTED_RESPONSE_HISTORY in recovered_prompt
@@ -2460,13 +2691,12 @@ def test_a_proposal_that_fails_revalidation_never_becomes_the_session_schedule()
     owner = client.cookies[OWNER_COOKIE]
     broken_payload = base_schedule_payload()
     broken_payload["preferences"][1]["person"] = ["P9"]
-    snapshot = store.begin(session_id, owner)
+    base_revision = store.begin(session_id, owner)
     assert store.finish(
         session_id,
-        "Break it",
-        "Broken proposal",
+        exchange("Break it", "Broken proposal"),
         (schedule_yaml(broken_payload), "broken diff"),
-        snapshot=snapshot,
+        snapshot=base_revision,
     ).proposal_saved
 
     approved = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
@@ -2493,6 +2723,29 @@ def test_a_newer_schedule_replaces_the_snapshot_and_the_proposal() -> None:
     assert approved.status_code == 404
 
 
+def test_session_approval_refuses_invalid_yaml_and_releases_proposal_text() -> None:
+    store = SessionStore(make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT))
+    saved_entries = []
+    store.on_entry(lambda _session_id, entry: saved_entries.append(entry))
+    original = schedule_yaml()
+    session = store.create("owner", original)
+    broken = base_schedule_payload()
+    broken["preferences"][1]["person"] = ["P9"]
+    snapshot = store.begin(session.id, "owner", run_id="proposing-run")
+    store.finish(session.id, exchange("Edit", "Proposal"), (schedule_yaml(broken), "diff"), snapshot=snapshot)
+    retained = store.retained_bytes
+
+    approved = store.approve_proposal(session.id, "owner", session.revision)
+
+    assert approved is None
+    assert session.schedule_yaml == original
+    assert session.pending_proposal is None
+    assert session.transcript[-1] == ProposalDecisionEntry("invalid")
+    # The decision is saved under the run that proposed it.
+    assert saved_entries[-1][1:] == ("proposing-run", ProposalDecisionEntry("invalid"))
+    assert store.retained_bytes < retained
+
+
 def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved() -> None:
     app = create_test_app(settings=make_settings(), provider=FakeProvider())
     store = app.state.session_store
@@ -2500,33 +2753,31 @@ def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved()
     first_proposal = original.replace("description: ''", "description: First", 1)
     stale_proposal = original.replace("description: ''", "description: Stale", 1)
     session = store.create("browser-owner", original)
-    original_snapshot = store.begin(session.id, "browser-owner")
+    original_revision = store.begin(session.id, "browser-owner")
     assert store.finish(
         session.id,
-        "First edit",
-        "First proposal",
+        exchange("First edit", "First proposal"),
         (first_proposal, "first diff"),
-        snapshot=original_snapshot,
+        snapshot=original_revision,
     ).proposal_saved
-    active_snapshot = store.begin(session.id, "browser-owner")
+    active_turn_revision = store.begin(session.id, "browser-owner")
 
     store.approve_proposal(session.id, "browser-owner", session.revision)
     completion = store.finish(
         session.id,
-        "Stale edit",
-        "Stale proposal",
+        exchange("Stale edit", "Stale proposal"),
         (stale_proposal, "stale diff"),
-        snapshot=active_snapshot,
+        snapshot=active_turn_revision,
     )
 
-    assert not completion.turn_saved
-    assert session.history == [
-        ChatMessage(role="user", content="First edit"),
-        ChatMessage(role="assistant", content="First proposal"),
-        ChatMessage(role="user", content=PROPOSAL_APPROVED_HISTORY),
+    assert not completion.run_saved
+    assert session.transcript == [
+        UserMessage("First edit"),
+        AssistantMessage("First proposal"),
+        ProposalDecisionEntry("approved"),
     ]
     with pytest.raises(HTTPException) as exc_info:
-        store.approve_proposal(session.id, "browser-owner", session.revision)
+        store.approve_proposal(session.id, "browser-owner", active_turn_revision)
     assert exc_info.value.status_code == 404
 
 
@@ -2534,30 +2785,20 @@ def test_session_store_queues_steering_once_and_retains_it_with_the_turn() -> No
     app = create_test_app(settings=make_settings(), provider=FakeProvider())
     store = app.state.session_store
     session = store.create("browser-owner", schedule_yaml())
-    snapshot = store.begin(session.id, "browser-owner")
+    revision = store.begin(session.id, "browser-owner")
 
     store.queue_steering(session.id, "browser-owner", "queued-1", "Focus on P2 instead.")
     store.queue_steering(session.id, "browser-owner", "queued-1", "Focus on P2 instead.")
 
     assert store.take_steering(session.id, False) == [("queued-1", "Focus on P2 instead.")]
-    assert store.finish(
-        session.id,
-        "Inspect P1.",
-        "P2 is the better target.",
-        snapshot=snapshot,
-        turn_messages=[
-            UserMessage("Inspect P1."),
-            AssistantMessage("P1 needs review."),
-            UserMessage("Focus on P2 instead."),
-            AssistantMessage("P2 is the better target."),
-        ],
-    ).turn_saved
-    assert session.history == [
-        ChatMessage(role="user", content="Inspect P1."),
-        ChatMessage(role="assistant", content="P1 needs review."),
-        ChatMessage(role="user", content="Focus on P2 instead."),
-        ChatMessage(role="assistant", content="P2 is the better target."),
+    entries = [
+        UserMessage("Inspect P1."),
+        AssistantMessage("P1 needs review."),
+        UserMessage("Focus on P2 instead."),
+        AssistantMessage("P2 is the better target."),
     ]
+    assert store.finish(session.id, entries, snapshot=revision).run_saved
+    assert session.transcript == entries
 
 
 def test_session_store_bounds_steering_across_a_whole_turn_not_the_drained_queue() -> None:
@@ -2576,10 +2817,10 @@ def test_session_store_bounds_steering_across_a_whole_turn_not_the_drained_queue
         store.queue_steering(session.id, "browser-owner", "one-too-many", "Keep going.")
 
     assert exc_info.value.status_code == 429
-    assert len(session.turn.steering_ids) == settings.max_history_messages
+    assert session.agent.steered_count == settings.max_history_messages
 
     # A fresh turn starts the budget over.
-    store.abort(session.id, store._sessions[session.id].turn)
+    store.abort(session.id, session.snapshot)
     store.begin(session.id, "browser-owner")
     store.queue_steering(session.id, "browser-owner", "queued-0", "Keep going.")
     assert store.take_steering(session.id, False) == [("queued-0", "Keep going.")]
@@ -2596,6 +2837,7 @@ def test_session_store_bounds_retained_chat_text_across_sessions() -> None:
     with pytest.raises(HTTPException) as exc_info:
         store.create("browser-owner", "c" * 400)
     assert exc_info.value.status_code == 429
+    assert exc_info.value.detail == "The AI service has reached its session text and file retention limit."
 
     # Replacing a schedule with a smaller one returns its budget. The edit is recorded as an app event.
     store.update_schedule(first.id, "browser-owner", "a" * 50)
@@ -2608,18 +2850,57 @@ def test_session_store_bounds_retained_chat_text_across_sessions() -> None:
     assert store.retained_bytes == 550 + len(SCHEDULE_CHANGED_EVENT)
 
 
-def test_proposal_decision_keeps_its_exchange_when_it_exceeds_message_cap() -> None:
+def test_proposal_history_event_counts_the_exchange_removed_by_the_cap() -> None:
     app = create_test_app(settings=make_settings(max_history_messages=2), provider=FakeProvider())
     store = app.state.session_store
     session = store.create("browser-owner", "description: test")
-    store.begin(session.id, "browser-owner")
-    store.finish(session.id, "question", "answer", ("proposal", "diff"), snapshot=session.turn)
+    snapshot = store.begin(session.id, "browser-owner")
+    store.finish(session.id, exchange("question", "answer"), ("proposal", "diff"), snapshot=snapshot)
 
     store.discard_proposal(session.id, "browser-owner")
 
-    assert [message["role"] for message in session.history] == ["user", "assistant", "user"]
-    assert session.history[-1]["content"] == PROPOSAL_REJECTED_HISTORY
-    assert store.begin(session.id, "browser-owner").dropped_history_messages == 0
+    # The newest exchange stays whole with its decision, even above the cap.
+    assert store._sessions[session.id].transcript == [
+        *exchange("question", "answer"),
+        ProposalDecisionEntry("rejected"),
+    ]
+    assert store.begin(session.id, "browser-owner").previously_dropped == 0
+
+
+def test_budget_trimming_drops_a_decision_with_the_exchange_it_decided() -> None:
+    settings = make_settings(max_session_bytes=10_000, max_schedule_bytes=1000, max_history_messages=20)
+    app = create_test_app(settings=settings, provider=FakeProvider())
+    store = app.state.session_store
+    session = store.create("browser-owner", "a" * 10)
+    snapshot = store.begin(session.id, "browser-owner")
+    store.finish(session.id, exchange("q" * 100, "A" * 5_000), ("proposal", "diff"), snapshot=snapshot)
+    store.discard_proposal(session.id, "browser-owner")
+
+    snapshot = store.begin(session.id, "browser-owner")
+    store.finish(session.id, exchange("next", "B" * 6_000), snapshot=snapshot)
+
+    assert session.transcript == exchange("next", "B" * 6_000)
+    assert session.dropped_history_messages == 3
+
+
+def test_prompt_budget_projection_starts_at_a_prompt() -> None:
+    history = [
+        UserMessage("q" * 400),
+        AssistantMessage("Proposed a change."),
+        ProposalDecisionEntry("approved"),
+        UserMessage("Next question."),
+        AssistantMessage("Next answer."),
+    ]
+
+    context = project_history(history, max_chars=300)
+    messages = build_provider_messages(context, "description: schedule\n", "Latest.")
+
+    assert messages[1:-1] == [
+        ChatMessage(role="user", content="Next question."),
+        ChatMessage(role="assistant", content="Next answer."),
+    ]
+    assert context.used_chars == sum(len(json.dumps(message, ensure_ascii=False)) for message in messages[1:-1])
+    assert context.dropped_messages == 3
 
 
 @pytest.mark.parametrize("message_cap", [1, 3], ids=["below-exchange-size", "odd-overflow"])
@@ -2629,12 +2910,9 @@ def test_history_message_cap_keeps_complete_exchanges(message_cap: int) -> None:
     session = store.create("browser-owner", "description: test")
 
     for question in ("first question", "second question"):
-        store.begin(session.id, "browser-owner")
-        store.finish(session.id, question, f"answer to {question}", snapshot=session.turn)
-        assert session.history == [
-            ChatMessage(role="user", content=question),
-            ChatMessage(role="assistant", content=f"answer to {question}"),
-        ]
+        snapshot = store.begin(session.id, "browser-owner")
+        store.finish(session.id, exchange(question, f"answer to {question}"), snapshot=snapshot)
+        assert session.transcript == exchange(question, f"answer to {question}")
     assert session.dropped_history_messages == 2
 
 
@@ -2655,8 +2933,8 @@ def test_steering_adjusts_retained_bytes_without_a_full_recount() -> None:
 
 
 def test_completed_turns_do_not_accumulate_past_the_budget() -> None:
-    # A turn grows a session without passing an admission check, so sessions
-    # admitted cheaply must not keep every answer they produce.
+    # Completed runs add output without another capacity check. Initially small
+    # sessions must not keep every answer they produce.
     settings = make_settings(max_session_bytes=10_000, max_schedule_bytes=1000, max_history_messages=20)
     app = create_test_app(settings=settings, provider=FakeProvider())
     store = app.state.session_store
@@ -2664,17 +2942,14 @@ def test_completed_turns_do_not_accumulate_past_the_budget() -> None:
 
     for _ in range(6):
         for session in sessions:
-            store.begin(session.id, "browser-owner")
-            store.finish(session.id, "q" * 100, "A" * 5_000, None, snapshot=session.turn)
+            snapshot = store.begin(session.id, "browser-owner")
+            store.finish(session.id, exchange("q" * 100, "A" * 5_000), None, snapshot=snapshot)
 
     # Each session keeps its schedule and its newest question and answer, so that floor is what
     # remains, independently of how many turns ran.
     assert store.retained_bytes == 5 * (10 + 100 + 5_000)
     for session in sessions:
-        history = store._sessions[session.id].history
-        assert history[-2]["content"] == "q" * 100
-        assert history[-1]["content"] == "A" * 5_000
-        assert len(history) == 2
+        assert store._sessions[session.id].transcript == exchange("q" * 100, "A" * 5_000)
 
 
 def test_discarding_a_stale_proposal_returns_its_share_of_the_budget() -> None:
@@ -2682,13 +2957,12 @@ def test_discarding_a_stale_proposal_returns_its_share_of_the_budget() -> None:
     app = create_test_app(settings=settings, provider=FakeProvider())
     store = app.state.session_store
     session = store.create("browser-owner", "a" * 100)
-    store.begin(session.id, "browser-owner")
+    snapshot = store.begin(session.id, "browser-owner")
     store.finish(
         session.id,
-        "question",
-        "answer",
+        exchange("question", "answer"),
         ("p" * 400, "d" * 100),
-        snapshot=session.turn,
+        snapshot=snapshot,
     )
     retained_with_proposal = store.retained_bytes
 
@@ -2698,7 +2972,7 @@ def test_discarding_a_stale_proposal_returns_its_share_of_the_budget() -> None:
 
     assert exc_info.value.status_code == 409
     assert store.retained_bytes == retained_with_proposal - 500
-    assert not store._sessions[session.id].proposal_yaml
+    assert store._sessions[session.id].pending_proposal is None
 
 
 def test_replacing_a_schedule_credits_the_proposal_it_drops() -> None:
@@ -2706,17 +2980,17 @@ def test_replacing_a_schedule_credits_the_proposal_it_drops() -> None:
     app = create_test_app(settings=settings, provider=FakeProvider())
     store = app.state.session_store
     session = store.create("browser-owner", "a" * 100)
-    store.begin(session.id, "browser-owner")
-    store.finish(session.id, "q", "a", ("p" * 600, "d" * 100), snapshot=session.turn)
+    snapshot = store.begin(session.id, "browser-owner")
+    store.finish(session.id, exchange("q", "a"), ("p" * 600, "d" * 100), snapshot=snapshot)
 
     # The larger schedule alone exceeds the budget, but it also drops the proposal.
     store.update_schedule(session.id, "browser-owner", "b" * 300)
 
     assert store._sessions[session.id].schedule_yaml == "b" * 300
-    assert not store._sessions[session.id].proposal_yaml
-    # The new schedule, the two one-character turn messages, and the edit event are all that remain.
+    assert store._sessions[session.id].pending_proposal is None
+    # The new schedule, the two one-character run messages, and the edit event are all that remain.
     assert store.retained_bytes == 302 + len(SCHEDULE_CHANGED_DISCARDED_EVENT)
-    assert store._sessions[session.id].history[-1]["content"] == SCHEDULE_CHANGED_DISCARDED_EVENT
+    assert store._sessions[session.id].transcript[-1] == AppEventEntry(SCHEDULE_CHANGED_DISCARDED_EVENT)
 
 
 def test_session_store_rejects_steering_after_the_final_boundary() -> None:
@@ -2824,18 +3098,9 @@ def test_background_command_timeout_preserves_tool_result_and_reports_the_actual
         started = client.post(f"/sessions/{session_id}/messages", json={"message": "Optimize."})
         assert "Optimization started" in started.text
         optimizer.release.set()
-        deadline = time.monotonic() + 2
-        events = []
-        while time.monotonic() < deadline:
-            events = app.state.session_event_broker.events_after(session_id)
-            if any(event.type == "error" for event in events):
-                break
-            time.sleep(0.01)
+        events = review_run_events(app, session_id)
         assert events[-1].type == "error"
-        assert events[-1].data == {
-            "message": SANDBOX_COMMAND_TIMEOUT_ERROR,
-            "turn_id": next(event.data["message_id"] for event in events if event.type == "turn_start"),
-        }
+        assert events[-1].data == {"message": SANDBOX_COMMAND_TIMEOUT_ERROR, "run_id": ANY}
         tool = next(event for event in events if event.type == "tool")
         assert not tool.data["ok"]
         assert "Command timed out" in tool.data["result"]
@@ -2896,13 +3161,7 @@ def test_background_review_reports_safe_reasons_and_keeps_private_errors_hidden(
         session = create_session(client, schedule_yaml())
         client.post(f"/sessions/{session}/messages", json={"message": "Optimize."})
         optimizer.release.set()
-        deadline = time.monotonic() + 2
-        events = []
-        while time.monotonic() < deadline:
-            events = app.state.session_event_broker.events_after(session)
-            if any(event.type == "error" for event in events):
-                break
-            time.sleep(0.01)
+        events = review_run_events(app, session)
         assert events[-1].type == "error"
         message = events[-1].data["message"]
         if failure == "validation":

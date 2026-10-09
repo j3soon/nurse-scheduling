@@ -47,6 +47,15 @@ class ScheduleProposal:
 
 
 @dataclass(frozen=True)
+class PendingProposal:
+    """A session proposal and the run that produced it."""
+
+    schedule_yaml: str
+    diff: str
+    run_id: str | None
+
+
+@dataclass(frozen=True)
 class ScheduleCandidateReview:
     """Trusted validation and proposal result for one complete candidate."""
 
