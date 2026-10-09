@@ -96,7 +96,7 @@ disabled, although setting either one still enables bearer authentication.
 Both Compose variants enable AI session recovery through a fixed private PostgreSQL
 service connection. The database uses the persistent `postgres-ai-data` volume
 and is not published on a host port. See
-[session recovery storage](../docs/content/ai-assistant.md#session-recovery-storage) for
+[session recovery storage](https://github.com/j3soon/nurse-scheduling/blob/dev/docs/content/developer-guide/ai-assistant.md#session-recovery-storage) for
 retention and failure behavior.
 
 Cloudflared and NGINX share `tunnel`. NGINX and the API share `api`, which AI
@@ -145,7 +145,7 @@ For local inspection, start the loopback-only pgAdmin UI and open
 docker compose -f compose.backend.yml --profile inspection run --rm --service-ports pgadmin
 ```
 
-See [inspect chat history with pgAdmin](../docs/content/ai-assistant.md#inspect-chat-history-with-pgadmin)
+See [inspect chat history with pgAdmin](https://github.com/j3soon/nurse-scheduling/blob/dev/docs/content/developer-guide/ai-assistant.md#inspect-chat-history-with-pgadmin)
 for login, remote SSH forwarding, connection, and query instructions.
 
 NGINX removes the `/ai` prefix before forwarding requests to this
@@ -175,7 +175,7 @@ remaining filterable through their `app` tags.
 `SENTRY_AUTH_TOKEN` is not needed by the running backend because the SDK sends
 events through the DSN. Do not add a frontend DSN or Sentry auth token to this
 backend environment file. Configure them in the frontend build environment as
-described in the [developer guide](../docs/content/developer-guide/index.md#sentry).
+described in the [developer guide](https://github.com/j3soon/nurse-scheduling/blob/dev/docs/content/developer-guide/index.md#sentry).
 
 An unset DSN retains the repository's existing shared Sentry project. Running
 outside Docker uses the `development` environment. Set `DISABLE_SENTRY=1` in
@@ -266,7 +266,7 @@ docker compose -f compose.backend.yml --profile inspection run --rm --service-po
 ```
 
 Open `http://127.0.0.1:5540`. See
-[inspect Redis with RedisInsight](../docs/content/backend-server.md#inspect-redis-with-redisinsight)
+[inspect Redis with RedisInsight](https://github.com/j3soon/nurse-scheduling/blob/dev/docs/content/developer-guide/backend-server.md#inspect-redis-with-redisinsight)
 for remote access, key prefixes, and data-safety guidance.
 
 The backend publishes its accepted run options at `GET /optimize/options`.
@@ -274,7 +274,7 @@ The frontend uses this response for solver choices, timeout limits,
 running-job controls, and the prettify default. Configure the response with:
 
 - `OPTIMIZE_SOLVERS`, a comma-separated allowlist of selectors from the
-  [solver reference](https://nursescheduling.org/docs/solvers/)
+  [solver reference](https://dev.nursescheduling.org/docs/developer-guide/solvers/)
 - `OPTIMIZE_DEFAULT_SOLVER`
 - `OPTIMIZE_MIN_TIMEOUT_SECONDS`
 - `OPTIMIZE_DEFAULT_TIMEOUT_SECONDS`

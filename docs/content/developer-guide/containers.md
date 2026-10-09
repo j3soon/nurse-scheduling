@@ -7,6 +7,10 @@ memory variant uses four. Both connect services by name.
 Docker assigns their addresses. Only the optional inspection UIs publish ports,
 and those bind to host loopback. The frontend is deployed separately.
 
+<figure markdown="1">
+
+**Figure 1. Backend services and container networks.**
+
 ```mermaid
 flowchart TB
     Visitor[<b>Public client</b><br/>Cloudflare Tunnel]
@@ -34,6 +38,8 @@ flowchart TB
     PostgresUI -.->|postgres| Postgres
 ```
 
+</figure>
+
 Solid lines show normal traffic. Dotted lines show optional inspection or
 diagnostic profiles. The `api` and `ai` labels are distinct networks even though
 both services use the same image. In the memory Compose variant, the API keeps
@@ -42,7 +48,7 @@ jobs in process, so Redis, RedisInsight, and the usage reporter are absent.
 ## NGINX routing
 
 The Tunnel hostname points to `http://nginx:8080`. NGINX applies these rules
-from [its configuration](../../docker/nginx.backend.conf):
+from [its configuration](https://github.com/j3soon/nurse-scheduling/blob/dev/docker/nginx.backend.conf):
 
 | Incoming path | Upstream | Path sent upstream |
 | --- | --- | --- |

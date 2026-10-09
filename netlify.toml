@@ -13,8 +13,10 @@
   bun run build
   cd ..
 
+  python -m unittest discover -s scripts -p test_check_docs_links.py
   pip install -r docs/requirements.txt
   python -m zensical build --clean --strict
+  python scripts/check_docs_links.py
 
   mkdir -p web-frontend/out/docs
   mv site/* web-frontend/out/docs/
@@ -22,6 +24,58 @@
 
 [build.environment]
   # Configure frontend Sentry variables in Netlify's Build-scoped environment.
-  # See README.md#hosting-on-netlify. Keep SENTRY_AUTH_TOKEN out of this file.
+  # See web-frontend/README.md#hosting-on-netlify. Keep SENTRY_AUTH_TOKEN out of this file.
   NODE_VERSION = "25"
   PYTHON_VERSION = "3.12"
+
+# Preserve published developer-guide URLs and their fragments.
+
+[[redirects]]
+  from = "/docs/backend-server"
+  to = "/docs/developer-guide/backend-server/"
+  status = 301
+
+[[redirects]]
+  from = "/docs/backend-server/*"
+  to = "/docs/developer-guide/backend-server/:splat"
+  status = 301
+
+[[redirects]]
+  from = "/docs/ai-assistant"
+  to = "/docs/developer-guide/ai-assistant/"
+  status = 301
+
+[[redirects]]
+  from = "/docs/ai-assistant/*"
+  to = "/docs/developer-guide/ai-assistant/:splat"
+  status = 301
+
+[[redirects]]
+  from = "/docs/containers"
+  to = "/docs/developer-guide/containers/"
+  status = 301
+
+[[redirects]]
+  from = "/docs/containers/*"
+  to = "/docs/developer-guide/containers/:splat"
+  status = 301
+
+[[redirects]]
+  from = "/docs/solvers"
+  to = "/docs/developer-guide/solvers/"
+  status = 301
+
+[[redirects]]
+  from = "/docs/solvers/*"
+  to = "/docs/developer-guide/solvers/:splat"
+  status = 301
+
+[[redirects]]
+  from = "/docs/design"
+  to = "/docs/developer-guide/design-rationale/"
+  status = 301
+
+[[redirects]]
+  from = "/docs/design/*"
+  to = "/docs/developer-guide/design-rationale/:splat"
+  status = 301

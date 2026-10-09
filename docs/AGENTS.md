@@ -106,6 +106,11 @@
 
 - Make architecture and data-flow figures understandable without surrounding
   prose. Use bold titles and short descriptions inside nodes.
+- Give each diagram a numbered caption inside its figure. Label arrows with
+  their action or data. Verify owners, allocation, cleanup, and persistence
+  ordering against code before updating the diagram.
+- Keep stored states separate from derived phases. Distinguish preparing a
+  resource adapter from allocating a resource when allocation is lazy.
 - Give distinct concepts distinct blocks. Preserve meaningful topology when
   adjusting layout.
 - Show alternatives as directly labeled branches. Add a decision node only
@@ -113,6 +118,19 @@
 - Keep Mermaid source readable. Avoid invisible layout machinery unless a
   simple declaration cannot produce a clear result.
 - Use text or tables below a figure for detail.
+
+## Reproduce pages and links
+
+- Keep module commands in their READMEs. The developer-guide reproduction pages
+  and backend deployment page are symlinks to those files.
+- Use absolute links in symlinked READMEs so repository and site views resolve
+  them from the same place. State each shell block's working directory.
+- Link repository files outside the docs with absolute repository URLs.
+  Relative site links must stay inside the built documentation.
+- Move page paths, navigation entries, and inbound links together. Add permanent
+  redirects for published paths and preserve existing heading IDs.
+- Git on Windows can check out symlinks as plain text. Enable symlink support
+  or use Linux or WSL when building the documentation.
 
 ## Validation
 
@@ -130,8 +148,13 @@
   narrow viewport when formulas or wide tables are involved.
 - Use Playwright or browser developer tools to capture and inspect rendered
   figures and formulas.
+- Wait for `div.mermaid` before capturing a Mermaid diagram. Zensical puts the
+  SVG in a closed shadow root, so an SVG locator cannot detect it.
 - Run `zensical build --clean --strict` and `git diff --check` before
   finishing.
-- Verify internal links and referenced assets resolve without 404 responses.
+- When changing the link checker, run
+  `python -m unittest discover -s scripts -p test_check_docs_links.py`.
+- Run `python scripts/check_docs_links.py` after the build. It checks pages,
+  assets, anchors, README references, and redirect targets without network access.
 - After renaming a heading, update inbound anchor links and let the Zensical
   build check for stale anchors.

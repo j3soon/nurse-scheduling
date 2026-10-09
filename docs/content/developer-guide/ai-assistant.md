@@ -9,38 +9,12 @@ File attachments are enabled by default. The frontend accepts arbitrary file
 types and copies them into the disposable sandbox without executing them. The
 assistant reads and edits the schedule in that sandbox and can propose a new
 schedule, which the browser applies only after the user approves it.
-Each user message gets one temporary shell backed by E2B Cloud. This version
-excludes retrieval and repository access.
+Each run owns a workspace. It creates an E2B Cloud sandbox on the first
+workspace tool call. This version excludes retrieval and repository access.
 
 ## Run locally
 
-Copy the shared secret-free template from the `docker/` directory:
-
-```sh
-cp docker/.env.example docker/.env
-```
-
-Review the AI assistant block in `docker/.env`. Set the provider URL, API key,
-model, and other settings for your environment. For an authenticated service,
-also set one or more AI keys. To serve locally without auth, explicitly set
-`AI_AUTH_REQUIRED=false` and leave `AI_AUTH_TOKEN` and `AI_AUTH_TOKENS` empty.
-Then start the service:
-
-```sh
-./scripts/start_ai_backend.sh
-curl http://localhost:8001/health
-```
-
-The launcher reads `docker/.env` automatically. Set `AI_ENV_FILE` to load
-another path. Port `8001` avoids the normal backend on `8000`. Use another port
-for a local documentation server when both services run at the same time. The
-documented local Zensical port is `8003`.
-
-The frontend uses `https://api.nursescheduling.org/ai` by default. Its server
-control can select `http://localhost:8001` or a custom URL, and locks that
-selection after a conversation starts. Set `NEXT_PUBLIC_AI_API_URL` before
-building the frontend to provide a different deployment default. Remembered
-credentials are stored unencrypted per endpoint only when the user opts in.
+See the [core instructions](reproduce/core.md#run-locally) for this task.
 
 ## Architecture
 
@@ -52,7 +26,8 @@ their concurrency policy.
 | Component | Responsibility |
 | --- | --- |
 | `app.py` | HTTP routes, authentication, and application startup and shutdown. |
-| `agent_session.py`, `sessions.py`, `lifecycle.py` | Conversation changes and run execution, session access and budgets, and queued ownership through cleanup. |
+| `agent_session.py` | Conversation changes, steering, proposal decisions, and the shared run path. |
+| `sessions.py`, `lifecycle.py` | `SessionStore` access and budgets, plus `SessionRuns` ownership through cleanup and persistence. |
 | `agent.py`, `agent_loop.py`, `agent_types.py` | Observable execution state, the model loop, and executable tool contracts. |
 | `workspace.py`, `workspace_tools.py` | Lazy sandbox allocation and hydration, tool binding, and trusted schedule review. |
 | `transcript.py`, `context.py` | Typed conversation entries, provider requests, history selection, and application event presentation. |
@@ -60,19 +35,127 @@ their concurrency policy.
 | `session_events.py`, `session_event_projection.py` | Typed public events, tool call identity, text batching, and terminal publication after finalization. |
 | `recovery.py`, `history.py`, `session_event_stream.py` | Ordered persistence, bounded session replay, and restart recovery. |
 
+<figure markdown="1" id="ai-components">
+
+**Figure 1. Backend execution and resource owners.**
+
 ```mermaid
-flowchart LR
-    Browser[Frontend<br/>current schedule] -->|POST schedule once| Session[AI backend<br/>server-owned turn]
-    Browser -->|POST question<br/>and optional attachments| Session
-    Session -->|OpenAI-compatible chat request| Provider[Model provider]
-    Provider -->|streamed deltas and tool calls| Session
-    Session -->|one fresh turn| Sandbox[E2B Cloud sandbox<br/>shell working copy]
-    Session -->|background job with YAML snapshot| Optimizer[Optimizer API<br/>durable job]
-    Optimizer -->|status, score, and output workbook| Session
-    Sandbox -->|candidate schedule| Validation[Trusted server validation<br/>and structural diff]
-    Session -->|SSE text, tool, optimization status, and proposal events| Browser
-    Browser -->|approve with base revision| Session
+flowchart TB
+    Browser["<b>Browser</b><br/>Questions and approvals"]
+    Routes["<b>app.py</b><br/>Authorize HTTP requests"]
+    Runs["<b>SessionRuns</b><br/>Own accepted runs"]
+    Store["<b>SessionStore</b><br/>Access, expiry, and budgets"]
+    Session["<b>AgentSession</b><br/>Own conversation changes"]
+    Agent["<b>Agent and agent_loop</b><br/>Execute model and tool contracts"]
+    Workspace["<b>Workspace</b><br/>Create E2B sandbox on first use"]
+    Optimizer["<b>Optimizer operations</b><br/>Own independent API jobs"]
+    Browser -->|Requests| Routes
+    Routes -->|Start or stop| Runs
+    Routes -->|Access session| Store
+    Runs -->|Execute| Session
+    Store -->|Retain| Session
+    Session -->|Prepare and consume| Agent
+    Agent -->|Workspace tools| Workspace
+    Agent -->|Optimizer tools| Optimizer
 ```
+
+</figure>
+
+### Run completion
+
+Foreground questions and optimizer-result reviews use the same owner. A
+foreground request is rejected while another run owns the session. Background
+reviews wait in queue order. A disconnected browser does not cancel that owner.
+
+<figure markdown="1" id="ai-run-completion">
+
+**Figure 2. Run output, cleanup, persistence, and terminal delivery.**
+
+```mermaid
+flowchart TB
+    Accept["<b>Accepted request</b><br/>message_id identifies one run"]
+    Execute["<b>Server-owned execution</b><br/>Publish provisional run output"]
+    Cleanup["<b>Cleanup</b><br/>Close model generators<br/>Destroy any allocated sandbox"]
+    Commit["<b>Session finalization</b><br/>Commit or abort the RunSnapshot"]
+    Recovery["<b>Recovery finalization</b><br/>Save outcome and context<br/>Report storage failure if needed"]
+    Terminal["<b>Terminal delivery</b><br/>Publish done, stopped, stale, or error"]
+    Release["<b>Release run owner</b><br/>Allow the next queued run"]
+    Accept -->|JSON acknowledgement and SSE<br/>can arrive in either order| Execute
+    Execute -->|Complete, Stop, or fail| Cleanup
+    Cleanup -->|Fix the outcome| Commit
+    Commit -->|Await final writes| Recovery
+    Recovery -->|Flush held terminal event| Terminal
+    Terminal -->|Finish execution| Release
+```
+
+</figure>
+
+`AgentRun.cancelled` records a cancellation request. `finishing` prevents a
+late Stop from changing a result after cleanup has fixed its outcome. These
+flags and queue ownership are separate from the browser's running, stopping,
+and interrupted phases. `RunEvents` holds terminal events until finalization
+finishes, including when recovery storage reports a failure.
+
+### Frontend controller
+
+The page owns credentials, composer files, speech, scrolling, and browser
+download URLs. `useAiChat` owns chat state, saved conversation restoration,
+message submission, steering, session expiry, and proposal actions.
+`ChatTranscriptView` renders that state through explicit props and callbacks.
+
+<figure markdown="1" id="ai-frontend">
+
+**Figure 3. Frontend state, connection ownership, and rendering.**
+
+```mermaid
+flowchart TB
+    Page["<b>page.tsx</b><br/>Browser controls<br/>and schedule import"]
+    Controller["<b>useAiChat</b><br/>State and actions<br/>Router and event helpers"]
+    Reader["<b>Connection hook</b><br/>useSessionEventStream<br/>Reader, cursor, and retry"]
+    Transcript["<b>ChatTranscriptView</b><br/>Messages and controls"]
+    Saved["<b>Session storage</b><br/>Conversation and<br/>pending request"]
+    Page -->|Options and callbacks| Controller
+    Controller -->|Own connection| Reader
+    Controller -->|State and actions| Transcript
+    Controller -->|Restore and persist| Saved
+```
+
+
+</figure>
+
+The reader hook revokes callbacks from a closed connection and owns its retry
+timer. Accepted deferred events remain scoped to the conversation. A cursor
+reconnect continues the active reply after steering. A replacement snapshot
+rebuilds the run from its original reply and preserves surrounding message
+positions. `ChatLifecycle` owns browser operation phases and busy state.
+
+### Session and model context
+
+<figure markdown="1" id="ai-context">
+
+**Figure 4. Retained conversation and the next provider request.**
+
+```mermaid
+flowchart TB
+    Transcript["<b>Typed transcript</b><br/>Questions, answers, app events, and decisions"]
+    Context["<b>context.py</b><br/>Project history and interruption notes"]
+    Current["<b>Current run</b><br/>Model responses and tool results"]
+    Prompt["<b>Prompt inputs</b><br/>Fixed instructions and schedule summary"]
+    Request["<b>Provider request</b><br/>Initial layout and follow-up messages"]
+    Provider["<b>Provider</b><br/>Complete one model request"]
+    Transcript -->|Retained entries| Context
+    Context -->|Selected history| Request
+    Current -->|Follow-up messages| Request
+    Prompt -->|Instructions and request values| Request
+    Request -->|OpenAI-compatible messages| Provider
+```
+
+</figure>
+
+`build_provider_messages` builds the initial layout. The model loop calls
+`prepare_provider_request` for each follow-up, combining that layout with
+current run entries. Session retention, model context selection, and event
+replay have separate limits.
 
 The browser receives an HTTP-only owner cookie and an unguessable session UUID.
 Active sessions expire after 30 days of inactivity by default. Sending or
@@ -108,6 +191,32 @@ until removed or the session expires. A server restart can remove them without
 prior notice. Conversation context keeps filenames and attachment markers,
 while recovery entries can retain inspected document content and tool output.
 The prompt gives the agent workspace paths for schedules and attachments.
+
+### Optimizer jobs and result reviews
+
+<figure markdown="1" id="ai-optimizer">
+
+**Figure 5. Independent optimization and serialized result review.**
+
+```mermaid
+flowchart TB
+    Tool["<b>Optimizer tool</b><br/>Submit sandbox working YAML"]
+    Jobs["<b>Optimizer API</b><br/>Execute an independent job"]
+    Monitor["<b>AI optimizer monitor</b><br/>Watch status and collect the result"]
+    Cache["<b>Result cache</b><br/>Bound workbook bytes and restore person IDs"]
+    Runs["<b>SessionRuns</b><br/>Queue a background review"]
+    Review["<b>AgentSession</b><br/>Review result metadata with the model"]
+    Workspace["<b>Next workspace</b><br/>Hydrate retained workbook on first tool use"]
+    Tool -->|Normalized input and server credential| Jobs
+    Jobs -->|Status and completed workbook| Monitor
+    Monitor -->|Retain result and delete remote job| Cache
+    Monitor -->|Enqueue result metadata| Runs
+    Runs -->|Execute when the session is idle| Review
+    Cache -->|Make workbook available| Workspace
+    Review -->|Workspace tool call| Workspace
+```
+
+</figure>
 
 The server-side `optimizer` tool submits a copy of the current sandbox working
 YAML to the existing optimizer API. It replaces person IDs and removes
@@ -145,8 +254,8 @@ schedule to `/workspace/schedule.yaml` and searchable schema documentation to
 `/reference`. It writes uploads below `/workspace/attachments` under safe paths
 prefixed with their upload IDs. The backend then runs every command for that
 user message in the same sandbox,
-reads the candidate, and destroys the sandbox. A later message always starts a
-new sandbox. Only conversation history, the current schedule revision, and a
+reads the candidate, and destroys the sandbox. A later run creates a new
+sandbox when it calls a workspace tool. Only conversation history, the current schedule revision, and a
 pending validated proposal remain in application state.
 
 When a turn fails, its provisional activity remains visible but is not added to
@@ -208,167 +317,7 @@ after the upgrade. Keep the upgraded database until those records are no longer 
 
 ## Evaluation
 
-The assistant is evaluated against fixed cases with verifiable criteria. This is
-evaluation, and is separate from the solver performance benchmark described in
-the backend server guide.
-
-`core/tests/ai_eval/cases/` holds the cases grouped by category, from questions
-answerable from the prompt summary through schedule edits to requests that must
-be refused. Each case states criteria over the schedule a run produces, so
-grading does not depend on how the assistant reached it. Every run contacts the
-configured provider, so this is a manual tool rather than part of CI.
-
-The runner needs the same provider settings the service uses:
-
-| Variable | Required | Purpose |
-| --- | --- | --- |
-| `AI_PROVIDER_BASE_URL` | Yes | OpenAI-compatible endpoint. |
-| `AI_PROVIDER_API_KEY` | Yes | Provider bearer token. |
-| `AI_PROVIDER_MODEL` | No | Defaults to `local-model`. |
-| `AI_SANDBOX_BACKEND` | Yes | Use `e2b`. |
-| `E2B_API_KEY` | Yes | E2B Cloud credential used by the trusted application. |
-| `E2B_TEMPLATE` | No | Defaults to `nurse-scheduling-ai-sandbox`. |
-| `AI_EVAL_ARTIFACT_ROOT` | No | Report root, `artifacts` by default. |
-
-The launcher reads them from `docker/.env`, so the shortest form is:
-
-```sh
-./scripts/run_ai_eval.sh --case clarify-night-request-scope
-./scripts/run_ai_eval.sh --category 01-reading
-./scripts/run_ai_eval.sh --tuning         # default tuning set
-./scripts/run_ai_eval.sh --full           # every case
-```
-
-An evaluation scope is required. `--tuning` selects cases tagged `difficult`
-or `tuning`, keeping prompt tuning focused as the corpus grows. Pass `--full`
-to run every case. Explicit `--case`, `--category`, or `--tag` selectors bypass
-the tuning tag filter and cannot be combined with `--tuning` or `--full`.
-Start with cases relevant to the changed behavior, including a contrasting
-control when ambiguity or scope is involved. Use `--repeat 3` on that selected
-set to assess reliability before a broad tuning or full run. A single selected
-pass is only a smoke check, not evidence of an improvement.
-Cases may use `user_turns` for a real multi-turn conversation and
-`intermediate_answer_contains` to verify that earlier turns ask a required
-question without producing a proposal.
-
-The launcher checks provider authentication before provisioning any E2B
-sandbox. Providers without a `/models` endpoint produce an inconclusive result
-and continue.
-
-To run it without the launcher, load the settings first:
-
-```sh
-set -a && . ./docker/.env && set +a
-cd core && python -m tests.ai_eval.runner --category 01-reading
-```
-
-Select cases with `--case` and `--category`, both repeatable. The runner creates
-and destroys one E2B sandbox per case, so start with selected cases before
-running the complete evaluation.
-
-Every run writes a report to its own directory under
-`artifacts/ai-evals/<timestamp>/`, alongside the performance benchmark reports,
-and prints the path when it finishes. `summary.md` holds the pass count, median
-seconds, LLM inference time, provider HTTP attempt and retry counts, and the
-aggregate sandbox timing per category. It also includes per-case tables for
-every sandbox timing and suspension metric. `results.jsonl` holds one line per case, and
-`cases/<id>.json` holds the whole run for one case: the prompt it was given,
-its reasoning, every tool call with its arguments and result, the answer, the
-proposed schedule, timing breakdown, and each criterion with its outcome. Pass `--output-dir` to
-choose the directory, which must not already exist, or set
-`AI_EVAL_ARTIFACT_ROOT` to move the root.
-
-Each case also records tool batches, calls per model turn, calls per batch,
-parallel execution, execution time per batch, and the number of batches
-containing multiple calls. The summary lists batch counts beside sandbox pause
-metrics so pause behavior can be checked at model-turn boundaries instead of
-inferred from the total tool count.
-
-To measure E2B read concurrency without provider or model variance, run:
-
-```sh
-./scripts/run_ai_read_benchmark.sh
-```
-
-The benchmark alternates repeated sequential and concurrent read batches in one
-warm sandbox. It reports median and p95 latency plus the median speedup under
-`artifacts/ai-read-benchmarks/`. Use `--runs`, `--calls`, and `--bytes` to change
-the sample count, calls per batch, and file size.
-
-Timing fields use wall-clock seconds. `end_to_end_seconds` covers the agent run.
-`llm_inference_seconds` sums only time awaiting provider stream events.
-`llm_turn_seconds` records that wait separately for each logical model turn.
-`provider_requests` reports the underlying HTTP attempts, retries, retried
-turns, and attempts per logical turn. A successful retry therefore remains
-visible in both the case artifact and aggregate summary.
-`sandbox.lifetime_seconds` covers the complete create-to-destroy lifecycle. Its
-mutually exclusive components are provisioning, execution, pause transition,
-warm waiting, suspended, resume wait, and teardown. Their sum equals the
-sandbox lifetime. Resume wait is the blocking interval after work needs the
-sandbox but before E2B has made it usable, and `max_resume_wait_seconds` exposes
-the worst individual resume. The `sandbox.suspension` object reports pause and
-resume counts. It also reports `pause_cancel_count` for an in-progress pause
-cancelled when new sandbox work arrives. A pause cancelled before its E2B
-request starts or during final cleanup is not included. LLM inference can
-overlap warm waiting, pause transition, and suspended time by design.
-
-After each sandbox operation, the E2B backend schedules an explicit warm-memory
-pause. Immediate follow-up activity cancels a pause that has not started, so
-hydration and other consecutive operations stay together. Otherwise the pause
-transition can overlap model inference, and E2B auto-resumes the same sandbox
-when the next operation arrives. The memory snapshot is retained because five
-fresh disk-only resume trials took 5.95 to 12.62 seconds, with an 8.01-second
-median. Commands, file operations, pause/resume transitions, and close share
-one serialized lifecycle lock.
-
-Pause is optional optimization work and has a five-second application deadline.
-The longer background deadline does not delay foreground work because new
-activity cancels an in-progress pause. A failed or timed-out pause is not
-retried. Because a timeout cannot prove whether E2B accepted the request, the
-next operation first uses the separately bounded, replay-safe auto-resume probe.
-A later idle pause may still be attempted because the control-plane failure may
-have been transient.
-
-The E2B creation timeout is not the hard deadline. E2B 2.46.0 testing showed
-that an `on_timeout=kill` deadline did not kill a manually paused sandbox. The
-application-level maximum agent-turn deadline and explicit kill in `finally`
-are therefore the authoritative hard deadline. A separate live check confirms
-that after this explicit kill, E2B rejects resume with `SandboxNotFoundException`.
-
-Each created sandbox carries non-secret application ownership and hard-deadline
-metadata. A completed `kill` response confirms either that the sandbox was
-killed or was already absent. If deletion cannot be confirmed within request
-cleanup, the sandbox ID enters a background queue that retries with capped
-exponential backoff. At application startup and every configured reaper
-interval, a metadata-filtered scan covers both running and paused sandboxes and
-queues overdue instances. This avoids a full-account scan and lets a restarted
-process recover cleanup work after a crash. If the application remains down,
-no in-process cleanup can run, so deployments requiring cleanup during a full
-service outage should invoke the same reconciliation from an external job.
-The AI service initializes the shared Sentry integration with the
-`app=ai-backend` tag. An unconfirmed request cleanup is logged as a warning.
-An overdue sandbox or three consecutive background deletion failures is logged
-as an error. All later attempts remain visible as warning logs, and a successful
-cleanup is logged as confirmation. Sentry log alerts can use these severities
-and the structured sandbox cleanup fields to notify administrators without an
-error event for every retry.
-Even a successful foreground kill is checked again in the background after one
-E2B control-request timeout. This settling period covers a late pause or resume
-request that can otherwise make a sandbox reappear after the kill response.
-Confirmation lists only application-owned running and paused sandboxes. A
-still-present ID is killed again with capped exponential backoff.
-
-Deployments can run the same metadata-filtered cleanup independently of the AI
-service with:
-
-```bash
-python -m nurse_scheduling.ai.sandbox.reap
-```
-
-The command requires only `E2B_API_KEY`, performs one reconciliation and
-deletion pass, and returns a nonzero status if listing fails or any deletion is
-still unconfirmed. Schedule it periodically when overdue sandboxes must be
-cleaned while the AI service is offline.
+See the [core instructions](reproduce/core.md#evaluation) for this task.
 
 ## Agent capabilities
 
@@ -421,6 +370,32 @@ as one undo step. `POST /sessions/{id}/proposal/reject` drops it, and `PUT
 /sessions/{id}/schedule` replaces the snapshot when the schedule changed
 elsewhere in the app, which also drops any pending proposal.
 
+<figure markdown="1" id="ai-proposals">
+
+**Figure 6. Trusted proposal review and browser approval.**
+
+```mermaid
+flowchart TB
+    Candidate["<b>Sandbox candidate</b><br/>Untrusted schedule file"]
+    Validation["<b>Trusted backend review</b><br/>Validate and compute a structural diff"]
+    Pending["<b>Pending proposal</b><br/>Retain only after the owning run commits"]
+    Browser["<b>Browser</b><br/>Show the diff and request approval"]
+    Base{"Browser schedule hash<br/>matches proposal base?"}
+    Approved["<b>Approved schedule</b><br/>Revalidate and update the session"]
+    Import["<b>Frontend import</b><br/>Apply as one undo operation"]
+    Discard["<b>Discard proposal</b><br/>Keep the current schedule"]
+    Candidate -->|Read after model execution| Validation
+    Validation -->|Valid changed schedule and current RunSnapshot| Pending
+    Pending -->|Diff without candidate YAML| Browser
+    Browser -->|Approve with current schedule hash| Base
+    Base -->|Yes| Approved
+    Approved -->|Return validated YAML| Import
+    Base -->|No| Discard
+    Browser -->|Reject| Discard
+```
+
+</figure>
+
 With PostgreSQL, each of these requests saves the session state for recovery.
 The server applies an approval or rejection before it saves it, so a failed
 save returns `history_saved: false` and the browser shows a warning. The next
@@ -472,107 +447,15 @@ response cannot prove that the original operation did not take effect.
 
 ## Configuration
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `AI_AUTH_TOKEN` | Unset | Shared bearer token. Setting it protects every AI session route. Use at least 16 ASCII characters. |
-| `AI_AUTH_TOKENS` | Unset | JSON object mapping administrative IDs to bearer keys. |
-| `AI_AUTH_REQUIRED` | `false` (`true` in Docker) | Fail startup unless at least one key of 16 or more ASCII characters is configured. |
-| `AI_PROVIDER_BASE_URL` | Required | OpenAI-compatible API base URL. |
-| `AI_PROVIDER_API_KEY` | Required | Provider bearer token. Never commit it. |
-| `AI_PROVIDER_MODEL` | `local-model` | Model value sent to chat completions. |
-| `AI_HISTORY_POSTGRES_URL` | Unset | PostgreSQL connection string for session recovery and turn metadata. Compose sets its internal URL directly. |
-| `AI_REQUEST_LOG_ENABLED` | `true` | Log a question preview for each incoming message, which records chat text. |
-| `AI_PROVIDER_TIMEOUT_SECONDS` | `180` | Provider request timeout. |
-| `AI_PROVIDER_MAX_ATTEMPTS` | `3` | Total attempts for a provider request that times out before streaming begins. |
-| `AI_PROVIDER_RETRY_BACKOFF_SECONDS` | `1` | Initial pre-stream timeout retry delay. The delay doubles after each failed attempt. |
-| `AI_OPTIMIZER_BASE_URL` | `http://localhost:8000` (`http://api:8000` in Docker Compose) | Optimizer API base URL. Use HTTPS for a credentialed remote endpoint. An unavailable API produces a tool error without disabling chat. |
-| `AI_OPTIMIZER_AUTH_TOKEN` | Unset (defaults to `API_AUTH_TOKEN` in Docker Compose) | Server-side optimizer API bearer token. Set it explicitly when the API uses identified keys. |
-| `AI_OPTIMIZER_POLL_INTERVAL_SECONDS` | `1` | Delay between background optimizer status checks. |
-| `AI_OPTIMIZER_REQUEST_TIMEOUT_SECONDS` | `30` | Timeout for one optimizer API request or result download. |
-| `AI_OPTIMIZER_DEFAULT_TIMEOUT_SECONDS` | `300` | Optimizer time limit sent when the assistant omits one. Docker Compose derives it from `OPTIMIZE_DEFAULT_TIMEOUT_SECONDS`. |
-| `AI_OPTIMIZER_MAX_RUNS_PER_SESSION` | `50` | Maximum background optimizer runs one chat session may start. |
-| `AI_OPTIMIZER_MAX_RESULT_BYTES` | `10000000` | Maximum workbook bytes retained for one result download. |
-| `AI_OPTIMIZER_RESULT_CACHE_BYTES` | `100000000` | Maximum total optimizer workbook bytes retained by one AI process. Oldest results are evicted first. |
-| `AI_SANDBOX_BACKEND` | Required | Sandbox provider. Currently `e2b`. |
-| `E2B_API_KEY` | Required for E2B | E2B Cloud credential used only by the trusted application. |
-| `E2B_TEMPLATE` | `nurse-scheduling-ai-sandbox` | Prebuilt E2B template alias. |
-| `AI_SANDBOX_COMMAND_TIMEOUT_SECONDS` | `60` | Default and maximum deadline for one shell command. |
-| `AI_SANDBOX_TURN_TIMEOUT_SECONDS` | `3600` | Deadline for the complete sandbox-backed user message. The Compose deployment's NGINX proxy waits up to 3660 seconds between response bytes, so raise its `proxy_read_timeout` before raising this past it. |
-| `AI_AGENT_MAX_TOOL_ROUNDS` | `200` | Maximum model tool-call rounds before the agent must answer from verified results. |
-| `AI_AGENT_MAX_TOOL_CALLS` | `400` | Maximum total tool calls in one sandbox-backed user message. |
-| `AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS` | `10` | Deadline for destroying a sandbox. |
-| `AI_SANDBOX_MAX_ATTEMPTS` | `3` | Total attempts for replay-safe E2B requests. |
-| `AI_SANDBOX_RETRY_BACKOFF_SECONDS` | `0.5` | Initial E2B retry delay, doubled after each failure. |
-| `AI_SANDBOX_PAUSE_REQUEST_TIMEOUT_SECONDS` | `5` | Deadline for the cancellable background pause request. |
-| `AI_SANDBOX_CONTROL_REQUEST_TIMEOUT_SECONDS` | `2` | Deadline for each foreground auto-resume attempt and the E2B request timeout for destruction. |
-| `AI_SANDBOX_REAPER_INTERVAL_SECONDS` | `30` | Interval for reconciling overdue running or paused E2B sandboxes owned by this application. |
-| `AI_BACKEND_PORT` | `8001` | Port used by the development launcher. |
-| `AI_COOKIE_SECURE` | `0` in the launcher | Use `0` for local HTTP and `1` for public HTTPS. Secure deployments use `SameSite=None` so approved cross-site frontends can retain session ownership. |
-| `AI_SESSION_TTL_SECONDS` | `2592000` | Idle session lifetime. Session activity renews it. |
-| `AI_MAX_SESSIONS` | `1000` | Maximum process-local sessions. With PostgreSQL, a new or restored session unloads the least recently used idle session instead of getting HTTP 429. That session loses its uploads, downloads, and optimizer results, as after a restart. A session stays loaded while a response, optimizer run, or recovery write is unfinished, and after a failed save until a later save succeeds. |
-| `AI_MAX_SESSION_BYTES` | `268435456` | Chat text budget across live sessions. New sessions, schedule updates, and queued steering that would exceed it get HTTP 429. A completed turn instead drops its session's oldest complete exchanges and warns the browser. Size the process above this budget plus the newest turn and any pending proposal of each session. |
-| `AI_MAX_HISTORY_MESSAGES` | `1000` | Conversation messages retained per session. The effective minimum is two, so a completed question and answer survive when this is set to one. |
-| `AI_MAX_HISTORY_CHARS` | `200000` | Prompt budget for retained history. The newest messages that fit are sent, so a long session cannot outgrow the model context window. |
-| `AI_MAX_MESSAGE_CHARS` | `8000` | Maximum question length. |
-| `AI_MAX_SCHEDULE_BYTES` | `1000000` | Maximum UTF-8 YAML snapshot size. |
-| `AI_MAX_CONCURRENT_REQUESTS` | `4` | Maximum simultaneous provider streams. |
-| `AI_MAX_ATTACHMENT_FILES` | `8` | Maximum files attached to one question. |
-| `AI_MAX_ATTACHMENT_BYTES` | `5000000` | Maximum bytes per attached file. The Compose deployment's NGINX proxy accepts 48 MB per `/ai/` request, so raise its `client_max_body_size` before raising this or `AI_MAX_ATTACHMENT_FILES` past it. |
-
-Attachments are always enabled. Every upload is copied unchanged into the
-disposable sandbox, where the agent can inspect it with Pi-compatible tools.
-
-`AI_AUTH_TOKENS` uses a JSON object such as
-`'{"institution-a":"first-key","person-b":"second-key"}'`. IDs may contain
-letters, numbers, underscores, and hyphens. They appear in administrative
-session logs, while clients send only the key and never receive the ID. Remove a
-pair and restart the service to revoke it. The legacy and identified settings
-may coexist during migration.
+See the [core instructions](reproduce/core.md#configuration) for this task.
 
 ## Run in the development container
 
-Build the existing all-in-one development image from the repository root:
-
-```sh
-docker build -f docker/Dockerfile.dev -t nurse-scheduling:dev .
-docker run --rm -it \
-  --name nurse-scheduling-dev \
-  --network=host \
-  --env-file docker/.env \
-  -v "$(pwd):/app" \
-  nurse-scheduling:dev
-```
-
-Start the AI backend inside the container:
-
-```sh
-./scripts/start_ai_backend.sh
-```
-
-Start the frontend from another host terminal:
-
-```sh
-docker exec -it -w /app nurse-scheduling-dev \
-  ./scripts/start_frontend.sh --hostname 0.0.0.0
-```
-
-The optimizer tool is always available to the model. Native runs use
-`http://localhost:8000` by default, while Docker Compose uses `http://api:8000`.
-If that API is unavailable, the tool reports a request error and chat remains
-available.
+See the [core instructions](reproduce/core.md#run-in-the-development-container) for this task.
 
 ## Run with Docker Compose
 
-Both backend Compose variants start the AI service by default. Configure the AI
-assistant block in `docker/.env`, then run from the `docker/` directory:
-
-```sh
-docker compose -f compose.backend.yml up -d --build
-```
-
-Use `compose.backend.memory.yml` in the same command when running the
-process-local optimization backend. The AI service itself remains process-local
-in both variants and listens on port `8001` inside the Compose network.
+Follow the [Compose startup instructions](reproduce/core.md#run-with-docker-compose).
 
 ### Session recovery storage
 
@@ -884,64 +767,12 @@ curl -H "Authorization: Bearer ${AI_AUTH_TOKEN}" \
 
 ## Troubleshoot local development
 
-| Problem | What to check |
-| --- | --- |
-| Send fails immediately | Start the AI backend and request `http://localhost:8001/health`. |
-| Provider unavailable | Check `AI_PROVIDER_BASE_URL`, `AI_PROVIDER_API_KEY`, and provider availability. |
-| An attachment is rejected | Check the configured file count, byte limit, and public reverse-proxy body limit. |
-| An answer stops early | Retry it. Cancelled and failed turns retain the question and an interruption note in later model context. |
-
-For a provider HTTP failure, search the AI backend log using the error ID shown
-in the browser. If the logged response is a Cloudflare `520`, inspect the
-provider origin for an empty, malformed, or abruptly closed response. A `525`
-means Cloudflare could not complete TLS with the provider origin. Correlate the
-logged timestamp and Cloudflare Ray ID with the provider proxy, tunnel, and
-origin logs. See Cloudflare's [520](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-5xx-errors/error-520/)
-and [525](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-5xx-errors/error-525/)
-guidance.
+See the [core instructions](reproduce/core.md#troubleshoot-local-development) for this task.
 
 ### Attachment capability discovery
 
-The attachment control is available after capability discovery confirms the
-server's file count and byte limits. If it is missing, compare the direct and
-browser-facing responses:
-
-```sh
-curl http://127.0.0.1:8001/capabilities
-curl https://api.nursescheduling.org/ai/capabilities
-```
-
-Use the endpoint shown by the frontend's AI server control for the
-browser-facing check. If local capability discovery fails, check that port
-`8001` is reachable and accepts the frontend origin. For production, check
-`/ai/capabilities` through NGINX. When developing in a container, also
-test the container address used by the browser. A loopback-only test can miss a
-CORS failure or incomplete hydration.
+See the [capability discovery instructions](reproduce/core.md#attachment-capability-discovery).
 
 ## Validate
 
-Run the focused checks inside the development container:
-
-```sh
-cd /app/core
-ruff check nurse_scheduling/ai nurse_scheduling/ai_serve.py \
-  tests/test_ai_basic.py tests/test_ai_provider.py \
-  tests/test_ai_sandbox.py tests/test_ai_sandbox_e2b.py \
-  tests/test_ai_sandbox_agent.py tests/test_ai_pi_bash.py tests/test_ai_pi_edit.py \
-  tests/test_ai_pi_read.py tests/test_ai_pi_write.py tests/test_ai_sandbox_tools.py \
-  tests/test_ai_attachment_tools.py
-pytest -q tests/test_ai_basic.py tests/test_ai_provider.py \
-  tests/test_ai_sandbox.py tests/test_ai_sandbox_e2b.py \
-  tests/test_ai_sandbox_agent.py tests/test_ai_pi_bash.py tests/test_ai_pi_edit.py \
-  tests/test_ai_pi_read.py tests/test_ai_pi_write.py tests/test_ai_sandbox_tools.py \
-  tests/test_ai_attachment_tools.py
-
-cd /app/web-frontend
-bun run test -- \
-  src/app/experimental-ai/AssistantMarkdown.test.tsx \
-  src/app/experimental-ai/aiClient.test.ts \
-  src/app/experimental-ai/page.test.tsx \
-  src/components/Navigation.test.tsx
-bun run build
-bun run test:e2e:affected -- e2e/experimental-ai-basic.spec.ts
-```
+Follow the [AI test instructions](reproduce/core.md#ai-tests).

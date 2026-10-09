@@ -482,6 +482,7 @@ test('downloads a completed background optimization from chat', async ({ page })
     if (format === 'HTML') {
       const exportPage = await page.context().newPage();
       await exportPage.setContent(exported);
+      const exportSummary = exportPage.locator('article').filter({ hasText: 'Optimization finished.' });
       for (const width of [1280, 390]) {
         await page.setViewportSize({ width, height: 900 });
         await exportPage.setViewportSize({ width, height: 900 });
@@ -491,8 +492,9 @@ test('downloads a completed background optimization from chat', async ({ page })
           const available = parent.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
           return element.getBoundingClientRect().width / available;
         };
-        const chatRatio = await page.locator('article').first().evaluate(widthRatio);
-        const exportRatio = await exportPage.locator('article').first().evaluate(widthRatio);
+        // The foreground turn can prepend a system message after the export snapshot.
+        const chatRatio = await summary.evaluate(widthRatio);
+        const exportRatio = await exportSummary.evaluate(widthRatio);
         expect(exportRatio).toBeCloseTo(chatRatio, 2);
         for (const renderedPage of [page, exportPage]) {
           const details = renderedPage.locator('article dl');
