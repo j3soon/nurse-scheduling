@@ -21,6 +21,8 @@
 
 'use client';
 
+import { activitySummary, formatCharacterCount as formatCount, scheduleChangeLines } from './chatPresentation';
+
 import { useState } from 'react';
 import AssistantMarkdown from './AssistantMarkdown';
 
@@ -54,10 +56,6 @@ export type ActivityEntry = ResponseEntry | ReasoningEntry | ToolEntry | Schedul
 
 // Long output is revealed a chunk at a time, so an expanded row never floods the page.
 const CHUNK_CHARS = 2000;
-
-function formatCount(characters: number): string {
-  return characters >= 1000 ? `${(characters / 1000).toFixed(1)}k` : `${characters}`;
-}
 
 function ChunkedText({ text, label }: { text: string; label: string }) {
   const [shown, setShown] = useState(CHUNK_CHARS);
@@ -94,18 +92,7 @@ function ToolBody({ entry }: { entry: ToolEntry }) {
 }
 
 function ScheduleChangePreview({ entry }: { entry: ScheduleChangeEntry }) {
-  const before = entry.before.split('\n');
-  const after = entry.after.split('\n');
-  let prefix = 0;
-  while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) prefix += 1;
-  let suffix = 0;
-  while (
-    suffix < before.length - prefix
-    && suffix < after.length - prefix
-    && before[before.length - suffix - 1] === after[after.length - suffix - 1]
-  ) suffix += 1;
-  const removed = before.slice(prefix, before.length - suffix);
-  const added = after.slice(prefix, after.length - suffix);
+  const { removed, added } = scheduleChangeLines(entry.before, entry.after);
 
   return (
     <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed">
@@ -117,15 +104,6 @@ function ScheduleChangePreview({ entry }: { entry: ScheduleChangeEntry }) {
       ))}
     </pre>
   );
-}
-
-function summaryOf(entry: ActivityEntry): string {
-  if (entry.kind === 'response') return '';
-  if (entry.kind === 'reasoning') return `Reasoning · ${formatCount(entry.text.length)} characters`;
-  if (entry.kind === 'schedule-change') return 'schedule edit';
-  if (entry.state === 'running') return `${entry.name} · running`;
-  if (entry.state === 'interrupted') return `${entry.name} · interrupted`;
-  return entry.ok ? entry.name : `${entry.name} · failed`;
 }
 
 export function AssistantActivity({ entries }: { entries: ActivityEntry[] }) {
@@ -142,7 +120,7 @@ export function AssistantActivity({ entries }: { entries: ActivityEntry[] }) {
             <AssistantMarkdown content={entry.text} />
           ) : (
             <details className="text-xs text-gray-500">
-              <summary className="cursor-pointer select-none py-0.5 hover:text-gray-700">{summaryOf(entry)}</summary>
+              <summary className="cursor-pointer select-none py-0.5 hover:text-gray-700">{activitySummary(entry)}</summary>
               <div className="mt-1 rounded bg-gray-50 p-2">
                 {entry.kind === 'reasoning'
                   ? <ChunkedText text={entry.text} label="reasoning" />

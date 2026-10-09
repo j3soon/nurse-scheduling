@@ -44,7 +44,10 @@ import { generateYamlFromState } from '@/utils/yamlGenerator';
 import yaml from 'js-yaml';
 import { ActivityEntry, AssistantActivity } from './AssistantActivity';
 import CollapsedText from './CollapsedText';
-import { ChatExportMessage, downloadChatExport, messageLabel, type ChatExportFormat } from './chatExport';
+import { downloadChatExport, messageLabel, type ChatExportFormat } from './chatExport';
+import { applyModelInput, type ChatMessage } from './chatTranscript';
+import { applyOptimizationEvent, appendOptimizationResult, type ActiveOptimization } from './optimizerEvents';
+import { formatResponseDuration, formatResponseTime, formatSessionExpiration, retentionLabel } from './chatPresentation';
 import { parseOptimizerMessage } from './optimizerMessage';
 import {
   AiCapabilities,
@@ -82,7 +85,7 @@ import {
 import type { SessionReset, ToolStartActivity, OptimizationProgressActivity } from './aiClient';
 import type { SessionEvent } from './sessionEvents';
 import { SessionEventRouter } from './sessionEventRouter';
-import { applyAssistantEvent, stopResponse, type AssistantEvent } from './assistantEvents';
+import { applyAssistantEvent, stopResponse, messageId, interruptRunningTools, type AssistantEvent } from './assistantEvents';
 
 interface StreamCallbacks {
   onDownload?: (id: string) => void;
@@ -164,25 +167,6 @@ function assistantEventCallbacks(
   };
 }
 
-interface ChatMessage extends ChatExportMessage {
-  id: string;
-  requestId?: string;
-  request?: { id: string; question: string; questionId: string; assistantId: string; activeAssistantId?: string; active: boolean; uploading?: boolean };
-  downloadId?: string;
-  // Absolute history position of an app event, so a retried turn does not show it twice.
-  historyIndex?: number;
-  runId?: string;
-  retry?: {
-    question: string;
-    requiresAttachments: boolean;
-  };
-  optimizerJob?: Pick<OptimizationActivity, 'jobId' | 'downloadable'>;
-}
-
-interface ActiveOptimization extends OptimizationActivity {
-  points: OptimizationProgressPoint[];
-}
-
 const AI_STORAGE_KEY = 'nurse-scheduling-ai-data';
 const UNSAVED_APPROVAL_WARNING = 'This approval could not be saved for recovery after a service restart.';
 const UNSAVED_REJECTION_WARNING = 'This rejection could not be saved for recovery after a service restart.';
@@ -192,10 +176,6 @@ const AI_CONVERSATION_STORAGE_KEY = 'nurse-scheduling-ai-conversation';
 const FIREFOX_ON_DEVICE_SPEECH_VERSION = 157;
 const SESSION_EVENTS_RETRY_MS = 1000;
 const SESSION_EVENTS_MAX_RETRY_MS = 30000;
-// A solver can emit a progress event per incumbent solution, and the whole series is
-// persisted with the conversation. Halving the oldest points keeps the sparkline shape
-// while bounding the array and the tab storage a long run consumes.
-const OPTIMIZATION_PROGRESS_POINT_LIMIT = 500;
 const SPEECH_LANGUAGES = [
   { value: '', label: 'Browser default' },
   { value: 'en-US', label: 'English (United States)' },
@@ -337,12 +317,6 @@ function fileExtension(filename: string): string {
   return lastDot < 0 ? '' : filename.slice(lastDot).toLowerCase();
 }
 
-function messageId(): string {
-  return typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random()}`;
-}
-
 function isActivityEntry(value: unknown): value is ActivityEntry {
   if (typeof value !== 'object' || value === null || !('kind' in value)) return false;
   if (value.kind === 'response' || value.kind === 'reasoning') {
@@ -456,153 +430,11 @@ function readStoredConversation(): StoredChatConversation | null {
   }
 }
 
-function retentionLabel(seconds: number): string {
-  if (seconds % 86400 === 0) {
-    const days = seconds / 86400;
-    return `${days} ${days === 1 ? 'day' : 'days'}`;
-  }
-  if (seconds % 3600 === 0) {
-    const hours = seconds / 3600;
-    return `${hours} ${hours === 1 ? 'hour' : 'hours'}`;
-  }
-  return `${seconds.toLocaleString()} seconds`;
-}
-
-function formatSessionExpiration(timestamp: number): string {
-  return new Date(timestamp).toLocaleString([], {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    second: '2-digit',
-    timeZoneName: 'short',
-  });
-}
-
-function formatResponseDuration(startedAt: number, completedAt: number): string {
-  const seconds = Math.max(0, completedAt - startedAt) / 1000;
-  if (seconds < 1) return '<1s';
-  if (seconds < 10) return `${seconds.toFixed(1)}s`;
-  if (seconds < 60) return `${Math.round(seconds)}s`;
-  return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
-}
-
-function formatResponseTime(timestamp: number): string {
-  const completed = new Date(timestamp);
-  const now = new Date();
-  const sameDate = completed.getFullYear() === now.getFullYear()
-    && completed.getMonth() === now.getMonth()
-    && completed.getDate() === now.getDate();
-  return completed.toLocaleString([], sameDate
-    ? { hour: 'numeric', minute: '2-digit' }
-    : { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-}
-
-function optimizationMessage(activity: OptimizationActivity): string {
-  const summary = activity.state === 'completed'
-    ? activity.downloadable
-      ? 'Optimization finished. Download the optimized schedule to review it.'
-      : 'Optimization finished, but no result workbook is available to download.'
-    : `Optimization ended with status: ${activity.state}.`;
-  const details: string[] = [];
-  const add = (label: string, value: string | number | undefined) => {
-    // Indent continuation lines so field values cannot introduce another label.
-    if (value !== undefined) details.push(`${label}: ${String(value).replace(/\r\n?|\n/g, '\n ')}`);
-  };
-  add('Outcome', activity.result?.outcome);
-  add('Final score', activity.result?.score);
-  add('Solver', activity.request?.solver);
-  add('Solver status', activity.result?.solverStatus);
-  add('Termination reason', activity.result?.terminationReason);
-  if (activity.request?.timeoutSeconds !== undefined) add('Solver timeout', `${activity.request.timeoutSeconds}s`);
-  if (activity.backend) {
-    add('Backend URL', activity.backend.url ?? 'unknown');
-    add('Backend version', activity.backend.appVersion ?? 'unknown');
-    add('API version', activity.backend.apiVersion);
-    add('Service', activity.backend.serviceName);
-    add('Deployment', activity.backend.deploymentId);
-    add('Instance', activity.backend.instanceId);
-    if (activity.backend.requestTimeoutSeconds !== undefined) {
-      add('Backend request timeout', `${activity.backend.requestTimeoutSeconds}s`);
-    }
-    const claimed = activity.backend.claimedPerformance;
-    add('Claimed performance', claimed ? `${claimed.score} (version ${claimed.appVersion}, measured ${claimed.measuredAt})` : 'unavailable');
-  }
-  add('Error code', activity.error?.code);
-  add('Error', activity.error?.message);
-  return [summary, ...details].join('\n');
-}
-
 function isAuthenticationError(error: unknown): boolean {
   return typeof error === 'object'
     && error !== null
     && 'status' in error
     && error.status === 401;
-}
-
-// Show the request messages added since the last reply, in the order the model receives them:
-// a changed system prompt, app events, the question, and a status message just before the reply.
-function applyModelInput(
-  messages: ChatMessage[],
-  input: ModelInput,
-  turn: { questionId: string | null; assistantId: string },
-): ChatMessage[] {
-  const statusId = `status-${turn.assistantId}`;
-  // History never keeps a status message, so only the latest request's status stays visible.
-  const result = messages.filter(message => message.source !== 'status');
-  const known = new Set(result.map(message => message.historyIndex));
-  const lastSystem = [...result].reverse().find(message => message.role === 'system');
-  const before: ChatMessage[] = lastSystem?.content === input.system
-    ? []
-    : [{ id: messageId(), role: 'system', content: input.system }];
-  let status: ChatMessage | null = null;
-  let questionText: string | null = null;
-  let optimizerText: string | null = null;
-  input.messages.forEach(entry => {
-    if (entry.kind === 'app' && !known.has(entry.index)) {
-      before.push({
-        id: `history-${entry.index}`, role: 'user', source: 'app', title: entry.title, historyIndex: entry.index, content: entry.content,
-      });
-    } else if (entry.kind === 'status') {
-      status = { id: statusId, role: 'user', source: 'status', title: entry.title, content: entry.content };
-    } else if (entry.kind === 'question') {
-      questionText = entry.content;
-    } else if (entry.kind === 'optimizer') {
-      optimizerText = entry.content;
-    }
-  });
-  let assistantIndex = result.findIndex(message => message.id === turn.assistantId);
-  if (assistantIndex < 0) return messages;
-  let questionIndex = turn.questionId === null ? -1 : result.findIndex(message => message.id === turn.questionId);
-  if (questionIndex >= 0 && questionText !== null) {
-    result[questionIndex] = { ...result[questionIndex], content: questionText };
-  }
-  if (optimizerText !== null) {
-    // The optimizer notice keeps the run summary. The model receives its own user-role optimizer message.
-    const optimizerId = `optimizer-input-${turn.assistantId}`;
-    questionIndex = result.findIndex(message => message.id === optimizerId);
-    if (questionIndex >= 0) {
-      result[questionIndex] = { ...result[questionIndex], content: optimizerText };
-    } else {
-      result.splice(assistantIndex, 0, { id: optimizerId, role: 'user', source: 'optimizer', content: optimizerText });
-      questionIndex = assistantIndex;
-      assistantIndex += 1;
-    }
-  }
-  const insertAt = questionIndex >= 0 ? questionIndex : assistantIndex;
-  result.splice(insertAt, 0, ...before);
-  assistantIndex += before.length;
-  if (status !== null) result.splice(assistantIndex, 0, status);
-  return result;
-}
-
-function interruptRunningTools(entries: ActivityEntry[]): ActivityEntry[] {
-  return entries.map(entry => (
-    entry.kind === 'tool' && entry.state === 'running'
-      ? { ...entry, state: 'interrupted' as const }
-      : entry
-  ));
 }
 
 function OptimizationSparkline({ points }: { points: OptimizationProgressPoint[] }) {
@@ -1427,47 +1259,11 @@ export default function ExperimentalAiPage() {
       }, sandboxScheduleRef, scheduleYamlRef),
       onProposal: diff => setProposalDiff(diff),
       onOptimization: activity => {
-        if (!activity.terminal) {
-          setActiveOptimization(current => ({
-            ...activity,
-            points: current?.jobId === activity.jobId ? current.points : [],
-          }));
-          return;
-        }
-        setActiveOptimization(current => current?.jobId === activity.jobId ? null : current);
-        const content = optimizationMessage(activity);
-        setMessages(previous => previous.some(message => message.id === `optimizer-${activity.jobId}`)
-          ? previous
-          : [
-            ...previous,
-            {
-              id: `optimizer-${activity.jobId}`,
-              role: 'optimizer',
-              createdAt: Date.now(),
-              content,
-              optimizerJob: { jobId: activity.jobId, downloadable: activity.downloadable },
-            },
-          ]);
+        setActiveOptimization(current => applyOptimizationEvent(current, { type: 'optimization', activity }));
+        if (activity.terminal) setMessages(previous => appendOptimizationResult(previous, activity, Date.now()));
       },
-      onOptimizationProgress: ({ jobId, point }) => {
-        setActiveOptimization(current => {
-          if (current !== null && current.jobId !== jobId) return current;
-          const previous = current?.points ?? [];
-          const last = previous.at(-1);
-          if (last?.elapsedSeconds === point.elapsedSeconds && last.currentBestScore === point.currentBestScore) {
-            return current;
-          }
-          const retained = previous.length >= OPTIMIZATION_PROGRESS_POINT_LIMIT
-            ? previous.filter((_, index) => index % 2 === 0 || index === previous.length - 1)
-            : previous;
-          return {
-            jobId,
-            state: current?.state ?? 'running',
-            terminal: false,
-            downloadable: false,
-            points: [...retained, point],
-          };
-        });
+      onOptimizationProgress: activity => {
+        setActiveOptimization(current => applyOptimizationEvent(current, { type: 'optimization_progress', activity }));
       },
       onDone: runId => {
         updateBackgroundMessage(message => ({
