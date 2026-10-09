@@ -90,6 +90,10 @@ Check once whether repository wrapper commands honor path or test filters. If a
 wrapper always runs a broad suite, use an allowed direct narrow command for each
 slice and reserve the broad wrapper for final combined validation.
 
+For AI backend or client changes, use the
+[AI validation ladder](references/ai-validation.md) to choose focused, affected,
+browser, and live checks. Run the tiers that cover the changed behavior.
+
 ## Incorporate corrections safely
 
 Apply feedback to uncommitted work directly. Fold minor corrections into their

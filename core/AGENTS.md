@@ -33,13 +33,14 @@ include committed branch changes since the merge base with `REF`, `--list` to
 inspect selection without running checks, or `--full` for the normal local
 suite. Run optional solver and real-scenario suites explicitly when affected.
 
-For AI persistence checks, follow the
-[container PostgreSQL recipe](../skills/run-ci/references/postgresql.md).
-Check that `initdb` and `pg_ctl` exist in the selected binary directory. They may
-be installed outside `PATH`, or absent even when Psycopg is available. Use a fresh
-UTF-8 cluster and run the server as `postgres`, since it refuses to run as root.
-Set `AI_HISTORY_TEST_POSTGRES_URL` for the test process and confirm the database
-cases ran. A passing suite with those cases skipped does not validate persistence.
+For AI refactor slices, use the
+[AI validation ladder](../skills/implement-change-series/references/ai-validation.md)
+to choose focused, affected, browser, and selected live checks. For AI persistence
+checks, use `../scripts/test_ai_postgres.sh` with explicit test paths or `--base REF`.
+It creates a fresh UTF-8 cluster, stops it on exit, and retains compact logs. See
+the [PostgreSQL wrapper guide](../skills/run-ci/references/postgresql.md) for tool
+requirements. Confirm that database cases ran. A passing suite with those cases
+skipped does not validate persistence.
 
 ## Dependencies
 - `requirements.txt` is the minimal runtime set. Deployment images install only
