@@ -77,13 +77,13 @@ import {
   queueMessage,
   rejectProposal,
   sendMessage,
-  streamSessionEvents,
   stopSession,
   updateSessionSchedule,
   uploadFiles,
 } from './aiClient';
 import type { SessionReset, ToolStartActivity, OptimizationProgressActivity } from './aiClient';
 import type { SessionEvent } from './sessionEvents';
+import { useSessionEventStream } from './useSessionEventStream';
 import { SessionEventRouter } from './sessionEventRouter';
 import { applyAssistantEvent, stopResponse, messageId, interruptRunningTools, type AssistantEvent } from './assistantEvents';
 
@@ -93,8 +93,6 @@ interface StreamCallbacks {
   onModelInput?: (input: ModelInput) => void;
   forRun?: (runId: string, trigger?: string) => StreamCallbacks | undefined;
   onReset?: (reset: SessionReset) => void;
-  lastEventId?: number;
-  onEventId?: (id: number) => void;
   onRunStart?: (runId: string, trigger: string) => void;
   onRunContext?: (runId: string) => void;
   onDelta: (text: string) => void;
@@ -174,8 +172,6 @@ const AI_AUTH_STORAGE_KEY = 'nurse-scheduling-ai-auth';
 const AI_SERVER_STORAGE_KEY = 'nurse-scheduling-ai-server';
 const AI_CONVERSATION_STORAGE_KEY = 'nurse-scheduling-ai-conversation';
 const FIREFOX_ON_DEVICE_SPEECH_VERSION = 157;
-const SESSION_EVENTS_RETRY_MS = 1000;
-const SESSION_EVENTS_MAX_RETRY_MS = 30000;
 const SPEECH_LANGUAGES = [
   { value: '', label: 'Browser default' },
   { value: 'en-US', label: 'English (United States)' },
@@ -547,11 +543,8 @@ export default function ExperimentalAiPage() {
   const authTokensRef = useRef<Record<string, string>>({});
   const abortControllerRef = useRef<AbortController | null>(null);
   const eventRouterRef = useRef(new SessionEventRouter());
-  const sessionEventsControllerRef = useRef<AbortController | null>(null);
-  const sessionEventsRetryRef = useRef(0);
-  const sessionEventsTimerRef = useRef<number | null>(null);
-  const [sessionEventsAttempt, setSessionEventsAttempt] = useState(0);
-  const lastSessionEventIdRef = useRef(0);
+  const sessionEvents = useSessionEventStream();
+  const lastSessionEventIdRef = sessionEvents.cursor;
   const scheduleYamlRef = useRef(scheduleYaml);
   const sandboxScheduleRef = useRef<string | null>(null);
   const selectedAttachmentsRef = useRef<SelectedAttachment[]>([]);
@@ -570,12 +563,7 @@ export default function ExperimentalAiPage() {
   const resetRuntime = useCallback(() => {
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
-    sessionEventsControllerRef.current?.abort();
-    sessionEventsControllerRef.current = null;
-    if (sessionEventsTimerRef.current !== null) window.clearTimeout(sessionEventsTimerRef.current);
-    sessionEventsTimerRef.current = null;
-    sessionEventsRetryRef.current = 0;
-    lastSessionEventIdRef.current = 0;
+    sessionEvents.reset();
     sessionIdRef.current = null;
     sessionEndpointRef.current = null;
     syncedScheduleRef.current = null;
@@ -592,7 +580,7 @@ export default function ExperimentalAiPage() {
     setProposalDiff(null);
     setDownloadingOptimizationId(null);
     setIsApplyingProposal(false);
-  }, [lifecycle]);
+  }, [lifecycle, sessionEvents]);
   const reportRequestError = useCallback((requestError: unknown, fallback: string) => {
     if (isAuthenticationError(requestError)) {
       setAuthRequired(true);
@@ -682,7 +670,7 @@ export default function ExperimentalAiPage() {
     setSpeechSupported(hasSpeechRecognition && (
       detectedFirefoxVersion === null || detectedFirefoxVersion >= FIREFOX_ON_DEVICE_SPEECH_VERSION
     ));
-  }, [lifecycle]);
+  }, [lifecycle, lastSessionEventIdRef]);
 
   const rememberPreferences = (preferences: AiPreferences) => {
     setShowReasoning(preferences.showReasoning);
@@ -783,6 +771,7 @@ export default function ExperimentalAiPage() {
     aiEndpoint,
     isClientReady,
     lifecycle,
+    lastSessionEventIdRef,
     messages,
     proposalDiff,
     scheduleYaml,
@@ -883,8 +872,6 @@ export default function ExperimentalAiPage() {
   useEffect(() => () => {
       lifecycle.reset();
       abortControllerRef.current?.abort();
-      sessionEventsControllerRef.current?.abort();
-      if (sessionEventsTimerRef.current !== null) window.clearTimeout(sessionEventsTimerRef.current);
       speechRecognitionRef.current?.stop();
       selectedAttachmentsRef.current.forEach(attachment => {
         if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
@@ -1142,30 +1129,6 @@ export default function ExperimentalAiPage() {
   };
 
   const startSessionEventStream = useCallback((sessionId: string, endpoint: string, resetReplay = false) => {
-    sessionEventsControllerRef.current?.abort();
-    if (sessionEventsTimerRef.current !== null) {
-      window.clearTimeout(sessionEventsTimerRef.current);
-      sessionEventsTimerRef.current = null;
-    }
-    const controller = new AbortController();
-    sessionEventsControllerRef.current = controller;
-    // The stream ends on any network or proxy interruption. Release the controller so
-    // the effect can open a replacement, otherwise later background work is never seen.
-    const openedAt = Date.now();
-    const reconnect = () => {
-      if (sessionEventsControllerRef.current !== controller) return;
-      sessionEventsControllerRef.current = null;
-      if (controller.signal.aborted) return;
-      // Back off only for repeated rapid failures, not for a stream that held for a while.
-      if (Date.now() - openedAt >= SESSION_EVENTS_MAX_RETRY_MS) sessionEventsRetryRef.current = 0;
-      if (lifecycle.busy) setIsReconnecting(true);
-      const delay = Math.min(SESSION_EVENTS_MAX_RETRY_MS, SESSION_EVENTS_RETRY_MS * 2 ** sessionEventsRetryRef.current);
-      sessionEventsRetryRef.current += 1;
-      sessionEventsTimerRef.current = window.setTimeout(() => {
-        sessionEventsTimerRef.current = null;
-        setSessionEventsAttempt(attempt => attempt + 1);
-      }, delay);
-    };
     const beginBackgroundMessage = (runId: string) => {
       lifecycle.begin('background', runId);
       // The server renews the session when it starts this turn.
@@ -1205,12 +1168,6 @@ export default function ExperimentalAiPage() {
     };
     const ownsConversation = lifecycle.capture();
     const handlers: StreamCallbacks = {
-      lastEventId: lastSessionEventIdRef.current,
-      onEventId: id => {
-        lastSessionEventIdRef.current = id;
-        sessionEventsRetryRef.current = 0;
-        setIsReconnecting(false);
-      },
       onReset: reset => {
         setMessages(previous => {
           const keptRuns = new Set<string>();
@@ -1304,45 +1261,31 @@ export default function ExperimentalAiPage() {
       onHistoryTrimmed: setTrimmedHistoryCount,
       onError: failBackgroundTurn,
     };
-    const callbacks = scopedCallbacks(handlers, () => sessionEventsControllerRef.current === controller && !controller.signal.aborted);
-    void streamSessionEvents(
-      sessionId,
-      {
-        lastEventId: callbacks.lastEventId,
-        reset: resetReplay,
-        onEventId: callbacks.onEventId,
-        onEvent: event => {
-          if (sessionEventsControllerRef.current === controller && !controller.signal.aborted) {
-            eventRouterRef.current.dispatch(event, value => dispatchPageEvent(value, handlers), ownsConversation);
-          }
-        },
+    sessionEvents.connect({
+      sessionId, endpoint, authToken, resetReplay,
+      onEventId: () => setIsReconnecting(false),
+      onDisconnect: () => { if (lifecycle.busy) setIsReconnecting(true); },
+      onEvent: event => eventRouterRef.current.dispatch(event, value => dispatchPageEvent(value, handlers), ownsConversation),
+      onError: streamError => {
+        if (isAuthenticationError(streamError)) reportRequestError(streamError, 'The AI session could not reconnect.');
       },
-      controller.signal,
-      authToken,
-      endpoint,
-    ).then(reconnect, (streamError: unknown) => {
-      if (sessionEventsControllerRef.current !== controller || controller.signal.aborted) {
-        reconnect();
-        return;
-      }
-      if (isAuthenticationError(streamError)) reportRequestError(streamError, 'The AI session could not reconnect.');
-      reconnect();
     });
-  }, [authToken, lifecycle, reportRequestError, sessionRetentionSeconds, updateContextUsage]);
+  }, [authToken, lifecycle, reportRequestError, sessionRetentionSeconds, updateContextUsage, sessionEvents]);
 
   useEffect(() => {
     if (!isClientReady || activeSessionId === null || conversationUnavailable) return;
     if (messages.some(message => message.request?.active) && eventRouterRef.current.foreground === null) return;
-    if (sessionEventsControllerRef.current === null) {
+    if (!sessionEvents.connected(activeSessionId, authToken, sessionEndpointRef.current ?? aiEndpoint)) {
       startSessionEventStream(activeSessionId, sessionEndpointRef.current ?? aiEndpoint);
     }
   }, [
     activeSessionId,
     aiEndpoint,
+    authToken,
     conversationUnavailable,
     isClientReady,
     messages,
-    sessionEventsAttempt,
+    sessionEvents,
     startSessionEventStream,
   ]);
 
@@ -1565,7 +1508,7 @@ export default function ExperimentalAiPage() {
         event => dispatchPageEvent(event, callbacks), rejectRun,
         () => startSessionEventStream(sessionId, sessionEndpoint, true),
       );
-      if (sessionEventsControllerRef.current === null) startSessionEventStream(sessionId, sessionEndpoint);
+      if (!sessionEvents.connected()) startSessionEventStream(sessionId, sessionEndpoint);
       const aborted = () => finishRun();
       controller.signal.addEventListener('abort', aborted, { once: true });
       try {
