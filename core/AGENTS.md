@@ -9,7 +9,7 @@ Run commands from `core/`:
   Inside one, skip the virtual environment, as the root `AGENTS.md` describes.
 - `uv pip install -r requirements-optional.txt`: the development install. See
   the Dependencies section below.
-- `python -m nurse_scheduling.cli <input.yaml> [output.csv] --solver <selector>`: selectors are documented in `../README.md`.
+- `python -m nurse_scheduling.cli <input.yaml> [output.csv] --solver <selector>`: selectors are documented in `README.md`.
 - `pytest`: run the normal core test suite with logs captured unless a test fails.
 - `pytest <affected_test_paths>`
 - `../scripts/test_core_affected.sh`: run full Ruff checks and compact affected
