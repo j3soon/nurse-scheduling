@@ -267,7 +267,9 @@ class SessionOptimizer:
 
         submission.add_done_callback(submitted)
         try:
-            return await asyncio.shield(submission)
+            # Keep ownership without reporting a late rejection after caller cancellation.
+            await asyncio.wait((submission,))
+            return submission.result()
         except asyncio.CancelledError:
             self._release_reservation(session_id, owner, reservation)
             # The owned submission disposes of any late response after revocation.

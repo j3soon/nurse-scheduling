@@ -1267,6 +1267,8 @@ def test_retirement_during_preparation_revokes_submission(monkeypatch) -> None:
 
 def test_cancelled_submission_cleans_its_late_remote_response_without_revoking_the_retry() -> None:
     async def scenario():
+        loop_errors = []
+        asyncio.get_running_loop().set_exception_handler(lambda _loop, context: loop_errors.append(context))
         backend = FakeOptimizerBackend()
         backend.submit_gate = asyncio.Event()
 
@@ -1294,6 +1296,41 @@ def test_cancelled_submission_cleans_its_late_remote_response_without_revoking_t
         assert backend.closed
         assert optimizer._tasks == set()
         assert optimizer._submissions == set()
+        assert loop_errors == []
+
+    asyncio.run(scenario())
+
+
+def test_cancelled_submission_owns_its_late_rejection_and_permits_retry() -> None:
+    async def scenario():
+        loop_errors = []
+        asyncio.get_running_loop().set_exception_handler(lambda _loop, context: loop_errors.append(context))
+        backend = FakeOptimizerBackend()
+        backend.submit_gate = asyncio.Event()
+        backend.submit_error = True
+
+        async def on_completion(*_args):
+            return None
+
+        optimizer = SessionOptimizer(
+            backend, poll_interval_seconds=0.001, on_completion=on_completion, max_runs_per_session=1
+        )
+        starting = asyncio.create_task(execute_optimizer_tool(optimizer, "session", TEST_SCHEDULE, "{}"))
+        await backend.submit_entered.wait()
+        submissions = tuple(optimizer._submissions)
+        starting.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await starting
+        backend.submit_gate.set()
+        await asyncio.gather(*submissions, return_exceptions=True)
+        assert optimizer._submissions == set()
+        assert backend.cancel_requests == []
+        assert backend.deleted == []
+        backend.submit_error = False
+        assert (await execute_optimizer_tool(optimizer, "session", TEST_SCHEDULE, "{}")).ok
+        await optimizer.close()
+        assert backend.closed
+        assert loop_errors == []
 
     asyncio.run(scenario())
 
