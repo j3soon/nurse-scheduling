@@ -553,6 +553,81 @@ describe('ExperimentalAiPage', () => {
     });
   });
 
+  it.each([
+    { steeringCount: 1, replacement: false }, { steeringCount: 2, replacement: false },
+    { steeringCount: 1, replacement: true }, { steeringCount: 2, replacement: true },
+  ])('restores the active reply after $steeringCount steering messages, replacement=$replacement', async ({ steeringCount, replacement }) => {
+    let callbacks: SessionStreamOptions | undefined;
+    mockRunEvents.mockImplementation(async (_session: string, _question: string, target: SessionStreamOptions) => {
+      callbacks = target;
+      target.onEvent({ type: 'delta', text: 'Original answer.' });
+      await new Promise<void>(() => {});
+    });
+    const user = userEvent.setup();
+    const view = render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Explain coverage.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Original answer.');
+    await act(async () => {
+      for (let index = 1; index <= steeringCount; index++) {
+        callbacks?.onEvent({ type: 'steering', messageId: `queued-${index}`, message: `Compare day ${index}.` });
+        callbacks?.onEvent({ type: 'delta', text: `Day ${index} partial` });
+      }
+      const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
+      stream.onEventId?.(10);
+    });
+    act(() => window.dispatchEvent(new Event('pagehide')));
+    const stored = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
+    const activeId = stored.messages.at(-1).id;
+    const messageId = mockSendMessage.mock.calls[0][5].messageId;
+    expect(stored.pendingRequest).toMatchObject({ messageId, activeAssistantId: activeId });
+    expect(stored.messages.at(-1).requestId).toBe(messageId);
+    expect(stored.messages.find((message: { id: string }) => message.id === `queued-${steeringCount}`).requestId).toBe(messageId);
+
+    await act(async () => view.unmount());
+    mockSendMessage.mockClear();
+    mockCreateSession.mockClear();
+    mockUpdateSessionSchedule.mockClear();
+    mockRunEvents.mockImplementation(async (_session: string, _question: string, target: SessionStreamOptions) => {
+      if (replacement) {
+        target.onEvent({ type: 'session_reset', reset: {
+          runIds: ['user-run-1'], activeRunId: 'user-run-1', terminalRunIds: [], incomplete: false, proposalDiff: null,
+        } });
+        target.onEvent({ type: 'delta', text: 'Original answer.' });
+        for (let index = 1; index <= steeringCount; index++) {
+          target.onEvent({ type: 'steering', messageId: `queued-${index}`, message: `Compare day ${index}.` });
+          target.onEvent({ type: 'delta', text: `Day ${index} partial` });
+        }
+      }
+      target.onEvent({ type: 'delta', text: ' and finished.' });
+    });
+    render(<ExperimentalAiPage />);
+
+    await screen.findByText(`Day ${steeringCount} partial and finished.`);
+    expect(screen.getAllByText('Original answer.')).toHaveLength(1);
+    for (let index = 1; index <= steeringCount; index++) {
+      expect(screen.getAllByText(`Compare day ${index}.`)).toHaveLength(1);
+    }
+    expect(mockSendMessage).toHaveBeenCalledTimes(1);
+    expect(mockSendMessage.mock.calls[0][5]).toMatchObject({ messageId });
+    expect(mockStreamSessionEvents.mock.calls.at(-1)![1].lastEventId).toBe(10);
+    expect(mockCreateSession).not.toHaveBeenCalled();
+    expect(mockUpdateSessionSchedule).not.toHaveBeenCalled();
+    await waitFor(() => {
+      const completed = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
+      expect(completed.pendingRequest).toBeNull();
+      if (!replacement) expect(completed.messages.find((message: { id: string }) => message.id === activeId).status).toBeUndefined();
+      expect(completed.messages.some((message: { status?: string }) => message.status === 'pending')).toBe(false);
+      expect(completed.messages.map((message: { role: string; content: string }) => [message.role, message.content])).toEqual([
+        ['user', 'Explain coverage.'], ['assistant', 'Original answer.'],
+        ...Array.from({ length: steeringCount }, (_, index) => [
+          ['user', `Compare day ${index + 1}.`],
+          ['assistant', `Day ${index + 1} partial${index + 1 === steeringCount ? ' and finished.' : ''}`],
+        ]).flat(),
+      ]);
+    });
+  });
+
   it('asks for files again instead of recovering a request whose upload never finished', async () => {
     const pendingRequest = {
       messageId: 'original-request', question: 'Read these files', questionId: 'question', assistantId: 'answer',

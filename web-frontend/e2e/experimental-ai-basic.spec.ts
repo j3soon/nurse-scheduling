@@ -820,8 +820,9 @@ test('places uploads beside desktop chat and below mobile controls and allows re
   await expect(panel.getByText('No uploaded files.')).toBeVisible();
 });
 
-for (const interruption of ['network pause', 'reload', 'tab switch'] as const) {
-  test(`recovers the complete answer after a ${interruption}`, async ({ page, context }) => {
+for (const { interruption, steered } of (['network pause', 'reload', 'tab switch'] as const)
+  .flatMap(interruption => [false, true].map(steered => ({ interruption, steered })))) {
+  test(`recovers the complete answer after a ${interruption}${steered ? ' with steering' : ''}`, async ({ page, context }) => {
     const origin = frontendOrigin();
     const authToken = 'browser-ai-auth-token';
     const messageIds: string[] = [];
@@ -830,6 +831,7 @@ for (const interruption of ['network pause', 'reload', 'tab switch'] as const) {
     const readers = new Set<ServerResponse>();
     let executions = 0;
     let unauthorized = 0;
+    let closedReaders = 0;
     const headers = {
       'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Credentials': 'true',
       'Access-Control-Allow-Headers': 'Authorization, Content-Type, Last-Event-ID',
@@ -872,7 +874,7 @@ for (const interruption of ['network pause', 'reload', 'tab switch'] as const) {
         response.flushHeaders();
         journal.slice(cursor).forEach(frame => response.write(frame));
         readers.add(response);
-        response.on('close', () => readers.delete(response));
+        response.on('close', () => { readers.delete(response); closedReaders += 1; });
         return;
       }
       if (request.url === '/ai/sessions/replay-session/messages') {
@@ -904,6 +906,13 @@ for (const interruption of ['network pause', 'reload', 'tab switch'] as const) {
       await page.getByRole('button', { name: 'Send', exact: true }).click();
       await expect(page.getByText('First part and', { exact: true })).toBeVisible();
       await expect.poll(() => messageIds.length).toBe(2);
+      if (steered) {
+        publish('steering', { message_id: 'queued-1', message: 'Compare Tuesday.' });
+        publish('delta', { text: 'Steered part and ' });
+        await expect(page.getByText('Compare Tuesday.', { exact: true })).toBeVisible();
+        await expect(page.getByText('Steered part and', { exact: true })).toBeVisible();
+      }
+      const closedBeforeInterruption = closedReaders;
       if (interruption === 'network pause') {
         await context.setOffline(true);
         // Offline emulation can leave an open stream running, so close it at the server.
@@ -920,17 +929,22 @@ for (const interruption of ['network pause', 'reload', 'tab switch'] as const) {
         complete();
         await page.getByRole('button', { name: '12. Experimental AI', exact: true }).click();
       } else {
-        complete();
         await page.reload();
+        complete();
       }
-      await expect(page.getByText('First part and complete answer.', { exact: true })).toBeVisible();
+      await expect.poll(() => closedReaders).toBeGreaterThan(closedBeforeInterruption);
+      await expect(page.getByText(`${steered ? 'Steered' : 'First'} part and complete answer.`, { exact: true })).toBeVisible();
+      if (steered) {
+        await expect(page.getByText('First part and', { exact: true })).toHaveCount(1);
+        await expect(page.getByText('Compare Tuesday.', { exact: true })).toHaveCount(1);
+      }
       await expect(page.getByText('Continue while disconnected', { exact: true })).toHaveCount(1);
       await expect(page.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0);
       expect(executions).toBe(1);
       expect(unauthorized).toBe(0);
       expect(new Set(messageIds).size).toBe(1);
       // The reconnecting reader continued from its saved cursor instead of replaying everything.
-      expect(cursors.at(-1)).toBeGreaterThan(0);
+      expect(cursors.at(-1)).toBeGreaterThanOrEqual(steered ? 4 : 2);
     } finally {
       await context.setOffline(false);
       server.closeAllConnections();

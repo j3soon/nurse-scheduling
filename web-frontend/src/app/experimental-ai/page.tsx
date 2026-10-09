@@ -167,7 +167,7 @@ function assistantEventCallbacks(
 interface ChatMessage extends ChatExportMessage {
   id: string;
   requestId?: string;
-  request?: { id: string; question: string; questionId: string; assistantId: string; active: boolean; uploading?: boolean };
+  request?: { id: string; question: string; questionId: string; assistantId: string; activeAssistantId?: string; active: boolean; uploading?: boolean };
   downloadId?: string;
   // Absolute history position of an app event, so a retried turn does not show it twice.
   historyIndex?: number;
@@ -322,7 +322,7 @@ interface StoredChatConversation {
   backgroundAssistantId?: string | null;
   trimmedHistoryCount?: number;
   pendingRequest?: {
-    messageId: string; question: string; questionId: string; assistantId: string; createdAt: number; uploading?: boolean;
+    messageId: string; question: string; questionId: string; assistantId: string; activeAssistantId?: string; createdAt: number; uploading?: boolean;
   } | null;
 }
 
@@ -384,6 +384,7 @@ function isChatMessage(value: unknown): value is ChatMessage {
     && (message.request === undefined || (typeof message.request === 'object' && message.request !== null
       && typeof message.request.id === 'string' && typeof message.request.question === 'string'
       && typeof message.request.questionId === 'string' && typeof message.request.assistantId === 'string'
+      && (message.request.activeAssistantId === undefined || typeof message.request.activeAssistantId === 'string')
       && typeof message.request.active === 'boolean'
       && (message.request.uploading === undefined || typeof message.request.uploading === 'boolean')))
     && (message.downloadId === undefined || typeof message.downloadId === 'string')
@@ -440,10 +441,11 @@ function readStoredConversation(): StoredChatConversation | null {
     if (pending != null) {
       if (typeof pending.messageId !== 'string' || !pending.messageId || typeof pending.question !== 'string'
         || typeof pending.questionId !== 'string' || typeof pending.assistantId !== 'string'
+        || (pending.activeAssistantId !== undefined && typeof pending.activeAssistantId !== 'string')
         || !Number.isFinite(pending.createdAt) || (pending.uploading !== undefined && typeof pending.uploading !== 'boolean')) return null;
       value.messages = value.messages.map(message => message.id === pending.questionId
         ? { ...message, request: { id: pending.messageId, question: pending.question, questionId: pending.questionId,
-          assistantId: pending.assistantId, active: true, uploading: pending.uploading } } : message);
+          assistantId: pending.assistantId, activeAssistantId: pending.activeAssistantId, active: true, uploading: pending.uploading } } : message);
     }
     return {
       ...value,
@@ -922,7 +924,8 @@ export default function ExperimentalAiPage() {
           pendingRequest: (() => {
             const request = messages.find(message => message.request?.active)?.request;
             return request ? { messageId: request.id, question: request.question, questionId: request.questionId,
-              assistantId: request.assistantId, createdAt: messages.find(message => message.id === request.questionId)?.createdAt ?? Date.now(),
+              assistantId: request.assistantId, activeAssistantId: request.activeAssistantId,
+              createdAt: messages.find(message => message.id === request.questionId)?.createdAt ?? Date.now(),
               uploading: request.uploading } : null;
           })(),
         };
@@ -1552,7 +1555,7 @@ export default function ExperimentalAiPage() {
     attachmentsForMessage: SelectedAttachment[],
     clearComposer: boolean,
     createdAt = Date.now(),
-    resume?: { id: string; questionId: string; assistantId: string; recover?: boolean },
+    resume?: { id: string; questionId: string; assistantId: string; activeAssistantId?: string; recover?: boolean },
   ) => {
     if (!question || lifecycle.busy || conversationUnavailable || (authRequired && authToken === null)) return;
 
@@ -1571,30 +1574,42 @@ export default function ExperimentalAiPage() {
     currentRequestRef.current = { id: request.id, stopped: false };
     const currentRequest = currentRequestRef.current;
     userMessage.requestId = request.id;
-    let activeAssistantId = request.assistantId;
+    // Cursor recovery continues the active reply. Replacement snapshots rebuild from the original reply.
+    let activeAssistantId = resume?.recover ? resume.activeAssistantId ?? request.assistantId : request.assistantId;
     const initialAssistantId = request.assistantId;
-    const runMessageIds = new Set([initialAssistantId]);
-    let activeAssistantHasOutput = false;
-    let activeQuestion = question;
+    const runMessageIds = new Set([
+      initialAssistantId, activeAssistantId,
+      ...messages.filter(message => resume?.recover && message.requestId === request.id && message.id !== userMessage.id)
+        .map(message => message.id),
+    ]);
+    const recoveredAssistant = resume?.recover ? messages.find(message => message.id === activeAssistantId) : undefined;
+    let activeAssistantHasOutput = Boolean(recoveredAssistant?.content || recoveredAssistant?.activity?.length);
+    let activeQuestion = resume?.recover
+      ? messages.slice(0, messages.findIndex(message => message.id === activeAssistantId))
+        .findLast(message => message.role === 'user' && message.requestId === request.id)?.content ?? question
+      : question;
     let activeQuestionRequiresAttachments = attachmentsForMessage.length > 0;
     const responseStartedAt = Date.now();
     followPageBottomRef.current = true;
     setShowScrollToBottom(false);
+    const withActiveAssistant = (message: ChatMessage, assistantId: string): ChatMessage => (
+      message.request?.id === request.id
+        ? { ...message, request: { ...message.request, activeAssistantId: assistantId } } : message
+    );
     const resetResponse = () => {
-      activeAssistantId = request.assistantId;
-      activeAssistantHasOutput = false;
-      activeQuestion = question;
+      const assistantId = activeAssistantId;
       setMessages(previous => {
-        const original = previous.find(message => message.id === request.assistantId);
+        const original = previous.find(message => message.id === assistantId);
         const assistant: ChatMessage = {
-          id: request.assistantId, role: 'assistant', content: '', status: 'pending',
-          responseStartedAt: original?.responseStartedAt ?? responseStartedAt, requestId: request.id, request,
-          ...(resume?.recover && original ? { content: original.content, activity: original.activity } : {}),
+          id: assistantId, role: 'assistant', content: '', status: 'pending',
+          responseStartedAt: original?.responseStartedAt ?? responseStartedAt, requestId: request.id,
+          request: { ...request, activeAssistantId: assistantId },
+          ...(resume?.recover && original ? { content: original.content, activity: original.activity, runId: original.runId } : {}),
         };
-        if (resume?.recover && original) activeAssistantHasOutput = Boolean(original.content || original.activity?.length);
-        const retained = previous.filter(message => message.id !== `status-${request.assistantId}`
-          && (message.requestId !== request.id || message.id === userMessage.id || message.id === request.assistantId));
-        if (original) return retained.map(message => message.id === request.assistantId ? assistant : message);
+        const retained = previous.filter(message => message.id !== `status-${assistantId}`
+          && (resume?.recover || message.requestId !== request.id || message.id === userMessage.id || message.id === assistantId))
+          .map(message => withActiveAssistant(message, assistantId));
+        if (original) return retained.map(message => message.id === assistantId ? assistant : message);
         const questionIndex = retained.findIndex(message => message.id === userMessage.id);
         if (questionIndex < 0) return [...retained, userMessage, assistant];
         retained.splice(questionIndex + 1, 0, assistant);
@@ -1667,8 +1682,12 @@ export default function ExperimentalAiPage() {
             const first = previous.findIndex(message => resetIds.has(message.id));
             const position = first < 0 ? previous.findIndex(message => message.id === userMessage.id) + 1
               : previous.slice(0, first).filter(message => !resetIds.has(message.id)).length;
-            const retained = previous.filter(message => !resetIds.has(message.id));
-            retained.splice(position, 0, { id: initialAssistantId, runId, requestId: request.id, role: 'assistant', content: '', status: 'pending', responseStartedAt });
+            const retained = previous.filter(message => !resetIds.has(message.id))
+              .map(message => withActiveAssistant(message, initialAssistantId));
+            retained.splice(position, 0, {
+              id: initialAssistantId, runId, requestId: request.id, request: { ...request, activeAssistantId: initialAssistantId },
+              role: 'assistant', content: '', status: 'pending', responseStartedAt,
+            });
             return retained;
           });
           runMessageIds.clear();
@@ -1697,15 +1716,17 @@ export default function ExperimentalAiPage() {
             runMessageIds.add(nextAssistantId);
             setMessages(previous => {
               const completedIndex = previous.findIndex(message => message.id === completedAssistantId);
-              const completed = previous.map(message => (
+              const completed = previous.map(message => withActiveAssistant(
                 message.id === completedAssistantId
                   ? { ...message, runId, status: undefined, responseCompletedAt: steeringStartedAt }
-                  : message
+                  : message, nextAssistantId,
               ));
-              const queued: ChatMessage = { id: queuedId, runId, role: 'user', content: queuedMessage, createdAt };
+              const queued: ChatMessage = { id: queuedId, runId, requestId: request.id, role: 'user', content: queuedMessage, createdAt };
               const next: ChatMessage = {
                 id: nextAssistantId,
                 runId,
+                requestId: request.id,
+                request: { ...request, activeAssistantId: nextAssistantId },
                 role: 'assistant',
                 content: '',
                 status: 'pending',
@@ -1721,10 +1742,11 @@ export default function ExperimentalAiPage() {
             const pendingAssistantId = activeAssistantId;
             setMessages(previous => {
               const pendingIndex = previous.findIndex(message => message.id === pendingAssistantId);
-              if (pendingIndex < 0) return [...previous, { id: queuedId, runId, role: 'user', content: queuedMessage, createdAt }];
+              const queued: ChatMessage = { id: queuedId, runId, requestId: request.id, role: 'user', content: queuedMessage, createdAt };
+              if (pendingIndex < 0) return [...previous, queued];
               return [
                 ...previous.slice(0, pendingIndex),
-                { id: queuedId, runId, role: 'user', content: queuedMessage, createdAt },
+                queued,
                 ...previous.slice(pendingIndex),
               ];
             });
