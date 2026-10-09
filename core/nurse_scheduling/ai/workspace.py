@@ -19,6 +19,7 @@
 
 # This file is mostly AI generated.
 
+import asyncio
 import json
 import logging
 import re
@@ -196,7 +197,7 @@ async def _measured_sandbox_turn(
     optimizer_result: bytes | None,
     optimizer_context: bytes | None,
 ) -> AsyncIterator[SandboxBackend]:
-    """Create, hydrate, and measure a sandbox only when its first tool batch begins."""
+    """Create, hydrate, and measure a sandbox only when a tool needs it."""
     stack = AsyncExitStack()
     sandbox = _LazySandboxTurn(
         factory,
@@ -247,6 +248,9 @@ class _LazySandboxTurn:
         self._optimizer_result = optimizer_result
         self._optimizer_context = optimizer_context
         self._sandbox: SandboxBackend | None = None
+        self._start_lock = asyncio.Lock()
+        self._activity_stack: AsyncExitStack | None = None
+        self._activity_started = False
         self._lifecycle_started: float | None = None
         self._cleanup_started: float | None = None
 
@@ -259,25 +263,31 @@ class _LazySandboxTurn:
         return self._require_sandbox().sandbox_id
 
     async def _start(self) -> SandboxBackend:
-        if self._sandbox is not None:
+        # Parallel reads share allocation, hydration, and one activity scope.
+        async with self._start_lock:
+            needs_hydration = self._sandbox is None
+            if self._sandbox is None:
+                self._lifecycle_started = time.perf_counter()
+                try:
+                    self._sandbox = await self._stack.enter_async_context(
+                        managed_sandbox(self._factory, cleanup_timeout_seconds=self._cleanup_timeout_seconds)
+                    )
+                finally:
+                    self._metrics.provisioning_seconds = time.perf_counter() - self._lifecycle_started
+            if self._activity_stack is not None and not self._activity_started:
+                await self._activity_stack.enter_async_context(self._sandbox.activity_batch())
+                self._activity_started = True
+            if needs_hydration:
+                await hydrate_sandbox(
+                    self._sandbox,
+                    self._schedule_yaml,
+                    self._pending_proposal_yaml,
+                    self._pending_proposal_diff,
+                    self._attachments,
+                    self._optimizer_result,
+                    self._optimizer_context,
+                )
             return self._sandbox
-        self._lifecycle_started = time.perf_counter()
-        try:
-            self._sandbox = await self._stack.enter_async_context(
-                managed_sandbox(self._factory, cleanup_timeout_seconds=self._cleanup_timeout_seconds)
-            )
-        finally:
-            self._metrics.provisioning_seconds = time.perf_counter() - self._lifecycle_started
-        await hydrate_sandbox(
-            self._sandbox,
-            self._schedule_yaml,
-            self._pending_proposal_yaml,
-            self._pending_proposal_diff,
-            self._attachments,
-            self._optimizer_result,
-            self._optimizer_context,
-        )
-        return self._sandbox
 
     def _require_sandbox(self) -> SandboxBackend:
         if self._sandbox is None:  # pragma: no cover - callers start before synchronous access
@@ -286,9 +296,14 @@ class _LazySandboxTurn:
 
     @asynccontextmanager
     async def activity_batch(self) -> AsyncIterator[None]:
-        sandbox = await self._start()
-        async with sandbox.activity_batch():
-            yield
+        async with AsyncExitStack() as stack:
+            self._activity_stack = stack
+            self._activity_started = False
+            try:
+                yield
+            finally:
+                self._activity_stack = None
+                self._activity_started = False
 
     async def write_file(self, path: str, content: str | bytes) -> None:
         await (await self._start()).write_file(path, content)

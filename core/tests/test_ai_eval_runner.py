@@ -558,8 +558,11 @@ def test_yaml_installation_violation_stops_before_executing_the_command(fail_fas
     assert not run.passed
     assert not run.error
     assert "avoids package installation" in " ".join(run.failures)
-    assert len(factory.created[0].commands) == (0 if fail_fast else 1)
-    assert factory.created[0].closed
+    if fail_fast:
+        assert factory.created == []
+    else:
+        assert len(factory.created[0].commands) == 1
+        assert factory.created[0].closed
     assert any(event["kind"] == "evaluation_stop" for event in run.trajectory["events"]) == fail_fast
 
 
