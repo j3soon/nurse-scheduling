@@ -193,6 +193,8 @@ skipped does not validate persistence.
 - Keep bundled attachment helpers general and optional. Preserve meaningful
   source data such as spreadsheet formulas and cached values, report truncation,
   and let the agent write a focused sandbox parser when a helper is insufficient.
+- When adding a bundled reference, include it in sandbox hydration, production
+  Docker copy paths, and evaluation reference hashes.
 - Prefer extending an existing helper when an operation shares its parser,
   dependencies, and output format. Reuse loading and validation instead of
   adding a sibling script. Keep a separate helper when its interface is useful

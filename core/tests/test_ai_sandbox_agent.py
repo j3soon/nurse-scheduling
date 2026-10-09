@@ -23,6 +23,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import pytest
 
@@ -420,6 +421,17 @@ def test_hydration_uploads_every_reference_in_one_request():
     # by the user rather than absorbed before the turn starts.
     assert backend.write_files_calls == 1
     assert len(backend.files) > len(REFERENCE_SCHEMAS)
+
+
+def test_hydration_keeps_bundled_example_separate_from_current_schedule():
+    factory = FakeSandboxFactory()
+    _collect(ScriptedProvider(_run_call(), [TextDelta("Done.")]), factory)
+    files = factory.created[0].files
+    source = Path(__file__).resolve().parents[2] / "web-frontend/public/examples/large-ward-with-87-people-2025-11.yaml"
+    example = files["/reference/examples/large-ward-with-87-people-2025-11.yaml"]
+    assert example == source.read_bytes()
+    assert files[WORKSPACE_SCHEDULE] != example
+    assert b"/reference/examples/large-ward-with-87-people-2025-11.yaml" in files[REFERENCE_SCHEMAS["core"]]
 
 
 def test_hydration_places_untrusted_attachments_under_safe_paths():

@@ -1511,6 +1511,7 @@ def test_reference_digests_cover_every_file_hydrated_into_the_sandbox():
     # A user guide edit steers the 10-app-ui cases, so it has to move this fingerprint.
     expected = {path.name for path in SCHEMA_REFERENCE_FILES.values()}
     expected.add(TAIWAN_HOLIDAYS_SOURCE.name)
+    expected.add("examples/large-ward-with-87-people-2025-11.yaml")
     expected.update(f"user-guide/{relative}" for relative in load_user_guide_references())
     expected.update(path.removeprefix("/reference/") for path in REFERENCE_ATTACHMENT_TOOLS)
     expected.update({"tools/README.md", "result_context.py", "policy_audit"})

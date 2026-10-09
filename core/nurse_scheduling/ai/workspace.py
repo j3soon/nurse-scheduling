@@ -45,6 +45,7 @@ from .sandbox import (
 from .schema import (
     SCHEMA_REFERENCE_FILES,
     TAIWAN_HOLIDAYS_SOURCE,
+    load_schedule_example,
     load_schedule_reference,
     load_taiwan_holidays_reference,
     load_user_guide_references,
@@ -59,6 +60,7 @@ WORKSPACE_ATTACHMENTS = "/workspace/attachments"
 REFERENCE_SCHEMAS = {group: f"/reference/{path.name}" for group, path in SCHEMA_REFERENCE_FILES.items()}
 REFERENCE_SCHEMAS["taiwan-holidays"] = f"/reference/{TAIWAN_HOLIDAYS_SOURCE.name}"
 REFERENCE_USER_GUIDE = "/reference/user-guide"
+REFERENCE_SCHEDULE_EXAMPLE = "/reference/examples/large-ward-with-87-people-2025-11.yaml"
 ATTACHMENT_TOOL_DIRECTORY = Path(__file__).with_name("attachment_tools")
 INSPECTION_HELPERS = {
     "inspect_request_tiers.py": "Current YAML inventory of all nonzero shift-request weight tiers, with entry and expanded target counts. --max-tiers bounds returned tiers.",
@@ -366,6 +368,7 @@ async def hydrate_sandbox(
     """Copy trusted application state and searchable references into one turn."""
     started = time.perf_counter()
     files: dict[str, str | bytes] = {WORKSPACE_SCHEDULE: schedule_yaml}
+    files[REFERENCE_SCHEDULE_EXAMPLE] = load_schedule_example()
     try:
         files[WORKSPACE_SOURCE_CONTEXT] = json.dumps(
             build_result_context(schedule_yaml), ensure_ascii=False, allow_nan=False

@@ -9,6 +9,9 @@
 !docs/content/user-guide/
 !docs/content/user-guide/**
 !web-frontend/
+!web-frontend/public/
+!web-frontend/public/examples/
+!web-frontend/public/examples/**
 !web-frontend/src/
 !web-frontend/src/utils/
 !web-frontend/src/utils/taiwanHolidays.ts

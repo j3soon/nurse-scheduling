@@ -2,6 +2,9 @@
 
 ## Core structure: dates, people, and shift types
 
+The public anonymized ward example is `/reference/examples/large-ward-with-87-people-2025-11.yaml`.
+Use it as a reference. `/workspace/schedule.yaml` remains the user's current schedule.
+
 ---
 
 This document intentionally groups related shapes. Read it once when working in this domain instead of searching for each field separately.

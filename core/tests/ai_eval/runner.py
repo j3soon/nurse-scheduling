@@ -74,6 +74,7 @@ from nurse_scheduling.ai.sandbox.factory import create_sandbox_factory
 from nurse_scheduling.ai.schema import (
     SCHEMA_REFERENCE_FILES,
     TAIWAN_HOLIDAYS_SOURCE,
+    load_schedule_example,
     load_schedule_reference,
     load_taiwan_holidays_reference,
     load_user_guide_references,
@@ -1552,6 +1553,9 @@ def _reference_digests() -> dict[str, str]:
         for group, path in SCHEMA_REFERENCE_FILES.items()
     }
     digests[TAIWAN_HOLIDAYS_SOURCE.name] = hashlib.sha256(load_taiwan_holidays_reference().encode()).hexdigest()
+    digests["examples/large-ward-with-87-people-2025-11.yaml"] = hashlib.sha256(
+        load_schedule_example().encode()
+    ).hexdigest()
     for relative_path, reference in load_user_guide_references().items():
         digests[f"user-guide/{relative_path}"] = hashlib.sha256(reference.encode()).hexdigest()
     for destination, source in REFERENCE_ATTACHMENT_TOOLS.items():
