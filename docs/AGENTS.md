@@ -150,6 +150,8 @@
   figures and formulas.
 - Run `zensical build --clean --strict` and `git diff --check` before
   finishing.
+- When changing the link checker, run
+  `python -m unittest discover -s scripts -p test_check_docs_links.py`.
 - Run `python scripts/check_docs_links.py` after the build. It checks pages,
   assets, anchors, README references, and redirect targets without network access.
 - After renaming a heading, update inbound anchor links and let the Zensical

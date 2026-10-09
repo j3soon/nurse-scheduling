@@ -1,6 +1,6 @@
 ---
 name: run-ci
-description: Run and fix the repository's local CI checks when asked to "Run CI", "Run all CI", or verify all CI locally. Runs core lint and the normal core pytest suite with coverage without CBC, cuOpt, or the three explicit real-scenario tests, then runs frontend lint, build, unit coverage, and Playwright E2E coverage. Fix failures and rerun until the full script passes.
+description: Run and fix the repository's local CI checks when asked to "Run CI", "Run all CI", or verify all CI locally. Runs documentation link-checker tests, core lint, and the normal core pytest suite with coverage without CBC, cuOpt, or the three explicit real-scenario tests, then runs frontend lint, build, unit coverage, and Playwright E2E coverage. Fix failures and rerun until the full script passes.
 ---
 
 # Run CI
@@ -18,6 +18,7 @@ working directory.
 
 The script intentionally:
 
+- Runs documentation link-checker regression tests before the module checks.
 - Excludes every core test file matching `*pulp_cbc.py` or `*pulp_cuopt.py`,
   plus the mixed CBC/cuOpt `test_solver_pulp_progress.py` suite.
 - Does not explicitly run the three `core/tests/real/schedule_*.py` scenarios.

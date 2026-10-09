@@ -52,8 +52,12 @@ def check_links(root: Path) -> list[str]:
     site = root / "site"
     if not (site / "index.html").is_file():
         return ["Build the docs with `zensical build --clean --strict` first."]
-    redirects = tomllib.loads((root / "netlify.toml").read_text()).get("redirects", [])
-    pages = {path: Page(path.read_text()) for path in site.rglob("*.html")}
+    redirects = tomllib.loads((root / "netlify.toml").read_text(encoding="utf-8")).get(
+        "redirects", []
+    )
+    pages = {
+        path: Page(path.read_text(encoding="utf-8")) for path in site.rglob("*.html")
+    }
     sources = [
         root / name
         for name in (
@@ -64,14 +68,14 @@ def check_links(root: Path) -> list[str]:
             "docs/README.md",
         )
     ]
-    sources += sorted((root / "docs/content").rglob("*.md"))
-    readme_pages = {
-        source.resolve(): "/docs/"
-        + source.relative_to(root / "docs/content").with_suffix("").as_posix()
-        + "/"
-        for source in (root / "docs/content").rglob("*.md")
-        if source.is_symlink()
-    }
+    doc_sources = sorted((root / "docs/content").rglob("*.md"))
+    sources += doc_sources
+    doc_pages = {}
+    for source in doc_sources:
+        parts = source.relative_to(root / "docs/content").with_suffix("").parts
+        if parts[-1] == "index":
+            parts = parts[:-1]
+        doc_pages[source.resolve()] = "/docs/" + "/".join((*parts, ""))
     errors: set[str] = set()
 
     def target_path(path: str) -> str:
@@ -97,9 +101,9 @@ def check_links(root: Path) -> list[str]:
             source = root / path.removeprefix(REPOSITORY_PATH)
             if not source.exists():
                 errors.add(f"{owner.relative_to(root)}: missing repository file {path}")
-            if source.resolve() not in readme_pages:
+            if source.resolve() not in doc_pages:
                 return
-            path = readme_pages[source.resolve()]
+            path = doc_pages[source.resolve()]
         elif parsed.hostname not in DOCS_HOSTS or not (
             path == "/docs" or path.startswith("/docs/")
         ):
@@ -142,7 +146,7 @@ def check_links(root: Path) -> list[str]:
             else:
                 check(destination, file)
     for source in sources:
-        for url in URL.findall(source.read_text()):
+        for url in URL.findall(source.read_text(encoding="utf-8")):
             check(url.rstrip(".,"), source)
     for redirect in redirects:
         target = redirect["to"].replace(":splat", "")

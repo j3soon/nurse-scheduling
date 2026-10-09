@@ -24,6 +24,7 @@ zensical serve
 For building static site, run:
 
 ```sh
+python -m unittest discover -s scripts -p test_check_docs_links.py
 zensical build --clean --strict
 python scripts/check_docs_links.py
 ```

@@ -15,6 +15,11 @@ fi
 set -x
 
 (
+  cd "$repo_root"
+  python -m unittest discover -s scripts -p test_check_docs_links.py
+)
+
+(
   cd "$repo_root/core"
   ruff format --check nurse_scheduling tests
   ruff check nurse_scheduling tests

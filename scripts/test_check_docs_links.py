@@ -45,7 +45,7 @@ class CheckDocsLinksTests(unittest.TestCase):
     def write(self, name, text):
         path = self.root / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text)
+        path.write_text(text, encoding="utf-8")
         return path
 
     def test_relative_pages_assets_and_encoded_fragments(self):
@@ -136,6 +136,43 @@ class CheckDocsLinksTests(unittest.TestCase):
         self.assertTrue(
             any("missing repository file" in error for error in check_links(self.root))
         )
+
+    def test_repository_documentation_links_check_built_anchors(self):
+        for source, directory in [
+            ("developer-guide/backend-server.md", "developer-guide/backend-server"),
+            ("developer-guide/index.md", "developer-guide"),
+            ("index.md", ""),
+        ]:
+            with self.subTest(source=source):
+                self.write(f"docs/content/{source}", "# Install")
+                url = (
+                    "https://github.com/j3soon/nurse-scheduling/blob/dev/"
+                    f"docs/content/{source}#install"
+                )
+                self.write("README.md", url)
+                page = Path("site") / directory / "index.html"
+                self.write(page, '<h1 id="install">Install</h1>')
+                self.assertEqual(check_links(self.root), [])
+                self.write(page, '<h1 id="renamed">Renamed</h1>')
+                self.assertEqual(
+                    check_links(self.root), [f"README.md: missing anchor {url}"]
+                )
+
+    def test_repository_documentation_links_require_a_built_page(self):
+        self.write("docs/content/page.md", "# Page")
+        self.write(
+            "README.md",
+            "https://github.com/j3soon/nurse-scheduling/blob/dev/docs/content/page.md",
+        )
+        self.assertEqual(
+            check_links(self.root), ["README.md: missing built target /docs/page/"]
+        )
+
+    def test_utf8_files_and_anchors(self):
+        self.write("netlify.toml", "# 中文\n")
+        self.write("README.md", "中文\nhttps://nursescheduling.org/docs/#%E7%AB%A0")
+        self.write("site/index.html", '<h1 id="章">中文</h1>')
+        self.assertEqual(check_links(self.root), [])
 
     def test_redirect_cycles_are_reported(self):
         self.write(
