@@ -19,51 +19,46 @@ apt-get update
 apt-get install -y --no-install-recommends postgresql
 ```
 
-Run this block from the repository root as root inside the development container.
-It creates a fresh UTF-8 cluster under ignored `artifacts/`, listens only on a
-Unix socket, runs the affected recovery tests, and stops the server on exit,
-including test failure:
+Use the checked-in wrapper from the repository root. It supports root execution
+through the `postgres` account and non-root execution through the current account.
+Each invocation creates a fresh UTF-8 cluster, disables TCP, stops its server on
+exit, and keeps data and compact logs in the ignored `artifacts/` directory:
 
-```bash
-bash <<'BASH'
-set -euo pipefail
-postgres_bin="$(pg_config --bindir)"
-test -x "$postgres_bin/initdb"
-test -x "$postgres_bin/pg_ctl"
-mkdir -p artifacts
-postgres_root="$(mktemp -d "$PWD/artifacts/ai-postgres.XXXXXX")"
-postgres_port=55432
-chown postgres:postgres "$postgres_root"
-runuser -u postgres -- "$postgres_bin/initdb" \
-  -D "$postgres_root/data" -A trust -E UTF8 --no-locale \
-  > "$postgres_root/init.log"
-runuser -u postgres -- "$postgres_bin/pg_ctl" \
-  -D "$postgres_root/data" -l "$postgres_root/server.log" \
-  -o "-k '$postgres_root' -p $postgres_port -c listen_addresses=" -w start
-trap 'runuser -u postgres -- "$postgres_bin/pg_ctl" -D "$postgres_root/data" -m fast -w stop' EXIT
-"$postgres_bin/createdb" -h "$postgres_root" -p "$postgres_port" \
-  -U postgres ai_history_test
-export AI_HISTORY_TEST_POSTGRES_URL="postgresql://postgres@/ai_history_test?host=$postgres_root&port=$postgres_port"
-"$postgres_bin/psql" "$AI_HISTORY_TEST_POSTGRES_URL" -Atc 'SHOW server_encoding'
-(
-  cd core
-  pytest -q tests/test_ai_history.py tests/test_ai_reconnect.py
-)
-BASH
+```sh
+# Default history and reconnect suites.
+./scripts/test_ai_postgres.sh
+
+# An explicit test node. Selection inspection needs no PostgreSQL installation.
+./scripts/test_ai_postgres.sh --list core/tests/test_ai_history.py::test_postgres_duplicates_and_reconnection
+./scripts/test_ai_postgres.sh core/tests/test_ai_history.py::test_postgres_duplicates_and_reconnection
+
+# Committed and working changes since the branch base.
+./scripts/test_ai_postgres.sh --base origin/dev
+
+# Collect focused diagnostic failures without a first-failure limit.
+# Explicit commands run from core/.
+./scripts/test_ai_postgres.sh --command pytest -q --tb=short tests/test_ai_history.py tests/test_ai_reconnect.py
 ```
 
-The encoding check must print `UTF8`. PostgreSQL refuses to run as root, so the
-server commands use the package's `postgres` account. Trust authentication is
-limited here to a private test socket with TCP disabled. This is not deployment
-configuration. Keep the data and logs for diagnosis under `artifacts/`.
+The wrapper sets `AI_HISTORY_TEST_POSTGRES_URL` only for its child command and
+preserves that command's exit status. It prints the log directory and the test
+summary. Read `tests.log` there when more failure detail is needed. Each invocation
+uses a distinct short Unix socket directory, so concurrent runs do not share a
+cluster or bind a TCP port. The socket directory is removed after shutdown.
 
-Do not reuse an old cluster with another PostgreSQL major version. The server
-version must match the data directory's `PG_VERSION`. If `pg_config` points to a
-directory without server binaries, select the installed version under
-`/usr/lib/postgresql/<major>/bin/` instead. An absent package can also mean the
-container's package index needs `apt-get update`.
+Do not reuse an old cluster with another PostgreSQL major version. If `pg_config`
+points to a directory without server tools, select the matching installed version:
 
-For broader validation, replace the final pytest command with
-`../scripts/test_core_affected.sh` from `core/`, or run the CI skill's script from
-the repository root. Keep setup, the exported URL, and validation in the same
-shell. Shell variables do not carry between independent command-tool calls.
+```sh
+AI_TEST_POSTGRES_BIN=/usr/lib/postgresql/14/bin ./scripts/test_ai_postgres.sh
+```
+
+The version is an example. Check that the selected directory contains `initdb`,
+`pg_ctl`, `createdb`, and `psql`. The wrapper does not install tools. Root execution
+also requires `runuser` and the package's `postgres` account. Trust authentication
+is limited to the private test socket with TCP disabled. This is test configuration.
+
+Validate wrapper changes with `./scripts/test_ai_postgres_harness.sh`. It checks
+UTF-8 encoding, TCP disablement, fresh-cluster isolation, failure status, and cleanup
+against actual PostgreSQL servers. `./scripts/test_affected_harness.sh` checks
+selection forwarding without requiring PostgreSQL.
