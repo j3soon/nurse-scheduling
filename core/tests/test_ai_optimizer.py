@@ -750,19 +750,26 @@ def test_browser_cancellation_reports_transport_failure_and_allows_retry() -> No
     asyncio.run(scenario())
 
 
-def test_browser_cancellation_keeps_a_completion_received_during_the_request() -> None:
+@pytest.mark.parametrize("request_failed", [False, True], ids=["stale-response", "late-error"])
+def test_browser_cancellation_keeps_a_completion_received_during_the_request(request_failed: bool) -> None:
     async def scenario() -> None:
+        cancel_started = asyncio.Event()
+
         class Backend(FakeOptimizerBackend):
             async def cancel(self, job_id):
+                cancel_started.set()
                 await self.deleted_event.wait()
+                if request_failed:
+                    raise OptimizerError("The completed remote job was deleted.")
                 return OptimizerJobPayload(id=job_id, state="cancelling")
 
         backend = Backend()
         optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=lambda *_: asyncio.sleep(0))
         job = await optimizer.start("session-1", TEST_SCHEDULE, None)
         cancelling = asyncio.create_task(optimizer.cancel("session-1", job.id))
+        await asyncio.wait_for(cancel_started.wait(), timeout=1)
         backend.release.set()
-        await asyncio.wait_for(cancelling, timeout=1)
+        assert await asyncio.wait_for(cancelling, timeout=1) is job
         assert job.payload.state == "completed"
         assert job.artifact is not None
         await optimizer.close()

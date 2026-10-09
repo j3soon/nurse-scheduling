@@ -423,6 +423,9 @@ class SessionOptimizer:
         try:
             payload = await self._backend.cancel(job.remote_id)
         except OptimizerError as exc:
+            # Completion can delete the remote job while cancellation is in flight.
+            if _is_terminal(job.payload):
+                return job
             logger.warning("Optimizer cancel request failed job_id=%s error=%s", job.id, exc)
             raise OptimizerError(f"The optimizer did not accept the cancel request. {exc}") from exc
         job.observe(payload)
