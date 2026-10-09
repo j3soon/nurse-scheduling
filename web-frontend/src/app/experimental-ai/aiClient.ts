@@ -78,6 +78,7 @@ export interface StreamCallbacks {
   lastEventId?: number;
   onEventId?: (id: number) => void;
   onTurnStart?: (messageId: string, trigger: string) => void;
+  onTurnContext?: (messageId: string) => void;
   onDelta: (text: string) => void;
   onReasoning?: (text: string) => void;
   onToolStart?: (activity: ToolStartActivity) => void;
@@ -176,6 +177,7 @@ interface SsePayload {
   used_tokens?: unknown;
   max_tokens?: unknown;
   message_id?: unknown;
+  turn_id?: unknown;
   trigger?: unknown;
   job_id?: unknown;
   state?: unknown;
@@ -394,6 +396,9 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): boolean {
     .map(line => line.slice('data:'.length).trimStart())
     .join('\n');
   if (!rawData) return false;
+  const isSnapshot = eventType === 'turn_snapshot' || eventType === 'session_snapshot';
+  // Replacement snapshots can reset the cursor after server recovery.
+  if (!isSnapshot && Number.isSafeInteger(eventId) && eventId > 0 && eventId <= (callbacks.lastEventId ?? 0)) return false;
 
   let payload: SsePayload;
   try {
@@ -404,9 +409,13 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): boolean {
 
   // Acknowledge before dispatching, so a handler that throws cannot make a
   // replayed stream repeat the same event after every reconnect.
-  if (Number.isSafeInteger(eventId) && eventId > 0) callbacks.onEventId?.(eventId);
+  if (Number.isSafeInteger(eventId) && (eventId > 0 || (isSnapshot && eventId === 0))) {
+    callbacks.lastEventId = eventId;
+    callbacks.onEventId?.(eventId);
+  }
+  if (typeof payload.turn_id === 'string') callbacks.onTurnContext?.(payload.turn_id);
 
-  if (eventType === 'turn_snapshot' || eventType === 'session_snapshot') {
+  if (isSnapshot) {
     if (!Array.isArray(payload.events) || payload.events.some(event =>
       typeof event?.type !== 'string' || typeof event?.data !== 'object' || event.data === null
       || event.type.endsWith('_snapshot'))) {
@@ -631,6 +640,7 @@ async function consumeStream(response: Response, callbacks: StreamCallbacks, sto
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
+  const streamCallbacks = { ...callbacks };
   let buffer = '';
 
   try {
@@ -638,11 +648,11 @@ async function consumeStream(response: Response, callbacks: StreamCallbacks, sto
       let chunk: ReadableStreamReadResult<Uint8Array>;
       try { chunk = await reader.read(); } catch { throw new AiConnectionError('The AI connection was interrupted.'); }
       const { done, value } = chunk;
-      buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, '\n');
+      buffer = (buffer + decoder.decode(value, { stream: !done })).replace(/\r\n/g, '\n');
 
       let boundary = buffer.indexOf('\n\n');
       while (boundary >= 0) {
-        const terminal = consumeEvent(buffer.slice(0, boundary), callbacks);
+        const terminal = consumeEvent(buffer.slice(0, boundary), streamCallbacks);
         if (terminal && stopAtTerminal) return true;
         buffer = buffer.slice(boundary + 2);
         boundary = buffer.indexOf('\n\n');
@@ -651,7 +661,8 @@ async function consumeStream(response: Response, callbacks: StreamCallbacks, sto
       if (done) break;
     }
 
-    return buffer.trim() ? consumeEvent(buffer, callbacks) : false;
+    // A replay cursor advances only over complete frames. Reconnect replays a lost delimiter.
+    return false;
   } finally {
     void reader.cancel().catch(() => undefined);
     reader.releaseLock();

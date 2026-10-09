@@ -23,7 +23,6 @@ import asyncio
 import os
 import threading
 import time
-from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
 
@@ -118,10 +117,7 @@ def test_postgres_recovery_keeps_operational_metadata(postgres_history):
 @pytest.mark.parametrize("failed", [False, True])
 def test_postgres_background_turn_keeps_metadata_and_entry_ownership(postgres_history, failed):
     from nurse_scheduling.ai.background import run_background_turn
-
-    @asynccontextmanager
-    async def track(_session):
-        yield
+    from nurse_scheduling.ai.lifecycle import Turn
 
     class Provider:
         async def stream_events(self, messages, tools=None):
@@ -144,8 +140,7 @@ def test_postgres_background_turn_keeps_metadata_and_entry_ownership(postgres_hi
             settings=settings,
             store=store,
             event_broker=app.state.session_event_broker,
-            turn_locks={},
-            track_active_turn=track,
+            turn=Turn(),
             concurrency_limit=asyncio.Semaphore(1),
             history_log=postgres_history,
             provider=provider,
@@ -168,7 +163,10 @@ def test_postgres_background_turn_keeps_metadata_and_entry_ownership(postgres_hi
         record = postgres_history.load_recovery_session(session.id, session.owner_token)
         assert record["background_status"] == row[4]
         assert record["turns"] == []
-        assert any(event["data"] == {"text": "Background output"} for event in record["background_events"])
+        assert any(
+            event["type"] == "delta" and event["data"] == {"text": "Background output", "turn_id": str(row[0])}
+            for event in record["background_events"]
+        )
 
     asyncio.run(exercise())
 
@@ -340,7 +338,7 @@ def test_cancelled_turn_admission_releases_the_session(recorded_history, monkeyp
             release.set()
             await asyncio.gather(first, return_exceptions=True)
             assert not app.state.session_store._sessions[session_id].active
-            assert not app.state.turn_locks[session_id].locked()
+            assert not app.state.turns.busy(session_id)
             second = await client.post(f"/sessions/{session_id}/messages", json={"message": "Second"})
             return basic.parse_sse(second.text)[-1][0]
 
@@ -428,10 +426,10 @@ def test_full_store_evicts_the_least_recently_used_idle_session(recorded_history
         first = basic.create_session(client)
         second = basic.create_session(client)
         for session_id in (first, second):
-            store._sessions[session_id].active = True
+            store.begin(session_id, store._sessions[session_id].owner_token)
         assert client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()}).status_code == 429
         for session_id in (first, second):
-            store._sessions[session_id].active = False
+            store.abort(session_id, store._sessions[session_id].turn)
         assert client.get(f"/sessions/{first}/uploads").status_code == 200
         third = basic.create_session(client)
     assert list(store._sessions) == [first, third]
@@ -475,7 +473,10 @@ def test_full_store_keeps_a_session_until_its_state_write_ends(recorded_history,
                 assert basic.parse_sse(response.text)[-1][0] == "done"
             else:
                 assert response.status_code == 204
-            await asyncio.wait_for(asyncio.gather(*app.state.turn_workers), timeout=1)
+            await asyncio.wait_for(
+                asyncio.gather(*(turn.done for pending in app.state.turns._turns.values() for turn in pending)),
+                timeout=1,
+            )
             assert (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).status_code == 201
 
     asyncio.run(exercise())

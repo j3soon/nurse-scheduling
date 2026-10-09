@@ -4,5 +4,5 @@
 
 interface:
   display_name: "Improve Agents from Chat Traces"
-  short_description: "Inspect chats, test fixes, and commit when authorized"
-  default_prompt: "Use $improve-agent-from-traces to inspect these exported chats, rank useful fixes, compare them with the current behavior, and commit validated improvements when authorized."
+  short_description: "Inspect chats, validate fixes, and create commits"
+  default_prompt: "Use $improve-agent-from-traces to inspect these exported chats, rank useful fixes, compare them with the current behavior, and commit validated improvements in self-contained changes."

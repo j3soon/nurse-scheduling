@@ -67,11 +67,17 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   suite to diagnose its failure.
 
 ## Git
-- Preserve each file's staged or unstaged state. Never stage, unstage, or commit unless explicitly asked. Stage only the requested index entries.
-- Keep commits focused on one change. A self-contained change may span modules in one commit, e.g. `core` + `web-frontend` code, or code plus its `docs` update.
-- Prefer reviewable feature slices over minimal implementation-step commits. Combine a new mechanism with its
-  representative usage and tests when they form one coherent change. Keep a separate commit only when it can be
-  understood, validated, and reverted independently.
+- Commit validated implementation work as part of the task unless the user asks
+  to leave it uncommitted. Inspection and planning requests do not authorize
+  implementation changes.
+- Inspect staged and unstaged changes before committing. Stage or unstage entries
+  as needed to keep the commit within the task's scope. Preserve unrelated work.
+- Keep each commit self-contained. Include one complete change with its necessary
+  implementation, representative usage, tests, and documentation. A single change
+  may span modules, such as `core` + `web-frontend`, or code plus its `docs` update.
+- Prefer reviewable feature slices over minimal implementation-step commits.
+  Separate changes only when each can be understood, validated, and reverted
+  independently.
 - Fold minor whitespace, wording, marker, or metadata corrections into the
   related commit. Do not create standalone cleanup commits for them. Authorization
   to commit an active unpublished series includes these minor local rewrites.

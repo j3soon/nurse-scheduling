@@ -29,7 +29,7 @@ import threading
 import time
 from collections import Counter
 from collections.abc import AsyncIterator, Callable, Sequence
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from dataclasses import asdict, dataclass, field, replace
 from typing import Literal
 from uuid import UUID, uuid4
@@ -73,6 +73,7 @@ from .background import (
 )
 from .config import AiSettings, validate_ai_auth_credentials
 from .history import ChatHistory, stop_maintenance
+from .lifecycle import SessionTurns, Turn, TurnSnapshot
 from .optimizer import (
     HttpOptimizerBackend,
     OptimizerArtifact,
@@ -269,10 +270,13 @@ class ChatSession:
     revision: str
     history: list[ChatMessage] = field(default_factory=list)
     dropped_history_messages: int = 0
-    active: bool = False
-    accepting_steering: bool = False
-    steering_queue: list[tuple[str, str]] = field(default_factory=list)
-    steering_ids: set[str] = field(default_factory=set)
+    version: int = 0
+    turn: TurnSnapshot | None = None
+
+    @property
+    def active(self) -> bool:
+        return self.turn is not None
+
     proposal_yaml: str = ""
     proposal_diff: str = ""
     downloads: dict[str, bytes] = field(default_factory=dict)
@@ -299,7 +303,7 @@ def _session_bytes(session: "ChatSession") -> int:
     total += sum(_text_bytes(message.get("content")) for message in session.history)
     return (
         total
-        + sum(_text_bytes(text) for _message_id, text in session.steering_queue)
+        + sum(_text_bytes(text) for _message_id, text in (session.turn.steering_queue if session.turn else ()))
         + sum(map(len, session.downloads.values()))
         + sum(len(upload.data) for upload in session.uploads.values())
     )
@@ -479,44 +483,36 @@ class SessionStore:
             self._recount(session)
             return session
 
-    def begin(self, session_id: str, owner_token: str | None) -> tuple[list[ChatMessage], str, str, str, str, int]:
-        """Reserve a session and return its history and schedule snapshots."""
+    def begin(self, session_id: str, owner_token: str | None) -> TurnSnapshot:
+        """Reserve the current conversation version for one foreground turn."""
         with self._lock:
             session = self._get_owned(session_id, owner_token)
             if session.active:
                 raise HTTPException(status_code=409, detail="This chat session already has an active response.")
-            session.active = True
-            session.accepting_steering = True
-            session.steering_queue.clear()
-            session.steering_ids.clear()
-            session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
-            return (
-                list(session.history),
-                session.schedule_yaml,
-                session.revision,
-                session.proposal_yaml,
-                session.proposal_diff,
-                session.dropped_history_messages,
-            )
+            return self._reserve(session, accepting_steering=True)
 
-    def begin_background(self, session_id: str) -> tuple[list[ChatMessage], str, str, str, str, int] | None:
+    def begin_background(self, session_id: str) -> TurnSnapshot | None:
         """Reserve an idle session for a trusted background-triggered turn."""
         with self._lock:
             self._prune_expired()
             session = self._sessions.get(session_id)
             if session is None or session.active:
                 return None
-            session.active = True
-            session.accepting_steering = False
-            session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
-            return (
-                list(session.history),
-                session.schedule_yaml,
-                session.revision,
-                session.proposal_yaml,
-                session.proposal_diff,
-                session.dropped_history_messages,
-            )
+            return self._reserve(session, accepting_steering=False)
+
+    def _reserve(self, session: ChatSession, *, accepting_steering: bool) -> TurnSnapshot:
+        session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
+        snapshot = TurnSnapshot(
+            history=list(session.history),
+            schedule_yaml=session.schedule_yaml,
+            version=session.version,
+            proposal_yaml=session.proposal_yaml,
+            proposal_diff=session.proposal_diff,
+            accepting_steering=accepting_steering,
+            dropped_history_messages=session.dropped_history_messages,
+        )
+        session.turn = snapshot
+        return snapshot
 
     def require_owned(self, session_id: str, owner_token: str | None) -> None:
         """Validate access to a session without exposing its state."""
@@ -657,19 +653,16 @@ class SessionStore:
         assistant_message: str,
         proposal: tuple[str, str] | None = None,
         *,
-        base_revision: str,
+        snapshot: TurnSnapshot,
         turn_messages: Sequence[ChatMessage] = (),
     ) -> TurnCompletion:
-        """Save a completed turn when its schedule revision is still current."""
+        """Save a completed turn only while its conversation version is current."""
         with self._lock:
             session = self._sessions.get(session_id)
-            if session is None:
+            if session is None or session.turn is not snapshot:
                 return TurnCompletion(turn_saved=False, proposal_saved=False)
-            if session.revision != base_revision:
-                session.active = False
-                session.accepting_steering = False
-                session.steering_queue.clear()
-                session.steering_ids.clear()
+            session.turn = None
+            if session.version != snapshot.version:
                 self._recount(session)
                 return TurnCompletion(turn_saved=False, proposal_saved=False)
             completed_turn = turn_messages or (
@@ -681,10 +674,6 @@ class SessionStore:
             proposal_saved = proposal is not None
             if proposal_saved:
                 session.proposal_yaml, session.proposal_diff = proposal
-            session.active = False
-            session.accepting_steering = False
-            session.steering_queue.clear()
-            session.steering_ids.clear()
             self._recount(session)
             self._trim_history_to_budget(session, min(len(completed_turn), len(session.history)))
             return TurnCompletion(
@@ -704,18 +693,19 @@ class SessionStore:
         """Queue a message for the next model boundary of an active response."""
         with self._lock:
             session = self._get_owned(session_id, owner_token)
-            if not session.active or not session.accepting_steering:
+            turn = session.turn
+            if turn is None or not turn.accepting_steering:
                 raise HTTPException(status_code=409, detail="The active response is no longer accepting messages.")
-            if message_id in session.steering_ids:
+            if message_id in turn.steering_ids:
                 return
             # Counted over the whole turn, not the drained queue, because the seen-ID set
             # that makes a retried POST idempotent is never emptied mid-turn.
-            if len(session.steering_ids) >= self._settings.max_history_messages:
+            if len(turn.steering_ids) >= self._settings.max_history_messages:
                 raise HTTPException(status_code=429, detail="Too many messages are already queued.")
             message_bytes = _text_bytes(message)
             self._require_capacity(message_bytes)
-            session.steering_queue.append((message_id, message))
-            session.steering_ids.add(message_id)
+            turn.steering_queue.append((message_id, message))
+            turn.steering_ids.add(message_id)
             session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
             self._charge(session, message_bytes)
 
@@ -725,10 +715,11 @@ class SessionStore:
             session = self._sessions.get(session_id)
             if session is None or not session.active:
                 return []
-            queued = list(session.steering_queue)
-            session.steering_queue.clear()
+            turn = session.turn
+            queued = list(turn.steering_queue)
+            turn.steering_queue.clear()
             if close_if_empty and not queued:
-                session.accepting_steering = False
+                turn.accepting_steering = False
             self._charge(session, -sum(_text_bytes(text) for _message_id, text in queued))
             return queued
 
@@ -751,6 +742,8 @@ class SessionStore:
                 self._require_capacity(additional_bytes)
             data_changed = _schedule_data(session.schedule_yaml) != _schedule_data(schedule_yaml)
             had_proposal = bool(session.proposal_yaml)
+            if session.schedule_yaml != schedule_yaml or had_proposal:
+                session.version += 1
             session.schedule_yaml = schedule_yaml
             session.revision = schedule_revision(schedule_yaml)
             session.proposal_yaml = ""
@@ -774,6 +767,7 @@ class SessionStore:
             approved = session.proposal_yaml
             session.proposal_yaml = ""
             session.proposal_diff = ""
+            session.version += 1
             session.schedule_yaml = approved
             session.revision = schedule_revision(approved)
             self._append_history_event(session, PROPOSAL_APPROVED_HISTORY)
@@ -787,6 +781,7 @@ class SessionStore:
         if not session.proposal_yaml:
             raise HTTPException(status_code=404, detail="No proposal is waiting for approval.")
         if session.revision != base_sha256:
+            session.version += 1
             session.proposal_yaml = ""
             session.proposal_diff = ""
             self._recount(session)
@@ -809,19 +804,17 @@ class SessionStore:
             session.proposal_yaml = ""
             session.proposal_diff = ""
             if had_proposal:
+                session.version += 1
                 self._append_history_event(session, history_event)
             session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
             self._recount(session)
 
-    def abort(self, session_id: str) -> None:
-        """Release a session without recording an incomplete response."""
+    def abort(self, session_id: str, snapshot: TurnSnapshot) -> None:
+        """Only the owner of a reservation may release it."""
         with self._lock:
             session = self._sessions.get(session_id)
-            if session is not None:
-                session.active = False
-                session.accepting_steering = False
-                session.steering_queue.clear()
-                session.steering_ids.clear()
+            if session is not None and session.turn is snapshot:
+                session.turn = None
                 self._recount(session)
 
     def _append_history_event(self, session: ChatSession, content: str) -> None:
@@ -950,17 +943,12 @@ def create_app(
     store = SessionStore(settings)
     event_broker = SessionEventBroker(max_sessions=settings.max_sessions, max_snapshot_bytes=settings.max_session_bytes)
     turn_journal = TurnJournal(history_log, settings.max_session_bytes)
-    turn_workers: set[asyncio.Task] = set()
+    turns = SessionTurns()
     shutting_down = False
     recovery_lock = asyncio.Lock()
     state_write_locks: dict[str, asyncio.Lock] = {}
     session_pins: Counter[str] = Counter()
     unsaved_sessions: set[str] = set()
-    turn_locks: dict[str, asyncio.Lock] = {}
-    active_turn_tasks: dict[str, asyncio.Task[object]] = {}
-    active_turn_requests: dict[str, str] = {}
-    background_turn_tasks: dict[str, set[asyncio.Task[object]]] = {}
-    pending_turn_stops: set[str] = set()
     concurrency_limit = asyncio.Semaphore(settings.max_concurrent_requests)
     auth_registry = create_auth_registry(settings.auth_token, settings.auth_tokens)
     require_auth = create_auth_dependency(auth_registry)
@@ -1079,17 +1067,6 @@ def create_app(
             max_age=settings.session_ttl_seconds,
         )
 
-    @asynccontextmanager
-    async def track_active_turn(session_id: str) -> AsyncIterator[None]:
-        task = asyncio.current_task()
-        if task is not None:
-            active_turn_tasks[session_id] = task
-        try:
-            yield
-        finally:
-            if task is not None and active_turn_tasks.get(session_id) is task:
-                del active_turn_tasks[session_id]
-
     if optimizer_backend is None:
         optimizer_backend = HttpOptimizerBackend(
             settings.optimizer_base_url,
@@ -1099,31 +1076,26 @@ def create_app(
         )
 
     async def optimizer_completed(session_id: str, prompt: str, artifact: OptimizerArtifact | None) -> None:
-        task = asyncio.current_task()
-        if task is not None:
-            background_turn_tasks.setdefault(session_id, set()).add(task)
-        try:
-            await run_background_turn(
+        turn = turns.start(
+            session_id,
+            lambda turn: run_background_turn(
                 session_id,
                 prompt,
                 artifact,
+                turn=turn,
                 settings=settings,
                 store=store,
                 event_broker=event_broker,
-                turn_locks=turn_locks,
-                track_active_turn=track_active_turn,
                 concurrency_limit=concurrency_limit,
                 history_log=history_log,
                 provider=provider,
                 sandbox_factory=sandbox_factory,
                 session_optimizer=session_optimizer,
-            )
-        finally:
-            if task is not None:
-                tasks = background_turn_tasks[session_id]
-                tasks.discard(task)
-                if not tasks:
-                    del background_turn_tasks[session_id]
+            ),
+            background=True,
+        )
+        turn.task.add_done_callback(pin_session(session_id))
+        await turn.wait()
 
     async def optimizer_updated(session_id: str, update: dict[str, object]) -> None:
         await event_broker.emit(
@@ -1156,6 +1128,8 @@ def create_app(
             if event_type == "stopped" and shutting_down:
                 return
             async with state_write_lock(session_id):
+                if session_id not in store._sessions:
+                    return
                 saved = await history_log.write(
                     "finish_recovery_turn",
                     session_id,
@@ -1183,10 +1157,9 @@ def create_app(
 
     def retire_session(session_id: str) -> None:
         """Release everything keyed by a session once the store drops it."""
-        turn_locks.pop(session_id, None)
+        turns.retire(session_id)
         state_write_locks.pop(session_id, None)
         unsaved_sessions.discard(session_id)
-        pending_turn_stops.discard(session_id)
         session_optimizer.forget_session(session_id)
         event_broker.forget_session(session_id)
         turn_journal.forget_session(session_id)
@@ -1198,7 +1171,7 @@ def create_app(
                 session_id not in session_pins
                 and session_id not in unsaved_sessions
                 and not turn_journal.has_unsaved_outcome(session_id)
-                and session_id not in background_turn_tasks
+                and not turns.busy(session_id)
                 and not session_optimizer.has_unfinished_run(session_id)
             )
         )
@@ -1214,15 +1187,14 @@ def create_app(
         maintenance = asyncio.create_task(history_log.maintain()) if history_log is not None else None
         try:
             async with managed_sandbox_factory(sandbox_factory):
-                yield
+                try:
+                    yield
+                finally:
+                    # Interrupted turns stay running in storage. Join their cleanup before sandbox teardown.
+                    shutting_down = True
+                    await turns.close()
+                    await session_optimizer.close()
         finally:
-            # Interrupted turns stay running in recovery storage, so the restarted
-            # service reports a restart instead of a user Stop.
-            shutting_down = True
-            for task in tuple(turn_workers):
-                task.cancel()
-            await asyncio.gather(*turn_workers, return_exceptions=True)
-            await session_optimizer.close()
             if maintenance is not None:
                 await stop_maintenance(maintenance)
 
@@ -1245,15 +1217,13 @@ def create_app(
     app.state.settings = settings
     app.state.auth_registry = auth_registry
     app.state.session_store = store
-    app.state.turn_locks = turn_locks
+    app.state.turns = turns
     app.state.provider = provider
     app.state.sandbox_factory = sandbox_factory
     app.state.app_version = app_version
     app.state.session_optimizer = session_optimizer
     app.state.session_event_broker = event_broker
     app.state.turn_journal = turn_journal
-    app.state.active_turn_tasks = active_turn_tasks
-    app.state.turn_workers = turn_workers
 
     app.add_middleware(SentryClientAddressMiddleware)
 
@@ -1365,20 +1335,10 @@ def create_app(
                 await turn_journal.request_stop(session_id, body.message_id)
             except RuntimeError as exc:
                 raise HTTPException(status_code=503, detail=str(exc)) from None
-            # A delayed Stop must not cancel a later turn. A turn that has not started yet
-            # finds the saved request instead.
-            task = active_turn_tasks.get(session_id)
-            if task is not None and not task.done() and active_turn_requests.get(session_id) == body.message_id:
-                task.cancel()
+            turns.stop(session_id, body.message_id)
             return Response(status_code=status.HTTP_202_ACCEPTED)
-        task = active_turn_tasks.get(session_id)
-        if task is not None and not task.done():
-            task.cancel()
-        elif store.has_active_turn(session_id, owner):
-            pending_turn_stops.add(session_id)
-        for background_task in tuple(background_turn_tasks.get(session_id, ())):
-            if not background_task.done():
-                background_task.cancel()
+        turns.stop(session_id)
+        return Response(status_code=status.HTTP_202_ACCEPTED)
         return Response(status_code=status.HTTP_202_ACCEPTED)
 
     @app.post(
@@ -1545,346 +1505,338 @@ def create_app(
             if existing.question != question:
                 raise HTTPException(status_code=409, detail="This message ID belongs to a different question.")
             return turn_response(existing, body.last_event_id, owner, snapshot=True)
-        turn_lock = turn_locks.setdefault(session_id, asyncio.Lock())
-        if turn_lock.locked():
-            raise HTTPException(status_code=409, detail="This chat session already has an active response.")
-        await turn_lock.acquire()
-        turn_released = False
+        replay_turn = None
 
-        def release_turn() -> None:
-            nonlocal turn_released
-            if not turn_released:
-                turn_released = True
-                turn_lock.release()
-
-        try:
-            history, schedule_yaml, base_revision, proposal_yaml, proposal_diff, previously_dropped = store.begin(
-                session_id, owner
-            )
-            # Uploads cannot change while the turn is active, so this snapshot stays valid for the whole turn.
-            hydrated_attachments = store.attachments(session_id)
-        except BaseException:
-            pending_turn_stops.discard(session_id)
-            release_turn()
-            raise
-        turn_id = str(uuid4())
-        request_logger.info(
-            "AI request started session_id=%s question_chars=%s question=%s files=%s",
-            session_id,
-            len(question),
-            json.dumps(_question_log_preview(question), ensure_ascii=False),
-            len(hydrated_attachments),
-        )
-        history_question = question
-        request_id = body.message_id or turn_id
-        # No worker owns the session until admission ends, so every failure, including
-        # cancellation, must release it here.
-        try:
-            if not await save_session(session_id):
-                raise RuntimeError("AI message recovery is temporarily unavailable.")
-            replay_turn = await turn_journal.start(
-                session_id,
-                turn_id,
-                request_id,
-                question,
-                {
-                    "model": settings.provider_model,
-                    "auth_credential_id": request.state.auth_credential_id,
-                    "attachment_count": len(hydrated_attachments),
-                },
-            )
-        except BaseException as exc:
-            store.abort(session_id)
-            pending_turn_stops.discard(session_id)
-            release_turn()
-            if isinstance(exc, RuntimeError):
-                raise HTTPException(status_code=503, detail=str(exc)) from None
-            raise
-
-        saved_outcome = None
-        recovery_metadata = {}
-
-        async def generate_events():
-            nonlocal saved_outcome
-            current_task = asyncio.current_task()
-            if current_task is not None:
-                active_turn_tasks[session_id] = current_task
-                active_turn_requests[session_id] = request_id
-            stopped_before_stream = session_id in pending_turn_stops
-            pending_turn_stops.discard(session_id)
-            assistant_parts: list[str] = []
-            pending_proposal: AgentProposal | None = None
-            pending_download: bytes | None = None
-            completed = False
-
-            error_code = None
-            usage = None
-            last_call: TokenUsage | None = None
-            turn_messages = [ChatMessage(role="user", content=history_question)]
-            assistant_segment: list[str] = []
+        async def run_foreground(turn: Turn) -> None:
+            nonlocal replay_turn
+            snapshot = store.begin(session_id, owner)
+            turn.admitting = True
             try:
-                if stopped_before_stream or await turn_journal.was_stopped(session_id, request_id):
-                    raise asyncio.CancelledError
-                latest_artifact = await session_optimizer.latest_result_artifact(session_id)
-                retained_history = recent_history(history, settings.max_history_chars)
-                dropped_history = previously_dropped + len(history) - len(retained_history)
-                messages = build_provider_messages(
-                    retained_history,
-                    schedule_yaml,
-                    question,
-                    hydrated_attachments,
-                    system_prompt=SANDBOX_SYSTEM_PROMPT,
-                    pending_proposal=bool(proposal_yaml),
-                    optimizer_result_available=latest_artifact is not None,
-                    max_history_chars=settings.max_history_chars,
-                    max_download_bytes=settings.max_download_bytes,
-                )
-                yield _sse_event(
-                    "model_input", model_input(messages, len(retained_history), dropped_history, "question")
-                )
-                context_chars = history_context_chars(history, settings.max_history_chars)
-                yield _sse_event("context_usage", context_usage(context_chars, settings))
-                if dropped_history:
-                    yield _sse_event("history_trimmed", {"dropped": dropped_history})
-                if stopped_before_stream:
-                    raise asyncio.CancelledError
-                async with concurrency_limit:
-                    agent_events = run_sandbox_agent(
-                        provider,
-                        sandbox_factory,
-                        schedule_yaml,
-                        messages,
-                        SandboxAgentLimits.from_settings(settings),
-                        take_steering=lambda close_if_empty: store.take_steering(session_id, close_if_empty),
-                        pending_proposal_yaml=proposal_yaml,
-                        pending_proposal_diff=proposal_diff,
-                        execute_optimizer=(
-                            lambda current_yaml, arguments: session_optimizer.execute(
-                                session_id, current_yaml, arguments
-                            )
-                        ),
-                        attachments=hydrated_attachments,
-                        optimizer_result=latest_artifact.content if latest_artifact is not None else None,
-                        optimizer_context=latest_artifact.schedule_context if latest_artifact is not None else None,
-                    )
-                    async for event in agent_events:
-                        if isinstance(event, AgentText):
-                            assistant_parts.append(event.text)
-                            assistant_segment.append(event.text)
-                            yield _sse_event("delta", {"text": event.text})
-                        elif isinstance(event, AgentReasoning):
-                            yield _sse_event("reasoning", {"text": event.text})
-                        elif isinstance(event, TokenUsage):
-                            usage = event if usage is None else usage + event
-                            last_call = event
-                            yield _sse_event(
-                                "context_usage", context_usage(context_chars, settings, last_call, provider)
-                            )
-                        elif isinstance(event, AgentToolStart):
-                            yield _sse_event(
-                                "tool_start",
-                                {
-                                    "name": event.name,
-                                    "arguments": event.arguments,
-                                },
-                            )
-                        elif isinstance(event, AgentToolUse):
-                            yield _sse_event(
-                                "tool",
-                                {
-                                    "name": event.name,
-                                    "arguments": event.arguments,
-                                    "result": event.result,
-                                    "ok": event.ok,
-                                },
-                            )
-                        elif isinstance(event, AgentSteering):
-                            if assistant_segment:
-                                turn_messages.append(ChatMessage(role="assistant", content="".join(assistant_segment)))
-                            turn_messages.append(ChatMessage(role="user", content=event.text))
-                            assistant_segment.clear()
-                            yield _sse_event(
-                                "steering",
-                                {
-                                    "message_id": event.message_id,
-                                    "message": event.text,
-                                },
-                            )
-                        elif isinstance(event, AgentScheduleChange):
-                            yield _sse_event(
-                                "schedule_change",
-                                {"schedule_yaml": event.schedule_yaml},
-                            )
-                        elif isinstance(event, AgentDownload):
-                            pending_download = event.content
-                        elif isinstance(event, AgentProposal):
-                            pending_proposal = event
-                proposal = None
-                if pending_proposal is not None:
-                    proposal = (pending_proposal.text, pending_proposal.diff)
-                turn_messages.append(ChatMessage(role="assistant", content="".join(assistant_segment)))
-                completion = store.finish(
+                hydrated_attachments = store.attachments(session_id)
+                turn_id = turn.id
+                request_id = body.message_id or turn_id
+                request_logger.info(
+                    "AI request started session_id=%s question_chars=%s question=%s files=%s",
                     session_id,
-                    history_question,
-                    "".join(assistant_parts),
-                    proposal,
-                    base_revision=base_revision,
-                    turn_messages=turn_messages,
+                    len(question),
+                    json.dumps(_question_log_preview(question), ensure_ascii=False),
+                    len(hydrated_attachments),
                 )
-                completed = True
-                saved_outcome = (
-                    ("done", {"message_id": turn_id})
-                    if completion.turn_saved
-                    else ("stale", {"message": STALE_TURN_ERROR})
-                )
-
-                if not completion.turn_saved:
-                    yield _sse_event("stale", {"message": STALE_TURN_ERROR})
-                    return
-                if completion.history_trimmed_count and completion.history_trimmed_count != dropped_history:
-                    yield _sse_event("history_trimmed", {"dropped": completion.history_trimmed_count})
-                if completion.proposal_saved:
-                    yield _sse_event("proposal", {"diff": pending_proposal.diff})
-                if pending_download is not None:
-                    if store.save_download(session_id, turn_id, pending_download):
-                        yield _sse_event("download", {"download_id": turn_id})
-                    else:
-                        yield _sse_event(
-                            "warning",
-                            {
-                                "message": "The generated ZIP could not be retained because the service memory limit was reached."
-                            },
-                        )
-                done = {"message_id": turn_id}
-                yield _sse_event(
-                    "context_usage", context_usage(completion.context_used_chars, settings, last_call, provider)
-                )
-                yield _sse_event("done", done)
-            except asyncio.CancelledError:
-                if completed:
-                    # Stop can arrive while a completed answer is being persisted.
-                    yield (
-                        _sse_event("done", {"message_id": turn_id})
-                        if completion.turn_saved
-                        else _sse_event("stale", {"message": STALE_TURN_ERROR})
-                    )
-                else:
-                    yield _sse_event("stopped", {"message_id": turn_id})
-            except ProviderError as exc:
-                error_code = "provider_error"
-                yield _sse_event("error", {"message": exc.user_message or PROVIDER_ERROR})
-            except SandboxDownloadError as exc:
-                error_code = "download_error"
-                yield _sse_event("error", {"message": str(exc)})
-            except SandboxCommandTimeoutError:
-                error_code = "sandbox_command_timeout"
-                yield _sse_event("error", {"message": SANDBOX_COMMAND_TIMEOUT_ERROR})
-            except SandboxTurnTimeoutError:
-                error_code = "sandbox_timeout"
-                yield _sse_event("error", {"message": SANDBOX_TURN_TIMEOUT_ERROR})
-            except SandboxCandidateError as exc:
-                error_code = "candidate_validation"
-                logger.warning("AI candidate validation failed: %s", exc)
-                yield _sse_event(
-                    "error",
-                    {"message": CANDIDATE_VALIDATION_ERROR + (f"\n\n{exc.user_message}" if exc.user_message else "")},
-                )
-            except SandboxError:
-                error_code = "sandbox_error"
-                logger.exception("AI sandbox turn failed")
-                yield _sse_event("error", {"message": "The temporary AI sandbox failed. Please try again."})
-            except Exception:
-                error_code = "internal_error"
-                logger.exception("Unexpected AI stream failure")
-                yield _sse_event("error", {"message": "The AI response failed unexpectedly."})
-            finally:
-                pending_turn_stops.discard(session_id)
-                if current_task is not None and active_turn_tasks.get(session_id) is current_task:
-                    del active_turn_tasks[session_id]
-                    active_turn_requests.pop(session_id, None)
-                if not completed:
-                    store.abort(session_id)
-                recovery_metadata.update(error_code=error_code, usage=asdict(usage) if usage else None)
-                release_turn()
-
-        async def run_turn() -> None:
-            queue = asyncio.Queue(maxsize=64)
-            terminal = None
-            shutdown = False
-
-            async def collect_events() -> None:
-                source = generate_events()
-                try:
-                    async for block in source:
-                        lines = block.splitlines()
-                        event_type = next(line[7:] for line in lines if line.startswith("event: "))
-                        data = json.loads(next(line[6:] for line in lines if line.startswith("data: ")))
-                        await queue.put((event_type, data))
-                except asyncio.CancelledError:
-                    await queue.put(saved_outcome or ("stopped", {"message_id": turn_id}))
-                finally:
-                    await source.aclose()
-                    await queue.put(None)
-
-            collector = asyncio.create_task(collect_events(), name=f"ai-output-{turn_id}")
-            try:
-                ended = False
-                while not ended:
-                    batch = []
-                    event = await queue.get()
-                    while True:
-                        if event is None:
-                            ended = True
-                            break
-                        if event[0] in {"delta", "reasoning"}:
-                            append_compacted(batch, *event)
-                        else:
-                            batch.append({"type": event[0], "data": event[1]})
-                        if queue.empty():
-                            break
-                        event = queue.get_nowait()
-                    for event in batch:
-                        if event["type"] in {"done", "stopped", "stale", "error"}:
-                            terminal = (event["type"], event["data"])
-                        else:
-                            await turn_journal.publish(replay_turn, event["type"], event["data"])
-            except asyncio.CancelledError:
-                # Only shutdown cancels this worker. Stop cancels the event source instead.
-                terminal = saved_outcome or terminal
-                shutdown = True
-            except Exception:
-                logger.exception("AI turn recovery failed session_id=%s", session_id)
-                replay_turn.append(
-                    replay_turn.cursor + 1,
-                    "error",
+                if not await save_session(session_id):
+                    raise RuntimeError("AI message recovery is temporarily unavailable.")
+                replay_turn = await turn_journal.start(
+                    session_id,
+                    turn_id,
+                    request_id,
+                    question,
                     {
-                        "message": "AI message recovery is temporarily unavailable. Reconnect to check the saved response."
+                        "model": settings.provider_model,
+                        "auth_credential_id": request.state.auth_credential_id,
+                        "attachment_count": len(hydrated_attachments),
                     },
                 )
-            finally:
-                if not collector.done():
-                    collector.cancel()
-                # Release a producer waiting for a full queue before joining it. Keep a
-                # terminal event that the turn queued before shutdown.
-                while not queue.empty():
-                    event = queue.get_nowait()
-                    if shutdown and terminal is None and event and event[0] in {"done", "stopped", "stale", "error"}:
-                        terminal = event
-                await asyncio.gather(collector, return_exceptions=True)
-                if terminal is not None:
-                    async with state_write_lock(session_id):
-                        saved = await turn_journal.finish(
-                            replay_turn, *terminal, state=store.recovery_state(session_id), metadata=recovery_metadata
-                        )
-                        record_save(session_id, saved)
-                else:
-                    await save_session(session_id)
+                turn.admitting = False
+                turn.ready.set_result(True)
+                history, schedule_yaml = snapshot.history, snapshot.schedule_yaml
+                proposal_yaml, proposal_diff = snapshot.proposal_yaml, snapshot.proposal_diff
+                previously_dropped = snapshot.dropped_history_messages
+                history_question = question
+                saved_outcome = None
+                recovery_metadata = {}
 
-        worker = asyncio.create_task(run_turn(), name=f"ai-turn-{turn_id}")
-        turn_workers.add(worker)
-        worker.add_done_callback(turn_workers.discard)
-        # Keep the session loaded until the worker saves the turn's outcome.
-        worker.add_done_callback(pin_session(session_id))
+                async def generate_events():
+                    nonlocal saved_outcome
+                    assistant_parts: list[str] = []
+                    pending_proposal: AgentProposal | None = None
+                    pending_download: bytes | None = None
+                    completed = False
+
+                    error_code = None
+                    usage = None
+                    last_call: TokenUsage | None = None
+                    turn_messages = [ChatMessage(role="user", content=history_question)]
+                    assistant_segment: list[str] = []
+                    try:
+                        if turn.cancelled or await turn_journal.was_stopped(session_id, request_id):
+                            raise asyncio.CancelledError
+                        latest_artifact = await session_optimizer.latest_result_artifact(session_id)
+                        retained_history = recent_history(history, settings.max_history_chars)
+                        dropped_history = previously_dropped + len(history) - len(retained_history)
+                        messages = build_provider_messages(
+                            retained_history,
+                            schedule_yaml,
+                            question,
+                            hydrated_attachments,
+                            system_prompt=SANDBOX_SYSTEM_PROMPT,
+                            pending_proposal=bool(proposal_yaml),
+                            optimizer_result_available=latest_artifact is not None,
+                            max_history_chars=settings.max_history_chars,
+                            max_download_bytes=settings.max_download_bytes,
+                        )
+                        yield _sse_event(
+                            "model_input", model_input(messages, len(retained_history), dropped_history, "question")
+                        )
+                        context_chars = history_context_chars(history, settings.max_history_chars)
+                        yield _sse_event("context_usage", context_usage(context_chars, settings))
+                        if dropped_history:
+                            yield _sse_event("history_trimmed", {"dropped": dropped_history})
+                        async with concurrency_limit:
+                            agent_events = run_sandbox_agent(
+                                provider,
+                                sandbox_factory,
+                                schedule_yaml,
+                                messages,
+                                SandboxAgentLimits.from_settings(settings),
+                                take_steering=lambda close_if_empty: store.take_steering(session_id, close_if_empty),
+                                pending_proposal_yaml=proposal_yaml,
+                                pending_proposal_diff=proposal_diff,
+                                execute_optimizer=(
+                                    lambda current_yaml, arguments: session_optimizer.execute(
+                                        session_id, current_yaml, arguments
+                                    )
+                                ),
+                                attachments=hydrated_attachments,
+                                optimizer_result=latest_artifact.content if latest_artifact is not None else None,
+                                optimizer_context=latest_artifact.schedule_context
+                                if latest_artifact is not None
+                                else None,
+                            )
+                            async with aclosing(agent_events):
+                                async for event in agent_events:
+                                    if isinstance(event, AgentText):
+                                        assistant_parts.append(event.text)
+                                        assistant_segment.append(event.text)
+                                        yield _sse_event("delta", {"text": event.text})
+                                    elif isinstance(event, AgentReasoning):
+                                        yield _sse_event("reasoning", {"text": event.text})
+                                    elif isinstance(event, TokenUsage):
+                                        usage = event if usage is None else usage + event
+                                        last_call = event
+                                        yield _sse_event(
+                                            "context_usage", context_usage(context_chars, settings, last_call, provider)
+                                        )
+                                    elif isinstance(event, AgentToolStart):
+                                        yield _sse_event(
+                                            "tool_start",
+                                            {
+                                                "name": event.name,
+                                                "arguments": event.arguments,
+                                            },
+                                        )
+                                    elif isinstance(event, AgentToolUse):
+                                        yield _sse_event(
+                                            "tool",
+                                            {
+                                                "name": event.name,
+                                                "arguments": event.arguments,
+                                                "result": event.result,
+                                                "ok": event.ok,
+                                            },
+                                        )
+                                    elif isinstance(event, AgentSteering):
+                                        if assistant_segment:
+                                            turn_messages.append(
+                                                ChatMessage(role="assistant", content="".join(assistant_segment))
+                                            )
+                                        turn_messages.append(ChatMessage(role="user", content=event.text))
+                                        assistant_segment.clear()
+                                        yield _sse_event(
+                                            "steering",
+                                            {
+                                                "message_id": event.message_id,
+                                                "message": event.text,
+                                            },
+                                        )
+                                    elif isinstance(event, AgentScheduleChange):
+                                        yield _sse_event(
+                                            "schedule_change",
+                                            {"schedule_yaml": event.schedule_yaml},
+                                        )
+                                    elif isinstance(event, AgentDownload):
+                                        pending_download = event.content
+                                    elif isinstance(event, AgentProposal):
+                                        pending_proposal = event
+                        proposal = None
+                        if pending_proposal is not None:
+                            proposal = (pending_proposal.text, pending_proposal.diff)
+                        turn_messages.append(ChatMessage(role="assistant", content="".join(assistant_segment)))
+                        completion = store.finish(
+                            session_id,
+                            history_question,
+                            "".join(assistant_parts),
+                            proposal,
+                            snapshot=snapshot,
+                            turn_messages=turn_messages,
+                        )
+                        completed = True
+                        turn.finishing = True
+                        saved_outcome = (
+                            ("done", {"message_id": turn_id})
+                            if completion.turn_saved
+                            else ("stale", {"message": STALE_TURN_ERROR})
+                        )
+
+                        if not completion.turn_saved:
+                            yield _sse_event("stale", {"message": STALE_TURN_ERROR})
+                            return
+                        if completion.history_trimmed_count and completion.history_trimmed_count != dropped_history:
+                            yield _sse_event("history_trimmed", {"dropped": completion.history_trimmed_count})
+                        if completion.proposal_saved:
+                            yield _sse_event("proposal", {"diff": pending_proposal.diff})
+                        if pending_download is not None:
+                            if store.save_download(session_id, turn_id, pending_download):
+                                yield _sse_event("download", {"download_id": turn_id})
+                            else:
+                                yield _sse_event(
+                                    "warning",
+                                    {
+                                        "message": "The generated ZIP could not be retained because the service memory limit was reached."
+                                    },
+                                )
+                        done = {"message_id": turn_id}
+                        yield _sse_event(
+                            "context_usage", context_usage(completion.context_used_chars, settings, last_call, provider)
+                        )
+                        yield _sse_event("done", done)
+                    except asyncio.CancelledError:
+                        if completed:
+                            # Stop can arrive while a completed answer is being persisted.
+                            yield (
+                                _sse_event("done", {"message_id": turn_id})
+                                if completion.turn_saved
+                                else _sse_event("stale", {"message": STALE_TURN_ERROR})
+                            )
+                        else:
+                            yield _sse_event("stopped", {"message_id": turn_id})
+                    except ProviderError as exc:
+                        error_code = "provider_error"
+                        yield _sse_event("error", {"message": exc.user_message or PROVIDER_ERROR})
+                    except SandboxDownloadError as exc:
+                        error_code = "download_error"
+                        yield _sse_event("error", {"message": str(exc)})
+                    except SandboxCommandTimeoutError:
+                        error_code = "sandbox_command_timeout"
+                        yield _sse_event("error", {"message": SANDBOX_COMMAND_TIMEOUT_ERROR})
+                    except SandboxTurnTimeoutError:
+                        error_code = "sandbox_timeout"
+                        yield _sse_event("error", {"message": SANDBOX_TURN_TIMEOUT_ERROR})
+                    except SandboxCandidateError as exc:
+                        error_code = "candidate_validation"
+                        logger.warning("AI candidate validation failed: %s", exc)
+                        yield _sse_event(
+                            "error",
+                            {
+                                "message": CANDIDATE_VALIDATION_ERROR
+                                + (f"\n\n{exc.user_message}" if exc.user_message else "")
+                            },
+                        )
+                    except SandboxError:
+                        error_code = "sandbox_error"
+                        logger.exception("AI sandbox turn failed")
+                        yield _sse_event("error", {"message": "The temporary AI sandbox failed. Please try again."})
+                    except Exception:
+                        error_code = "internal_error"
+                        logger.exception("Unexpected AI stream failure")
+                        yield _sse_event("error", {"message": "The AI response failed unexpectedly."})
+                    finally:
+                        if not completed:
+                            store.abort(session_id, snapshot)
+                        recovery_metadata.update(error_code=error_code, usage=asdict(usage) if usage else None)
+
+                queue = asyncio.Queue(maxsize=64)
+                terminal = None
+
+                async def collect_events() -> None:
+                    source = generate_events()
+                    try:
+                        async for block in source:
+                            lines = block.splitlines()
+                            event_type = next(line[7:] for line in lines if line.startswith("event: "))
+                            data = json.loads(next(line[6:] for line in lines if line.startswith("data: ")))
+                            await queue.put((event_type, data))
+                    except asyncio.CancelledError:
+                        await queue.put(saved_outcome or ("stopped", {"message_id": turn_id}))
+                    finally:
+                        await source.aclose()
+                        await queue.put(None)
+
+                collector = asyncio.create_task(collect_events(), name=f"ai-output-{turn_id}")
+                try:
+                    ended = False
+                    while not ended:
+                        batch = []
+                        event = await queue.get()
+                        while True:
+                            if event is None:
+                                ended = True
+                                break
+                            if event[0] in {"delta", "reasoning"}:
+                                append_compacted(batch, *event)
+                            else:
+                                batch.append({"type": event[0], "data": event[1]})
+                            if queue.empty():
+                                break
+                            event = queue.get_nowait()
+                        for event in batch:
+                            if event["type"] in {"done", "stopped", "stale", "error"}:
+                                terminal = (event["type"], event["data"])
+                            else:
+                                await turn_journal.publish(replay_turn, event["type"], event["data"])
+                except asyncio.CancelledError:
+                    terminal = saved_outcome or terminal
+                    if terminal is None and not shutting_down:
+                        terminal = ("stopped", {"message_id": turn_id})
+                except Exception:
+                    logger.exception("AI turn recovery failed session_id=%s", session_id)
+                    terminal = (
+                        "error",
+                        {
+                            "message": "AI message recovery is temporarily unavailable. Reconnect to check the saved response."
+                        },
+                    )
+                finally:
+                    turn.finishing = True
+                    if not collector.done():
+                        collector.cancel()
+                    # Release a producer waiting for a full queue before joining it. Keep a
+                    # terminal event that the turn queued before shutdown.
+                    while not queue.empty():
+                        event = queue.get_nowait()
+                        if terminal is None and event and event[0] in {"done", "stopped", "stale", "error"}:
+                            terminal = event
+                    await asyncio.gather(collector, return_exceptions=True)
+                    if session_id in store._sessions:
+                        if shutting_down and terminal is not None and terminal[0] == "stopped":
+                            terminal = None
+                        if terminal is not None:
+                            async with state_write_lock(session_id):
+                                saved = await turn_journal.finish(
+                                    replay_turn,
+                                    *terminal,
+                                    state=store.recovery_state(session_id),
+                                    metadata=recovery_metadata,
+                                )
+                                record_save(session_id, saved)
+                        else:
+                            await save_session(session_id)
+            finally:
+                turn.admitting = False
+                store.abort(session_id, snapshot)
+
+        turn = turns.start(session_id, run_foreground, message_id=body.message_id)
+        turn.task.add_done_callback(pin_session(session_id))
+        try:
+            if not await asyncio.shield(turn.ready):
+                if turn.task.cancelled():
+                    raise HTTPException(status_code=409, detail="The response was stopped before it started.")
+                await turn.wait()
+        except asyncio.CancelledError:
+            if not turn.ready.done() or not turn.ready.result():
+                turn.cancel()
+                await asyncio.shield(turn.done)
+            raise
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from None
         return turn_response(replay_turn, body.last_event_id, owner)
 
     @app.put(

@@ -805,6 +805,7 @@ test('restores interleaved foreground and optimizer replies in chat and export o
   await page.addInitScript(original => {
     sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
       sessionId: 'browser-session', endpoint: '/ai', expiresAt: Date.now() + 60_000, retentionSeconds: 172800,
+      sessionEventId: 50,
       messages: [
         { id: 'system', role: 'system', content: 'Mock system prompt' },
         { id: 'question', role: 'user', content: original.question, requestId: original.id },
@@ -818,10 +819,9 @@ test('restores interleaved foreground and optimizer replies in chat and export o
     }));
   }, request);
   const backgroundEvents = [
-    { type: 'turn_start', data: { message_id: 'background', trigger: 'optimizer' } },
-    { type: 'model_input', data: { system: 'Mock system prompt', messages: [{ kind: 'optimizer', content: 'Completed optimizer result.' }] } },
-    { type: 'delta', data: { text: 'The result is ready.' } },
-    { type: 'done', data: { message_id: 'background' } },
+    { type: 'model_input', data: { turn_id: 'background', system: 'Mock system prompt', messages: [{ kind: 'optimizer', content: 'Completed optimizer result.' }] } },
+    { type: 'delta', data: { turn_id: 'background', text: 'The result is ready.' } },
+    { type: 'done', data: { turn_id: 'background', message_id: 'background' } },
   ];
   await page.route('**/ai/sessions/browser-session/events', route => route.fulfill({
     contentType: 'text/event-stream',

@@ -1,6 +1,6 @@
 ---
 name: resolve-review-comments
-description: Triage unresolved pull request review comments against the current code, fix only valid findings, run affected validation, and commit when authorized. Use when asked to assess or resolve PR feedback. Do not use for a general code review without existing reviewer comments.
+description: Triage unresolved pull request review comments against the current code, fix only valid findings, run affected validation, and create self-contained commits. Use when asked to assess or resolve PR feedback. Do not use for a general code review without existing reviewer comments.
 ---
 
 # Resolve Review Comments
@@ -10,7 +10,7 @@ comment as a required change.
 
 ## Establish the current review state
 
-1. Inspect the worktree and preserve its staged and unstaged state.
+1. Inspect staged and unstaged changes and identify unrelated work.
 2. Read the repository and affected-module instructions before editing.
 3. Verify the pull request head SHA, local `HEAD`, and remote-tracking branch.
    Rendered review pages and bot summaries can lag behind newly pushed commits.
@@ -48,9 +48,11 @@ that exercise unrelated optional dependencies unless the user requests full CI
 or the change has broad impact.
 
 Review the final diff, run the repository's whitespace check, and ensure no
-temporary or generated files are included. Commit only when the user requested
-it. Follow the repository's identity and commit-message rules, and never use a
-coding-agent identity as author, committer, or co-author.
+temporary or generated files are included. Follow the repository's commit policy
+and group each complete fix with its related tests and documentation. Adjust the
+index as needed to exclude unrelated changes. Follow the repository's identity
+and commit-message rules, and never use a coding-agent identity as author,
+committer, or co-author.
 
 Report the comments fixed, comments skipped with reasons, validation evidence,
 commit hash when created, and whether the commit was pushed. Do not resolve

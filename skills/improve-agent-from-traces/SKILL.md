@@ -1,6 +1,6 @@
 ---
 name: improve-agent-from-traces
-description: Inspect exported AI chats, reproduce errors or wasted work, test fixes to prompts or helpers, and commit validated improvements when authorized. Use for trace-driven agent improvement, including user-identified issues. Planning requests stop at proposed experiments.
+description: Inspect exported AI chats, reproduce errors or wasted work, test fixes to prompts or helpers, and create self-contained commits for validated improvements. Use for trace-driven agent improvement, including user-identified issues. Planning requests stop at proposed experiments.
 ---
 
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
@@ -12,7 +12,7 @@ description: Inspect exported AI chats, reproduce errors or wasted work, test fi
 Turn observed agent failures into reproducible tests, measured fixes, and
 reviewable commits. Follow the requested scope. An inspection or planning
 request ends with findings and proposed experiments. Implementation includes
-the test, fix, and validation. Commit only when the user has authorized it.
+the test, fix, and validation. Follow the repository's commit policy.
 
 ## Read the chat and tool calls
 
@@ -278,8 +278,8 @@ testcase, fixture, and control inputs. Recomputing a receipt fingerprint from
 changed files does not validate old results. Rerun mismatched comparisons and
 retain the original reports.
 
-When committing is authorized, combine the fix, representative case, tests, and
-minimal evidence in one self-contained commit. Fold minor corrections into that
+Combine the fix, representative case, tests, and minimal evidence in one
+self-contained commit. Fold minor corrections into that
 commit. Follow the repository's Git and plain-English rules. Name the relevant
 case and observed change without adding routine validation footers or run-log
 paths. Lead with confirmed results and limit each caveat to the claim it affects.

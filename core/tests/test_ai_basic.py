@@ -394,7 +394,7 @@ def test_active_session_drains_all_queued_steering_messages() -> None:
         ("queued-1", "Focus on P2 instead."),
         ("queued-2", "Also compare P3."),
     ]
-    app.state.session_store.abort(session_id)
+    app.state.session_store.abort(session_id, app.state.session_store._sessions[session_id].turn)
 
 
 def test_message_request_logs_question_to_stdout(caplog: pytest.LogCaptureFixture) -> None:
@@ -585,10 +585,12 @@ def test_disconnected_turn_keeps_running_until_explicit_stop(wait_stage: str, mo
         assert not operation_cancelled.is_set()
         if factory.created:
             assert not factory.created[0].closed
-        task = app.state.active_turn_tasks[session.id]
+        task = app.state.turns._turns[session.id][0].task
         task.cancel()
         # The turn worker saves the stopped outcome after this event task ends.
-        await asyncio.wait_for(asyncio.gather(*app.state.turn_workers), timeout=1)
+        await asyncio.wait_for(
+            asyncio.gather(*(turn.done for pending in app.state.turns._turns.values() for turn in pending)), timeout=1
+        )
 
         backend = factory.created[0] if factory.created else None
         return backend, operation_cancelled.is_set(), session.active, list(session.history)
@@ -698,7 +700,7 @@ def test_stop_cancels_background_turn_waiting_behind_foreground_turn() -> None:
                 stopped.status_code,
                 app.state.session_store._sessions[session_id].active,
                 provider.calls,
-                app.state.turn_locks[session_id].locked(),
+                app.state.turns.busy(session_id),
             )
 
     status_code, session_active, provider_calls, lock_held = asyncio.run(exercise())
@@ -791,7 +793,7 @@ def test_disconnect_before_stream_iteration_keeps_the_accepted_turn(monkeypatch)
         }
 
         await app(scope, receive, send)
-        await asyncio.gather(*app.state.turn_workers)
+        await asyncio.gather(*(turn.done for pending in app.state.turns._turns.values() for turn in pending))
         return session.active
 
     assert not asyncio.run(exercise())
@@ -911,7 +913,7 @@ def test_session_status_reports_sliding_lifetime_without_refreshing_it(monkeypat
     assert expired.json()["detail"] == "Chat session not found."
 
 
-def test_expiring_a_session_releases_its_turn_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_expiring_a_session_keeps_no_turn_owner(monkeypatch: pytest.MonkeyPatch) -> None:
     now = 100.0
     monkeypatch.setattr("nurse_scheduling.ai.app.time.monotonic", lambda: now)
     app = create_test_app(settings=make_settings(session_ttl_seconds=20), provider=FakeProvider())
@@ -920,15 +922,15 @@ def test_expiring_a_session_releases_its_turn_lock(monkeypatch: pytest.MonkeyPat
 
     active = client.post(f"/sessions/{session_id}/messages", json={"message": "Keep this chat active."})
     assert active.status_code == 200
-    assert session_id in app.state.turn_locks
+    assert not app.state.turns.busy(session_id)
 
     now = 131.0
     assert client.get(f"/sessions/{session_id}").status_code == 404
-    assert app.state.turn_locks == {}
+    assert app.state.turns._turns == {}
 
     unknown = client.post(f"/sessions/{uuid4()}/messages", json={"message": "No such chat."})
     assert unknown.status_code == 404
-    assert app.state.turn_locks == {}
+    assert app.state.turns._turns == {}
 
 
 def test_finishing_a_turn_keeps_the_deadline_set_when_it_started(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -940,11 +942,11 @@ def test_finishing_a_turn_keeps_the_deadline_set_when_it_started(monkeypatch: py
     session = store.create(owner, schedule_yaml())
 
     now = 105.0
-    _, _, revision, _, _, _ = store.begin(session.id, owner)
+    snapshot = store.begin(session.id, owner)
     assert session.expires_at == 125.0
 
     now = 115.0
-    assert store.finish(session.id, "Question", "Answer", base_revision=revision).turn_saved
+    assert store.finish(session.id, "Question", "Answer", snapshot=snapshot).turn_saved
     assert session.expires_at == 125.0
 
 
@@ -1977,7 +1979,9 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         assert events[2].data["state"] == "completed"
         assert events[2].data["downloadable"] is True
         assert events[4].data["max_chars"] == 200_000
+        assert all(event.data["turn_id"] == events[3].data["message_id"] for event in events[3:])
         assert events[5].data == {
+            "turn_id": events[3].data["message_id"],
             "system": provider.calls[3][0]["content"],
             "messages": [
                 {"kind": "optimizer", "content": provider.calls[3][-2]["content"]},
@@ -1985,7 +1989,7 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
             ],
         }
         assert provider.calls[3][0] == provider.calls[0][0]
-        assert events[8].data == {"text": "The optimizer returned score 23."}
+        assert events[8].data == {"text": "The optimizer returned score 23.", "turn_id": events[3].data["message_id"]}
         assert events[9].data["used_chars"] > events[4].data["used_chars"]
         if history_enabled:
             assert len(history_starts) == 3
@@ -2425,13 +2429,13 @@ def test_a_proposal_that_fails_revalidation_never_becomes_the_session_schedule()
     owner = client.cookies[OWNER_COOKIE]
     broken_payload = base_schedule_payload()
     broken_payload["preferences"][1]["person"] = ["P9"]
-    _, _, base_revision, _, _, _ = store.begin(session_id, owner)
+    snapshot = store.begin(session_id, owner)
     assert store.finish(
         session_id,
         "Break it",
         "Broken proposal",
         (schedule_yaml(broken_payload), "broken diff"),
-        base_revision=base_revision,
+        snapshot=snapshot,
     ).proposal_saved
 
     approved = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
@@ -2465,23 +2469,23 @@ def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved()
     first_proposal = original.replace("description: ''", "description: First", 1)
     stale_proposal = original.replace("description: ''", "description: Stale", 1)
     session = store.create("browser-owner", original)
-    _, _, original_revision, _, _, _ = store.begin(session.id, "browser-owner")
+    original_snapshot = store.begin(session.id, "browser-owner")
     assert store.finish(
         session.id,
         "First edit",
         "First proposal",
         (first_proposal, "first diff"),
-        base_revision=original_revision,
+        snapshot=original_snapshot,
     ).proposal_saved
-    _, _, active_turn_revision, _, _, _ = store.begin(session.id, "browser-owner")
+    active_snapshot = store.begin(session.id, "browser-owner")
 
-    store.adopt_proposal(session.id, "browser-owner", original_revision)
+    store.adopt_proposal(session.id, "browser-owner", session.revision)
     completion = store.finish(
         session.id,
         "Stale edit",
         "Stale proposal",
         (stale_proposal, "stale diff"),
-        base_revision=active_turn_revision,
+        snapshot=active_snapshot,
     )
 
     assert not completion.turn_saved
@@ -2491,7 +2495,7 @@ def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved()
         ChatMessage(role="user", content=PROPOSAL_APPROVED_HISTORY),
     ]
     with pytest.raises(HTTPException) as exc_info:
-        store.adopt_proposal(session.id, "browser-owner", active_turn_revision)
+        store.adopt_proposal(session.id, "browser-owner", session.revision)
     assert exc_info.value.status_code == 404
 
 
@@ -2499,7 +2503,7 @@ def test_session_store_queues_steering_once_and_retains_it_with_the_turn() -> No
     app = create_test_app(settings=make_settings(), provider=FakeProvider())
     store = app.state.session_store
     session = store.create("browser-owner", schedule_yaml())
-    _, _, revision, _, _, _ = store.begin(session.id, "browser-owner")
+    snapshot = store.begin(session.id, "browser-owner")
 
     store.queue_steering(session.id, "browser-owner", "queued-1", "Focus on P2 instead.")
     store.queue_steering(session.id, "browser-owner", "queued-1", "Focus on P2 instead.")
@@ -2509,7 +2513,7 @@ def test_session_store_queues_steering_once_and_retains_it_with_the_turn() -> No
         session.id,
         "Inspect P1.",
         "P2 is the better target.",
-        base_revision=revision,
+        snapshot=snapshot,
         turn_messages=[
             ChatMessage(role="user", content="Inspect P1."),
             ChatMessage(role="assistant", content="P1 needs review."),
@@ -2541,10 +2545,10 @@ def test_session_store_bounds_steering_across_a_whole_turn_not_the_drained_queue
         store.queue_steering(session.id, "browser-owner", "one-too-many", "Keep going.")
 
     assert exc_info.value.status_code == 429
-    assert len(session.steering_ids) == settings.max_history_messages
+    assert len(session.turn.steering_ids) == settings.max_history_messages
 
     # A fresh turn starts the budget over.
-    store.abort(session.id)
+    store.abort(session.id, store._sessions[session.id].turn)
     store.begin(session.id, "browser-owner")
     store.queue_steering(session.id, "browser-owner", "queued-0", "Keep going.")
     assert store.take_steering(session.id, False) == [("queued-0", "Keep going.")]
@@ -2578,12 +2582,12 @@ def test_proposal_history_event_counts_the_exchange_removed_by_the_cap() -> None
     store = app.state.session_store
     session = store.create("browser-owner", "description: test")
     store.begin(session.id, "browser-owner")
-    store.finish(session.id, "question", "answer", ("proposal", "diff"), base_revision=session.revision)
+    store.finish(session.id, "question", "answer", ("proposal", "diff"), snapshot=session.turn)
 
     store.discard_proposal(session.id, "browser-owner")
 
     assert [message["role"] for message in store._sessions[session.id].history] == ["user"]
-    assert store.begin(session.id, "browser-owner")[-1] == 2
+    assert store.begin(session.id, "browser-owner").dropped_history_messages == 2
 
 
 @pytest.mark.parametrize("message_cap", [1, 3], ids=["below-exchange-size", "odd-overflow"])
@@ -2594,7 +2598,7 @@ def test_history_message_cap_keeps_complete_exchanges(message_cap: int) -> None:
 
     for question in ("first question", "second question"):
         store.begin(session.id, "browser-owner")
-        store.finish(session.id, question, f"answer to {question}", base_revision=session.revision)
+        store.finish(session.id, question, f"answer to {question}", snapshot=session.turn)
         assert session.history == [
             ChatMessage(role="user", content=question),
             ChatMessage(role="assistant", content=f"answer to {question}"),
@@ -2629,7 +2633,7 @@ def test_completed_turns_do_not_accumulate_past_the_budget() -> None:
     for _ in range(6):
         for session in sessions:
             store.begin(session.id, "browser-owner")
-            store.finish(session.id, "q" * 100, "A" * 5_000, None, base_revision=session.revision)
+            store.finish(session.id, "q" * 100, "A" * 5_000, None, snapshot=session.turn)
 
     # Each session keeps its schedule and its newest question and answer, so that floor is what
     # remains, independently of how many turns ran.
@@ -2652,7 +2656,7 @@ def test_discarding_a_stale_proposal_returns_its_share_of_the_budget() -> None:
         "question",
         "answer",
         ("p" * 400, "d" * 100),
-        base_revision=session.revision,
+        snapshot=session.turn,
     )
     retained_with_proposal = store.retained_bytes
 
@@ -2671,7 +2675,7 @@ def test_replacing_a_schedule_credits_the_proposal_it_drops() -> None:
     store = app.state.session_store
     session = store.create("browser-owner", "a" * 100)
     store.begin(session.id, "browser-owner")
-    store.finish(session.id, "q", "a", ("p" * 600, "d" * 100), base_revision=session.revision)
+    store.finish(session.id, "q", "a", ("p" * 600, "d" * 100), snapshot=session.turn)
 
     # The larger schedule alone exceeds the budget, but it also drops the proposal.
     store.update_schedule(session.id, "browser-owner", "b" * 300)
@@ -2796,7 +2800,10 @@ def test_background_command_timeout_preserves_tool_result_and_reports_the_actual
                 break
             time.sleep(0.01)
         assert events[-1].type == "error"
-        assert events[-1].data == {"message": SANDBOX_COMMAND_TIMEOUT_ERROR}
+        assert events[-1].data == {
+            "message": SANDBOX_COMMAND_TIMEOUT_ERROR,
+            "turn_id": next(event.data["message_id"] for event in events if event.type == "turn_start"),
+        }
         tool = next(event for event in events if event.type == "tool")
         assert not tool.data["ok"]
         assert "Command timed out" in tool.data["result"]

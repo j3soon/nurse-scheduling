@@ -586,6 +586,42 @@ describe('AI client', () => {
     expect(eventIds).toEqual([7, 8]);
   });
 
+  it('keeps receiving session updates across background turn completions', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(streamedResponse([
+      'id: 1\nevent: turn_start\ndata: {"message_id":"first","trigger":"optimizer"}\n\n',
+      'id: 2\nevent: done\ndata: {"message_id":"first"}\n\n',
+      'id: 3\nevent: optimization\ndata: {"job_id":"opt-1","state":"succeeded","terminal":true,"downloadable":true}\n\n',
+      'id: 4\nevent: turn_start\ndata: {"message_id":"second","trigger":"optimizer"}\n\n',
+      'id: 5\nevent: delta\ndata: {"text":"Second review","turn_id":"second"}\n\n',
+      'id: 6\nevent: stopped\ndata: {"message_id":"second"}\n\n',
+      'id: 7\nevent: error\ndata: {"message":"Recovery notice"}\n\n',
+      'id: 8\nevent: delta\ndata: {"text":"Later update"}\n\n',
+      'id: 9\nevent: delta\ndata: {"text":"Incomplete frame"}\n',
+    ]));
+    vi.stubGlobal('fetch', fetchMock);
+    const cursor = vi.fn();
+    const delta = vi.fn();
+    const done = vi.fn();
+    const stopped = vi.fn();
+    const error = vi.fn();
+    const optimization = vi.fn();
+
+    await streamSessionEvents('session', {
+      onDelta: delta, onDone: done, onStopped: stopped, onError: error,
+      onOptimization: optimization, onEventId: cursor,
+    }, new AbortController().signal, null);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(cursor.mock.calls.map(([id]) => id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(delta.mock.calls.map(([text]) => text)).toEqual(['Second review', 'Later update']);
+    expect(done).toHaveBeenCalledExactlyOnceWith('first');
+    expect(stopped).toHaveBeenCalledExactlyOnceWith('second');
+    expect(error).toHaveBeenCalledExactlyOnceWith('Recovery notice');
+    expect(optimization).toHaveBeenCalledExactlyOnceWith({
+      jobId: 'opt-1', state: 'succeeded', terminal: true, downloadable: true,
+    });
+  });
+
   it('resumes background events after the stored cursor', async () => {
     const fetchMock = vi.fn().mockResolvedValue(streamedResponse([]));
     vi.stubGlobal('fetch', fetchMock);
@@ -601,6 +637,80 @@ describe('AI client', () => {
       'https://api.nursescheduling.org/ai/sessions/session-id/events',
       expect.objectContaining({ headers: { 'Last-Event-ID': '4' } }),
     );
+  });
+
+  it('deduplicates replay and identifies a turn without its retained start event', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      'id: 4\nevent: delta\ndata: {"text":"old","turn_id":"old-turn"}\n\n',
+      'id: 5\nevent: delta\ndata: {"text":"new","turn_id":"new-turn"}\n\n',
+      'id: 5\nevent: delta\ndata: {"text":"duplicate","turn_id":"new-turn"}\n\n',
+    ])));
+    const delta = vi.fn();
+    const context = vi.fn();
+    const cursor = vi.fn();
+    await streamSessionEvents('session', {
+      lastEventId: 4, onDelta: delta, onTurnContext: context, onEventId: cursor,
+    }, new AbortController().signal, null);
+    expect(delta).toHaveBeenCalledExactlyOnceWith('new');
+    expect(context).toHaveBeenCalledExactlyOnceWith('new-turn');
+    expect(cursor).toHaveBeenCalledExactlyOnceWith(5);
+  });
+
+  it.each([
+    { type: 'session_snapshot', id: 0 },
+    { type: 'session_snapshot', id: 3 },
+    { type: 'session_snapshot', id: 4 },
+    { type: 'turn_snapshot', id: 3 },
+    { type: 'turn_snapshot', id: 4 },
+  ])('accepts $type at cursor $id when the stored cursor is 4', async ({ type, id }) => {
+    const events = id === 0 ? [] : [{ type: 'delta', data: { text: 'Recovered answer' } }];
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      `id: ${id}\nevent: ${type}\ndata: ${JSON.stringify({ events })}\n\n`,
+      ...(id > 0 ? [`id: ${id}\nevent: delta\ndata: {"text":"duplicate"}\n\n`] : []),
+      `id: ${id + 1}\nevent: delta\ndata: {"text":"New answer"}\n\n`,
+      `id: ${id + 2}\nevent: done\ndata: {"message_id":"new-turn"}\n\n`,
+    ])));
+    const delta = vi.fn();
+    const replay = vi.fn();
+    const cursor = vi.fn();
+    const done = vi.fn();
+    const callbacks = { lastEventId: 4, onDelta: delta, onReplay: replay, onEventId: cursor, onDone: done };
+    const signal = new AbortController().signal;
+
+    if (type === 'session_snapshot') await streamSessionEvents('session', callbacks, signal, null);
+    else await streamMessage('session', 'Question', callbacks, signal, null);
+
+    expect(replay).toHaveBeenCalledExactlyOnceWith(events);
+    expect(delta.mock.calls.map(([text]) => text)).toEqual([
+      ...(id > 0 ? ['Recovered answer'] : []), 'New answer',
+    ]);
+    expect(cursor.mock.calls.map(([eventId]) => eventId)).toEqual([id, id + 1, id + 2]);
+    expect(done).toHaveBeenCalledExactlyOnceWith('new-turn');
+  });
+
+  it('does not acknowledge a replayable event before receiving its delimiter', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      'id: 6\r\nevent: delta\r\ndata: {"text":"complete"}\r',
+      '\n\r\n',
+      'id: 7\nevent: delta\ndata: {"text":"replay me"}\n',
+    ])));
+    const delta = vi.fn();
+    const cursor = vi.fn();
+    await streamSessionEvents('session', { onDelta: delta, onEventId: cursor }, new AbortController().signal, null);
+    expect(delta).toHaveBeenCalledExactlyOnceWith('complete');
+    expect(cursor).toHaveBeenCalledExactlyOnceWith(6);
+  });
+
+  it('discards an incomplete session frame when no cursor observer is registered', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      'id: 1\nevent: delta\ndata: {"text":"Complete frame"}\n\n',
+      'id: 2\nevent: delta\ndata: {"text":"Incomplete frame"}\n',
+    ])));
+    const delta = vi.fn();
+
+    await streamSessionEvents('session', { onDelta: delta }, new AbortController().signal, null);
+
+    expect(delta).toHaveBeenCalledExactlyOnceWith('Complete frame');
   });
 
   it('stops a session turn with authentication', async () => {

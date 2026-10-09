@@ -456,6 +456,52 @@ describe('ExperimentalAiPage', () => {
     expect(screen.getByText(/This chat expired after 30 days/)).toBeInTheDocument();
   });
 
+  it('clears foreground work and queued input when the chat timer expires', async () => {
+    vi.useFakeTimers();
+    mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, session_retention_seconds: 1 });
+    let foreground: StreamCallbacks | undefined;
+    let foregroundSignal: AbortSignal | undefined;
+    let backgroundSignal: AbortSignal | undefined;
+    let finishStream: (() => void) | undefined;
+    mockStreamMessage.mockImplementation((_id, _question, callbacks, signal) => {
+      foreground = callbacks;
+      foregroundSignal = signal;
+      return new Promise<void>(resolve => { finishStream = resolve; });
+    });
+    mockStreamSessionEvents.mockImplementation((_id, _callbacks, signal) => {
+      backgroundSignal = signal;
+      return new Promise<void>(() => {});
+    });
+    render(<ExperimentalAiPage />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+    fireEvent.change(composer, { target: { value: 'Keep working' } });
+    await act(async () => { fireEvent.submit(composer.closest('form')!); });
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled();
+    fireEvent.change(composer, { target: { value: 'Queued question' } });
+    await act(async () => { fireEvent.submit(composer.closest('form')!); });
+    expect(screen.getByText('Queued for steering')).toBeInTheDocument();
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+
+    expect(screen.getByText(/This chat expired/)).toBeInTheDocument();
+    expect(foregroundSignal?.aborted).toBe(true);
+    expect(backgroundSignal?.aborted).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Queued for steering')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Start new chat' })).toBeEnabled();
+    expect(composer).toBeDisabled();
+    act(() => {
+      foreground?.onDelta('Expired answer');
+      foreground?.onProposal?.('Expired proposal');
+    });
+    await act(async () => finishStream?.());
+    expect(screen.queryByText('Expired answer')).not.toBeInTheDocument();
+    expect(screen.queryByText('Expired proposal')).not.toBeInTheDocument();
+    expect(mockStreamMessage).toHaveBeenCalledOnce();
+    expect(window.sessionStorage.getItem('nurse-scheduling-ai-conversation')).toBeNull();
+  });
+
   it('reports an expired stored chat and requires a new conversation', async () => {
     window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
       sessionId: 'expired-session',
@@ -646,6 +692,7 @@ describe('ExperimentalAiPage', () => {
       callbacks: typeof backgroundCallbacks,
     ) => {
       backgroundCallbacks = callbacks;
+      await new Promise<void>(() => {});
     });
     const firstRender = render(<ExperimentalAiPage />);
 
@@ -799,6 +846,7 @@ describe('ExperimentalAiPage', () => {
       callbacks: typeof backgroundCallbacks,
     ) => {
       backgroundCallbacks = callbacks;
+      await new Promise<void>(() => {});
     });
     render(<ExperimentalAiPage />);
 
@@ -828,6 +876,7 @@ describe('ExperimentalAiPage', () => {
       callbacks: typeof backgroundCallbacks,
     ) => {
       backgroundCallbacks = callbacks;
+      await new Promise<void>(() => {});
     });
     render(<ExperimentalAiPage />);
 
@@ -857,6 +906,7 @@ describe('ExperimentalAiPage', () => {
       callbacks: typeof backgroundCallbacks,
     ) => {
       backgroundCallbacks = callbacks;
+      await new Promise<void>(() => {});
     });
     window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
       sessionId: 'restored-session',
@@ -988,7 +1038,7 @@ describe('ExperimentalAiPage', () => {
     expect(mockStreamMessage).toHaveBeenCalledOnce();
   });
 
-  it('keeps replayed background replies before later questions in the chat and export', async () => {
+  it.each([true, false])('keeps replayed background replies in chat and export order (retained start: %s)', async retainedStart => {
     window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
       sessionId: 'restored-session', endpoint: '/ai', expiresAt: Date.now() + 60_000, retentionSeconds: 2592000,
       messages: [
@@ -997,22 +1047,33 @@ describe('ExperimentalAiPage', () => {
         { id: 'answer', role: 'assistant', content: 'Optimizer started.' },
         { id: 'optimizer-result', role: 'optimizer', content: 'Optimization finished.' },
         { id: 'optimizer-input-background', role: 'user', source: 'optimizer', content: 'Completed optimizer result.' },
-        { id: 'background', role: 'assistant', content: 'Partial result', responseStartedAt: Date.now() - 60_000 },
+        { id: 'background', role: 'assistant', content: 'Partial result', responseStartedAt: Date.now() - 60_000,
+          activity: [{ kind: 'reasoning', text: 'Partial thought' }] },
         { id: 'later-question', role: 'user', content: 'Explain the score.' },
         { id: 'later-answer', role: 'assistant', content: 'The score explanation.' },
       ], syncedSchedule: 'description: current schedule\n', proposalDiff: null,
     }));
     let background: StreamCallbacks | undefined;
-    mockStreamSessionEvents.mockImplementation(async (_id: string, callbacks: StreamCallbacks) => { background = callbacks; });
+    mockStreamSessionEvents.mockImplementation((_id: string, callbacks: StreamCallbacks) => {
+      background = callbacks;
+      return new Promise<void>(() => {});
+    });
     const download = vi.spyOn(chatExport, 'downloadChatExport').mockReturnValue('');
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
     await waitFor(() => expect(background).toBeDefined());
     for (let replay = 0; replay < 2; replay += 1) {
       act(() => {
-        background?.onReplay?.([{ type: 'turn_start', data: { message_id: 'background', trigger: 'optimizer' } }]);
-        background?.onTurnStart?.('background', 'optimizer');
+        background?.onReplay?.([
+          ...(retainedStart ? [{ type: 'turn_start', data: { message_id: 'background', trigger: 'optimizer' } }] : []),
+          { type: 'reasoning', data: { turn_id: 'background', text: 'Complete thought' } },
+          { type: 'delta', data: { turn_id: 'background', text: 'The result is ready.' } },
+          { type: 'done', data: { turn_id: 'background', message_id: 'background' } },
+        ]);
+        if (retainedStart) background?.onTurnStart?.('background', 'optimizer');
+        else background?.onTurnContext?.('background');
         background?.onModelInput?.({ system: 'Shared instructions', messages: [{ kind: 'optimizer', content: 'Completed optimizer result.' }] });
+        background?.onReasoning?.('Complete thought');
         background?.onDelta('The result is ready.');
         background?.onDone?.('background');
       });
@@ -1025,8 +1086,40 @@ describe('ExperimentalAiPage', () => {
         'Shared instructions', 'Optimize it.', 'Optimizer started.', 'Optimization finished.',
         'Completed optimizer result.', 'The result is ready.', 'Explain the score.', 'The score explanation.',
       ]);
+      expect(download.mock.calls[replay][1][5].activity).toEqual([
+        { kind: 'reasoning', text: 'Complete thought' },
+        { kind: 'response', text: 'The result is ready.' },
+      ]);
     }
     expect(mockStreamMessage).not.toHaveBeenCalled();
+  });
+
+  it('keeps queued input waiting when a replay snapshot has no terminal event', async () => {
+    const user = userEvent.setup();
+    let background: StreamCallbacks | undefined;
+    mockStreamSessionEvents.mockImplementation((_id, callbacks) => {
+      background = callbacks;
+      return new Promise<void>(() => {});
+    });
+    mockQueueMessage.mockRejectedValue(new MockAiHttpError('Not accepting steering', 409));
+    render(<ExperimentalAiPage />);
+    const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+    await user.type(composer, 'Optimize');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    act(() => background?.onTurnStart?.('review', 'optimizer'));
+    await user.type(composer, 'Explain the result');
+    fireEvent.submit(composer.closest('form')!);
+    await waitFor(() => expect(mockQueueMessage).toHaveBeenCalledOnce());
+
+    act(() => background?.onReplay?.([]));
+
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled();
+    expect(screen.getByText('Queued for steering')).toBeInTheDocument();
+    expect(mockStreamMessage).toHaveBeenCalledOnce();
+    act(() => background?.onDone?.('review'));
+    await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(2));
+    expect(mockStreamMessage.mock.calls[1][1]).toBe('Explain the result');
   });
 
   it('does not submit a question stopped while the session is being created', async () => {
@@ -1059,6 +1152,7 @@ describe('ExperimentalAiPage', () => {
       callbacks: typeof backgroundCallbacks,
     ) => {
       backgroundCallbacks = callbacks;
+      await new Promise<void>(() => {});
     });
     render(<ExperimentalAiPage />);
 
@@ -1137,6 +1231,7 @@ describe('ExperimentalAiPage', () => {
       callbacks: typeof backgroundCallbacks,
     ) => {
       backgroundCallbacks = callbacks;
+      await new Promise<void>(() => {});
     });
     render(<ExperimentalAiPage />);
 
@@ -1177,6 +1272,7 @@ describe('ExperimentalAiPage', () => {
       callbacks: typeof backgroundCallbacks,
     ) => {
       backgroundCallbacks = callbacks;
+      await new Promise<void>(() => {});
     });
     window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
       sessionId: 'restored-session',
@@ -1205,6 +1301,84 @@ describe('ExperimentalAiPage', () => {
     expect(stored.messages[0].status).toBeUndefined();
   });
 
+  it('keeps a foreground response active when an older background completion is replayed', async () => {
+    const user = userEvent.setup();
+    let background: StreamCallbacks | undefined;
+    let finishForeground: (() => void) | undefined;
+    mockStreamSessionEvents.mockImplementation(async (_id, callbacks) => {
+      background = callbacks;
+      await new Promise<void>(() => {});
+    });
+    mockStreamMessage.mockImplementation(async () => {
+      await new Promise<void>(resolve => { finishForeground = resolve; });
+    });
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Keep working');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(finishForeground).toBeDefined());
+    act(() => background?.onDone?.('previous-turn'));
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled();
+    await act(async () => finishForeground?.());
+    expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+  });
+
+  it('sends queued input after a background review finishes', async () => {
+    const user = userEvent.setup();
+    const download = vi.spyOn(chatExport, 'downloadChatExport').mockReturnValue('');
+    let background: StreamCallbacks | undefined;
+    mockStreamSessionEvents.mockImplementation(async (_id, callbacks) => {
+      background = callbacks;
+      await new Promise<void>(() => {});
+    });
+    mockQueueMessage.mockRejectedValue(new MockAiHttpError('Not accepting steering', 409));
+    render(<ExperimentalAiPage />);
+    const input = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+    await user.type(input, 'Optimize');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    act(() => background?.onTurnStart?.('review', 'optimizer'));
+    const queuedAt = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(queuedAt);
+    await user.type(input, 'Explain the result');
+    fireEvent.submit(input.closest('form')!);
+    await waitFor(() => expect(mockQueueMessage).toHaveBeenCalledOnce());
+    expect(mockStreamMessage).toHaveBeenCalledOnce();
+    clock.mockReturnValue(queuedAt + 60_000);
+    act(() => background?.onDone?.('review'));
+    await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(2));
+    expect(mockStreamMessage.mock.calls[1][1]).toBe('Explain the result');
+    const timestamp = screen.getByText('Explain the result').closest('article')?.querySelector('time');
+    expect(timestamp).toHaveAttribute('dateTime', new Date(queuedAt).toISOString());
+    await user.click(screen.getByRole('button', { name: 'Markdown' }));
+    expect(download.mock.calls[0][1]).toContainEqual(expect.objectContaining({
+      role: 'user', content: 'Explain the result', createdAt: queuedAt,
+    }));
+  });
+
+  it('ignores output and proposals from the previous conversation stream', async () => {
+    const user = userEvent.setup();
+    let background: StreamCallbacks | undefined;
+    mockStreamSessionEvents.mockImplementation(async (_id, callbacks) => {
+      background = callbacks;
+      await new Promise<void>(() => {});
+    });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    await user.click(screen.getByRole('button', { name: 'Start new chat' }));
+    act(() => {
+      background?.onTurnStart?.('old', 'optimizer');
+      background?.onDelta('Leaked old answer');
+      background?.onProposal?.('Old proposal');
+      background?.onEventId?.(900);
+    });
+    expect(screen.queryByText('Leaked old answer')).not.toBeInTheDocument();
+    expect(screen.queryByText('Old proposal')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+  });
+
   it('stops a background assistant turn through the session endpoint', async () => {
     const user = userEvent.setup();
     let backgroundCallbacks: {
@@ -1217,6 +1391,7 @@ describe('ExperimentalAiPage', () => {
       callbacks: typeof backgroundCallbacks,
     ) => {
       backgroundCallbacks = callbacks;
+      await new Promise<void>(() => {});
     });
     render(<ExperimentalAiPage />);
 
@@ -1249,6 +1424,7 @@ describe('ExperimentalAiPage', () => {
         callbacks: typeof backgroundCallbacks,
       ) => {
         backgroundCallbacks = callbacks;
+      await new Promise<void>(() => {});
       });
       render(<ExperimentalAiPage />);
 
@@ -1277,6 +1453,42 @@ describe('ExperimentalAiPage', () => {
     },
   );
 
+  it.each([true, false])('keeps Stop pending through replacement replay (retained start: %s)', async retainedStart => {
+    const user = userEvent.setup();
+    let background: StreamCallbacks | undefined;
+    mockStreamSessionEvents.mockImplementation((_id, callbacks) => {
+      background = callbacks;
+      return new Promise<void>(() => {});
+    });
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    act(() => {
+      background?.onTurnStart?.('review', 'optimizer');
+      background?.onDelta('Partial answer');
+    });
+    await user.click(screen.getByRole('button', { name: 'Stop' }));
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeDisabled();
+
+    act(() => {
+      background?.onReplay?.([
+        ...(retainedStart ? [{ type: 'turn_start', data: { message_id: 'review', trigger: 'optimizer' } }] : []),
+        { type: 'delta', data: { turn_id: 'review', text: 'Recovered answer' } },
+      ]);
+      if (retainedStart) background?.onTurnStart?.('review', 'optimizer');
+      background?.onTurnContext?.('review');
+      background?.onDelta('Recovered answer');
+    });
+
+    expect(screen.getByText('Recovered answer')).toBeInTheDocument();
+    expect(screen.queryByText('Partial answer')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeDisabled();
+    expect(mockStopSession).toHaveBeenCalledOnce();
+    act(() => background?.onStopped?.('review'));
+    expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+  });
+
   it('re-enables Stop when the stop request itself fails', async () => {
     const user = userEvent.setup();
     mockStopSession.mockRejectedValue(new Error('network down'));
@@ -1289,6 +1501,7 @@ describe('ExperimentalAiPage', () => {
       callbacks: typeof backgroundCallbacks,
     ) => {
       backgroundCallbacks = callbacks;
+      await new Promise<void>(() => {});
     });
     render(<ExperimentalAiPage />);
 
@@ -2340,6 +2553,20 @@ describe('ExperimentalAiPage', () => {
       expect(mockLoadFromYaml).not.toHaveBeenCalled();
     });
 
+    it('does not apply an approval response to a new conversation', async () => {
+      let approve: ((value: { scheduleYaml: string; historySaved: boolean }) => void) | undefined;
+      mockApproveProposal.mockImplementation(() => new Promise<{ scheduleYaml: string; historySaved: boolean }>(resolve => { approve = resolve; }));
+      vi.spyOn(window, 'confirm').mockReturnValue(true);
+      const user = userEvent.setup();
+      render(<ExperimentalAiPage />);
+      await ask(user);
+      await user.click(screen.getByRole('button', { name: 'Approve' }));
+      await user.click(screen.getByRole('button', { name: 'Start new chat' }));
+      await act(async () => approve?.({ scheduleYaml: 'description: obsolete approval\n', historySaved: true }));
+      expect(mockLoadFromYaml).not.toHaveBeenCalled();
+      expect(screen.queryByText('The proposed schedule was applied. Undo reverts it in one step.')).not.toBeInTheDocument();
+    });
+
     it('drops a rejected proposal', async () => {
       const user = userEvent.setup();
       render(<ExperimentalAiPage />);
@@ -2389,6 +2616,44 @@ describe('ExperimentalAiPage', () => {
         '/ai',
       ));
       expect(mockCreateSession).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps a new chat proposal when an unavailable chat finishes updating its schedule', async () => {
+      let finishUpdate: (() => void) | undefined;
+      let rejectStatus: ((reason: Error) => void) | undefined;
+      mockUpdateSessionSchedule.mockImplementationOnce(() => new Promise<void>(resolve => { finishUpdate = resolve; }));
+      mockGetSessionStatus.mockImplementationOnce(() => new Promise<number>((_resolve, reject) => { rejectStatus = reject; }));
+      mockCreateSession.mockResolvedValue('new-session');
+      window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+        sessionId: 'old-session', endpoint: '/ai', expiresAt: Date.now() + 60_000,
+        retentionSeconds: 2592000,
+        messages: [{ id: 'old-question', role: 'user', content: 'Old question' }],
+        syncedSchedule: 'description: old schedule\n', proposalDiff: 'Old proposal',
+      }));
+      vi.spyOn(window, 'confirm').mockReturnValue(true);
+      const user = userEvent.setup();
+      render(<ExperimentalAiPage />);
+      await waitFor(() => expect(rejectStatus).toBeDefined());
+      await ask(user);
+      await waitFor(() => expect(finishUpdate).toBeDefined());
+      expect(screen.getByRole('button', { name: 'Start new chat' })).toBeDisabled();
+
+      await act(async () => rejectStatus?.(new MockAiHttpError('Chat session not found.', 404)));
+      expect(screen.getByRole('button', { name: 'Start new chat' })).toBeEnabled();
+
+      await user.click(screen.getByRole('button', { name: 'Start new chat' }));
+      mockStreamMessage.mockImplementationOnce((_id: string, _message: string, callbacks: StreamCallbacks) => {
+        callbacks.onProposal?.('New chat proposal');
+        callbacks.onDelta('New chat reply');
+      });
+      await ask(user);
+      await screen.findByText('New chat proposal');
+
+      await act(async () => finishUpdate?.());
+
+      expect(screen.getByRole('region', { name: 'Proposed schedule change' })).toHaveTextContent('New chat proposal');
+      expect(mockStreamMessage).toHaveBeenCalledOnce();
+      expect(mockStreamMessage.mock.calls[0][0]).toBe('new-session');
     });
   });
 });
