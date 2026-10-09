@@ -7,6 +7,8 @@ memory variant uses four. Both connect services by name.
 Docker assigns their addresses. Only the optional inspection UIs publish ports,
 and those bind to host loopback. The frontend is deployed separately.
 
+**Figure 1. Backend services and container networks.**
+
 ```mermaid
 flowchart TB
     Visitor[<b>Public client</b><br/>Cloudflare Tunnel]

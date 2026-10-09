@@ -106,6 +106,11 @@
 
 - Make architecture and data-flow figures understandable without surrounding
   prose. Use bold titles and short descriptions inside nodes.
+- Give each diagram a numbered caption inside its figure. Label arrows with
+  their action or data. Verify owners, allocation, cleanup, and persistence
+  ordering against code before updating the diagram.
+- Keep stored states separate from derived phases. Distinguish preparing a
+  resource adapter from allocating a resource when allocation is lazy.
 - Give distinct concepts distinct blocks. Preserve meaningful topology when
   adjusting layout.
 - Show alternatives as directly labeled branches. Add a decision node only

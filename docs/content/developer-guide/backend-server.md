@@ -33,6 +33,8 @@ schema at `$API_URL/openapi.json`.
 
 ## Architecture
 
+**Figure 1. Optimization API, execution, and storage owners.**
+
 ```mermaid
 flowchart TB
     Client[<b>HTTP client</b><br/>Submit YAML<br/>Receive JSON, SSE, XLSX]
@@ -89,6 +91,8 @@ orchestration. The process executor owns child process supervision. The runner
 owns one scheduler invocation and its output conversion.
 
 ## Job Lifecycle
+
+**Figure 2. Optimization job lifecycle.**
 
 ```mermaid
 stateDiagram-v2
