@@ -425,6 +425,13 @@ test('Stop cancels the run while keeping the session stream open', async ({ page
     expect(backend.wasDisconnected()).toBe(false);
     await expect(page.getByText('bash · interrupted')).toBeVisible();
     await expect(page.getByText('Stopped before completion.')).toBeVisible();
+    for (const format of ['HTML', 'Markdown']) {
+      const download = page.waitForEvent('download');
+      await page.getByRole('button', { name: format, exact: true }).click();
+      const exported = await readFile(await (await download).path(), 'utf8');
+      expect(exported).toContain(format === 'HTML' ? 'Stopped before completion.' : 'Status: stopped');
+      if (format === 'HTML') expect(exported).not.toContain('[No message text]');
+    }
   } finally {
     await backend.close();
   }

@@ -50,6 +50,21 @@ const metadata = {
 };
 
 describe('chat export', () => {
+  it.each(['', 'Partial answer.'])('marks a stopped response with content %j in both exports', content => {
+    const message: ChatExportMessage = { role: 'assistant', content, status: 'stopped' };
+    const markdown = buildMarkdownChatExport([message], metadata);
+    const html = buildHtmlChatExport([message], metadata);
+    const document = new DOMParser().parseFromString(html, 'text/html');
+
+    expect(markdown).toContain('Status: stopped');
+    expect(document.querySelector('.message-status')?.textContent).toBe('Stopped before completion.');
+    expect(html).not.toContain('[No message text]');
+    if (content) {
+      expect(markdown).toContain(content);
+      expect(document.querySelector('.content')?.textContent).toBe(content);
+    }
+  });
+
   it('keeps event titles as text in HTML exports', () => {
     const title = '<img src=x onerror=alert(1)> & "uploaded"';
     const output = buildHtmlChatExport([

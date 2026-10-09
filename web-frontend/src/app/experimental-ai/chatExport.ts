@@ -224,6 +224,7 @@ function messageDetails(message: ChatExportMessage): string[] {
   if (message.createdAt !== undefined) details.push(`Sent: ${new Date(message.createdAt).toISOString()}`);
   if (message.status === 'failed') details.push('Status: failed');
   if (message.status === 'pending') details.push('Status: pending');
+  if (message.status === 'stopped') details.push('Status: stopped');
   if (message.responseCompletedAt !== undefined) {
     details.push(`Completed: ${new Date(message.responseCompletedAt).toISOString()}`);
   }
@@ -246,7 +247,7 @@ function htmlAssistantTimeline(message: ChatExportMessage): ActivityEntry[] {
   const activity = message.activity ?? [];
   if (activity.some(entry => entry.kind === 'response')) return activity;
   if (message.content) return [...activity, { kind: 'response', text: message.content }];
-  if (message.status === 'pending' || message.status === 'failed') return activity;
+  if (message.status === 'pending' || message.status === 'failed' || message.status === 'stopped') return activity;
   return [...activity, { kind: 'response', text: '[No message text]' }];
 }
 
@@ -270,7 +271,9 @@ function renderHtmlMessageDetails(message: ChatExportMessage): string {
     ? '<p class="message-status" role="status">Thinking</p>'
     : message.status === 'failed'
       ? '<p class="failure">This turn failed and was not saved to AI history.</p>'
-      : '';
+      : message.status === 'stopped'
+        ? '<p class="message-status">Stopped before completion.</p>'
+        : '';
   const timestamp = message.responseCompletedAt ?? message.createdAt;
   const duration = message.responseStartedAt !== undefined && message.responseCompletedAt !== undefined
     ? ` · ${formatResponseDuration(message.responseStartedAt, message.responseCompletedAt)}`
