@@ -19,10 +19,11 @@
 
 // This test is mostly AI generated.
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   AssistantEvent,
   applyAssistantEvent,
+  messageId,
   toAssistantEvent,
 } from './assistantEvents';
 import type { ChatExportMessage } from './chatExport';
@@ -34,6 +35,20 @@ function reduce(events: AssistantEvent[]): ChatExportMessage {
 }
 
 describe('assistant events', () => {
+  it('uses secure random bytes for message IDs when randomUUID is unavailable', () => {
+    const getRandomValues = vi.fn((bytes: Uint8Array) => {
+      bytes.set(Array.from({ length: 16 }, (_, index) => index));
+      return bytes;
+    });
+    vi.stubGlobal('crypto', { getRandomValues });
+    try {
+      expect(messageId()).toBe('000102030405060708090a0b0c0d0e0f');
+      expect(getRandomValues).toHaveBeenCalledOnce();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('merges consecutive text and reasoning while keeping their order', () => {
     const message = reduce([
       { type: 'reasoning', text: 'Check ' },
