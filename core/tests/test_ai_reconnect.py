@@ -69,6 +69,55 @@ def test_stop_before_message_arrives_prevents_provider_execution():
         ]
 
 
+def test_older_message_id_does_not_execute_again_without_a_database():
+    async def exercise():
+        from .test_ai_history import serving
+
+        provider = basic.FakeProvider([["A1"], ["A2"]])
+        app = basic.create_test_app(settings=basic.make_settings(), provider=provider)
+        async with serving(app) as client:
+            session_id = (await client.post("/sessions", json={"schedule_yaml": "description: test"})).json()["id"]
+            path = f"/sessions/{session_id}/messages"
+            receipts = []
+            for question in ("Q1", "Q2", "Q1"):
+                receipts.append((await client.post(path, json={"message": question, "message_id": question})).json())
+                while app.state.runs.busy(session_id):
+                    await asyncio.sleep(0.01)
+            conflict = await client.post(path, json={"message": "Different", "message_id": "Q1"})
+            assert conflict.status_code == 409
+            assert receipts[0] == receipts[2]
+            assert len(provider.calls) == 2
+
+    asyncio.run(exercise())
+
+
+def test_message_receipts_refuse_new_execution_when_the_text_budget_is_full():
+    async def exercise():
+        from .test_ai_history import serving
+
+        provider = basic.FakeProvider([["A1"], ["A2"]])
+        settings = basic.make_settings(max_session_bytes=130, max_history_messages=2)
+        app = basic.create_test_app(settings=settings, provider=provider)
+        async with serving(app) as client:
+            session_id = (await client.post("/sessions", json={"schedule_yaml": "description: test"})).json()["id"]
+            path = f"/sessions/{session_id}/messages"
+            first = None
+            for question in ("Q1", "Q2"):
+                response = await client.post(path, json={"message": question, "message_id": question})
+                assert response.status_code == 202
+                if first is None:
+                    first = response.json()
+                while app.state.runs.busy(session_id):
+                    await asyncio.sleep(0.01)
+            refused = await client.post(path, json={"message": "Q3", "message_id": "Q3"})
+            assert refused.status_code == 429
+            repeated = await client.post(path, json={"message": "Q1", "message_id": "Q1"})
+            assert repeated.json() == first
+            assert len(provider.calls) == 2
+
+    asyncio.run(exercise())
+
+
 def test_stop_before_an_accepted_run_begins_publishes_its_stopped_outcome():
     async def exercise():
         app = basic.create_test_app(settings=basic.make_settings(), provider=basic.FakeProvider([["Must not run"]]))

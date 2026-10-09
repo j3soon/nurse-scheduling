@@ -129,13 +129,14 @@ class RunOutcome:
     terminal: AgentSessionTerminalEvent | None = None
 
 
-@dataclass(frozen=True)
+@dataclass
 class AcceptedMessage:
     """The newest client message ID of a session, so a retried POST reattaches to its run."""
 
     message_id: str
     question: str
-    run: AgentRun
+    run: AgentRun | None
+    run_id: str
 
 
 @dataclass(frozen=True)
@@ -150,6 +151,8 @@ class SessionPersistence(Protocol):
     """Session operations needed by a foreground or background run."""
 
     def begin(self, session_id: str, owner_token: str | None, *, run_id: str | None = None) -> RunSnapshot: ...
+
+    def remember_message(self, session_id: str, message: AcceptedMessage) -> None: ...
 
     def take_steering(self, session_id: str, close_if_empty: bool) -> list[tuple[str, str]]: ...
 
@@ -257,6 +260,7 @@ class AgentSession:
     # Last owner access, which orders eviction. A restored session keeps its stored expiry.
     last_used: float = field(default_factory=time.monotonic)
     latest_message: AcceptedMessage | None = None
+    accepted_messages: dict[str, AcceptedMessage] = field(default_factory=dict)
     # Named Stop requests, including those for messages that have not arrived yet.
     stopped_message_ids: set[str] = field(default_factory=set)
     event_stream: SessionEventStream | None = field(default=None, repr=False)
@@ -373,9 +377,11 @@ class AgentSession:
 
     def _accepted_message(self, message_id: str) -> AcceptedMessage | None:
         """Return the newest message when it has this ID and its run has not failed to start."""
-        accepted = self.latest_message
+        accepted = self.accepted_messages.get(message_id) or self.latest_message
         if accepted is None or accepted.message_id != message_id:
             return None
+        if accepted.run is None:
+            return accepted
         ready = accepted.run.ready
         return None if ready.done() and not ready.result() else accepted
 
@@ -404,8 +410,9 @@ class AgentSession:
             if accepted is not None:
                 if accepted.question != question:
                     raise HTTPException(status_code=409, detail="This message ID belongs to a different question.")
-                if await asyncio.shield(accepted.run.ready):
-                    return MessageReceipt(accepted.run.id)
+                accepted_run = accepted.run
+                if accepted_run is None or await asyncio.shield(accepted_run.ready):
+                    return MessageReceipt(accepted.run_id)
             found = None if accepted is not None else await runtime.recorder.find_message(self.id, message_id)
             if found is not None:
                 run_id, accepted_question = found
@@ -420,7 +427,15 @@ class AgentSession:
             message_id=message_id,
         )
         if message_id is not None:
-            self.latest_message = AcceptedMessage(message_id, question, run)
+            accepted = AcceptedMessage(message_id, question, run, run.id)
+            if not runtime.recorder.enabled:
+                try:
+                    runtime.store.remember_message(self.id, accepted)
+                except HTTPException:
+                    run.cancel()
+                    await asyncio.shield(run.done)
+                    raise
+            self.latest_message = accepted
         if not await asyncio.shield(run.ready):
             if run.cancelled and not run.shutdown:
                 # A Stop arrived before the run reported its start. A run cancelled before

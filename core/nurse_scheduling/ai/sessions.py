@@ -28,7 +28,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from .agent_session import AgentSession, RunCompletion, schedule_revision
+from .agent_session import AcceptedMessage, AgentSession, RunCompletion, schedule_revision
 from .candidate import PendingProposal
 from .config import AiSettings
 from .context import PROPOSAL_DECISION_HISTORY, history_chars, project_history, projected_history, upload_event
@@ -52,6 +52,10 @@ def _proposal_bytes(proposal: PendingProposal | None) -> int:
     return 0 if proposal is None else _text_bytes(proposal.schedule_yaml) + _text_bytes(proposal.diff)
 
 
+def _receipt_bytes(receipt: AcceptedMessage) -> int:
+    return _text_bytes(receipt.message_id) + _text_bytes(receipt.question) + _text_bytes(receipt.run_id)
+
+
 def _session_bytes(session: "AgentSession") -> int:
     """Return the text and file bytes one session retains."""
     total = _text_bytes(session.schedule_yaml) + _proposal_bytes(session.pending_proposal)
@@ -61,6 +65,7 @@ def _session_bytes(session: "AgentSession") -> int:
         )
         for entry in session.transcript
     )
+    total += sum(_receipt_bytes(receipt) for receipt in session.accepted_messages.values())
     total += sum(_text_bytes(text) for text in session.queued_steering)
     total += sum(len(upload.data) for upload in session.uploads.values())
     return total + sum(map(len, session.downloads.values()))
@@ -91,6 +96,28 @@ class SessionStore:
         self._on_retire: Callable[[str], None] | None = None
         self._on_entry: Callable[[str, EntryRow], None] | None = None
         self._evictable: Callable[[str], bool] | None = None
+
+    def remember_message(self, session_id: str, message: AcceptedMessage) -> None:
+        """Keep idempotent receipts within the session text budget when storage is disabled."""
+        session = self._sessions[session_id]
+        size = _receipt_bytes(message)
+        self._require_capacity(size)
+        session.accepted_messages[message.message_id] = message
+        self._charge(session, size)
+        assert message.run is not None
+        run = message.run
+
+        def finished(_task) -> None:
+            # A compact receipt keeps neither completed tasks nor their exception traces.
+            message.run = None
+            if not run.ready.result():
+                session.accepted_messages.pop(message.message_id, None)
+                if session.latest_message is message:
+                    session.latest_message = None
+                if self._sessions.get(session_id) is session:
+                    self._charge(session, -size)
+
+        run.task.add_done_callback(finished)
 
     def on_retire(self, callback: Callable[[str], None]) -> None:
         """Register the cleanup that follows every dropped session."""
