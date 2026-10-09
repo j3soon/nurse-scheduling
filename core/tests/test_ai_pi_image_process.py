@@ -55,7 +55,7 @@ def test_pi_image_process_conversion_hint_uses_the_final_encoding():
 
     assert isinstance(result, ProcessedImage)
     assert result.media_type == "image/png"
-    assert result.hints == ("[Image converted from image/tiff to image/png].",)
+    assert result.hints == ("[Image converted from image/tiff to image/png.]",)
 
 
 def test_pi_image_process_reports_jpeg_conversion_after_resize():
@@ -70,7 +70,7 @@ def test_pi_image_process_reports_jpeg_conversion_after_resize():
 
     assert isinstance(result, ProcessedImage)
     assert result.media_type == "image/jpeg"
-    assert result.hints[0] == "[Image converted from image/tiff to image/jpeg]."
+    assert result.hints[0] == "[Image converted from image/tiff to image/jpeg.]"
     assert "original 1200x1200, displayed at 1200x1200" in result.hints[1]
     assert ((len(result.data) + 2) // 3) * 4 < MAX_IMAGE_BASE64_BYTES
 

@@ -148,6 +148,20 @@ def test_sandbox_bash_combines_output_and_formats_nonzero_exit_like_pi():
     assert backend.commands == [("rg missing", None)]
 
 
+@pytest.mark.parametrize(
+    ("exit_code", "status"),
+    [(None, "Command terminated without an exit code"), (137, "Command exited with code 137")],
+)
+def test_sandbox_bash_returns_failed_results_for_terminated_commands(exit_code, status):
+    backend = FakeSandboxBackend("fake-1", command_handler=lambda *_: CommandResult("partial", "", exit_code))
+
+    outcome = asyncio.run(SandboxPiTools(backend, 10).execute(BASH_TOOL, '{"command":"terminated"}'))
+
+    assert outcome.text == f"partial\n\n{status}"
+    assert not outcome.ok
+    assert not outcome.terminal
+
+
 def test_sandbox_bash_caps_model_timeout_at_the_server_limit():
     backend = FakeSandboxBackend(
         "fake-1",

@@ -41,7 +41,7 @@ from nurse_scheduling.ai.pi.bash import (
 
 
 def test_pi_bash_schema_and_defaults_match_the_pinned_source():
-    assert UPSTREAM_COMMIT == "e266507b606b9552fa277252644054afd4384b11"
+    assert UPSTREAM_COMMIT == "a13d35a742c6ef8462812a28fbe1d8c8b7431c32"
     assert DEFAULT_MAX_LINES == 2_000
     assert DEFAULT_MAX_BYTES == 50 * 1_024
     assert "last 2000 lines or 50KB" in BASH_TOOL_DESCRIPTION
@@ -106,6 +106,23 @@ def test_pi_bash_result_matches_empty_nonzero_and_timeout_text():
     assert not failure.ok
     assert timeout.text == "Command timed out after 2.5 seconds"
     assert not timeout.ok
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "status"),
+    [(None, "Command terminated without an exit code"), (137, "Command exited with code 137")],
+)
+def test_pi_v1_bash_treats_missing_exit_codes_and_signal_terminations_as_errors(exit_code, status):
+    result = render_bash_result(
+        prepare_bash_output("partial output"),
+        full_output_path=None,
+        exit_code=exit_code,
+        timed_out=False,
+        timeout_seconds=10,
+    )
+
+    assert not result.ok
+    assert result.text == f"partial output\n\n{status}"
 
 
 def test_pi_bash_truncation_notice_points_to_the_full_output():

@@ -344,8 +344,8 @@ final candidate.
 Configured tool-round and tool-call limits bound the model-tool loop alongside
 per-command and complete agent-turn deadlines.
 
-The model-facing tool schemas and read behavior are Python ports pinned to Pi
-commit [`e266507`](https://github.com/earendil-works/pi/tree/e266507b606b9552fa277252644054afd4384b11/packages/coding-agent/src/core/tools).
+The model-facing tool schemas and behavior are Python ports pinned to
+[Pi v1.0.0](https://github.com/earendil-works/pi/tree/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/coding-agent/src/core/tools).
 The read tool recognizes JPEG, PNG, GIF, WebP, and BMP files. Its multimodal
 result lets the model inspect an image extracted from another file. The sandbox
 also includes optional helpers: `inspect_xlsx.py` reads every worksheet by
@@ -356,7 +356,17 @@ The Nurse Scheduling adapter delegates file and command operations to
 `SandboxBackend` and enforces the configured command timeout ceiling. E2B
 returns completed stdout and stderr separately, so the adapter concatenates
 them and cannot reproduce Pi's live
-stream interleaving exactly.
+stream interleaving exactly. Nonzero and missing command exit codes produce
+failed tool results that the agent can read before continuing. GIF detection
+requires a complete GIF87a or GIF89a signature.
+
+The v1.0.0 comparison covers all four tools, image detection and processing,
+and head/tail truncation. Edit/write execution and image processing are unchanged
+from the previous pin. Pi also adds programmatic Bash output and model-specific
+image resize profiles. This service exposes model-facing results only and keeps
+Pi's default 2000-pixel and 4.5 MB base64 image limits. Pillow replaces Photon's
+image codec and rejects oversized source images before decoding. Pi's terminal
+renderers and middle truncation are not used by these tools.
 
 ## Proposal lifecycle
 

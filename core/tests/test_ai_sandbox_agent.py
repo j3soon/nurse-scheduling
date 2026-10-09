@@ -373,6 +373,24 @@ def test_parallel_reads_share_hydration_and_controls_do_not_resume_the_sandbox()
     assert all(event.ok for event in events if isinstance(event, AgentToolUse))
 
 
+def test_failed_bash_result_reaches_the_model_and_allows_the_next_tool_call():
+    backend = FakeSandboxBackend(
+        "fake-1", command_handler=lambda command, *_: CommandResult("partial", "", None if command == "failed" else 0)
+    )
+    provider = ScriptedProvider(_run_call("failed"), _run_call("retry"), [TextDelta("Recovered.")])
+
+    events = _collect(provider, FakeSandboxFactory(lambda _: backend))
+
+    outcomes = [event for event in events if isinstance(event, AgentToolUse)]
+    assert [outcome.ok for outcome in outcomes] == [False, True]
+    assert outcomes[0].result == "partial\n\nCommand terminated without an exit code"
+    assert any(
+        message.get("role") == "tool" and message.get("content") == outcomes[0].result
+        for message in provider.requests[1][0]
+    )
+    assert backend.commands == [("failed", None), ("retry", None)]
+
+
 def test_pending_proposal_is_hydrated_as_trusted_read_only_context():
     factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id))
 
