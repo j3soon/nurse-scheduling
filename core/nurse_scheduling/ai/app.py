@@ -729,6 +729,10 @@ def create_app(
             logger.error("Approved proposal failed revalidation session_id=%s", session_id)
             await recovery.save_session(session_id)
             raise
+        except HTTPException as exc:
+            if exc.status_code == 409:
+                await recovery.save_session(session_id)
+            raise
         # The proposal is gone once adopted, so a failed save is reported rather than refused.
         history_saved = await recovery.save_session(session_id)
         refresh_owner_cookie(response, owner)

@@ -387,6 +387,58 @@ def test_proposal_decision_reports_a_failed_recovery_save(recorded_history, monk
     assert not client.app.state.session_store._sessions[session_id].proposal_yaml
 
 
+def test_stale_approval_that_cannot_be_saved_prevents_eviction(recorded_history, monkeypatch):
+    client, session_id, _ = basic.proposing_client(history_postgres_url="test", max_sessions=1)
+
+    def unavailable(*_args):
+        raise psycopg.OperationalError("secret-database-url")
+
+    monkeypatch.setattr(ChatHistory, "save_recovery_session", unavailable)
+    path = f"/sessions/{session_id}/proposal/approve"
+    response = client.post(path, json={"base_sha256": "0" * 64})
+    assert response.status_code == 409
+    session = client.app.state.session_store._sessions[session_id]
+    assert session.proposal_yaml == session.proposal_diff == ""
+    assert not client.app.state.recovery.evictable(session_id)
+    assert client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()}).status_code == 429
+    assert client.post(path, json={"base_sha256": "0" * 64}).status_code == 404
+
+
+def test_postgres_stale_approval_discard_survives_eviction_and_restart(postgres_history):
+    settings = basic.make_settings(history_postgres_url="test", max_sessions=1)
+    app = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
+    original = basic.schedule_yaml()
+    proposal = original.replace("description: ''", "description: Proposal", 1)
+    with basic.AuthenticatedTestClient(app) as client:
+        session_id = basic.create_session(client, original)
+        store = app.state.session_store
+        owner = client.cookies[basic.OWNER_COOKIE]
+        snapshot = store.begin(session_id, owner)
+        assert store.finish(
+            session_id, "Change description", "Proposed description", (proposal, "description diff"), snapshot=snapshot
+        ).proposal_saved
+        postgres_history.save_recovery_session(session_id, *store.recovery_state(session_id))
+        assert postgres_history.load_recovery_session(session_id, owner)["state"]["proposal_yaml"] == proposal
+
+        path = f"/sessions/{session_id}/proposal/approve"
+        request = {"base_sha256": "0" * 64}
+        assert client.post(path, json=request).status_code == 409
+        saved = postgres_history.load_recovery_session(session_id, owner)["state"]
+        assert saved["proposal_yaml"] == saved["proposal_diff"] == ""
+        assert saved["schedule_yaml"] == original
+
+        basic.create_session(client)
+        assert session_id not in store._sessions
+        assert client.post(path, json=request).status_code == 404
+        cookies = dict(client.cookies)
+
+    restarted = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
+    with basic.AuthenticatedTestClient(restarted) as client:
+        client.cookies.update(cookies)
+        assert client.post(path, json=request).status_code == 404
+        assert restarted.state.session_store._sessions[session_id].schedule_yaml == original
+
+
 def test_schedule_update_that_cannot_be_saved_can_be_retried(recorded_history, monkeypatch):
     def unavailable(*_args):
         raise psycopg.OperationalError("secret-database-url")
