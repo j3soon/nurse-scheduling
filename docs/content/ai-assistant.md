@@ -123,10 +123,11 @@ chat turns while retained. It is separate from user attachments. The browser
 keeps one replayable session stream open for foreground answers, optimizer status,
 and background reviews. The event journal and recovery projection each retain up
 to 1,000 required events, with a separate limit of 100 transient progress updates.
-Their combined serialized size is limited to 4 MiB per session and 64 MiB across
-the process. Expired cursors receive a replacement snapshot. PostgreSQL stores
-accepted questions before execution and saves non-progress publications through
-an asynchronous writer. It queues completed model entries before tool execution.
+Each list's serialized size is limited to 4 MiB per session. Together, the lists
+are limited to 64 MiB across the process. Expired cursors receive a replacement
+snapshot. PostgreSQL stores accepted questions before execution and saves
+non-progress publications through an asynchronous writer. It queues completed
+model entries before tool execution.
 Consecutive text fragments can share a storage row. The browser reattaches with
 the same client message ID and replaces partial output with the snapshot.
 It does not start another model run.
