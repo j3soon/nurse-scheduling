@@ -1268,24 +1268,35 @@ describe('ExperimentalAiPage', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument());
   });
 
-  it('replays a completed foreground answer into one message and preserves consumed steering', async () => {
+  it.each([false, true])('keeps replayed steering replies before later optimizer output, with an active run=%s', async active => {
+    if (active) {
+      mockRunEvents.mockImplementation(async (_session: string, _question: string, callbacks: SessionStreamOptions) => {
+        callbacks.onEvent({ type: 'delta', text: 'Alice works Monday.' });
+        await new Promise<void>(() => {});
+      });
+    }
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Explain');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
+    if (!active) await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument());
     const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
-    act(() => {
-      stream.onEvent({ type: 'session_reset', reset: { runIds: ['user-run-1'], activeRunId: null, terminalRunIds: ['user-run-1'], incomplete: false, proposalDiff: null } });
+    await act(async () => {
+      stream.onEvent({ type: 'optimization', activity: { jobId: 'result', state: 'completed', terminal: true, downloadable: false } });
+      stream.onEvent({ type: 'session_reset', reset: { runIds: ['user-run-1'], activeRunId: active ? 'user-run-1' : null, terminalRunIds: active ? [] : ['user-run-1'], incomplete: false, proposalDiff: null } });
       stream.onEvent({ type: 'run_start', runId: 'user-run-1', trigger: 'user' });
-      stream.onEvent({ type: 'delta', text: 'Alice works Monday.' });
-      stream.onEvent({ type: 'steering', messageId: 'queued', message: 'Compare Tuesday.' });
-      stream.onEvent({ type: 'delta', text: 'Tuesday is free.' });
+      stream.onEvent({ type: 'delta', runId: 'user-run-1', text: 'Alice works Monday.' });
+      stream.onEvent({ type: 'steering', runId: 'user-run-1', messageId: 'queued', message: 'Compare Tuesday.' });
+      stream.onEvent({ type: 'delta', runId: 'user-run-1', text: 'Tuesday is free.' });
       stream.onEvent({ type: 'done', runId: 'user-run-1' });
     });
     expect(screen.getAllByText('Alice works Monday.')).toHaveLength(1);
     expect(screen.getByText('Compare Tuesday.')).toBeInTheDocument();
     expect(screen.getByText('Tuesday is free.')).toBeInTheDocument();
+    expect(screen.getByText('Alice works Monday.').closest('article')?.nextElementSibling).toHaveTextContent('Compare Tuesday.');
+    expect(screen.getByText('Compare Tuesday.').closest('article')?.nextElementSibling).toHaveTextContent('Tuesday is free.');
+    expect(screen.getByText('Tuesday is free.').closest('article')?.nextElementSibling).toHaveTextContent('Optimization finished');
   });
 
   it('keeps a foreground response active when an older background completion is replayed', async () => {
@@ -2575,7 +2586,6 @@ describe('ExperimentalAiPage', () => {
     act(() => window.dispatchEvent(new Event('pagehide')));
     const saved = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
     const order = saved.messages.filter((entry: { role: string; source?: string }) => !entry.source && ['user', 'assistant'].includes(entry.role)).map((entry: { content: string }) => entry.content);
-    console.log({ replayedOrder: order });
     expect(order).toEqual(['Q1', 'Answer to Q1', 'Q2', 'Answer to Q2']);
   });
   it('applies each replayed model input to the correct run in one reset', async () => {

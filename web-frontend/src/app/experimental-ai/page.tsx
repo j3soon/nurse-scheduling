@@ -1695,22 +1695,25 @@ export default function ExperimentalAiPage() {
             const completedAssistantId = activeAssistantId;
             const nextAssistantId = messageId();
             runMessageIds.add(nextAssistantId);
-            setMessages(previous => [
-              ...previous.map(message => (
+            setMessages(previous => {
+              const completedIndex = previous.findIndex(message => message.id === completedAssistantId);
+              const completed = previous.map(message => (
                 message.id === completedAssistantId
                   ? { ...message, runId, status: undefined, responseCompletedAt: steeringStartedAt }
                   : message
-              )),
-              { id: queuedId, runId, role: 'user', content: queuedMessage, createdAt },
-              {
+              ));
+              const queued: ChatMessage = { id: queuedId, runId, role: 'user', content: queuedMessage, createdAt };
+              const next: ChatMessage = {
                 id: nextAssistantId,
                 runId,
                 role: 'assistant',
                 content: '',
                 status: 'pending',
                 responseStartedAt: steeringStartedAt,
-              },
-            ]);
+              };
+              const position = completedIndex < 0 ? completed.length : completedIndex + 1;
+              return [...completed.slice(0, position), queued, next, ...completed.slice(position)];
+            });
             activeAssistantId = nextAssistantId;
             setSteeringAssistantId(nextAssistantId);
             activeAssistantHasOutput = false;
