@@ -44,7 +44,7 @@ jobs in process, so Redis, RedisInsight, and the usage reporter are absent.
 ## NGINX routing
 
 The Tunnel hostname points to `http://nginx:8080`. NGINX applies these rules
-from [its configuration](../../docker/nginx.backend.conf):
+from [its configuration](https://github.com/j3soon/nurse-scheduling/blob/dev/docker/nginx.backend.conf):
 
 | Incoming path | Upstream | Path sent upstream |
 | --- | --- | --- |

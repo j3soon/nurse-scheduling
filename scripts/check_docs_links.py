@@ -128,7 +128,19 @@ def check_links(root: Path) -> list[str]:
         relative = file.relative_to(site).as_posix()
         page_url = "https://dev.nursescheduling.org/docs/" + relative
         for link in page.links:
-            check(urljoin(page_url, link), file)
+            reference = urlsplit(link)
+            destination = urljoin(page_url, link)
+            if (
+                not reference.scheme
+                and not reference.netloc
+                and not reference.path.startswith("/")
+                and not urlsplit(destination).path.startswith("/docs/")
+            ):
+                errors.add(
+                    f"{file.relative_to(root)}: relative link leaves docs: {link}"
+                )
+            else:
+                check(destination, file)
     for source in sources:
         for url in URL.findall(source.read_text()):
             check(url.rstrip(".,"), source)

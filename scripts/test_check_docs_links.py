@@ -76,6 +76,19 @@ class CheckDocsLinksTests(unittest.TestCase):
         )
         self.assertEqual(len(check_links(self.root)), 2)
 
+    def test_relative_links_cannot_leave_the_docs_root(self):
+        page = "site/developer-guide/containers/index.html"
+        self.write(page, '<a href="/experimental-ai/">Open the app</a>')
+        self.assertEqual(check_links(self.root), [])
+        self.write(
+            page,
+            '<a href="../../../docker/nginx.backend.conf">Configuration</a>',
+        )
+        self.assertEqual(
+            check_links(self.root),
+            [f"{page}: relative link leaves docs: ../../../docker/nginx.backend.conf"],
+        )
+
     def test_redirects_preserve_legacy_fragments(self):
         self.write("README.md", "https://nursescheduling.org/docs/old/#legacy")
         self.write(

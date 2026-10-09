@@ -125,6 +125,8 @@
   and backend deployment page are symlinks to those files.
 - Use absolute links in symlinked READMEs so repository and site views resolve
   them from the same place. State each shell block's working directory.
+- Link repository files outside the docs with absolute repository URLs.
+  Relative site links must stay inside the built documentation.
 - Move page paths, navigation entries, and inbound links together. Add permanent
   redirects for published paths and preserve existing heading IDs.
 - Git on Windows can check out symlinks as plain text. Enable symlink support

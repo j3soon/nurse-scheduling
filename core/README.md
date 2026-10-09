@@ -227,6 +227,7 @@ The Compose deployment uses Redis database `0` and the key prefix
 `nurse_scheduling:jobs:v0`. Open `redis-cli` from the Redis container:
 
 ```sh
+cd docker
 docker compose -f compose.backend.yml exec redis redis-cli -n 0
 ```
 
@@ -485,6 +486,7 @@ Deployments can run the same metadata-filtered cleanup independently of the AI
 service with:
 
 ```bash
+cd core
 python -m nurse_scheduling.ai.sandbox.reap
 ```
 
