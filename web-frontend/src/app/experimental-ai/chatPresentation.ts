@@ -29,8 +29,9 @@ export function formatResponseDuration(startedAt: number, completedAt: number): 
   const seconds = Math.max(0, completedAt - startedAt) / 1000;
   if (seconds < 1) return '<1s';
   if (seconds < 10) return `${seconds.toFixed(1)}s`;
-  if (seconds < 60) return `${Math.round(seconds)}s`;
-  return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+  const totalSeconds = Math.round(seconds);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  return `${Math.floor(totalSeconds / 60)}m ${totalSeconds % 60}s`;
 }
 
 export function activitySummary(entry: Exclude<ActivityEntry, { kind: 'response' }>): string {

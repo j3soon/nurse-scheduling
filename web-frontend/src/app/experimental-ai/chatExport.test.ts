@@ -50,6 +50,20 @@ const metadata = {
 };
 
 describe('chat export', () => {
+  it.each([
+    [59_400, '59s'],
+    [59_600, '1m 0s'],
+    [119_400, '1m 59s'],
+    [119_600, '2m 0s'],
+  ])('formats a %i ms response as %s in the HTML export', (elapsed, duration) => {
+    const output = buildHtmlChatExport([{
+      role: 'assistant', content: 'Done.', responseStartedAt: 1000, responseCompletedAt: 1000 + elapsed,
+    }], metadata);
+    const document = new DOMParser().parseFromString(output, 'text/html');
+
+    expect(document.querySelector('time')?.textContent).toMatch(new RegExp(` · ${duration}$`));
+  });
+
   it.each(['', 'Partial answer.'])('marks a stopped response with content %j in both exports', content => {
     const message: ChatExportMessage = { role: 'assistant', content, status: 'stopped' };
     const markdown = buildMarkdownChatExport([message], metadata);
