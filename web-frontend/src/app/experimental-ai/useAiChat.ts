@@ -219,6 +219,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   const lastSessionEventIdRef = sessionEvents.cursor;
 
   const scheduleYamlRef = useRef(scheduleYaml);
+  const sessionRetentionSecondsRef = useRef(sessionRetentionSeconds);
   const sandboxScheduleRef = useRef<string | null>(null);
   const queuedMessagesRef = useRef<QueuedChatMessage[]>([]);
   const conversationStorageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -247,6 +248,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   }, [lifecycle, sessionEvents, onReset]);
 
   scheduleYamlRef.current = scheduleYaml;
+  sessionRetentionSecondsRef.current = sessionRetentionSeconds;
 
   useEffect(() => {
     if (!isClientReady) return;
@@ -420,7 +422,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     const beginBackgroundMessage = (runId: string) => {
       lifecycle.begin('background', runId);
       // The server renews the session when it starts this turn.
-      setSessionExpiresAt(Date.now() + sessionRetentionSeconds * 1000);
+      setSessionExpiresAt(Date.now() + sessionRetentionSecondsRef.current * 1000);
       sandboxScheduleRef.current = scheduleYamlRef.current;
       setMessages(previous => {
         const existing = [...previous].reverse().find(message => message.role === 'assistant' && (message.runId ?? message.id) === runId);
@@ -558,7 +560,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
         if (isAuthenticationError(streamError)) reportRequestError(streamError, 'The AI session could not reconnect.');
       },
     });
-  }, [authToken, lifecycle, reportRequestError, sessionRetentionSeconds, updateContextUsage, sessionEvents, setError]);
+  }, [authToken, lifecycle, reportRequestError, updateContextUsage, sessionEvents, setError]);
 
   useEffect(() => {
     if (!isClientReady || activeSessionId === null || conversationUnavailable) return;
