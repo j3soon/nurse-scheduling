@@ -36,12 +36,14 @@ import pytest
 from psycopg import sql
 
 from nurse_scheduling.ai import history as history_module
+from nurse_scheduling.ai import recovery as recovery_module
 from nurse_scheduling.ai.agent_session import BACKGROUND_RECOVERY_ERROR, RECOVERY_SAVE_WARNING
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.history import ChatHistory, _insert_entries
 from nurse_scheduling.ai.provider import ProviderError, ReasoningDelta, TextDelta, TokenUsage
-from nurse_scheduling.ai.recovery import _event_rows
-from nurse_scheduling.ai.session_event_stream import SessionEvent, fold_recovery
+from nurse_scheduling.ai.recovery import SessionRecovery, _event_rows
+from nurse_scheduling.ai.session_event_stream import SessionEvent, SessionEventStream, fold_recovery
+from nurse_scheduling.ai.sessions import SessionStore
 from nurse_scheduling.ai.transcript import (
     AppEventEntry,
     AssistantMessage,
@@ -625,6 +627,68 @@ def test_background_recovery_outage_releases_session_and_reports_status(recorded
         assert session.transcript == []
         assert session.dropped_entries == 0
     assert not session.active
+
+
+@pytest.mark.parametrize("operation", ["append_entries", "append_events"])
+def test_recovery_writers_report_each_outage_once_and_report_recovery(monkeypatch, caplog, operation):
+    attempts = 0
+    saved_batches = []
+    delays = []
+    recoveries = []
+    original_sleep = asyncio.sleep
+
+    def persist(_self, _session_id, batch):
+        nonlocal attempts
+        attempts += 1
+        if attempts % 4:
+            unavailable()
+        saved_batches.append(batch)
+
+    async def sleep(delay):
+        if delay:
+            delays.append(delay)
+        await original_sleep(0)
+
+    monkeypatch.setattr(ChatHistory, operation, persist)
+    monkeypatch.setattr(recovery_module.asyncio, "sleep", sleep)
+    monkeypatch.setattr(history_module, "report_outage_recovery", lambda *args: recoveries.append(args))
+
+    async def exercise():
+        store = SessionStore(basic.make_settings())
+        session = store.create("owner", basic.schedule_yaml())
+        history = ChatHistory("test")
+        recovery = SessionRecovery(history, store, SessionEventStream())
+        if operation == "append_entries":
+            pending = recovery._pending_entries
+            first, second = (0, None, UserMessage("First")), (1, None, UserMessage("Second"))
+            writer = recovery._write_entries
+        else:
+            pending = recovery._pending_events
+            first, second = SessionEvent(1, "delta", {"text": "First"}), SessionEvent(2, "delta", {"text": "Second"})
+            writer = recovery._write_events
+        pending[session.id] = [first]
+        original_write = history.write
+
+        async def write(*args, **kwargs):
+            saved = await original_write(*args, **kwargs)
+            if saved and attempts == 4:
+                # A new batch arrives before the writer drains the first saved batch.
+                pending[session.id].append(second)
+            return saved
+
+        monkeypatch.setattr(history, "write", write)
+        await writer(session.id)
+        assert not pending
+
+    asyncio.run(exercise())
+    errors = [
+        record for record in caplog.records if record.name == history_module.logger.name and record.levelname == "ERROR"
+    ]
+    assert len(errors) == 2
+    assert attempts == 8 and len(saved_batches) == 2
+    assert delays == [1, 2, 4, 1, 2, 4]
+    assert recoveries == [(f"ai.history.{operation}", 3)] * 2
+    assert "secret-database-url" not in caplog.text
 
 
 def record(entry) -> tuple[str, dict]:

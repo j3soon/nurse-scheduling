@@ -32,6 +32,8 @@ import anyio
 import psycopg
 from psycopg.types.json import Jsonb
 
+from ..sentry import report_outage_recovery
+from ..server.retry import RepeatedFailure
 from .provider import TokenUsage
 from .transcript import AgentMessage, AssistantMessage, UserMessage, entry_from_record, entry_record
 
@@ -349,14 +351,20 @@ class ChatHistory:
             logger.error("AI history %s failed", operation)
             raise RuntimeError(RECOVERY_UNAVAILABLE) from None
 
-    async def write(self, operation: str, *args, **kwargs) -> bool:
+    async def write(self, operation: str, *args, failures: RepeatedFailure | None = None, **kwargs) -> bool:
         """Report failures without leaking connection strings or chat text to logs."""
         try:
             with anyio.CancelScope(shield=True):
                 await anyio.to_thread.run_sync(lambda: getattr(self, operation)(*args, **kwargs))
+            if failures is not None:
+                ended_failures = failures.recovered()
+                if ended_failures:
+                    logger.warning("AI history %s resumed after %d failed attempts", operation, ended_failures)
+                    report_outage_recovery(f"ai.history.{operation}", ended_failures)
             return True
         except (psycopg.Error, OSError):
-            logger.error("AI history %s failed", operation)
+            if failures is None or failures.report():
+                logger.error("AI history %s failed", operation)
             return False
 
     async def maintain(self) -> None:

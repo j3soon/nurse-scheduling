@@ -29,6 +29,7 @@ from uuid import UUID
 
 from fastapi import HTTPException
 
+from ..server.retry import RepeatedFailure
 from .agent_session import STALE_RUN_ERROR, AgentSession
 from .history import ChatHistory, EntryRow, EventRow, RunKind, RunStatus
 from .provider import TokenUsage
@@ -193,18 +194,18 @@ class SessionRecovery:
     async def _write_entries(self, session_id: str) -> None:
         """Save queued entries in order, retrying a failed batch until storage accepts it."""
         assert self.history is not None
-        delay = 1.0
+        failures = RepeatedFailure(base_delay_seconds=1, max_delay_seconds=MAX_RETRY_DELAY_SECONDS)
         while self._pending_entries.get(session_id):
             async with self._locks.setdefault(session_id, asyncio.Lock()):
                 entries = list(self._pending_entries.get(session_id, ()))
-                saved = not entries or await self.history.write("append_entries", session_id, entries)
+                saved = not entries or await self.history.write(
+                    "append_entries", session_id, entries, failures=failures
+                )
                 if saved:
                     self._entries_saved(session_id, len(entries))
             if saved:
-                delay = 1.0
                 continue
-            await asyncio.sleep(delay)
-            delay = min(delay * 2, MAX_RETRY_DELAY_SECONDS)
+            await asyncio.sleep(failures.delay_seconds())
 
     async def save(self, session_id: str, credential_id: str | None = None) -> bool:
         if self.history is None:
@@ -389,19 +390,17 @@ class SessionRecovery:
         its IDs past storage and replaces output that a browser saw but storage lacks.
         """
         assert self.history is not None
-        delay = 1.0
+        failures = RepeatedFailure(base_delay_seconds=1, max_delay_seconds=MAX_RETRY_DELAY_SECONDS)
         while self._pending_events.get(session_id):
             batch = list(self._pending_events[session_id])
-            if await self.history.write("append_events", session_id, _event_rows(batch)):
-                delay = 1.0
+            if await self.history.write("append_events", session_id, _event_rows(batch), failures=failures):
                 pending = self._pending_events.get(session_id)
                 if pending is not None:
                     del pending[: len(batch)]
                     if not pending:
                         del self._pending_events[session_id]
                 continue
-            await asyncio.sleep(delay)
-            delay = min(delay * 2, MAX_RETRY_DELAY_SECONDS)
+            await asyncio.sleep(failures.delay_seconds())
 
     async def flush(self, session_id: str) -> None:
         """Wait until every entry and event so far is saved."""
