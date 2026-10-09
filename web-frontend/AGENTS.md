@@ -29,6 +29,10 @@ Use Playwright locator actions for form controls. Before interacting with
 statically rendered controls, wait for an observable result of client
 initialization, such as loaded backend options enabling Optimize.
 
+When comparing chat exports with the live transcript, identify the same message
+by its label or content. A foreground stream can prepend a system message after
+the export snapshot, so message position is not stable.
+
 Both affected commands accept `--base REF` to include committed branch changes
 since the merge base with `REF`, `--list` to inspect selection, and `--full` to
 run their whole suite. `test:e2e:affected` cannot infer browser coverage from
