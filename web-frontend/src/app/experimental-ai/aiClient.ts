@@ -655,6 +655,7 @@ export async function sendMessage(
         );
         body = await response.json() as { run_id?: unknown };
       } catch (error) {
+        if (error instanceof SyntaxError) throw new Error('The AI backend returned an invalid run ID.');
         // A retry can find another run still active, or the service restarting.
         const retryable = !(error instanceof AiHttpError) || (retries > 0 && (error.status >= 500 || error.status === 409));
         if (retryable) throw new AiConnectionError('The AI connection was interrupted.');

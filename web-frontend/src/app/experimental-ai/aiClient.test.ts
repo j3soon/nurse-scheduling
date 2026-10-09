@@ -459,6 +459,21 @@ describe('AI client', () => {
     expect(onConnectionChange.mock.calls).toEqual([[false], [true]]);
   });
 
+  it('rejects a complete invalid JSON acknowledgement without retrying', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('not JSON', { status: 202 }))
+      .mockResolvedValue(new Response(JSON.stringify({ run_id: 'unexpected-retry' }), { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const onConnectionChange = vi.fn();
+
+    await expect(sendMessage('session-id', 'Question', new AbortController().signal, null, undefined, {
+      messageId: 'message-1', onConnectionChange,
+    })).rejects.toThrow('The AI backend returned an invalid run ID.');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(onConnectionChange).not.toHaveBeenCalled();
+  });
+
   it('saves Stop before retrying a request whose response never arrived', async () => {
     const fetchMock = vi.fn()
       .mockRejectedValueOnce(new TypeError('Failed to fetch'))
