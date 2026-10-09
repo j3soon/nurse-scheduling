@@ -82,7 +82,8 @@ The session records typed questions, assistant responses, app events, and propos
 decisions. Tool results and reasoning belong to the current run and are released
 when it ends. Stop and failed runs retain their questions with an interruption
 note. Later model context excludes claims from their discarded workspace.
-Persistence still stores the existing text history through a conversion boundary.
+Recovery stores typed entries, including their origin and interruption state.
+Existing text history remains readable when the service restores older sessions.
 The service applies queued steering before each follow-up model request, including
 requests after refused tool calls. It requires provider completion before tools
 run and rejects conflicting finish reasons or further output after completion.

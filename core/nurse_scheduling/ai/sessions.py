@@ -43,7 +43,16 @@ from .context import (
     upload_event,
 )
 from .lifecycle import TurnSnapshot
-from .transcript import AgentMessage, AppEventEntry, AssistantMessage, ProposalDecisionEntry, UserMessage, entry_text
+from .transcript import (
+    AgentMessage,
+    AppEventEntry,
+    AssistantMessage,
+    ProposalDecisionEntry,
+    UserMessage,
+    entry_from_record,
+    entry_record,
+    entry_text,
+)
 from .workspace import SandboxAttachment
 
 SESSION_MEMORY_LIMIT_MESSAGE = "The AI service has reached its memory limit."
@@ -262,7 +271,9 @@ class SessionStore:
                 time.time() + max(0, session.expires_at - time.monotonic()),
                 {
                     "schedule_yaml": session.schedule_yaml,
-                    "history": [dict(message) for message in session.history],
+                    "transcript": [
+                        {"type": kind, "payload": payload} for kind, payload in map(entry_record, session.transcript)
+                    ],
                     "proposal_yaml": session.proposal_yaml,
                     "proposal_diff": session.proposal_diff,
                     "dropped_history_messages": session.dropped_history_messages,
@@ -279,7 +290,12 @@ class SessionStore:
             if len(self._sessions) >= self._settings.max_sessions:
                 raise HTTPException(status_code=429, detail="The AI service has reached its session limit.")
             state = dict(record["state"])
-            state["transcript"] = entries_from_legacy_history(state.pop("history"))
+            if "transcript" in state:
+                state["transcript"] = [
+                    entry_from_record(entry["type"], entry["payload"]) for entry in state["transcript"]
+                ]
+            else:
+                state["transcript"] = entries_from_legacy_history(state.pop("history"))
             session = AgentSession(
                 id=session_id,
                 owner_token=owner,

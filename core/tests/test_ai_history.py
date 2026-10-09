@@ -33,8 +33,10 @@ from psycopg import sql
 
 from nurse_scheduling.ai import history as history_module
 from nurse_scheduling.ai.config import AiSettings
+from nurse_scheduling.ai.context import projected_history
 from nurse_scheduling.ai.history import ChatHistory
 from nurse_scheduling.ai.provider import ProviderError, TextDelta, TokenUsage
+from nurse_scheduling.ai.transcript import AssistantMessage, UserMessage, entry_from_record
 
 from . import test_ai_basic as basic
 
@@ -111,7 +113,15 @@ def test_postgres_recovery_keeps_operational_metadata(postgres_history):
         assert credential and created
         assert all(row[5] == credential and row[6] == 0 and row[7] <= row[8] for row in rows)
         state = postgres_history.load_recovery_session(session, owner)["state"]
-        assert state["history"] == [
+        entries = [entry_from_record(entry["type"], entry["payload"]) for entry in state["transcript"]]
+        assert entries == [
+            UserMessage("First"),
+            AssistantMessage("Answer"),
+            UserMessage("Second"),
+            AssistantMessage("Partial", "error"),
+        ]
+        expected_history = projected_history(entries)
+        assert expected_history == [
             {"role": "user", "content": "First"},
             {"role": "assistant", "content": "Answer"},
             {"role": "user", "content": "Second"},
@@ -127,7 +137,7 @@ def test_postgres_recovery_keeps_operational_metadata(postgres_history):
         client.cookies.set(basic.OWNER_COOKIE, owner)
         response = client.post(f"/sessions/{session}/messages", json={"message": "Retry"})
         assert response.status_code == 200
-        assert restored_provider.calls[0][1:5] == state["history"]
+        assert restored_provider.calls[0][1:5] == expected_history
 
 
 @pytest.mark.parametrize("failed", [False, True])

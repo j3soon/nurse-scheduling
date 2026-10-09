@@ -27,7 +27,6 @@ from nurse_scheduling.ai.context import (
     SCHEDULE_CHANGED_EVENT,
     build_provider_messages,
     cap_transcript,
-    entries_from_legacy_history,
     history_chars,
     interrupted_entries,
     prepare_provider_request,
@@ -44,6 +43,8 @@ from nurse_scheduling.ai.transcript import (
     ToolResultImage,
     ToolResultMessage,
     UserMessage,
+    entry_from_record,
+    entry_record,
 )
 
 from .test_ai_basic import make_settings, schedule_yaml
@@ -142,13 +143,64 @@ def test_legacy_recovery_preserves_the_next_provider_request_after_decisions_and
     store.finish(session.id, "unused", "unused", snapshot=snapshot, turn_messages=entries)
     expected = build_provider_messages(project_history(session.transcript), session.schedule_yaml, "Retry")
     owner, expires, state = store.recovery_state(session.id)
-    assert set(state) == {"schedule_yaml", "history", "proposal_yaml", "proposal_diff", "dropped_history_messages"}
-    assert {"role": "user", "content": PROPOSAL_APPROVED_HISTORY} in state["history"]
+    assert set(state) == {"schedule_yaml", "transcript", "proposal_yaml", "proposal_diff", "dropped_history_messages"}
+    assert {"type": "proposal_decision", "payload": {"decision": "approved"}} in state["transcript"]
     recovered = SessionStore(make_settings())
     recovered.restore(session.id, owner, {"expires_at": expires, "state": state})
     restored = recovered._sessions[session.id]
     assert build_provider_messages(project_history(restored.transcript), restored.schedule_yaml, "Retry") == expected
-    assert entries_from_legacy_history(state["history"]) == restored.transcript
+    assert entries == restored.transcript
+
+
+@pytest.mark.parametrize(
+    "question",
+    [PROPOSAL_APPROVED_HISTORY, SCHEDULE_CHANGED_EVENT, "Ordinary question"],
+    ids=["decision-text", "app-event-text", "ordinary"],
+)
+def test_typed_recovery_preserves_user_origin_and_interrupted_output(question):
+    store = SessionStore(make_settings())
+    session = store.create("owner", schedule_yaml())
+    snapshot = store.begin(session.id, "owner")
+    entries = [UserMessage(question), AssistantMessage("Discarded edit claim", "error")]
+    store.finish(session.id, question, "unused", snapshot=snapshot, turn_messages=entries)
+    owner, expires, state = store.recovery_state(session.id)
+    recovered = SessionStore(make_settings())
+    recovered.restore(session.id, owner, {"expires_at": expires, "state": state})
+    restored = recovered._sessions[session.id]
+    assert restored.transcript == entries
+    assert restored.history == session.history
+    assert recovered._session_bytes[session.id] == store._session_bytes[session.id]
+
+
+def test_typed_entry_storage_preserves_tool_calls_and_excludes_image_bytes():
+    import json
+
+    call = ToolCall("read-1", "read", '{"path":"schedule.yaml"}')
+    entries = [
+        UserMessage("Question"),
+        AssistantMessage("Checking", "tool_use", "Reasoning", (call,)),
+        ToolResultMessage(call.id, call.name, "Result", True, ToolResultImage("image/png", b"private bytes")),
+        ProposalDecisionEntry("approved"),
+        AppEventEntry("Upload event"),
+    ]
+    records = json.loads(json.dumps([entry_record(entry) for entry in entries]))
+    assert "private bytes" not in repr(records)
+    assert [entry_from_record(kind, payload) for kind, payload in records] == [
+        *entries[:2],
+        ToolResultMessage(call.id, call.name, "Result", True),
+        *entries[3:],
+    ]
+
+
+def test_recovery_reads_existing_text_history_without_a_database_reset():
+    store = SessionStore(make_settings())
+    session = store.create("owner", schedule_yaml())
+    owner, expires, state = store.recovery_state(session.id)
+    state.pop("transcript")
+    state["history"] = [{"role": "user", "content": "Question"}, {"role": "assistant", "content": "Answer"}]
+    recovered = SessionStore(make_settings())
+    recovered.restore(session.id, owner, {"expires_at": expires, "state": state})
+    assert recovered._sessions[session.id].transcript == [UserMessage("Question"), AssistantMessage("Answer")]
 
 
 def test_retained_byte_budget_counts_partial_text_hidden_from_model_context():
