@@ -948,7 +948,13 @@ def _check_vm_clock_queries(activity: Sequence[dict[str, Any]]) -> list[CheckRes
             command = json.loads(event.get("arguments", "{}"))["command"]
         except (TypeError, ValueError, KeyError):
             continue
-        python_clock = re.search(r"\b(?:datetime|date)\.(?:now|utcnow|today)\s*\(|\btime\.time\s*\(", command)
+        python_clock = re.search(
+            r"\b(?:datetime|date|Timestamp)\.(?:now|utcnow|today)\s*\("
+            r"|\btime\.(?:time|time_ns)\s*\("
+            r"|\btime\.(?:localtime|gmtime|ctime)\s*\(\s*\)"
+            r"|\btime\.strftime\s*\(\s*(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|[\w.]+)\s*,?\s*\)",
+            command,
+        )
         shell_clock = any(
             not re.search(r"(?:^|\s)(?:-d(?:\s|=)|--date(?:\s|=))", match.group(1))
             for match in re.finditer(
