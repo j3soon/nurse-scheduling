@@ -97,6 +97,7 @@ def case_digest(case: EvalCase) -> str:
         "current_time",
         "after_optimizer_turns",
         "optimizer_download_file",
+        "staffing_contract",
     ):
         if not fields[optional]:
             fields.pop(optional)
@@ -167,6 +168,14 @@ def case_digest(case: EvalCase) -> str:
 
         fields["clock_query_oracle_sha256"] = hashlib.sha256(
             inspect.getsource(_check_vm_clock_queries).encode()
+        ).hexdigest()
+    if case.semantic_check == "qualified-staffing":
+        from nurse_scheduling.preference_types import staffing_expression
+
+        from .grading import _check_staffing_contract
+
+        fields["staffing_oracle_sha256"] = hashlib.sha256(
+            inspect.getsource(_check_staffing_contract).encode() + inspect.getsource(staffing_expression).encode()
         ).hexdigest()
     if case.semantic_check == "optimizer-download":
         from .grading import _check_optimizer_download

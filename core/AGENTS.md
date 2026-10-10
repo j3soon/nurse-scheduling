@@ -328,6 +328,8 @@ skipped does not validate persistence.
   and background chat errors. Keep raw provider bodies and private SDK errors
   in server logs. Test that failed validation still discards the turn's edits.
 - Isolate prompt policies with the smallest fixture that exercises the claim.
+  For qualified staffing within a stated total, check both the total and eligibility.
+  Include a control where the qualified slot is explicitly additional.
   Use the large ward only when scale or reference cascades matter. Grade
   scheduling semantics rather than ineffective fields or equivalent formatting.
   For complete file imports, compare the whole parsed proposal with the uploaded

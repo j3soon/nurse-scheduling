@@ -910,27 +910,35 @@
     "file": "steps/new-schedule-guide.md",
     "cases": [
       "new-schedule-qualified-slots",
-      "guide-start-from-empty-schedule"
+      "guide-start-from-empty-schedule",
+      "senior-included-in-day-total",
+      "senior-additional-day-slot"
     ],
-    "hypothesis": "Reads the real-schedule guide and explains qualified slots before constructing a new schedule.",
-    "sha256": "444893d2a22a17a3babfa6b58aa67025e9cdbbce7c5b765dfe20a99d364d6250",
+    "hypothesis": "Reads the real-schedule guide, explains qualified slots, and preserves stated totals when a qualified slot is included.",
+    "sha256": "88b5ef7a73a54753ff5cbc6083b17d80426ea1fe9e2e14f0aed418aafab27391",
     "evidence": [
       {
-        "case": "new-schedule-qualified-slots",
-        "input_sha256": "6091c105c949f727999aebe112c6fe69032a8d105d6e09b4c593da47fbc43b7e",
-        "before": "1/3",
+        "case": "senior-included-in-day-total",
+        "input_sha256": "14a2fae3e5f9057dc0a8ca1453fb1f836721ad3f4f1dca1fd84f6d79faf6746d",
+        "before": "2/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
         "controls": [
           {
-            "case": "guide-start-from-empty-schedule",
-            "input_sha256": "420821ec433cd278f58207913181975612c40c00f985b0ec8587c2346b945ace",
+            "case": "senior-additional-day-slot",
+            "input_sha256": "642f80b3cd1555c8d3a2d80b210c41b5c2aa2e08ca9fdae112dbfa5548c11fe0",
+            "before": "5/5",
+            "after": "5/5"
+          },
+          {
+            "case": "new-schedule-qualified-slots",
+            "input_sha256": "5dd1ce77d9ecad8270cc9a4ef0537889bfb7ab165e69ebdc2f6e095deaa7a8b0",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Adjacent full-prompt prefixes. Without this section, two attempts did not read the real-schedule guide or explain the qualified slots. With it, all three read the guide and explained the D+, E+, and N+ pattern before editing. The empty-schedule construction control stays correct."
+        "note": "Compare the previous full prompt with the explicit included-versus-additional arithmetic. The first corrected baseline creates three day slots in one of three runs. All five candidate runs pass, including its first three used for this paired receipt. A separate five-run baseline also passes 5/5, so the longer comparison ties and does not establish a general success-rate or cost gain. The explicit additional-slot control stays correct. The explanation control is rerun in both versions with numeric staffing counts, valid N or N+ names, and a rejection rule limited to claims that the app cannot represent senior staffing. Earlier false failures remain diagnostic reports."
       }
     ]
   }

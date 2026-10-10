@@ -138,6 +138,7 @@ class EvalCase:
     after_optimizer_turns: tuple[str, ...] = ()
     download_count: int | None = None
     optimizer_download_file: str = ""
+    staffing_contract: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Keep direct test construction compatible with single-turn cases."""
@@ -215,6 +216,8 @@ def load_cases(path: Path) -> list[EvalCase]:
 
 def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     """Convert one dataset entry into a case, or explain why it cannot be graded."""
+    if "assertions" in entry:
+        raise EvalCaseError(f"{source} must use `assert`, not `assertions`, for schedule checks.")
     for required in ("id", "fixture", "expect_proposal"):
         if required not in entry:
             raise EvalCaseError(f"{source} is missing `{required}`.")
@@ -299,6 +302,7 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         "optimizer-start-source",
         "current-time-context",
         "optimizer-download",
+        "qualified-staffing",
     }:
         raise EvalCaseError(f"{source} has an unknown semantic_check.")
     proposal_turn, proposal_turns = _proposal_turns(
@@ -342,6 +346,25 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         raise EvalCaseError(f"{source} optimizer_download_file requires a completion and one ZIP download.")
     if semantic_check == "optimizer-download" and (not optimizer_completion or download_count is None):
         raise EvalCaseError(f"{source} optimizer-download requires a completion and a download_count.")
+    staffing_contract = entry.get("staffing_contract", {})
+    if not isinstance(staffing_contract, dict) or (
+        staffing_contract
+        and (
+            semantic_check != "qualified-staffing"
+            or set(staffing_contract) != {"counts", "qualified"}
+            or not isinstance(staffing_contract["counts"], dict)
+            or not staffing_contract["counts"]
+            or not all(isinstance(k, str) and type(v) is int and v >= 0 for k, v in staffing_contract["counts"].items())
+            or not isinstance(staffing_contract["qualified"], dict)
+            or not all(
+                k in staffing_contract["counts"] and isinstance(v, list) and v and all(isinstance(p, str) for p in v)
+                for k, v in staffing_contract["qualified"].items()
+            )
+        )
+    ):
+        raise EvalCaseError(f"{source} has an invalid staffing_contract.")
+    if semantic_check == "qualified-staffing" and not staffing_contract:
+        raise EvalCaseError(f"{source} qualified-staffing requires a staffing_contract.")
     if entry["expect_proposal"] and not assertions and not expected_diff and not semantic_check:
         raise EvalCaseError(f"{source} expects a proposal but asserts nothing about it.")
     if entry["expect_proposal"] and not entry.get("changes"):
@@ -379,6 +402,7 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         after_optimizer_turns=tuple(after_optimizer_turns),
         download_count=download_count,
         optimizer_download_file=optimizer_download_file,
+        staffing_contract=staffing_contract,
         changes=tuple(entry.get("changes", ())),
         answer_contains=tuple(
             tuple(value) if isinstance(value, list) else value for value in entry.get("answer_contains", ())
@@ -611,6 +635,8 @@ def grade(case: EvalCase, outcome: RunOutcome, computed: dict[str, Any] | None =
         checks.extend(_check_assertion(outcome, assertion) for assertion in case.assertions)
         checks.extend(_check_expected_diff(outcome, expected) for expected in case.expected_diff)
         checks.append(_check_nothing_else_changed(outcome, case.changes))
+        if case.semantic_check == "qualified-staffing":
+            checks.append(_check_staffing_contract(case, outcome))
     if case.semantic_check == "yaml-generator":
         checks.extend(_check_yaml_generator(outcome.activity))
     if case.semantic_check == "optimizer-start-source":
@@ -763,6 +789,86 @@ def _check_yaml_generator(activity: Sequence[dict[str, Any]]) -> list[CheckResul
         CheckResult("executes the repaired generator successfully", executed),
         CheckResult("avoids package installation in the offline sandbox", not installations, str(installations)),
     ]
+
+
+def _check_staffing_contract(case: EvalCase, outcome: RunOutcome) -> CheckResult:
+    """Compare all possible daily assignments with the requested staffing and eligibility."""
+    from itertools import product
+
+    import yaml
+
+    from nurse_scheduling.frontend_validation import load_frontend_data
+    from nurse_scheduling.models import CompiledShiftTypeRequirements
+    from nurse_scheduling.preference_types import staffing_expression
+
+    label = "compiled staffing preserves the requested totals and qualifications"
+    try:
+        data = load_frontend_data(yaml.safe_dump(outcome.proposed).encode())
+        compiled = data.compiled_schedule
+        people = [p.id for p in data.people.items]
+        shifts = [s.id for s in data.shiftTypes.items]
+        if set(shifts) != set(case.staffing_contract["counts"]):
+            return CheckResult(label, False, "shift types differ from the requested staffing contract")
+        if (len(shifts) + 1) ** len(people) > 100_000:
+            return CheckResult(label, False, "staffing oracle requires a small fixture")
+        rules = []
+        for preference, resolved in zip(data.preferences, compiled.preferences, strict=True):
+            if preference.type == "at most one shift per day":
+                continue
+            if not isinstance(resolved, CompiledShiftTypeRequirements):
+                return CheckResult(label, False, "adds a rule outside the requested staffing contract")
+            rules.append((preference, resolved))
+        expected = set()
+        assignments = list(product(range(-1, len(shifts)), repeat=len(people)))
+        for assignment in assignments:
+            if all(
+                assignment.count(s) == case.staffing_contract["counts"][sid] for s, sid in enumerate(shifts)
+            ) and all(
+                people[p] in eligible
+                for sid, eligible in case.staffing_contract["qualified"].items()
+                for p, s in enumerate(assignment)
+                if s >= 0 and shifts[s] == sid
+            ):
+                expected.add(assignment)
+        if not expected or not compiled.dates:
+            return CheckResult(label, False, "requested staffing has no feasible daily assignments")
+        for day in range(len(compiled.dates)):
+            actual = set()
+            for assignment in assignments:
+                allowed = True
+                for preference, resolved in rules:
+                    if day not in resolved.dates:
+                        continue
+                    for group in resolved.shift_type_groups:
+                        if resolved.qualified_people is not None and any(
+                            s in group and p not in resolved.qualified_people for p, s in enumerate(assignment)
+                        ):
+                            allowed = False
+                            break
+                        count = staffing_expression(
+                            lambda _d, s, p, selected=assignment: int(selected[p] == s),
+                            len(people),
+                            resolved,
+                            day,
+                            group,
+                        )
+                        if preference.preferredNumPeople is None:
+                            allowed = allowed and count == preference.requiredNumPeople
+                        else:
+                            allowed = allowed and preference.requiredNumPeople <= count <= preference.preferredNumPeople
+                    if not allowed:
+                        break
+                if allowed:
+                    actual.add(assignment)
+            if actual != expected:
+                return CheckResult(
+                    label,
+                    False,
+                    f"date {compiled.dates[day]} admits {len(actual)} assignments, expected {len(expected)}",
+                )
+        return CheckResult(label, True)
+    except (ValueError, TypeError, KeyError) as error:
+        return CheckResult(label, False, str(error))
 
 
 def _check_optimizer_download(case: EvalCase, outcome: RunOutcome) -> list[CheckResult]:

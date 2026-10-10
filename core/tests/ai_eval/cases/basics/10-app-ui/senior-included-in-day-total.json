@@ -1,0 +1,93 @@
+{
+  "fixture": "new-schedule",
+  "expect_proposal": true,
+  "semantic_check": "qualified-staffing",
+  "changes": [
+    "description",
+    "dates",
+    "people",
+    "shiftTypes",
+    "preferences"
+  ],
+  "tool_usage": {
+    "forbidden": [
+      "optimizer"
+    ],
+    "max_total": 15
+  },
+  "tags": [
+    "new-schedule",
+    "staffing"
+  ],
+  "note": "This testcase is mostly AI generated. Synthetic inclusive versus additive staffing. Grade every daily assignment admitted by the compiled requirements against independently specified counts and eligibility.",
+  "id": "senior-included-in-day-total",
+  "question": "Build a new schedule for March 1, 2026 only. Nurses S1 and S2 are seniors. J1, J2 and J3 are other nurses. Daily staffing: Day 2, Evening 1, Night 1. Senior nurse — (a) one of the 2 day slots. Use D for the general day slot, D+ for the senior day slot, E for evening and N for night. All nurses can fill the general slots. Use exact staffing counts, no preferred upper counts, and only these staffing rules plus at most one shift per day. Propose the YAML now. Do not optimize.",
+  "staffing_contract": {
+    "counts": {
+      "D": 1,
+      "D+": 1,
+      "E": 1,
+      "N": 1
+    },
+    "qualified": {
+      "D+": [
+        "S1",
+        "S2"
+      ]
+    }
+  },
+  "assert": [
+    {
+      "path": "dates.range.startDate",
+      "equals": "2026-03-01"
+    },
+    {
+      "path": "dates.range.endDate",
+      "equals": "2026-03-01"
+    },
+    {
+      "path": "people.items[].id",
+      "count": 5
+    },
+    {
+      "path": "people.items[].id",
+      "contains": "S1"
+    },
+    {
+      "path": "people.items[].id",
+      "contains": "S2"
+    },
+    {
+      "path": "people.items[].id",
+      "contains": "J1"
+    },
+    {
+      "path": "people.items[].id",
+      "contains": "J2"
+    },
+    {
+      "path": "people.items[].id",
+      "contains": "J3"
+    },
+    {
+      "path": "shiftTypes.items[].id",
+      "count": 4
+    },
+    {
+      "path": "shiftTypes.items[].id",
+      "contains": "D"
+    },
+    {
+      "path": "shiftTypes.items[].id",
+      "contains": "D+"
+    },
+    {
+      "path": "shiftTypes.items[].id",
+      "contains": "E"
+    },
+    {
+      "path": "shiftTypes.items[].id",
+      "contains": "N"
+    }
+  ]
+}

@@ -77,6 +77,75 @@ SCHEDULE = {
 }
 
 
+def qualified_staffing_proposal(general_count=1, qualified=("S1", "S2")):
+    proposed = copy.deepcopy(FIXTURE_SCHEDULES["new-schedule"])
+    proposed["dates"]["range"] = {"startDate": "2026-03-01", "endDate": "2026-03-01"}
+    proposed["people"]["items"] = [{"id": p, "description": ""} for p in ("S1", "S2", "J1", "J2", "J3")]
+    proposed["people"]["groups"] = [{"id": "Seniors", "description": "", "members": list(qualified)}]
+    proposed["shiftTypes"]["items"] = [{"id": s, "description": ""} for s in ("D", "D+", "E", "N")]
+    proposed["preferences"] = [
+        {"type": "at most one shift per day"},
+        *[
+            {
+                "type": "shift type requirement",
+                "shiftType": [s],
+                "date": ["ALL"],
+                "qualifiedPeople": ["Seniors"] if s == "D+" else ["ALL"],
+                "requiredNumPeople": n,
+            }
+            for s, n in (("D", general_count), ("D+", 1), ("E", 1), ("N", 1))
+        ],
+    ]
+    return proposed
+
+
+@pytest.mark.parametrize(
+    "case_id,general_count,passed",
+    [
+        ("senior-included-in-day-total", 1, True),
+        ("senior-included-in-day-total", 2, False),
+        ("senior-additional-day-slot", 2, True),
+        ("senior-additional-day-slot", 1, False),
+    ],
+)
+def test_staffing_grader_distinguishes_inclusive_and_additive_counts(case_id, general_count, passed):
+    case = next(c for c in load_cases(CASES_PATH) if c.id == case_id)
+    proposed = qualified_staffing_proposal(general_count)
+    result = grade(case, RunOutcome(initial=FIXTURE_SCHEDULES[case.fixture], proposed=proposed))
+    assert result.passed == passed
+
+
+def test_staffing_grader_rejects_unqualified_senior_slots():
+    case = next(c for c in load_cases(CASES_PATH) if c.id == "senior-included-in-day-total")
+    result = grade(
+        case,
+        RunOutcome(initial=FIXTURE_SCHEDULES[case.fixture], proposed=qualified_staffing_proposal(qualified=("J1",))),
+    )
+    assert not result.passed
+
+
+@pytest.mark.parametrize("general_count", [1, 2])
+def test_staffing_oracle_reference_assignment_is_solver_feasible(general_count):
+    import yaml
+
+    from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
+    from nurse_scheduling.frontend_validation import load_frontend_data
+    from nurse_scheduling.scheduler import schedule
+
+    source = yaml.safe_dump(qualified_staffing_proposal(general_count)).encode()
+    assert validate_frontend_schedule_yaml(source.decode(), max_bytes=50_000).valid
+    data = load_frontend_data(source)
+    assigned = ["D+", "D" if general_count == 2 else "OFF", "D", "E", "N"]
+    forced = {
+        (0, s, p): int(assigned[p] == item.id)
+        for s, item in enumerate(data.shiftTypes.items)
+        for p in range(len(data.people.items))
+    }
+    result = schedule(source, solver="ortools/cp-sat", timeout=5, forced_solution=forced)
+    assert result.solver_status == "OPTIMAL"
+    assert result.solution == forced
+
+
 def _case(**overrides) -> object:
     entry = {"id": "case", "fixture": "new-schedule", "question": "q", "expect_proposal": True}
     entry.update(overrides)
@@ -99,6 +168,35 @@ def _write(tmp_path: Path, *entries: dict) -> Path:
 def test_invalid_clock_context_is_rejected(tmp_path, context):
     with pytest.raises(EvalCaseError, match="clock context"):
         load_cases(_write(tmp_path, _case(expect_proposal=False, **context)))
+
+
+def test_misspelled_assertion_key_cannot_silently_drop_schedule_checks(tmp_path):
+    with pytest.raises(EvalCaseError, match="must use `assert`"):
+        load_cases(_write(tmp_path, _case(assertions=[{"path": "description", "kind": "equals", "value": "Ward"}])))
+
+
+@pytest.mark.parametrize("night,passed", [("N", True), ("N+", True), ("N", False)])
+def test_qualified_explanation_grades_counts_instead_of_a_night_suffix(night, passed):
+    case = next(c for c in load_cases(CASES_PATH) if c.id == "new-schedule-qualified-slots")
+    counts = copy.deepcopy(case.answer_json)
+    if not passed:
+        counts["night"] = {"total": 2, "senior": 1, "other": 1}
+    answer = (
+        f"Use D+ and E+ for senior slots. {night} is senior-only. "
+        "A single unrestricted D requirement cannot guarantee a one-senior and one-other mix.\n" + json.dumps(counts)
+    )
+    activity = [
+        {
+            "kind": "tool",
+            "name": "read",
+            "ok": True,
+            "arguments": json.dumps({"path": "/reference/user-guide/build-a-real-schedule.md"}),
+        }
+    ]
+    assert grade(case, RunOutcome(answer=answer, activity=activity)).passed == passed
+    if passed:
+        invalid = "This app cannot represent senior staffing.\n" + answer
+        assert not grade(case, RunOutcome(answer=invalid, activity=activity)).passed
 
 
 @pytest.mark.parametrize(
