@@ -20,12 +20,40 @@
 // This test is mostly AI generated.
 
 import { expect, test } from '@playwright/test';
-import { readFile, mkdir, mkdtemp } from 'node:fs/promises';
+import { readFile, readdir, writeFile, mkdir, mkdtemp } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import snapshot from '../../core/tests/ai_fixtures/chat-export.json';
 
 test.use({ timezoneId: 'Pacific/Honolulu', locale: 'zh-TW' });
+
+for (const failure of ['json', 'snapshot', 'filesystem'] as const) {
+  test(`CLI reports the ${failure} failure cause and preserves existing output`, async () => {
+    await mkdir(resolve('../artifacts'), { recursive: true });
+    const directory = await mkdtemp(resolve('../artifacts/chat-export-failure-'));
+    const input = resolve(directory, 'snapshot.json');
+    const output = resolve(directory, 'chat.md');
+    const original = 'Existing output';
+    await writeFile(input, failure === 'json' ? '{' : JSON.stringify({
+      ...snapshot, schema_version: failure === 'snapshot' ? 2 : 1,
+    }));
+    if (failure === 'filesystem') await mkdir(output);
+    const preserved = failure === 'filesystem' ? resolve(output, 'original.txt') : output;
+    await writeFile(preserved, original);
+
+    const result = spawnSync('bun', ['scripts/export-ai-chat.ts', output, '--snapshot', input], {
+      cwd: resolve('.'), encoding: 'utf8',
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('The output file was not changed.');
+    expect(result.stderr).toMatch(failure === 'json' ? /JSON|Unexpected|Expected/
+      : failure === 'snapshot' ? /invalid saved chat snapshot/ : /EISDIR|is a directory/);
+    expect(await readFile(preserved, 'utf8')).toBe(original);
+    expect((await readdir(directory)).filter(name => name.endsWith('.tmp'))).toEqual([]);
+  });
+}
 
 test('saved HTML and Markdown browser downloads byte-match the backend CLI', async ({ page }) => {
   const fixture = resolve('../core/tests/ai_fixtures/chat-export.json');
