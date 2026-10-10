@@ -42,7 +42,7 @@ for (const failure of ['json', 'snapshot', 'filesystem'] as const) {
     await writeFile(preserved, original);
 
     const result = spawnSync('bun', ['scripts/export-ai-chat.ts', output, '--snapshot', input], {
-      cwd: resolve('.'), encoding: 'utf8',
+      cwd: resolve('.'), encoding: 'utf8', timeout: 10_000,
     });
 
     expect(result.error).toBeUndefined();
@@ -97,7 +97,7 @@ test('saved HTML and Markdown browser downloads byte-match the backend CLI', asy
 
   for (const format of ['html', 'markdown'] as const) {
     const output = resolve(outputDirectory, format === 'html' ? 'chat.html' : 'chat.md');
-    execFileSync('bun', ['scripts/export-ai-chat.ts', output, '--snapshot', fixture], { cwd: resolve('.') });
+    execFileSync('bun', ['scripts/export-ai-chat.ts', output, '--snapshot', fixture], { cwd: resolve('.'), timeout: 10_000 });
     const download = page.waitForEvent('download');
     await page.getByRole('button', { name: format === 'html' ? 'HTML' : 'Markdown', exact: true }).click();
     const browserBytes = await readFile((await (await download).path())!);
