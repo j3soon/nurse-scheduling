@@ -176,6 +176,12 @@ def test_misspelled_assertion_key_cannot_silently_drop_schedule_checks(tmp_path)
         load_cases(_write(tmp_path, _case(assertions=[{"path": "description", "kind": "equals", "value": "Ward"}])))
 
 
+@pytest.mark.parametrize("field", ["answer_jsno", "semantic_checks", "tool_usgae", "expected_diffs"])
+def test_unknown_case_fields_cannot_silently_drop_checks(tmp_path, field):
+    with pytest.raises(EvalCaseError, match=f"unknown case fields: {field}"):
+        load_cases(_write(tmp_path, _case(expect_proposal=False, **{field: {}})))
+
+
 @pytest.mark.parametrize("night,passed", [("N", True), ("N+", True), ("N", False)])
 def test_qualified_explanation_grades_counts_instead_of_a_night_suffix(night, passed):
     case = next(c for c in load_cases(CASES_PATH) if c.id == "new-schedule-qualified-slots")

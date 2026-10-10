@@ -218,6 +218,46 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     """Convert one dataset entry into a case, or explain why it cannot be graded."""
     if "assertions" in entry:
         raise EvalCaseError(f"{source} must use `assert`, not `assertions`, for schedule checks.")
+    allowed = {
+        "_license",
+        "_comment",
+        "id",
+        "fixture",
+        "expect_proposal",
+        "question",
+        "user_turns",
+        "download_files",
+        "import_attachment",
+        "intermediate_answer_contains",
+        "after_optimizer_turns",
+        "tags",
+        "frontend_timezone",
+        "current_time",
+        "attachments",
+        "assert",
+        "expected_diff",
+        "semantic_check",
+        "proposal_turn",
+        "proposal_turns",
+        "turn_actions",
+        "turn_tool_usage",
+        "optimizer_error",
+        "optimizer_completion",
+        "optimizer_completion_only",
+        "answer_json",
+        "download_count",
+        "optimizer_download_file",
+        "staffing_contract",
+        "changes",
+        "answer_contains",
+        "answer_matches",
+        "answer_not_matches",
+        "tool_usage",
+        "note",
+    }
+    unknown = entry.keys() - allowed
+    if unknown:
+        raise EvalCaseError(f"{source} has unknown case fields: {', '.join(sorted(unknown))}.")
     for required in ("id", "fixture", "expect_proposal"):
         if required not in entry:
             raise EvalCaseError(f"{source} is missing `{required}`.")

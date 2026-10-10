@@ -93,3 +93,12 @@ unavailable and no performance gain is claimed.
 
 With the final group guidance, both the inclusive and explicitly additional
 senior staffing cases also pass a three-run interaction check.
+
+## Testcase field validation
+
+The loader previously accepted unknown top-level fields. A synthetic
+`answer_jsno` field silently removed the intended answer check. The loader now
+rejects every unknown field before provider calls, while allowing the existing
+license and provenance fields. Negative tests cover answer, semantic, tool, and
+diff typos. The complete dataset still loads. This is a deterministic parser
+comparison and does not require a provider evaluation.
