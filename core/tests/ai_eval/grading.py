@@ -25,8 +25,10 @@ import re
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # Most cases grade only the produced schedule or answer. Focused capability cases
 # may also assert a small, intentional tool trajectory.
@@ -131,6 +133,8 @@ class EvalCase:
     turn_tool_usage: tuple[ToolUsageExpectation | None, ...] = ()
     note: str = ""
     semantic_check: str = ""
+    frontend_timezone: str = ""
+    current_time: str = ""
 
     def __post_init__(self) -> None:
         """Keep direct test construction compatible with single-turn cases."""
@@ -257,6 +261,17 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     raw_tags = entry.get("tags", [])
     if not isinstance(raw_tags, list) or not all(isinstance(tag, str) and tag for tag in raw_tags):
         raise EvalCaseError(f"{source} `tags` must be a list of strings.")
+    frontend_timezone = entry.get("frontend_timezone", "")
+    current_time = entry.get("current_time", "")
+    if not isinstance(frontend_timezone, str) or not isinstance(current_time, str):
+        raise EvalCaseError(f"{source} timezone and current_time must be strings.")
+    try:
+        if frontend_timezone:
+            ZoneInfo(frontend_timezone)
+        if current_time and datetime.fromisoformat(current_time).utcoffset() is None:
+            raise ValueError("current_time needs a UTC offset")
+    except (ValueError, ZoneInfoNotFoundError) as error:
+        raise EvalCaseError(f"{source} has invalid clock context: {error}") from error
     raw_attachments = entry.get("attachments", [])
     if not isinstance(raw_attachments, list) or not all(
         isinstance(attachment, str) and attachment for attachment in raw_attachments
@@ -267,7 +282,12 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     assertions = tuple(_build_assertion(raw, source) for raw in entry.get("assert", []))
     expected_diff = tuple(_build_expected_diff(raw, source) for raw in entry.get("expected_diff", []))
     semantic_check = entry.get("semantic_check", "")
-    if not isinstance(semantic_check, str) or semantic_check not in {"", "yaml-generator", "optimizer-start-source"}:
+    if not isinstance(semantic_check, str) or semantic_check not in {
+        "",
+        "yaml-generator",
+        "optimizer-start-source",
+        "current-time-context",
+    }:
         raise EvalCaseError(f"{source} has an unknown semantic_check.")
     proposal_turn, proposal_turns = _proposal_turns(entry, len(raw_turns), source)
     turn_actions = _turn_actions(entry.get("turn_actions", []), len(raw_turns), source)
@@ -303,7 +323,7 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     if entry["expect_proposal"] and not entry.get("changes"):
         raise EvalCaseError(f"{source} expects a proposal but names no part it may change.")
     if not entry["expect_proposal"] and (
-        assertions or expected_diff or semantic_check not in {"", "optimizer-start-source"}
+        assertions or expected_diff or semantic_check not in {"", "optimizer-start-source", "current-time-context"}
     ):
         raise EvalCaseError(f"{source} expects no proposal, so its schedule criteria can never run.")
     return EvalCase(
@@ -328,6 +348,8 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         assertions=assertions,
         expected_diff=expected_diff,
         semantic_check=semantic_check,
+        frontend_timezone=frontend_timezone,
+        current_time=current_time,
         changes=tuple(entry.get("changes", ())),
         answer_contains=tuple(
             tuple(value) if isinstance(value, list) else value for value in entry.get("answer_contains", ())
@@ -559,6 +581,8 @@ def grade(case: EvalCase, outcome: RunOutcome, computed: dict[str, Any] | None =
         checks.extend(_check_yaml_generator(outcome.activity))
     if case.semantic_check == "optimizer-start-source":
         checks.extend(_check_optimizer_start_source(case, outcome))
+    if case.semantic_check == "current-time-context":
+        checks.extend(_check_vm_clock_queries(outcome.activity))
     if case.optimizer_completion:
         checks.append(
             CheckResult("optimizer completion delivered", any(e.get("kind") == "optimizer" for e in outcome.activity))
@@ -705,12 +729,37 @@ def _check_yaml_generator(activity: Sequence[dict[str, Any]]) -> list[CheckResul
     ]
 
 
+def _check_vm_clock_queries(activity: Sequence[dict[str, Any]]) -> list[CheckResult]:
+    """Allow calculations from supplied dates but reject VM clock reads."""
+    queries = []
+    for event in activity:
+        if event.get("kind") not in {"tool", "tool_start"} or event.get("name") != "bash":
+            continue
+        try:
+            command = json.loads(event.get("arguments", "{}"))["command"]
+        except (TypeError, ValueError, KeyError):
+            continue
+        python_clock = re.search(r"\b(?:datetime|date)\.(?:now|utcnow|today)\s*\(|\btime\.time\s*\(", command)
+        shell_clock = any(
+            not re.search(r"(?:^|\s)(?:-d(?:\s|=)|--date(?:\s|=))", match.group(1))
+            for match in re.finditer(
+                r"(?:^|[\n;&|`(])\s*(?:env\s+)?(?:[A-Za-z_][A-Za-z_0-9]*=\S+\s+)*date(?=\s|[)`]|$)([^\n;&|)`]*)",
+                command,
+            )
+        )
+        if python_clock or shell_clock:
+            queries.append(command)
+    return [CheckResult("does not query the VM clock", not queries, repr(queries) if queries else "")]
+
+
 def semantic_trajectory_failures(case: EvalCase, activity: Sequence[dict[str, Any]]) -> tuple[CheckResult, ...]:
     """Stop once a semantic trajectory rule is already irreversibly violated."""
     if case.semantic_check == "yaml-generator":
         installation = _check_yaml_generator(activity)[1]
         if not installation.passed:
             return (installation,)
+    if case.semantic_check == "current-time-context":
+        return tuple(check for check in _check_vm_clock_queries(activity) if not check.passed)
     return ()
 
 

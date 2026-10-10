@@ -453,6 +453,18 @@ def test_a_correct_answer_passes_and_records_its_cost():
     assert run.seconds >= 0
 
 
+@pytest.mark.parametrize("case_id", ["current-time-frontend-taipei", "current-time-frontend-los-angeles"])
+def test_clock_cases_use_the_frontend_timezone_and_frozen_server_instant(case_id):
+    provider = ScriptedProvider([TextDelta(json.dumps(CASE_BY_ID[case_id].answer_json))])
+    factory = _factory()
+    run = _run(case_id, provider, factory)
+    assert run.passed
+    context = provider.messages[0][-1]["content"]
+    assert CASE_BY_ID[case_id].frontend_timezone in context
+    assert "2031-" in context
+    assert factory.created == []
+
+
 def test_attachment_case_hydrates_generated_file_and_records_an_upload_event():
     factory = _factory()
     run = _run(
@@ -470,7 +482,7 @@ def test_attachment_case_hydrates_generated_file_and_records_an_upload_event():
     prompt = run.trajectory["prompt"]
     assert prompt[1]["content"].startswith("[App event] The user uploaded files.")
     assert '"path": "/workspace/attachments/01-ward-notes.xlsx"' in prompt[1]["content"]
-    assert prompt[-1] == {"role": "user", "content": CASE_BY_ID["read-second-xlsx-sheet"].question}
+    assert prompt[-2] == {"role": "user", "content": CASE_BY_ID["read-second-xlsx-sheet"].question}
 
 
 def test_optimizer_case_uses_controlled_production_tool_contract():
@@ -930,7 +942,7 @@ def test_a_multi_user_turn_case_preserves_the_conversation_history():
 
     assert run.passed
     assert len(provider.messages) == 2
-    assert provider.messages[1][-3:] == [
+    assert provider.messages[1][-4:-1] == [
         {"role": "user", "content": "Expand the range."},
         {"role": "assistant", "content": "Renew Taiwan holidays?"},
         {"role": "user", "content": "No."},

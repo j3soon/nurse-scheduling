@@ -24,6 +24,8 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .config import DEFAULT_MAX_HISTORY_CHARS, AiSettings
 from .optimizer import WORKSPACE_OPTIMIZER_RESULT
@@ -72,6 +74,7 @@ def recent_history(history: list[ChatMessage], max_chars: int) -> list[ChatMessa
 
 APP_EVENT_PREFIX = "[App event]"
 STATUS_PREFIX = "[Current status]"
+CURRENT_TIME_STATUS = "Current date and time: "
 SCHEDULE_CHANGED_EVENT = (
     f"{APP_EVENT_PREFIX} The schedule changed in the app. /workspace/schedule.yaml contains the current version."
 )
@@ -110,6 +113,7 @@ _APP_EVENT_TITLES = (
     (PROPOSAL_INVALID_HISTORY, "Proposal Invalid"),
 )
 _STATUS_TITLES = (
+    (CURRENT_TIME_STATUS, "Current Time"),
     (PENDING_PROPOSAL_STATUS, "Pending Proposal"),
     (OPTIMIZER_RESULT_STATUS, "Optimizer Result"),
     (UNLISTED_UPLOADS_STATUS, "Unlisted Uploads"),
@@ -151,9 +155,13 @@ def status_message(
     *,
     pending_proposal: bool,
     optimizer_result_available: bool,
+    frontend_timezone: str | None = None,
+    now: datetime | None = None,
 ) -> str:
     """Describe request-specific state that would otherwise change the cached prompt prefix."""
     lines = []
+    if frontend_timezone is not None:
+        lines.append(current_time_status(frontend_timezone, now))
     if pending_proposal:
         lines.append(PENDING_PROPOSAL_STATUS)
     if optimizer_result_available:
@@ -168,6 +176,27 @@ def status_message(
     if unlisted:
         lines.append(f"{UNLISTED_UPLOADS_STATUS} {json.dumps(unlisted, ensure_ascii=False)}")
     return f"{STATUS_PREFIX}\n" + "\n".join(lines) if lines else ""
+
+
+def validate_frontend_timezone(value: str) -> str:
+    """Accept an IANA timezone that the server can use for the browser's clock context."""
+    try:
+        ZoneInfo(value)
+    except (ValueError, ZoneInfoNotFoundError) as error:
+        raise ValueError("frontend_timezone must be a known IANA timezone") from error
+    return value
+
+
+def current_time_status(frontend_timezone: str, now: datetime | None = None) -> str:
+    """Describe the server's current instant in the frontend's timezone."""
+    instant = now if now is not None else datetime.now(UTC)
+    if instant.utcoffset() is None:
+        raise ValueError("Current time must include a UTC offset")
+    timezone = UTC if frontend_timezone in {"UTC", "Etc/UTC", "GMT", "Etc/GMT"} else ZoneInfo(frontend_timezone)
+    local = instant.astimezone(timezone)
+    return CURRENT_TIME_STATUS + json.dumps(
+        {"datetime": local.isoformat(timespec="seconds"), "timezone": frontend_timezone}
+    )
 
 
 def context_usage(
@@ -207,6 +236,8 @@ def build_provider_messages(
     optimizer_result_available: bool = False,
     max_history_chars: int = DEFAULT_MAX_HISTORY_CHARS,
     max_download_bytes: int = 50_000_000,
+    frontend_timezone: str | None = None,
+    now: datetime | None = None,
 ) -> list[ChatMessage]:
     """Build a provider prompt whose system message and history stay unchanged between requests.
 
@@ -226,6 +257,8 @@ def build_provider_messages(
         attachments,
         pending_proposal=pending_proposal,
         optimizer_result_available=optimizer_result_available,
+        frontend_timezone=frontend_timezone,
+        now=now,
     )
     return [
         ChatMessage(role="system", content=system_content),
@@ -269,9 +302,20 @@ def model_input(
     return {"system": messages[0]["content"], "messages": added}
 
 
-def prepare_provider_request(prefix: Sequence[ChatMessage], entries: Sequence[AgentMessage]) -> list[ChatMessage]:
+def prepare_provider_request(
+    prefix: Sequence[ChatMessage], entries: Sequence[AgentMessage], *, now: datetime | None = None
+) -> list[ChatMessage]:
     """Project the agent's in-run messages at the provider boundary."""
     request = list(prefix)
+    clock_status = None
+    if request and isinstance(request[-1]["content"], str) and request[-1]["content"].startswith(STATUS_PREFIX + "\n"):
+        lines = request[-1]["content"].splitlines()
+        for index, line in enumerate(lines):
+            if line.startswith(CURRENT_TIME_STATUS):
+                timezone = json.loads(line.removeprefix(CURRENT_TIME_STATUS))["timezone"]
+                lines[index] = current_time_status(timezone, now)
+                clock_status = {**request.pop(), "content": "\n".join(lines)}
+                break
     pending_images: list[ChatMessage] = []
 
     def flush_images() -> None:
@@ -300,6 +344,8 @@ def prepare_provider_request(prefix: Sequence[ChatMessage], entries: Sequence[Ag
         elif isinstance(entry, UserMessage):
             request.append(ChatMessage(role="user", content=entry.text))
     flush_images()
+    if clock_status is not None:
+        request.append(clock_status)
     return request
 
 

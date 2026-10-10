@@ -286,6 +286,40 @@ def test_chat_requests_report_the_frontend_build_after_session_creation(queued, 
     assert "frontend_version=v0.4.2 backend_version=v0.4.3" in caplog.text
 
 
+@pytest.mark.parametrize("queued", [False, True], ids=["foreground", "queued"])
+def test_chat_timezone_comes_from_the_frontend_and_updates_later_requests(queued):
+    provider = FakeProvider()
+    app = create_test_app(settings=make_settings(), provider=provider)
+    with AuthenticatedTestClient(app) as client:
+        created = client.post("/sessions", json={"schedule_yaml": schedule_yaml(), "frontend_timezone": "Asia/Taipei"})
+        assert created.status_code == 201
+        session_id = created.json()["id"]
+        session = app.state.session_store.get(session_id)
+        assert session.frontend_timezone == "Asia/Taipei"
+        if queued:
+            session.begin_run(accepting_steering=True)
+        response = client.post(
+            f"/sessions/{session_id}/messages" + ("/queue" if queued else ""),
+            json={"message": "Hello", "message_id": "timezone-message", "frontend_timezone": "America/Los_Angeles"},
+        )
+        assert response.status_code in {200, 202}
+        assert session.frontend_timezone == "America/Los_Angeles"
+        if queued:
+            assert session.snapshot.frontend_timezone == "Asia/Taipei"
+        else:
+            assert '"timezone": "America/Los_Angeles"' in provider.calls[0][-1]["content"]
+        assert session.recovery_state()["frontend_timezone"] == "America/Los_Angeles"
+
+
+@pytest.mark.parametrize("timezone", ["No/Such_Zone", "../../etc/passwd", ""], ids=["unknown", "path", "empty"])
+def test_invalid_frontend_timezone_is_rejected_without_creating_a_session(timezone):
+    app = create_test_app(settings=make_settings(), provider=FakeProvider())
+    with AuthenticatedTestClient(app) as client:
+        response = client.post("/sessions", json={"schedule_yaml": schedule_yaml(), "frontend_timezone": timezone})
+        assert response.status_code == 422
+        assert app.state.session_store._sessions == {}
+
+
 def test_application_lifespan_runs_sandbox_cleanup_supervision():
     class LifecycleFactory(FakeSandboxFactory):
         starts = 0
@@ -809,7 +843,7 @@ def test_a_stopped_prompt_stays_in_context_for_the_next_run() -> None:
     transcript, follow_up_prompt = asyncio.run(exercise())
 
     assert transcript == [UserMessage("Rename P1."), AssistantMessage("I renamed P1 to", "aborted")]
-    assert follow_up_prompt[1:] == [
+    assert follow_up_prompt[1:-1] == [
         ChatMessage(role="user", content="Rename P1."),
         ChatMessage(role="assistant", content=ABORTED_RESPONSE_HISTORY),
         ChatMessage(role="user", content="Rename P2 instead."),
@@ -1024,7 +1058,8 @@ def test_health_and_streamed_schedule_question() -> None:
         ("done", {"run_id": run_id}),
     ]
     prompt = provider.calls[0]
-    assert prompt[-1] == {"role": "user", "content": "Who works Monday?"}
+    assert prompt[-2] == {"role": "user", "content": "Who works Monday?"}
+    assert "Current date and time:" in prompt[-1]["content"]
     # Schedule facts require a tool read.
     system_prompt = " ".join(prompt[0]["content"].split())
     assert "Alice" not in system_prompt
@@ -1229,8 +1264,8 @@ def test_uploads_and_removals_are_history_messages_before_the_question() -> None
         )
     )
     removed = f"[App event] The user removed a file from the workspace: {json.dumps(other)}"
-    # The question is sent as typed. The file is listed by its upload event, so no status message is needed.
-    assert provider.calls[0][1:] == [
+    # The question is sent as typed. Uploads stay in history, while the clock is request-specific.
+    assert provider.calls[0][1:-1] == [
         {"role": "user", "content": uploaded},
         {"role": "user", "content": removed},
         {"role": "user", "content": "Read"},
@@ -1245,12 +1280,14 @@ def test_uploads_and_removals_are_history_messages_before_the_question() -> None
                 {"kind": "app", "index": 0, "content": uploaded, "title": "Files Uploaded"},
                 {"kind": "app", "index": 1, "content": removed, "title": "File Removed"},
                 {"kind": "question", "content": "Read"},
+                {"kind": "status", "content": provider.calls[0][-1]["content"], "title": "Current Time"},
             ],
             "run_id": ANY,
         },
     )
     assert parse_sse(second.text, include_model_input=True)[1][1]["messages"] == [
-        {"kind": "question", "content": "Read again"}
+        {"kind": "question", "content": "Read again"},
+        {"kind": "status", "content": provider.calls[1][-1]["content"], "title": "Current Time"},
     ]
 
 
@@ -1790,7 +1827,7 @@ def test_history_is_trimmed_in_steps_so_most_requests_extend_the_previous_prefix
     prefix_changes = [
         turn
         for turn in range(1, 10)
-        if provider.calls[turn][: len(provider.calls[turn - 1])] != provider.calls[turn - 1]
+        if provider.calls[turn][: len(provider.calls[turn - 1]) - 1] != provider.calls[turn - 1][:-1]
     ]
     assert len(prefix_changes) == 1
     assert "Q0" not in json.dumps(provider.calls[-1])
@@ -2353,7 +2390,11 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
             "schedule_yaml": schedule_yaml(),
             "messages": [
                 {"kind": "optimizer", "content": provider.calls[3][-2]["content"]},
-                {"kind": "status", "content": provider.calls[3][-1]["content"], "title": "Optimizer Result"},
+                {
+                    "kind": "status",
+                    "content": provider.calls[3][-1]["content"],
+                    "title": "Current Time, Optimizer Result",
+                },
             ],
             "run_id": run_id,
         }
@@ -2367,8 +2408,8 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
             # The review run hydrates the retained upload too.
             assert history_starts[-1][4:] == ("test-model", 1)
         assert '"score": 23' in str(provider.calls[3][-2]["content"])
-        assert provider.calls[3][-1]["content"] == (
-            f"{STATUS_PREFIX}\nOptimization result: /workspace/optimizer-results/optimized-schedule.xlsx."
+        assert provider.calls[3][-1]["content"].endswith(
+            "\nOptimization result: /workspace/optimizer-results/optimized-schedule.xlsx."
         )
         background_sandbox = next(
             backend

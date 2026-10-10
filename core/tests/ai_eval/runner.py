@@ -292,6 +292,7 @@ async def run_case(
         history.append(AppEventEntry(upload_event(case_attachments)))
     optimizer_started = False
     optimizer_source = ""
+    request_clock = (lambda: datetime.fromisoformat(case.current_time)) if case.current_time else None
 
     async def execute_optimizer(_schedule_yaml: str, arguments: str) -> AgentToolOutcome:
         """Expose the production tool contract without submitting an actual job."""
@@ -391,6 +392,8 @@ async def run_case(
                 max_download_bytes=settings.max_download_bytes,
                 pending_proposal=pending_proposal is not None,
                 optimizer_result_available=optimizer_result is not None,
+                frontend_timezone=case.frontend_timezone or "UTC",
+                now=request_clock() if request_clock else None,
             )
             prompt_messages.append(messages)
             turn_answer: list[str] = []
@@ -414,6 +417,7 @@ async def run_case(
                 optimizer_result=optimizer_result,
                 optimizer_context=optimizer_context,
                 agent=agent,
+                request_clock=request_clock,
             )
             async with aclosing(agent_events):
                 async for event in agent_events:

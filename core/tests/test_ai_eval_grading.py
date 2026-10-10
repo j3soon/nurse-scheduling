@@ -91,6 +91,36 @@ def _write(tmp_path: Path, *entries: dict) -> Path:
     return tmp_path
 
 
+@pytest.mark.parametrize(
+    "context",
+    [{"frontend_timezone": "Unknown/Place"}, {"current_time": "2031-03-31T23:30:00"}, {"current_time": "bad"}],
+    ids=["unknown-zone", "missing-offset", "invalid-time"],
+)
+def test_invalid_clock_context_is_rejected(tmp_path, context):
+    with pytest.raises(EvalCaseError, match="clock context"):
+        load_cases(_write(tmp_path, _case(expect_proposal=False, **context)))
+
+
+@pytest.mark.parametrize(
+    "command, allowed",
+    [
+        ("date +%Y-%m-%d", False),
+        ("TZ=Asia/Taipei date +%H:%M", False),
+        ("echo $(date)", False),
+        ("python -c 'from datetime import datetime; print(datetime.now())'", False),
+        ("date -d '2031-04-01' +%Y-%m-%d", True),
+        ("TZ=Asia/Taipei date --date='2031-04-01' +%Y-%m-%d", True),
+        ("python -c 'from datetime import date; print(date(2031, 4, 1))'", True),
+    ],
+    ids=["shell-now", "shell-zone", "substitution", "python-now", "shell-input", "shell-input-zone", "python-input"],
+)
+def test_clock_grading_distinguishes_vm_time_from_supplied_date_calculations(command, allowed):
+    from .ai_eval.grading import _check_vm_clock_queries
+
+    event = {"kind": "tool_start", "name": "bash", "arguments": json.dumps({"command": command})}
+    assert _check_vm_clock_queries([event])[0].passed is allowed
+
+
 def test_resolves_fields_indexes_and_selectors():
     assert resolve(SCHEDULE, "dates.range.startDate") == ["2026-03-01"]
     assert resolve(SCHEDULE, "people.items[0].id") == ["P1"]

@@ -321,6 +321,9 @@ skipped does not validate persistence.
   whether the agent knows its role, rather than guessing from available tools
   or asking the user to inspect the UI. Keep navigation advice valid for someone
   on another page.
+- Supply the current server time in the frontend timezone as request-specific
+  status. Keep it out of retained history and the static prompt. Cover local
+  midnight and timezone changes when testing calendar context.
 - Show known provider reasons and trusted validation details in both foreground
   and background chat errors. Keep raw provider bodies and private SDK errors
   in server logs. Test that failed validation still discards the turn's edits.

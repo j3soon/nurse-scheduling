@@ -304,7 +304,12 @@ export async function createSession(
     method: 'POST',
     credentials: 'include',
     headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ schedule_yaml: scheduleYaml, frontend_version: CURRENT_APP_VERSION, ai_endpoint: endpoint }),
+    body: JSON.stringify({
+      schedule_yaml: scheduleYaml,
+      frontend_version: CURRENT_APP_VERSION,
+      ai_endpoint: endpoint,
+      frontend_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    }),
   });
   if (!response.ok) throw await responseError(response);
 
@@ -590,7 +595,12 @@ async function postMessage(
     method: 'POST',
     credentials: 'include',
     headers: authorizedHeaders(authToken, { Accept: accept, 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ message, message_id: messageId, frontend_version: CURRENT_APP_VERSION }),
+    body: JSON.stringify({
+      message,
+      message_id: messageId,
+      frontend_version: CURRENT_APP_VERSION,
+      frontend_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    }),
     signal,
   });
   if (!response.ok) throw await responseError(response);
@@ -755,7 +765,12 @@ export async function queueMessage(
     method: 'POST',
     credentials: 'include',
     headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ message_id: messageId, message, frontend_version: CURRENT_APP_VERSION }),
+    body: JSON.stringify({
+      message_id: messageId,
+      message,
+      frontend_version: CURRENT_APP_VERSION,
+      frontend_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    }),
   });
   if (!response.ok) throw await responseError(response);
 }
