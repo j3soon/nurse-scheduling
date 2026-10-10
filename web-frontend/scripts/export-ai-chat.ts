@@ -42,8 +42,9 @@ try {
   writeFileSync(temporary, document, 'utf8');
   renameSync(temporary, output);
   console.log(`Exported ${output}`);
-} catch {
+} catch (error) {
   rmSync(temporary, { force: true });
-  console.error('Could not export the saved chat snapshot. The output file was not changed.');
+  console.error('Could not export the saved chat snapshot. The output file was not changed.',
+    error instanceof Error ? error.message : String(error));
   process.exit(1);
 }

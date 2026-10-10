@@ -59,6 +59,8 @@ from nurse_scheduling.ai.workspace import (
     SandboxCandidateError,
     SandboxTurnTimeoutError,
     WorkspaceLimits,
+    WorkspaceMetrics,
+    _measured_sandbox_turn,
     attachment_path,
     hydrate_sandbox,
 )
@@ -372,6 +374,49 @@ def test_parallel_reads_share_hydration_and_controls_do_not_resume_the_sandbox()
     assert factory.created[0].closed
     assert batches == ["start", "end"]
     assert all(event.ok for event in events if isinstance(event, AgentToolUse))
+
+
+@pytest.mark.parametrize("failure_count", [1, 2])
+def test_parallel_reads_retry_failed_hydration_before_using_the_sandbox(failure_count) -> None:
+    class Backend(FakeSandboxBackend):
+        hydration_attempts = 0
+
+        async def write_files(self, files):
+            self.hydration_attempts += 1
+            await asyncio.sleep(0)
+            if self.hydration_attempts <= failure_count:
+                # A failed upload can leave a valid schedule without its reference files.
+                self.files[WORKSPACE_SCHEDULE] = schedule_yaml().encode()
+                raise SandboxError("Hydration upload failed.")
+            await super().write_files(files)
+
+        async def read_file(self, path, *, max_bytes=None):
+            assert WORKSPACE_SOURCE_CONTEXT in self.files
+            return await super().read_file(path, max_bytes=max_bytes)
+
+    factory = FakeSandboxFactory(Backend)
+
+    async def read() -> list:
+        async with _measured_sandbox_turn(
+            factory, 1, WorkspaceMetrics(), schedule_yaml(), "", "", (), None, None
+        ) as sandbox:
+            async with sandbox.activity_batch():
+                results = await asyncio.gather(
+                    sandbox.read_file(WORKSPACE_SCHEDULE),
+                    sandbox.read_file(WORKSPACE_SCHEDULE),
+                    return_exceptions=True,
+                )
+            results.append(await sandbox.read_file(WORKSPACE_SCHEDULE))
+            return results
+
+    results = asyncio.run(read())
+
+    assert all(isinstance(result, SandboxError) for result in results[:failure_count])
+    assert all(str(result) == "Hydration upload failed." for result in results[:failure_count])
+    assert results[failure_count:] == [schedule_yaml().encode()] * (3 - failure_count)
+    assert len(factory.created) == 1
+    assert factory.created[0].hydration_attempts == failure_count + 1
+    assert factory.created[0].closed
 
 
 def test_failed_bash_result_reaches_the_model_and_allows_the_next_tool_call():

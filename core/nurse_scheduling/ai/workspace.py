@@ -250,6 +250,7 @@ class _LazySandboxTurn:
         self._optimizer_result = optimizer_result
         self._optimizer_context = optimizer_context
         self._sandbox: SandboxBackend | None = None
+        self._hydrated = False
         self._start_lock = asyncio.Lock()
         self._activity_stack: AsyncExitStack | None = None
         self._activity_started = False
@@ -267,7 +268,6 @@ class _LazySandboxTurn:
     async def _start(self) -> SandboxBackend:
         # Parallel reads share allocation, hydration, and one activity scope.
         async with self._start_lock:
-            needs_hydration = self._sandbox is None
             if self._sandbox is None:
                 self._lifecycle_started = time.perf_counter()
                 try:
@@ -279,7 +279,7 @@ class _LazySandboxTurn:
             if self._activity_stack is not None and not self._activity_started:
                 await self._activity_stack.enter_async_context(self._sandbox.activity_batch())
                 self._activity_started = True
-            if needs_hydration:
+            if not self._hydrated:
                 await hydrate_sandbox(
                     self._sandbox,
                     self._schedule_yaml,
@@ -289,6 +289,7 @@ class _LazySandboxTurn:
                     self._optimizer_result,
                     self._optimizer_context,
                 )
+                self._hydrated = True
             return self._sandbox
 
     def _require_sandbox(self) -> SandboxBackend:
