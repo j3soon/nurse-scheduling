@@ -471,6 +471,8 @@ skipped does not validate persistence.
   and suppresses the full schedule output.
 - Core tests run on Linux, macOS, and Windows in CI. Keep tests platform
   neutral, including paths, line endings, and environment limits.
+  Compare text-loaded references with UTF-8 text because text reads normalize
+  checkout line endings. Use byte comparisons only when exact bytes are required.
 - Write hash-bound fixture inputs as exact encoded bytes to avoid platform
   newline translation. Fix ZIP creator metadata as well as timestamps when
   generated archive bytes must match across platforms.
