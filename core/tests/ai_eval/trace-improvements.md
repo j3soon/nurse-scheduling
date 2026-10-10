@@ -102,3 +102,29 @@ rejects every unknown field before provider calls, while allowing the existing
 license and provenance fields. Negative tests cover answer, semantic, tool, and
 diff typos. The complete dataset still loads. This is a deterministic parser
 comparison and does not require a provider evaluation.
+
+## ZIP commands in the sandbox
+
+The shared cloud template failed a synthetic archive check with
+`zip: command not found` and exit code 127. The Dockerfile now installs `zip`
+and `unzip`. An isolated rebuilt template passes ZIP creation, extraction,
+archive-member byte checks, and the existing YAML/backend smoke check.
+The tested template ID is `xbfavdutcvbe69ug6rl6`. The shared alias was not
+rebuilt for this experiment. AI server startup rebuilds its configured alias
+from the tracked Dockerfile.
+
+With the complete prompt, cases, fixtures, and reference hashes unchanged,
+`download-generated-zip`, `optimizer-result-explicit-zip`, and
+`optimizer-result-already-downloadable` each pass 3/3 before and after.
+The live model is `unsloth/Qwen3.8-27B-NVFP4`, with four concurrent jobs.
+There are no infrastructure failures. Missing-ZIP command failures fall from
+two to zero. The archive cases check actual delivered bytes. The existing
+workbook control checks a follow-up in a fresh workspace without another ZIP.
+Optimizer workbooks use solver-checked fixed assignments and the production
+exporter and completion formatter, not the HTTP job queue.
+
+This repairs a missing tool. It does not establish a model cost improvement.
+Mean CSV-case tool calls increase from 1.33 to 2.00, while explicit-workbook
+archive calls remain 1.67 in both versions. Python archive creation remains
+an equally valid approach. Complete paired timing and token statistics remain
+in the ignored comparison reports.
