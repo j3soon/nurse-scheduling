@@ -1,0 +1,32 @@
+{
+  "id": "optimizer-result-explicit-zip",
+  "fixture": "request-audit",
+  "question": "Optimize the current roster for 60 seconds and briefly summarize the result when it finishes.",
+  "expect_proposal": false,
+  "optimizer_completion": "request-audit",
+  "optimizer_completion_only": true,
+  "after_optimizer_turns": [
+    "Please give me a ZIP containing the original optimized workbook unchanged, named original-result.xlsx inside the ZIP. Do not edit the schedule."
+  ],
+  "intermediate_answer_contains": [
+    [],
+    [
+      "Download result"
+    ]
+  ],
+  "answer_contains": [],
+  "download_count": 1,
+  "semantic_check": "optimizer-download",
+  "tool_usage": {
+    "max_per_tool": {
+      "optimizer": 1
+    },
+    "max_total": 10
+  },
+  "tags": [
+    "optimizer-result",
+    "downloads"
+  ],
+  "note": "This testcase is mostly AI generated. Seed an optimizer start, deliver the production completion with an exporter-generated workbook checked against fixed assignments, then ask a follow-up in a fresh VM. Verify existing user delivery or the bytes in an explicitly requested archive.",
+  "optimizer_download_file": "original-result.xlsx"
+}

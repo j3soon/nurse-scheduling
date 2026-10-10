@@ -24,8 +24,12 @@ import { createServer, type ServerResponse } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 
+const FRONTEND_TIMEZONE = 'America/Los_Angeles';
+test.use({ timezoneId: FRONTEND_TIMEZONE });
+
 interface CapturedRequests {
   scheduleYaml: string;
+  frontendTimezone: string;
   messageBody: string;
   messageBodies: string[];
   messageContentType: string;
@@ -150,6 +154,7 @@ async function mockAiBackend(
 }> {
   const captured = {
     scheduleYaml: '',
+    frontendTimezone: '',
     messageBody: '',
     messageBodies: [] as string[],
     messageContentType: '',
@@ -213,7 +218,9 @@ async function mockAiBackend(
       return;
     }
     if (request.url().endsWith('/sessions')) {
-      captured.scheduleYaml = (request.postDataJSON() as { schedule_yaml: string }).schedule_yaml;
+      const body = request.postDataJSON() as { schedule_yaml: string; frontend_timezone: string };
+      captured.scheduleYaml = body.schedule_yaml;
+      captured.frontendTimezone = body.frontend_timezone;
       await route.fulfill({
         status: 201,
         contentType: 'application/json',
@@ -316,8 +323,9 @@ test('asks about the current schedule and renders a streamed answer', async ({ p
   expect(viewport).not.toBeNull();
   expect(Math.abs(composerBox!.y + composerBox!.height - viewport!.height)).toBeLessThanOrEqual(2);
   await expect(page.getByRole('contentinfo')).toHaveCount(0);
-  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Who works first?', message_id: expect.any(String), frontend_version: expect.any(String) });
+  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Who works first?', message_id: expect.any(String), frontend_version: expect.any(String), frontend_timezone: FRONTEND_TIMEZONE });
   expect(captured.scheduleYaml).toContain('apiVersion:');
+  expect(captured.frontendTimezone).toBe(FRONTEND_TIMEZONE);
 
   await expect(page.getByRole('button', { name: 'Stop' })).toBeHidden();
   await page.getByRole('button', { name: '1. Dates' }).click();
@@ -424,8 +432,8 @@ test('retries a failed text run without hiding its provisional activity', async 
   await expect(page.getByText('Recovered response.')).toBeVisible();
   const bodies = captured.messageBodies.map(body => JSON.parse(body));
   expect(bodies).toEqual([
-    { message: 'Who works first?', message_id: expect.any(String), frontend_version: expect.any(String) },
-    { message: 'Who works first?', message_id: expect.any(String), frontend_version: expect.any(String) },
+    { message: 'Who works first?', message_id: expect.any(String), frontend_version: expect.any(String), frontend_timezone: FRONTEND_TIMEZONE },
+    { message: 'Who works first?', message_id: expect.any(String), frontend_version: expect.any(String), frontend_timezone: FRONTEND_TIMEZONE },
   ]);
   // A retry asks again, so it is a new message rather than a reconnect to the failed run.
   expect(bodies[0].message_id).not.toBe(bodies[1].message_id);
@@ -703,7 +711,7 @@ test('previews and sends an image attachment', async ({ page }) => {
   expect(captured.uploadContentType).toContain('multipart/form-data');
   expect(captured.uploadBody).toContain('filename="ward.png"');
   expect(captured.messageContentType).toBe('application/json');
-  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'What is shown?', message_id: expect.any(String), frontend_version: expect.any(String) });
+  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'What is shown?', message_id: expect.any(String), frontend_version: expect.any(String), frontend_timezone: FRONTEND_TIMEZONE });
   // The bubbles follow the provider request: system prompt, upload event, then the question as typed.
   const cards = page.getByLabel('Chat messages').locator('article');
   await expect(cards.locator('> p:first-child')).toHaveText(['System', 'User · App - Files Uploaded', 'User', 'Assistant']);
@@ -753,7 +761,7 @@ test('previews and sends arbitrary file attachments', async ({ page }) => {
   expect(captured.uploadBody).toContain('notes.pdf');
   expect(captured.uploadBody).toContain('coverage.custom');
   expect(captured.uploadBody).toContain('Alice,day');
-  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Check the documents.', message_id: expect.any(String), frontend_version: expect.any(String) });
+  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Check the documents.', message_id: expect.any(String), frontend_version: expect.any(String), frontend_timezone: FRONTEND_TIMEZONE });
 });
 
 test('downloads and removes generated files through the ZIP controls', async ({ page }) => {
@@ -838,7 +846,7 @@ test('places uploads beside desktop chat and below mobile controls and allows re
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Read this file');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Workbook inspected.')).toBeVisible();
-  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Read this file', message_id: expect.any(String), frontend_version: expect.any(String) });
+  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Read this file', message_id: expect.any(String), frontend_version: expect.any(String), frontend_timezone: FRONTEND_TIMEZONE });
   const panel = page.getByRole('complementary', { name: 'Session files' });
   await expect(panel.getByRole('button', { name: 'Remove ward.csv' })).toBeVisible();
   const panelBox = (await panel.boundingBox())!;

@@ -94,6 +94,8 @@ skipped does not validate persistence.
   Continue only after cleanup succeeds, otherwise stop the claim loop.
 
 ## Experimental AI
+- Prioritize maintainability, readability, and simplicity. Avoid over-engineering.
+  Use Pi agent v1.0.0 as a reference for AI chat architecture and design philosophy.
 - `AgentSession` owns conversation changes, steering, proposal decisions, and
   the shared foreground and optimizer-review execution path. `SessionStore`
   owns access, expiry, and retained-byte budgets. `SessionRecovery` owns ordered
@@ -191,6 +193,8 @@ skipped does not validate persistence.
 - Keep bundled attachment helpers general and optional. Preserve meaningful
   source data such as spreadsheet formulas and cached values, report truncation,
   and let the agent write a focused sandbox parser when a helper is insufficient.
+- When adding a bundled reference, include it in sandbox hydration, production
+  Docker copy paths, and evaluation reference hashes.
 - Prefer extending an existing helper when an operation shares its parser,
   dependencies, and output format. Reuse loading and validation instead of
   adding a sibling script. Keep a separate helper when its interface is useful
@@ -317,10 +321,17 @@ skipped does not validate persistence.
   whether the agent knows its role, rather than guessing from available tools
   or asking the user to inspect the UI. Keep navigation advice valid for someone
   on another page.
+- Supply the current server time in the frontend timezone as request-specific
+  status. Keep it out of retained history and the static prompt. Cover local
+  midnight and timezone changes when testing calendar context.
 - Show known provider reasons and trusted validation details in both foreground
   and background chat errors. Keep raw provider bodies and private SDK errors
   in server logs. Test that failed validation still discards the turn's edits.
 - Isolate prompt policies with the smallest fixture that exercises the claim.
+  For qualified staffing within a stated total, check both the total and eligibility.
+  Include a control where the qualified slot is explicitly additional.
+  For named groups, check actual membership and preserve unrelated groups.
+  Include a control that explicitly requests broader membership.
   Use the large ward only when scale or reference cascades matter. Grade
   scheduling semantics rather than ineffective fields or equivalent formatting.
   For complete file imports, compare the whole parsed proposal with the uploaded
@@ -460,6 +471,8 @@ skipped does not validate persistence.
   and suppresses the full schedule output.
 - Core tests run on Linux, macOS, and Windows in CI. Keep tests platform
   neutral, including paths, line endings, and environment limits.
+  Compare text-loaded references with UTF-8 text because text reads normalize
+  checkout line endings. Use byte comparisons only when exact bytes are required.
 - Write hash-bound fixture inputs as exact encoded bytes to avoid platform
   newline translation. Fix ZIP creator metadata as well as timestamps when
   generated archive bytes must match across platforms.

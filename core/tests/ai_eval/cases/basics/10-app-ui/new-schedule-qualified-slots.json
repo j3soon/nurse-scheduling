@@ -1,15 +1,14 @@
 {
   "id": "new-schedule-qualified-slots",
   "fixture": "new-schedule",
-  "question": "I am creating a schedule from scratch for next month. There are nine nurses. Six are seniors and three are other nurses. Every day, day and evening each need one senior and one other nurse, and night needs one senior. Explain how you would represent these staffing rules before making any changes. Do not edit yet.",
+  "question": "I am creating a schedule from scratch for next month. There are nine nurses. Six are seniors and three are other nurses. Every day, day and evening each need one senior and one other nurse, and night needs one senior. Explain how you would represent these staffing rules before making any changes. Do not edit yet. Include a JSON object with keys day, evening and night. Each value must give the numeric total, senior and other staffing counts. Counts refer to slots, not the number of nurses employed.",
   "expect_proposal": false,
   "answer_contains": [
     "D+",
-    "E+",
-    "N+"
+    "E+"
   ],
   "answer_not_matches": [
-    "cannot.*(?:represent|enforce).*senior"
+    "(?:this|the) (?:app|scheduler|system) cannot (?:represent|enforce) (?:the )?senior"
   ],
   "tool_usage": {
     "required_calls": [
@@ -31,5 +30,22 @@
     "new-schedule",
     "staffing"
   ],
-  "note": "This testcase is mostly AI generated. Synthetic reproduction of late qualified-slot guidance. Explain separate senior and other slots before construction, preserving the requested staffing composition."
+  "note": "This testcase is mostly AI generated. Synthetic reproduction of late qualified-slot guidance. Explain separate senior and other slots before construction, preserving the requested staffing composition. Night may use N or N+ because it needs one qualified pool. Grade the requested staffing composition instead of requiring a particular night suffix.",
+  "answer_json": {
+    "day": {
+      "total": 2,
+      "senior": 1,
+      "other": 1
+    },
+    "evening": {
+      "total": 2,
+      "senior": 1,
+      "other": 1
+    },
+    "night": {
+      "total": 1,
+      "senior": 1,
+      "other": 0
+    }
+  }
 }

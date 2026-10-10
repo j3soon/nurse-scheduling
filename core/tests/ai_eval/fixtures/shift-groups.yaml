@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Johnson Sun
+# This test is mostly AI generated.
+apiVersion: alpha
+description: Synthetic shift group membership
+dates:
+  range:
+    startDate: '2026-03-01'
+    endDate: '2026-03-03'
+  items: []
+  groups: []
+people:
+  items:
+    - id: P1
+      description: Nurse
+    - id: P2
+      description: Nurse
+  groups: []
+shiftTypes:
+  items:
+    - id: D
+      description: Day shift
+    - id: E
+      description: Evening shift
+    - id: N
+      description: Night shift
+  groups:
+    - id: Day
+      description: Daytime assignments
+      members: [D]
+    - id: Evening
+      description: Evening assignments
+      members: [E]
+    - id: Night
+      description: Night assignments
+      members: [N]
+preferences:
+  - type: at most one shift per day

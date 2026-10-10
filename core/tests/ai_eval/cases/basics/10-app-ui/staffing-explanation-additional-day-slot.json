@@ -1,0 +1,102 @@
+{
+  "_license": "Copyright (C) 2023-2026 Johnson Sun. SPDX-License-Identifier: AGPL-3.0-or-later",
+  "_comment": "This test is mostly AI generated.",
+  "fixture": "new-schedule",
+  "expect_proposal": true,
+  "semantic_check": "qualified-staffing",
+  "changes": [
+    "description",
+    "dates",
+    "people",
+    "shiftTypes",
+    "preferences"
+  ],
+  "tool_usage": {
+    "forbidden": [
+      "optimizer"
+    ],
+    "max_total": 15
+  },
+  "tags": [
+    "new-schedule",
+    "staffing"
+  ],
+  "note": "This testcase is mostly AI generated. Synthetic staffing explanation. Grade proposal semantics and final numerical explanation independently. The counts describe exact hard requirements, not optimizer feasibility.",
+  "id": "staffing-explanation-additional-day-slot",
+  "question": "Build a new schedule for March 1, 2026 only. Nurses S1 and S2 are seniors. J1, J2 and J3 are other nurses. Daily staffing: two general day slots plus one additional senior day slot, Evening 1, Night 1. Use D for the general day slot, D+ for the senior day slot, E for evening and N for night. All nurses can fill the general slots. Use exact staffing counts, no preferred upper counts, and only these staffing rules plus at most one shift per day. Propose the YAML now. Do not optimize. In the final reply include a JSON object with day_slots (all day slots including senior), senior_day_slots, total_working_slots (all shifts on that date), off_people (people minus total working slots under at most one shift per day), and eligible_senior_people (number of eligible seniors). Explain the arithmetic accurately. These counts describe the proposed requirements, not a solved roster. Put all five fields directly in one JSON object. Every value must be an integer count, not a list of shift names or IDs. day_slots counts day-shift assignments D and D+ only.",
+  "staffing_contract": {
+    "counts": {
+      "D": 2,
+      "D+": 1,
+      "E": 1,
+      "N": 1
+    },
+    "qualified": {
+      "D+": [
+        "S1",
+        "S2"
+      ]
+    }
+  },
+  "assert": [
+    {
+      "path": "dates.range.startDate",
+      "equals": "2026-03-01"
+    },
+    {
+      "path": "dates.range.endDate",
+      "equals": "2026-03-01"
+    },
+    {
+      "path": "people.items[].id",
+      "count": 5
+    },
+    {
+      "path": "people.items[].id",
+      "contains": "S1"
+    },
+    {
+      "path": "people.items[].id",
+      "contains": "S2"
+    },
+    {
+      "path": "people.items[].id",
+      "contains": "J1"
+    },
+    {
+      "path": "people.items[].id",
+      "contains": "J2"
+    },
+    {
+      "path": "people.items[].id",
+      "contains": "J3"
+    },
+    {
+      "path": "shiftTypes.items[].id",
+      "count": 4
+    },
+    {
+      "path": "shiftTypes.items[].id",
+      "contains": "D"
+    },
+    {
+      "path": "shiftTypes.items[].id",
+      "contains": "D+"
+    },
+    {
+      "path": "shiftTypes.items[].id",
+      "contains": "E"
+    },
+    {
+      "path": "shiftTypes.items[].id",
+      "contains": "N"
+    }
+  ],
+  "answer_json": {
+    "day_slots": 3,
+    "senior_day_slots": 1,
+    "total_working_slots": 5,
+    "off_people": 0,
+    "eligible_senior_people": 2
+  }
+}

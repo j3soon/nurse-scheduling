@@ -1,0 +1,38 @@
+{
+  "id": "bundled-ward-example-inspection",
+  "fixture": "small-clinic",
+  "question": "Use the read tool to inspect /reference/examples/large-ward-with-87-people-2025-11.yaml, the bundled anonymized example. If that file is unavailable, report that without searching other directories. Do not edit the current schedule. Reply only with JSON containing example_people_count (entries under people.items), example_day_members (members of the shift-type group whose exact ID is Day under shiftTypes.groups, in YAML order), and workday_ordinary_day_required (the required staffing count for D on WORKDAY).",
+  "expect_proposal": false,
+  "answer_json": {
+    "example_people_count": 87,
+    "example_day_members": [
+      "D",
+      "D+",
+      "A",
+      "D~",
+      "K"
+    ],
+    "workday_ordinary_day_required": 13
+  },
+  "tags": [
+    "app-ui",
+    "example-reference"
+  ],
+  "note": "This testcase is mostly AI generated. Inspect the public anonymized example as a separate source, without changing the current four-person clinic.",
+  "tool_usage": {
+    "required_calls": [
+      {
+        "name": "read",
+        "arguments": {
+          "path": "/reference/examples/large-ward-with-87-people-2025-11.yaml"
+        }
+      }
+    ],
+    "forbidden": [
+      "write",
+      "edit",
+      "optimizer"
+    ],
+    "max_total": 8
+  }
+}

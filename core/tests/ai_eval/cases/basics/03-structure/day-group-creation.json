@@ -1,0 +1,61 @@
+{
+  "fixture": "small-clinic",
+  "expect_proposal": true,
+  "tool_usage": {
+    "forbidden": [
+      "optimizer"
+    ],
+    "max_total": 12
+  },
+  "tags": [
+    "shift-groups"
+  ],
+  "note": "This testcase is mostly AI generated. Check actual Day membership and preserve unrelated groups. Explicitly authorized custom membership is a contrasting control.",
+  "id": "day-group-creation",
+  "question": "Add E with description Evening shift. Create a shift-type group named Day for daytime assignments. D is the day shift, E is evening, and N and O are overnight. Leave all other data unchanged.",
+  "expected_diff": [
+    {
+      "path": "shiftTypes.items",
+      "added": [
+        {
+          "id": "E",
+          "description": "Evening shift"
+        }
+      ]
+    },
+    {
+      "path": "shiftTypes.groups",
+      "added": [
+        {
+          "id": "Day",
+          "members": [
+            "D"
+          ]
+        }
+      ],
+      "allow_added_description": true
+    }
+  ],
+  "changes": [
+    "shiftTypes.items",
+    "shiftTypes.groups"
+  ],
+  "assert": [
+    {
+      "path": "shiftTypes.groups[?id=Day].members",
+      "count": 1
+    },
+    {
+      "path": "shiftTypes.groups[?id=Day].members",
+      "contains": "D"
+    },
+    {
+      "path": "shiftTypes.groups[?id=Night]",
+      "unchanged": true
+    },
+    {
+      "path": "shiftTypes.groups",
+      "count": 2
+    }
+  ]
+}

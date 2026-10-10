@@ -1,0 +1,29 @@
+{
+  "id": "explicit-date-frontend-time-control",
+  "fixture": "small-clinic",
+  "question": "For a hypothetical instant 2030-01-31T23:00:00+00:00 in Asia/Taipei, what are the local date, local time, timezone, and first date of the next month? Use this hypothetical instant. Reply here with JSON: local_date (YYYY-MM-DD), local_time (HH:MM), timezone (IANA name), next_month_start (YYYY-MM-DD). Do not create files or edit the schedule.",
+  "expect_proposal": false,
+  "frontend_timezone": "Asia/Taipei",
+  "current_time": "2031-03-31T23:30:00+00:00",
+  "answer_json": {
+    "local_date": "2030-02-01",
+    "local_time": "07:00",
+    "timezone": "Asia/Taipei",
+    "next_month_start": "2030-03-01"
+  },
+  "tool_usage": {
+    "forbidden": [
+      "write",
+      "edit",
+      "optimizer"
+    ],
+    "max_total": 3
+  },
+  "semantic_check": "current-time-context",
+  "tags": [
+    "app-ui",
+    "clock-context",
+    "control"
+  ],
+  "note": "This testcase is mostly AI generated. The user names a hypothetical instant and timezone. Current-time context must not replace that requested instant."
+}

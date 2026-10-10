@@ -1377,6 +1377,25 @@ def test_postgres_evicted_session_restores_on_its_next_request(postgres_history)
     assert asyncio.run(exercise()) == [UserMessage("Question"), AssistantMessage("Saved answer")]
 
 
+def test_postgres_frontend_timezone_survives_a_service_restart(postgres_history):
+    settings = basic.make_settings(history_postgres_url="test")
+    app = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
+    with basic.AuthenticatedTestClient(app) as client:
+        session_id = client.post(
+            "/sessions", json={"schedule_yaml": basic.schedule_yaml(), "frontend_timezone": "Asia/Taipei"}
+        ).json()["id"]
+        owner = client.cookies[basic.OWNER_COOKIE]
+
+    provider = basic.FakeProvider()
+    restarted = basic.create_test_app(settings=settings, provider=provider)
+    with basic.AuthenticatedTestClient(restarted) as client:
+        client.cookies.set(basic.OWNER_COOKIE, owner)
+        response = client.post(f"/sessions/{session_id}/messages", json={"message": "Today?"})
+        assert basic.parse_sse(response.text)[-1][0] == "done"
+        assert '"timezone": "Asia/Taipei"' in provider.calls[0][-1]["content"]
+        assert restarted.state.session_store._sessions[session_id].frontend_timezone == "Asia/Taipei"
+
+
 def test_postgres_restored_conversation_matches_the_live_conversation(postgres_history):
     settings = basic.make_settings(history_postgres_url="test", max_history_messages=4)
     provider = basic.FakeProvider([["A1"], ProviderError("private detail"), ["A3"], ["A4"]])

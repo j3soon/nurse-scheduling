@@ -25,6 +25,7 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import aclosing
 from dataclasses import replace
+from datetime import datetime
 from functools import partial
 
 from .agent import Agent
@@ -137,6 +138,7 @@ async def run_workspace(
     optimizer_result: bytes | None = None,
     optimizer_context: bytes | None = None,
     agent: Agent | None = None,
+    request_clock: Callable[[], datetime] | None = None,
 ) -> AsyncIterator[AgentEvent | AgentScheduleChange | AgentDownload]:
     """Hydrate, run, read, validate, and destroy one fresh sandbox turn."""
     agent = agent or Agent()
@@ -164,6 +166,7 @@ async def run_workspace(
                     take_steering=take_steering,
                     max_tool_rounds=limits.max_tool_rounds,
                     max_tool_calls=limits.max_tool_calls,
+                    request_clock=request_clock,
                 )
                 async with aclosing(events):
                     async for event in events:

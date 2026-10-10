@@ -18,6 +18,7 @@ RUN --mount=type=cache,id=api-pip,target=/root/.cache/pip,sharing=locked \
 COPY --chown=user:user core/ /app/nurse-scheduling/core/
 COPY --chown=user:user docker/e2b/ /app/nurse-scheduling/docker/e2b/
 COPY --chown=user:user docs/content/user-guide/ /app/nurse-scheduling/docs/content/user-guide/
+COPY --chown=user:user web-frontend/public/examples/ /app/nurse-scheduling/web-frontend/public/examples/
 COPY --chown=user:user web-frontend/src/utils/taiwanHolidays.ts /app/nurse-scheduling/web-frontend/src/utils/taiwanHolidays.ts
 
 USER user

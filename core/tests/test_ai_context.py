@@ -19,6 +19,8 @@
 
 # This test is mostly AI generated.
 
+from datetime import UTC, datetime
+
 import pytest
 
 from nurse_scheduling.ai.context import (
@@ -49,6 +51,46 @@ from nurse_scheduling.ai.transcript import (
 )
 
 from .test_ai_basic import make_settings, schedule_yaml
+
+
+def test_current_time_uses_frontend_timezone_and_keeps_the_cached_prefix():
+    instant = datetime(2031, 3, 31, 23, 30, tzinfo=UTC)
+    taipei = build_provider_messages([], schedule_yaml(), "Today?", frontend_timezone="Asia/Taipei", now=instant)
+    los_angeles = build_provider_messages(
+        [], schedule_yaml(), "Today?", frontend_timezone="America/Los_Angeles", now=instant
+    )
+    assert taipei[:-1] == los_angeles[:-1]
+    assert "2031-04-01T07:30:00+08:00" in taipei[-1]["content"]
+    assert "Asia/Taipei" in taipei[-1]["content"]
+    assert "2031-03-31T16:30:00-07:00" in los_angeles[-1]["content"]
+    utc = build_provider_messages([], schedule_yaml(), "Today?", frontend_timezone="UTC", now=instant)
+    assert "2031-03-31T23:30:00+00:00" in utc[-1]["content"]
+
+
+def test_tool_followup_refreshes_current_time_without_retaining_old_clock_context():
+    first = datetime(2031, 3, 31, 15, 59, 59, tzinfo=UTC)
+    second = datetime(2031, 3, 31, 16, 0, 0, tzinfo=UTC)
+    messages = build_provider_messages([], schedule_yaml(), "Today?", frontend_timezone="Asia/Taipei", now=first)
+    entries = [AssistantMessage("Checking."), UserMessage("Continue.")]
+    request = prepare_provider_request(messages, entries, now=second)
+    assert "2031-04-01T00:00:00+08:00" in request[-1]["content"]
+    assert "2031-03-31T23:59:59+08:00" not in str(request)
+    assert request[-2]["content"] == "Continue."
+    assert messages[-1]["content"].endswith('"timezone": "Asia/Taipei"}')
+
+
+def test_frontend_timezone_is_reserved_with_the_run_and_restored_with_the_session():
+    store = SessionStore(make_settings())
+    session = store.create("owner", schedule_yaml())
+    session.frontend_timezone = "Asia/Taipei"
+    snapshot = store.begin(session.id, "owner")
+    session.frontend_timezone = "America/Los_Angeles"
+    assert snapshot.frontend_timezone == "Asia/Taipei"
+    store.finish(session.id, [], snapshot=snapshot)
+    owner, expires, state = store.recovery_state(session.id)
+    recovered = SessionStore(make_settings())
+    recovered.restore(session.id, owner, state, expires, entries=[], next_entry_seq=0)
+    assert recovered._sessions[session.id].frontend_timezone == "America/Los_Angeles"
 
 
 @pytest.mark.parametrize("reason", ["aborted", "error"])
@@ -150,6 +192,7 @@ def test_legacy_recovery_preserves_the_next_provider_request_after_decisions_and
         "dropped_history_messages",
         "dropped_entries",
         "frontend_version",
+        "frontend_timezone",
         "export_metadata",
     }
     records = [entry_record(entry) for entry in session.transcript]

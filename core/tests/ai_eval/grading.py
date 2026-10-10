@@ -25,8 +25,10 @@ import re
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # Most cases grade only the produced schedule or answer. Focused capability cases
 # may also assert a small, intentional tool trajectory.
@@ -131,6 +133,12 @@ class EvalCase:
     turn_tool_usage: tuple[ToolUsageExpectation | None, ...] = ()
     note: str = ""
     semantic_check: str = ""
+    frontend_timezone: str = ""
+    current_time: str = ""
+    after_optimizer_turns: tuple[str, ...] = ()
+    download_count: int | None = None
+    optimizer_download_file: str = ""
+    staffing_contract: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Keep direct test construction compatible with single-turn cases."""
@@ -208,6 +216,48 @@ def load_cases(path: Path) -> list[EvalCase]:
 
 def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     """Convert one dataset entry into a case, or explain why it cannot be graded."""
+    if "assertions" in entry:
+        raise EvalCaseError(f"{source} must use `assert`, not `assertions`, for schedule checks.")
+    allowed = {
+        "_license",
+        "_comment",
+        "id",
+        "fixture",
+        "expect_proposal",
+        "question",
+        "user_turns",
+        "download_files",
+        "import_attachment",
+        "intermediate_answer_contains",
+        "after_optimizer_turns",
+        "tags",
+        "frontend_timezone",
+        "current_time",
+        "attachments",
+        "assert",
+        "expected_diff",
+        "semantic_check",
+        "proposal_turn",
+        "proposal_turns",
+        "turn_actions",
+        "turn_tool_usage",
+        "optimizer_error",
+        "optimizer_completion",
+        "optimizer_completion_only",
+        "answer_json",
+        "download_count",
+        "optimizer_download_file",
+        "staffing_contract",
+        "changes",
+        "answer_contains",
+        "answer_matches",
+        "answer_not_matches",
+        "tool_usage",
+        "note",
+    }
+    unknown = entry.keys() - allowed
+    if unknown:
+        raise EvalCaseError(f"{source} has unknown case fields: {', '.join(sorted(unknown))}.")
     for required in ("id", "fixture", "expect_proposal"):
         if required not in entry:
             raise EvalCaseError(f"{source} is missing `{required}`.")
@@ -233,9 +283,17 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     ):
         raise EvalCaseError(f"{source} `user_turns` must be a non-empty list of strings.")
     raw_intermediate = entry.get("intermediate_answer_contains", [])
+    after_optimizer_turns = entry.get("after_optimizer_turns", [])
+    if (
+        not isinstance(after_optimizer_turns, list)
+        or not all(isinstance(turn, str) and turn for turn in after_optimizer_turns)
+        or (after_optimizer_turns and not entry.get("optimizer_completion"))
+    ):
+        raise EvalCaseError(f"{source} after_optimizer_turns requires an optimizer completion and question strings.")
+    total_turns = len(raw_turns) + bool(entry.get("optimizer_completion")) + len(after_optimizer_turns)
     if (
         not isinstance(raw_intermediate, list)
-        or len(raw_intermediate) > len(raw_turns) - 1
+        or len(raw_intermediate) > total_turns - 1
         or not all(
             isinstance(expected, list)
             and all(
@@ -257,6 +315,17 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     raw_tags = entry.get("tags", [])
     if not isinstance(raw_tags, list) or not all(isinstance(tag, str) and tag for tag in raw_tags):
         raise EvalCaseError(f"{source} `tags` must be a list of strings.")
+    frontend_timezone = entry.get("frontend_timezone", "")
+    current_time = entry.get("current_time", "")
+    if not isinstance(frontend_timezone, str) or not isinstance(current_time, str):
+        raise EvalCaseError(f"{source} timezone and current_time must be strings.")
+    try:
+        if frontend_timezone:
+            ZoneInfo(frontend_timezone)
+        if current_time and datetime.fromisoformat(current_time).utcoffset() is None:
+            raise ValueError("current_time needs a UTC offset")
+    except (ValueError, ZoneInfoNotFoundError) as error:
+        raise EvalCaseError(f"{source} has invalid clock context: {error}") from error
     raw_attachments = entry.get("attachments", [])
     if not isinstance(raw_attachments, list) or not all(
         isinstance(attachment, str) and attachment for attachment in raw_attachments
@@ -267,12 +336,21 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     assertions = tuple(_build_assertion(raw, source) for raw in entry.get("assert", []))
     expected_diff = tuple(_build_expected_diff(raw, source) for raw in entry.get("expected_diff", []))
     semantic_check = entry.get("semantic_check", "")
-    if not isinstance(semantic_check, str) or semantic_check not in {"", "yaml-generator", "optimizer-start-source"}:
+    if not isinstance(semantic_check, str) or semantic_check not in {
+        "",
+        "yaml-generator",
+        "optimizer-start-source",
+        "current-time-context",
+        "optimizer-download",
+        "qualified-staffing",
+    }:
         raise EvalCaseError(f"{source} has an unknown semantic_check.")
-    proposal_turn, proposal_turns = _proposal_turns(entry, len(raw_turns), source)
+    proposal_turn, proposal_turns = _proposal_turns(
+        entry, total_turns if after_optimizer_turns else len(raw_turns), source
+    )
     turn_actions = _turn_actions(entry.get("turn_actions", []), len(raw_turns), source)
     raw_turn_tools = entry.get("turn_tool_usage", [])
-    if not isinstance(raw_turn_tools, list) or len(raw_turn_tools) > len(raw_turns):
+    if not isinstance(raw_turn_tools, list) or len(raw_turn_tools) > total_turns:
         raise EvalCaseError(f"{source} `turn_tool_usage` must list expectations for existing user turns.")
     optimizer_error = entry.get("optimizer_error", "")
     if not isinstance(optimizer_error, str):
@@ -298,12 +376,43 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     answer_json = entry.get("answer_json", {})
     if not isinstance(answer_json, dict):
         raise EvalCaseError(f"{source} `answer_json` must be an object.")
+    download_count = entry.get("download_count")
+    optimizer_download_file = entry.get("optimizer_download_file", "")
+    if download_count is not None and (type(download_count) is not int or download_count < 0):
+        raise EvalCaseError(f"{source} download_count must be a nonnegative integer.")
+    if not isinstance(optimizer_download_file, str) or (
+        optimizer_download_file and (not optimizer_completion or download_count != 1)
+    ):
+        raise EvalCaseError(f"{source} optimizer_download_file requires a completion and one ZIP download.")
+    if semantic_check == "optimizer-download" and (not optimizer_completion or download_count is None):
+        raise EvalCaseError(f"{source} optimizer-download requires a completion and a download_count.")
+    staffing_contract = entry.get("staffing_contract", {})
+    if not isinstance(staffing_contract, dict) or (
+        staffing_contract
+        and (
+            semantic_check != "qualified-staffing"
+            or set(staffing_contract) != {"counts", "qualified"}
+            or not isinstance(staffing_contract["counts"], dict)
+            or not staffing_contract["counts"]
+            or not all(isinstance(k, str) and type(v) is int and v >= 0 for k, v in staffing_contract["counts"].items())
+            or not isinstance(staffing_contract["qualified"], dict)
+            or not all(
+                k in staffing_contract["counts"] and isinstance(v, list) and v and all(isinstance(p, str) for p in v)
+                for k, v in staffing_contract["qualified"].items()
+            )
+        )
+    ):
+        raise EvalCaseError(f"{source} has an invalid staffing_contract.")
+    if semantic_check == "qualified-staffing" and not staffing_contract:
+        raise EvalCaseError(f"{source} qualified-staffing requires a staffing_contract.")
     if entry["expect_proposal"] and not assertions and not expected_diff and not semantic_check:
         raise EvalCaseError(f"{source} expects a proposal but asserts nothing about it.")
     if entry["expect_proposal"] and not entry.get("changes"):
         raise EvalCaseError(f"{source} expects a proposal but names no part it may change.")
     if not entry["expect_proposal"] and (
-        assertions or expected_diff or semantic_check not in {"", "optimizer-start-source"}
+        assertions
+        or expected_diff
+        or semantic_check not in {"", "optimizer-start-source", "current-time-context", "optimizer-download"}
     ):
         raise EvalCaseError(f"{source} expects no proposal, so its schedule criteria can never run.")
     return EvalCase(
@@ -328,6 +437,12 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         assertions=assertions,
         expected_diff=expected_diff,
         semantic_check=semantic_check,
+        frontend_timezone=frontend_timezone,
+        current_time=current_time,
+        after_optimizer_turns=tuple(after_optimizer_turns),
+        download_count=download_count,
+        optimizer_download_file=optimizer_download_file,
+        staffing_contract=staffing_contract,
         changes=tuple(entry.get("changes", ())),
         answer_contains=tuple(
             tuple(value) if isinstance(value, list) else value for value in entry.get("answer_contains", ())
@@ -551,14 +666,25 @@ def grade(case: EvalCase, outcome: RunOutcome, computed: dict[str, Any] | None =
                 len(downloads) == 1 and all(downloads[0].get(name) == digest for name, digest in expected.items()),
             )
         )
+    if case.download_count is not None:
+        captured = sum(event.get("kind") == "download" for event in outcome.activity)
+        checks.append(
+            CheckResult(f"captures exactly {case.download_count} ZIP download(s)", captured == case.download_count)
+        )
     if case.expect_proposal and proposed:
         checks.extend(_check_assertion(outcome, assertion) for assertion in case.assertions)
         checks.extend(_check_expected_diff(outcome, expected) for expected in case.expected_diff)
         checks.append(_check_nothing_else_changed(outcome, case.changes))
+        if case.semantic_check == "qualified-staffing":
+            checks.append(_check_staffing_contract(case, outcome))
     if case.semantic_check == "yaml-generator":
         checks.extend(_check_yaml_generator(outcome.activity))
     if case.semantic_check == "optimizer-start-source":
         checks.extend(_check_optimizer_start_source(case, outcome))
+    if case.semantic_check == "current-time-context":
+        checks.extend(_check_vm_clock_queries(outcome.activity))
+    if case.semantic_check == "optimizer-download":
+        checks.extend(_check_optimizer_download(case, outcome))
     if case.optimizer_completion:
         checks.append(
             CheckResult("optimizer completion delivered", any(e.get("kind") == "optimizer" for e in outcome.activity))
@@ -705,12 +831,150 @@ def _check_yaml_generator(activity: Sequence[dict[str, Any]]) -> list[CheckResul
     ]
 
 
+def _check_staffing_contract(case: EvalCase, outcome: RunOutcome) -> CheckResult:
+    """Compare all possible daily assignments with the requested staffing and eligibility."""
+    from itertools import product
+
+    import yaml
+
+    from nurse_scheduling.frontend_validation import load_frontend_data
+    from nurse_scheduling.models import CompiledShiftTypeRequirements
+    from nurse_scheduling.preference_types import staffing_expression
+
+    label = "compiled staffing preserves the requested totals and qualifications"
+    try:
+        data = load_frontend_data(yaml.safe_dump(outcome.proposed).encode())
+        compiled = data.compiled_schedule
+        people = [p.id for p in data.people.items]
+        shifts = [s.id for s in data.shiftTypes.items]
+        if set(shifts) != set(case.staffing_contract["counts"]):
+            return CheckResult(label, False, "shift types differ from the requested staffing contract")
+        if (len(shifts) + 1) ** len(people) > 100_000:
+            return CheckResult(label, False, "staffing oracle requires a small fixture")
+        rules = []
+        for preference, resolved in zip(data.preferences, compiled.preferences, strict=True):
+            if preference.type == "at most one shift per day":
+                continue
+            if not isinstance(resolved, CompiledShiftTypeRequirements):
+                return CheckResult(label, False, "adds a rule outside the requested staffing contract")
+            rules.append((preference, resolved))
+        expected = set()
+        assignments = list(product(range(-1, len(shifts)), repeat=len(people)))
+        for assignment in assignments:
+            if all(
+                assignment.count(s) == case.staffing_contract["counts"][sid] for s, sid in enumerate(shifts)
+            ) and all(
+                people[p] in eligible
+                for sid, eligible in case.staffing_contract["qualified"].items()
+                for p, s in enumerate(assignment)
+                if s >= 0 and shifts[s] == sid
+            ):
+                expected.add(assignment)
+        if not expected or not compiled.dates:
+            return CheckResult(label, False, "requested staffing has no feasible daily assignments")
+        for day in range(len(compiled.dates)):
+            actual = set()
+            for assignment in assignments:
+                allowed = True
+                for preference, resolved in rules:
+                    if day not in resolved.dates:
+                        continue
+                    for group in resolved.shift_type_groups:
+                        if resolved.qualified_people is not None and any(
+                            s in group and p not in resolved.qualified_people for p, s in enumerate(assignment)
+                        ):
+                            allowed = False
+                            break
+                        count = staffing_expression(
+                            lambda _d, s, p, selected=assignment: int(selected[p] == s),
+                            len(people),
+                            resolved,
+                            day,
+                            group,
+                        )
+                        if preference.preferredNumPeople is None:
+                            allowed = allowed and count == preference.requiredNumPeople
+                        else:
+                            allowed = allowed and preference.requiredNumPeople <= count <= preference.preferredNumPeople
+                    if not allowed:
+                        break
+                if allowed:
+                    actual.add(assignment)
+            if actual != expected:
+                return CheckResult(
+                    label,
+                    False,
+                    f"date {compiled.dates[day]} admits {len(actual)} assignments, expected {len(expected)}",
+                )
+        return CheckResult(label, True)
+    except (ValueError, TypeError, KeyError) as error:
+        return CheckResult(label, False, str(error))
+
+
+def _check_optimizer_download(case: EvalCase, outcome: RunOutcome) -> list[CheckResult]:
+    """Check the retained workbook and any explicitly requested archive independently of chat claims."""
+    artifacts = [event for event in outcome.activity if event.get("kind") == "optimizer_artifact"]
+    checks = [
+        CheckResult(
+            "optimizer workbook retained for the user's download",
+            len(artifacts) == 1 and bool(artifacts[0].get("sha256")),
+        )
+    ]
+    if case.optimizer_download_file:
+        downloads = [event.get("files", {}) for event in outcome.activity if event.get("kind") == "download"]
+        matches = len(artifacts) == len(downloads) == 1 and downloads[0].get(case.optimizer_download_file) == artifacts[
+            0
+        ].get("sha256")
+        checks.append(CheckResult("ZIP delivers the unchanged optimizer workbook bytes", matches))
+    elif case.download_count == 0:
+        answers = "\n".join((*outcome.intermediate_answers, outcome.answer))
+        offer = re.search(
+            r"(?:would you like|do you want|shall I|want me to|I can|I'll|I will)[^.!?\n]{0,120}"
+            r"(?:zip|package|prepare[^.!?\n]{0,50}(?:download|workbook|file)|create[^.!?\n]{0,50}(?:download|zip))",
+            answers,
+            re.IGNORECASE,
+        )
+        checks.append(CheckResult("does not offer another copy of the downloadable optimizer workbook", offer is None))
+    return checks
+
+
+def _check_vm_clock_queries(activity: Sequence[dict[str, Any]]) -> list[CheckResult]:
+    """Allow calculations from supplied dates but reject VM clock reads."""
+    queries = []
+    for event in activity:
+        if event.get("kind") not in {"tool", "tool_start"} or event.get("name") != "bash":
+            continue
+        try:
+            command = json.loads(event.get("arguments", "{}"))["command"]
+        except (TypeError, ValueError, KeyError):
+            continue
+        python_clock = re.search(
+            r"\b(?:datetime|date|Timestamp)\.(?:now|utcnow|today)\s*\("
+            r"|\btime\.(?:time|time_ns)\s*\("
+            r"|\btime\.(?:localtime|gmtime|ctime)\s*\(\s*\)"
+            r"|\btime\.strftime\s*\(\s*(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|[\w.]+)\s*,?\s*\)",
+            command,
+        )
+        shell_clock = any(
+            not re.search(r"(?:^|\s)(?:-d(?:\s|=)|--date(?:\s|=))", match.group(1))
+            for match in re.finditer(
+                r"(?:^|[\n;&|`(])\s*(?:env\s+)?(?:[A-Za-z_][A-Za-z_0-9]*=\S+\s+)*date(?=\s|[)`]|$)([^\n;&|)`]*)",
+                command,
+            )
+        )
+        if python_clock or shell_clock:
+            queries.append(command)
+    return [CheckResult("does not query the VM clock", not queries, repr(queries) if queries else "")]
+
+
 def semantic_trajectory_failures(case: EvalCase, activity: Sequence[dict[str, Any]]) -> tuple[CheckResult, ...]:
     """Stop once a semantic trajectory rule is already irreversibly violated."""
     if case.semantic_check == "yaml-generator":
         installation = _check_yaml_generator(activity)[1]
         if not installation.passed:
             return (installation,)
+    if case.semantic_check == "current-time-context":
+        return tuple(check for check in _check_vm_clock_queries(activity) if not check.passed)
     return ()
 
 

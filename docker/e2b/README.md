@@ -5,7 +5,7 @@ assistant. Each assistant turn starts a fresh sandbox from the prebuilt
 template, hydrates `/workspace`, and destroys the sandbox after the turn.
 
 The template uses one vCPU and 512 MiB of memory. It runs as the unprivileged
-`user` account and provides Bash, ripgrep, sed, grep, diff, and Python with
+`user` account and provides Bash, ripgrep, sed, grep, diff, zip, unzip, and Python with
 `ruamel.yaml`, PyYAML, `openpyxl`, `defusedxml`, Pillow, `pypdf`, and `pypdfium2`. The
 template pins these itself. The backend keeps `pypdf` and `pypdfium2` out of
 `core/requirements.txt` because only the sandbox and the core tests need them,
@@ -69,6 +69,7 @@ does not touch unrelated E2B sandboxes.
 ## Test
 
 The live template check parses and writes synthetic YAML with both libraries.
+It also creates and extracts a ZIP archive and checks the extracted bytes.
 The `tool-yaml-generator-repair` evaluation accepts either library. Its original
 prompt comparison used a template without PyYAML.
 

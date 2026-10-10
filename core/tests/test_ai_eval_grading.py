@@ -53,6 +53,7 @@ CROSS_YEAR_UNIT_PATH = Path(__file__).parent / "ai_eval" / "fixtures" / "cross-y
 WARD_PATH = Path(__file__).parent / "testcases" / "real" / "large-ward-with-87-people-2025-11.yaml"
 
 FIXTURE_SCHEDULES = {
+    "shift-groups": _load_yaml((CASES_PATH.parent / "fixtures" / "shift-groups.yaml").read_bytes()),
     "policy-audit": _load_yaml((CASES_PATH.parent / "fixtures" / "policy-audit.yaml").read_bytes()),
     "request-audit-groups": _load_yaml((CASES_PATH.parent / "fixtures" / "request-audit-groups.yaml").read_bytes()),
     "weight-units": _load_yaml((CASES_PATH.parent / "fixtures" / "weight-units.yaml").read_bytes()),
@@ -77,6 +78,97 @@ SCHEDULE = {
 }
 
 
+def qualified_staffing_proposal(general_count=1, qualified=("S1", "S2")):
+    proposed = copy.deepcopy(FIXTURE_SCHEDULES["new-schedule"])
+    proposed["dates"]["range"] = {"startDate": "2026-03-01", "endDate": "2026-03-01"}
+    proposed["people"]["items"] = [{"id": p, "description": ""} for p in ("S1", "S2", "J1", "J2", "J3")]
+    proposed["people"]["groups"] = [{"id": "Seniors", "description": "", "members": list(qualified)}]
+    proposed["shiftTypes"]["items"] = [{"id": s, "description": ""} for s in ("D", "D+", "E", "N")]
+    proposed["preferences"] = [
+        {"type": "at most one shift per day"},
+        *[
+            {
+                "type": "shift type requirement",
+                "shiftType": [s],
+                "date": ["ALL"],
+                "qualifiedPeople": ["Seniors"] if s == "D+" else ["ALL"],
+                "requiredNumPeople": n,
+            }
+            for s, n in (("D", general_count), ("D+", 1), ("E", 1), ("N", 1))
+        ],
+    ]
+    return proposed
+
+
+@pytest.mark.parametrize("general_count", [1, 2])
+@pytest.mark.parametrize(
+    "wrong_field",
+    [None, "day_slots", "total_working_slots", "off_people", "senior_day_slots", "eligible_senior_people"],
+)
+def test_staffing_explanation_checks_arithmetic_separately_from_proposal(general_count, wrong_field):
+    case_id = "staffing-explanation-" + ("included-in-day-total" if general_count == 1 else "additional-day-slot")
+    case = next(c for c in load_cases(CASES_PATH) if c.id == case_id)
+    answer = copy.deepcopy(case.answer_json)
+    if wrong_field:
+        answer[wrong_field] += 1
+    result = grade(
+        case,
+        RunOutcome(
+            initial=FIXTURE_SCHEDULES["new-schedule"],
+            proposed=qualified_staffing_proposal(general_count),
+            answer=json.dumps(answer),
+        ),
+    )
+    assert result.passed == (wrong_field is None)
+
+
+@pytest.mark.parametrize(
+    "case_id,general_count,passed",
+    [
+        ("senior-included-in-day-total", 1, True),
+        ("senior-included-in-day-total", 2, False),
+        ("senior-additional-day-slot", 2, True),
+        ("senior-additional-day-slot", 1, False),
+    ],
+)
+def test_staffing_grader_distinguishes_inclusive_and_additive_counts(case_id, general_count, passed):
+    case = next(c for c in load_cases(CASES_PATH) if c.id == case_id)
+    proposed = qualified_staffing_proposal(general_count)
+    result = grade(case, RunOutcome(initial=FIXTURE_SCHEDULES[case.fixture], proposed=proposed))
+    assert result.passed == passed
+
+
+def test_staffing_grader_rejects_unqualified_senior_slots():
+    case = next(c for c in load_cases(CASES_PATH) if c.id == "senior-included-in-day-total")
+    result = grade(
+        case,
+        RunOutcome(initial=FIXTURE_SCHEDULES[case.fixture], proposed=qualified_staffing_proposal(qualified=("J1",))),
+    )
+    assert not result.passed
+
+
+@pytest.mark.parametrize("general_count", [1, 2])
+def test_staffing_oracle_reference_assignment_is_solver_feasible(general_count):
+    import yaml
+
+    from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
+    from nurse_scheduling.frontend_validation import load_frontend_data
+    from nurse_scheduling.scheduler import schedule
+
+    source = yaml.safe_dump(qualified_staffing_proposal(general_count)).encode()
+    assert validate_frontend_schedule_yaml(source.decode(), max_bytes=50_000).valid
+    data = load_frontend_data(source)
+    assigned = ["D+", "D" if general_count == 2 else "OFF", "D", "E", "N"]
+    forced = {
+        (0, s, p): int(assigned[p] == item.id)
+        for s, item in enumerate(data.shiftTypes.items)
+        for p in range(len(data.people.items))
+    }
+    result = schedule(source, solver="ortools/cp-sat", timeout=5, forced_solution=forced)
+    assert result.solver_status == "OPTIMAL"
+    assert result.solution == forced
+
+
 def _case(**overrides) -> object:
     entry = {"id": "case", "fixture": "new-schedule", "question": "q", "expect_proposal": True}
     entry.update(overrides)
@@ -89,6 +181,182 @@ def _write(tmp_path: Path, *entries: dict) -> Path:
     for entry in entries:
         (tmp_path / f"{entry['id']}.json").write_text(json.dumps(entry), encoding="utf-8")
     return tmp_path
+
+
+@pytest.mark.parametrize(
+    "context",
+    [{"frontend_timezone": "Unknown/Place"}, {"current_time": "2031-03-31T23:30:00"}, {"current_time": "bad"}],
+    ids=["unknown-zone", "missing-offset", "invalid-time"],
+)
+def test_invalid_clock_context_is_rejected(tmp_path, context):
+    with pytest.raises(EvalCaseError, match="clock context"):
+        load_cases(_write(tmp_path, _case(expect_proposal=False, **context)))
+
+
+def test_misspelled_assertion_key_cannot_silently_drop_schedule_checks(tmp_path):
+    with pytest.raises(EvalCaseError, match="must use `assert`"):
+        load_cases(_write(tmp_path, _case(assertions=[{"path": "description", "kind": "equals", "value": "Ward"}])))
+
+
+@pytest.mark.parametrize("field", ["answer_jsno", "semantic_checks", "tool_usgae", "expected_diffs"])
+def test_unknown_case_fields_cannot_silently_drop_checks(tmp_path, field):
+    with pytest.raises(EvalCaseError, match=f"unknown case fields: {field}"):
+        load_cases(_write(tmp_path, _case(expect_proposal=False, **{field: {}})))
+
+
+@pytest.mark.parametrize("night,passed", [("N", True), ("N+", True), ("N", False)])
+def test_qualified_explanation_grades_counts_instead_of_a_night_suffix(night, passed):
+    case = next(c for c in load_cases(CASES_PATH) if c.id == "new-schedule-qualified-slots")
+    counts = copy.deepcopy(case.answer_json)
+    if not passed:
+        counts["night"] = {"total": 2, "senior": 1, "other": 1}
+    answer = (
+        f"Use D+ and E+ for senior slots. {night} is senior-only. "
+        "A single unrestricted D requirement cannot guarantee a one-senior and one-other mix.\n" + json.dumps(counts)
+    )
+    activity = [
+        {
+            "kind": "tool",
+            "name": "read",
+            "ok": True,
+            "arguments": json.dumps({"path": "/reference/user-guide/build-a-real-schedule.md"}),
+        }
+    ]
+    assert grade(case, RunOutcome(answer=answer, activity=activity)).passed == passed
+    if passed:
+        invalid = "This app cannot represent senior staffing.\n" + answer
+        assert not grade(case, RunOutcome(answer=invalid, activity=activity)).passed
+
+
+@pytest.mark.parametrize("members,passes", [(["D"], True), (["D", "E"], False)])
+def test_day_group_creation_grades_the_actual_members(members, passes):
+    from io import StringIO
+
+    from ruamel.yaml import YAML
+
+    from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
+
+    case = next(c for c in load_cases(CASES_PATH) if c.id == "day-group-creation")
+    proposed = copy.deepcopy(FIXTURE_SCHEDULES[case.fixture])
+    proposed["shiftTypes"]["items"].append({"id": "E", "description": "Evening shift"})
+    proposed["shiftTypes"]["groups"].append({"id": "Day", "description": "Daytime shifts", "members": members})
+    source = StringIO()
+    YAML(typ="safe").dump(proposed, source)
+    assert validate_frontend_schedule_yaml(source.getvalue(), max_bytes=50_000).valid
+    assert grade(case, RunOutcome(initial=FIXTURE_SCHEDULES[case.fixture], proposed=proposed)).passed == passes
+
+
+@pytest.mark.parametrize("members,passes", [(["D", "D+"], True), (["D", "D+", "E", "N"], False)])
+def test_day_group_grader_rejects_automatic_evening_and_night_members(members, passes):
+    case = next(c for c in load_cases(CASES_PATH) if c.id == "day-group-adds-only-day-shifts")
+    proposed = copy.deepcopy(FIXTURE_SCHEDULES[case.fixture])
+    proposed["shiftTypes"]["items"].append({"id": "D+", "description": "Senior day shift"})
+    proposed["shiftTypes"]["groups"][0]["members"] = members
+    result = grade(case, RunOutcome(initial=FIXTURE_SCHEDULES[case.fixture], proposed=proposed))
+    assert result.passed == passes
+
+
+def test_day_group_grader_accepts_explicit_custom_membership():
+    case = next(c for c in load_cases(CASES_PATH) if c.id == "day-group-explicit-broadening-control")
+    proposed = copy.deepcopy(FIXTURE_SCHEDULES[case.fixture])
+    proposed["shiftTypes"]["groups"][0]["members"] = ["N", "D", "E"]
+    assert grade(case, RunOutcome(initial=FIXTURE_SCHEDULES[case.fixture], proposed=proposed)).passed
+
+
+def test_day_group_reference_fixture_is_valid_and_all_still_includes_every_shift():
+    from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
+    from nurse_scheduling.frontend_validation import load_frontend_data
+
+    source = (CASES_PATH.parent / "fixtures" / "shift-groups.yaml").read_bytes()
+    assert validate_frontend_schedule_yaml(source.decode(), max_bytes=50_000).valid
+    compiled = load_frontend_data(source).compiled_schedule
+    assert compiled.map_sid_s["Day"] == (0,)
+    assert compiled.map_sid_s["ALL"] == (0, 1, 2)
+
+
+@pytest.mark.parametrize(
+    "command, allowed",
+    [
+        ("date +%Y-%m-%d", False),
+        ("TZ=Asia/Taipei date +%H:%M", False),
+        ("echo $(date)", False),
+        ("python -c 'from datetime import datetime; print(datetime.now())'", False),
+        ("python -c 'import time; print(time.time())'", False),
+        ("python -c 'import time; print(time.time_ns())'", False),
+        ("python -c 'import time; print(time.localtime())'", False),
+        ("python -c 'import time; print(time.gmtime())'", False),
+        ("python -c 'import time; print(time.ctime())'", False),
+        ("""python -c 'import time; print(time.strftime("%Y,%m,%d"))'""", False),
+        ("python -c 'import time; print(time.strftime(fmt))'", False),
+        ("python -c 'import pandas as pd; print(pd.Timestamp.now())'", False),
+        ("date -d '2031-04-01' +%Y-%m-%d", True),
+        ("TZ=Asia/Taipei date --date='2031-04-01' +%Y-%m-%d", True),
+        ("python -c 'from datetime import date; print(date(2031, 4, 1))'", True),
+        ("python -c 'import time; print(time.localtime(0))'", True),
+        ("python -c 'import time; print(time.gmtime(0))'", True),
+        ("python -c 'import time; print(time.ctime(0))'", True),
+        ("""python -c 'import time; print(time.strftime("%Y,%m,%d", time.gmtime(0)))'""", True),
+    ],
+    ids=[
+        "shell-now",
+        "shell-zone",
+        "substitution",
+        "python-now",
+        "seconds-now",
+        "nanoseconds-now",
+        "localtime-now",
+        "gmtime-now",
+        "ctime-now",
+        "strftime-now",
+        "strftime-variable-now",
+        "pandas-now",
+        "shell-input",
+        "shell-input-zone",
+        "python-input",
+        "localtime-input",
+        "gmtime-input",
+        "ctime-input",
+        "strftime-input",
+    ],
+)
+def test_clock_grading_distinguishes_vm_time_from_supplied_date_calculations(command, allowed):
+    from .ai_eval.grading import _check_vm_clock_queries
+
+    event = {"kind": "tool_start", "name": "bash", "arguments": json.dumps({"command": command})}
+    assert _check_vm_clock_queries([event])[0].passed is allowed
+
+
+@pytest.mark.parametrize("delivered", ["original-sha", "changed-sha"], ids=["unchanged", "changed"])
+def test_optimizer_archive_grades_actual_delivered_bytes(delivered):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "optimizer-result-explicit-zip")
+    outcome = RunOutcome(
+        initial=FIXTURE_SCHEDULES[case.fixture],
+        activity=[
+            {"kind": "optimizer", "turn": 2},
+            {"kind": "optimizer_artifact", "sha256": "original-sha"},
+            {"kind": "download", "files": {"original-result.xlsx": delivered}},
+        ],
+        intermediate_answers=("Started.", "Use Download result."),
+        proposal_turns=(False, False, False),
+    )
+    assert grade(case, outcome).passed is (delivered == "original-sha")
+
+
+@pytest.mark.parametrize(
+    "answer, allowed",
+    [("Use Download result.", True), ("Would you like me to prepare a ZIP download?", False)],
+    ids=["existing-button", "redundant-offer"],
+)
+def test_download_grading_rejects_an_offer_in_the_completion_reply(answer, allowed):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "optimizer-result-already-downloadable")
+    outcome = RunOutcome(
+        initial=FIXTURE_SCHEDULES[case.fixture],
+        answer="Use Download result.",
+        activity=[{"kind": "optimizer", "turn": 2}, {"kind": "optimizer_artifact", "sha256": "original-sha"}],
+        intermediate_answers=("Started.", "Use Download result. " + answer),
+        proposal_turns=(False, False, False),
+    )
+    assert grade(case, outcome).passed is allowed
 
 
 def test_resolves_fields_indexes_and_selectors():
@@ -864,16 +1132,7 @@ def test_ambiguous_weight_case_rejects_guessing_and_wrong_clarified_target():
 def test_the_dataset_only_uses_registered_fixtures():
     cases = load_cases(CASES_PATH)
 
-    assert {case.fixture for case in cases} == {
-        "policy-audit",
-        "cross-year-unit",
-        "new-schedule",
-        "request-audit",
-        "request-audit-groups",
-        "small-clinic",
-        "ward87",
-        "weight-units",
-    }
+    assert {case.fixture for case in cases} == set(FIXTURE_SCHEDULES)
     assert len(cases) == len({case.id for case in cases})
 
 
@@ -1018,6 +1277,8 @@ def test_reading_questions_cannot_be_answered_from_the_prompt_summary():
     }
 
     for case in load_cases(CASES_PATH):
+        if case.optimizer_completion:
+            continue
         if not case.answer_contains:
             continue
         values = computed_values(FIXTURE_SCHEDULES[case.fixture])

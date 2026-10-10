@@ -34,6 +34,7 @@ from ruamel.yaml import YAML
 
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.downloads import WORKSPACE_DOWNLOAD
+from nurse_scheduling.ai.optimizer import WORKSPACE_OPTIMIZER_RESULT
 from nurse_scheduling.ai.optimizer_tool import optimizer_start_message
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.pi.edit import EDIT_TOOL
@@ -453,6 +454,18 @@ def test_a_correct_answer_passes_and_records_its_cost():
     assert run.seconds >= 0
 
 
+@pytest.mark.parametrize("case_id", ["current-time-frontend-taipei", "current-time-frontend-los-angeles"])
+def test_clock_cases_use_the_frontend_timezone_and_frozen_server_instant(case_id):
+    provider = ScriptedProvider([TextDelta(json.dumps(CASE_BY_ID[case_id].answer_json))])
+    factory = _factory()
+    run = _run(case_id, provider, factory)
+    assert run.passed
+    context = provider.messages[0][-1]["content"]
+    assert CASE_BY_ID[case_id].frontend_timezone in context
+    assert "2031-" in context
+    assert factory.created == []
+
+
 def test_attachment_case_hydrates_generated_file_and_records_an_upload_event():
     factory = _factory()
     run = _run(
@@ -470,7 +483,7 @@ def test_attachment_case_hydrates_generated_file_and_records_an_upload_event():
     prompt = run.trajectory["prompt"]
     assert prompt[1]["content"].startswith("[App event] The user uploaded files.")
     assert '"path": "/workspace/attachments/01-ward-notes.xlsx"' in prompt[1]["content"]
-    assert prompt[-1] == {"role": "user", "content": CASE_BY_ID["read-second-xlsx-sheet"].question}
+    assert prompt[-2] == {"role": "user", "content": CASE_BY_ID["read-second-xlsx-sheet"].question}
 
 
 def test_optimizer_case_uses_controlled_production_tool_contract():
@@ -930,7 +943,7 @@ def test_a_multi_user_turn_case_preserves_the_conversation_history():
 
     assert run.passed
     assert len(provider.messages) == 2
-    assert provider.messages[1][-3:] == [
+    assert provider.messages[1][-4:-1] == [
         {"role": "user", "content": "Expand the range."},
         {"role": "assistant", "content": "Renew Taiwan holidays?"},
         {"role": "user", "content": "No."},
@@ -951,6 +964,29 @@ def test_completion_only_case_seeds_history_without_counting_a_model_tool_call()
     assert '"request_audit"' in provider.messages[0][-2]["content"]
     assert provider.messages[0][-1]["content"].startswith("[Current status]")
     assert not factory.created
+
+
+def test_optimizer_followup_receives_the_same_workbook_in_a_new_workspace():
+    read = [
+        ToolCallRequest(
+            (ToolCall("read-result", READ_TOOL, '{"path":"/workspace/optimizer-results/schedule-context.json"}'),)
+        )
+    ]
+    provider = ScriptedProvider(
+        read,
+        [TextDelta("The workbook is available through Download result.")],
+        read,
+        [TextDelta("Use Download result for the original workbook.")],
+    )
+    factory = _factory()
+    run = _run("optimizer-result-already-downloadable", provider, factory)
+    assert run.passed
+    assert len(factory.created) == 2
+    original = factory.created[0].files[WORKSPACE_OPTIMIZER_RESULT]
+    assert factory.created[1].files[WORKSPACE_OPTIMIZER_RESULT] == original
+    artifact = next(event for event in run.trajectory["events"] if event["kind"] == "optimizer_artifact")
+    assert artifact["sha256"] == hashlib.sha256(original).hexdigest()
+    assert all(backend.closed for backend in factory.created)
 
 
 @pytest.mark.parametrize("fail_fast, expected_user_turns", [(True, [1]), (False, [1, 2])])
@@ -1511,6 +1547,7 @@ def test_reference_digests_cover_every_file_hydrated_into_the_sandbox():
     # A user guide edit steers the 10-app-ui cases, so it has to move this fingerprint.
     expected = {path.name for path in SCHEMA_REFERENCE_FILES.values()}
     expected.add(TAIWAN_HOLIDAYS_SOURCE.name)
+    expected.add("examples/large-ward-with-87-people-2025-11.yaml")
     expected.update(f"user-guide/{relative}" for relative in load_user_guide_references())
     expected.update(path.removeprefix("/reference/") for path in REFERENCE_ATTACHMENT_TOOLS)
     expected.update({"tools/README.md", "result_context.py", "policy_audit"})

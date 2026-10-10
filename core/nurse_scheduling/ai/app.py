@@ -26,14 +26,14 @@ import sys
 from collections.abc import AsyncIterator
 from contextlib import aclosing, asynccontextmanager
 from dataclasses import replace
-from typing import Literal, cast
+from typing import Annotated, Literal, cast
 from uuid import UUID, uuid4
 
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import AfterValidator, BaseModel, Field, ValidationError
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -43,6 +43,7 @@ from ..service_logging import configure_service_logging
 from ..version import get_app_version
 from .agent_session import AgentSession, SessionRuntime
 from .config import AiSettings, validate_ai_auth_credentials
+from .context import validate_frontend_timezone
 from .history import ChatHistory, stop_maintenance
 from .lifecycle import TERMINAL_EVENTS, AgentRun, SessionRuns
 from .optimizer import (
@@ -67,6 +68,7 @@ SERVICE_NAME = "nurse-scheduling-ai-api"
 __all__ = ("SessionStore", "schedule_revision")
 API_VERSION = "0.2.0"
 OWNER_COOKIE = "nurse_scheduling_ai_owner"
+FrontendTimezone = Annotated[str, Field(min_length=1, max_length=100), AfterValidator(validate_frontend_timezone)]
 ORIGIN_REGEX = (
     r"^(http://(localhost|127\.0\.0\.1|host\.docker\.internal|10(?:\.[0-9]{1,3}){3}|"
     r"192\.168(?:\.[0-9]{1,3}){2}|172\.(1[6-9]|2[0-9]|3[01])(?:\.[0-9]{1,3}){2}):[0-9]+|"
@@ -148,6 +150,7 @@ class CreateSessionRequest(BaseModel):
     schedule_yaml: str = Field(min_length=1)
     frontend_version: str | None = Field(default=None, min_length=1, max_length=200)
     ai_endpoint: str | None = Field(default=None, min_length=1, max_length=2048)
+    frontend_timezone: FrontendTimezone = "UTC"
 
 
 class ChatRequest(BaseModel):
@@ -157,6 +160,7 @@ class ChatRequest(BaseModel):
     # A repeated client message ID reattaches to its run instead of asking again.
     message_id: str | None = Field(default=None, min_length=1, max_length=100)
     frontend_version: str | None = Field(default=None, min_length=1, max_length=200)
+    frontend_timezone: FrontendTimezone | None = None
 
 
 class StopChatRequest(BaseModel):
@@ -527,6 +531,7 @@ def create_app(
         refresh_owner_cookie(response, owner)
         session = store.create(owner, request.schedule_yaml)
         session.observe_frontend_version(request.frontend_version, app.state.app_version)
+        session.frontend_timezone = request.frontend_timezone
         session.export_metadata["endpoint"] = request.ai_endpoint or str(http_request.base_url).rstrip("/")
         # The client never learns this ID unless the save succeeds, so release its slot otherwise.
         saved = False
@@ -754,6 +759,8 @@ def create_app(
         message = _validate_question(request.message, settings)
         session = store.require_owned(session_id, owner)
         session.observe_frontend_version(request.frontend_version, app.state.app_version)
+        if request.frontend_timezone is not None:
+            session.frontend_timezone = request.frontend_timezone
         store.queue_steering(session_id, owner, request.message_id, message)
         request_logger.info(
             "AI steering queued session_id=%s message_chars=%s message=%s auth_credential_id=%s",
@@ -777,6 +784,8 @@ def create_app(
         question = _validate_question(body.message, settings)
         session = store.require_owned(session_id, owner)
         session.observe_frontend_version(body.frontend_version, app.state.app_version)
+        if body.frontend_timezone is not None:
+            session.frontend_timezone = body.frontend_timezone
         cursor = event_stream.cursor(session_id)
         receipt = await session.accept_message(
             question,

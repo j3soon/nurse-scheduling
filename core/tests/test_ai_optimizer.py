@@ -51,6 +51,12 @@ TEST_SCHEDULE = schedule_yaml()
 WORKBOOK_BYTES = optimizer_workbook_bytes()
 
 
+@pytest.mark.parametrize("available", [False, True])
+def test_completion_reports_existing_download_only_when_available(available) -> None:
+    message = optimizer_completion_message({"download_available": available, "result": {}})
+    assert ("Download result button" in message) == available
+
+
 @pytest.mark.parametrize("score", [0, -20, 20, None])
 def test_completion_reports_score_direction_without_mutating_input(score) -> None:
     result = {"download_available": False, "result": {"score": score}}

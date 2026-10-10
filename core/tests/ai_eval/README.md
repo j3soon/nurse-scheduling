@@ -76,6 +76,7 @@ For a scalar, mapping, or whole-section replacement, use `before` and `after` in
 Use `null` for a missing path, such as an export section created from scratch.
 
 Keep `assert` for outcomes that intentionally allow multiple valid objects or need invariants across a large cascade.
+The loader rejects `assertions`, which would otherwise silently omit these checks.
 Examples include optional descriptions, case-insensitive natural-language values, and deleting one ID from many
 history entries while preserving similarly named IDs. Use `{"path": "...", "unchanged": true}` when a value must
 match the input fixture, so fixture copy edits do not stale a literal expectation. Use `answer_contains` for read-only and refusal cases,
@@ -212,6 +213,12 @@ comparisons to unchanged constraints and weights. `optimizer-score-same-model`
 checks direction and `optimizer-score-changed-model` guards comparability.
 Cases marked `optimizer_completion_only` seed a fixed successful start and acknowledgement without a provider call.
 The seed remains in the grading trace but is excluded from model tool and token metrics.
+`after_optimizer_turns` adds user messages after completion in fresh workspaces with the retained workbook.
+The `optimizer-download` check rejects redundant ZIP delivery or offers. An explicitly requested archive
+must contain the original workbook bytes under `optimizer_download_file`.
+The `qualified-staffing` check compares every possible daily assignment in a small fixture with
+`staffing_contract.counts` and `staffing_contract.qualified`. It uses compiled selectors and the engine's
+staffing expression, so different rule layouts can pass when their staffing and eligibility match.
 `request-audit-stale-summary` supplies an earlier verified incumbent's counts with a different source hash
 to check that the agent uses the current workbook instead.
 

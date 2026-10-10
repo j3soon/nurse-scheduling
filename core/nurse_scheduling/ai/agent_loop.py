@@ -22,8 +22,9 @@
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import aclosing, asynccontextmanager
+from datetime import datetime
 
 from .agent_types import (
     AgentMessageEnd,
@@ -76,6 +77,7 @@ async def agent_loop(
     max_tool_rounds: int | None = None,
     max_tool_calls: int | None = None,
     run_messages: list[AgentMessage] | None = None,
+    request_clock: Callable[[], datetime] | None = None,
 ) -> AsyncIterator[AgentText | AgentReasoning | AgentToolStart | AgentToolUse]:
     """Run the model/tool loop shared by agent capability layers."""
     registered = {tool.name: tool for tool in tools}
@@ -100,7 +102,7 @@ async def agent_loop(
         answer, reasoning, calls = [], [], ()
         finish_reason = None
         provider_events = provider.stream_events(
-            prepare_provider_request(messages, conversation),
+            prepare_provider_request(messages, conversation, now=request_clock() if request_clock else None),
             [] if final_answer_only else [tool.definition for tool in tools],
         )
         try:

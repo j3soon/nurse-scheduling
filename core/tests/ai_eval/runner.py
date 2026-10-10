@@ -74,6 +74,7 @@ from nurse_scheduling.ai.sandbox.factory import create_sandbox_factory
 from nurse_scheduling.ai.schema import (
     SCHEMA_REFERENCE_FILES,
     TAIWAN_HOLIDAYS_SOURCE,
+    load_schedule_example,
     load_schedule_reference,
     load_taiwan_holidays_reference,
     load_user_guide_references,
@@ -115,6 +116,7 @@ from .prompt_ladder import case_digest, load_prompt_steps, prompt_at_step
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 CASES = Path(__file__).resolve().parent / "cases"
 FIXTURES = {
+    "shift-groups": Path(__file__).resolve().parent / "fixtures" / "shift-groups.yaml",
     "policy-audit": Path(__file__).resolve().parent / "fixtures" / "policy-audit.yaml",
     "request-audit-groups": Path(__file__).resolve().parent / "fixtures" / "request-audit-groups.yaml",
     "weight-units": Path(__file__).resolve().parent / "fixtures" / "weight-units.yaml",
@@ -291,6 +293,9 @@ async def run_case(
         history.append(AppEventEntry(upload_event(case_attachments)))
     optimizer_started = False
     optimizer_source = ""
+    retained_optimizer_result = None
+    retained_optimizer_context = None
+    request_clock = (lambda: datetime.fromisoformat(case.current_time)) if case.current_time else None
 
     async def execute_optimizer(_schedule_yaml: str, arguments: str) -> AgentToolOutcome:
         """Expose the production tool contract without submitting an actual job."""
@@ -330,8 +335,9 @@ async def run_case(
         turns = [(question, False) for question in case.user_turns]
         if case.optimizer_completion:
             turns.append(("", True))
+        turns.extend((question, False) for question in case.after_optimizer_turns)
         for turn_index, (question, completion) in enumerate(turns):
-            if case.optimizer_completion_only and not completion:
+            if case.optimizer_completion_only and not completion and turn_index < len(case.user_turns):
                 arguments = json.dumps({"action": "start", "timeout_seconds": 60})
                 outcome = await execute_optimizer(text, arguments)
                 if not outcome.ok:
@@ -360,8 +366,8 @@ async def run_case(
                 intermediate_proposals.append(False)
                 history.extend([UserMessage(question), AssistantMessage(acknowledgement)])
                 continue
-            optimizer_result = None
-            optimizer_context = None
+            optimizer_result = retained_optimizer_result
+            optimizer_context = retained_optimizer_context
             if completion:
                 if not optimizer_started:
                     events.append({"kind": "evaluation_stop", "reason": "optimizer was not started"})
@@ -378,6 +384,9 @@ async def run_case(
                     break
                 context = await asyncio.to_thread(build_result_context, optimizer_source, workbook=optimizer_result)
                 optimizer_context = json.dumps(context, ensure_ascii=False, allow_nan=False).encode()
+                retained_optimizer_result = optimizer_result
+                retained_optimizer_context = optimizer_context
+                events.append({"kind": "optimizer_artifact", "sha256": hashlib.sha256(optimizer_result).hexdigest()})
                 question = optimizer_completion_message(result_data)
                 optimizer_started = False
             attachments = case_attachments
@@ -390,6 +399,8 @@ async def run_case(
                 max_download_bytes=settings.max_download_bytes,
                 pending_proposal=pending_proposal is not None,
                 optimizer_result_available=optimizer_result is not None,
+                frontend_timezone=case.frontend_timezone or "UTC",
+                now=request_clock() if request_clock else None,
             )
             prompt_messages.append(messages)
             turn_answer: list[str] = []
@@ -413,6 +424,7 @@ async def run_case(
                 optimizer_result=optimizer_result,
                 optimizer_context=optimizer_context,
                 agent=agent,
+                request_clock=request_clock,
             )
             async with aclosing(agent_events):
                 async for event in agent_events:
@@ -1552,6 +1564,9 @@ def _reference_digests() -> dict[str, str]:
         for group, path in SCHEMA_REFERENCE_FILES.items()
     }
     digests[TAIWAN_HOLIDAYS_SOURCE.name] = hashlib.sha256(load_taiwan_holidays_reference().encode()).hexdigest()
+    digests["examples/large-ward-with-87-people-2025-11.yaml"] = hashlib.sha256(
+        load_schedule_example().encode()
+    ).hexdigest()
     for relative_path, reference in load_user_guide_references().items():
         digests[f"user-guide/{relative_path}"] = hashlib.sha256(reference.encode()).hexdigest()
     for destination, source in REFERENCE_ATTACHMENT_TOOLS.items():

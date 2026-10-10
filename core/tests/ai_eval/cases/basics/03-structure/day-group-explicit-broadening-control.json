@@ -1,0 +1,62 @@
+{
+  "fixture": "shift-groups",
+  "expect_proposal": true,
+  "tool_usage": {
+    "forbidden": [
+      "optimizer"
+    ],
+    "max_total": 12
+  },
+  "tags": [
+    "shift-groups"
+  ],
+  "note": "This testcase is mostly AI generated. Check actual Day membership and preserve unrelated groups. Explicitly authorized custom membership is a contrasting control.",
+  "id": "day-group-explicit-broadening-control",
+  "question": "Our legacy shift-type group named Day now means all working shifts. Add E and N to that group alongside D. Keep its ID and description, and leave all other data unchanged.",
+  "expected_diff": [
+    {
+      "path": "shiftTypes.groups[?id=Day].members",
+      "added": [
+        "E",
+        "N"
+      ]
+    }
+  ],
+  "changes": [
+    "shiftTypes.groups"
+  ],
+  "assert": [
+    {
+      "path": "shiftTypes.groups[?id=Day].members",
+      "count": 3
+    },
+    {
+      "path": "shiftTypes.groups[?id=Day].members",
+      "contains": "D"
+    },
+    {
+      "path": "shiftTypes.groups[?id=Day].members",
+      "contains": "E"
+    },
+    {
+      "path": "shiftTypes.groups[?id=Day].members",
+      "contains": "N"
+    },
+    {
+      "path": "shiftTypes.groups",
+      "count": 3
+    },
+    {
+      "path": "shiftTypes.groups[?id=Evening]",
+      "unchanged": true
+    },
+    {
+      "path": "shiftTypes.groups[?id=Night]",
+      "unchanged": true
+    },
+    {
+      "path": "shiftTypes.groups[?id=Day].description",
+      "unchanged": true
+    }
+  ]
+}

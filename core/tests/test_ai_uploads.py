@@ -57,9 +57,9 @@ def test_followup_hydrates_retained_upload_and_removal_stops_hydration():
         path = f"/workspace/attachments/{files[0]['id']}-notes.txt"
         upload = provider.calls[0][1]
         assert path in upload["content"]
-        assert provider.calls[0][-1]["content"] == "Read"
+        assert provider.calls[0][-2]["content"] == "Read"
         assert provider.calls[2][1] == upload
-        assert provider.calls[2][-1]["content"] == "Read again"
+        assert provider.calls[2][-2]["content"] == "Read again"
         assert factory.created[0].files[path] == factory.created[1].files[path] == b"ward handover"
         assert factory.created[0].closed and factory.created[1].closed
         assert other.delete(f"/sessions/{session}/uploads/{files[0]['id']}").status_code == 404
@@ -67,9 +67,10 @@ def test_followup_hydrates_retained_upload_and_removal_stops_hydration():
         assert client.delete(f"/sessions/{session}/uploads/{files[0]['id']}").status_code == 204
         assert client.get(f"/sessions/{session}/uploads").json() == []
         client.post(f"/sessions/{session}/messages", json={"message": "Check removed file"})
-        assert provider.calls[4][-2]["content"].startswith("[App event] The user removed a file")
-        assert path in provider.calls[4][-2]["content"]
-        assert provider.calls[4][-1]["content"] == "Check removed file"
+        assert provider.calls[4][-3]["content"].startswith("[App event] The user removed a file")
+        assert path in provider.calls[4][-3]["content"]
+        assert provider.calls[4][-2]["content"] == "Check removed file"
+        assert "Current date and time:" in provider.calls[4][-1]["content"]
         assert not any(name.startswith("/workspace/attachments/") for name in factory.created[2].files)
         preflight = client.options(
             f"/sessions/{session}/uploads/example",
