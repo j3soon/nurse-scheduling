@@ -52,7 +52,7 @@ class CommandResult:
 
     stdout: str
     stderr: str
-    exit_code: int
+    exit_code: int | None
     duration_seconds: float = 0.0
     timed_out: bool = False
     sandbox_terminated: bool = False

@@ -22,6 +22,7 @@
 import asyncio
 import json
 from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 
 import pytest
 
@@ -57,6 +58,8 @@ from nurse_scheduling.ai.workspace import (
     SandboxCandidateError,
     SandboxTurnTimeoutError,
     WorkspaceLimits,
+    WorkspaceMetrics,
+    _measured_sandbox_turn,
     attachment_path,
     hydrate_sandbox,
 )
@@ -254,6 +257,38 @@ def test_optimizer_rejects_an_invalid_working_schedule_before_submission() -> No
 
 
 @pytest.mark.parametrize("action", ["status", "finish_now"])
+@pytest.mark.parametrize("with_read", [False, True], ids=["control-only", "mixed-batch"])
+def test_optimizer_job_controls_allocate_a_sandbox_only_for_file_tools(action: str, with_read: bool) -> None:
+    factory = FakeSandboxFactory()
+    arguments = json.dumps({"action": action})
+    calls = [ToolCall("control-job", OPTIMIZER_TOOL, arguments)]
+    if with_read:
+        calls.append(ToolCall("read-schedule", READ_TOOL, '{"path":"schedule.yaml"}'))
+    provider = ScriptedProvider([ToolCallRequest(tuple(calls))], [TextDelta("Checked.")])
+    controls = []
+
+    async def execute_optimizer(current_schedule: str, received_arguments: str) -> AgentToolOutcome:
+        assert factory.created == []
+        controls.append((current_schedule, received_arguments))
+        return AgentToolOutcome("Existing job updated.", True)
+
+    async def collect() -> list:
+        return [
+            event
+            async for event in run_workspace(
+                provider, factory, schedule_yaml(), MESSAGES, _limits(), execute_optimizer=execute_optimizer
+            )
+        ]
+
+    events = asyncio.run(collect())
+    assert controls == [("", arguments)]
+    assert len(factory.created) == int(with_read)
+    assert all(event.ok for event in events if isinstance(event, AgentToolUse))
+    if with_read:
+        assert factory.created[0].closed
+
+
+@pytest.mark.parametrize("action", ["status", "finish_now"])
 def test_optimizer_job_controls_work_with_an_invalid_working_schedule(action: str) -> None:
     arguments = json.dumps({"action": action})
     provider = ScriptedProvider(
@@ -295,6 +330,110 @@ def test_optimizer_job_controls_work_with_an_invalid_working_schedule(action: st
     assert controls == [("", arguments)]
     control_result = next(event for event in events if isinstance(event, AgentToolUse) and event.name == OPTIMIZER_TOOL)
     assert control_result.ok
+
+
+def test_parallel_reads_share_hydration_and_controls_do_not_resume_the_sandbox() -> None:
+    batches = []
+
+    class Backend(FakeSandboxBackend):
+        @asynccontextmanager
+        async def activity_batch(self):
+            batches.append("start")
+            try:
+                yield
+            finally:
+                batches.append("end")
+
+        async def write_files(self, files):
+            await asyncio.sleep(0)
+            await super().write_files(files)
+
+    factory = FakeSandboxFactory(Backend)
+    provider = ScriptedProvider(
+        [ToolCallRequest(tuple(ToolCall(f"read-{i}", READ_TOOL, '{"path":"schedule.yaml"}') for i in range(2)))],
+        [ToolCallRequest((ToolCall("status", OPTIMIZER_TOOL, '{"action":"status"}'),))],
+        [TextDelta("Checked.")],
+    )
+
+    async def execute_optimizer(_schedule: str, _arguments: str) -> AgentToolOutcome:
+        assert batches == ["start", "end"]
+        return AgentToolOutcome("Running.", True)
+
+    async def collect() -> list:
+        return [
+            event
+            async for event in run_workspace(
+                provider, factory, schedule_yaml(), MESSAGES, _limits(), execute_optimizer=execute_optimizer
+            )
+        ]
+
+    events = asyncio.run(collect())
+    assert len(factory.created) == 1
+    assert factory.created[0].write_files_calls == 1
+    assert factory.created[0].closed
+    assert batches == ["start", "end"]
+    assert all(event.ok for event in events if isinstance(event, AgentToolUse))
+
+
+@pytest.mark.parametrize("failure_count", [1, 2])
+def test_parallel_reads_retry_failed_hydration_before_using_the_sandbox(failure_count) -> None:
+    class Backend(FakeSandboxBackend):
+        hydration_attempts = 0
+
+        async def write_files(self, files):
+            self.hydration_attempts += 1
+            await asyncio.sleep(0)
+            if self.hydration_attempts <= failure_count:
+                # A failed upload can leave a valid schedule without its reference files.
+                self.files[WORKSPACE_SCHEDULE] = schedule_yaml().encode()
+                raise SandboxError("Hydration upload failed.")
+            await super().write_files(files)
+
+        async def read_file(self, path, *, max_bytes=None):
+            assert WORKSPACE_SOURCE_CONTEXT in self.files
+            return await super().read_file(path, max_bytes=max_bytes)
+
+    factory = FakeSandboxFactory(Backend)
+
+    async def read() -> list:
+        async with _measured_sandbox_turn(
+            factory, 1, WorkspaceMetrics(), schedule_yaml(), "", "", (), None, None
+        ) as sandbox:
+            async with sandbox.activity_batch():
+                results = await asyncio.gather(
+                    sandbox.read_file(WORKSPACE_SCHEDULE),
+                    sandbox.read_file(WORKSPACE_SCHEDULE),
+                    return_exceptions=True,
+                )
+            results.append(await sandbox.read_file(WORKSPACE_SCHEDULE))
+            return results
+
+    results = asyncio.run(read())
+
+    assert all(isinstance(result, SandboxError) for result in results[:failure_count])
+    assert all(str(result) == "Hydration upload failed." for result in results[:failure_count])
+    assert results[failure_count:] == [schedule_yaml().encode()] * (3 - failure_count)
+    assert len(factory.created) == 1
+    assert factory.created[0].hydration_attempts == failure_count + 1
+    assert factory.created[0].closed
+
+
+def test_failed_bash_result_reaches_the_model_and_allows_the_next_tool_call():
+    backend = FakeSandboxBackend(
+        "fake-1", command_handler=lambda command, *_: CommandResult("partial", "", None if command == "failed" else 0)
+    )
+    provider = ScriptedProvider(_run_call("failed"), _run_call("retry"), [TextDelta("Recovered.")])
+
+    events = _collect(provider, FakeSandboxFactory(lambda _: backend))
+
+    outcomes = [event for event in events if isinstance(event, AgentToolUse)]
+    assert [outcome.ok for outcome in outcomes] == [False, True]
+    assert outcomes[0].result == "partial\n\nCommand terminated without an exit code"
+    assert any(
+        message.get("role") == "tool" and message.get("content") == outcomes[0].result
+        for message in provider.requests[1][0]
+    )
+    assert backend.commands == [("failed", None), ("retry", None)]
 
 
 def test_pending_proposal_is_hydrated_as_trusted_read_only_context():

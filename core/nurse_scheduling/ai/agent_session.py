@@ -260,6 +260,9 @@ class AgentSession:
     # Last owner access, which orders eviction. A restored session keeps its stored expiry.
     last_used: float = field(default_factory=time.monotonic)
     latest_message: AcceptedMessage | None = None
+    frontend_version: str | None = None
+    reported_version_mismatch: bool = False
+    export_metadata: dict[str, Any] = field(default_factory=dict)
     accepted_messages: dict[str, AcceptedMessage] = field(default_factory=dict)
     # Named Stop requests, including those for messages that have not arrived yet.
     stopped_message_ids: set[str] = field(default_factory=set)
@@ -269,6 +272,24 @@ class AgentSession:
     _saved_run_messages: int = field(default=0, repr=False)
     _listeners: list[Callable[[AgentSessionEvent], None]] = field(default_factory=list, repr=False)
     _events_closed: bool = False
+
+    def observe_frontend_version(self, version: str | None, backend_version: str) -> None:
+        """Keep the browser build available and report a mismatch once per loaded session."""
+        if version is not None:
+            self.frontend_version = version
+        self.export_metadata["backend_version"] = backend_version
+        if self.frontend_version is None or self.reported_version_mismatch:
+            return
+        if self.frontend_version == backend_version and not backend_version.endswith("-dirty"):
+            return
+        self.reported_version_mismatch = True
+        logger.error(
+            "AI frontend and backend versions do not match session_id=%s frontend_version=%s backend_version=%s",
+            self.id,
+            self.frontend_version,
+            backend_version,
+            extra={"frontend_version": self.frontend_version, "backend_version": backend_version},
+        )
 
     @property
     def history(self) -> list[ChatMessage]:
@@ -284,6 +305,13 @@ class AgentSession:
         """
         return {
             "schedule_yaml": self.schedule_yaml,
+            "frontend_version": self.frontend_version,
+            "export_metadata": {
+                **self.export_metadata,
+                "uploaded_files": [
+                    {"filename": upload.filename, "bytes": len(upload.data)} for upload in self.uploads.values()
+                ],
+            },
             "pending_proposal": None if self.pending_proposal is None else asdict(self.pending_proposal),
             "dropped_history_messages": self.dropped_history_messages,
             "dropped_entries": self.dropped_entries,
@@ -313,6 +341,8 @@ class AgentSession:
             expires_at=expires_at,
             schedule_yaml=state["schedule_yaml"],
             revision=schedule_revision(state["schedule_yaml"]),
+            frontend_version=state.get("frontend_version"),
+            export_metadata=state.get("export_metadata", {}),
             transcript=retained_entries(entries),
             dropped_history_messages=state["dropped_history_messages"],
             dropped_entries=state["dropped_entries"],
@@ -638,6 +668,7 @@ class AgentSession:
         events.emit(
             {
                 "type": "model_input",
+                "schedule_yaml": snapshot.schedule_yaml,
                 **model_input(
                     messages, len(history.messages), dropped_history, "optimizer" if background else "question"
                 ),

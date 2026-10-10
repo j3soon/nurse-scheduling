@@ -23,6 +23,7 @@ import {
   AiStaleRunError,
   PRODUCTION_AI_API_URL,
   approveProposal,
+  cancelOptimization,
   createSession,
   downloadGeneratedZip,
   downloadOptimization,
@@ -30,6 +31,7 @@ import {
   getCapabilities,
   getBackendVersion,
   getSessionStatus,
+  getSavedChatSnapshot,
   getUploads,
   isOfficialAiEndpoint,
   queueMessage,
@@ -57,6 +59,7 @@ function streamedResponse(chunks: string[]): Response {
 }
 
 import type { SessionEvent } from './sessionEvents';
+import { CURRENT_APP_VERSION } from '@/utils/version';
 
 describe('AI client', () => {
   beforeEach(() => {
@@ -80,7 +83,7 @@ describe('AI client', () => {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ai-client-token' },
-      body: JSON.stringify({ schedule_yaml: 'description: test' }),
+      body: JSON.stringify({ schedule_yaml: 'description: test', frontend_version: CURRENT_APP_VERSION, ai_endpoint: 'https://api.nursescheduling.org/ai' }),
     });
   });
 
@@ -345,7 +348,7 @@ describe('AI client', () => {
     expect(fetchMock).toHaveBeenCalledWith(
       'https://api.nursescheduling.org/ai/sessions/session%2Fid/messages',
       expect.objectContaining({
-        body: JSON.stringify({ message: 'Who works?' }),
+        body: JSON.stringify({ message: 'Who works?', frontend_version: CURRENT_APP_VERSION }),
         credentials: 'include',
         headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json', Authorization: 'Bearer stream-token' },
       }),
@@ -434,7 +437,7 @@ describe('AI client', () => {
       method: 'POST',
       credentials: 'include',
       headers: { Accept: 'application/json', 'Content-Type': 'application/json', Authorization: 'Bearer stream-token' },
-      body: JSON.stringify({ message: 'What is shown?', message_id: 'message-1' }),
+      body: JSON.stringify({ message: 'What is shown?', message_id: 'message-1', frontend_version: CURRENT_APP_VERSION }),
       signal: expect.any(AbortSignal),
     });
   });
@@ -453,8 +456,8 @@ describe('AI client', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const bodies = fetchMock.mock.calls.map(([, request]) => JSON.parse((request as RequestInit).body as string));
     expect(bodies).toEqual([
-      { message: 'Question', message_id: 'message-1' },
-      { message: 'Question', message_id: 'message-1' },
+      { message: 'Question', message_id: 'message-1', frontend_version: CURRENT_APP_VERSION },
+      { message: 'Question', message_id: 'message-1', frontend_version: CURRENT_APP_VERSION },
     ]);
     expect(onConnectionChange.mock.calls).toEqual([[false], [true]]);
   });
@@ -903,6 +906,15 @@ describe('AI client', () => {
     );
   });
 
+  it('fetches the saved export snapshot with scoped credentials', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ schema_version: 1 })));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(getSavedChatSnapshot('session/id', 'ai-token', 'https://ai.example.test')).resolves.toEqual({ schema_version: 1 });
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith('https://ai.example.test/sessions/session%2Fid/export', {
+      credentials: 'include', headers: { Authorization: 'Bearer ai-token' },
+    });
+  });
+
   it('queues a steering message without cancelling the active stream', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 202 }));
     vi.stubGlobal('fetch', fetchMock);
@@ -915,9 +927,31 @@ describe('AI client', () => {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer stream-token' },
-        body: JSON.stringify({ message_id: 'queued-1', message: 'Focus on P2.' }),
+        body: JSON.stringify({ message_id: 'queued-1', message: 'Focus on P2.', frontend_version: CURRENT_APP_VERSION }),
       },
     );
+  });
+
+  it('cancels the displayed optimizer job with the selected backend credentials', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await cancelOptimization('session/id', 'opt/id', 'ai-token', 'https://ai.example.test');
+
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith(
+      'https://ai.example.test/sessions/session%2Fid/optimizations/opt%2Fid/cancel',
+      { method: 'POST', credentials: 'include', headers: { Authorization: 'Bearer ai-token' } },
+    );
+  });
+
+  it('reports optimizer cancellation errors without retrying the command', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ detail: 'Optimizer unavailable.' }), { status: 502 },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(cancelOptimization('session', 'job', null)).rejects.toThrow('Optimizer unavailable.');
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it('approves a proposal with the revision the browser holds', async () => {

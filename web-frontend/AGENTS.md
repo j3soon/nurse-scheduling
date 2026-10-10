@@ -25,6 +25,12 @@ and browser suites when checking the full app or broad shared behavior.
 Frontend unit/component tests use Vitest; browser integration tests use
 Playwright.
 
+Filesystem failure tests must accept the supported platforms' error codes.
+Assert the failed operation and path as well as output preservation.
+
+Give synchronous child processes in tests a timeout shorter than the test timeout.
+The test runner cannot interrupt a blocked synchronous call.
+
 Use Playwright locator actions for form controls. Before interacting with
 statically rendered controls, wait for an observable result of client
 initialization, such as loaded backend options enabling Optimize.
@@ -32,6 +38,8 @@ initialization, such as loaded backend options enabling Optimize.
 When comparing chat exports with the live transcript, identify the same message
 by its label or content. A foreground stream can prepend a system message after
 the export snapshot, so message position is not stable.
+Check saved transcript reconstruction against live message order as well as export
+byte parity. Include steering before output and optimizer events between replies.
 
 Both affected commands accept `--base REF` to include committed branch changes
 since the merge base with `REF`, `--list` to inspect selection, and `--full` to
@@ -93,9 +101,12 @@ every session request, including the fetch-based event stream. Store it only
 when the user explicitly opts in to unencrypted device storage.
 The AI page defaults to the hosted `/ai` path on the production API and calls
 the selected backend directly. Production NGINX must strip the `/ai`
-prefix and disable response buffering. Read the shared backend app version from
-the parent `/info` endpoint when AI is mounted at `/ai`. Older AI capabilities
-may omit `app_version`. Keep credentials scoped to their endpoint and lock the
+prefix and disable response buffering. Read the AI service build version from
+`/capabilities`. Fall back to the
+parent `/info` endpoint when AI is mounted at `/ai` and capabilities omit
+`app_version`. Send the frontend build version on session creation and every
+chat message, including queued messages. Keep credentials scoped to their
+endpoint and lock the
 endpoint after a conversation creates a session. A self-hosted build may set another default with `NEXT_PUBLIC_AI_API_URL`. When a
 capability-gated control is missing, inspect the capabilities request from the
 exact browser origin. A loopback-only browser check can miss CORS failures.

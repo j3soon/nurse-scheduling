@@ -194,6 +194,14 @@ The prompt gives the agent workspace paths for schedules and attachments.
 
 ### Optimizer jobs and result reviews
 
+The background status box has a **Cancel optimizer** control. It posts to
+`/sessions/{id}/optimizations/{job_id}/cancel` and uses the AI service's existing
+optimizer transport. The public job ID prevents a delayed click from cancelling
+a newer job. Authentication and browser session ownership still apply. State
+updates and the cancellation summary arrive on the session stream. Cancellation
+uses no model call or sandbox, and cancelled jobs do not start a result review.
+It leaves an active chat response running.
+
 <figure markdown="1" id="ai-optimizer">
 
 **Figure 5. Independent optimization and serialized result review.**
@@ -344,8 +352,8 @@ final candidate.
 Configured tool-round and tool-call limits bound the model-tool loop alongside
 per-command and complete agent-turn deadlines.
 
-The model-facing tool schemas and read behavior are Python ports pinned to Pi
-commit [`e266507`](https://github.com/earendil-works/pi/tree/e266507b606b9552fa277252644054afd4384b11/packages/coding-agent/src/core/tools).
+The model-facing tool schemas and behavior are Python ports pinned to
+[Pi v1.0.0](https://github.com/earendil-works/pi/tree/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/coding-agent/src/core/tools).
 The read tool recognizes JPEG, PNG, GIF, WebP, and BMP files. Its multimodal
 result lets the model inspect an image extracted from another file. The sandbox
 also includes optional helpers: `inspect_xlsx.py` reads every worksheet by
@@ -356,7 +364,17 @@ The Nurse Scheduling adapter delegates file and command operations to
 `SandboxBackend` and enforces the configured command timeout ceiling. E2B
 returns completed stdout and stderr separately, so the adapter concatenates
 them and cannot reproduce Pi's live
-stream interleaving exactly.
+stream interleaving exactly. Nonzero and missing command exit codes produce
+failed tool results that the agent can read before continuing. GIF detection
+requires a complete GIF87a or GIF89a signature.
+
+The v1.0.0 comparison covers all four tools, image detection and processing,
+and head/tail truncation. Edit/write execution and image processing are unchanged
+from the previous pin. Pi also adds programmatic Bash output and model-specific
+image resize profiles. This service exposes model-facing results only and keeps
+Pi's default 2000-pixel and 4.5 MB base64 image limits. Pillow replaces Photon's
+image codec and rejects oversized source images before decoding. Pi's terminal
+renderers and middle truncation are not used by these tools.
 
 ## Proposal lifecycle
 
@@ -643,7 +661,23 @@ The Cloudflare public hostname must target `http://nginx:8080`. The trailing
 slash on `proxy_pass` removes the public `/ai` prefix before the request reaches
 FastAPI.
 
+## Export saved chats
+
+The HTML and Markdown controls use saved PostgreSQL history when available.
+The operator command produces the same bytes from the same saved snapshot.
+See [Export saved AI chats](reproduce/core.md#export-saved-ai-chats) for the
+one-command Docker and native database workflow. Builds without PostgreSQL keep
+the browser transcript export.
+
 ## HTTP API
+
+Session creation and both foreground and queued messages include
+`frontend_version`, the browser's build version. The AI service compares it with
+its own build, logs a mismatch once per loaded session, and includes both versions
+in the error record sent through Sentry's logging integration. The request still
+runs. The browser shows the same warning as Optimize and Export below its token
+controls. `/capabilities.app_version` identifies the AI service. The parent
+`/info` version is a fallback for older deployments.
 
 | Endpoint | Purpose |
 | --- | --- |

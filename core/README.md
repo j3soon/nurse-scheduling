@@ -653,3 +653,26 @@ executed. For a smaller change, pass explicit affected test paths. The
 [AI validation guide](https://github.com/j3soon/nurse-scheduling/blob/dev/skills/implement-change-series/references/ai-validation.md)
 explains when selected live cases are needed. Frontend ownership changes need
 browser checks. Model, tool, and context changes need selected live cases.
+
+## Export saved AI chats
+
+From the repository root, export one PostgreSQL-backed chat session:
+
+```sh
+./scripts/export_ai_chat.sh SESSION_UUID artifacts/chat.html
+./scripts/export_ai_chat.sh SESSION_UUID artifacts/chat.md
+```
+
+The command reads PostgreSQL through the Docker Compose `ai` service. It uses
+`docker/.env` by default. Set `AI_ENV_FILE` to use another Compose environment
+file. Set `AI_HISTORY_POSTGRES_URL` to read a native database instead. Bun and
+the locked frontend dependencies must be installed on the host. Native database
+access also requires the core Python dependencies.
+
+The browser and command use the same formatter and saved chat snapshot. They
+produce identical UTF-8 bytes for the same snapshot. Saved exports use the last
+stored event time as their export timestamp and display message times in UTC.
+They reconstruct all saved chat runs, including failed and stopped runs,
+even when the browser has trimmed its replay buffer. Files and workbooks remain
+separate downloads. Sessions remain exportable until PostgreSQL retention deletes
+them. Older sessions use the metadata available in their saved records.

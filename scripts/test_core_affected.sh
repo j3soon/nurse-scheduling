@@ -23,7 +23,7 @@ elif [[ "$run_full_suite" == false ]]; then
   for file in "${changed_files[@]}"; do
     relative="${file#core/}"
     case "$relative" in
-      tests/test_ai_*.py)
+      tests/test_ai_*.py | tests/ai_fixtures/*)
         ai_changed=true
         ;;
       tests/test_*.py)

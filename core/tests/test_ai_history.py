@@ -23,6 +23,7 @@ import asyncio
 import hashlib
 import json
 import os
+import subprocess
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -320,6 +321,24 @@ def test_recovery_read_failure_during_message_lookup_returns_503(recorded_histor
         session_id = basic.create_session(client)
         response = client.post(f"/sessions/{session_id}/messages", json={"message": "Question", "message_id": "m1"})
     assert response.status_code == 503
+    assert provider.calls == []
+
+
+def test_saved_export_read_failure_returns_503_and_allows_retry(recorded_history, monkeypatch):
+    monkeypatch.setattr(ChatHistory, "export_snapshot", unavailable)
+    provider = basic.FakeProvider()
+    app = basic.create_test_app(settings=basic.make_settings(history_postgres_url="test"), provider=provider)
+    with basic.AuthenticatedTestClient(app) as client:
+        session_id = basic.create_session(client)
+        response = client.get(f"/sessions/{session_id}/export")
+        assert response.status_code == 503
+        assert "secret-database-url" not in response.text
+        assert not app.state.recovery._pins
+        snapshot = json.loads(
+            Path(__file__).with_name("ai_fixtures").joinpath("chat-export.json").read_text(encoding="utf-8")
+        )
+        monkeypatch.setattr(ChatHistory, "export_snapshot", lambda *_args: snapshot)
+        assert client.get(f"/sessions/{session_id}/export").json() == snapshot
     assert provider.calls == []
 
 
@@ -1683,3 +1702,109 @@ def test_reset_covers_output_when_the_run_finishes_during_its_storage_read(postg
         asyncio.run(scenario())
     finally:
         return_rows.set()
+
+
+def test_postgres_export_snapshot_matches_the_complete_chat_fixture_and_cli(postgres_history, tmp_path):
+    fixture = json.loads(
+        Path(__file__).with_name("ai_fixtures").joinpath("chat-export.json").read_text(encoding="utf-8")
+    )
+    fixture.pop("_comment")
+    fixture.pop("_license")
+    session_id = fixture["session_id"]
+    state = session_state(
+        "export-owner",
+        frontend_version=fixture["frontend_version"],
+        export_metadata=fixture["metadata"],
+        pending_proposal={"diff": fixture["pending_proposal_diff"]},
+    )
+    postgres_history.save_session(session_id, state)
+    for sequence, run in enumerate(fixture["runs"]):
+        postgres_history.start_run(
+            run["id"], session_id, state, run["prompt"], sequence, model="fixture", attachment_count=2, kind=run["kind"]
+        )
+    postgres_history.append_events(
+        session_id,
+        [
+            (i, i, event["data"].get("run_id"), event["type"], event["data"])
+            for i, event in enumerate(fixture["events"], 1)
+        ],
+    )
+    with postgres_history._connect() as connection:
+        connection.execute(
+            "UPDATE chat_sessions SET created_at = to_timestamp(%s) WHERE id = %s",
+            (fixture["runs"][0]["started_at"] / 1000, session_id),
+        )
+        for run in fixture["runs"]:
+            connection.execute(
+                "UPDATE chat_runs SET status = %s, started_at = to_timestamp(%s), finished_at = to_timestamp(%s) WHERE id = %s",
+                (
+                    run["status"],
+                    run["started_at"] / 1000,
+                    None if run["finished_at"] is None else run["finished_at"] / 1000,
+                    run["id"],
+                ),
+            )
+        for i, event in enumerate(fixture["events"], 1):
+            connection.execute(
+                "UPDATE chat_session_events SET created_at = to_timestamp(%s) WHERE session_id = %s AND event_id = %s",
+                (event["occurred_at"] / 1000, session_id, i),
+            )
+        database_url = connection.info.dsn
+    assert postgres_history.export_snapshot(session_id) == fixture
+    assert postgres_history.export_snapshot(str(uuid4())) is None
+    repo = Path(__file__).resolve().parents[2]
+    saved = tmp_path / "snapshot.json"
+    saved.write_text(json.dumps(fixture), encoding="utf-8")
+    for extension in ("html", "md"):
+        expected = tmp_path / f"expected.{extension}"
+        actual = tmp_path / f"actual.{extension}"
+        subprocess.run(
+            ["bun", str(repo / "web-frontend/scripts/export-ai-chat.ts"), str(expected), "--snapshot", str(saved)],
+            check=True,
+            capture_output=True,
+        )
+        result = subprocess.run(
+            [str(repo / "scripts/export_ai_chat.sh"), session_id, str(actual)],
+            env={**os.environ, "AI_HISTORY_POSTGRES_URL": database_url},
+            check=False,
+            capture_output=True,
+        )
+        assert result.returncode == 0, result.stderr.decode()
+        assert actual.read_bytes() == expected.read_bytes()
+    actual.write_text("keep this file", encoding="utf-8")
+    failed = subprocess.run(
+        [str(repo / "scripts/export_ai_chat.sh"), str(uuid4()), str(actual)],
+        env={**os.environ, "AI_HISTORY_POSTGRES_URL": database_url},
+        capture_output=True,
+        check=False,
+    )
+    assert failed.returncode != 0
+    assert actual.read_text(encoding="utf-8") == "keep this file"
+
+
+def test_postgres_saved_export_is_owned_and_survives_restart(postgres_history):
+    settings = basic.make_settings(history_postgres_url="postgresql:///fixture")
+    app = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
+    with basic.AuthenticatedTestClient(app) as client:
+        assert client.get("/capabilities").json()["saved_chat_export"]
+        session_id = client.post(
+            "/sessions",
+            json={
+                "schedule_yaml": basic.schedule_yaml(),
+                "frontend_version": "v0.4.3",
+                "ai_endpoint": "https://ai.example.test/ai",
+            },
+        ).json()["id"]
+        assert client.post(f"/sessions/{session_id}/messages", json={"message": "Hello"}).status_code == 200
+        exported = client.get(f"/sessions/{session_id}/export")
+        assert exported.status_code == 200
+        snapshot = exported.json()
+        assert snapshot["frontend_version"] == "v0.4.3"
+        assert snapshot["metadata"]["endpoint"] == "https://ai.example.test/ai"
+        assert any(event["type"] == "model_input" for event in snapshot["events"])
+        cookies = dict(client.cookies)
+    restarted = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
+    with basic.AuthenticatedTestClient(restarted) as client:
+        assert client.get(f"/sessions/{session_id}/export").status_code == 404
+        client.cookies.update(cookies)
+        assert client.get(f"/sessions/{session_id}/export").json() == snapshot

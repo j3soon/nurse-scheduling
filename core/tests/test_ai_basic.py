@@ -226,6 +226,66 @@ def test_application_tags_sentry_request_address(monkeypatch):
     assert [request.url.path for request in requests] == ["/health"]
 
 
+@pytest.mark.parametrize(
+    ("frontend_version", "backend_version", "mismatch"),
+    [
+        ("v0.4.3", "v0.4.3", False),
+        ("v0.4.2", "v0.4.3", True),
+        ("v0.4.3-dirty", "v0.4.3-dirty", True),
+        (None, "v0.4.3", False),
+    ],
+)
+def test_frontend_build_version_reports_a_mismatch_once_per_session(
+    frontend_version, backend_version, mismatch, monkeypatch, caplog
+):
+    monkeypatch.setattr("nurse_scheduling.ai.app.get_app_version", lambda: backend_version)
+    app = create_test_app(settings=make_settings(), provider=FakeProvider())
+    with AuthenticatedTestClient(app) as client:
+        body = {"schedule_yaml": schedule_yaml()}
+        if frontend_version is not None:
+            body["frontend_version"] = frontend_version
+        created = client.post("/sessions", json=body)
+        assert created.status_code == 201
+        session_id = created.json()["id"]
+        session = app.state.session_store.get(session_id)
+        assert session.frontend_version == frontend_version
+        response = client.post(
+            f"/sessions/{session_id}/messages",
+            json={"message": "Hello", "message_id": "version-message", "frontend_version": frontend_version},
+            headers={"Accept": "application/json"},
+        )
+        assert response.status_code == 202
+
+    errors = [record for record in caplog.records if record.levelno == logging.ERROR]
+    assert len(errors) == int(mismatch)
+    if mismatch:
+        assert errors[0].frontend_version == frontend_version
+        assert errors[0].backend_version == backend_version
+        assert session_id in errors[0].message
+
+
+@pytest.mark.parametrize("queued", [False, True], ids=["foreground", "queued"])
+def test_chat_requests_report_the_frontend_build_after_session_creation(queued, monkeypatch, caplog):
+    monkeypatch.setattr("nurse_scheduling.ai.app.get_app_version", lambda: "v0.4.3")
+    provider = FakeProvider()
+    app = create_test_app(settings=make_settings(), provider=provider)
+    with AuthenticatedTestClient(app) as client:
+        session_id = client.post("/sessions", json={"schedule_yaml": schedule_yaml()}).json()["id"]
+        session = app.state.session_store.get(session_id)
+        if queued:
+            session.begin_run(accepting_steering=True)
+        response = client.post(
+            f"/sessions/{session_id}/messages" + ("/queue" if queued else ""),
+            json={"message": "Hello", "message_id": "version-message", "frontend_version": "v0.4.2"},
+            headers={"Accept": "application/json"},
+        )
+        assert response.status_code == 202
+        assert session.frontend_version == "v0.4.2"
+        if queued:
+            assert provider.calls == []
+    assert "frontend_version=v0.4.2 backend_version=v0.4.3" in caplog.text
+
+
 def test_application_lifespan_runs_sandbox_cleanup_supervision():
     class LifecycleFactory(FakeSandboxFactory):
         starts = 0
@@ -1013,6 +1073,7 @@ def test_capabilities_report_configured_attachment_limits(monkeypatch: pytest.Mo
     assert response.status_code == 200
     assert response.json() == {
         "app_version": "v0.4.2-backend",
+        "saved_chat_export": False,
         "file_attachments": {
             "enabled": True,
             "max_files": 5,
@@ -1179,6 +1240,7 @@ def test_uploads_and_removals_are_history_messages_before_the_question() -> None
         "model_input",
         {
             "system": provider.calls[0][0]["content"],
+            "schedule_yaml": "description: test",
             "messages": [
                 {"kind": "app", "index": 0, "content": uploaded, "title": "Files Uploaded"},
                 {"kind": "app", "index": 1, "content": removed, "title": "File Removed"},
@@ -2100,6 +2162,60 @@ def rename_call() -> list[object]:
     return [ToolCallRequest((ToolCall("call_0", BASH_TOOL, arguments),))]
 
 
+def test_browser_cancels_an_optimizer_job_without_provider_or_sandbox_work() -> None:
+    async def scenario() -> None:
+        class Backend(BackgroundTestOptimizer):
+            def __init__(self):
+                super().__init__()
+                self.cancelled = []
+
+            async def cancel(self, job_id):
+                self.cancelled.append(job_id)
+                self.release.set()
+                return OptimizerJobPayload(id=job_id, state="cancelled", terminal=True)
+
+        backend = Backend()
+        provider = FakeProvider()
+        factory = FakeSandboxFactory()
+        app = create_test_app(
+            settings=make_settings(optimizer_poll_interval_seconds=0.001),
+            provider=provider,
+            sandbox_factory=factory,
+            optimizer_backend=backend,
+        )
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test", headers=AI_AUTH_HEADERS
+            ) as client,
+        ):
+            session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
+            other_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
+            job = await app.state.session_optimizer.start(session_id, schedule_yaml(), None)
+            route = f"/sessions/{session_id}/optimizations/{job.id}/cancel"
+            assert (await client.post(route, headers={"Authorization": "Bearer invalid"})).status_code == 401
+            assert (await client.post(f"/sessions/{other_id}/optimizations/{job.id}/cancel")).status_code == 404
+            assert (await client.post(f"/sessions/{session_id}/optimizations/missing/cancel")).status_code == 404
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test", headers=AI_AUTH_HEADERS
+            ) as stranger:
+                assert (await stranger.post(route)).status_code == 404
+            assert backend.cancelled == []
+            assert (await client.post(route)).status_code == 202
+            assert (await client.post(route)).status_code == 202
+            async with asyncio.timeout(2):
+                while not any(
+                    event.type == "optimization" and event.data["state"] == "cancelled"
+                    for event in app.state.session_event_stream.events_after(session_id)
+                ):
+                    await asyncio.sleep(0.001)
+            assert backend.cancelled == [job.remote_id]
+            assert provider.calls == []
+            assert factory.created == []
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("history_enabled", [False, True], ids=["without-history", "with-history"])
 def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatch, history_enabled: bool) -> None:
     history_starts: list[tuple[str, str, str | None, str, str, int]] = []
@@ -2234,6 +2350,7 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         assert all("message_id" not in event.data for event in events[3:])
         assert events[4].data == {
             "system": provider.calls[3][0]["content"],
+            "schedule_yaml": schedule_yaml(),
             "messages": [
                 {"kind": "optimizer", "content": provider.calls[3][-2]["content"]},
                 {"kind": "status", "content": provider.calls[3][-1]["content"], "title": "Optimizer Result"},

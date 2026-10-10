@@ -25,6 +25,7 @@ import {
   fetchLatestTag,
   fetchReleaseBranches,
   getMajorMinor,
+  hasAppVersionMismatch,
   isStableReleaseVersion,
   parseVersionParts,
 } from '@/utils/version';
@@ -32,6 +33,15 @@ import {
 describe('version utils', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it.each([
+    ['v0.4.3', 'v0.4.3', false],
+    ['v0.4.3', 'v0.4.2', true],
+    ['v0.4.3-dirty', 'v0.4.3-dirty', true],
+    ['unknown', 'v0.4.3', true],
+  ])('compares frontend %s and backend %s consistently', (frontend, backend, mismatch) => {
+    expect(hasAppVersionMismatch(frontend, backend)).toBe(mismatch);
   });
 
   it('treats localhost origins on any port as the same build', () => {

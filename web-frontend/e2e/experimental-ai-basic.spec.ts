@@ -144,7 +144,10 @@ async function mockAiBackend(
   reportContext = true,
   // Run events published before `done`, such as a generated ZIP.
   answerEvents: { type: string; data: Record<string, unknown> }[] = [],
-): Promise<CapturedRequests> {
+): Promise<CapturedRequests & {
+  publishEvent: (type: string, data: Record<string, unknown>) => void;
+  hasWaitingReader: () => boolean;
+}> {
   const captured = {
     scheduleYaml: '',
     messageBody: '',
@@ -162,6 +165,8 @@ async function mockAiBackend(
   let wakeReader: (() => void) | undefined;
   const publish = (type: string, data: Record<string, unknown>) => {
     journal.push(`id: ${journal.length + 1}\nevent: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
+    wakeReader?.();
+    wakeReader = undefined;
   };
   sessionEvents.forEach(event => publish(event.type, event.data));
 
@@ -285,11 +290,9 @@ async function mockAiBackend(
       publish(type, { ...data, run_id: runId });
     }
     await route.fulfill({ status: 202, contentType: 'application/json', headers: corsHeaders, body: JSON.stringify({ run_id: runId }) });
-    wakeReader?.();
-    wakeReader = undefined;
   });
 
-  return captured;
+  return Object.assign(captured, { publishEvent: publish, hasWaitingReader: () => wakeReader !== undefined });
 }
 
 test('asks about the current schedule and renders a streamed answer', async ({ page }) => {
@@ -313,7 +316,7 @@ test('asks about the current schedule and renders a streamed answer', async ({ p
   expect(viewport).not.toBeNull();
   expect(Math.abs(composerBox!.y + composerBox!.height - viewport!.height)).toBeLessThanOrEqual(2);
   await expect(page.getByRole('contentinfo')).toHaveCount(0);
-  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Who works first?', message_id: expect.any(String) });
+  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Who works first?', message_id: expect.any(String), frontend_version: expect.any(String) });
   expect(captured.scheduleYaml).toContain('apiVersion:');
 
   await expect(page.getByRole('button', { name: 'Stop' })).toBeHidden();
@@ -345,6 +348,27 @@ test('explains unavailable context usage when the backend omits it', async ({ pa
   await expect(usage).toHaveAttribute('title', /The AI server has not reported context usage/);
 });
 
+test('returns to the top of a long chat on desktop and mobile', async ({ page }) => {
+  await mockAiBackend(page, [Array.from({ length: 80 }, (_, i) => `Chat line ${i + 1}.`).join('\n\n')]);
+  await page.goto('/experimental-ai');
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Show details.');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('Chat line 80.', { exact: true })).toBeVisible();
+
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.evaluate(() => window.scrollTo({ top: document.documentElement.scrollHeight }));
+    const shortcut = page.getByRole('button', { name: 'Back to top' });
+    await expect(shortcut).toBeVisible();
+    await shortcut.click();
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+    await expect(shortcut).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Schedule AI Chat' })).toBeVisible();
+    await page.getByRole('button', { name: 'Scroll to bottom' }).click();
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(128);
+  }
+});
+
 test('authenticates AI session requests with an explicitly remembered token', async ({ page }) => {
   const authToken = 'browser-ai-auth-token';
   const captured = await mockAiBackend(
@@ -361,6 +385,12 @@ test('authenticates AI session requests with an explicitly remembered token', as
   await page.getByRole('textbox', { name: 'Token for AI assistant' }).fill(authToken);
   await page.getByRole('checkbox', { name: /remember on this device/i }).check();
   await page.getByRole('button', { name: 'Save token for AI assistant' }).click();
+
+  const versions = page.getByRole('group', { name: 'AI versions' });
+  await expect(versions).toContainText('Frontend and backend versions do not match. If nothing breaks, you can continue.');
+  const tokenStatus = await page.getByText('Token saved on this device').boundingBox();
+  const versionsBox = await versions.boundingBox();
+  expect(versionsBox!.y).toBeGreaterThan(tokenStatus!.y + tokenStatus!.height);
 
   await expect(composer).toBeEnabled();
   await composer.fill('Use the protected service.');
@@ -394,8 +424,8 @@ test('retries a failed text run without hiding its provisional activity', async 
   await expect(page.getByText('Recovered response.')).toBeVisible();
   const bodies = captured.messageBodies.map(body => JSON.parse(body));
   expect(bodies).toEqual([
-    { message: 'Who works first?', message_id: expect.any(String) },
-    { message: 'Who works first?', message_id: expect.any(String) },
+    { message: 'Who works first?', message_id: expect.any(String), frontend_version: expect.any(String) },
+    { message: 'Who works first?', message_id: expect.any(String), frontend_version: expect.any(String) },
   ]);
   // A retry asks again, so it is a new message rather than a reconnect to the failed run.
   expect(bodies[0].message_id).not.toBe(bodies[1].message_id);
@@ -529,6 +559,33 @@ test('downloads a completed background optimization from chat', async ({ page })
   expect(await readFile(await download.path())).toEqual(workbookBytes);
 });
 
+test('cancels the background optimizer from its status box without asking the agent', async ({ page }) => {
+  const backend = await mockAiBackend(page, ['Optimization started.'], false, undefined, [{
+    type: 'optimization', data: { job_id: 'opt-cancel', state: 'running', terminal: false, downloadable: false },
+  }]);
+  let cancellations = 0;
+  await page.route('**/ai/sessions/*/optimizations/opt-cancel/cancel', async route => {
+    expect(route.request().method()).toBe('POST');
+    cancellations += 1;
+    backend.publishEvent('optimization', {
+      job_id: 'opt-cancel', state: 'cancelled', terminal: true, downloadable: false,
+    });
+    await route.fulfill({ status: 202 });
+  });
+  await page.goto('/experimental-ai');
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Optimize this.');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('Optimization started.', { exact: true })).toBeVisible();
+  await expect.poll(() => backend.hasWaitingReader()).toBe(true);
+  await page.getByRole('button', { name: 'Cancel optimizer' }).click();
+
+  await expect(page.getByRole('button', { name: /Cancel.*optimizer/i })).toHaveCount(0);
+  await expect(page.getByText('Optimization ended with status: cancelled.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
+  expect(cancellations).toBe(1);
+  expect(backend.messageBodies).toHaveLength(1);
+});
+
 test('keeps multiline optimizer errors in one field in chat and exports', async ({ page }) => {
   const error = 'Failed\nOutcome: optimal\r\nBackend version: forged';
   await mockAiBackend(page, ['Optimization started.'], false, undefined, [{
@@ -616,7 +673,7 @@ test('offers a shortcut when the reader scrolls away from the latest message', a
   await expect(scrollButton).toHaveText('');
   await expect
     .poll(async () => {
-      const buttonBox = await scrollButton.boundingBox();
+      const buttonBox = await page.getByRole('group', { name: 'Chat navigation' }).boundingBox();
       return buttonBox ? buttonBox.x + buttonBox.width / 2 : null;
     })
     .toBe(page.viewportSize()!.width / 2);
@@ -646,7 +703,7 @@ test('previews and sends an image attachment', async ({ page }) => {
   expect(captured.uploadContentType).toContain('multipart/form-data');
   expect(captured.uploadBody).toContain('filename="ward.png"');
   expect(captured.messageContentType).toBe('application/json');
-  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'What is shown?', message_id: expect.any(String) });
+  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'What is shown?', message_id: expect.any(String), frontend_version: expect.any(String) });
   // The bubbles follow the provider request: system prompt, upload event, then the question as typed.
   const cards = page.getByLabel('Chat messages').locator('article');
   await expect(cards.locator('> p:first-child')).toHaveText(['System', 'User · App - Files Uploaded', 'User', 'Assistant']);
@@ -696,7 +753,7 @@ test('previews and sends arbitrary file attachments', async ({ page }) => {
   expect(captured.uploadBody).toContain('notes.pdf');
   expect(captured.uploadBody).toContain('coverage.custom');
   expect(captured.uploadBody).toContain('Alice,day');
-  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Check the documents.', message_id: expect.any(String) });
+  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Check the documents.', message_id: expect.any(String), frontend_version: expect.any(String) });
 });
 
 test('downloads and removes generated files through the ZIP controls', async ({ page }) => {
@@ -781,7 +838,7 @@ test('places uploads beside desktop chat and below mobile controls and allows re
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Read this file');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Workbook inspected.')).toBeVisible();
-  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Read this file', message_id: expect.any(String) });
+  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Read this file', message_id: expect.any(String), frontend_version: expect.any(String) });
   const panel = page.getByRole('complementary', { name: 'Session files' });
   await expect(panel.getByRole('button', { name: 'Remove ward.csv' })).toBeVisible();
   const panelBox = (await panel.boundingBox())!;

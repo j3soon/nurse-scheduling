@@ -18,7 +18,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # Adapted from Pi's packages/coding-agent/src/core/tools/bash.ts and truncate.ts
-# at e266507b606b9552fa277252644054afd4384b11. Pi's MIT license is in LICENSE.
+# at a13d35a742c6ef8462812a28fbe1d8c8b7431c32. Pi's MIT license is in LICENSE.
 # This code is mostly AI generated.
 
 import json
@@ -31,7 +31,7 @@ BASH_PROMPT_SNIPPET = "Execute bash commands (ls, grep, find, etc.)"
 DEFAULT_MAX_LINES = 2_000
 DEFAULT_MAX_BYTES = 50 * 1_024
 MAX_TIMEOUT_SECONDS = 2_147_483_647 / 1_000
-UPSTREAM_COMMIT = "e266507b606b9552fa277252644054afd4384b11"
+UPSTREAM_COMMIT = "a13d35a742c6ef8462812a28fbe1d8c8b7431c32"
 UPSTREAM_SOURCE = (
     f"https://github.com/earendil-works/pi/blob/{UPSTREAM_COMMIT}/packages/coding-agent/src/core/tools/bash.ts"
 )
@@ -161,7 +161,7 @@ def render_bash_result(
     output: PreparedBashOutput,
     *,
     full_output_path: str | None,
-    exit_code: int,
+    exit_code: int | None,
     timed_out: bool,
     timeout_seconds: float,
 ) -> BashResult:
@@ -174,6 +174,8 @@ def render_bash_result(
         return BashResult(text, False, output.truncation)
 
     text = output.render(full_output_path)
+    if exit_code is None:
+        return BashResult(_append_status(text, "Command terminated without an exit code"), False, output.truncation)
     if exit_code != 0:
         return BashResult(_append_status(text, f"Command exited with code {exit_code}"), False, output.truncation)
     return BashResult(text, True, output.truncation)

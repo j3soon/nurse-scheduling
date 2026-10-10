@@ -34,6 +34,7 @@ from nurse_scheduling.ai.optimizer import (
     OptimizerArtifact,
     OptimizerError,
     OptimizerJobPayload,
+    OptimizerJobUnavailable,
     OptimizerResultUnavailable,
     SessionOptimizer,
     optimizer_completion_message,
@@ -685,6 +686,92 @@ def test_finish_now_controls_the_active_job_and_a_second_run_waits_for_terminal_
         assert finish.ok
         assert backend.finish_requests == ["remote-1"]
         await asyncio.wait_for(completed.wait(), timeout=1)
+        await optimizer.close()
+
+    asyncio.run(scenario())
+
+
+def test_browser_cancels_only_its_displayed_optimizer_job_without_a_review() -> None:
+    async def scenario() -> None:
+        backend = FakeOptimizerBackend()
+        reviews = []
+        updates = []
+
+        async def on_completion(*args):
+            reviews.append(args)
+
+        async def on_update(_session_id, update):
+            updates.append(update)
+
+        optimizer = SessionOptimizer(
+            backend, poll_interval_seconds=0.001, on_completion=on_completion, on_update=on_update
+        )
+        job = await optimizer.start("session-1", TEST_SCHEDULE, None)
+        with pytest.raises(OptimizerJobUnavailable):
+            await optimizer.cancel("session-2", job.id)
+        with pytest.raises(OptimizerJobUnavailable):
+            await optimizer.cancel("session-1", "missing")
+        assert backend.cancel_requests == []
+        assert await optimizer.cancel("session-1", job.id) is job
+        await asyncio.wait_for(backend.deleted_event.wait(), timeout=1)
+        assert backend.cancel_requests == ["remote-1"]
+        assert updates[-1]["state"] == "cancelled"
+        assert updates[-1]["terminal"]
+        assert reviews == []
+        assert await optimizer.cancel("session-1", job.id) is job
+        second = await optimizer.start("session-1", TEST_SCHEDULE, None)
+        await optimizer.cancel("session-1", job.id)
+        assert backend.cancel_requests == ["remote-1"]
+        assert second.payload.state == "running"
+        await optimizer.close()
+
+    asyncio.run(scenario())
+
+
+def test_browser_cancellation_reports_transport_failure_and_allows_retry() -> None:
+    async def scenario() -> None:
+        class Backend(FakeOptimizerBackend):
+            async def cancel(self, job_id):
+                if not self.cancel_requests:
+                    self.cancel_requests.append(job_id)
+                    raise OptimizerError("offline")
+                return await super().cancel(job_id)
+
+        backend = Backend()
+        optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=lambda *_: asyncio.sleep(0))
+        job = await optimizer.start("session-1", TEST_SCHEDULE, None)
+        with pytest.raises(OptimizerError, match="did not accept the cancel request"):
+            await optimizer.cancel("session-1", job.id)
+        assert job.payload.state == "running"
+        await optimizer.cancel("session-1", job.id)
+        assert job.payload.state == "cancelled"
+        await optimizer.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("request_failed", [False, True], ids=["stale-response", "late-error"])
+def test_browser_cancellation_keeps_a_completion_received_during_the_request(request_failed: bool) -> None:
+    async def scenario() -> None:
+        cancel_started = asyncio.Event()
+
+        class Backend(FakeOptimizerBackend):
+            async def cancel(self, job_id):
+                cancel_started.set()
+                await self.deleted_event.wait()
+                if request_failed:
+                    raise OptimizerError("The completed remote job was deleted.")
+                return OptimizerJobPayload(id=job_id, state="cancelling")
+
+        backend = Backend()
+        optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=lambda *_: asyncio.sleep(0))
+        job = await optimizer.start("session-1", TEST_SCHEDULE, None)
+        cancelling = asyncio.create_task(optimizer.cancel("session-1", job.id))
+        await asyncio.wait_for(cancel_started.wait(), timeout=1)
+        backend.release.set()
+        assert await asyncio.wait_for(cancelling, timeout=1) is job
+        assert job.payload.state == "completed"
+        assert job.artifact is not None
         await optimizer.close()
 
     asyncio.run(scenario())

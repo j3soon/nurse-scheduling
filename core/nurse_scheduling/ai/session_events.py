@@ -111,6 +111,7 @@ class ModelInputEvent(RunFields):
     type: Literal["model_input"]
     system: str
     messages: list[ModelInputMessage]
+    schedule_yaml: NotRequired[str]
 
 
 class ContextUsageEvent(RunFields):

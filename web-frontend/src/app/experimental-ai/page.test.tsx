@@ -31,6 +31,7 @@ const mockDownloadGeneratedZip = vi.hoisted(() => vi.fn());
 const mockRemoveGeneratedZip = vi.hoisted(() => vi.fn());
 const mockUploadFiles = vi.hoisted(() => vi.fn());
 const mockDownloadOptimization = vi.hoisted(() => vi.fn());
+const mockCancelOptimization = vi.hoisted(() => vi.fn());
 const mockGetBackendVersion = vi.hoisted(() => vi.fn());
 const mockGetCapabilities = vi.hoisted(() => vi.fn());
 const mockGetSessionStatus = vi.hoisted(() => vi.fn());
@@ -67,6 +68,7 @@ vi.mock('./aiClient', async importOriginal => {
   PRODUCTION_AI_API_URL: 'https://api.nursescheduling.org/ai',
   createSession: mockCreateSession,
   downloadOptimization: mockDownloadOptimization,
+  cancelOptimization: mockCancelOptimization,
   downloadGeneratedZip: mockDownloadGeneratedZip,
   removeGeneratedZip: mockRemoveGeneratedZip,
   getUploads: mockGetUploads,
@@ -156,6 +158,7 @@ describe('ExperimentalAiPage', () => {
     mockDownloadOptimization.mockReset().mockResolvedValue(new Blob(['workbook']));
     mockGetCapabilities.mockReset().mockResolvedValue(defaultCapabilities);
     mockGetBackendVersion.mockReset().mockResolvedValue('v0.4.3');
+    mockCancelOptimization.mockReset().mockResolvedValue(undefined);
     mockGetSessionStatus.mockReset().mockResolvedValue(172800);
     mockRunEvents.mockReset().mockImplementation(async (
       _sessionId: string,
@@ -365,6 +368,26 @@ describe('ExperimentalAiPage', () => {
     render(<ExperimentalAiPage />);
     await waitFor(() => expect(screen.getByText(/^Backend(?:\s|$)/)).toHaveTextContent('Backend v0.2.0-production'));
     expect(mockGetBackendVersion).toHaveBeenCalledWith(expect.any(AbortSignal), '/ai');
+  });
+
+  it('warns about the AI service version even when the parent backend reports another build', async () => {
+    mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, app_version: 'v0.4.2-ai' });
+    render(<ExperimentalAiPage />);
+
+    const versions = screen.getByRole('group', { name: 'AI versions' });
+    await waitFor(() => expect(versions).toHaveTextContent('Backend v0.4.2-ai'));
+    expect(versions).toHaveTextContent('Frontend and backend versions do not match. If nothing breaks, you can continue.');
+  });
+
+  it('shows an unknown backend version without declaring a mismatch', async () => {
+    mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, app_version: undefined });
+    mockGetBackendVersion.mockResolvedValue(undefined);
+    render(<ExperimentalAiPage />);
+
+    await waitFor(() => expect(mockGetBackendVersion).toHaveBeenCalled());
+    const versions = screen.getByRole('group', { name: 'AI versions' });
+    expect(versions).toHaveTextContent('Backend unknown');
+    expect(versions).not.toHaveTextContent('versions do not match');
   });
 
   it('keeps chat export downloads available and releases replaced files on cleanup', async () => {
@@ -1006,6 +1029,56 @@ describe('ExperimentalAiPage', () => {
     expect(await screen.findByRole('button', { name: 'Download result' })).toBeInTheDocument();
     expect(screen.getAllByText('The optimizer returned score 23.')).toHaveLength(1);
     expect(mockStreamSessionEvents.mock.calls.at(-1)?.[1].lastEventId).toBe(4);
+  });
+
+  it('cancels the background optimizer directly while a chat response continues', async () => {
+    const user = userEvent.setup();
+    let finishStream: (() => void) | undefined;
+    mockRunEvents.mockImplementationOnce(async () => {
+      await new Promise<void>(resolve => { finishStream = resolve; });
+    });
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(finishStream).toBeDefined());
+    const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
+    act(() => stream.onEvent({ type: 'optimization', activity: {
+      jobId: 'opt-1', state: 'running', terminal: false, downloadable: false,
+    } }));
+    await user.click(screen.getByRole('button', { name: 'Cancel optimizer' }));
+
+    expect(mockCancelOptimization).toHaveBeenCalledExactlyOnceWith('session-id', 'opt-1', null, '/ai');
+    expect(screen.getByRole('button', { name: 'Cancelling optimizer…' })).toBeDisabled();
+    expect(mockStopSession).not.toHaveBeenCalled();
+    expect(mockQueueMessage).not.toHaveBeenCalled();
+    expect(mockRunEvents).toHaveBeenCalledOnce();
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
+
+    act(() => stream.onEvent({ type: 'optimization', activity: {
+      jobId: 'opt-1', state: 'cancelled', terminal: true, downloadable: false,
+    } }));
+    expect(screen.queryByText(/Optimizer running in the background/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
+    await act(async () => finishStream?.());
+  });
+
+  it('keeps the optimizer visible after a cancel failure and allows a retry', async () => {
+    const user = userEvent.setup();
+    mockCancelOptimization.mockRejectedValueOnce(new Error('Optimizer unavailable.'));
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
+    act(() => stream.onEvent({ type: 'optimization', activity: {
+      jobId: 'opt-1', state: 'running', terminal: false, downloadable: false,
+    } }));
+    await user.click(screen.getByRole('button', { name: 'Cancel optimizer' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Optimizer unavailable.');
+    await user.click(screen.getByRole('button', { name: 'Cancel optimizer' }));
+    expect(mockCancelOptimization).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('button', { name: 'Cancelling optimizer…' })).toBeDisabled();
   });
 
   it('reopens the background event stream after it disconnects', async () => {
@@ -1904,6 +1977,55 @@ describe('ExperimentalAiPage', () => {
     }
   });
 
+  it('returns to the top and stops following streamed text until the bottom shortcut is used', async () => {
+    const user = userEvent.setup();
+    let sendDelta: ((text: string) => void) | undefined;
+    let finishStream: (() => void) | undefined;
+    mockRunEvents.mockImplementationOnce(async (
+      _sessionId: string,
+      _message: string,
+      callbacks: SessionStreamOptions,
+    ) => {
+      sendDelta = text => callbacks.onEvent({ type: 'delta', text });
+      await new Promise<void>(resolve => {
+        finishStream = resolve;
+      });
+    });
+    const scrollTo = vi.mocked(window.scrollTo);
+    const scrollHeight = vi.spyOn(document.documentElement, 'scrollHeight', 'get').mockReturnValue(1300);
+    const innerHeight = vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(800);
+    let scrollYPosition = 500;
+    const scrollY = vi.spyOn(window, 'scrollY', 'get').mockImplementation(() => scrollYPosition);
+
+    try {
+      render(<ExperimentalAiPage />);
+      await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Stream details.');
+      await user.click(screen.getByRole('button', { name: 'Send' }));
+      await waitFor(() => expect(sendDelta).toBeDefined());
+      await waitFor(() => expect(scrollTo).toHaveBeenCalled());
+
+      act(() => window.dispatchEvent(new Event('scroll')));
+      await user.click(screen.getByRole('button', { name: 'Back to top' }));
+      scrollYPosition = 0;
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 0, behavior: 'instant' });
+      act(() => window.dispatchEvent(new Event('scroll')));
+      expect(screen.queryByRole('button', { name: 'Back to top' })).not.toBeInTheDocument();
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Scroll to bottom' })).toBeInTheDocument());
+      const callsBeforeDelta = scrollTo.mock.calls.length;
+      act(() => sendDelta?.('More streamed content.'));
+
+      await waitFor(() => expect(screen.getByText('More streamed content.')).toBeInTheDocument());
+      expect(scrollTo).toHaveBeenCalledTimes(callsBeforeDelta);
+      await user.click(screen.getByRole('button', { name: 'Scroll to bottom' }));
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 1300, behavior: 'instant' });
+      await act(async () => finishStream?.());
+    } finally {
+      scrollHeight.mockRestore();
+      innerHeight.mockRestore();
+      scrollY.mockRestore();
+    }
+  });
+
   it('resumes following streamed text when the user scrolls to the current bottom', async () => {
     const user = userEvent.setup();
     let sendDelta: ((text: string) => void) | undefined;
@@ -2210,6 +2332,9 @@ describe('ExperimentalAiPage', () => {
     await user.click(screen.getByRole('button', { name: 'Save token for AI assistant' }));
 
     expect(screen.getByText('Token saved on this device')).toBeInTheDocument();
+    expect(screen.getByText('Token saved on this device').compareDocumentPosition(
+      screen.getByRole('group', { name: 'AI versions' }),
+    ) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(JSON.parse(window.localStorage.getItem('nurse-scheduling-ai-auth') ?? '{}')).toEqual({
       tokens: { '/ai': 'remembered-ai-token' },
     });

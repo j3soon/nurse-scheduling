@@ -36,15 +36,16 @@ import PageDocumentationLink from '@/components/PageDocumentationLink';
 import { DOCUMENTATION_URLS, FIREFOX_NIGHTLY_URL, FIREFOX_SPEECH_RECOGNITION_STATUS_URL, GITHUB_AI_BETA_ACCESS_URL, GITHUB_PRIVACY_URL, GITHUB_TAGS_URL } from '@/constants/urls';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
-import { CURRENT_APP_VERSION } from '@/utils/version';
+import { CURRENT_APP_VERSION, hasAppVersionMismatch } from '@/utils/version';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
 import yaml from 'js-yaml';
 
-import { downloadChatExport, type ChatExportFormat } from './chatExport';
+import { downloadChatExport, downloadChatExportDocument, type ChatExportFormat } from './chatExport';
+import { buildSavedChatExport, parseSavedChatSnapshot } from './savedChatExport';
 
 import { retentionLabel } from './chatPresentation';
 
-import { AiCapabilities, DEFAULT_SESSION_RETENTION_SECONDS, LOCAL_AI_API_URL, PRODUCTION_AI_API_URL, downloadOptimization, downloadGeneratedZip, getAiBaseUrl, getCapabilities, getBackendVersion, isOfficialAiEndpoint, normalizeAiEndpoint } from './aiClient';
+import { AiCapabilities, DEFAULT_SESSION_RETENTION_SECONDS, LOCAL_AI_API_URL, PRODUCTION_AI_API_URL, cancelOptimization, getSavedChatSnapshot, downloadOptimization, downloadGeneratedZip, getAiBaseUrl, getCapabilities, getBackendVersion, isOfficialAiEndpoint, normalizeAiEndpoint } from './aiClient';
 
 import { messageId } from './assistantEvents';
 
@@ -205,6 +206,7 @@ export default function ExperimentalAiPage() {
 
   const [draft, setDraft] = useState('');
   const [downloadingOptimizationId, setDownloadingOptimizationId] = useState<string | null>(null);
+  const [cancellingOptimizationId, setCancellingOptimizationId] = useState<string | null>(null);
   const [isClientReady, setIsClientReady] = useState(false);
   const [aiEndpoint, setAiEndpoint] = useState(getAiBaseUrl);
   const [serverStatus, setServerStatus] = useState<AiServerStatus>('checking');
@@ -218,6 +220,8 @@ export default function ExperimentalAiPage() {
   const [authRejected, setAuthRejected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [capabilitiesError, setCapabilitiesError] = useState<string | null>(null);
+  const [savedChatExportEnabled, setSavedChatExportEnabled] = useState(false);
+  const [isExportingChat, setIsExportingChat] = useState(false);
   const [fileCapability, setFileCapability] = useState(DISABLED_FILE_CAPABILITY);
   const [selectedAttachments, setSelectedAttachments] = useState<SelectedAttachment[]>([]);
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
@@ -226,6 +230,7 @@ export default function ExperimentalAiPage() {
   const [isListening, setIsListening] = useState(false);
   const [speechLanguage, setSpeechLanguage] = useState('');
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [showScrollToTop, setShowScrollToTop] = useState(false);
   const [showReasoning, setShowReasoning] = useState(true);
   const [showTools, setShowTools] = useState(true);
   const authTokensRef = useRef<Record<string, string>>({});
@@ -249,7 +254,11 @@ export default function ExperimentalAiPage() {
     setError(requestError instanceof Error ? requestError.message : fallback);
   }, []);
 
-  const resetChatUi = useCallback(() => setDownloadingOptimizationId(null), []);
+  const resetChatUi = useCallback(() => {
+    setDownloadingOptimizationId(null);
+    setCancellingOptimizationId(null);
+    setIsExportingChat(false);
+  }, []);
   const {
     messages, uploadedFiles, removingUploadId, removingDownloadId, contextUsage, activeSessionId,
     sessionExpiresAt, sessionRetentionSeconds, conversationUnavailable, sessionNotice, trimmedHistoryCount,
@@ -281,6 +290,10 @@ export default function ExperimentalAiPage() {
     await submitMessage(draft.trim(), selectedAttachments.map(attachment => attachment.file));
   };
   hasMessagesRef.current = messages.length > 0;
+
+  useEffect(() => {
+    setCancellingOptimizationId(current => current === activeOptimization?.jobId ? current : null);
+  }, [activeOptimization?.jobId]);
 
   useTabSwitchWarning(draft.trim().length > 0 || selectedAttachments.length > 0);
 
@@ -342,6 +355,7 @@ export default function ExperimentalAiPage() {
     if (!isClientReady) return;
     const capabilitiesController = new AbortController();
     setServerStatus('checking');
+    setBackendVersion(undefined);
     setCapabilitiesError(null);
     getCapabilities(capabilitiesController.signal, aiEndpoint)
       .then(async capabilities => {
@@ -349,11 +363,12 @@ export default function ExperimentalAiPage() {
         setServerStatus('online');
         setAuthRequired(capabilities.auth?.required ?? false);
         setFileCapability(capabilities.file_attachments);
+        setSavedChatExportEnabled(capabilities.saved_chat_export === true);
         setSessionRetentionSeconds(
           capabilities.session_retention_seconds ?? DEFAULT_SESSION_RETENTION_SECONDS,
         );
-        const version = await getBackendVersion(capabilitiesController.signal, aiEndpoint);
-        if (!capabilitiesController.signal.aborted) setBackendVersion(version ?? capabilities.app_version);
+        const version = capabilities.app_version ?? await getBackendVersion(capabilitiesController.signal, aiEndpoint);
+        if (!capabilitiesController.signal.aborted) setBackendVersion(version);
       })
       .catch((capabilityError: unknown) => {
         if (!capabilitiesController.signal.aborted) {
@@ -409,6 +424,7 @@ export default function ExperimentalAiPage() {
       }, 200);
     };
     const handleScroll = () => {
+      setShowScrollToTop(window.scrollY > 128);
       if (!userScrollPending && !pointerScrollActive) return;
       const pageBottom = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
       setFollowPageBottom(window.scrollY >= pageBottom);
@@ -436,6 +452,7 @@ export default function ExperimentalAiPage() {
 
     const pageBottom = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
     setFollowPageBottom(window.scrollY >= pageBottom);
+    setShowScrollToTop(window.scrollY > 128);
     window.addEventListener('scroll', handleScroll, { passive: true });
     window.addEventListener('scrollend', handleScrollEnd, { passive: true });
     window.addEventListener('wheel', handleWheel, { passive: true });
@@ -475,6 +492,13 @@ export default function ExperimentalAiPage() {
     followPageBottomRef.current = true;
     setShowScrollToBottom(false);
     window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' });
+  };
+
+  const scrollToPageTop = () => {
+    followPageBottomRef.current = false;
+    setShowScrollToBottom(hasMessagesRef.current);
+    setShowScrollToTop(false);
+    window.scrollTo({ top: 0, behavior: 'instant' });
   };
 
   const saveAuthToken = (token: string, remember: boolean) => {
@@ -632,22 +656,37 @@ export default function ExperimentalAiPage() {
     }
   };
 
-  const exportChat = (format: ChatExportFormat) => {
-    const previousUrl = chatExportUrlRef.current;
-    chatExportUrlRef.current = downloadChatExport(format, messages, sessionEndpoint, new Date(), {
-      backendVersion,
-      pendingProposalDiff: proposalDiff ?? undefined,
-      runningOptimization: activeOptimization !== null && !activeOptimization.terminal
-        ? {
-          jobId: activeOptimization.jobId,
-          state: activeOptimization.state,
-          solver: activeOptimization.request?.solver,
-          timeoutSeconds: activeOptimization.request?.timeoutSeconds,
-        }
-        : undefined,
-      uploadedFiles: fileCapability.retained ? uploadedFiles : undefined,
-    });
-    if (previousUrl) URL.revokeObjectURL(previousUrl);
+  const exportChat = async (format: ChatExportFormat) => {
+    if (isExportingChat) return;
+    const session = captureSession();
+    setIsExportingChat(true);
+    try {
+      const previousUrl = chatExportUrlRef.current;
+      if (savedChatExportEnabled && session !== null) {
+        const snapshot = parseSavedChatSnapshot(await getSavedChatSnapshot(session.id, authToken, session.endpoint));
+        if (!session.ownsConversation()) return;
+        chatExportUrlRef.current = downloadChatExportDocument(format, buildSavedChatExport(snapshot, format), new Date(snapshot.snapshot_at));
+      } else {
+        chatExportUrlRef.current = downloadChatExport(format, messages, sessionEndpoint, new Date(), {
+          backendVersion,
+          pendingProposalDiff: proposalDiff ?? undefined,
+          runningOptimization: activeOptimization !== null && !activeOptimization.terminal
+            ? {
+              jobId: activeOptimization.jobId,
+              state: activeOptimization.state,
+              solver: activeOptimization.request?.solver,
+              timeoutSeconds: activeOptimization.request?.timeoutSeconds,
+            }
+            : undefined,
+          uploadedFiles: fileCapability.retained ? uploadedFiles : undefined,
+        });
+      }
+      if (previousUrl) URL.revokeObjectURL(previousUrl);
+    } catch (exportError) {
+      if (session === null || session.ownsConversation()) reportRequestError(exportError, 'The chat could not be exported.');
+    } finally {
+      if (session === null || session.ownsConversation()) setIsExportingChat(false);
+    }
   };
 
   const downloadOptimizationResult = async (jobId: string) => {
@@ -677,6 +716,21 @@ export default function ExperimentalAiPage() {
       if (ownsConversation()) reportRequestError(downloadError, 'The optimized schedule could not be downloaded.');
     } finally {
       if (ownsConversation()) setDownloadingOptimizationId(null);
+    }
+  };
+
+  const cancelActiveOptimization = async () => {
+    const session = captureSession();
+    if (session === null || activeOptimization === null || cancellingOptimizationId !== null) return;
+    const jobId = activeOptimization.jobId;
+    setCancellingOptimizationId(jobId);
+    try {
+      await cancelOptimization(session.id, jobId, authToken, session.endpoint);
+    } catch (cancelError) {
+      if (session.ownsConversation()) {
+        setCancellingOptimizationId(current => current === jobId ? null : current);
+        reportRequestError(cancelError, 'The optimizer could not be cancelled.');
+      }
     }
   };
   const toggleDictation = () => {
@@ -752,6 +806,7 @@ export default function ExperimentalAiPage() {
     setIsDraggingFiles(false);
     if (!attachmentPickerDisabled) addAttachments(Array.from(event.dataTransfer.files));
   };
+  const hasVersionMismatch = backendVersion !== undefined && hasAppVersionMismatch(CURRENT_APP_VERSION, backendVersion);
   const serverLocked = activeSessionId !== null || messages.length > 0;
 
   // The Session files panel is fixed on the right at xl, so the chat and composer reserve
@@ -764,24 +819,6 @@ export default function ExperimentalAiPage() {
           <PageDocumentationLink href={DOCUMENTATION_URLS.experimentalAi} label="Experimental AI" />
           <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800">
             Experimental
-          </span>
-          <span className="text-xs text-gray-400">
-            Frontend{' '}
-            <AppVersionText
-              version={CURRENT_APP_VERSION}
-              versionHref={GITHUB_TAGS_URL}
-              versionClassName="hover:text-gray-600"
-              commitClassName="hover:text-gray-600"
-            />
-          </span>
-          <span className="text-xs text-gray-400">
-            Backend{' '}
-            <AppVersionText
-              version={backendVersion ?? 'unknown'}
-              versionHref={GITHUB_TAGS_URL}
-              versionClassName="hover:text-gray-600"
-              commitClassName="hover:text-gray-600"
-            />
           </span>
         </div>
         <p className="text-sm text-gray-600">
@@ -931,14 +968,14 @@ export default function ExperimentalAiPage() {
               <span>Export chat:</span>
               <button
                 type="button"
-                onClick={() => exportChat('html')}
+                onClick={() => void exportChat('html')}
                 className="font-medium text-gray-700 underline underline-offset-2 hover:text-gray-900"
               >
                 HTML
               </button>
               <button
                 type="button"
-                onClick={() => exportChat('markdown')}
+                onClick={() => void exportChat('markdown')}
                 className="font-medium text-gray-700 underline underline-offset-2 hover:text-gray-900"
               >
                 Markdown
@@ -973,6 +1010,33 @@ export default function ExperimentalAiPage() {
             )}
           </div>
         )}
+        <div role="group" aria-label="AI versions" className={`mt-3 rounded-md border px-3 py-2 text-xs ${hasVersionMismatch ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-gray-200 bg-gray-50 text-gray-600'}`}>
+          <div className="flex flex-wrap gap-x-4 gap-y-1">
+            <span>
+              Frontend{' '}
+              <AppVersionText
+                version={CURRENT_APP_VERSION}
+                versionHref={GITHUB_TAGS_URL}
+                versionClassName="hover:text-gray-600"
+                commitClassName="hover:text-gray-600"
+              />
+            </span>
+            <span>
+              Backend{' '}
+              <AppVersionText
+                version={backendVersion ?? 'unknown'}
+                versionHref={GITHUB_TAGS_URL}
+                versionClassName="hover:text-gray-600"
+                commitClassName="hover:text-gray-600"
+              />
+            </span>
+          </div>
+          {hasVersionMismatch && (
+            <p className="mt-1 font-medium text-amber-700">
+              Frontend and backend versions do not match. If nothing breaks, you can continue.
+            </p>
+          )}
+        </div>
       </div>
 
       {fileCapability.retained && (
@@ -1082,16 +1146,31 @@ export default function ExperimentalAiPage() {
             Drop files to attach
           </div>
         )}
-        {showScrollToBottom && (
-          <button
-            type="button"
-            onClick={scrollToPageBottom}
-            aria-label="Scroll to bottom"
-            title="Scroll to bottom"
-            className="absolute -top-10 left-1/2 -translate-x-1/2 rounded-full border border-gray-300 bg-white/95 p-2 text-gray-700 shadow-md backdrop-blur hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
-          >
-            <FiArrowDown aria-hidden="true" className="h-4 w-4" />
-          </button>
+        {(showScrollToTop || showScrollToBottom) && (
+          <div role="group" aria-label="Chat navigation" className="absolute -top-10 left-1/2 flex -translate-x-1/2 gap-2">
+            {showScrollToTop && (
+              <button
+                type="button"
+                onClick={scrollToPageTop}
+                aria-label="Back to top"
+                title="Back to top"
+                className="rounded-full border border-gray-300 bg-white/95 p-2 text-gray-700 shadow-md backdrop-blur hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+              >
+                <FiArrowUp aria-hidden="true" className="h-4 w-4" />
+              </button>
+            )}
+            {showScrollToBottom && (
+              <button
+                type="button"
+                onClick={scrollToPageBottom}
+                aria-label="Scroll to bottom"
+                title="Scroll to bottom"
+                className="rounded-full border border-gray-300 bg-white/95 p-2 text-gray-700 shadow-md backdrop-blur hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+              >
+                <FiArrowDown aria-hidden="true" className="h-4 w-4" />
+              </button>
+            )}
+          </div>
         )}
         {isReconnecting && (
           <div role="status" className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
@@ -1115,6 +1194,15 @@ export default function ExperimentalAiPage() {
                 {activeOptimization.points.length > 1 && <OptimizationSparkline points={activeOptimization.points} />}
               </div>
             )}
+            <button
+              type="button"
+              onClick={() => void cancelActiveOptimization()}
+              disabled={cancellingOptimizationId === activeOptimization.jobId || activeOptimization.state === 'cancelling' || isReconnecting}
+              className="ml-auto inline-flex items-center gap-1 rounded-md border border-violet-300 px-2 py-1 font-medium hover:bg-violet-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 disabled:cursor-wait disabled:opacity-60"
+            >
+              <FiSquare aria-hidden="true" className="h-3 w-3" />
+              {cancellingOptimizationId === activeOptimization.jobId || activeOptimization.state === 'cancelling' ? 'Cancelling optimizer…' : 'Cancel optimizer'}
+            </button>
           </div>
         )}
         {queuedMessages.length > 0 && (

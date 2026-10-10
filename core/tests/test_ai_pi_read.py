@@ -194,6 +194,31 @@ def test_pi_image_detection_rejects_an_invalid_bmp_header():
     assert detect_supported_image_mime_type(b"BM" + b"\x00" * 40) is None
 
 
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        (b"GIF87a", "image/gif"),
+        (b"GIF89a", "image/gif"),
+        (b"GIF", None),
+        (b"GIF89", None),
+        (b"GIF90a", None),
+        (b"GIF is a text format description", None),
+        (b"\xff\xd8\xff", "image/jpeg"),
+        (b"RIFF\x00\x00\x00\x00WEBP", "image/webp"),
+        (b"RIFFWEBP", None),
+    ],
+)
+def test_pi_v1_image_signatures_require_complete_format_headers(content, expected):
+    assert detect_supported_image_mime_type(content) == expected
+
+
+def test_pi_v1_read_does_not_treat_gif_prefixed_text_as_an_image():
+    result = render_read_result(b"GIF is a text format description", ReadInput("notes.txt"))
+
+    assert result.text == "GIF is a text format description"
+    assert result.image is None
+
+
 def test_pi_read_applies_exif_orientation_before_resizing():
     output = BytesIO()
     image = Image.new("RGB", (10, 2_001), "red")

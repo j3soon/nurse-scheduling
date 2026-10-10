@@ -63,6 +63,10 @@ class OptimizerResultUnavailable(Exception):
     """A session-owned optimizer result is not available for download."""
 
 
+class OptimizerJobUnavailable(Exception):
+    """The requested optimizer job does not belong to this session."""
+
+
 class OptimizerJobPayload(BaseModel):
     """Subset of the optimizer job response used by the assistant."""
 
@@ -409,6 +413,26 @@ class SessionOptimizer:
             await self._notify_update(job)
         return job, True
 
+    async def cancel(self, session_id: str, job_id: str) -> SessionOptimization:
+        """Cancel the displayed job without involving a model or another session's job."""
+        job = self._jobs.get(job_id)
+        if job is None or job.session_id != session_id:
+            raise OptimizerJobUnavailable("Optimizer job not found.")
+        if _is_terminal(job.payload) or job.payload.state == "cancelling":
+            return job
+        try:
+            payload = await self._backend.cancel(job.remote_id)
+        except OptimizerError as exc:
+            # Completion can delete the remote job while cancellation is in flight.
+            if _is_terminal(job.payload):
+                return job
+            logger.warning("Optimizer cancel request failed job_id=%s error=%s", job.id, exc)
+            raise OptimizerError(f"The optimizer did not accept the cancel request. {exc}") from exc
+        job.observe(payload)
+        if self._jobs.get(job.id) is job and not _is_terminal(job.payload):
+            await self._notify_update(job)
+        return job
+
     async def _monitor(self, job: SessionOptimization) -> None:
         unreachable_since: float | None = None
         outage_reported = False
@@ -505,6 +529,8 @@ class SessionOptimizer:
         if job.artifact is not None and request_audit is not None:
             result_data["request_audit"] = request_audit
         await self._notify_update(job)
+        if job.payload.state == "cancelled":
+            return
         prompt = optimizer_completion_message(result_data)
         if self._jobs.get(job.id) is not job:
             return
