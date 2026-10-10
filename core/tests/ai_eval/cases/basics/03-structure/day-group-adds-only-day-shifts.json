@@ -1,0 +1,67 @@
+{
+  "fixture": "shift-groups",
+  "expect_proposal": true,
+  "tool_usage": {
+    "forbidden": [
+      "optimizer"
+    ],
+    "max_total": 12
+  },
+  "tags": [
+    "shift-groups"
+  ],
+  "note": "This testcase is mostly AI generated. Check actual Day membership and preserve unrelated groups. Explicitly authorized custom membership is a contrasting control.",
+  "id": "day-group-adds-only-day-shifts",
+  "question": "Add D+ with description Senior day shift. Update the existing Day shift-type group so day rules also cover this new senior day shift. Leave the other groups and scheduling rules unchanged.",
+  "expected_diff": [
+    {
+      "path": "shiftTypes.groups[?id=Day].members",
+      "added": [
+        "D+"
+      ]
+    },
+    {
+      "path": "shiftTypes.items",
+      "added": [
+        {
+          "id": "D+",
+          "description": "Senior day shift"
+        }
+      ]
+    }
+  ],
+  "changes": [
+    "shiftTypes.groups",
+    "shiftTypes.items"
+  ],
+  "assert": [
+    {
+      "path": "shiftTypes.groups[?id=Day].members",
+      "count": 2
+    },
+    {
+      "path": "shiftTypes.groups[?id=Day].members",
+      "contains": "D"
+    },
+    {
+      "path": "shiftTypes.groups[?id=Day].members",
+      "contains": "D+"
+    },
+    {
+      "path": "shiftTypes.groups",
+      "count": 3
+    },
+    {
+      "path": "shiftTypes.groups[?id=Evening]",
+      "unchanged": true
+    },
+    {
+      "path": "shiftTypes.groups[?id=Night]",
+      "unchanged": true
+    },
+    {
+      "path": "shiftTypes.groups[?id=Day].description",
+      "unchanged": true
+    }
+  ]
+}

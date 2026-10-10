@@ -53,6 +53,7 @@ CROSS_YEAR_UNIT_PATH = Path(__file__).parent / "ai_eval" / "fixtures" / "cross-y
 WARD_PATH = Path(__file__).parent / "testcases" / "real" / "large-ward-with-87-people-2025-11.yaml"
 
 FIXTURE_SCHEDULES = {
+    "shift-groups": _load_yaml((CASES_PATH.parent / "fixtures" / "shift-groups.yaml").read_bytes()),
     "policy-audit": _load_yaml((CASES_PATH.parent / "fixtures" / "policy-audit.yaml").read_bytes()),
     "request-audit-groups": _load_yaml((CASES_PATH.parent / "fixtures" / "request-audit-groups.yaml").read_bytes()),
     "weight-units": _load_yaml((CASES_PATH.parent / "fixtures" / "weight-units.yaml").read_bytes()),
@@ -197,6 +198,52 @@ def test_qualified_explanation_grades_counts_instead_of_a_night_suffix(night, pa
     if passed:
         invalid = "This app cannot represent senior staffing.\n" + answer
         assert not grade(case, RunOutcome(answer=invalid, activity=activity)).passed
+
+
+@pytest.mark.parametrize("members,passes", [(["D"], True), (["D", "E"], False)])
+def test_day_group_creation_grades_the_actual_members(members, passes):
+    from io import StringIO
+
+    from ruamel.yaml import YAML
+
+    from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
+
+    case = next(c for c in load_cases(CASES_PATH) if c.id == "day-group-creation")
+    proposed = copy.deepcopy(FIXTURE_SCHEDULES[case.fixture])
+    proposed["shiftTypes"]["items"].append({"id": "E", "description": "Evening shift"})
+    proposed["shiftTypes"]["groups"].append({"id": "Day", "description": "Daytime shifts", "members": members})
+    source = StringIO()
+    YAML(typ="safe").dump(proposed, source)
+    assert validate_frontend_schedule_yaml(source.getvalue(), max_bytes=50_000).valid
+    assert grade(case, RunOutcome(initial=FIXTURE_SCHEDULES[case.fixture], proposed=proposed)).passed == passes
+
+
+@pytest.mark.parametrize("members,passes", [(["D", "D+"], True), (["D", "D+", "E", "N"], False)])
+def test_day_group_grader_rejects_automatic_evening_and_night_members(members, passes):
+    case = next(c for c in load_cases(CASES_PATH) if c.id == "day-group-adds-only-day-shifts")
+    proposed = copy.deepcopy(FIXTURE_SCHEDULES[case.fixture])
+    proposed["shiftTypes"]["items"].append({"id": "D+", "description": "Senior day shift"})
+    proposed["shiftTypes"]["groups"][0]["members"] = members
+    result = grade(case, RunOutcome(initial=FIXTURE_SCHEDULES[case.fixture], proposed=proposed))
+    assert result.passed == passes
+
+
+def test_day_group_grader_accepts_explicit_custom_membership():
+    case = next(c for c in load_cases(CASES_PATH) if c.id == "day-group-explicit-broadening-control")
+    proposed = copy.deepcopy(FIXTURE_SCHEDULES[case.fixture])
+    proposed["shiftTypes"]["groups"][0]["members"] = ["N", "D", "E"]
+    assert grade(case, RunOutcome(initial=FIXTURE_SCHEDULES[case.fixture], proposed=proposed)).passed
+
+
+def test_day_group_reference_fixture_is_valid_and_all_still_includes_every_shift():
+    from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
+    from nurse_scheduling.frontend_validation import load_frontend_data
+
+    source = (CASES_PATH.parent / "fixtures" / "shift-groups.yaml").read_bytes()
+    assert validate_frontend_schedule_yaml(source.decode(), max_bytes=50_000).valid
+    compiled = load_frontend_data(source).compiled_schedule
+    assert compiled.map_sid_s["Day"] == (0,)
+    assert compiled.map_sid_s["ALL"] == (0, 1, 2)
 
 
 @pytest.mark.parametrize(
@@ -1025,16 +1072,7 @@ def test_ambiguous_weight_case_rejects_guessing_and_wrong_clarified_target():
 def test_the_dataset_only_uses_registered_fixtures():
     cases = load_cases(CASES_PATH)
 
-    assert {case.fixture for case in cases} == {
-        "policy-audit",
-        "cross-year-unit",
-        "new-schedule",
-        "request-audit",
-        "request-audit-groups",
-        "small-clinic",
-        "ward87",
-        "weight-units",
-    }
+    assert {case.fixture for case in cases} == set(FIXTURE_SCHEDULES)
     assert len(cases) == len({case.id for case in cases})
 
 

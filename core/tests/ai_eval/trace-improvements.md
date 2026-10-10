@@ -6,8 +6,11 @@
 
 These selected comparisons start with three repetitions per version and four
 concurrent case jobs. Noisy cases extend to five. Detailed trajectories, input
-hashes, reliability, timing, and token
-statistics remain in ignored artifacts. Results describe the named cases and model.
+hashes, reliability, timing, and token statistics remain in ignored artifacts.
+Results describe the named cases and model.
+
+The referenced HTML exports were unavailable in this checkout. These cases
+are synthetic reproductions of the reported behavior.
 
 | Change | Testcase | Before | After | Control before/after |
 | --- | --- | --- | --- | --- |
@@ -15,6 +18,7 @@ statistics remain in ignored artifacts. Results describe the named cases and mod
 | Frontend timezone and server time | `current-time-frontend-taipei`, `current-time-frontend-los-angeles` | 0/5 each | 5/5 each | `explicit-date-frontend-time-control`: 3/3, 3/3 |
 | Existing optimizer download | `optimizer-result-already-downloadable` | 0/3 | 5/5 | Final explicit ZIP and generated-file controls: 5/5 each |
 | Inclusive senior staffing | `senior-included-in-day-total` | 2/3, then 5/5 | 5/5 | `senior-additional-day-slot`: 5/5, 5/5 |
+| Day group membership | `day-group-creation` | 1/5 | 5/5 | `day-group-adds-only-day-shifts`, `day-group-explicit-broadening-control`: 3/3 before, 5/5 after each |
 
 The example comparison used the same production prompt and current-schedule
 fixture. The candidate adds sandbox hydration and advertises the reference path
@@ -70,3 +74,22 @@ correct warning that one unrestricted shift cannot guarantee a senior mix.
 Independent tests accept both valid names and that warning. They reject wrong
 counts and claims that the app cannot represent senior staffing. Corrected
 comparisons use the same final control in both versions.
+
+The final group comparison keeps the staffing prompt, cases, fixtures, and grader
+unchanged. Only the group rules in the core schema reference differ. Four of
+five baseline proposals include evening shift `E` in `Day`, despite the stated
+day/evening distinction. All five candidates include only day shift `D`.
+The day-slot addition and explicitly requested broad-membership controls pass
+all runs. There were no infrastructure failures.
+
+Group membership is supplied by the YAML. The compiler does not automatically
+put evening or night shifts in `Day`. The new guidance prevents the model from
+proposing that interpretation without a user request. The independent fixture
+check confirms that `Day` selects only `D` while reserved `ALL` still selects
+every shift. Correct reference proposals pass frontend validation and the
+grader. Known wrong proposals fail even when their explanations sound correct.
+Only one creation pair passes in both versions, so its cost variation is
+unavailable and no performance gain is claimed.
+
+With the final group guidance, both the inclusive and explicitly additional
+senior staffing cases also pass a three-run interaction check.

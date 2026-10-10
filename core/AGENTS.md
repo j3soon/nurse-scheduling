@@ -330,6 +330,8 @@ skipped does not validate persistence.
 - Isolate prompt policies with the smallest fixture that exercises the claim.
   For qualified staffing within a stated total, check both the total and eligibility.
   Include a control where the qualified slot is explicitly additional.
+  For named groups, check actual membership and preserve unrelated groups.
+  Include a control that explicitly requests broader membership.
   Use the large ward only when scale or reference cascades matter. Grade
   scheduling semantics rather than ineffective fields or equivalent formatting.
   For complete file imports, compare the whole parsed proposal with the uploaded

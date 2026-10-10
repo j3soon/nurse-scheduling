@@ -299,6 +299,9 @@ Fields:
 Rules:
 - Group IDs must be unique across shift types and groups and cannot case-insensitively equal the reserved selectors ALL or OFF.
 - Members may name shift types or groups defined earlier in the list.
+- Keep Day, Evening, and Night assignments separate when the user distinguishes those categories.
+- Do not include evening or night shifts in Day unless the user explicitly requests that membership.
+- Preserve existing group membership unless its change is requested. Only ALL includes every shift type automatically.
 
 Minimal frontend-compatible YAML:
 
