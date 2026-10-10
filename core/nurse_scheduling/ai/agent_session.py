@@ -261,6 +261,7 @@ class AgentSession:
     last_used: float = field(default_factory=time.monotonic)
     latest_message: AcceptedMessage | None = None
     frontend_version: str | None = None
+    frontend_timezone: str = "UTC"
     reported_version_mismatch: bool = False
     export_metadata: dict[str, Any] = field(default_factory=dict)
     accepted_messages: dict[str, AcceptedMessage] = field(default_factory=dict)
@@ -306,6 +307,7 @@ class AgentSession:
         return {
             "schedule_yaml": self.schedule_yaml,
             "frontend_version": self.frontend_version,
+            "frontend_timezone": self.frontend_timezone,
             "export_metadata": {
                 **self.export_metadata,
                 "uploaded_files": [
@@ -342,6 +344,7 @@ class AgentSession:
             schedule_yaml=state["schedule_yaml"],
             revision=schedule_revision(state["schedule_yaml"]),
             frontend_version=state.get("frontend_version"),
+            frontend_timezone=state.get("frontend_timezone", "UTC"),
             export_metadata=state.get("export_metadata", {}),
             transcript=retained_entries(entries),
             dropped_history_messages=state["dropped_history_messages"],
@@ -516,6 +519,7 @@ class AgentSession:
             previously_dropped=self.dropped_history_messages,
             run_id=run_id,
             uploads=tuple(self.uploads.values()),
+            frontend_timezone=self.frontend_timezone,
         )
         return self.snapshot
 
@@ -664,6 +668,7 @@ class AgentSession:
             pending_proposal=snapshot.pending_proposal is not None,
             optimizer_result_available=artifact is not None,
             max_download_bytes=settings.max_download_bytes,
+            frontend_timezone=snapshot.frontend_timezone,
         )
         events.emit(
             {

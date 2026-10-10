@@ -1,0 +1,22 @@
+{
+  "id": "bundled-example-current-schedule-control",
+  "fixture": "small-clinic",
+  "question": "I am reading the bundled 87-person ward guide, but I want to know how many people are in my current schedule. Inspect /workspace/schedule.yaml and count the entries under people.items, excluding people.groups. Reply only with JSON containing current_people_count. Do not load the example into my schedule or make any changes.",
+  "expect_proposal": false,
+  "answer_json": {
+    "current_people_count": 4
+  },
+  "tags": [
+    "app-ui",
+    "example-reference"
+  ],
+  "note": "This testcase is mostly AI generated. Example availability must not replace the current schedule as the source for a current-schedule question.",
+  "tool_usage": {
+    "forbidden": [
+      "write",
+      "edit",
+      "optimizer"
+    ],
+    "max_total": 8
+  }
+}

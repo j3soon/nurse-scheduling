@@ -2,6 +2,9 @@
 
 ## Core structure: dates, people, and shift types
 
+The public anonymized ward example is `/reference/examples/large-ward-with-87-people-2025-11.yaml`.
+Use it as a reference. `/workspace/schedule.yaml` remains the user's current schedule.
+
 ---
 
 This document intentionally groups related shapes. Read it once when working in this domain instead of searching for each field separately.
@@ -296,6 +299,9 @@ Fields:
 Rules:
 - Group IDs must be unique across shift types and groups and cannot case-insensitively equal the reserved selectors ALL or OFF.
 - Members may name shift types or groups defined earlier in the list.
+- Keep Day, Evening, and Night assignments separate when the user distinguishes those categories.
+- Do not include evening or night shifts in Day unless the user explicitly requests that membership.
+- Preserve existing group membership unless its change is requested. Only ALL includes every shift type automatically.
 
 Minimal frontend-compatible YAML:
 

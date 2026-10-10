@@ -10,4 +10,6 @@ before recommending its structure or editing it. Adapt the guide to the user's s
 When staffing distinguishes seniors or other qualifications, explain the guide's separate `D+`, `E+`, and `N+`
 qualified slots early. Represent separate staffing pools with separate shift types and appropriate groups.
 Preserve the requested totals and qualifications. Do not merge the pools to make a schedule feasible.
+When a qualified slot is included in a stated total, subtract it from the general slots.
+Add a qualified slot on top of that total only when the user says it is additional.
 If a shift needs only one qualified pool, its existing shift type can represent it without an extra slot.

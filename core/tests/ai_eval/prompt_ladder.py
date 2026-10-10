@@ -93,9 +93,16 @@ def case_digest(case: EvalCase) -> str:
         "answer_json",
         "download_files",
         "import_attachment",
+        "frontend_timezone",
+        "current_time",
+        "after_optimizer_turns",
+        "optimizer_download_file",
+        "staffing_contract",
     ):
         if not fields[optional]:
             fields.pop(optional)
+    if fields["download_count"] is None:
+        fields.pop("download_count")
     if any(isinstance(value, dict) for value in case.answer_json.values()):
         from .grading import _answer_json_matches
 
@@ -155,6 +162,26 @@ def case_digest(case: EvalCase) -> str:
 
         fields["optimizer_input_oracle_sha256"] = hashlib.sha256(
             inspect.getsource(_check_optimizer_start_source).encode()
+        ).hexdigest()
+    if case.semantic_check == "current-time-context":
+        from .grading import _check_vm_clock_queries
+
+        fields["clock_query_oracle_sha256"] = hashlib.sha256(
+            inspect.getsource(_check_vm_clock_queries).encode()
+        ).hexdigest()
+    if case.semantic_check == "qualified-staffing":
+        from nurse_scheduling.preference_types import staffing_expression
+
+        from .grading import _check_staffing_contract
+
+        fields["staffing_oracle_sha256"] = hashlib.sha256(
+            inspect.getsource(_check_staffing_contract).encode() + inspect.getsource(staffing_expression).encode()
+        ).hexdigest()
+    if case.semantic_check == "optimizer-download":
+        from .grading import _check_optimizer_download
+
+        fields["optimizer_download_oracle_sha256"] = hashlib.sha256(
+            inspect.getsource(_check_optimizer_download).encode()
         ).hexdigest()
     if case.semantic_check == "yaml-generator":
         fields["generator_sha256"] = [

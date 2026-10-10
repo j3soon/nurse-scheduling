@@ -23,6 +23,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import pytest
 
@@ -43,7 +44,7 @@ from nurse_scheduling.ai.pi.write import WRITE_TOOL
 from nurse_scheduling.ai.provider import ChatMessage, ProviderError, TextDelta, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
-from nurse_scheduling.ai.schema import load_taiwan_holidays_reference, load_user_guide_references
+from nurse_scheduling.ai.schema import load_schedule_example, load_taiwan_holidays_reference, load_user_guide_references
 from nurse_scheduling.ai.workspace import (
     REFERENCE_SCHEMAS,
     REFERENCE_USER_GUIDE,
@@ -465,6 +466,27 @@ def test_hydration_uploads_every_reference_in_one_request():
     # by the user rather than absorbed before the turn starts.
     assert backend.write_files_calls == 1
     assert len(backend.files) > len(REFERENCE_SCHEMAS)
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
+def test_hydration_keeps_bundled_example_separate_from_current_schedule(newline, tmp_path, monkeypatch):
+    bundled_source = (
+        Path(__file__).resolve().parents[2] / "web-frontend/public/examples/large-ward-with-87-people-2025-11.yaml"
+    )
+    source = tmp_path / bundled_source.name
+    source.write_bytes(bundled_source.read_text(encoding="utf-8").replace("\n", newline).encode("utf-8"))
+    monkeypatch.setattr("nurse_scheduling.ai.schema.SCHEDULE_EXAMPLE_SOURCE", source)
+    load_schedule_example.cache_clear()
+    factory = FakeSandboxFactory()
+    try:
+        _collect(ScriptedProvider(_run_call(), [TextDelta("Done.")]), factory)
+    finally:
+        load_schedule_example.cache_clear()
+    files = factory.created[0].files
+    example = files["/reference/examples/large-ward-with-87-people-2025-11.yaml"]
+    assert example == source.read_text(encoding="utf-8").encode("utf-8")
+    assert files[WORKSPACE_SCHEDULE] != example
+    assert b"/reference/examples/large-ward-with-87-people-2025-11.yaml" in files[REFERENCE_SCHEMAS["core"]]
 
 
 def test_hydration_places_untrusted_attachments_under_safe_paths():

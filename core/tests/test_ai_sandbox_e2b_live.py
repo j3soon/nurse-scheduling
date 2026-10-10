@@ -124,6 +124,30 @@ def test_prebuilt_e2b_template_supports_the_selected_pi_tools():
     asyncio.run(exercise())
 
 
+def test_prebuilt_e2b_template_creates_and_extracts_zip_bytes():
+    async def exercise() -> None:
+        factory = E2BSandboxFactory(
+            api_key=E2B_API_KEY,
+            template=os.getenv("E2B_TEMPLATE", "nurse-scheduling-ai-sandbox"),
+            turn_timeout_seconds=30,
+            command_timeout_seconds=5,
+        )
+        async with managed_sandbox(factory, cleanup_timeout_seconds=10) as sandbox:
+            content = b"name,date\nP1,2031-03-01\n"
+            await sandbox.write_file("/workspace/sample.csv", content)
+            result = await sandbox.run("zip -q sample.zip sample.csv && unzip -q sample.zip -d extracted")
+            assert result.exit_code == 0, result.stderr
+            assert await sandbox.read_file("/workspace/extracted/sample.csv") == content
+            import io
+            import zipfile
+
+            with zipfile.ZipFile(io.BytesIO(await sandbox.read_file("/workspace/sample.zip"))) as archive:
+                assert archive.namelist() == ["sample.csv"]
+                assert archive.read("sample.csv") == content
+
+    asyncio.run(exercise())
+
+
 def test_explicit_pause_auto_resumes_the_same_sandbox():
     async def exercise() -> None:
         factory = E2BSandboxFactory(

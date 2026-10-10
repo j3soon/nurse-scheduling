@@ -49,8 +49,14 @@ def optimizer_completion_message(result_data: dict[str, Any]) -> str:
             "score_comparison_scope": "Compare only scores from unchanged constraints and weights.",
         }
     result_path = WORKSPACE_OPTIMIZER_RESULT if result_data["download_available"] else "unavailable"
+    download_status = (
+        "The user can already download this workbook with the chat's Download result button.\n"
+        if result_data["download_available"]
+        else ""
+    )
     return (
         f"Optimizer job finished. Result workbook: {result_path}.\n"
+        f"{download_status}"
         f"Optimizer result JSON:\n{json.dumps(result_data, ensure_ascii=False)}"
     )
 

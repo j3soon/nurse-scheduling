@@ -1,0 +1,28 @@
+{
+  "id": "current-time-frontend-los-angeles",
+  "fixture": "small-clinic",
+  "question": "What are my current local date, local time, timezone, and the first date of next month? Reply only with JSON: local_date (YYYY-MM-DD), local_time (HH:MM), timezone (IANA name), next_month_start (YYYY-MM-DD). Reply in the chat. Do not create files or edit the schedule.",
+  "expect_proposal": false,
+  "frontend_timezone": "America/Los_Angeles",
+  "current_time": "2031-03-31T23:30:00+00:00",
+  "answer_json": {
+    "local_date": "2031-03-31",
+    "local_time": "16:30",
+    "timezone": "America/Los_Angeles",
+    "next_month_start": "2031-04-01"
+  },
+  "tool_usage": {
+    "forbidden": [
+      "write",
+      "edit",
+      "optimizer"
+    ],
+    "max_total": 3
+  },
+  "tags": [
+    "app-ui",
+    "clock-context"
+  ],
+  "note": "This testcase is mostly AI generated. One frozen server instant crosses a date and month boundary in Taipei but remains in March in Los Angeles. Reject VM clock reads, while allowing calculations from the supplied timestamp. Grade the local timestamp and next month independently.",
+  "semantic_check": "current-time-context"
+}

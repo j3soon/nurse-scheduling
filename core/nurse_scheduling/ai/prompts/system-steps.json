@@ -827,19 +827,35 @@
     "id": "generated-downloads",
     "file": "steps/generated-downloads.md",
     "cases": [
-      "download-generated-zip"
+      "download-generated-zip",
+      "optimizer-result-already-downloadable",
+      "optimizer-result-explicit-zip"
     ],
-    "hypothesis": "Delivers requested generated files through the server-captured download ZIP.",
-    "sha256": "bf59afa6702fc9d6f8c273ce924a35122f0614677d619d227631daa391694647",
+    "hypothesis": "Uses existing optimizer downloads and packages generated files or explicitly requested archives.",
+    "sha256": "f71e94f9bc0c9298fccb5f772d50ae8bc25b3f75ef78c541985b9cc2d4488604",
     "evidence": [
       {
-        "case": "download-generated-zip",
-        "input_sha256": "e7320ac910fbacf1d69c96582b851f4ab9f985f3cf983308416a58aa69b26666",
-        "before": "0/3",
-        "after": "3/3",
+        "case": "optimizer-result-already-downloadable",
+        "input_sha256": "e58e2b2eb02fd4eeb3949233e51c11e3009b750d17404753a7e61cf67797eb96",
+        "before": "4/5",
+        "after": "5/5",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
-        "note": "Adjacent full-prompt prefixes. Without the section, every attempt wrote /workspace/sample.csv and reported it as delivered, so the server captured no ZIP. With it, every attempt packaged the requested CSV in the captured ZIP."
+        "controls": [
+          {
+            "case": "optimizer-result-explicit-zip",
+            "input_sha256": "d8a053284a58886ce9791ae3c18a7714d61dd001da4f9a3be3de359ea9c7dd6d",
+            "before": "5/5",
+            "after": "5/5"
+          },
+          {
+            "case": "download-generated-zip",
+            "input_sha256": "4d09672c053a9aa5a2a9ad872ad661634c1b597238bc5de3a27230794aca6392",
+            "before": "5/5",
+            "after": "5/5"
+          }
+        ],
+        "note": "Full prompt before and after the targeted existing-download rule, with host download facts in both arms. Earlier host facts alone improved the follow-up from 0/3 to 2/3, but a later repetition offered an unnecessary ZIP. The final five runs use the existing button without another ZIP or offer. Explicit archives preserve workbook bytes, and generated files still use the captured ZIP. Controlled completions use exporter-generated workbooks from solver-checked fixed assignments."
       }
     ]
   },
@@ -894,27 +910,35 @@
     "file": "steps/new-schedule-guide.md",
     "cases": [
       "new-schedule-qualified-slots",
-      "guide-start-from-empty-schedule"
+      "guide-start-from-empty-schedule",
+      "senior-included-in-day-total",
+      "senior-additional-day-slot"
     ],
-    "hypothesis": "Reads the real-schedule guide and explains qualified slots before constructing a new schedule.",
-    "sha256": "444893d2a22a17a3babfa6b58aa67025e9cdbbce7c5b765dfe20a99d364d6250",
+    "hypothesis": "Reads the real-schedule guide, explains qualified slots, and preserves stated totals when a qualified slot is included.",
+    "sha256": "88b5ef7a73a54753ff5cbc6083b17d80426ea1fe9e2e14f0aed418aafab27391",
     "evidence": [
       {
-        "case": "new-schedule-qualified-slots",
-        "input_sha256": "6091c105c949f727999aebe112c6fe69032a8d105d6e09b4c593da47fbc43b7e",
-        "before": "1/3",
+        "case": "senior-included-in-day-total",
+        "input_sha256": "14a2fae3e5f9057dc0a8ca1453fb1f836721ad3f4f1dca1fd84f6d79faf6746d",
+        "before": "2/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
         "controls": [
           {
-            "case": "guide-start-from-empty-schedule",
-            "input_sha256": "420821ec433cd278f58207913181975612c40c00f985b0ec8587c2346b945ace",
+            "case": "senior-additional-day-slot",
+            "input_sha256": "642f80b3cd1555c8d3a2d80b210c41b5c2aa2e08ca9fdae112dbfa5548c11fe0",
+            "before": "5/5",
+            "after": "5/5"
+          },
+          {
+            "case": "new-schedule-qualified-slots",
+            "input_sha256": "5dd1ce77d9ecad8270cc9a4ef0537889bfb7ab165e69ebdc2f6e095deaa7a8b0",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Adjacent full-prompt prefixes. Without this section, two attempts did not read the real-schedule guide or explain the qualified slots. With it, all three read the guide and explained the D+, E+, and N+ pattern before editing. The empty-schedule construction control stays correct."
+        "note": "Compare the previous full prompt with the explicit included-versus-additional arithmetic. The first corrected baseline creates three day slots in one of three runs. All five candidate runs pass, including its first three used for this paired receipt. A separate five-run baseline also passes 5/5, so the longer comparison ties and does not establish a general success-rate or cost gain. The explicit additional-slot control stays correct. The explanation control is rerun in both versions with numeric staffing counts, valid N or N+ names, and a rejection rule limited to claims that the app cannot represent senior staffing. Earlier false failures remain diagnostic reports."
       }
     ]
   }

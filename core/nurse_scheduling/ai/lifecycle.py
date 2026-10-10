@@ -46,6 +46,7 @@ class RunSnapshot:
     run_id: str | None = None
     # Uploads cannot change while a run is active, so this stays valid for the whole run.
     uploads: tuple[SandboxAttachment, ...] = ()
+    frontend_timezone: str = "UTC"
 
 
 @dataclass(eq=False)
