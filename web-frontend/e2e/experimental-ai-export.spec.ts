@@ -48,8 +48,13 @@ for (const failure of ['json', 'snapshot', 'filesystem'] as const) {
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('The output file was not changed.');
-    expect(result.stderr).toMatch(failure === 'json' ? /JSON|Unexpected|Expected/
-      : failure === 'snapshot' ? /invalid saved chat snapshot/ : /EISDIR|is a directory/);
+    if (failure === 'filesystem') {
+      // Renaming over a directory reports EISDIR on Unix and EPERM on Windows.
+      expect(result.stderr).toMatch(/\b(?:EISDIR|EPERM):[^\n]*\brename\b/);
+      expect(result.stderr).toContain(output);
+    } else {
+      expect(result.stderr).toMatch(failure === 'json' ? /JSON|Unexpected|Expected/ : /invalid saved chat snapshot/);
+    }
     expect(await readFile(preserved, 'utf8')).toBe(original);
     expect((await readdir(directory)).filter(name => name.endsWith('.tmp'))).toEqual([]);
   });

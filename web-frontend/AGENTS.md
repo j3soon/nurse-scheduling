@@ -25,6 +25,9 @@ and browser suites when checking the full app or broad shared behavior.
 Frontend unit/component tests use Vitest; browser integration tests use
 Playwright.
 
+Filesystem failure tests must accept the supported platforms' error codes.
+Assert the failed operation and path as well as output preservation.
+
 Use Playwright locator actions for form controls. Before interacting with
 statically rendered controls, wait for an observable result of client
 initialization, such as loaded backend options enabling Optimize.
