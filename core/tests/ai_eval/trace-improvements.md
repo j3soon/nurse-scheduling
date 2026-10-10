@@ -128,3 +128,47 @@ Mean CSV-case tool calls increase from 1.33 to 2.00, while explicit-workbook
 archive calls remain 1.67 in both versions. Python archive creation remains
 an equally valid approach. Complete paired timing and token statistics remain
 in the ignored comparison reports.
+
+## Further staffing and guide experiments
+
+Two new cases, `staffing-explanation-included-in-day-total` and
+`staffing-explanation-additional-day-slot`, grade compiled staffing requirements and
+explicit answer counts separately. The final JSON fields specify integer
+units for day assignments, senior day assignments, all working assignments,
+people OFF, and eligible seniors. Independent correct proposals and wrong
+answer counts test the grader before provider calls. These checks do not
+analyze every sentence of free-form prose.
+
+The focused-guide candidate changes only the initial reading paragraph of
+`new-schedule-guide`. It keeps all references available and uses the same code
+and tools. The declared gate requires correct controls and a combined
+matched-passing total-token ratio of at most 0.80. After correcting ambiguous
+JSON field descriptions in both versions, inclusive staffing falls from 2/3
+to 1/3. One failure has correct YAML but reports five working slots instead of
+four. The setup and qualified-staffing controls pass 3/3. The ward prototype
+also exposes a method-specific grader that rejects a valid Bash inspection.
+The prompt candidate fails the correctness gate and is reverted. Its prototype
+ward case and complete diagnostic reports remain in ignored artifacts.
+
+A separate code experiment keeps the production prompt unchanged and adds
+computed exact staffing counts to trusted validation feedback after an edit.
+It uses compiled selectors and eligibility. It omits totals for overlapping,
+incomplete, preferred-range, or weighted requirements and bounds its output.
+Deterministic tests verify the calculation and model-facing delivery. All
+232 focused checks and the affected PostgreSQL suite pass for the candidate.
+
+Three live runs initially improve inclusive staffing from 2/3 to 3/3. A
+matched two-run extension produces a five-run tie: inclusive staffing passes
+4/5 before and after, and the additional-slot control passes 5/5 in both.
+There are no infrastructure failures. The remaining failure misinterprets the
+requested total, although its explanation matches the wrong proposal. The
+candidate shows no repeated correctness or cost gain and is reverted. The
+new staffing regression cases remain. Original attempts and complete paired
+statistics, including token categories, tool calls, turns, timing, and sample
+standard deviations, remain in the ignored reports.
+
+More original chat exports would help distinguish incorrect interpretation
+from incorrect prose about a correct proposal. Include the starting YAML,
+attachments, final proposal, and the expected staffing counts. A useful runner
+follow-up is to record the exact E2B template and build ID in evaluation
+metadata so environment comparisons need no manual identity record.

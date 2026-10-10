@@ -100,6 +100,28 @@ def qualified_staffing_proposal(general_count=1, qualified=("S1", "S2")):
     return proposed
 
 
+@pytest.mark.parametrize("general_count", [1, 2])
+@pytest.mark.parametrize(
+    "wrong_field",
+    [None, "day_slots", "total_working_slots", "off_people", "senior_day_slots", "eligible_senior_people"],
+)
+def test_staffing_explanation_checks_arithmetic_separately_from_proposal(general_count, wrong_field):
+    case_id = "staffing-explanation-" + ("included-in-day-total" if general_count == 1 else "additional-day-slot")
+    case = next(c for c in load_cases(CASES_PATH) if c.id == case_id)
+    answer = copy.deepcopy(case.answer_json)
+    if wrong_field:
+        answer[wrong_field] += 1
+    result = grade(
+        case,
+        RunOutcome(
+            initial=FIXTURE_SCHEDULES["new-schedule"],
+            proposed=qualified_staffing_proposal(general_count),
+            answer=json.dumps(answer),
+        ),
+    )
+    assert result.passed == (wrong_field is None)
+
+
 @pytest.mark.parametrize(
     "case_id,general_count,passed",
     [
