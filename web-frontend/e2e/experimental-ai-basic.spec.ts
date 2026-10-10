@@ -144,7 +144,10 @@ async function mockAiBackend(
   reportContext = true,
   // Run events published before `done`, such as a generated ZIP.
   answerEvents: { type: string; data: Record<string, unknown> }[] = [],
-): Promise<CapturedRequests & { publishEvent: (type: string, data: Record<string, unknown>) => void }> {
+): Promise<CapturedRequests & {
+  publishEvent: (type: string, data: Record<string, unknown>) => void;
+  hasWaitingReader: () => boolean;
+}> {
   const captured = {
     scheduleYaml: '',
     messageBody: '',
@@ -162,6 +165,8 @@ async function mockAiBackend(
   let wakeReader: (() => void) | undefined;
   const publish = (type: string, data: Record<string, unknown>) => {
     journal.push(`id: ${journal.length + 1}\nevent: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
+    wakeReader?.();
+    wakeReader = undefined;
   };
   sessionEvents.forEach(event => publish(event.type, event.data));
 
@@ -285,11 +290,9 @@ async function mockAiBackend(
       publish(type, { ...data, run_id: runId });
     }
     await route.fulfill({ status: 202, contentType: 'application/json', headers: corsHeaders, body: JSON.stringify({ run_id: runId }) });
-    wakeReader?.();
-    wakeReader = undefined;
   });
 
-  return Object.assign(captured, { publishEvent: publish });
+  return Object.assign(captured, { publishEvent: publish, hasWaitingReader: () => wakeReader !== undefined });
 }
 
 test('asks about the current schedule and renders a streamed answer', async ({ page }) => {
@@ -573,6 +576,7 @@ test('cancels the background optimizer from its status box without asking the ag
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Optimize this.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Optimization started.', { exact: true })).toBeVisible();
+  await expect.poll(() => backend.hasWaitingReader()).toBe(true);
   await page.getByRole('button', { name: 'Cancel optimizer' }).click();
 
   await expect(page.getByRole('button', { name: /Cancel.*optimizer/i })).toHaveCount(0);
