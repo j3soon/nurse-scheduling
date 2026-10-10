@@ -59,6 +59,23 @@ describe('saved chat export', () => {
     expect(() => buildSavedChatExport({ ...snapshot, snapshot_at: Number.NaN }, 'html')).toThrow('invalid saved chat snapshot');
   });
 
+  it('skips runs without saved events and finalizes only the observed reply', () => {
+    const { messages } = projectSavedChat(parseSavedChatSnapshot({
+      ...snapshot,
+      runs: [
+        { ...snapshot.runs[0], id: 'unobserved', prompt: 'Earlier question', started_at: 1 },
+        { ...snapshot.runs[0], id: 'observed', prompt: 'Later question', started_at: 2, status: 'cancelled', finished_at: 4 },
+      ],
+      events: [{ type: 'delta', data: { run_id: 'observed', text: 'Partial answer' }, occurred_at: 3 }],
+    }));
+
+    expect(messages.map(message => [message.role, message.content])).toEqual([
+      ['user', 'Later question'], ['assistant', 'Partial answer'],
+    ]);
+    expect(messages[1].status).toBe('stopped');
+    expect(messages[1].responseCompletedAt).toBe(4);
+  });
+
   it.each([1, 2])('keeps %s steering messages before one assistant when no output has started', count => {
     const runId = snapshot.runs[0].id;
     const events = [

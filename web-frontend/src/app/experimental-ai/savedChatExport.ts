@@ -115,7 +115,8 @@ export function projectSavedChat(snapshot: SavedChatSnapshot): { messages: ChatM
     }
   }
   for (const run of snapshot.runs) {
-    const turn = ensureTurn(run.id, run.started_at);
+    const turn = turns.get(run.id);
+    if (!turn) continue;
     messages = messages.map(message => {
       if (message.id !== turn.assistantId || message.status !== 'pending' || run.status === 'running') return message;
       const type = run.status === 'cancelled' ? 'stopped' : run.status === 'completed' ? 'done' : 'error';
