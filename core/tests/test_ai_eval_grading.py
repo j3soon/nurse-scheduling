@@ -121,6 +121,39 @@ def test_clock_grading_distinguishes_vm_time_from_supplied_date_calculations(com
     assert _check_vm_clock_queries([event])[0].passed is allowed
 
 
+@pytest.mark.parametrize("delivered", ["original-sha", "changed-sha"], ids=["unchanged", "changed"])
+def test_optimizer_archive_grades_actual_delivered_bytes(delivered):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "optimizer-result-explicit-zip")
+    outcome = RunOutcome(
+        initial=FIXTURE_SCHEDULES[case.fixture],
+        activity=[
+            {"kind": "optimizer", "turn": 2},
+            {"kind": "optimizer_artifact", "sha256": "original-sha"},
+            {"kind": "download", "files": {"original-result.xlsx": delivered}},
+        ],
+        intermediate_answers=("Started.", "Use Download result."),
+        proposal_turns=(False, False, False),
+    )
+    assert grade(case, outcome).passed is (delivered == "original-sha")
+
+
+@pytest.mark.parametrize(
+    "answer, allowed",
+    [("Use Download result.", True), ("Would you like me to prepare a ZIP download?", False)],
+    ids=["existing-button", "redundant-offer"],
+)
+def test_download_grading_rejects_an_offer_in_the_completion_reply(answer, allowed):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "optimizer-result-already-downloadable")
+    outcome = RunOutcome(
+        initial=FIXTURE_SCHEDULES[case.fixture],
+        answer="Use Download result.",
+        activity=[{"kind": "optimizer", "turn": 2}, {"kind": "optimizer_artifact", "sha256": "original-sha"}],
+        intermediate_answers=("Started.", "Use Download result. " + answer),
+        proposal_turns=(False, False, False),
+    )
+    assert grade(case, outcome).passed is allowed
+
+
 def test_resolves_fields_indexes_and_selectors():
     assert resolve(SCHEDULE, "dates.range.startDate") == ["2026-03-01"]
     assert resolve(SCHEDULE, "people.items[0].id") == ["P1"]
@@ -1048,6 +1081,8 @@ def test_reading_questions_cannot_be_answered_from_the_prompt_summary():
     }
 
     for case in load_cases(CASES_PATH):
+        if case.optimizer_completion:
+            continue
         if not case.answer_contains:
             continue
         values = computed_values(FIXTURE_SCHEDULES[case.fixture])

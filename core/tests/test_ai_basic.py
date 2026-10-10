@@ -2410,6 +2410,7 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         assert '"score": 23' in str(provider.calls[3][-2]["content"])
         assert provider.calls[3][-1]["content"].endswith(
             "\nOptimization result: /workspace/optimizer-results/optimized-schedule.xlsx."
+            " The user can already download this workbook with the chat's Download result button."
         )
         background_sandbox = next(
             backend

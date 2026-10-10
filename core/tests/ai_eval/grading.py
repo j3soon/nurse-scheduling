@@ -135,6 +135,9 @@ class EvalCase:
     semantic_check: str = ""
     frontend_timezone: str = ""
     current_time: str = ""
+    after_optimizer_turns: tuple[str, ...] = ()
+    download_count: int | None = None
+    optimizer_download_file: str = ""
 
     def __post_init__(self) -> None:
         """Keep direct test construction compatible with single-turn cases."""
@@ -237,9 +240,17 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     ):
         raise EvalCaseError(f"{source} `user_turns` must be a non-empty list of strings.")
     raw_intermediate = entry.get("intermediate_answer_contains", [])
+    after_optimizer_turns = entry.get("after_optimizer_turns", [])
+    if (
+        not isinstance(after_optimizer_turns, list)
+        or not all(isinstance(turn, str) and turn for turn in after_optimizer_turns)
+        or (after_optimizer_turns and not entry.get("optimizer_completion"))
+    ):
+        raise EvalCaseError(f"{source} after_optimizer_turns requires an optimizer completion and question strings.")
+    total_turns = len(raw_turns) + bool(entry.get("optimizer_completion")) + len(after_optimizer_turns)
     if (
         not isinstance(raw_intermediate, list)
-        or len(raw_intermediate) > len(raw_turns) - 1
+        or len(raw_intermediate) > total_turns - 1
         or not all(
             isinstance(expected, list)
             and all(
@@ -287,12 +298,15 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         "yaml-generator",
         "optimizer-start-source",
         "current-time-context",
+        "optimizer-download",
     }:
         raise EvalCaseError(f"{source} has an unknown semantic_check.")
-    proposal_turn, proposal_turns = _proposal_turns(entry, len(raw_turns), source)
+    proposal_turn, proposal_turns = _proposal_turns(
+        entry, total_turns if after_optimizer_turns else len(raw_turns), source
+    )
     turn_actions = _turn_actions(entry.get("turn_actions", []), len(raw_turns), source)
     raw_turn_tools = entry.get("turn_tool_usage", [])
-    if not isinstance(raw_turn_tools, list) or len(raw_turn_tools) > len(raw_turns):
+    if not isinstance(raw_turn_tools, list) or len(raw_turn_tools) > total_turns:
         raise EvalCaseError(f"{source} `turn_tool_usage` must list expectations for existing user turns.")
     optimizer_error = entry.get("optimizer_error", "")
     if not isinstance(optimizer_error, str):
@@ -318,12 +332,24 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     answer_json = entry.get("answer_json", {})
     if not isinstance(answer_json, dict):
         raise EvalCaseError(f"{source} `answer_json` must be an object.")
+    download_count = entry.get("download_count")
+    optimizer_download_file = entry.get("optimizer_download_file", "")
+    if download_count is not None and (type(download_count) is not int or download_count < 0):
+        raise EvalCaseError(f"{source} download_count must be a nonnegative integer.")
+    if not isinstance(optimizer_download_file, str) or (
+        optimizer_download_file and (not optimizer_completion or download_count != 1)
+    ):
+        raise EvalCaseError(f"{source} optimizer_download_file requires a completion and one ZIP download.")
+    if semantic_check == "optimizer-download" and (not optimizer_completion or download_count is None):
+        raise EvalCaseError(f"{source} optimizer-download requires a completion and a download_count.")
     if entry["expect_proposal"] and not assertions and not expected_diff and not semantic_check:
         raise EvalCaseError(f"{source} expects a proposal but asserts nothing about it.")
     if entry["expect_proposal"] and not entry.get("changes"):
         raise EvalCaseError(f"{source} expects a proposal but names no part it may change.")
     if not entry["expect_proposal"] and (
-        assertions or expected_diff or semantic_check not in {"", "optimizer-start-source", "current-time-context"}
+        assertions
+        or expected_diff
+        or semantic_check not in {"", "optimizer-start-source", "current-time-context", "optimizer-download"}
     ):
         raise EvalCaseError(f"{source} expects no proposal, so its schedule criteria can never run.")
     return EvalCase(
@@ -350,6 +376,9 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         semantic_check=semantic_check,
         frontend_timezone=frontend_timezone,
         current_time=current_time,
+        after_optimizer_turns=tuple(after_optimizer_turns),
+        download_count=download_count,
+        optimizer_download_file=optimizer_download_file,
         changes=tuple(entry.get("changes", ())),
         answer_contains=tuple(
             tuple(value) if isinstance(value, list) else value for value in entry.get("answer_contains", ())
@@ -573,6 +602,11 @@ def grade(case: EvalCase, outcome: RunOutcome, computed: dict[str, Any] | None =
                 len(downloads) == 1 and all(downloads[0].get(name) == digest for name, digest in expected.items()),
             )
         )
+    if case.download_count is not None:
+        captured = sum(event.get("kind") == "download" for event in outcome.activity)
+        checks.append(
+            CheckResult(f"captures exactly {case.download_count} ZIP download(s)", captured == case.download_count)
+        )
     if case.expect_proposal and proposed:
         checks.extend(_check_assertion(outcome, assertion) for assertion in case.assertions)
         checks.extend(_check_expected_diff(outcome, expected) for expected in case.expected_diff)
@@ -583,6 +617,8 @@ def grade(case: EvalCase, outcome: RunOutcome, computed: dict[str, Any] | None =
         checks.extend(_check_optimizer_start_source(case, outcome))
     if case.semantic_check == "current-time-context":
         checks.extend(_check_vm_clock_queries(outcome.activity))
+    if case.semantic_check == "optimizer-download":
+        checks.extend(_check_optimizer_download(case, outcome))
     if case.optimizer_completion:
         checks.append(
             CheckResult("optimizer completion delivered", any(e.get("kind") == "optimizer" for e in outcome.activity))
@@ -727,6 +763,33 @@ def _check_yaml_generator(activity: Sequence[dict[str, Any]]) -> list[CheckResul
         CheckResult("executes the repaired generator successfully", executed),
         CheckResult("avoids package installation in the offline sandbox", not installations, str(installations)),
     ]
+
+
+def _check_optimizer_download(case: EvalCase, outcome: RunOutcome) -> list[CheckResult]:
+    """Check the retained workbook and any explicitly requested archive independently of chat claims."""
+    artifacts = [event for event in outcome.activity if event.get("kind") == "optimizer_artifact"]
+    checks = [
+        CheckResult(
+            "optimizer workbook retained for the user's download",
+            len(artifacts) == 1 and bool(artifacts[0].get("sha256")),
+        )
+    ]
+    if case.optimizer_download_file:
+        downloads = [event.get("files", {}) for event in outcome.activity if event.get("kind") == "download"]
+        matches = len(artifacts) == len(downloads) == 1 and downloads[0].get(case.optimizer_download_file) == artifacts[
+            0
+        ].get("sha256")
+        checks.append(CheckResult("ZIP delivers the unchanged optimizer workbook bytes", matches))
+    elif case.download_count == 0:
+        answers = "\n".join((*outcome.intermediate_answers, outcome.answer))
+        offer = re.search(
+            r"(?:would you like|do you want|shall I|want me to|I can|I'll|I will)[^.!?\n]{0,120}"
+            r"(?:zip|package|prepare[^.!?\n]{0,50}(?:download|workbook|file)|create[^.!?\n]{0,50}(?:download|zip))",
+            answers,
+            re.IGNORECASE,
+        )
+        checks.append(CheckResult("does not offer another copy of the downloadable optimizer workbook", offer is None))
+    return checks
 
 
 def _check_vm_clock_queries(activity: Sequence[dict[str, Any]]) -> list[CheckResult]:

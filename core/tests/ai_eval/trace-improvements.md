@@ -11,8 +11,8 @@ statistics remain in ignored artifacts. Results describe the named cases and mod
 | Change | Testcase | Before | After | Control before/after |
 | --- | --- | --- | --- | --- |
 | Public example availability | `bundled-ward-example-inspection` | 0/3 | 3/3 | `bundled-example-current-schedule-control`: 3/3, 3/3 |
-
 | Frontend timezone and server time | `current-time-frontend-taipei`, `current-time-frontend-los-angeles` | 0/5 each | 5/5 each | `explicit-date-frontend-time-control`: 3/3, 3/3 |
+| Existing optimizer download | `optimizer-result-already-downloadable` | 0/3 | 5/5 | Final explicit ZIP and generated-file controls: 5/5 each |
 
 The example comparison used the same production prompt and current-schedule
 fixture. The candidate adds sandbox hydration and advertises the reference path
@@ -29,3 +29,14 @@ There were no infrastructure failures. An additional clock instruction passed
 but showed no benefit over the same data-only context, so it was not retained.
 The browser sends its timezone on creation and messages. Session recovery
 retains it, and each provider request refreshes the timestamp.
+
+The download comparison first keeps the prompt unchanged and adds the known
+**Download result** button to completion and later-turn status. The main case
+improves from 0/3 to 2/3. A separate prompt comparison keeps these host facts in
+both versions and adds the existing-download rule. It improves from 4/5 to 5/5.
+The explicit archive and generated-file controls both remain 5/5. All attempts
+had no infrastructure failures. Archives contain the original workbook bytes.
+The completion workbook comes from solver-checked fixed assignments and the real
+exporter. This comparison tests agent delivery decisions, not the optimizer job
+service or stochastic solve quality. These small samples do not establish a
+general success rate or performance gain.

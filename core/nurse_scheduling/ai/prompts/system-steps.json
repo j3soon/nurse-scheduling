@@ -827,19 +827,35 @@
     "id": "generated-downloads",
     "file": "steps/generated-downloads.md",
     "cases": [
-      "download-generated-zip"
+      "download-generated-zip",
+      "optimizer-result-already-downloadable",
+      "optimizer-result-explicit-zip"
     ],
-    "hypothesis": "Delivers requested generated files through the server-captured download ZIP.",
-    "sha256": "bf59afa6702fc9d6f8c273ce924a35122f0614677d619d227631daa391694647",
+    "hypothesis": "Uses existing optimizer downloads and packages generated files or explicitly requested archives.",
+    "sha256": "f71e94f9bc0c9298fccb5f772d50ae8bc25b3f75ef78c541985b9cc2d4488604",
     "evidence": [
       {
-        "case": "download-generated-zip",
-        "input_sha256": "e7320ac910fbacf1d69c96582b851f4ab9f985f3cf983308416a58aa69b26666",
-        "before": "0/3",
-        "after": "3/3",
+        "case": "optimizer-result-already-downloadable",
+        "input_sha256": "e58e2b2eb02fd4eeb3949233e51c11e3009b750d17404753a7e61cf67797eb96",
+        "before": "4/5",
+        "after": "5/5",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
-        "note": "Adjacent full-prompt prefixes. Without the section, every attempt wrote /workspace/sample.csv and reported it as delivered, so the server captured no ZIP. With it, every attempt packaged the requested CSV in the captured ZIP."
+        "controls": [
+          {
+            "case": "optimizer-result-explicit-zip",
+            "input_sha256": "d8a053284a58886ce9791ae3c18a7714d61dd001da4f9a3be3de359ea9c7dd6d",
+            "before": "5/5",
+            "after": "5/5"
+          },
+          {
+            "case": "download-generated-zip",
+            "input_sha256": "4d09672c053a9aa5a2a9ad872ad661634c1b597238bc5de3a27230794aca6392",
+            "before": "5/5",
+            "after": "5/5"
+          }
+        ],
+        "note": "Full prompt before and after the targeted existing-download rule, with host download facts in both arms. Earlier host facts alone improved the follow-up from 0/3 to 2/3, but a later repetition offered an unnecessary ZIP. The final five runs use the existing button without another ZIP or offer. Explicit archives preserve workbook bytes, and generated files still use the captured ZIP. Controlled completions use exporter-generated workbooks from solver-checked fixed assignments."
       }
     ]
   },

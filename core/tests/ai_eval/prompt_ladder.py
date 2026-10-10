@@ -95,9 +95,13 @@ def case_digest(case: EvalCase) -> str:
         "import_attachment",
         "frontend_timezone",
         "current_time",
+        "after_optimizer_turns",
+        "optimizer_download_file",
     ):
         if not fields[optional]:
             fields.pop(optional)
+    if fields["download_count"] is None:
+        fields.pop("download_count")
     if any(isinstance(value, dict) for value in case.answer_json.values()):
         from .grading import _answer_json_matches
 
@@ -163,6 +167,12 @@ def case_digest(case: EvalCase) -> str:
 
         fields["clock_query_oracle_sha256"] = hashlib.sha256(
             inspect.getsource(_check_vm_clock_queries).encode()
+        ).hexdigest()
+    if case.semantic_check == "optimizer-download":
+        from .grading import _check_optimizer_download
+
+        fields["optimizer_download_oracle_sha256"] = hashlib.sha256(
+            inspect.getsource(_check_optimizer_download).encode()
         ).hexdigest()
     if case.semantic_check == "yaml-generator":
         fields["generator_sha256"] = [

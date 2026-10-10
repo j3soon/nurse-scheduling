@@ -292,6 +292,8 @@ async def run_case(
         history.append(AppEventEntry(upload_event(case_attachments)))
     optimizer_started = False
     optimizer_source = ""
+    retained_optimizer_result = None
+    retained_optimizer_context = None
     request_clock = (lambda: datetime.fromisoformat(case.current_time)) if case.current_time else None
 
     async def execute_optimizer(_schedule_yaml: str, arguments: str) -> AgentToolOutcome:
@@ -332,8 +334,9 @@ async def run_case(
         turns = [(question, False) for question in case.user_turns]
         if case.optimizer_completion:
             turns.append(("", True))
+        turns.extend((question, False) for question in case.after_optimizer_turns)
         for turn_index, (question, completion) in enumerate(turns):
-            if case.optimizer_completion_only and not completion:
+            if case.optimizer_completion_only and not completion and turn_index < len(case.user_turns):
                 arguments = json.dumps({"action": "start", "timeout_seconds": 60})
                 outcome = await execute_optimizer(text, arguments)
                 if not outcome.ok:
@@ -362,8 +365,8 @@ async def run_case(
                 intermediate_proposals.append(False)
                 history.extend([UserMessage(question), AssistantMessage(acknowledgement)])
                 continue
-            optimizer_result = None
-            optimizer_context = None
+            optimizer_result = retained_optimizer_result
+            optimizer_context = retained_optimizer_context
             if completion:
                 if not optimizer_started:
                     events.append({"kind": "evaluation_stop", "reason": "optimizer was not started"})
@@ -380,6 +383,9 @@ async def run_case(
                     break
                 context = await asyncio.to_thread(build_result_context, optimizer_source, workbook=optimizer_result)
                 optimizer_context = json.dumps(context, ensure_ascii=False, allow_nan=False).encode()
+                retained_optimizer_result = optimizer_result
+                retained_optimizer_context = optimizer_context
+                events.append({"kind": "optimizer_artifact", "sha256": hashlib.sha256(optimizer_result).hexdigest()})
                 question = optimizer_completion_message(result_data)
                 optimizer_started = False
             attachments = case_attachments

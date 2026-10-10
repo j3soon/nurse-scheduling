@@ -34,6 +34,7 @@ from ruamel.yaml import YAML
 
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.downloads import WORKSPACE_DOWNLOAD
+from nurse_scheduling.ai.optimizer import WORKSPACE_OPTIMIZER_RESULT
 from nurse_scheduling.ai.optimizer_tool import optimizer_start_message
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.pi.edit import EDIT_TOOL
@@ -963,6 +964,29 @@ def test_completion_only_case_seeds_history_without_counting_a_model_tool_call()
     assert '"request_audit"' in provider.messages[0][-2]["content"]
     assert provider.messages[0][-1]["content"].startswith("[Current status]")
     assert not factory.created
+
+
+def test_optimizer_followup_receives_the_same_workbook_in_a_new_workspace():
+    read = [
+        ToolCallRequest(
+            (ToolCall("read-result", READ_TOOL, '{"path":"/workspace/optimizer-results/schedule-context.json"}'),)
+        )
+    ]
+    provider = ScriptedProvider(
+        read,
+        [TextDelta("The workbook is available through Download result.")],
+        read,
+        [TextDelta("Use Download result for the original workbook.")],
+    )
+    factory = _factory()
+    run = _run("optimizer-result-already-downloadable", provider, factory)
+    assert run.passed
+    assert len(factory.created) == 2
+    original = factory.created[0].files[WORKSPACE_OPTIMIZER_RESULT]
+    assert factory.created[1].files[WORKSPACE_OPTIMIZER_RESULT] == original
+    artifact = next(event for event in run.trajectory["events"] if event["kind"] == "optimizer_artifact")
+    assert artifact["sha256"] == hashlib.sha256(original).hexdigest()
+    assert all(backend.closed for backend in factory.created)
 
 
 @pytest.mark.parametrize("fail_fast, expected_user_turns", [(True, [1]), (False, [1, 2])])

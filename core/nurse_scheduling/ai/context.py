@@ -165,7 +165,10 @@ def status_message(
     if pending_proposal:
         lines.append(PENDING_PROPOSAL_STATUS)
     if optimizer_result_available:
-        lines.append(f"{OPTIMIZER_RESULT_STATUS} {WORKSPACE_OPTIMIZER_RESULT}.")
+        lines.append(
+            f"{OPTIMIZER_RESULT_STATUS} {WORKSPACE_OPTIMIZER_RESULT}. "
+            "The user can already download this workbook with the chat's Download result button."
+        )
     # Trimmed history or a failed turn can hide an upload event, so list only the files the request cannot show.
     sent = "\n".join(str(message["content"]) for message in history)
     unlisted = [

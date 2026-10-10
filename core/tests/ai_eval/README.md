@@ -212,6 +212,9 @@ comparisons to unchanged constraints and weights. `optimizer-score-same-model`
 checks direction and `optimizer-score-changed-model` guards comparability.
 Cases marked `optimizer_completion_only` seed a fixed successful start and acknowledgement without a provider call.
 The seed remains in the grading trace but is excluded from model tool and token metrics.
+`after_optimizer_turns` adds user messages after completion in fresh workspaces with the retained workbook.
+The `optimizer-download` check rejects redundant ZIP delivery or offers. An explicitly requested archive
+must contain the original workbook bytes under `optimizer_download_file`.
 `request-audit-stale-summary` supplies an earlier verified incumbent's counts with a different source hash
 to check that the agent uses the current workbook instead.
 
