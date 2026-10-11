@@ -313,7 +313,7 @@ available in their saved format, which cannot distinguish user text identical to
 an application event.
 
 Before upgrading, stop every old AI service instance and back up the PostgreSQL
-database. Apply the migration through service initialization, then start the matching
+database. Follow the [backup and restore runbook](backend-deployment.md#ai-chat-history-backup-and-restore). Apply the migration through service initialization, then start the matching
 frontend. The migration runs in one transaction under the existing advisory lock.
 Verify restoration of a saved session and retry its accepted message ID before
 allowing traffic.
@@ -587,56 +587,41 @@ interrupted work failed. It does not rerun model calls or mutating tools.
 
 ### Inspect chat history with pgAdmin
 
-The optional pgAdmin service listens only on the backend host's loopback
-interface. Start it from `docker/` with the same Compose file and environment
-file used by that deployment:
+Start pgAdmin from `docker/` with the same Compose file and environment file
+used by the deployment:
 
 ```sh
-docker compose -f compose.backend.yml --profile inspection run --rm --service-ports pgadmin
+cd docker
+docker compose --env-file .env -f compose.backend.yml \
+  --profile inspection run --rm --service-ports pgadmin
 ```
 
-For a remote backend, forward the loopback port over SSH:
+For staging, replace `--env-file .env` with `--env-file .env.staging`.
+If the deployment uses a process-local optimizer, replace
+`compose.backend.yml` with `compose.backend.memory.yml` and keep the same
+environment file and project name.
 
-```sh
-ssh -L 5050:127.0.0.1:5050 user@backend-host
-```
+It listens on the backend host's loopback port `5050`. For a remote host,
+forward that port with `ssh -L 5050:127.0.0.1:5050 user@backend-host`.
+The [backend deployment guide](backend-deployment.md)
+covers the Compose services and environment file.
 
 Open `http://127.0.0.1:5050` and sign in with
-`admin@nursescheduling.local` / `pgadmin`. Expand **Nurse Scheduling**, then
-connect to **AI chat history** with database password `ai_history`. The server
-definition is preloaded on every run.
-
-Use **Tools > Query Tool** to inspect the newest turns:
+`admin@nursescheduling.org` / `pgadmin`. Under **Nurse Scheduling**, connect
+to **AI chat history** with database password `ai_history`. The server
+definition is preloaded. In **Tools > Query Tool**, inspect recent entries:
 
 ```sql
-SELECT
-    turns.started_at,
-    turns.auth_credential_id,
-    turns.kind,
-    turns.model,
-    turns.status,
-    turns.question,
-    turns.error_code,
-    turns.usage
-FROM chat_recovery_turns AS turns
-ORDER BY turns.started_at DESC
+SELECT e.created_at, e.session_id, e.seq, e.type, e.payload, r.kind,
+       r.status, r.error_code, r.model, r.auth_credential_id
+FROM chat_session_entries AS e
+LEFT JOIN chat_runs AS r ON r.id = e.run_id
+ORDER BY e.created_at DESC, e.seq DESC
 LIMIT 100;
 ```
 
 Press Ctrl+C when finished. Compose removes the temporary pgAdmin container;
 the PostgreSQL service and its `postgres-ai-data` volume remain intact.
-
-Use `compose.backend.memory.yml` in these commands for the process-local backend
-variant. For staging, also pass its `--env-file .env.staging` option.
-
-Run PostgreSQL integration checks against a test database whose role can create
-schemas. Each test creates and removes its own temporary schema:
-
-```sh
-cd core
-AI_HISTORY_TEST_POSTGRES_URL=postgresql:///ai_history_test \
-  .venv/bin/pytest -q tests/test_ai_history.py
-```
 
 ## Production path proxy
 

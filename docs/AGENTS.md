@@ -41,6 +41,9 @@
 
 ### Wording and terminology
 
+- When porting documentation from another branch, preserve its wording. Change
+  it only where current behavior or links require a correction.
+
 - Use concise, precise, human language. Every sentence should convey a concrete
   action, definition, or explanation that a first-time reader can understand.
   Rewrite or remove vague statements and redundant caveats.
@@ -131,6 +134,12 @@
   redirects for published paths and preserve existing heading IDs.
 - Git on Windows can check out symlinks as plain text. Enable symlink support
   or use Linux or WSL when building the documentation.
+
+- Describe the current recovery schema separately from historical migrations.
+  Keep conversation order, event cursors, and execution status distinct.
+- For backup and restore instructions, use the same environment file, Compose
+  variant, and project for every step. Verify the dump before replacement and
+  keep restore failures from restarting writers.
 
 ## Validation
 
