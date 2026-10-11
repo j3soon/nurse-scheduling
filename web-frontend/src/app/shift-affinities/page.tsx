@@ -239,11 +239,11 @@ export default function ShiftAffinitiesPage() {
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
           <h1 className="text-3xl font-bold text-gray-800">Shift Affinities</h1>
           <PageDocumentationLink href={DOCUMENTATION_URLS.shiftAffinities} label="Shift Affinities" />
         </div>
-        <div className="flex gap-4">
+        <div className="flex flex-wrap gap-3 sm:gap-4">
           <ToggleButton
             label="Add Shift Affinity"
             isToggled={isFormVisible}

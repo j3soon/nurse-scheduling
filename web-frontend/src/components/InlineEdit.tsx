@@ -95,6 +95,12 @@ export function InlineEdit({
   return (
     <div
       onDoubleClick={onDoubleClick}
+      onPointerUp={event => {
+        if (onDoubleClick && (event.pointerType === 'touch' || event.pointerType === 'pen')) {
+          event.stopPropagation();
+          onDoubleClick();
+        }
+      }}
       className={`${isReadOnly ? '' : 'cursor-pointer'} ${className} ${!hasValue ? emptyClassName : ''}`}
       title={valueToDisplay}
     >

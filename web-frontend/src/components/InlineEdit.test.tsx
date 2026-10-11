@@ -148,4 +148,18 @@ describe('InlineEdit', () => {
     const value = screen.getByText('Add description...');
     expect(value.className).not.toContain('cursor-pointer');
   });
+
+  it('starts editing on a touch tap while preserving mouse double-click behavior', async () => {
+    const user = userEvent.setup();
+    const onDoubleClick = vi.fn();
+    render(<InlineEdit value="Nurse A" isEditing={false} onSave={vi.fn()} onCancel={vi.fn()} onDoubleClick={onDoubleClick} />);
+    const value = screen.getByText('Nurse A');
+    await user.click(value);
+    expect(onDoubleClick).not.toHaveBeenCalled();
+    await user.pointer([{ keys: '[TouchA>]', target: value }, { keys: '[/TouchA]' }]);
+    expect(onDoubleClick).toHaveBeenCalledTimes(1);
+    await user.dblClick(value);
+    expect(onDoubleClick).toHaveBeenCalledTimes(2);
+  });
+
 });

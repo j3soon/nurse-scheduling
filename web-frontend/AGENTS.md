@@ -51,6 +51,12 @@ and shuts it down afterwards. Existing local servers are never reused.
 New schedules contain no user-defined people, shift types, or groups. E2E tests
 that require populated entities must seed them explicitly.
 
+For responsive UI changes, check populated pages and open editing forms at phone
+widths. Use touch device emulation for tap and reorder checks. Resizing a desktop
+viewport alone does not exercise coarse-pointer controls or phone Enter behavior.
+Check the visual viewport separately for fixed composers. Browser emulation does
+not replace an iOS or Android keyboard check on a real device.
+
 For deterministic checks of version-dependent UI, restart the dev server with
 an explicit version, for example:
 

@@ -1876,7 +1876,7 @@ export default function OptimizeAndExportPage() {
     <div className="container mx-auto px-4 py-6 lg:py-8">
       <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 flex-wrap items-center gap-3">
             <h1 className="text-3xl font-bold text-gray-900">Optimize and Export</h1>
             <PageDocumentationLink
               href={DOCUMENTATION_URLS.optimizeAndExport}
@@ -1947,7 +1947,7 @@ export default function OptimizeAndExportPage() {
         </div>
       )}
 
-      <div className="mb-6 grid gap-6 xl:grid-cols-[minmax(0,0.95fr)_minmax(380px,1.05fr)]">
+      <div className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,0.95fr)_minmax(380px,1.05fr)]">
         <section className="rounded-lg border border-gray-200 bg-white">
           <div className="border-b border-gray-200 px-5 py-4">
             <h2 className="text-base font-semibold text-gray-900">Setup and Run</h2>

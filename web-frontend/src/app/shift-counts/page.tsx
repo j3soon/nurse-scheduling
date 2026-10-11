@@ -339,11 +339,11 @@ export default function ShiftCountsPage() {
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
           <h1 className="text-3xl font-bold text-gray-800">Shift Counts</h1>
           <PageDocumentationLink href={DOCUMENTATION_URLS.shiftCounts} label="Shift Counts" />
         </div>
-        <div className="flex gap-4">
+        <div className="flex flex-wrap gap-3 sm:gap-4">
           <ToggleButton
             label="Add Shift Count"
             isToggled={isFormVisible}
@@ -525,8 +525,8 @@ export default function ShiftCountsPage() {
               </div>
 
               {/* Expression and Target */}
-              <div className="flex gap-4">
-                <div className="flex-1">
+              <div className="flex flex-col gap-4 sm:flex-row">
+                <div className="min-w-0 flex-1">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Expression *
                   </label>
