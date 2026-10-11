@@ -187,7 +187,7 @@ export default function Navigation() {
       {currentTabIndex > 0 && (
         <button
           onClick={navigatePrevious}
-          className="fixed left-0 top-1/2 transform -translate-y-1/2 p-3 transition-all duration-200 z-10 hover:scale-110 group cursor-pointer"
+          className="hidden sm:block fixed left-0 top-1/2 transform -translate-y-1/2 p-3 transition-all duration-200 z-10 hover:scale-110 group cursor-pointer"
           title="Previous tab (←)"
         >
           <svg className="w-8 h-8 text-gray-400 group-hover:text-gray-600 transition-colors duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -200,7 +200,7 @@ export default function Navigation() {
       {currentTabIndex < TABS.length - 1 && (
         <button
           onClick={navigateNext}
-          className="fixed right-0 top-1/2 transform -translate-y-1/2 p-3 transition-all duration-200 z-10 hover:scale-110 group cursor-pointer"
+          className="hidden sm:block fixed right-0 top-1/2 transform -translate-y-1/2 p-3 transition-all duration-200 z-10 hover:scale-110 group cursor-pointer"
           title="Next tab (→)"
         >
           <svg className="w-8 h-8 text-gray-400 group-hover:text-gray-600 transition-colors duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">

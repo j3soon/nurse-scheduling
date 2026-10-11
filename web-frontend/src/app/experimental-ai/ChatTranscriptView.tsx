@@ -88,7 +88,7 @@ export function ChatTranscriptView({
       <section
         aria-label="Chat messages"
         aria-live="polite"
-        className="mb-4 min-h-80 space-y-4 rounded-xl border border-gray-200 bg-gray-50 p-4"
+        className="mb-4 min-h-80 space-y-4 rounded-xl border border-gray-200 bg-gray-50 p-2 sm:p-4"
       >
         {messages.length === 0 && (
           <div className="flex min-h-72 items-center justify-center text-center text-gray-500">
@@ -101,19 +101,19 @@ export function ChatTranscriptView({
           return (
             <article
               key={message.id}
-              className={`rounded-xl px-4 py-3 ${
+              className={`min-w-0 rounded-xl px-3 py-3 sm:px-4 ${
                 message.role === 'system'
                   ? 'border border-dashed border-gray-300 bg-gray-50 text-gray-700'
                   : message.role === 'user' && message.source === undefined
-                    ? 'ml-auto max-w-[85%] bg-blue-600 text-white'
+                    ? 'ml-auto max-w-[95%] sm:max-w-[85%] bg-blue-600 text-white'
                     : message.source === 'optimizer'
                       // Optimizer messages align left like the optimizer notice, in the chat and in exports.
-                      ? 'mr-auto max-w-[85%] border border-emerald-200 bg-emerald-50 text-emerald-950'
+                      ? 'mr-auto max-w-[95%] sm:max-w-[85%] border border-emerald-200 bg-emerald-50 text-emerald-950'
                       : message.role === 'user'
-                        ? 'ml-auto max-w-[85%] border border-blue-200 bg-blue-50 text-blue-950'
+                        ? 'ml-auto max-w-[95%] sm:max-w-[85%] border border-blue-200 bg-blue-50 text-blue-950'
                         : message.role === 'optimizer'
-                          ? 'mr-auto max-w-[85%] border border-emerald-200 bg-emerald-50 text-emerald-950'
-                          : 'mr-auto max-w-[85%] border border-gray-200 bg-white text-gray-900'
+                          ? 'mr-auto max-w-[95%] sm:max-w-[85%] border border-emerald-200 bg-emerald-50 text-emerald-950'
+                          : 'mr-auto max-w-[95%] sm:max-w-[85%] border border-gray-200 bg-white text-gray-900'
               }`}
             >
               <p className="mb-1 text-xs font-semibold uppercase tracking-wide opacity-70">{messageLabel(message)}</p>

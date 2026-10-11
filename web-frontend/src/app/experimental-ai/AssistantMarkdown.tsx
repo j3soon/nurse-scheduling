@@ -126,7 +126,7 @@ const components: Components = {
 
 export default function AssistantMarkdown({ content }: { content: string }) {
   return (
-    <div className="break-words leading-6">
+    <div className="min-w-0 [overflow-wrap:anywhere] leading-6">
       <Markdown remarkPlugins={[remarkGfm]} skipHtml components={components}>
         {content}
       </Markdown>

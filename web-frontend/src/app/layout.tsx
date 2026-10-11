@@ -65,7 +65,7 @@ export default function RootLayout({
           <SchedulingDataProvider>
             <VersionWarningBanner />
             <Navigation />
-            <main style={{ paddingLeft: '2.5rem', paddingRight: '2.5rem' }}>
+            <main className="min-w-0 px-2 sm:px-10">
               {children}
             </main>
             <Footer />
