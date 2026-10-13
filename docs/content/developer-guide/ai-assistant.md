@@ -340,6 +340,17 @@ weighted case means decreased by 24%. These selected checks used
 `unsloth/Qwen3.8-27B-NVFP4`, real E2B commands and four case jobs. They did not
 submit optimizer jobs or establish a general cost or latency saving.
 
+Workbook imports must retain the required `at most one shift per day` rule,
+including imports that exclude optional staffing or rest rules. The import
+guidance asks the agent to derive request weights from each cell's formatting
+and build the proposal from the source in code. The
+`workbook-import-first-valid-proposal` case improved from 0/3 to 3/3 against the
+previous full prompt. Explained and unexplained workbook controls passed 3/3
+in both versions. These checks used real provider requests and E2B commands
+with four case jobs and did not submit optimizer jobs. Some runs still used
+handwritten YAML, and one repaired generated-script errors. No cost saving or
+universal use of the requested coding method is claimed.
+
 ## Agent capabilities
 
 The model receives Pi's four default coding tools: `read`, `bash`, `edit`, and

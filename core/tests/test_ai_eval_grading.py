@@ -98,6 +98,46 @@ def test_xlsx_range_case_requires_successful_range_use_and_saved_caches(
     assert grade(case, outcome).passed is passed
 
 
+@pytest.mark.parametrize("defect", [None, "wrong-weight", "missing-rule", "repaired-invalid-write"])
+def test_workbook_import_requires_correct_weights_and_a_valid_first_proposal(defect):
+    case = next(c for c in load_cases(CASES_PATH) if c.id == "workbook-import-first-valid-proposal")
+    proposed = copy.deepcopy(FIXTURE_SCHEDULES["new-schedule"])
+    proposed["dates"]["range"] = {"startDate": "2025-11-01", "endDate": "2025-11-03"}
+    proposed["people"]["items"] = [
+        {"id": "Ada", "history": ["OFF"]},
+        {"id": "Bela", "history": ["E", "E"]},
+    ]
+    proposed["shiftTypes"]["items"] = [{"id": shift} for shift in ("D", "E")]
+    proposed["preferences"] = [
+        {"type": "at most one shift per day"},
+        *[
+            {"type": "shift request", "person": [person], "date": [date], "shiftType": [shift], "weight": weight}
+            for person, date, shift, weight in (
+                ("Ada", "01", "OFF", 11000000000),
+                ("Ada", "03", "D", 11000000000),
+                ("Bela", "01", "OFF", 11000000),
+                ("Bela", "02", "E", 11000000000),
+            )
+        ],
+    ]
+    if defect == "wrong-weight":
+        proposed["preferences"][3]["weight"] = 11000000000
+    if defect == "missing-rule":
+        proposed = None
+    activity = []
+    if defect in {"missing-rule", "repaired-invalid-write"}:
+        activity.append(
+            {
+                "kind": "tool",
+                "name": "write",
+                "ok": False,
+                "result": "Trusted schedule check after this command:\nMissing required preferences: {'at most one shift per day'}",
+            }
+        )
+    outcome = RunOutcome(initial=FIXTURE_SCHEDULES[case.fixture], proposed=proposed, activity=activity)
+    assert grade(case, outcome).passed is (defect is None)
+
+
 def qualified_staffing_proposal(general_count=1, qualified=("S1", "S2")):
     proposed = copy.deepcopy(FIXTURE_SCHEDULES["new-schedule"])
     proposed["dates"]["range"] = {"startDate": "2026-03-01", "endDate": "2026-03-01"}
