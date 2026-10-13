@@ -647,6 +647,16 @@ class PublicDiagnostic:
             self._mark_inconclusive("job_submission_error", "A diagnostic job could not be submitted.")
             return None
         if response.status_code == 429:
+            body = self._json_object(response) or {}
+            error = body.get("error")
+            if isinstance(error, dict) and error.get("code") == "client_job_capacity_exceeded":
+                self._mark_inconclusive(
+                    "client_job_capacity_reached",
+                    "The backend limits active jobs per address for unauthenticated requests. Raise "
+                    f"JOB_MAX_PENDING_PER_CLIENT to at least {self.config.expected_concurrency + QUEUED_JOB_TARGET} "
+                    "while the diagnostic runs.",
+                )
+                return None
             self._mark_inconclusive(
                 "job_capacity_reached",
                 "The backend rejected a diagnostic job because active capacity was already full.",

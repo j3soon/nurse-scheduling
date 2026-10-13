@@ -35,6 +35,7 @@ from typing import Any
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from nurse_scheduling.loader import MAX_NESTING_DEPTH
 from nurse_scheduling.scheduler import SUPPORTED_SOLVER_CHOICES, ScheduleResult
@@ -2232,6 +2233,33 @@ def test_queue_capacity_is_reported_as_429():
         assert rejected.status_code == 429
         assert rejected.headers["retry-after"] == "1"
         assert rejected.json()["error"]["code"] == "job_capacity_exceeded"
+
+
+def test_anonymous_jobs_share_a_budget_per_forwarded_address():
+    # Compose runs Uvicorn with proxy headers, so NGINX's forwarded address names the client.
+    app = create_app(
+        settings=_settings(max_pending_jobs_per_client=2),
+        store=MemoryJobStore(),
+        runner=SuccessfulRunner(),
+        start_background=False,
+    )
+    with TestClient(ProxyHeadersMiddleware(app, trusted_hosts="*")) as client:
+        first_address = {"X-Forwarded-For": "203.0.113.1"}
+        assert [_create(client, first_address).status_code for _ in range(2)] == [202, 202]
+        rejected = _create(client, first_address)
+
+        assert rejected.status_code == 429
+        assert rejected.headers["retry-after"] == "1"
+        assert rejected.json()["error"]["code"] == "client_job_capacity_exceeded"
+        assert _create(client, {"X-Forwarded-For": "203.0.113.2"}).status_code == 202
+
+
+def test_authenticated_jobs_are_not_limited_per_address():
+    settings = _settings(auth_token=AUTH_TOKEN, max_pending_jobs_per_client=1)
+    with _client(start_background=False, settings=settings) as client:
+        headers = {"Authorization": f"Bearer {AUTH_TOKEN}"}
+
+        assert [_create(client, headers).status_code for _ in range(3)] == [202, 202, 202]
 
 
 def test_input_and_timeout_validation():

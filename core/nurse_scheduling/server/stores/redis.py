@@ -19,6 +19,7 @@
 
 import json
 import math
+import secrets
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -36,6 +37,7 @@ from ..errors import (
     JobNotFoundError,
     StoreWriteConflictError,
 )
+from ..job_store import require_client_capacity
 from ..jobs.models import (
     Job,
     JobEvent,
@@ -50,6 +52,7 @@ from ..jobs.models import (
     WorkerLease,
 )
 from ..retry import retry_with_backoff
+from ..suspicion import address_digest
 from ..usage_metrics import RedisUsageMetrics, schedule_basics_for
 
 SOCKET_TIMEOUT_MARGIN_SECONDS = 5.0
@@ -187,6 +190,10 @@ class RedisJobStore:
         """Persistent UUID identifying this Redis database and key namespace."""
         self._store_id = self._resolve_store_id()
         """Persistent identity captured during startup."""
+        self._client_key_salt = self._resolve_metadata(
+            self._key("metadata:client_key_salt"), secrets.token_hex(32), "client key salt"
+        )
+        """Private salt shared through Redis, so every API process derives the same client keys."""
         self._jobs_key = self._key("jobs")
         """Sorted-set key (`ZADD`) of retained job IDs scored by creation time."""
         self._pending_key = self._key("pending")
@@ -205,24 +212,31 @@ class RedisJobStore:
         """Return the persistent identity of this Redis database and namespace."""
         return self._store_id
 
+    def client_key(self, address: str) -> str:
+        """Return a salted digest of an address that every process sharing this store derives."""
+        return address_digest(self._client_key_salt, address)
+
     def _resolve_store_id(self) -> str:
         """Atomically create or read the persistent Redis store identity."""
+        return self._resolve_metadata(self._store_id_key, str(uuid4()), "identity")
+
+    def _resolve_metadata(self, key: str, candidate: str, description: str) -> str:
+        """Atomically create or read one persistent store value."""
         return retry_with_backoff(
-            self._resolve_store_id_once,
+            lambda: self._resolve_metadata_once(key, candidate, description),
             retry_on=redis.RedisError,
         )
 
-    def _resolve_store_id_once(self) -> str:
-        """Create or read the store identity in one retryable attempt."""
-        value = _decode(self._redis.get(self._store_id_key))
+    def _resolve_metadata_once(self, key: str, candidate: str, description: str) -> str:
+        """Create or read one store value in one retryable attempt."""
+        value = _decode(self._redis.get(key))
         if isinstance(value, str) and value.strip():
             return value
-        candidate = str(uuid4())
-        self._redis.set(self._store_id_key, candidate, nx=True)
-        value = _decode(self._redis.get(self._store_id_key))
+        self._redis.set(key, candidate, nx=True)
+        value = _decode(self._redis.get(key))
         if isinstance(value, str) and value.strip():
             return value
-        raise redis.RedisError("Redis job store identity could not be initialized")
+        raise redis.RedisError(f"Redis job store {description} could not be initialized")
 
     def create(
         self,
@@ -237,7 +251,7 @@ class RedisJobStore:
 
         Raises:
             StoreWriteConflictError: If the job ID already exists.
-            JobCapacityError: If pending or retained capacity is exhausted.
+            JobCapacityError: If pending, per-client, or retained capacity is exhausted.
             redis.RedisError: If a Redis operation fails.
         """
         # Parsed once outside the loop, because a watched transaction may retry and the
@@ -255,6 +269,21 @@ class RedisJobStore:
                     if pending_count >= limits.max_pending:
                         transaction.unwatch()
                         raise JobCapacityError("Too many jobs are queued or running")
+                    if limits.max_pending_per_client is not None and job.request.client_key is not None:
+                        # A watched pending set fences membership changes, and a job never changes its key.
+                        pending_ids = [
+                            self._job_key(_decode(raw_id)) for raw_id in transaction.smembers(self._pending_key)
+                        ]
+                        raw_pending = transaction.mget(pending_ids) if pending_ids else []
+                        try:
+                            require_client_capacity(
+                                job,
+                                (self._deserialize_job(raw) for raw in raw_pending if raw is not None),
+                                limits,
+                            )
+                        except JobCapacityError:
+                            transaction.unwatch()
+                            raise
 
                     prune_ids: list[str] = []
                     retained_count = transaction.zcard(self._jobs_key)
@@ -840,6 +869,7 @@ class RedisJobStore:
                 "solver": job.request.solver,
                 "prettify": job.request.prettify,
                 "timeout_seconds": job.request.timeout_seconds,
+                "client_key": job.request.client_key,
             },
             "created_at": job.created_at.isoformat(),
             "revision": job.revision,
@@ -881,6 +911,7 @@ class RedisJobStore:
                 solver=request["solver"],
                 prettify=request.get("prettify"),
                 timeout_seconds=request["timeout_seconds"],
+                client_key=request.get("client_key"),
             ),
             created_at=datetime.fromisoformat(data["created_at"]),
             revision=data["revision"],

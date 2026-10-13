@@ -2150,11 +2150,15 @@ class BackgroundTestOptimizer:
     def __init__(self) -> None:
         self.release = threading.Event()
         self.submitted_yaml = ""
+        self.submitted_client_address: str | None = None
         self.closed = False
         self.deleted: list[str] = []
 
-    async def submit(self, schedule_yaml: str, _timeout_seconds: int | None) -> OptimizerJobPayload:
+    async def submit(
+        self, schedule_yaml: str, _timeout_seconds: int | None, client_address: str | None = None
+    ) -> OptimizerJobPayload:
         self.submitted_yaml = schedule_yaml
+        self.submitted_client_address = client_address
         return OptimizerJobPayload(id="remote-background", state="running")
 
     async def get(self, job_id: str) -> OptimizerJobPayload:
@@ -2339,6 +2343,8 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         submitted = parse_schedule(optimizer.submitted_yaml)
         assert [person["id"] for person in submitted["people"]["items"]] == ["P1", "P2"]
         assert "description" not in submitted
+        # The optimizer limits active jobs per address, so it must see the browser's, not this service's.
+        assert optimizer.submitted_client_address == "testclient"
 
         optimizer.release.set()
         deadline = time.monotonic() + 2

@@ -19,6 +19,7 @@
 
 # This test is mostly AI generated.
 
+import json
 import os
 import time
 import uuid
@@ -33,6 +34,7 @@ import redis
 
 from nurse_scheduling.server.config import DEFAULT_JOB_RETENTION_SECONDS, DEFAULT_MAX_RETAINED_JOBS
 from nurse_scheduling.server.errors import (
+    ClientJobCapacityError,
     JobArtifactNotFoundError,
     JobCapacityError,
     JobInputNotFoundError,
@@ -125,12 +127,16 @@ def store(store_factory):
     return store_factory()
 
 
-def _controller(store, *, max_pending=8, max_retained=32, now=None, runtime_identity=None):
+def _controller(store, *, max_pending=8, max_retained=32, max_pending_per_client=None, now=None, runtime_identity=None):
     clock = (lambda: now) if now is not None else (lambda: datetime.now(timezone.utc))
     sequence = iter(f"job_{index}" for index in range(100))
     return JobController(
         store,
-        limits=StoreLimits(max_pending=max_pending, max_retained=max_retained),
+        limits=StoreLimits(
+            max_pending=max_pending,
+            max_retained=max_retained,
+            max_pending_per_client=max_pending_per_client,
+        ),
         retention_seconds=60,
         worker_lease_seconds=30,
         runtime_identity=runtime_identity,
@@ -139,7 +145,7 @@ def _controller(store, *, max_pending=8, max_retained=32, now=None, runtime_iden
     )
 
 
-def _create(controller, input_name="input.yaml"):
+def _create(controller, input_name="input.yaml", client_address=None):
     return controller.create_job(
         input_name=input_name,
         client_id="client",
@@ -147,6 +153,7 @@ def _create(controller, input_name="input.yaml"):
         prettify=True,
         timeout_seconds=60,
         input_bytes=b"apiVersion: alpha\n",
+        client_address=client_address,
     )
 
 
@@ -769,6 +776,60 @@ def test_store_enforces_capacity_across_concurrent_creates(store):
         results = list(executor.map(create, range(8)))
 
     assert sum(not isinstance(result, JobCapacityError) for result in results) == 4
+
+
+def test_store_limits_active_jobs_per_client_address(store):
+    controller = _controller(store, max_pending_per_client=2)
+    first = _create(controller, client_address="203.0.113.1")
+    _create(controller, client_address="203.0.113.1")
+
+    with pytest.raises(ClientJobCapacityError, match="from this address"):
+        _create(controller, client_address="203.0.113.1")
+    # Other addresses and trusted callers keep the remaining shared capacity.
+    _create(controller, client_address="203.0.113.2")
+    _create(controller)
+
+    controller.cancel_job(first.id)
+    replacement = _create(controller, client_address="203.0.113.1")
+
+    assert replacement.request.client_key == first.request.client_key
+    assert "203.0.113.1" not in first.request.client_key
+
+
+def test_store_enforces_client_capacity_across_concurrent_creates(store):
+    controller = _controller(store, max_pending_per_client=3)
+
+    def create(index: int):
+        try:
+            return _create(controller, f"{index}.yaml", client_address="203.0.113.1")
+        except JobCapacityError as error:
+            return error
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(create, range(8)))
+
+    assert sum(not isinstance(result, JobCapacityError) for result in results) == 3
+    assert all(isinstance(result, ClientJobCapacityError) for result in results if isinstance(result, Exception))
+
+
+def test_redis_processes_sharing_a_store_derive_the_same_client_key(fake_redis_store_factory):
+    first = fake_redis_store_factory(key_prefix="test:jobs:shared")
+    second = fake_redis_store_factory(key_prefix="test:jobs:shared")
+    other = fake_redis_store_factory(key_prefix="test:jobs:other")
+
+    assert first.client_key("203.0.113.1") == second.client_key("203.0.113.1")
+    assert first.client_key("203.0.113.1") != other.client_key("203.0.113.1")
+    assert first.client_key("203.0.113.1") != first.client_key("203.0.113.2")
+
+
+def test_redis_store_reads_jobs_saved_before_client_keys(fake_redis_store_factory):
+    store = fake_redis_store_factory()
+    job = _create(_controller(store), client_address="203.0.113.1")
+    saved = json.loads(store._redis.get(store._job_key(job.id)))
+    del saved["request"]["client_key"]
+    store._redis.set(store._job_key(job.id), json.dumps(saved))
+
+    assert store.get(job.id).request.client_key is None
 
 
 def test_store_claims_each_job_at_most_once_under_concurrency(store):

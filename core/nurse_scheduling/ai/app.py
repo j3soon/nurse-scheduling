@@ -532,6 +532,7 @@ def create_app(
         session = store.create(owner, request.schedule_yaml)
         session.observe_frontend_version(request.frontend_version, app.state.app_version)
         session.frontend_timezone = request.frontend_timezone
+        session.client_address = http_request.client.host if http_request.client else None
         session.export_metadata["endpoint"] = request.ai_endpoint or str(http_request.base_url).rstrip("/")
         # The client never learns this ID unless the save succeeds, so release its slot otherwise.
         saved = False
@@ -786,6 +787,8 @@ def create_app(
         session.observe_frontend_version(body.frontend_version, app.state.app_version)
         if body.frontend_timezone is not None:
             session.frontend_timezone = body.frontend_timezone
+        if request.client is not None:
+            session.client_address = request.client.host
         cursor = event_stream.cursor(session_id)
         receipt = await session.accept_message(
             question,

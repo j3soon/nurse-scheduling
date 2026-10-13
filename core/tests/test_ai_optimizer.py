@@ -154,7 +154,9 @@ class FakeOptimizerBackend:
         self.result_entered = asyncio.Event()
         self.deleted_event = asyncio.Event()
 
-    async def submit(self, schedule_yaml: str, timeout_seconds: int | None) -> OptimizerJobPayload:
+    async def submit(
+        self, schedule_yaml: str, timeout_seconds: int | None, client_address: str | None = None
+    ) -> OptimizerJobPayload:
         self.submit_entered.set()
         if self.submit_gate is not None:
             await self.submit_gate.wait()
@@ -321,6 +323,24 @@ def test_submission_without_provenance_does_not_probe_info(backend_info: dict[st
         assert payload.id == "remote-1"
         assert payload.backend == {"url": "http://api:8000", "request_timeout_seconds": 5}
         await backend.close()
+
+    asyncio.run(scenario())
+
+
+def test_http_backend_forwards_the_browser_address_only_when_known() -> None:
+    async def scenario() -> None:
+        forwarded: list[str | None] = []
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            forwarded.append(request.headers.get("X-Forwarded-For"))
+            return httpx.Response(202, json={"id": f"remote-{len(forwarded)}", "state": "queued"})
+
+        backend = HttpOptimizerBackend("http://api:8000", "", 5, 1_000_000, transport=httpx.MockTransport(handle))
+        await backend.submit(TEST_SCHEDULE, 30, client_address="203.0.113.1")
+        await backend.submit(TEST_SCHEDULE, 30)
+        await backend.close()
+
+        assert forwarded == ["203.0.113.1", None]
 
     asyncio.run(scenario())
 
@@ -498,7 +518,9 @@ def test_a_rejected_submission_reports_the_reason_to_the_model() -> None:
 def test_start_returns_immediately_and_completion_wakes_the_agent() -> None:
     async def scenario() -> None:
         class ProvenanceBackend(FakeOptimizerBackend):
-            async def submit(self, schedule_yaml: str, timeout_seconds: int | None) -> OptimizerJobPayload:
+            async def submit(
+                self, schedule_yaml: str, timeout_seconds: int | None, client_address: str | None = None
+            ) -> OptimizerJobPayload:
                 payload = await super().submit(schedule_yaml, timeout_seconds)
                 payload.backend = {"url": "http://optimizer:8000", "app_version": "v0.4.3"}
                 payload.request = {"solver": "ortools/cp-sat", "timeout_seconds": timeout_seconds}
@@ -964,7 +986,9 @@ def test_finish_now_waits_for_workbook_before_terminal_update() -> None:
 
 def test_immediately_completed_submission_waits_for_workbook_before_terminal_update() -> None:
     class ImmediateBackend(FakeOptimizerBackend):
-        async def submit(self, schedule_yaml: str, timeout_seconds: int | None) -> OptimizerJobPayload:
+        async def submit(
+            self, schedule_yaml: str, timeout_seconds: int | None, client_address: str | None = None
+        ) -> OptimizerJobPayload:
             self.submissions.append((schedule_yaml, timeout_seconds))
             return OptimizerJobPayload(id="remote-1", state="completed", terminal=True)
 

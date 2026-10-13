@@ -91,7 +91,9 @@ class OptimizerJobPayload(BaseModel):
 class OptimizerBackend(Protocol):
     """Transport boundary used by session-scoped optimization jobs."""
 
-    async def submit(self, schedule_yaml: str, timeout_seconds: int | None) -> OptimizerJobPayload: ...
+    async def submit(
+        self, schedule_yaml: str, timeout_seconds: int | None, client_address: str | None = None
+    ) -> OptimizerJobPayload: ...
 
     async def get(self, job_id: str) -> OptimizerJobPayload: ...
 
@@ -243,7 +245,14 @@ class SessionOptimizer:
                 job.retired.set()
         self._discard_session(session_id)
 
-    async def start(self, session_id: str, schedule_yaml: str, timeout_seconds: int | None) -> SessionOptimization:
+    async def start(
+        self,
+        session_id: str,
+        schedule_yaml: str,
+        timeout_seconds: int | None,
+        client_address: str | None = None,
+    ) -> SessionOptimization:
+        """Submit one optimizer job for a session, attributed to the browser address that asked for it."""
         if self._closed:
             raise OptimizerError("The optimizer service is shutting down.")
         owner = self._sessions.get(session_id)
@@ -267,7 +276,9 @@ class SessionOptimizer:
         reservation = object()
         owner.reservation = reservation
         owner.runs += 1
-        submission = asyncio.create_task(self._submit(session_id, owner, reservation, schedule_yaml, timeout_seconds))
+        submission = asyncio.create_task(
+            self._submit(session_id, owner, reservation, schedule_yaml, timeout_seconds, client_address)
+        )
         self._submissions.add(submission)
 
         def submitted(task: asyncio.Task) -> None:
@@ -292,6 +303,7 @@ class SessionOptimizer:
         reservation: object,
         schedule_yaml: str,
         timeout_seconds: int | None,
+        client_address: str | None,
     ) -> SessionOptimization:
         def owns_submission() -> bool:
             return not self._closed and self._sessions.get(session_id) is owner and owner.reservation is reservation
@@ -304,6 +316,7 @@ class SessionOptimizer:
             payload = await self._backend.submit(
                 prepared.submission_yaml,
                 self._default_timeout_seconds if timeout_seconds is None else timeout_seconds,
+                client_address=client_address,
             )
         except ValueError as exc:
             self._release_reservation(session_id, owner, reservation)

@@ -59,14 +59,22 @@ class HttpOptimizerBackend:
         self._max_result_bytes = max_result_bytes
         self._request_timeout_seconds = request_timeout_seconds
 
-    async def submit(self, schedule_yaml: str, timeout_seconds: int | None) -> OptimizerJobPayload:
+    async def submit(
+        self, schedule_yaml: str, timeout_seconds: int | None, client_address: str | None = None
+    ) -> OptimizerJobPayload:
+        """Submit a job, forwarding the browser address so the optimizer bounds jobs per person.
+
+        The optimizer accepts this header only behind a proxy that trusts its peer, as in
+        Docker Compose. Otherwise it limits this service's own address.
+        """
         fields: dict[str, tuple[None, str]] = {
             "yaml_content": (None, schedule_yaml),
             "prettify": (None, "true"),
         }
         if timeout_seconds is not None:
             fields["timeout"] = (None, str(timeout_seconds))
-        payload = await self._request_job("POST", "optimize", files=fields)
+        headers = {"X-Forwarded-For": client_address} if client_address else None
+        payload = await self._request_job("POST", "optimize", files=fields, headers=headers)
         payload.backend = self._backend_info(payload.backend)
         return payload
 

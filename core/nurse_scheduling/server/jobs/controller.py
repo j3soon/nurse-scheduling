@@ -104,16 +104,19 @@ class JobController:
         timeout_seconds: int,
         input_bytes: bytes,
         auth_credential_id: str | None = None,
+        client_address: str | None = None,
     ) -> Job:
         """Create and enqueue a job with its submitted input.
 
-        ID collisions are retried before reporting an application conflict.
+        ID collisions are retried before reporting an application conflict. A job with a
+        `client_address` counts against that address's share of the pending capacity.
 
         Raises:
-            JobCapacityError: If pending or retained capacity is exhausted.
+            JobCapacityError: If pending, per-client, or retained capacity is exhausted.
             JobOperationContentionError: If a unique job ID cannot be allocated.
         """
         now = self._clock()
+        client_key = self._store.client_key(client_address) if client_address is not None else None
 
         def create() -> Job:
             """Build and atomically persist one job-ID candidate."""
@@ -126,6 +129,7 @@ class JobController:
                     solver=solver,
                     prettify=prettify,
                     timeout_seconds=timeout_seconds,
+                    client_key=client_key,
                 ),
                 created_at=now,
             )

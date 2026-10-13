@@ -304,6 +304,10 @@ def classify_suspicious_request(
         # Many addresses meeting a full queue is a busy service. One address filling it is
         # not, and only counting per address separates them.
         return "job_capacity_exceeded", "warning"
+    if status_code == 429 and error_code == "client_job_capacity_exceeded":
+        # A browser holds at most a few jobs, so meeting the per-address limit means one
+        # address is submitting faster than the queue drains.
+        return "client_job_capacity_exceeded", "warning"
     if status_code == 404:
         # A missing route is noise, and so is a wordlist path that merely landed on the job
         # route. Only an identifier of the issued shape shows knowledge of what a job ID is.

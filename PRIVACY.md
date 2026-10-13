@@ -30,6 +30,7 @@ Clicking **Optimize** sends the current scheduling YAML to the backend shown in 
 - Operational logs may include job IDs, pseudonymous client IDs, filenames, statuses, timing, and errors.
 - The backend sets a pseudonymous client UUID cookie for up to 7 days.
 - The backend counts repeated suspicious requests as a salted digest of the connecting address, never the address itself. Counters expire within minutes and are excluded from reporting telemetry.
+- The backend stores a salted digest of the connecting address with each unauthenticated optimization job, never the address itself, to limit how many jobs one address runs at once. The digest is deleted with the job and is excluded from reporting telemetry. The AI service keeps the browser's address in memory to forward it with optimizer requests and does not save it.
 - Docker Redis deployments retain minimal per-job telemetry for weekly reports, including job and pseudonymous client IDs, solver, lifecycle timestamps and state, queue and runtime durations, outcome, failure code, solver status, termination reason, configured timeout, download count, people and shift type counts, and the schedule date range. Telemetry excludes the uploaded YAML, people and shift type identifiers, descriptions, filenames, IP addresses, and email addresses. Reporting does not remove telemetry. Rows expire 30 days after the end of their event week by default. Operators may send this telemetry through a configured reporting provider such as Mailgun.
 
 ## Experimental AI

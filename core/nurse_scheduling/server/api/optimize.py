@@ -125,6 +125,18 @@ def _client_id(request: Request, response: Response) -> str:
     return client_id
 
 
+def _limited_client_address(request: Request) -> str | None:
+    """Return the address whose active jobs are bounded, or `None` for a trusted caller.
+
+    A bearer key belongs to an operator or service the deployment trusts, such as the
+    diagnostic, so only anonymous requests share a per-address budget. Behind the Compose
+    proxy, Uvicorn resolves the address from the forwarded header that NGINX sets.
+    """
+    if request.state.auth_credential_id is not None or request.client is None:
+        return None
+    return request.client.host
+
+
 def _report_foreign_job_access(request: Request, job) -> None:
     """Report a browser reaching a job that a different browser created.
 
@@ -190,6 +202,7 @@ async def create_job(
         timeout_seconds=timeout_seconds,
         input_bytes=content,
         auth_credential_id=request.state.auth_credential_id,
+        client_address=_limited_client_address(request),
     )
     # This project's own data is plain and always parses, so neither shape comes from it.
     # The job is queued by now, so reporting must not be able to fail the response for it.

@@ -510,6 +510,12 @@ their feasible results. Queued jobs are then finished in batches matching the
 observed peak concurrency. Every submitted job has a one-hour solver timeout
 and bounded cleanup.
 
+The diagnostic needs `DIAGNOSTIC_EXPECTED_CONCURRENCY` plus five active jobs
+from one address. A deployment with keys exempts it through
+`DIAGNOSTIC_AUTH_TOKEN`. An open deployment counts its jobs against
+`JOB_MAX_PENDING_PER_CLIENT`, so raise that limit while the diagnostic runs.
+Otherwise the run reports `client_job_capacity_reached` and is inconclusive.
+
 The first successful response is printed immediately. The concluding summary
 includes the observed job backend. The example timing values below only show
 the output format and are not measured deployment performance:

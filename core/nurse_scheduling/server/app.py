@@ -186,6 +186,7 @@ def create_app(
         limits=StoreLimits(
             max_pending=settings.max_pending_jobs,
             max_retained=settings.max_retained_jobs,
+            max_pending_per_client=settings.max_pending_jobs_per_client,
         ),
         retention_seconds=settings.job_retention_seconds,
         worker_lease_seconds=settings.worker_lease_seconds,

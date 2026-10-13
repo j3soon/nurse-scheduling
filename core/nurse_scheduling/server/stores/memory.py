@@ -17,6 +17,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import secrets
 import threading
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -30,7 +31,9 @@ from ..errors import (
     JobNotFoundError,
     StoreWriteConflictError,
 )
+from ..job_store import require_client_capacity
 from ..jobs.models import Job, JobEvent, JobState, ServerActivity, StoredArtifact, StoreLimits, WorkerLease
+from ..suspicion import address_digest
 
 
 @dataclass
@@ -79,11 +82,17 @@ class MemoryJobStore:
         """Re-entrant lock guarding all record, queue, artifact, and event access."""
         self._changed = threading.Condition(self._lock)
         """Condition backed by `_lock` that adds `wait()` and `notify_all()` for job changes."""
+        self._client_key_salt = secrets.token_hex(32)
+        """Private salt for client keys, which only this process compares."""
 
     @property
     def store_id(self) -> str:
         """Return this process-local store's opaque identity."""
         return self._store_id
+
+    def client_key(self, address: str) -> str:
+        """Return a salted digest of an address that this process alone can reproduce."""
+        return address_digest(self._client_key_salt, address)
 
     def create(
         self,
@@ -98,7 +107,7 @@ class MemoryJobStore:
 
         Raises:
             StoreWriteConflictError: If the job ID already exists.
-            JobCapacityError: If pending or retained capacity is exhausted.
+            JobCapacityError: If pending, per-client, or retained capacity is exhausted.
         """
         with self._changed:
             if job.id in self._records:
@@ -106,6 +115,11 @@ class MemoryJobStore:
             pending_count = sum(not record.job.state.terminal for record in self._records.values())
             if pending_count >= limits.max_pending:
                 raise JobCapacityError("Too many jobs are queued or running")
+            require_client_capacity(
+                job,
+                (record.job for record in self._records.values() if not record.job.state.terminal),
+                limits,
+            )
 
             while len(self._records) >= limits.max_retained:
                 terminal = sorted(
