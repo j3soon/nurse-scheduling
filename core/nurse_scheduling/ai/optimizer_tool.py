@@ -30,6 +30,7 @@ def optimizer_start_message(job_id: str, source_sha256: str) -> str:
     """Render the startup acknowledgement shared by production and controlled evaluations."""
     return (
         f"Started optimizer job {job_id} in the background for schedule SHA-256 {source_sha256}. "
+        "Stop tool calls for this turn and tell the user the optimizer is running in the background. "
         "The assistant will be woken when it finishes. The user can keep chatting meanwhile."
     )
 
