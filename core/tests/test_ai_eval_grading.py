@@ -1540,3 +1540,52 @@ def test_import_grader_checks_every_uploaded_rule(drop_rule):
         proposed["preferences"].pop()
     result = grade(case, RunOutcome(initial=FIXTURE_SCHEDULES[case.fixture], proposed=proposed))
     assert result.passed is not drop_rule
+
+
+@pytest.mark.parametrize("case_id", ["request-inspection-after-edit", "request-inspection-after-creation"])
+@pytest.mark.parametrize("mutation", [None, "failed-command", "wrong-count", "wrong-request"])
+def test_context_refresh_cases_require_successful_inspection_and_exact_counts(case_id, mutation):
+    from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
+
+    from .ai_test_helper import base_schedule_payload, schedule_yaml
+
+    case = next(case for case in load_cases(CASES_PATH) if case.id == case_id)
+    original = FIXTURE_SCHEDULES[case.fixture]
+    proposed = base_schedule_payload() if case_id.endswith("creation") else copy.deepcopy(original)
+    if case_id.endswith("creation"):
+        proposed.pop("appVersion")
+    if case_id.endswith("edit"):
+        proposed["preferences"].extend(copy.deepcopy(list(case.expected_diff[0].added)))
+    assert validate_frontend_schedule_yaml(schedule_yaml(proposed), 1_000_000).valid
+    from nurse_scheduling.ai.attachment_tools.inspect_shift_requests import inspect_requests
+    from nurse_scheduling.ai.result_context import build_result_context
+
+    source = schedule_yaml(proposed)
+    counts = inspect_requests(build_result_context(source), source.encode())
+    assert case.answer_json == {
+        "requestEntries": counts["request_entries"],
+        "personDateTargets": counts["person_date_targets"],
+    }
+    if mutation == "wrong-request":
+        proposed["preferences"][-1]["weight"] = 99
+    answer = dict(case.answer_json)
+    if mutation == "wrong-count":
+        answer["requestEntries"] += 1
+    command = case.tool_usage.required_calls[0][1]["command"]
+    result = grade(
+        case,
+        RunOutcome(
+            initial=original,
+            proposed=proposed,
+            answer=json.dumps(answer),
+            activity=[
+                {
+                    "kind": "tool",
+                    "name": "bash",
+                    "arguments": json.dumps({"command": command}),
+                    "ok": mutation != "failed-command",
+                }
+            ],
+        ),
+    )
+    assert result.passed == (mutation is None)

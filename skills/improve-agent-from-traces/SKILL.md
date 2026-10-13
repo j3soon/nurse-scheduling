@@ -126,6 +126,10 @@ same pair more than once.
 
 Run deterministic input and grader checks first. Run the selected case with
 the current prompt to confirm the baseline rather than relying on an old trace.
+After adding or changing cases here, run the complete
+`tests/test_ai_eval_grading.py` suite from `core/` before provider calls. Include
+the dataset checks. Focused mutation tests can miss category, path and allowed-change
+errors.
 
 ## Choose the fix
 

@@ -1,0 +1,52 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "id": "request-inspection-after-edit",
+  "fixture": "small-clinic",
+  "question": "Add a shift request for Ana-M to work D on 2026-01-06 with weight 1 and no description. Use exactly the date selector [\"2026-01-06\"] in the new preference. Keep every existing rule. After the edit passes trusted server validation, run exactly `python /reference/tools/inspect_shift_requests.py --max-requests 0` as a separate bash tool call. Use its counts to return JSON with integer requestEntries and personDateTargets. Do not optimize.",
+  "expect_proposal": true,
+  "changes": [
+    "preferences"
+  ],
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "added": [
+        {
+          "type": "shift request",
+          "person": [
+            "Ana-M"
+          ],
+          "date": [
+            "2026-01-06"
+          ],
+          "shiftType": [
+            "D"
+          ],
+          "weight": 1
+        }
+      ]
+    }
+  ],
+  "answer_json": {
+    "requestEntries": 3,
+    "personDateTargets": 3
+  },
+  "tool_usage": {
+    "required_calls": [
+      {
+        "name": "bash",
+        "arguments": {
+          "command": "python /reference/tools/inspect_shift_requests.py --max-requests 0"
+        }
+      }
+    ],
+    "forbidden": [
+      "optimizer"
+    ]
+  },
+  "tags": [
+    "request-inspection"
+  ],
+  "note": "This testcase is mostly AI generated. The explicit separate command checks server context refresh after a valid edit. Counts are three entries and three per-entry person/date targets. This does not measure spontaneous helper selection."
+}

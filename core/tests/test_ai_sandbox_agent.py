@@ -36,6 +36,7 @@ from nurse_scheduling.ai.agent_types import (
     AgentToolStart,
     AgentToolUse,
 )
+from nurse_scheduling.ai.attachment_tools.inspect_shift_requests import inspect_requests
 from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL, WORKSPACE_OPTIMIZER_RESULT
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.pi.edit import EDIT_TOOL
@@ -61,12 +62,13 @@ from nurse_scheduling.ai.workspace import (
     WorkspaceLimits,
     WorkspaceMetrics,
     _measured_sandbox_turn,
+    _ScheduleCandidateTracker,
     attachment_path,
     hydrate_sandbox,
 )
 from nurse_scheduling.ai.workspace_tools import run_workspace
 
-from .ai_test_helper import SCHEDULE_BYTE_LIMIT, schedule_yaml
+from .ai_test_helper import SCHEDULE_BYTE_LIMIT, base_schedule_payload, schedule_yaml
 
 MESSAGES: list[ChatMessage] = [{"role": "user", "content": "Give P1 a description."}]
 
@@ -152,6 +154,7 @@ def test_one_turn_hydrates_runs_reads_validates_proposes_and_closes():
     assert WORKSPACE_SCHEDULE in backend.files
     context = json.loads(backend.files[WORKSPACE_SOURCE_CONTEXT])
     assert context["people"] == ["P1", "P2"]
+    assert inspect_requests(context, backend.files[WORKSPACE_SCHEDULE])["request_entries"] == 1
     assert set(REFERENCE_SCHEMAS.values()) <= backend.files.keys()
     assert b"# Experimental AI Chat" in backend.files[f"{REFERENCE_USER_GUIDE}/experimental-ai.md"]
     assert b"# People" in backend.files[f"{REFERENCE_USER_GUIDE}/people.md"]
@@ -925,3 +928,92 @@ def test_uncompilable_draft_keeps_yaml_without_a_source_context(has_result):
     assert WORKSPACE_SOURCE_CONTEXT not in backend.files
     if has_result:
         assert backend.files[WORKSPACE_RESULT_CONTEXT] == context
+
+
+@pytest.mark.parametrize("new_schedule", [False, True])
+def test_accepted_schedule_edits_refresh_request_inspection_context(new_schedule):
+    async def check():
+        base = (
+            (Path(__file__).parent / "ai_eval/fixtures/new-schedule.yaml").read_text()
+            if new_schedule
+            else schedule_yaml()
+        )
+        backend = FakeSandboxBackend("context-refresh")
+        archived = b'{"source_sha256":"optimizer-submission"}'
+        await hydrate_sandbox(backend, base, optimizer_result=b"workbook", optimizer_context=archived)
+        backend.files[WORKSPACE_PENDING_RESULT_CONTEXT] = archived
+        tracker = _ScheduleCandidateTracker(backend, base, SCHEDULE_BYTE_LIMIT)
+        payload = base_schedule_payload()
+        payload["preferences"].append(
+            {"type": "shift request", "person": ["P2"], "date": ["FIRST"], "shiftType": ["N"], "weight": 2}
+        )
+        await backend.write_file(WORKSPACE_SCHEDULE, schedule_yaml(payload))
+        outcome, candidate = await tracker.review_if_changed()
+        assert outcome.ok and candidate is not None
+        context = json.loads(backend.files[WORKSPACE_SOURCE_CONTEXT])
+        counts = inspect_requests(context, backend.files[WORKSPACE_SCHEDULE])
+        assert (counts["request_entries"], counts["person_date_targets"]) == (2, 2)
+        assert backend.files[WORKSPACE_RESULT_CONTEXT] == archived
+        assert backend.files[WORKSPACE_PENDING_RESULT_CONTEXT] == archived
+        if not new_schedule:
+            await backend.write_file(WORKSPACE_SCHEDULE, base)
+            outcome, candidate = await tracker.review_if_changed()
+            assert outcome.ok and candidate == base
+            restored = json.loads(backend.files[WORKSPACE_SOURCE_CONTEXT])
+            assert inspect_requests(restored, backend.files[WORKSPACE_SCHEDULE])["request_entries"] == 1
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize("invalid", [b"not a schedule", b"\xff", None])
+def test_invalid_or_deleted_schedule_keeps_previous_inspection_context(invalid):
+    async def check():
+        base = schedule_yaml()
+        backend = FakeSandboxBackend("invalid-context")
+        await hydrate_sandbox(backend, base)
+        previous = backend.files[WORKSPACE_SOURCE_CONTEXT]
+        tracker = _ScheduleCandidateTracker(backend, base, SCHEDULE_BYTE_LIMIT)
+        if invalid is None:
+            del backend.files[WORKSPACE_SCHEDULE]
+        else:
+            await backend.write_file(WORKSPACE_SCHEDULE, invalid)
+        outcome, candidate = await tracker.review_if_changed()
+        assert not outcome.ok and candidate is None
+        assert backend.files[WORKSPACE_SOURCE_CONTEXT] == previous
+        if invalid is not None:
+            with pytest.raises(ValueError, match="stale"):
+                inspect_requests(json.loads(previous), invalid)
+
+    asyncio.run(check())
+
+
+def test_unchanged_schedule_does_not_rebuild_inspection_context(monkeypatch):
+    async def check():
+        base = schedule_yaml()
+        backend = FakeSandboxBackend("unchanged-context")
+        await hydrate_sandbox(backend, base)
+        tracker = _ScheduleCandidateTracker(backend, base, SCHEDULE_BYTE_LIMIT)
+
+        def unexpected_build(_source):
+            pytest.fail("Unchanged YAML must not rebuild its compiled context")
+
+        monkeypatch.setattr("nurse_scheduling.ai.workspace.build_result_context", unexpected_build)
+        assert await tracker.review_if_changed() is None
+
+    asyncio.run(check())
+
+
+def test_accepted_incomplete_draft_keeps_yaml_without_inspection_context():
+    async def check():
+        base = (Path(__file__).parent / "ai_eval/fixtures/new-schedule.yaml").read_text()
+        backend = FakeSandboxBackend("incomplete-context")
+        await hydrate_sandbox(backend, base)
+        tracker = _ScheduleCandidateTracker(backend, base, SCHEDULE_BYTE_LIMIT)
+        candidate = base.replace("description: ''", "description: Draft")
+        await backend.write_file(WORKSPACE_SCHEDULE, candidate)
+        outcome, accepted = await tracker.review_if_changed()
+        assert outcome.ok and accepted == candidate
+        assert backend.files[WORKSPACE_SCHEDULE] == candidate.encode()
+        assert WORKSPACE_SOURCE_CONTEXT not in backend.files
+
+    asyncio.run(check())

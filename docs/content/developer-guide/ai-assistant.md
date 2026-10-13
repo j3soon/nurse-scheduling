@@ -353,6 +353,20 @@ universal use of the requested coding method is claimed.
 
 ## Agent capabilities
 
+After an accepted edit to `/workspace/schedule.yaml`, the server refreshes
+`/workspace/schedule-context.json` when the schedule can compile. Request
+inspectors can then read new proposals and later edits in the same turn. Reverting
+to the original YAML refreshes its context too. Invalid edits leave the previous
+context unchanged, so inspectors still reject a source mismatch. Permitted
+incomplete drafts remain available for direct YAML inspection. Saved optimizer
+contexts keep the data from their submitted schedules.
+
+With the same full prompt, `request-inspection-after-edit` improved from 0/3
+to 3/3 and `request-inspection-after-creation` from 1/3 to 3/3. The read-only
+`request-filtered-cross-month` control passed 3/3 in both versions. These
+comparisons used real provider requests and E2B commands with four case jobs.
+They measure inspector availability after accepted schedule changes.
+
 The model receives Pi's four default coding tools: `read`, `bash`, `edit`, and
 `write`. `read` provides bounded text-file inspection with offsets and returns
 supported images as multimodal tool results. `edit`

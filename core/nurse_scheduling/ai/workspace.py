@@ -497,6 +497,14 @@ class _ScheduleCandidateTracker:
             review.outcome.ok,
             review.proposal is not None,
         )
+        if review.outcome.ok:
+            try:
+                context = json.dumps(build_result_context(candidate), ensure_ascii=False, allow_nan=False)
+            except Exception:
+                # Accepted incomplete drafts can still require direct YAML inspection.
+                logger.debug("Updated schedule inspection context unavailable", exc_info=True)
+            else:
+                await self._sandbox.write_file(WORKSPACE_SOURCE_CONTEXT, context)
         if review.proposal is not None:
             return (
                 AgentToolOutcome(
