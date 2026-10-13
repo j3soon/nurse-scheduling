@@ -1415,19 +1415,31 @@ def test_second_turn_keeps_only_system_message_at_beginning() -> None:
     assert all(message["role"] != "system" for message in provider.calls[1][1:])
 
 
-def test_private_container_origin_can_call_ai_backend_directly() -> None:
+@pytest.mark.parametrize(
+    ("origin", "allowed"),
+    [
+        ("https://nursescheduling.org", True),
+        ("https://staging.nursescheduling.org", True),
+        ("http://localhost:3000", True),
+        ("http://192.168.0.117:3005", False),
+        ("http://10.0.0.5:3000", False),
+        ("http://172.20.0.3:3000", False),
+        ("http://host.docker.internal:3000", False),
+        ("http://nursescheduling.org", False),
+        ("https://nursescheduling.org.example.com", False),
+    ],
+)
+def test_ai_backend_allows_credentialed_requests_only_from_trusted_origins(origin: str, allowed: bool) -> None:
+    # The secure owner cookie is SameSite=None, so any allowed origin could act with it.
     client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
 
     response = client.options(
         "/capabilities",
-        headers={
-            "Origin": "http://192.168.0.117:3005",
-            "Access-Control-Request-Method": "GET",
-        },
+        headers={"Origin": origin, "Access-Control-Request-Method": "GET"},
     )
 
-    assert response.status_code == 200
-    assert response.headers["access-control-allow-origin"] == "http://192.168.0.117:3005"
+    assert (response.status_code == 200) is allowed
+    assert (response.headers.get("access-control-allow-origin") == origin) is allowed
 
 
 def test_session_uuid_alone_does_not_bypass_browser_ownership() -> None:

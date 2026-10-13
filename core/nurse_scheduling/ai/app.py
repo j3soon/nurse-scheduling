@@ -69,11 +69,9 @@ __all__ = ("SessionStore", "schedule_revision")
 API_VERSION = "0.2.0"
 OWNER_COOKIE = "nurse_scheduling_ai_owner"
 FrontendTimezone = Annotated[str, Field(min_length=1, max_length=100), AfterValidator(validate_frontend_timezone)]
-ORIGIN_REGEX = (
-    r"^(http://(localhost|127\.0\.0\.1|host\.docker\.internal|10(?:\.[0-9]{1,3}){3}|"
-    r"192\.168(?:\.[0-9]{1,3}){2}|172\.(1[6-9]|2[0-9]|3[01])(?:\.[0-9]{1,3}){2}):[0-9]+|"
-    r"https://([a-zA-Z0-9-]+\.)?nursescheduling\.org)$"
-)
+# HTTPS deployments send the owner cookie with `SameSite=None`, so every allowed origin can act
+# with it. Plain-HTTP origins are limited to loopback, as on the optimizer API.
+ORIGIN_REGEX = r"^(http://(localhost|127\.0\.0\.1):[0-9]+|https://([a-zA-Z0-9-]+\.)?nursescheduling\.org)$"
 logger = logging.getLogger("nurse_scheduling.ai")
 request_logger = logging.getLogger("nurse_scheduling.ai.requests")
 

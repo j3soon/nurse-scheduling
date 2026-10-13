@@ -775,6 +775,11 @@ curl -H "Authorization: Bearer ${AI_AUTH_TOKEN}" \
   browser route uses HTTPS, even if NGINX uses internal HTTP to the container.
   Secure deployments set the owner cookie to `SameSite=None`; the CORS origin
   allowlist still limits which browser origins may make credentialed requests.
+- The allowlist accepts `nursescheduling.org` and its subdomains over HTTPS,
+  and loopback origins over HTTP, as on the optimizer API. It refuses
+  private-network origins such as `http://192.168.0.10:3000`, because any
+  device on a shared network can serve one. Open a development frontend
+  through `localhost` or `127.0.0.1`.
 - The owner cookie contains an opaque UUID, not the provider key. It is not a
   replacement for future account authentication.
 - The complete schedule is sent to the AI service. Relevant content is sent to
