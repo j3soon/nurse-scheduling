@@ -137,6 +137,33 @@ Completed attempts are saved immediately to `results.jsonl` and `cases/`, with i
 attempts and are not complete comparisons. Final reports restore dataset order. Existing output directories
 are rejected before model work starts.
 
+Extend a completed comparison from three to five attempts per case from the repository root:
+
+```sh
+AI_ENV_FILE=docker/.env.staging ./scripts/run_ai_eval.sh \
+  --extend-report artifacts/ai-evals/three-runs \
+  --prompt-compare-step 5 --repeat 5 \
+  --output-dir artifacts/ai-evals/five-runs
+```
+
+Use the original prompt selector, such as `--prompt-step`, `--prompt-compare-step` or
+`--prompt-ablate-step`. `--repeat` is the target total and defaults to five for an extension.
+Only missing repetitions run, with the same global four-job limit. Add `--case ID` to extend
+only a noisy case. The new report keeps the other cases at their original repetition counts.
+Single-prompt reports can also be extended. Omit the prompt selector when the original report
+used the current production prompt.
+
+The runner checks the saved cases, fixtures, attachments, prompt, references, provider model,
+sandbox configuration and failure policy before provider work. Changed inputs require a new
+comparison. Incomplete reports, duplicate repetitions and inconsistent trajectories are rejected.
+The original report stays unchanged. The new report preserves old failures and missing usage,
+records each extension's source and Git revision, and recomputes summaries and paired statistics
+from all attempts. An extension retains the original cost target. Its wall time covers only
+the new execution, while per-attempt timings include the saved attempts. Review the extended
+comparison before updating prompt receipts.
+Add `--plan-only` to verify fingerprints and print the missing attempts without provider calls
+or creating the output directory.
+
 Cases tagged `holdout` use schedules that differ from the primary tuning fixtures. Run them to check generalization,
 but do not rewrite prompts to match one held-out trajectory. Promote a recurring failure pattern into a separate
 tuning case before changing agent guidance.

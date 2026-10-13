@@ -34,10 +34,10 @@ for arg in "$@"; do
     resolve_next=false
   else
     case "$arg" in
-      --output-dir | --cases-dir | --baseline-report)
+      --output-dir | --cases-dir | --baseline-report | --extend-report)
         resolve_next=true
         ;;
-      --output-dir=[!/]* | --cases-dir=[!/]* | --baseline-report=[!/]*)
+      --output-dir=[!/]* | --cases-dir=[!/]* | --baseline-report=[!/]* | --extend-report=[!/]*)
         arg="${arg%%=*}=${PWD}/${arg#*=}"
         ;;
     esac
