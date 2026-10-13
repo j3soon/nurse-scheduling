@@ -5,4 +5,6 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <!-- This file is mostly AI generated. -->
 
-When preparing a People History (shorthand) CSV, generate `person,shift,repetition` rows from the source cells in code. Use the shift on the day before the schedule starts, including OFF, and count its consecutive occurrences ending on that day. The repetition count is an integer. Read calendar dates to identify that run regardless of worksheet column order.
+For a People History CSV with one `person,shift,repetition` row per person, compute the final consecutive run from the source cells in code. Count the shift on the day before the schedule starts, including OFF, using calendar dates rather than worksheet column order. Use an integer repetition count.
+
+For full `people.items.history` arrays, preserve all supplied days in chronological order. Do not reduce them to the final run.

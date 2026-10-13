@@ -726,31 +726,31 @@
       "month-end-history-reverse",
       "month-end-full-history"
     ],
-    "hypothesis": "Produces one shorthand history row per person from the final consecutive shift run, including OFF, while preserving full daily history when requested.",
-    "sha256": "c244762367884de1c0bea5856a3ee8ce606e49c28e5046e0652096fede907db8",
+    "hypothesis": "Uses the final consecutive run for one-row shorthand CSVs and preserves every supplied day for full history arrays.",
+    "sha256": "25dbc83a8cf881add7ccdef8d181c053ab7e120051b4c53caa0a6c45fdfa03cf",
     "evidence": [
       {
-        "case": "month-end-history-reverse",
-        "input_sha256": "a3d37738e6877edadfd980d5a1449c4853a551a44a2bbdb0a476e3cd3a0a23da",
-        "before": "4/5",
-        "after": "5/5",
+        "case": "month-end-full-history",
+        "input_sha256": "c154a81dae26f3a11b241dcc2b4dba4a681674d2e71330d496d6d58a47cee252",
+        "before": "2/3",
+        "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
         "controls": [
           {
-            "case": "month-end-full-history",
-            "input_sha256": "949c9e17fdb06c57ee3f4cee6f1bda4c17693e60c5170a9dcbb16b5a9f2b8bc3",
+            "case": "month-end-history-forward",
+            "input_sha256": "0c2e937e0b5e76d297b594fd4dd7495ca74779b06d5bb1c1d43e411dc8d92607",
             "before": "3/3",
             "after": "3/3"
           },
           {
-            "case": "month-end-history-forward",
-            "input_sha256": "0833b96d777d50b17241887e480c49106ed8bca3126ba191cdc1f85d5cde59e8",
+            "case": "month-end-history-reverse",
+            "input_sha256": "53e030aa73c97b48da0e1863502de0f7857c56a8bb99f38f7a01f178fca87bdb",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Recorded adjacent-prefix comparison with ZIP delivery available in both arms. Production prompt order was not changed. The default audit uses full-prompt ablation to include that delivery contract. This receipt covers the recorded prefix context. A separate full-context check found a full-history regression and is retained in ignored artifacts. The reverse-date witness separates a final streak from a complete six-day history. Forward shorthand and full-history controls pass. The original comparison without the delivery contract failed both arms and is retained in ignored artifacts."
+        "note": "Full-prompt comparison of immediately previous wording with scoped wording, with the same code, helpers, cases, and attachments. Full-history arrays improve from 2/3 to 3/3. Both one-row shorthand CSV controls pass 3/3 with both wordings. Calendar order and all supplied days remain semantic. No optimizer jobs ran."
       }
     ],
     "comparison_mode": "ablation"
