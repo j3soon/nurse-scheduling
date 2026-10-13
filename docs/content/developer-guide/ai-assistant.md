@@ -327,6 +327,19 @@ after the upgrade. Keep the upgraded database until those records are no longer 
 
 See the [core instructions](reproduce/core.md#evaluation) for this task.
 
+When a request supplies conflicting staffing totals and component counts, the
+assistant asks which counts to keep before reading guides or the current
+schedule. It proceeds directly when the user explicitly replaces the old counts.
+
+The `staffing-conflicting-day-total` case checks clarification followed by the
+user's chosen total. Both prompt versions passed 3/3. The added clause reduced
+mean whole-conversation total tokens from 134,130 to 77,605, meeting the declared
+20% reduction target. The `staffing-explicit-day-total-override` control passed
+5/5 in both versions and used 4.7% more tokens with the clause. The equally
+weighted case means decreased by 24%. These selected checks used
+`unsloth/Qwen3.8-27B-NVFP4`, real E2B commands and four case jobs. They did not
+submit optimizer jobs or establish a general cost or latency saving.
+
 ## Agent capabilities
 
 The model receives Pi's four default coding tools: `read`, `bash`, `edit`, and

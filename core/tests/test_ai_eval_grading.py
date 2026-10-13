@@ -149,6 +149,8 @@ def test_staffing_explanation_checks_arithmetic_separately_from_proposal(general
         ("senior-included-in-day-total", 2, False),
         ("senior-additional-day-slot", 2, True),
         ("senior-additional-day-slot", 1, False),
+        ("staffing-explicit-day-total-override", 2, True),
+        ("staffing-explicit-day-total-override", 1, False),
     ],
 )
 def test_staffing_grader_distinguishes_inclusive_and_additive_counts(case_id, general_count, passed):
@@ -156,6 +158,35 @@ def test_staffing_grader_distinguishes_inclusive_and_additive_counts(case_id, ge
     proposed = qualified_staffing_proposal(general_count)
     result = grade(case, RunOutcome(initial=FIXTURE_SCHEDULES[case.fixture], proposed=proposed))
     assert result.passed == passed
+
+
+@pytest.mark.parametrize(
+    "premature_proposal,general_count,first_tool,passed",
+    [
+        (False, 1, None, True),
+        (True, 1, None, False),
+        (False, 2, None, False),
+        (False, 1, "write", False),
+        (False, 1, "edit", False),
+        (False, 1, "optimizer", False),
+    ],
+)
+def test_conflicting_staffing_case_requires_clarification_and_the_chosen_total(
+    premature_proposal, general_count, first_tool, passed
+):
+    case = next(c for c in load_cases(CASES_PATH) if c.id == "staffing-conflicting-day-total")
+    activity = [{"kind": "user", "turn": 1}]
+    if first_tool:
+        activity.append({"kind": "tool", "name": first_tool, "ok": True})
+    activity.extend([{"kind": "user", "turn": 2}, {"kind": "tool", "name": "write", "ok": True}])
+    outcome = RunOutcome(
+        initial=FIXTURE_SCHEDULES[case.fixture],
+        proposed=qualified_staffing_proposal(general_count),
+        intermediate_answers=["Should I keep 2 or 3 total day slots?"],
+        proposal_turns=[premature_proposal, True],
+        activity=activity,
+    )
+    assert grade(case, outcome).passed == passed
 
 
 def test_staffing_grader_rejects_unqualified_senior_slots():
