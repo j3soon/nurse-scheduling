@@ -65,6 +65,8 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   the tested default.
 - Check a suspected missing dependency or tool directly before rerunning a full
   suite to diagnose its failure.
+- Run security scans with `skills/security-scan` against an isolated loopback
+  copy of the services. Never scan the public domain or the running deployment.
 
 ## Git
 - Commit validated implementation work as part of the task unless the user asks
