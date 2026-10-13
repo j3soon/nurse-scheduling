@@ -78,6 +78,15 @@ candidate change, and remaining uncertainty.
 
 ## Reproduce the failure
 
+Read the relevant reference before designing an experiment:
+
+- For attachments, imports, generated downloads or missing sandbox libraries, read
+  [file workflows](references/file-workflows.md).
+- For optimizer submission, completion, result interpretation or roster quality,
+  read [optimizer results](references/optimizer-results.md).
+- For embedding guides or measuring prefix-cache reuse, read
+  [guide and cache experiments](references/guide-and-cache-experiments.md).
+
 Locate existing cases and reuse their test input or grader when appropriate. Use
 the smallest test input that reproduces the problem. Remove incidental names,
 dates, and roster size unless they cause the failure. Preserve the production
@@ -103,35 +112,10 @@ by weakening the task, staffing, rest policy, validation, or grading criteria.
 Add a contrasting control where a superficially similar request warrants a
 different action, such as genuine ambiguity or an explicitly authorized change.
 
-For file workflows, check actual delivered bytes and a later message in a fresh
-workspace. A claimed download path or a successful first-turn read does not prove
-delivery or retention. For complete imports, compare the whole parsed source
-with the proposal. Keep a partial-update control.
-For generated import files, grade the delivered file against the destination
-importer's row and field rules. Test malformed output with the real importer
-to detect silent conversions. Fix parser defects separately from model mistakes.
-Pair a summarized format with a full-history control. Keep its instruction
-scoped to that format so the agent preserves data in other formats.
-
 Inspect the test runner before describing a run as end-to-end. Record whether
 provider requests, sandbox commands, optimizer submission, solving, and result
 delivery are real or simulated. A live model and a successful optimizer-tool
 reply do not prove that an optimizer job ran.
-
-Use fixed assignments checked by the solver and exported as real workbooks when
-testing result interpretation. These isolate agent behavior from solver
-variation. They do not prove that the optimizer can find a good roster. For that
-claim, solve the submitted YAML without forcing an assignment and retain its
-actual status, score, workbook, and preference counts. A local engine check
-does not test the HTTP job service, queue, or worker recovery. Use the existing
-real-optimizer check when that level of validation is requested.
-
-Grade input preservation, truthful result interpretation, and schedule quality
-separately. A feasible roster can still miss finite-weight preferences. Define
-quality requirements in advance, such as staffing shortfalls and unmet strong
-requests. Keep solver/model/export time separate from agent and sandbox time.
-For automatic completion messages, preserve the production message role,
-format, and workbook. Uploading a workbook alone does not test that delivery.
 
 Validate schedule inputs with `validate_frontend_schedule_yaml` before live
 AI comparisons. A format accepted by the backend but unsupported by the frontend
@@ -139,12 +123,6 @@ can produce misleading agent failures. Check structured answer fields
 and counting units before provider calls. For example, request entries and
 person/date pairs are different counts, and overlapping entries can count the
 same pair more than once.
-
-For workbook imports, validate an independent correct proposal with both the
-frontend validator and the grader before live runs. Check that each format
-belongs to the correct cell and that finite weights stay finite. Grade
-clarification, construction, solving and delivery separately. A run that fails
-clarification does not establish anything about optimizer behavior.
 
 Run deterministic input and grader checks first. Run the selected case with
 the current prompt to confirm the baseline rather than relying on an old trace.
@@ -157,15 +135,6 @@ to reconcile state manually. Compare implementations with the same prompt and
 help text to isolate the code change from wording changes.
 When a boundary input skips existing logic, check whether that logic belongs
 outside the loop or behind a different condition before adding a duplicate branch.
-
-For repeated missing-library errors in an offline sandbox, consider preinstalling
-the library instead of adding more instructions to use another one. Check the
-rebuilt image with synthetic input. Mark comparisons that relied on its absence
-as historical and recheck the affected guidance before changing it.
-
-For read-only attachment questions, check whether inspecting the current
-schedule helps answer the user's request. Test a focused attachment question
-alongside an explicit comparison request before changing source-selection guidance.
 
 Use a focused prompt instruction for a decision or interpretation the model
 needs to learn. Extend an existing segment when it covers that behavior. Keep the
@@ -194,14 +163,6 @@ that instruction while both versions have the same helper available. Check the
 helper's correctness separately. Accept other correct approaches. Calling the
 helper alone does not count as success.
 
-Before embedding a guide, check whether the current agent already reads it.
-Keep guide availability unchanged when comparing ways to direct the agent to
-it. Separate gains from better answers, fewer document reads, and cache reuse.
-If testing cache reuse, verify provider usage and timing with matched cold and
-warm requests. Keep output length and shared prompt content comparable. A
-configured cache is not proof of a hit. An unreported cache count is unknown,
-not zero. Use the existing cache probe rather than guessing from latency alone.
-
 Fix retry, attachment retention, or backend failures in code when that layer
 owns them. Do not conceal infrastructure defects behind unrelated prompt text.
 Before removing or consolidating an existing clause, recover its rationale
@@ -221,6 +182,11 @@ Record the exact prompt, hashes of the test cases and inputs, provider/model, to
 and environment. Use the repository's repetition and concurrency policy. Here,
 start with three runs per version and four concurrent case jobs. Extend to five
 when results are noisy. Larger samples require a requested deeper investigation.
+Use `--extend-report REPORT --repeat 5` to extend a completed evaluation.
+Reuse its original prompt selector. Add `--case ID` to extend only a noisy case.
+Check the plan with `--plan-only` before provider calls. The runner validates
+fingerprints, continues repetition numbers and writes a new combined report.
+Inspect that report before refreshing evidence.
 Keep infrastructure errors separate and preserve failed attempts when retrying them.
 Recheck only affected cases with both versions and unchanged inputs. Keep the
 original failed batch and identify the clean recheck separately. A successful
@@ -300,9 +266,12 @@ testcase, fixture, and control inputs. Recomputing a receipt fingerprint from
 changed files does not validate old results. Rerun mismatched comparisons and
 retain the original reports.
 
+For implementation tasks, commit each confirmed improvement as soon as its
+evidence is saved and affected checks pass, unless the user asks to leave
+changes uncommitted. Create that commit before starting the next improvement.
 Combine the fix, representative case, tests, and minimal evidence in one
-self-contained commit. Fold minor corrections into that
-commit. Follow the repository's Git and plain-English rules. Name the relevant
+self-contained commit. Fold minor corrections into that commit. Follow the
+repository's Git and plain-English rules. Name the relevant
 case and observed change without adding routine validation footers or run-log
 paths. Lead with confirmed results and limit each caveat to the claim it affects.
 
@@ -322,5 +291,3 @@ request, showing material changes and the checks that support them.
   and environment requirements rather than inventing flags.
 - [Evaluation guide](../../core/tests/ai_eval/README.md), including fixed-result
   tests and the on-demand real-optimizer check.
-- [Prefix-cache probe](../../core/tests/ai_eval/prefix_cache_probe.py) for cache
-  experiments. Inspect its CLI before choosing probe or benchmark mode.
