@@ -148,6 +148,121 @@ def test_workbook_inspector_selects_later_rows_and_sheets(tmp_path: Path):
     assert later_sheet["sheets"][0]["first_column"] == 3
 
 
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["--sheet", "Staffing checks", "--range", "B3:C4"],
+        ["--range", "'Staffing checks'!$B$3:$C$4"],
+        ["--sheet", "Staffing checks", "--range", "Staffing checks!b3:c4"],
+    ],
+)
+def test_workbook_inspector_cli_a1_range_preserves_formulas_caches_and_styles(tmp_path, monkeypatch, capsys, options):
+    import json
+    import sys
+
+    from nurse_scheduling.ai.attachment_tools.inspect_xlsx import main
+
+    path = tmp_path / "formulas.xlsx"
+    path.write_bytes(load_attachment_fixtures(("formula-xlsx",))[0].data)
+    monkeypatch.setattr(sys, "argv", ["inspect_xlsx.py", str(path), "--styles", *options])
+    main()
+    actual = json.loads(capsys.readouterr().out)
+    expected = inspect_workbook(
+        path, sheet_name="Staffing checks", start_row=3, start_column=2, max_rows=2, max_columns=2, styles=True
+    )
+    assert actual == expected
+    values = actual["sheets"][0]["rows"][0]["values"]
+    assert values[1]["formula"] == "=B3*2"
+    assert values[1]["cached_value"] == 11
+
+
+def test_workbook_inspector_cli_single_cell_in_quoted_sheet(tmp_path, monkeypatch, capsys):
+    import json
+    import sys
+
+    from nurse_scheduling.ai.attachment_tools.inspect_xlsx import main
+
+    path = tmp_path / "quoted.xlsx"
+    workbook = Workbook()
+    workbook.active.title = "Team's ! checks"
+    workbook.active["C7"] = "Selected cell"
+    workbook.active["D7"] = "Outside range"
+    workbook.save(path)
+    workbook.close()
+    monkeypatch.setattr(sys, "argv", ["inspect_xlsx.py", str(path), "--range", "'Team''s ! checks'!C7"])
+    main()
+    result = json.loads(capsys.readouterr().out)
+    assert result["sheets"][0]["name"] == "Team's ! checks"
+    assert result["sheets"][0]["first_column"] == 3
+    assert result["sheets"][0]["rows"] == [{"row": 7, "values": ["Selected cell"]}]
+
+
+def test_workbook_inspector_cli_range_keeps_stored_fills(tmp_path, monkeypatch, capsys):
+    import json
+    import sys
+
+    from nurse_scheduling.ai.attachment_tools.inspect_xlsx import main
+
+    path = tmp_path / "colored.xlsx"
+    path.write_bytes(load_attachment_fixtures(("colored-xlsx",))[0].data)
+    monkeypatch.setattr(sys, "argv", ["inspect_xlsx.py", str(path), "--range", "Staff!A2:B4", "--styles"])
+    main()
+    actual = json.loads(capsys.readouterr().out)
+    assert actual == inspect_workbook(path, sheet_name="Staff", start_row=2, max_rows=3, max_columns=2, styles=True)
+    assert any(
+        style.get("fill", {}).get("foreground", {}).get("value") == "00FFF2CC" for style in actual["styles"].values()
+    )
+
+
+@pytest.mark.parametrize(
+    "options, kwargs", [([], {}), (["--start-row", "3"], {"start_row": 3}), (["--overview"], {"overview": True})]
+)
+def test_workbook_inspector_cli_preserves_existing_window_defaults(tmp_path, monkeypatch, capsys, options, kwargs):
+    import json
+    import sys
+
+    from nurse_scheduling.ai.attachment_tools.inspect_xlsx import main
+
+    path = tmp_path / "formulas.xlsx"
+    path.write_bytes(load_attachment_fixtures(("formula-xlsx",))[0].data)
+    monkeypatch.setattr(sys, "argv", ["inspect_xlsx.py", str(path), *options])
+    main()
+    assert json.loads(capsys.readouterr().out) == inspect_workbook(path, **kwargs)
+
+
+@pytest.mark.parametrize(
+    "options, error",
+    [
+        (["--range", "A:C"], "finite rectangle"),
+        (["--range", "1:2"], "finite rectangle"),
+        (["--range", "C4:B3"], "ordered cells"),
+        (["--range", "A0:B2"], "ordered cells"),
+        (["--range", "XFE1"], "worksheet limits"),
+        (["--range", "A1048577"], "worksheet limits"),
+        (["--range", "A1:Z1000"], "10,000 cells"),
+        (["--range", "not-a-range"], "valid coordinate or range"),
+        (["--range", "!A1"], "sheet name"),
+        (["--range", "A1", "--start-row", "1"], "cannot be combined"),
+        (["--range", "A1", "--max-columns", "2"], "cannot be combined"),
+        (["--range", "A1", "--overview"], "cannot be combined"),
+        (["--range", "First!A1", "--sheet", "Second"], "conflicts"),
+    ],
+)
+def test_workbook_inspector_cli_rejects_invalid_or_conflicting_ranges(monkeypatch, capsys, options, error):
+    import sys
+
+    from nurse_scheduling.ai.attachment_tools.inspect_xlsx import main
+
+    # Range validation runs before opening a workbook, including oversized ranges.
+    monkeypatch.setattr(sys, "argv", ["inspect_xlsx.py", "missing.xlsx", *options])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 2
+    captured = capsys.readouterr()
+    assert error in captured.err
+    assert "Traceback" not in captured.err
+
+
 def _text_pdf(path: Path) -> None:
     writer = PdfWriter()
     for label in ("First page", "Second page"):

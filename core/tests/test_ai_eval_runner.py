@@ -127,6 +127,22 @@ def test_prompt_steps_reconstruct_production_and_link_real_cases():
         assert sections[index - 1] not in prompt_at_step(index, omit=index)
 
 
+def test_file_workflow_prefixes_include_download_delivery_guidance():
+    steps = load_prompt_steps()
+    delivery_index = next(index for index, step in enumerate(steps) if step.id == "generated-downloads")
+    delivery = load_system_prompt_sections()[delivery_index]
+    for index, step in enumerate(steps):
+        if step.id == "generated-downloads":
+            continue
+        if any(CASE_BY_ID[case_id].download_files for case_id in step.cases):
+            before = (
+                prompt_at_step(len(steps), omit=index + 1)
+                if step.comparison_mode == "ablation"
+                else prompt_at_step(index)
+            )
+            assert delivery in before, f"{step.id} tests file delivery without the download contract"
+
+
 def test_every_shipped_prompt_clause_has_current_repeated_benefit_evidence():
     validate_prompt_evidence(load_prompt_steps(), CASE_BY_ID, FIXTURE_DIGESTS)
 

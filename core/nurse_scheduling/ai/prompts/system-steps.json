@@ -448,7 +448,7 @@
     "evidence": [
       {
         "case": "result-stale-summary-control",
-        "input_sha256": "1f2b90a90045b160e17960d255fbf16df1086cb7055396a6728c66212c85ffb3",
+        "input_sha256": "bc74623d3d6fe3a2e03e0f69155c68891a324d8c109860a9ab68b6f393b12722",
         "before": "0/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
@@ -456,18 +456,18 @@
         "controls": [
           {
             "case": "result-grouped-cross-month",
-            "input_sha256": "9bf1c383273562b723d79e34c8d09d743176ed3b7efdc437f5b1f21432d6afc2",
+            "input_sha256": "41926ef473412fa3d93a4a106ff1f6868b384614d131db6b9defb21b9f7e0431",
             "before": "3/3",
             "after": "3/3"
           },
           {
             "case": "result-single-tier-summary",
-            "input_sha256": "bcbf6ffbe36985c573623f310ac5c45b3b9dff57955cc340da16aedd6e419343",
+            "input_sha256": "0b51d2f81eda6b6387ccdb203ec7d04bf8a1f003970463bd854834e7f889f715",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Full-prompt ablation. The stale-summary witness verifies the current result instead of repeating earlier incumbent counts, improving from 0/3 to 3/3. Both controls pass in both arms. The total-token cost target of 0.80 failed: grouped counts cost 1.73 times baseline and single-tier counts cost 0.90 times baseline. Retain this clause for correctness, with no token-saving claim. Zero-target output was not rerun and remains outside this receipt."
+        "note": "Full-prompt ablation with the A1-range helper, before moving download delivery earlier. The stale-summary witness uses the current workbook instead of archived summary counts. Both count controls pass. No cost target was declared."
       }
     ],
     "comparison_mode": "ablation"
@@ -486,35 +486,35 @@
     "evidence": [
       {
         "case": "xlsx-sheet-inventory",
+        "input_sha256": "75bca49c83cdd3774d2a217adf1b0c8d4e235cd639d2629f2e3ad5bdf3572c3d",
         "before": "3/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
-        "cost_metric": "total-tokens",
-        "cost_ratio": 0.5315305590039762,
-        "cost_target": 0.8,
         "controls": [
           {
-            "case": "xlsx-formulas-and-caches",
+            "case": "xlsx-color-fallback",
+            "input_sha256": "9087b8d44221d38a52623a758d6f9b72b5f7343d3a77e1dc74b7acd5a41f7e35",
             "before": "3/3",
-            "after": "3/3",
-            "input_sha256": "bbeaf716b09c9c80b6cdc3d764fd6aeeab33bb3837870c96ace30f7cc08c68b6"
+            "after": "3/3"
           },
           {
-            "case": "xlsx-color-fallback",
+            "case": "xlsx-formulas-and-caches",
+            "input_sha256": "c493d062b016c89e61b7074e018693bcd80850fb5d860c01b247c1baef142e47",
             "before": "3/3",
-            "after": "3/3",
-            "input_sha256": "a7d2aa0986d71eb9c5c11c110c27c3277892e56ac0868c8c627b6271c73cd424"
+            "after": "3/3"
           },
           {
             "case": "xlsx-styled-requests-and-caches",
+            "input_sha256": "9dbcf8b01a36d5e5525bb41a27560d58caf96745e64424f4bc2497313fb9b0e1",
             "before": "3/3",
-            "after": "3/3",
-            "input_sha256": "df1e7d89cd5ebed8cd9ace22448e502d01272f7bc96d72b940785d793d4b19d6"
+            "after": "3/3"
           }
         ],
-        "note": "Adjacent prefix comparison with inspect_xlsx.py --overview available in both arms. Formula, cache and color controls all pass. Separate production comparison kept inventory correct in five pairs, with 10% more tokens and 23% more time after consolidation. Normal cell output is unchanged. Full distributions remain in ignored artifacts.",
-        "input_sha256": "26c29490ec0664c7e8479bc8df96b0950c848cecb5b7e9d3aa39fc965e351c02"
+        "note": "Adjacent prefix comparison with the A1-range helper. The predeclared total-token target is 0.80. Formula caches, stored colors, and styled requests remain correct.",
+        "cost_metric": "total-tokens",
+        "cost_ratio": 0.39351841987514113,
+        "cost_target": 0.8
       }
     ]
   },
@@ -730,29 +730,30 @@
     "sha256": "c244762367884de1c0bea5856a3ee8ce606e49c28e5046e0652096fede907db8",
     "evidence": [
       {
-        "case": "month-end-history-forward",
-        "input_sha256": "204cd96c1ddccd32ab1b16bc5133f99137b1b38b4681377b2dfa17516cae225a",
-        "before": "1/3",
-        "after": "3/3",
+        "case": "month-end-history-reverse",
+        "input_sha256": "a3d37738e6877edadfd980d5a1449c4853a551a44a2bbdb0a476e3cd3a0a23da",
+        "before": "4/5",
+        "after": "5/5",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
         "controls": [
           {
-            "case": "month-end-history-reverse",
-            "input_sha256": "d10b3575aac2ef79852ba15d7add6863112b7cbd24f6d94c9d00b96dbd96362e",
-            "before": "1/3",
+            "case": "month-end-full-history",
+            "input_sha256": "949c9e17fdb06c57ee3f4cee6f1bda4c17693e60c5170a9dcbb16b5a9f2b8bc3",
+            "before": "3/3",
             "after": "3/3"
           },
           {
-            "case": "month-end-full-history",
-            "input_sha256": "fe71b2c03aac4519d5ba63ca86a797535270dafbb5dfe7e34607f6ad310a1b2c",
+            "case": "month-end-history-forward",
+            "input_sha256": "0833b96d777d50b17241887e480c49106ed8bca3126ba191cdc1f85d5cde59e8",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Compare the previous full prompt with this final step. Grade captured CSV downloads. Both date orders improved. Full daily history stayed correct. The reversed-date receipt uses a clean paired recheck after an earlier E2B failure."
+        "note": "Recorded adjacent-prefix comparison with ZIP delivery available in both arms. Production prompt order was not changed. The default audit uses full-prompt ablation to include that delivery contract. This receipt covers the recorded prefix context. A separate full-context check found a full-history regression and is retained in ignored artifacts. The reverse-date witness separates a final streak from a complete six-day history. Forward shorthand and full-history controls pass. The original comparison without the delivery contract failed both arms and is retained in ignored artifacts."
       }
-    ]
+    ],
+    "comparison_mode": "ablation"
   },
   {
     "id": "workbook-policy-clarification",
@@ -767,20 +768,20 @@
     "evidence": [
       {
         "case": "workbook-unexplained-policy",
-        "input_sha256": "7c292dae40cb431cff440f1cbf83edcd1f2f436202b375b7cd2f14e7a60ec166",
-        "before": "0/3",
-        "after": "3/3",
+        "input_sha256": "4eb183895d22eba701e7d83dde9f55b7724d8b7d8f6af95da28908745192cd31",
+        "before": "4/5",
+        "after": "5/5",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
         "controls": [
           {
             "case": "workbook-explained-policy",
-            "input_sha256": "3d96a7865a2f793a29860d4327d5fff64437b57a092763a6bb9f9f3e70c5056d",
-            "before": "2/3",
+            "input_sha256": "ab10e53b5f46d70d9f5766cadb1d4976e77db4ce9abbe477e2b802ff0afc7edc",
+            "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Adjacent full-prompt comparison. Unexplained workbooks require clarification. Explained colors, histories and requests produce complete proposals with exact finite weights. Costs are not compared for the failing baseline. The 87-person case is linked for additional coverage, not included in this clean receipt."
+        "note": "Recorded adjacent-prefix comparison with the download clause placed before file workflows in both arms. Production order was subsequently restored after the optimizer controls failed. Unexplained inputs require clarification. Explained colors and finite request weights produce the requested proposal. An earlier control copied one weight incorrectly. That failed batch is retained separately from this clean recheck."
       }
     ]
   },
@@ -835,27 +836,27 @@
     "sha256": "f71e94f9bc0c9298fccb5f772d50ae8bc25b3f75ef78c541985b9cc2d4488604",
     "evidence": [
       {
-        "case": "optimizer-result-already-downloadable",
-        "input_sha256": "e58e2b2eb02fd4eeb3949233e51c11e3009b750d17404753a7e61cf67797eb96",
-        "before": "4/5",
-        "after": "5/5",
+        "case": "download-generated-zip",
+        "input_sha256": "4d09672c053a9aa5a2a9ad872ad661634c1b597238bc5de3a27230794aca6392",
+        "before": "0/3",
+        "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
         "controls": [
           {
-            "case": "optimizer-result-explicit-zip",
-            "input_sha256": "d8a053284a58886ce9791ae3c18a7714d61dd001da4f9a3be3de359ea9c7dd6d",
-            "before": "5/5",
-            "after": "5/5"
+            "case": "optimizer-result-already-downloadable",
+            "input_sha256": "e25d25f9d644d3fa41cb220d4c4c267d0462f28a52f1fd45a0a56841671dce39",
+            "before": "3/3",
+            "after": "3/3"
           },
           {
-            "case": "download-generated-zip",
-            "input_sha256": "4d09672c053a9aa5a2a9ad872ad661634c1b597238bc5de3a27230794aca6392",
-            "before": "5/5",
-            "after": "5/5"
+            "case": "optimizer-result-explicit-zip",
+            "input_sha256": "d1141214d0d41d728daa0566156d8e210be99b07333b32380abd520660be9ebf",
+            "before": "0/3",
+            "after": "3/3"
           }
         ],
-        "note": "Full prompt before and after the targeted existing-download rule, with host download facts in both arms. Earlier host facts alone improved the follow-up from 0/3 to 2/3, but a later repetition offered an unnecessary ZIP. The final five runs use the existing button without another ZIP or offer. Explicit archives preserve workbook bytes, and generated files still use the captured ZIP. Controlled completions use exporter-generated workbooks from solver-checked fixed assignments."
+        "note": "Adjacent prefix comparison before file-import policies. Generated files and explicitly requested result archives reach the download capture. Already-downloadable optimizer results use the existing button. Optimizer completions use checked fixed assignments, not submitted jobs."
       }
     ]
   },

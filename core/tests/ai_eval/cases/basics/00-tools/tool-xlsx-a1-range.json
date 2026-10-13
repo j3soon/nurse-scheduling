@@ -1,0 +1,23 @@
+{
+  "_license": "Copyright (C) 2023-2026 Johnson Sun. SPDX-License-Identifier: AGPL-3.0-or-later",
+  "_comment": "This test is mostly AI generated.",
+  "id": "tool-xlsx-a1-range",
+  "fixture": "new-schedule",
+  "question": "Run exactly this workbook-inspection command: python /reference/tools/inspect_xlsx.py /workspace/attachments/01-capacity-checks.xlsx --range \"'Staffing checks'!B3:C5\". From its output, report the last-saved cached values of C3, C4, and C5 and how many of these three cells contain formulas. Do not recalculate them or use another reader. Reply only as JSON with keys C3, C4, C5, and formulaCount. Use null if no cached value was saved. If the command fails, report its error instead.",
+  "attachments": ["formula-xlsx"],
+  "expect_proposal": false,
+  "answer_json": {"C3": 11, "C4": 10, "C5": null, "formulaCount": 3},
+  "tool_usage": {
+    "required_calls": [
+      {
+        "name": "bash",
+        "arguments": {
+          "command": "python /reference/tools/inspect_xlsx.py /workspace/attachments/01-capacity-checks.xlsx --range \"'Staffing checks'!B3:C5\""
+        }
+      }
+    ],
+    "forbidden": ["optimizer"]
+  },
+  "tags": ["attachment", "xlsx-inspection"],
+  "note": "Synthetic CLI capability check for the repeated unsupported --range calls in exported chats. Both a successful range command and independently known formula caches are required. This tests an explicitly requested helper invocation, not the model's choice of reader or optimizer behavior."
+}

@@ -360,6 +360,19 @@ also includes optional helpers: `inspect_xlsx.py` reads every worksheet by
 default and shows formulas alongside their last-saved cached values, while
 `inspect_pdf.py` extracts text by page and can render a selected page. The agent
 can write a focused parser in its sandbox when these helpers are insufficient.
+
+The XLSX inspector accepts `--range B3:D8` with `--sheet`, or a sheet-qualified
+range such as `--range "'Sheet name'!B3:D8"`. A range selects a finite rectangle
+of at most 10,000 cells per sheet. It also accepts a single cell and absolute
+references such as `$B$3:$D$8`. The existing row and column window options remain
+available. Do not combine them or `--overview` with `--range`.
+
+The `tool-xlsx-a1-range` case checks successful range execution and independently
+known saved formula caches. With the full prompt unchanged, three runs per
+version on `unsloth/Qwen3.8-27B-NVFP4` improved from 0/3 to 3/3 after adding the
+range option. The `xlsx-formulas-and-caches` control passed 3/3 with both versions.
+These checks used real provider requests and E2B commands with four case jobs.
+They did not submit optimizer jobs or establish a token or latency saving.
 The Nurse Scheduling adapter delegates file and command operations to
 `SandboxBackend` and enforces the configured command timeout ceiling. E2B
 returns completed stdout and stderr separately, so the adapter concatenates

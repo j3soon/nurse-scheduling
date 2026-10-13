@@ -78,6 +78,26 @@ SCHEDULE = {
 }
 
 
+@pytest.mark.parametrize(
+    "successful, correct_values, range_command, passed",
+    [(True, True, True, True), (False, True, True, False), (True, False, True, False), (True, True, False, False)],
+)
+def test_xlsx_range_case_requires_successful_range_use_and_saved_caches(
+    successful, correct_values, range_command, passed
+):
+    case = load_cases(CASES_PATH / "basics/00-tools/tool-xlsx-a1-range.json")[0]
+    command = case.tool_usage.required_calls[0][1]["command"]
+    if not range_command:
+        command = "python /reference/tools/inspect_xlsx.py /workspace/attachments/01-capacity-checks.xlsx --sheet 'Staffing checks'"
+    answer = {"C3": 11 if correct_values else 12, "C4": 10, "C5": None, "formulaCount": 3}
+    outcome = RunOutcome(
+        initial=FIXTURE_SCHEDULES[case.fixture],
+        answer=json.dumps(answer),
+        activity=[{"kind": "tool", "name": "bash", "ok": successful, "arguments": json.dumps({"command": command})}],
+    )
+    assert grade(case, outcome).passed is passed
+
+
 def qualified_staffing_proposal(general_count=1, qualified=("S1", "S2")):
     proposed = copy.deepcopy(FIXTURE_SCHEDULES["new-schedule"])
     proposed["dates"]["range"] = {"startDate": "2026-03-01", "endDate": "2026-03-01"}
