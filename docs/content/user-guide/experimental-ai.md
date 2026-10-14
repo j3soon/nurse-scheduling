@@ -198,6 +198,9 @@ first response text.
 Assistant answers render Markdown, including headings, lists, links, code, and
 tables. Use the copy icon at the top-right of a code block to copy its contents.
 Raw HTML is ignored. Remote images written in an answer are not loaded.
+Uploaded file names and sizes appear beside their upload event in the chat and
+exports. The file panel shows the files currently retained by the session.
+
 Use **HTML** under **Export chat** for a styled, standalone transcript, or
 **Markdown** for a plain-text transcript. Export runs in the browser. The export
 also lists the uploaded files by name and size, includes a proposal that is

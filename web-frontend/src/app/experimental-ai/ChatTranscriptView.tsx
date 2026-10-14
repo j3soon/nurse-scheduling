@@ -23,7 +23,7 @@ import { FiDownload } from 'react-icons/fi';
 
 import { AssistantActivity } from './AssistantActivity';
 import CollapsedText from './CollapsedText';
-import { messageLabel } from './chatExport';
+import { messageLabel, messageUploadedFileLines } from './chatExport';
 import { formatResponseDuration, formatResponseTime, formatSessionExpiration, retentionLabel } from './chatPresentation';
 import { parseOptimizerMessage } from './optimizerMessage';
 
@@ -96,6 +96,7 @@ export function ChatTranscriptView({
           </div>
         )}
         {messages.map(message => {
+          const uploads = messageUploadedFileLines(message);
           const timestamp = message.responseCompletedAt ?? message.createdAt;
           const optimizer = message.role === 'optimizer' ? parseOptimizerMessage(message.content) : null;
           return (
@@ -117,6 +118,11 @@ export function ChatTranscriptView({
               }`}
             >
               <p className="mb-1 text-xs font-semibold uppercase tracking-wide opacity-70">{messageLabel(message)}</p>
+              {uploads.length > 0 && (
+                <ul aria-label="Uploaded files in this message" className="mb-2 list-inside list-disc text-xs">
+                  {uploads.map((file, index) => <li key={index}>{file}</li>)}
+                </ul>
+              )}
               {message.activity && (
                 <AssistantActivity
                   entries={message.activity.filter(entry => (

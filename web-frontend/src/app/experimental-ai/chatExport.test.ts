@@ -50,6 +50,41 @@ const metadata = {
 };
 
 describe('chat export', () => {
+  it.each([
+    'Not a JSON file list',
+    '[{"filename":"input.csv","bytes":"20"}]',
+    '[null]',
+    '[{"filename":"input.csv","bytes":-1}]',
+  ])('keeps unrecognized upload metadata as collapsed context (%s)', payload => {
+    const message: ChatExportMessage = {
+      role: 'user', source: 'app', title: 'Files Uploaded', content: `[App event] Upload: ${payload}`,
+    };
+    const document = new DOMParser().parseFromString(buildHtmlChatExport([message], metadata), 'text/html');
+    expect(document.querySelector('article .attachments')).toBeNull();
+    expect(document.querySelector('article pre')?.textContent).toBe(message.content);
+  });
+
+  it('shows each upload beside its message before the following question', () => {
+    const uploaded = (filename: string): ChatExportMessage => ({
+      role: 'user', source: 'app', title: 'Files Uploaded',
+      content: '[App event] The user uploaded files. They stay in the workspace until the user removes them: '
+        + JSON.stringify([{ filename, bytes: 20, path: `/workspace/attachments/${filename}` }]),
+    });
+    const messages: ChatExportMessage[] = [
+      uploaded('roster.csv'), { role: 'user', content: 'Read the roster.' },
+      { role: 'assistant', content: 'First answer.' }, uploaded('requests.tsv'),
+      { role: 'user', content: 'Read the requests.' },
+    ];
+    const html = buildHtmlChatExport(messages, metadata);
+    const document = new DOMParser().parseFromString(html, 'text/html');
+    const uploads = [...document.querySelectorAll('article.app .attachments')];
+    expect(uploads.map(upload => upload.textContent)).toEqual(['roster.csv (0.02 KB)', 'requests.tsv (0.02 KB)']);
+    const markdown = buildMarkdownChatExport(messages, metadata);
+    expect(markdown.indexOf('- roster.csv (0.02 KB)')).toBeLessThan(markdown.indexOf('Read the roster.'));
+    expect(markdown.indexOf('- requests.tsv (0.02 KB)')).toBeGreaterThan(markdown.indexOf('First answer.'));
+    expect(markdown.indexOf('- requests.tsv (0.02 KB)')).toBeLessThan(markdown.indexOf('Read the requests.'));
+  });
+
   it.each(['', 'Partial answer.'])('exports the specific failure beside response text %j', content => {
     const failureReason = 'Provider HTTP 525. Error ID: example. <script>unsafe</script>';
     const message: ChatExportMessage = { role: 'assistant', content, status: 'failed', failureReason };

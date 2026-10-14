@@ -181,19 +181,20 @@ def extract_export(html, *, include_reasoning=False):
             for c in node.children
             if isinstance(c, Node) and c.tag == "time"
         ]
+        collapsed_text = [
+            child.text()
+            for prompt in node.find("system-prompt")
+            for child in prompt.children
+            if isinstance(child, Node) and child.tag == "pre"
+        ]
         messages.append(
             {
                 "index": len(messages),
                 "role": role,
                 "sources": classes[role_index + 1 :],
                 "label": texts(node, "label"),
-                "content": texts(node, "content"),
-                "system_prompts": [
-                    child.text()
-                    for prompt in node.find("system-prompt")
-                    for child in prompt.children
-                    if isinstance(child, Node) and child.tag == "pre"
-                ],
+                "content": texts(node, "content") + ([] if role == "system" else collapsed_text),
+                "system_prompts": collapsed_text if role == "system" else [],
                 "activity": activity,
                 "failures": texts(node, "failure"),
                 "status": texts(node, "message-status"),

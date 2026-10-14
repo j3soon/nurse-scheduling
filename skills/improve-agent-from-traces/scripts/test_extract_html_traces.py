@@ -42,6 +42,19 @@ def tool(summary, *outputs):
 
 
 class ExtractHtmlTracesTests(unittest.TestCase):
+    def test_collapsed_app_and_status_text_is_content_not_system_policy(self):
+        source = message("system", '<details class="system-prompt"><pre>Policy</pre></details>')
+        for origin in ("app", "status", "optimizer"):
+            source += message(
+                f"user {origin}",
+                f'<details class="system-prompt"><summary>Hidden text</summary><pre>{origin} context</pre></details>',
+            )
+        messages = extract_export(source)["messages"]
+        self.assertEqual(messages[0]["system_prompts"], ["Policy"])
+        for entry, origin in zip(messages[1:], ("app", "status", "optimizer"), strict=True):
+            self.assertEqual(entry["content"], [f"{origin} context"])
+            self.assertEqual(entry["system_prompts"], [])
+
     def test_roles_timestamps_and_pending_state_survive(self):
         source = message(
             "user app",
@@ -56,7 +69,8 @@ class ExtractHtmlTracesTests(unittest.TestCase):
         report = extract_export(source)
         self.assertEqual(report["messages"][0]["role"], "user")
         self.assertEqual(report["messages"][0]["sources"], ["app"])
-        self.assertEqual(report["messages"][0]["system_prompts"], ["  saved\n"])
+        self.assertEqual(report["messages"][0]["content"], ["  saved\n"])
+        self.assertEqual(report["messages"][0]["system_prompts"], [])
         assistant = report["messages"][1]
         self.assertEqual(assistant["content"], ["First paragraph.\nNext\nline."])
         self.assertEqual(assistant["timing"][0]["datetime"], "2026-01-01T00:00:00Z")

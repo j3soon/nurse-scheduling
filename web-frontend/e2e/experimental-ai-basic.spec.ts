@@ -249,7 +249,7 @@ async function mockAiBackend(
       captured.uploadBody = request.postDataBuffer()?.toString('latin1') ?? '';
       captured.uploadContentType = request.headers()['content-type'] ?? '';
       const filenames = [...captured.uploadBody.matchAll(/filename="([^"]+)"/g)].map(match => match[1]);
-      pendingAppEvents.push(`[App event] The user uploaded files: ${JSON.stringify(filenames)}`);
+      pendingAppEvents.push(`[App event] The user uploaded files: ${JSON.stringify(filenames.map(filename => ({ filename, bytes: 1 })))}`);
       await route.fulfill({
         status: 201,
         contentType: 'application/json',
@@ -717,7 +717,7 @@ test('previews and sends an image attachment', async ({ page }) => {
   // The bubbles follow the provider request: system prompt, upload event, then the question as typed.
   const cards = page.getByLabel('Chat messages').locator('article');
   await expect(cards.locator('> p:first-child')).toHaveText(['System', 'User · App - Files Uploaded', 'User', 'Assistant']);
-  await expect(cards.nth(1)).toContainText('[App event] The user uploaded files: ["ward.png"]');
+  await expect(cards.filter({ hasText: 'User · App - Files Uploaded' }).getByRole('listitem')).toHaveText(['ward.png (0.001 KB)']);
   await expect(cards.nth(2)).toContainText('What is shown?');
   const systemPrompt = cards.nth(0).locator('details');
   await expect(systemPrompt.locator('pre')).toBeHidden();
@@ -753,10 +753,12 @@ test('previews and sends arbitrary file attachments', async ({ page }) => {
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   await expect(page.getByText('The image and schedule were received.')).toBeVisible();
-  // The upload event text starts collapsed under its titled label.
+  // File names stay visible while the exact app message starts collapsed.
   const upload = page.getByLabel('Chat messages').locator('article', { hasText: 'User · App - Files Uploaded' });
   await expect(upload.locator('pre')).toBeHidden();
-  await expect(upload).toContainText('[App event] The user uploaded files: ["staff.csv","notes.pdf","coverage.custom"]');
+  await expect(upload.getByRole('listitem')).toHaveText([
+    'staff.csv (0.001 KB)', 'notes.pdf (0.001 KB)', 'coverage.custom (0.001 KB)',
+  ]);
   expect(captured.uploadContentType).toContain('multipart/form-data');
   expect(captured.uploadBody).toContain('name="files"');
   expect(captured.uploadBody).toContain('staff.csv');

@@ -69,6 +69,22 @@ function uploadedFileLines(files: NonNullable<ChatExportMetadata['uploadedFiles'
   return files.map(file => `${file.filename} (${(file.bytes / 1000).toLocaleString('en-US')} KB)`);
 }
 
+export function messageUploadedFileLines(message: ChatExportMessage): string[] {
+  if (message.source !== 'app' || message.title !== 'Files Uploaded') return [];
+  const separator = message.content.indexOf(': ');
+  if (separator < 0) return [];
+  try {
+    const files: unknown = JSON.parse(message.content.slice(separator + 2));
+    if (!Array.isArray(files) || !files.every(file => file !== null && typeof file === 'object'
+      && typeof file.filename === 'string' && typeof file.bytes === 'number' && Number.isFinite(file.bytes) && file.bytes >= 0)) {
+      return [];
+    }
+    return uploadedFileLines(files);
+  } catch {
+    return [];
+  }
+}
+
 const RUNNING_OPTIMIZATION_NOTE = 'An optimization was still running when this chat was exported. Its result is not included.';
 
 function runningOptimizationDetails(running: NonNullable<ChatExportMetadata['runningOptimization']>): string[] {
@@ -283,6 +299,8 @@ export function buildMarkdownChatExport(
   ];
   messages.forEach(message => {
     lines.push('', `## ${messageLabel(message)}`);
+    const uploads = messageUploadedFileLines(message);
+    if (uploads.length) lines.push('', ...uploads.map(file => `- ${file}`));
     if (message.role === 'optimizer') {
       const { summary, details } = parseOptimizerMessage(message.content);
       lines.push('', summary || '[No message text]');
@@ -323,6 +341,7 @@ export function buildHtmlChatExport(
   metadata: ChatExportMetadata,
 ): string {
   const renderedMessages = messages.map(message => {
+    const uploads = messageUploadedFileLines(message);
     const timeline = message.role === 'assistant'
       ? renderAssistantTimelineHtml(message)
       : message.role === 'system' || message.source !== undefined
@@ -333,6 +352,7 @@ export function buildHtmlChatExport(
     return `
       <article class="message ${message.role}${message.source ? ` ${message.source}` : ''}">
         <div class="label">${escapeHtml(messageLabel(message))}</div>
+        ${uploads.length ? `<ul class="attachments">${uploads.map(file => `<li>${escapeHtml(file)}</li>`).join('')}</ul>` : ''}
         ${timeline}
         ${renderHtmlMessageDetails(message, metadata.timeZone)}
       </article>`;
