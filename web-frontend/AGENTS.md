@@ -126,6 +126,9 @@ offline emulation alone can leave an existing stream open. Assert that reconnect
 uses the same request ID and executes the accepted question only once. Mock
 `/capabilities` with the real authentication and attachment-limit contract so
 reload recovery follows the production path.
+For session actions, check the action's full server event sequence through the
+client decoder and transcript. Include `model_input`, not only `run_start`, text,
+and `done`. Isolated server and UI mocks can both pass while their contracts differ.
 Replay must replace existing messages in their original positions, including
 optimizer input and steering replies. Capture the message ID before queuing React
 state updates because one replay snapshot can contain several replies.

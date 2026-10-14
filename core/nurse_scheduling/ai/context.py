@@ -298,6 +298,9 @@ def model_input(
         if index > last_reply
     ]
     added.append({"kind": question_kind, "content": messages[1 + history_count]["content"]})
+    if question_kind == "app":
+        # The proposal-triggered prompt is retained after this history snapshot.
+        added[-1]["index"] = history_offset + history_count
     added.extend({"kind": "status", "content": message["content"]} for message in messages[2 + history_count :])
     for entry in added:
         if title := message_title(str(entry["kind"]), str(entry["content"])):

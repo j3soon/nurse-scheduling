@@ -53,6 +53,13 @@ async function mockProposingBackend(page: Page, holdAnswer = false) {
     const runId = `decision-${journal.length}`;
     for (const [type, data] of [
       ['run_start', { trigger: 'proposal' }],
+      ['model_input', {
+        system: 'Policy',
+        messages: [
+          { kind: 'app', index: journal.length + 1, title: `Proposal ${decision}`, content: `The user selected ${decision}.` },
+          { kind: 'app', index: journal.length + 2, content: `Continue after ${decision}.` },
+        ],
+      }],
       ['delta', { text: `Automatic ${decision} follow-up.` }],
       ['done', {}],
     ] as const) {
@@ -183,6 +190,12 @@ test('approves a proposed schedule and applies it as one undoable step', async (
   await expect(proposal).toBeHidden();
   expect(state.approvals).toBe(1);
   await expect(page.getByText('Automatic approval follow-up.')).toBeVisible();
+  const approvalPrompt = page.getByText('Continue after approval.', { exact: true });
+  await expect(approvalPrompt).toBeAttached();
+  await approvalPrompt.locator('..').locator('summary').click();
+  await expect(approvalPrompt).toBeVisible();
+  const chatText = await page.locator('body').textContent() ?? '';
+  expect(chatText.indexOf('Continue after approval.')).toBeGreaterThan(chatText.indexOf('I propose adding one nurse.'));
 
   await page.goto('/people');
   await expect(page.getByText('1. Proposed Nurse')).toBeVisible();
@@ -201,6 +214,10 @@ test('keeps the schedule when a proposal is rejected', async ({ page }) => {
 
   await expect(page.getByRole('region', { name: 'Proposed schedule change' })).toBeHidden();
   await expect(page.getByText('Automatic rejection follow-up.')).toBeVisible();
+  const rejectionPrompt = page.getByText('Continue after rejection.', { exact: true });
+  await expect(rejectionPrompt).toBeAttached();
+  await rejectionPrompt.locator('..').locator('summary').click();
+  await expect(rejectionPrompt).toBeVisible();
 
   await page.goto('/people');
   await expect(page.getByText('1. Proposed Nurse')).toBeHidden();

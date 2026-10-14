@@ -23,6 +23,30 @@ import snapshot from '../../../../core/tests/ai_fixtures/chat-export.json';
 import { buildSavedChatExport, parseSavedChatSnapshot, projectSavedChat } from './savedChatExport';
 
 describe('saved chat export', () => {
+  it.each(['Approve', 'Reject'])('keeps the %s prompt beside its saved follow-up', decision => {
+    const prompt = `The user selected ${decision}.`;
+    const { messages } = projectSavedChat(parseSavedChatSnapshot({
+      ...snapshot,
+      runs: [
+        { ...snapshot.runs[0], id: 'original', kind: 'foreground', prompt: 'Make a proposal', started_at: 1, finished_at: 3 },
+        { ...snapshot.runs[0], id: 'decision', kind: 'background', prompt, started_at: 4, finished_at: 7 },
+      ],
+      events: [
+        { type: 'delta', data: { run_id: 'original', text: 'Proposed' }, occurred_at: 2 },
+        { type: 'done', data: { run_id: 'original' }, occurred_at: 3 },
+        { type: 'model_input', data: {
+          run_id: 'decision', system: 'Policy',
+          messages: [{ kind: 'app', index: 2, content: 'Decision recorded' }, { kind: 'app', index: 3, content: prompt }],
+        }, occurred_at: 5 },
+        { type: 'delta', data: { run_id: 'decision', text: 'Decision follow-up' }, occurred_at: 6 },
+        { type: 'done', data: { run_id: 'decision' }, occurred_at: 7 },
+      ],
+    }));
+    expect(messages.map(message => message.content)).toEqual([
+      'Make a proposal', 'Proposed', 'Policy', 'Decision recorded', prompt, 'Decision follow-up',
+    ]);
+  });
+
   it('keeps every role and ordered activity from the saved journal', () => {
     const projected = projectSavedChat(parseSavedChatSnapshot(snapshot));
     expect(projected.messages.filter(message => message.role === 'system')).toHaveLength(2);

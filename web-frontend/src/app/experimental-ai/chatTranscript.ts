@@ -71,7 +71,8 @@ export function applyModelInput(
   });
   let assistantIndex = result.findIndex(message => message.id === turn.assistantId);
   if (assistantIndex < 0) return messages;
-  let questionIndex = turn.questionId === null ? -1 : result.findIndex(message => message.id === turn.questionId);
+  let questionIndex = turn.questionId === null || questionText === null
+    ? -1 : result.findIndex(message => message.id === turn.questionId);
   if (questionIndex >= 0 && questionText !== null) {
     result[questionIndex] = { ...result[questionIndex], content: questionText };
   }

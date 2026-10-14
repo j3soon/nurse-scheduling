@@ -581,6 +581,10 @@ def test_proposal_decision_starts_one_background_follow_up_without_a_chat_messag
             assert any(
                 "user " + ("approved" if decision == "approve" else "rejected") in str(m) for m in provider.calls[0]
             )
+            model_input = next(event.data for event in events if event.type == "model_input")
+            app_messages = [message for message in model_input["messages"] if message["kind"] == "app"]
+            assert [message.get("index") for message in app_messages] == [2, 3]
+            assert f"selected {decision.title()}" in app_messages[-1]["content"]
             repeat = await client.post(f"/sessions/{session_id}/proposal/reject")
             assert repeat.status_code == 200
             assert len(provider.calls) == 1
