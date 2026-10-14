@@ -448,6 +448,31 @@ Pi's default 2000-pixel and 4.5 MB base64 image limits. Pillow replaces Photon's
 image codec and rejects oversized source images before decoding. Pi's terminal
 renderers and middle truncation are not used by these tools.
 
+## Autonomous roster validation
+
+Ready-for-use scheduling edits can be optimized while their proposal is pending.
+The agent first confirms missing rest and fairness policy. After a successful
+optimizer start, the host emits a running message and ends the current exchange.
+It skips remaining tool calls in that batch and preserves queued user messages.
+The optimizer completion starts a review turn with the new submitted source and
+workbook. The agent checks staffing, requests, rest patterns and workload counts
+before reporting the result.
+
+The prompt asks the agent to retry a failed quality review within the agreed
+policy and user budget, without another optimize request. It limits this guidance
+to three automatic runs and stops earlier on no improvement or API failure.
+This is model guidance, alongside the service's existing execution limits.
+A new policy choice still needs the user. Draft, import, explanation and explicit
+no-optimization requests do not authorize this workflow.
+
+`autonomous-optimize-updated-proposal` and `autonomous-policy-review-retry`
+improved from 0/3 to 3/3 in full-prompt comparisons with this clause removed or
+included. Both versions used the same host turn boundary and
+`unsloth/Qwen3.8-27B-NVFP4`, with four case jobs. Draft and read-only controls
+passed 3/3 in both versions. Provider calls and E2B commands were live. Completion
+fixtures used solver-checked assignments and real exported workbooks. These
+checks do not cover the HTTP optimizer queue or establish a cost saving.
+
 ## Proposal lifecycle
 
 A finished run that changed the schedule leaves one pending proposal. The

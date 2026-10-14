@@ -1613,3 +1613,45 @@ def test_new_schedule_intake_requires_rest_and_fairness_questions(answer, passed
         }
     ]
     assert grade(case, RunOutcome(answer=answer, activity=activity)).passed is passed
+
+
+@pytest.mark.parametrize("sequence", [["unknown"], ["policy-audit-clean"] * 3, "policy-audit-clean"])
+def test_optimizer_follow_up_sequence_rejects_invalid_fixtures_or_unbounded_rounds(tmp_path, sequence):
+    raw = {
+        "id": "retry",
+        "fixture": "policy-audit",
+        "question": "Finish",
+        "expect_proposal": False,
+        "optimizer_completion": "policy-audit-misses",
+        "optimizer_follow_up_completions": sequence,
+    }
+    path = tmp_path / "retry.json"
+    path.write_text(json.dumps(raw))
+    with pytest.raises(EvalCaseError):
+        load_cases(path)
+
+
+@pytest.mark.parametrize("mutation", [None, "missed-result", "no-retry"])
+def test_autonomous_retry_grader_checks_running_status_actions_and_final_quality(mutation):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "autonomous-policy-review-retry")
+    answer = dict(case.answer_json)
+    if mutation == "missed-result":
+        answer["successionViolations"] = 1
+        answer["reviewedPolicySatisfied"] = False
+    activity = [
+        {"kind": "user", "turn": 1},
+        {"kind": "tool", "name": "optimizer", "ok": True, "arguments": '{"action":"start"}'},
+        {"kind": "optimizer", "turn": 2},
+    ]
+    if mutation != "no-retry":
+        activity.append({"kind": "tool", "name": "optimizer", "ok": True, "arguments": '{"action":"start"}'})
+    activity.append({"kind": "optimizer", "turn": 3})
+    outcome = RunOutcome(
+        answer=json.dumps(answer),
+        activity=activity,
+        intermediate_answers=[
+            "Running in the background.",
+            "Running in the background.",
+        ],
+    )
+    assert grade(case, outcome).passed is (mutation is None)

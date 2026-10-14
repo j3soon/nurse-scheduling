@@ -14,10 +14,19 @@ real-optimizer check when that level of validation is requested.
 
 Grade input preservation, truthful result interpretation, and schedule quality
 separately. A feasible roster can still miss finite-weight preferences. Define
-quality requirements in advance, such as staffing shortfalls and unmet strong
-requests. Keep solver/model/export time separate from agent and sandbox time.
+quality requirements in advance, such as staffing shortfalls and unmet requests
+at an exact numeric weight. Define JSON counting units and which finite-weight
+preferences must be satisfied for handoff. Do not let a vague term such as
+"usable" make that choice for the grader. Keep solver/model/export time separate
+from agent and sandbox time.
 For automatic completion messages, preserve the production message role,
 format, and workbook. Uploading a workbook alone does not test that delivery.
 
 See the [evaluation guide](../../../core/tests/ai_eval/README.md) for fixed-result
 tests and the on-demand real-optimizer check.
+
+For autonomous retries, deliver a completion sequence with no user message
+between results. Require a new successful submission before each completion,
+then check its source, distinct artifact and final quality counts. Grade a
+truthful running update without requiring incidental words in that update.
+Check that explicit draft and read-only requests still stop without optimizing.

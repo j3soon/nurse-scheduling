@@ -110,6 +110,8 @@ class AgentToolOutcome:
     image: ToolResultImage | None = None
     terminal: bool = False
     details: dict[str, Any] | None = None
+    # Finish this exchange with verified text, then honor accepted steering.
+    end_turn_message: str | None = None
 
 
 @dataclass(frozen=True)

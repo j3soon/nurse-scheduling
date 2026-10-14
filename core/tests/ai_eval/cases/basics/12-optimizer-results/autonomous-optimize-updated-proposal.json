@@ -1,0 +1,64 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "id": "autonomous-optimize-updated-proposal",
+  "fixture": "small-clinic",
+  "question": "Set Ana's existing N avoidance on the date selector ['06'] from weight -1 to -100. Keep the date selector exactly as ['06']. Preserve all other preferences. Prepare this updated roster for use.",
+  "expect_proposal": true,
+  "changes": [
+    "preferences"
+  ],
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "removed": [
+        {
+          "type": "shift request",
+          "person": [
+            "Ana"
+          ],
+          "date": [
+            "06"
+          ],
+          "shiftType": [
+            "N"
+          ],
+          "weight": -1
+        }
+      ],
+      "added": [
+        {
+          "type": "shift request",
+          "person": [
+            "Ana"
+          ],
+          "date": [
+            "06"
+          ],
+          "shiftType": [
+            "N"
+          ],
+          "weight": -100
+        }
+      ]
+    }
+  ],
+  "semantic_check": "optimizer-start-source",
+  "tool_usage": {
+    "required_calls": [
+      {
+        "name": "optimizer",
+        "arguments": {
+          "action": "start"
+        }
+      }
+    ],
+    "max_per_tool": {
+      "optimizer": 1
+    }
+  },
+  "tags": [
+    "proactive-optimization"
+  ],
+  "note": "This testcase is mostly AI generated. Ready-for-use scheduling edit with no separate optimization request. Grade the exact proposed change and the actual submitted source. The controlled optimizer stays running; this case does not prove solver quality or later delivery."
+}

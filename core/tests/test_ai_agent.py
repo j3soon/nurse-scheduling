@@ -594,3 +594,46 @@ def test_refused_tools_consume_steering_before_the_next_provider_request(call_co
     assert len(requests) == 2
     assert events.count(AgentSteering("cancel-edit", instruction)) == 1
     assert events[-2:] == [AgentText("I will only explain."), AgentMessageEnd(AssistantMessage("I will only explain."))]
+
+
+@pytest.mark.parametrize("steering", [False, True])
+def test_tool_can_finish_with_verified_text_without_losing_queued_steering(steering):
+    provider = FakeProvider(_calls(2), _text("Answered the queued question."))
+    executed = []
+    queued = [("follow-up", "What is the current status?")] if steering else []
+    messages = []
+
+    async def execute(name, arguments):
+        executed.append((name, arguments))
+        return AgentToolOutcome("Started successfully", True, end_turn_message="Running in the background.")
+
+    def take_steering(_close):
+        if not executed:
+            return []
+        result = queued[:]
+        queued.clear()
+        return result
+
+    async def collect():
+        return [
+            event
+            async for event in agent_loop(
+                provider,
+                QUESTION,
+                bind_agent_tools(TOOLS, execute),
+                run_messages=messages,
+                take_steering=take_steering,
+            )
+        ]
+
+    events = asyncio.run(collect())
+    assert len(executed) == 1
+    assert len(provider.requests) == (2 if steering else 1)
+    assert AgentText("Running in the background.") in events
+    assert AssistantMessage("Running in the background.") in messages
+    skipped = [event for event in events if isinstance(event, AgentToolUse) and not event.ok]
+    assert len(skipped) == 1 and "not executed" in skipped[0].result
+    assert [event.tool_call_id for event in events if isinstance(event, AgentToolStart)] == ["call_0"]
+    if steering:
+        assert AgentSteering("follow-up", "What is the current status?") in events
+        assert AgentText("Answered the queued question.") in events

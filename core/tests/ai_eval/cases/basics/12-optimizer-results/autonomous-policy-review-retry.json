@@ -1,0 +1,81 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "id": "autonomous-policy-review-retry",
+  "fixture": "policy-audit",
+  "question": "Prepare a usable roster. I need every configured preferred staffing target and the N followed by D preference satisfied, as well as all requests at weight 11000000000. Keep every configured rule and weight unchanged. Deliver it after checking the actual output. Return JSON with strongUnmet, preferredStaffingMisses, successionViolations, and reviewedPolicySatisfied. strongUnmet counts only unmet person/date targets at weight 11000000000. reviewedPolicySatisfied covers those requests, preferred staffing targets and the N followed by D rule.",
+  "expect_proposal": false,
+  "optimizer_completion": "policy-audit-misses",
+  "optimizer_completion_only": true,
+  "optimizer_follow_up_completions": [
+    "policy-audit-clean"
+  ],
+  "answer_json": {
+    "strongUnmet": 0,
+    "preferredStaffingMisses": 0,
+    "successionViolations": 0,
+    "reviewedPolicySatisfied": true
+  },
+  "intermediate_answer_contains": [
+    [
+      "background"
+    ],
+    [
+      [
+        "running",
+        "background"
+      ]
+    ]
+  ],
+  "tool_usage": {
+    "required_calls": [
+      {
+        "name": "optimizer",
+        "arguments": {
+          "action": "start"
+        }
+      }
+    ],
+    "max_per_tool": {
+      "optimizer": 2
+    }
+  },
+  "turn_tool_usage": [
+    {
+      "required_calls": [
+        {
+          "name": "optimizer",
+          "arguments": {
+            "action": "start"
+          }
+        }
+      ],
+      "max_per_tool": {
+        "optimizer": 1
+      }
+    },
+    {
+      "required_calls": [
+        {
+          "name": "optimizer",
+          "arguments": {
+            "action": "start"
+          }
+        }
+      ],
+      "max_per_tool": {
+        "optimizer": 1
+      }
+    },
+    {
+      "forbidden": [
+        "optimizer"
+      ]
+    }
+  ],
+  "tags": [
+    "proactive-optimization",
+    "optimizer-result"
+  ],
+  "note": "This testcase is mostly AI generated. No intervening user turn. A timed-out feasible incumbent misses preferred staffing three times and one N-D succession window; the next checked incumbent is clean. Both assignments are solver-validated and exported. Require a retry with unchanged policy, then review the new workbook and stop. Replies are controlled, not real asynchronous optimizer jobs."
+}

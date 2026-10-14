@@ -25,6 +25,11 @@ from typing import Any
 from .agent_types import AgentToolOutcome
 from .optimizer import OPTIMIZER_TOOL, WORKSPACE_OPTIMIZER_RESULT, OptimizerError, SessionOptimization, SessionOptimizer
 
+OPTIMIZER_RUNNING_MESSAGE = (
+    "Optimization is running in the background. You can keep chatting while it solves. "
+    "I will review the new result when it finishes."
+)
+
 
 def optimizer_start_message(job_id: str, source_sha256: str) -> str:
     """Render the startup acknowledgement shared by production and controlled evaluations."""

@@ -402,10 +402,11 @@ async def run_case(
     try:
         if sandbox_factory is None:
             raise ValueError("sandbox_factory is required for AI evaluation")
-        turns = [(question, False) for question in case.user_turns]
+        turns = [(question, "") for question in case.user_turns]
         if case.optimizer_completion:
-            turns.append(("", True))
-        turns.extend((question, False) for question in case.after_optimizer_turns)
+            turns.append(("", case.optimizer_completion))
+            turns.extend(("", name) for name in case.optimizer_follow_up_completions)
+        turns.extend((question, "") for question in case.after_optimizer_turns)
         for turn_index, (question, completion) in enumerate(turns):
             if case.optimizer_completion_only and not completion and turn_index < len(case.user_turns):
                 arguments = json.dumps({"action": "start", "timeout_seconds": 60})
@@ -444,10 +445,10 @@ async def run_case(
                     break
                 try:
                     if optimizer_completion_factory is None:
-                        optimizer_result, result_data = completion_result(case.optimizer_completion, optimizer_source)
+                        optimizer_result, result_data = completion_result(completion, optimizer_source)
                     else:
                         optimizer_result, result_data = await asyncio.to_thread(
-                            optimizer_completion_factory, case.optimizer_completion, optimizer_source
+                            optimizer_completion_factory, completion, optimizer_source
                         )
                 except ValueError as error:
                     events.append({"kind": "evaluation_stop", "reason": str(error)})

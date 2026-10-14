@@ -587,3 +587,110 @@ def test_proposal_decision_starts_one_background_follow_up_without_a_chat_messag
         await app.state.runs.close()
 
     asyncio.run(exercise())
+
+
+def test_optimizer_completion_can_retry_and_review_again_without_a_user_turn():
+    from io import BytesIO
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from nurse_scheduling import schedule
+    from nurse_scheduling.ai.attachment_tools.inspect_optimizer_result import inspect_result
+    from nurse_scheduling.ai.optimizer import OptimizerArtifact
+    from nurse_scheduling.ai.provider import ToolCall, ToolCallRequest
+    from nurse_scheduling.ai.sandbox import CommandResult
+    from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
+    from nurse_scheduling.ai.workspace import WORKSPACE_RESULT_CONTEXT
+
+    from .test_ai_basic import ScriptedToolProvider
+    from .test_ai_optimizer import FakeOptimizerBackend
+
+    async def exercise():
+        class Backend(FakeOptimizerBackend):
+            async def get(self, job_id):
+                payload = await super().get(job_id)
+                if payload.state == "completed":
+                    payload.result = {
+                        "outcome": "feasible",
+                        "solver_status": "FEASIBLE",
+                        "score": 0 if job_id == "remote-1" else 1,
+                    }
+                return payload
+
+            async def result_artifact(self, job):
+                source = self.submissions[int(job.id.rsplit("-", 1)[1]) - 1][0]
+                first = job.id == "remote-1"
+                forced = {
+                    (day, shift, person): int(day == 0 and person == 0 and shift == (1 if first else 0))
+                    for day in range(2)
+                    for shift in range(2)
+                    for person in range(2)
+                }
+                output = schedule(
+                    source.encode(), solver="ortools/cp-sat", forced_solution=forced, timeout=5, prettify=True
+                )
+                from nurse_scheduling.exporter import export_to_excel
+
+                output.dataframe.data.loc[output.dataframe.data.iloc[:, 0] == "Status"] = output.dataframe.data.loc[
+                    output.dataframe.data.iloc[:, 0] == "Status"
+                ].replace("OPTIMAL", "FEASIBLE")
+                data = BytesIO()
+                export_to_excel(output.dataframe, data, output.cell_export_info)
+                return OptimizerArtifact(
+                    data.getvalue(), "result.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+
+        audits = []
+
+        def inspect(_command, _timeout, sandbox):
+            with TemporaryDirectory() as directory:
+                workbook = Path(directory) / "result.xlsx"
+                workbook.write_bytes(sandbox.files["/workspace/optimizer-results/optimized-schedule.xlsx"])
+                context = json.loads(sandbox.files[WORKSPACE_RESULT_CONTEXT])
+                result = inspect_result(workbook, context, context["source_sha256"])
+            audits.append(result)
+            return CommandResult(json.dumps(result), "", 0)
+
+        start = [ToolCallRequest((ToolCall("start", "optimizer", '{"action":"start"}'),))]
+        review = [ToolCallRequest((ToolCall("review", "bash", '{"command":"inspect result"}'),))]
+        provider = ScriptedToolProvider(
+            start,
+            review,
+            start,
+            review,
+            [TextDelta("Reviewed fresh result.")],
+        )
+        backend = Backend()
+        backend.release.set()
+        factory = FakeSandboxFactory(lambda id: FakeSandboxBackend(id, command_handler=inspect))
+        app = create_test_app(
+            settings=make_settings(optimizer_poll_interval_seconds=0.001),
+            provider=provider,
+            sandbox_factory=factory,
+            optimizer_backend=backend,
+        )
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://testserver",
+                headers={**AI_AUTH_HEADERS, "Accept": "application/json"},
+            ) as client,
+        ):
+            sid = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
+            response = await client.post(f"/sessions/{sid}/messages", json={"message": "Prepare and check the roster."})
+            assert response.status_code == 202
+            async with asyncio.timeout(5):
+                while len(audits) < 2 or app.state.runs.busy(sid):
+                    await asyncio.sleep(0.001)
+            assert [a["summary"][0]["unmet"] for a in audits] == [1, 0]
+            assert len(backend.submissions) == 2
+            assert backend.deleted == ["remote-1", "remote-2"]
+            events = app.state.session_event_stream.events_after(sid)
+            assert [e.data["trigger"] for e in events if e.type == "run_start"] == ["user", "optimizer", "optimizer"]
+            assert sum(e.type == "done" for e in events) == 3
+            assert not any(e.type in {"stale", "error", "stopped"} for e in events)
+            session = app.state.session_store.get(sid)
+            assert session.transcript[-1] == AssistantMessage("Reviewed fresh result.")
+
+    asyncio.run(exercise())

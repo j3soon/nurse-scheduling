@@ -90,6 +90,7 @@ def case_digest(case: EvalCase) -> str:
     for optional in (
         "optimizer_completion",
         "optimizer_completion_only",
+        "optimizer_follow_up_completions",
         "answer_json",
         "download_files",
         "import_attachment",
@@ -120,6 +121,10 @@ def case_digest(case: EvalCase) -> str:
         from .optimizer_fixtures import RESULT_SOURCES, fixture_digest
 
         fields["optimizer_fixture_sha256"] = fixture_digest(case.optimizer_completion)
+        if case.optimizer_follow_up_completions:
+            fields["optimizer_follow_up_fixtures_sha256"] = [
+                fixture_digest(name) for name in case.optimizer_follow_up_completions
+            ]
         fields["request_context_sha256"] = hashlib.sha256(inspect.getsource(_project_context).encode()).hexdigest()
         helper_names.update(("inspect_optimizer_result.py", "inspect_xlsx.py"))
         from nurse_scheduling.loader import _load_yaml

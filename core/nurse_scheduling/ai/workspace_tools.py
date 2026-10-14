@@ -33,7 +33,7 @@ from .agent_types import AgentEvent, AgentProposal, AgentTool, AgentToolBatchMet
 from .candidate import review_schedule_candidate
 from .downloads import WORKSPACE_DOWNLOAD, validate_download_zip
 from .optimizer import OPTIMIZER_TOOL
-from .optimizer_tool import optimizer_tool_definition
+from .optimizer_tool import OPTIMIZER_RUNNING_MESSAGE, optimizer_tool_definition
 from .pi.read import READ_TOOL
 from .provider import ChatMessage, ToolCapableChatProvider
 from .sandbox import SandboxError, SandboxFactory, SandboxFileNotFoundError, SandboxFileSizeError
@@ -103,7 +103,10 @@ class WorkspaceTools:
             review = review_schedule_candidate(self.schedule_yaml, current_schedule, self.limits.max_schedule_bytes)
             if not review.outcome.ok:
                 return AgentToolOutcome(f"Trusted schedule check before optimizer:\n{review.outcome.text}", False)
-            return await self.execute_optimizer(current_schedule, arguments)
+            outcome = await self.execute_optimizer(current_schedule, arguments)
+            if outcome.ok:
+                return replace(outcome, end_turn_message=OPTIMIZER_RUNNING_MESSAGE)
+            return outcome
         outcome = await self.sandbox_tools.execute(name, arguments)
         if outcome.terminal:
             self.command_timeout = outcome.text

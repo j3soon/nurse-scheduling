@@ -521,7 +521,6 @@ def test_optimizer_status_control_requires_a_fresh_call_in_the_later_user_turn()
     case = CASE_BY_ID["tool-optimizer-status-on-request"]
     responses = [
         [ToolCallRequest((ToolCall("start", "optimizer", '{"action":"start"}'),))],
-        [TextDelta("Optimization is running in the background. You can keep chatting.")],
     ]
     provider = ScriptedProvider(
         *responses,
@@ -620,7 +619,7 @@ def test_missing_required_tool_does_not_stop_a_run_before_later_success():
     )
     run = asyncio.run(run_case(provider, settings(), case, _factory()))
     assert run.passed
-    assert len(provider.messages) == 3
+    assert len(provider.messages) == 2
 
 
 def test_provider_wait_time_is_recorded_per_inference_turn():
@@ -1915,3 +1914,61 @@ def test_history_import_case_checks_every_source_history():
             person["history"] = []
     wrong = grade(case, RunOutcome(answer="", initial=initial, proposed=proposal, activity=[]))
     assert len(wrong.failures()) == 31
+
+
+@pytest.mark.parametrize("retry", [False, True])
+def test_autonomous_review_delivers_each_completed_workbook_only_after_its_start(retry):
+    from nurse_scheduling.ai.attachment_tools.inspect_optimizer_result import inspect_result
+
+    from .ai_eval.optimizer_fixtures import completion_result
+
+    case = CASE_BY_ID["autonomous-policy-review-retry"]
+    delivered = []
+
+    def completion(name, source):
+        workbook, metadata = completion_result(name, source)
+        delivered.append(name)
+        return workbook, metadata
+
+    def audit(_command, _timeout, backend):
+        import tempfile
+        from pathlib import Path
+
+        from nurse_scheduling.ai.workspace import WORKSPACE_RESULT_CONTEXT
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "result.xlsx"
+            path.write_bytes(backend.files["/workspace/optimizer-results/optimized-schedule.xlsx"])
+            context = json.loads(backend.files[WORKSPACE_RESULT_CONTEXT])
+            counts = inspect_result(path, context, context["source_sha256"], max_unmet=0)
+        return CommandResult(json.dumps(counts), "", 0)
+
+    factory = _factory(audit)
+    first_tools = [ToolCallRequest((ToolCall("inspect-1", BASH_TOOL, '{"command":"audit"}'),))]
+    provider = ScriptedProvider(
+        [TextDelta("Preferred staffing and succession checks failed."), *first_tools],
+        (
+            [ToolCallRequest((ToolCall("retry", "optimizer", '{"action":"start"}'),))]
+            if retry
+            else [TextDelta("Please tell me to retry.")]
+        ),
+        [ToolCallRequest((ToolCall("inspect-2", BASH_TOOL, '{"command":"audit"}'),))],
+        [
+            TextDelta(
+                '{"strongUnmet":0,"preferredStaffingMisses":0,"successionViolations":0,"reviewedPolicySatisfied":true}'
+            )
+        ],
+    )
+    run = asyncio.run(run_case(provider, settings(), case, factory, optimizer_completion_factory=completion))
+    assert run.passed is retry
+    assert delivered == (["policy-audit-misses", "policy-audit-clean"] if retry else ["policy-audit-misses"])
+    if retry:
+        contexts = [
+            json.loads(backend.files["/workspace/optimizer-results/schedule-context.json"])
+            for backend in factory.created
+        ]
+        assert len(contexts) == 2
+        assert contexts[0]["workbook_sha256"] != contexts[1]["workbook_sha256"]
+        assert contexts[0]["source_sha256"] == contexts[1]["source_sha256"]
+        assert len(run.trajectory["user_turns"]) == 1
+        assert sum(event["kind"] == "optimizer_artifact" for event in run.trajectory["events"]) == 2

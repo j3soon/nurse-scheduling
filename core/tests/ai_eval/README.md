@@ -238,6 +238,15 @@ and workbook hashes match. `result-policy-misses`, `result-policy-clean`, and
 Score-bearing completions report `score_direction: maximize` and restrict score
 comparisons to unchanged constraints and weights. `optimizer-score-same-model`
 checks direction and `optimizer-score-changed-model` guards comparability.
+`optimizer_follow_up_completions` adds at most two named completion fixtures after
+`optimizer_completion`. Each is delivered only after another successful start,
+with the new submitted source and a fresh workbook. No user message is inserted
+between results. This checks autonomous retries rather than a user asking again.
+`autonomous-optimize-updated-proposal` checks that ready-for-use scheduling edits
+reach the optimizer without an explicit optimize request. `autonomous-policy-review-retry`
+checks a failed quality review, an unchanged-policy retry and a fresh passing result.
+Its quality goals name exact request weights and preferred policy targets.
+
 Cases marked `optimizer_completion_only` seed a fixed successful start and acknowledgement without a provider call.
 The seed remains in the grading trace but is excluded from model tool and token metrics.
 `after_optimizer_turns` adds user messages after completion in fresh workspaces with the retained workbook.

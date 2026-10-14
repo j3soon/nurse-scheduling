@@ -2281,7 +2281,6 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
     optimizer_call = [ToolCallRequest((ToolCall("optimizer-call", OPTIMIZER_TOOL, json.dumps({"action": "start"})),))]
     provider = ScriptedToolProvider(
         optimizer_call,
-        [TextDelta("Optimization started. You can keep chatting.")],
         [TextDelta("Yes, I can answer while it runs.")],
         [
             ToolCallRequest(
@@ -2334,7 +2333,7 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
 
         assert started.status_code == 200
         assert follow_up.status_code == 200
-        assert "Optimization started" in started.text
+        assert "running in the background" in started.text
         assert "answer while it runs" in follow_up.text
         submitted = parse_schedule(optimizer.submitted_yaml)
         assert [person["id"] for person in submitted["people"]["items"]] == ["P1", "P2"]
@@ -2386,19 +2385,19 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         assert all(event.data["run_id"] == run_id for event in events[3:])
         assert all("message_id" not in event.data for event in events[3:])
         assert events[4].data == {
-            "system": provider.calls[3][0]["content"],
+            "system": provider.calls[2][0]["content"],
             "schedule_yaml": schedule_yaml(),
             "messages": [
-                {"kind": "optimizer", "content": provider.calls[3][-2]["content"]},
+                {"kind": "optimizer", "content": provider.calls[2][-2]["content"]},
                 {
                     "kind": "status",
-                    "content": provider.calls[3][-1]["content"],
+                    "content": provider.calls[2][-1]["content"],
                     "title": "Current Time, Optimizer Result",
                 },
             ],
             "run_id": run_id,
         }
-        assert provider.calls[3][0] == provider.calls[0][0]
+        assert provider.calls[2][0] == provider.calls[0][0]
         assert events[7].data == {"text": "The optimizer returned score 23.", "run_id": run_id}
         assert events[8].data["max_chars"] == 200_000
         assert events[8].data["used_chars"] > 0
@@ -2407,8 +2406,8 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
             assert history_starts[-1][1] == session_id
             # The review run hydrates the retained upload too.
             assert history_starts[-1][4:] == ("test-model", 1)
-        assert '"score": 23' in str(provider.calls[3][-2]["content"])
-        assert provider.calls[3][-1]["content"].endswith(
+        assert '"score": 23' in str(provider.calls[2][-2]["content"])
+        assert provider.calls[2][-1]["content"].endswith(
             "\nOptimization result: /workspace/optimizer-results/optimized-schedule.xlsx."
             " The user can already download this workbook with the chat's Download result button."
         )
@@ -2417,7 +2416,7 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
             for backend in factory.created
             if "/workspace/optimizer-results/optimized-schedule.xlsx" in backend.files
         )
-        assert source_path in provider.calls[3][1]["content"]
+        assert source_path in provider.calls[2][1]["content"]
         assert background_sandbox.files[source_path] == b"original input"
         assert background_sandbox.files["/workspace/optimizer-results/optimized-schedule.xlsx"].startswith(
             b"PK\x03\x04"
@@ -2467,7 +2466,6 @@ def test_optimizer_inspection_keeps_submitted_context_after_editor_changes():
     read_context = [ToolCallRequest((ToolCall("read-context", READ_TOOL, json.dumps({"path": context_path})),))]
     provider = ScriptedToolProvider(
         [ToolCallRequest((ToolCall("start", OPTIMIZER_TOOL, '{"action":"start"}'),))],
-        [TextDelta("Started.")],
         read_context,
         [TextDelta("Reviewed.")],
         read_context,
@@ -3246,7 +3244,6 @@ def test_background_command_timeout_preserves_tool_result_and_reports_the_actual
 
     provider = ScriptedToolProvider(
         [ToolCallRequest((ToolCall("start", OPTIMIZER_TOOL, '{"action":"start"}'),))],
-        [TextDelta("Optimization started.")],
         [ToolCallRequest((ToolCall("wait", BASH_TOOL, '{"command":"sleep 30"}'),))],
     )
     optimizer = BackgroundTestOptimizer()
@@ -3260,7 +3257,7 @@ def test_background_command_timeout_preserves_tool_result_and_reports_the_actual
     with AuthenticatedTestClient(app) as client:
         session_id = create_session(client, schedule_yaml())
         started = client.post(f"/sessions/{session_id}/messages", json={"message": "Optimize."})
-        assert "Optimization started" in started.text
+        assert "running in the background" in started.text
         optimizer.release.set()
         events = review_run_events(app, session_id)
         assert events[-1].type == "error"
@@ -3269,7 +3266,7 @@ def test_background_command_timeout_preserves_tool_result_and_reports_the_actual
         assert not tool.data["ok"]
         assert "Command timed out" in tool.data["result"]
         assert not any(event.type in {"proposal", "done"} for event in events)
-        assert len(provider.calls) == 3
+        assert len(provider.calls) == 2
 
 
 def test_provider_http_failure_shows_status_and_reference_without_response_body(monkeypatch):
@@ -3299,7 +3296,6 @@ def test_provider_http_failure_shows_status_and_reference_without_response_body(
 def test_background_review_reports_safe_reasons_and_keeps_private_errors_hidden(failure):
     turns = [
         [ToolCallRequest((ToolCall("start", OPTIMIZER_TOOL, '{"action":"start"}'),))],
-        [TextDelta("Optimization started.")],
     ]
     if failure == "validation":
         turns.extend([rename_call(), [TextDelta("Invalid candidate.")]])

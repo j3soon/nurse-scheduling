@@ -118,6 +118,7 @@ class EvalCase:
     attachments: tuple[str, ...] = ()
     optimizer_error: str = ""
     optimizer_completion: str = ""
+    optimizer_follow_up_completions: tuple[str, ...] = ()
     optimizer_completion_only: bool = False
     answer_json: dict[str, Any] = field(default_factory=dict)
     download_files: dict[str, str] = field(default_factory=dict)
@@ -244,6 +245,7 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         "optimizer_error",
         "optimizer_completion",
         "optimizer_completion_only",
+        "optimizer_follow_up_completions",
         "answer_json",
         "download_count",
         "optimizer_download_file",
@@ -282,6 +284,16 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         or not all(isinstance(turn, str) and turn for turn in raw_turns)
     ):
         raise EvalCaseError(f"{source} `user_turns` must be a non-empty list of strings.")
+    follow_up_completions = entry.get("optimizer_follow_up_completions", [])
+    if (
+        not isinstance(follow_up_completions, list)
+        or len(follow_up_completions) > 2
+        or not all(isinstance(name, str) and name for name in follow_up_completions)
+        or (follow_up_completions and not entry.get("optimizer_completion"))
+    ):
+        raise EvalCaseError(
+            f"{source} optimizer_follow_up_completions needs a first completion and at most two fixtures."
+        )
     raw_intermediate = entry.get("intermediate_answer_contains", [])
     after_optimizer_turns = entry.get("after_optimizer_turns", [])
     if (
@@ -290,7 +302,12 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         or (after_optimizer_turns and not entry.get("optimizer_completion"))
     ):
         raise EvalCaseError(f"{source} after_optimizer_turns requires an optimizer completion and question strings.")
-    total_turns = len(raw_turns) + bool(entry.get("optimizer_completion")) + len(after_optimizer_turns)
+    total_turns = (
+        len(raw_turns)
+        + bool(entry.get("optimizer_completion"))
+        + len(follow_up_completions)
+        + len(after_optimizer_turns)
+    )
     if (
         not isinstance(raw_intermediate, list)
         or len(raw_intermediate) > total_turns - 1
@@ -356,7 +373,7 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     if not isinstance(optimizer_error, str):
         raise EvalCaseError(f"{source} `optimizer_error` must be a string.")
     optimizer_completion = entry.get("optimizer_completion", "")
-    if not isinstance(optimizer_completion, str) or optimizer_completion not in {
+    completion_names = {
         "",
         "request-audit",
         "request-audit-pending",
@@ -366,7 +383,12 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         "policy-audit-clean",
         "policy-audit-stale",
         "request-audit-stale-summary",
-    }:
+    }
+    if (
+        not isinstance(optimizer_completion, str)
+        or optimizer_completion not in completion_names
+        or any(name not in completion_names or not name for name in follow_up_completions)
+    ):
         raise EvalCaseError(f"{source} has an unknown optimizer_completion fixture.")
     optimizer_completion_only = entry.get("optimizer_completion_only", False)
     if not isinstance(optimizer_completion_only, bool) or (optimizer_completion_only and not optimizer_completion):
@@ -429,6 +451,7 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         attachments=tuple(raw_attachments),
         optimizer_error=optimizer_error,
         optimizer_completion=optimizer_completion,
+        optimizer_follow_up_completions=tuple(follow_up_completions),
         optimizer_completion_only=optimizer_completion_only,
         answer_json=answer_json,
         category=category,
