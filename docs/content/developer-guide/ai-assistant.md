@@ -790,7 +790,11 @@ curl -H "Authorization: Bearer ${AI_AUTH_TOKEN}" \
   the configured provider through model-facing tool results. Use approved
   services and anonymize sensitive schedules when required.
 - Arbitrary uploads are bounded, assigned safe sandbox paths, and treated as
-  untrusted data. Configure a matching request-body limit at the public reverse
+  untrusted data. Session requests authenticate before reading their bodies.
+  The AI service checks declared and streamed body bytes before parsing JSON
+  or multipart data. JSON bounds allow escaped schedules and messages. Only
+  upload routes receive the larger attachment body budget.
+  Configure a matching request-body limit at the public reverse
   proxy. Never add attachment execution to the sandbox workflow.
 - The Pi-compatible `read` tool recognizes JPEG, PNG, GIF, WebP, and BMP content.
   It normalizes and bounds images before returning them to the model as

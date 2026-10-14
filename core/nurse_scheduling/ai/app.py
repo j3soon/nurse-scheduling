@@ -57,6 +57,7 @@ from .optimizer import (
 from .optimizer_http import HttpOptimizerBackend
 from .provider import OpenAiCompatibleProvider, ToolCapableChatProvider
 from .recovery import SessionRecovery
+from .request_limits import AiRequestLimitsMiddleware
 from .sandbox import SandboxFactory, managed_sandbox_factory
 from .sandbox.factory import create_sandbox_factory
 from .session_event_stream import SessionEventStream, SessionResetData
@@ -459,6 +460,7 @@ def create_app(
         docs_url="/docs" if generated_docs_are_public else None,
         redoc_url="/redoc" if generated_docs_are_public else None,
     )
+    app.add_middleware(AiRequestLimitsMiddleware, settings=settings, require_auth=require_auth)
     app.add_middleware(
         CORSMiddleware,
         allow_origin_regex=ORIGIN_REGEX,
