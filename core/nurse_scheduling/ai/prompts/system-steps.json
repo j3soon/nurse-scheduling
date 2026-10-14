@@ -506,7 +506,7 @@
           },
           {
             "case": "xlsx-styled-requests-and-caches",
-            "input_sha256": "9dbcf8b01a36d5e5525bb41a27560d58caf96745e64424f4bc2497313fb9b0e1",
+            "input_sha256": "8281e591144e93c08aecafaa243b15ce976724a7c95c26f1a9fe203b138268a8",
             "before": "3/3",
             "after": "3/3"
           }
@@ -514,7 +514,8 @@
         "note": "Adjacent prefix comparison with the A1-range helper. The predeclared total-token target is 0.80. Formula caches, stored colors, and styled requests remain correct.",
         "cost_metric": "total-tokens",
         "cost_ratio": 0.39351841987514113,
-        "cost_target": 0.8
+        "cost_target": 0.8,
+        "grading_note": "Regraded saved outputs after numeric comparison correction. Case and fixture fingerprints match. Pass counts and costs are unchanged."
       }
     ]
   },
@@ -620,12 +621,13 @@
         "controls": [
           {
             "case": "optimizer-independent-request-check",
-            "input_sha256": "8cd9c2a3818f6266e8a3883e96b3cb86dfc9d3ea34a10029fc8d4d13e611be60",
+            "input_sha256": "80bc0f79a65ed7f2c01894fcca1c46d92c4e896b643cc8b8bff4d191e51379a3",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "The unchanged request-count witness remains valid. Independent checking remains authorized when requested. Stale-policy conclusions are not confirmed in the new comparison, so that testcase remains linked without a passing control receipt. Failed attempts remain in ignored artifacts."
+        "note": "The unchanged request-count witness remains valid. Independent checking remains authorized when requested. Stale-policy conclusions are not confirmed in the new comparison, so that testcase remains linked without a passing control receipt. Failed attempts remain in ignored artifacts.",
+        "grading_note": "Regraded saved outputs after numeric comparison correction. Case and fixture fingerprints match. Pass counts and costs are unchanged."
       }
     ]
   },
@@ -731,7 +733,7 @@
     "evidence": [
       {
         "case": "month-end-full-history",
-        "input_sha256": "c154a81dae26f3a11b241dcc2b4dba4a681674d2e71330d496d6d58a47cee252",
+        "input_sha256": "877e07a459afdeb2558cb9ad16b643189a6412a998f33e6608070ccd56c329a4",
         "before": "2/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
@@ -750,7 +752,8 @@
             "after": "3/3"
           }
         ],
-        "note": "Full-prompt comparison of immediately previous wording with scoped wording, with the same code, helpers, cases, and attachments. Full-history arrays improve from 2/3 to 3/3. Both one-row shorthand CSV controls pass 3/3 with both wordings. Calendar order and all supplied days remain semantic. No optimizer jobs ran."
+        "note": "Full-prompt comparison of immediately previous wording with scoped wording, with the same code, helpers, cases, and attachments. Full-history arrays improve from 2/3 to 3/3. Both one-row shorthand CSV controls pass 3/3 with both wordings. Calendar order and all supplied days remain semantic. No optimizer jobs ran.",
+        "grading_note": "Regraded saved outputs after numeric comparison correction. Case and fixture fingerprints match. Pass counts and costs are unchanged."
       }
     ],
     "comparison_mode": "ablation"
@@ -822,12 +825,13 @@
           },
           {
             "case": "optimizer-independent-request-check",
-            "input_sha256": "0ebfcc2a151d96f1d27555c75aaf80f39a7e184045db9e4b09e57d5ceacbbcb1",
+            "input_sha256": "c5af550e95046772a2d6a8accdc47717c84a69edf70e02c9045bf82ea613f02a",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Adjacent full-prompt prefixes. Goal witness preserves submitted policy with 69% fewer mean tokens. Two of three starts are direct. Edit and independent-check controls stay correct. Authorized edits use 38% more tokens, so the combined cost gate fails. Baseline token variance is high. Controlled starts do not grade solver quality."
+        "note": "Adjacent full-prompt prefixes. Goal witness preserves submitted policy with 69% fewer mean tokens. Two of three starts are direct. Edit and independent-check controls stay correct. Authorized edits use 38% more tokens, so the combined cost gate fails. Baseline token variance is high. Controlled starts do not grade solver quality.",
+        "grading_note": "Regraded saved outputs after numeric comparison correction. Case and fixture fingerprints match. Pass counts and costs are unchanged."
       }
     ]
   },
@@ -941,12 +945,13 @@
           },
           {
             "case": "new-schedule-qualified-slots",
-            "input_sha256": "5dd1ce77d9ecad8270cc9a4ef0537889bfb7ab165e69ebdc2f6e095deaa7a8b0",
+            "input_sha256": "6f64582f70aa47b1c0d8a5fa45a9824fec3d36fbbb53d6d84119e6a3b060b0ed",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Compare the previous full prompt with the explicit included-versus-additional arithmetic. The first corrected baseline creates three day slots in one of three runs. All five candidate runs pass, including its first three used for this paired receipt. A separate five-run baseline also passes 5/5, so the longer comparison ties and does not establish a general success-rate or cost gain. The explicit additional-slot control stays correct. The explanation control is rerun in both versions with numeric staffing counts, valid N or N+ names, and a rejection rule limited to claims that the app cannot represent senior staffing. Earlier false failures remain diagnostic reports."
+        "note": "Compare the previous full prompt with the explicit included-versus-additional arithmetic. The first corrected baseline creates three day slots in one of three runs. All five candidate runs pass, including its first three used for this paired receipt. A separate five-run baseline also passes 5/5, so the longer comparison ties and does not establish a general success-rate or cost gain. The explicit additional-slot control stays correct. The explanation control is rerun in both versions with numeric staffing counts, valid N or N+ names, and a rejection rule limited to claims that the app cannot represent senior staffing. Earlier false failures remain diagnostic reports.",
+        "grading_note": "Regraded saved outputs after numeric comparison correction. Case and fixture fingerprints match. Pass counts and costs are unchanged."
       }
     ]
   },
@@ -1009,12 +1014,13 @@
           },
           {
             "case": "new-schedule-qualified-slots",
-            "input_sha256": "c7c65565533601ac6c899658f044914784f8646bb9b8ea0ebf8eba667dfa1ea5",
+            "input_sha256": "2a0e355140e06c8cbe6dffb7424ef242f61a2d6fc13b82407a0a85a184f3e8b0",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Full previous production prompt versus the same prompt plus policy intake. Provider and E2B commands are live. Initial diagnostic batch has three provider failures and remains preserved. Clean intake/declined recheck and unchanged qualified explanation control are used here. No optimization or general cost benefit is claimed."
+        "note": "Full previous production prompt versus the same prompt plus policy intake. Provider and E2B commands are live. Initial diagnostic batch has three provider failures and remains preserved. Clean intake/declined recheck and unchanged qualified explanation control are used here. No optimization or general cost benefit is claimed.",
+        "grading_note": "Regraded saved outputs after numeric comparison correction. Case and fixture fingerprints match. Pass counts and costs are unchanged."
       }
     ]
   },

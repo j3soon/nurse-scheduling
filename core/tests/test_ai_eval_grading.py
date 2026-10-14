@@ -80,6 +80,36 @@ SCHEDULE = {
 
 
 @pytest.mark.parametrize(
+    ("expected", "actual", "passed"),
+    [
+        (20020000000, 20020000000.0, True),
+        (20020000000.0, 20020000000, True),
+        ({"sum": 20020000000}, {"sum": 20020000000.0}, True),
+        (20020000000, 20020000001.0, False),
+        (1, 1.5, False),
+        (1, "1", False),
+        ("01", 1, False),
+        (1, True, False),
+        (True, 1, False),
+        (0, False, False),
+        (False, 0, False),
+        (9007199254740993, 9007199254740992.0, False),
+        (["01", "02"], [1, 2], False),
+    ],
+)
+def test_answer_json_numeric_fields_compare_values_without_coercing_other_types(expected, actual, passed):
+    case = EvalCase(
+        id="numeric-answer",
+        fixture="new-schedule",
+        question="Return JSON.",
+        expect_proposal=False,
+        answer_json={"value": expected},
+    )
+    result = grade(case, RunOutcome(answer=json.dumps({"value": actual})))
+    assert result.passed is passed
+
+
+@pytest.mark.parametrize(
     "successful, correct_values, range_command, passed",
     [(True, True, True, True), (False, True, True, False), (True, False, True, False), (True, True, False, False)],
 )

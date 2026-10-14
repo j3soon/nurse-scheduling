@@ -59,7 +59,10 @@ failures. Infrastructure-invalid pairs may be rerun only with the original failu
 For a stronger witness, freeze the case and grading before comparing, then confirm a promising gain in an
 independent batch with unchanged inputs. Difficulty alone is not evidence. Keep passing ties as controls,
 and do not require a guide read as a substitute for correct app behavior. Correct grader mistakes in both
-arms, preserve the original results, and rerun the affected comparison.
+arms and preserve the original results. For a grading-only change, first regrade saved outputs from both arms
+with matching testcase and fixture fingerprints. Refresh grading fingerprints and record that regrading used
+saved outputs. Keep historical counts and costs only when every affected check retains its result. Rerun the
+affected provider comparison when model inputs changed or saved outputs and matching fingerprints are unavailable.
 
 Keep behavioral regression cases when removing redundant guidance. They need not remain in the active
 clause-evidence manifest. Identify clauses by their stable IDs when reviewing results, since removing a

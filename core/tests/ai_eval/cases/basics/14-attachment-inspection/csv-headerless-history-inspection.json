@@ -1,0 +1,19 @@
+{
+  "_license": "Copyright (C) 2023-2026 Johnson Sun. SPDX-License-Identifier: AGPL-3.0-or-later",
+  "_comment": "This test is mostly AI generated.",
+  "id": "csv-headerless-history-inspection",
+  "fixture": "new-schedule",
+  "attachments": ["headerless-history-csv"],
+  "question": "Verify history.csv with code. It has no header and each row is person,shift,repetition. Report JSON with row_count, first_person, first_shift, first_repetition and total_repetitions. Preserve the shift text. Do not edit or optimize the schedule.",
+  "expect_proposal": false,
+  "answer_json": {
+    "row_count": 2,
+    "first_person": "P1",
+    "first_shift": "OFF",
+    "first_repetition": 2,
+    "total_repetitions": 5
+  },
+  "tool_usage": {"required": ["bash"], "forbidden": ["optimizer"]},
+  "tags": ["attachment", "csv-inspection"],
+  "note": "The first row is data. This contrasts a CSV with column headers and keeps OFF as a shift string. Correct custom parsers are accepted."
+}

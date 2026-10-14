@@ -1050,11 +1050,17 @@ def tool_limit_failures(activity: Sequence[dict[str, Any]], expected: ToolUsageE
 
 
 def _answer_json_matches(actual: Any, expected: Any) -> bool:
-    """Check required mapping fields, preserving exact scalar and list semantics."""
+    """Check required fields and numeric values without coercing other scalar types."""
     if isinstance(expected, dict):
         return isinstance(actual, dict) and all(
             key in actual and _answer_json_matches(actual[key], value) for key, value in expected.items()
         )
+    if (
+        isinstance(expected, (int, float))
+        and not isinstance(expected, bool)
+        and (not isinstance(expected, float) or math.isfinite(expected))
+    ):
+        return isinstance(actual, (int, float)) and not isinstance(actual, bool) and actual == expected
     return _key(actual) == _key(expected)
 
 
