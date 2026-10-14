@@ -168,6 +168,20 @@ def case_digest(case: EvalCase) -> str:
         fields["optimizer_input_oracle_sha256"] = hashlib.sha256(
             inspect.getsource(_check_optimizer_start_source).encode()
         ).hexdigest()
+    if case.semantic_check == "optimizer-initiative":
+        from .grading import _check_optimizer_initiative, _check_optimizer_start_source
+
+        fields["optimizer_initiative_oracle_sha256"] = hashlib.sha256(
+            inspect.getsource(_check_optimizer_initiative).encode()
+            + inspect.getsource(_check_optimizer_start_source).encode()
+        ).hexdigest()
+    if case.semantic_check == "optimizer-inputs-preserved":
+        from .grading import _check_optimizer_inputs_preserved, _check_optimizer_start_source
+
+        fields["optimizer_sequence_source_oracle_sha256"] = hashlib.sha256(
+            inspect.getsource(_check_optimizer_inputs_preserved).encode()
+            + inspect.getsource(_check_optimizer_start_source).encode()
+        ).hexdigest()
     if case.semantic_check == "current-time-context":
         from .grading import _check_vm_clock_queries
 

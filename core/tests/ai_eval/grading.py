@@ -357,6 +357,8 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         "",
         "yaml-generator",
         "optimizer-start-source",
+        "optimizer-initiative",
+        "optimizer-inputs-preserved",
         "current-time-context",
         "optimizer-download",
         "qualified-staffing",
@@ -434,7 +436,15 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     if not entry["expect_proposal"] and (
         assertions
         or expected_diff
-        or semantic_check not in {"", "optimizer-start-source", "current-time-context", "optimizer-download"}
+        or semantic_check
+        not in {
+            "",
+            "optimizer-start-source",
+            "optimizer-initiative",
+            "optimizer-inputs-preserved",
+            "current-time-context",
+            "optimizer-download",
+        }
     ):
         raise EvalCaseError(f"{source} expects no proposal, so its schedule criteria can never run.")
     return EvalCase(
@@ -704,6 +714,10 @@ def grade(case: EvalCase, outcome: RunOutcome, computed: dict[str, Any] | None =
         checks.extend(_check_yaml_generator(outcome.activity))
     if case.semantic_check == "optimizer-start-source":
         checks.extend(_check_optimizer_start_source(case, outcome))
+    if case.semantic_check == "optimizer-initiative":
+        checks.extend(_check_optimizer_initiative(case, outcome))
+    if case.semantic_check == "optimizer-inputs-preserved":
+        checks.extend(_check_optimizer_inputs_preserved(case, outcome))
     if case.semantic_check == "current-time-context":
         checks.extend(_check_vm_clock_queries(outcome.activity))
     if case.semantic_check == "optimizer-download":
@@ -770,6 +784,33 @@ def _check_import_schedule(case: EvalCase, outcome: RunOutcome) -> CheckResult:
 
     attachment = load_attachment_fixtures((case.import_attachment,))[0]
     return CheckResult("complete uploaded schedule preserved", outcome.proposed == _load_yaml(attachment.data))
+
+
+def _check_optimizer_inputs_preserved(case: EvalCase, outcome: RunOutcome) -> list[CheckResult]:
+    """Verify each submitted source in a retry sequence independently of the answer."""
+    inputs = [event for event in outcome.activity if event.get("kind") == "optimizer_input"]
+    return [
+        CheckResult("optimizer inputs captured", bool(inputs)),
+        *[
+            check
+            for event in inputs
+            for check in _check_optimizer_start_source(case, replace(outcome, activity=[event]))
+        ],
+    ]
+
+
+def _check_optimizer_initiative(case: EvalCase, outcome: RunOutcome) -> list[CheckResult]:
+    """Accept an unsolicited optimization offer or a successful start with the correct source."""
+    if any(event.get("kind") == "tool" and event.get("name") == "optimizer" for event in outcome.activity):
+        required = ToolUsageExpectation(required_calls=(("optimizer", {"action": "start"}),))
+        return [*_check_optimizer_start_source(case, outcome), *_check_tool_usage(outcome.activity, required)]
+    invitation = (
+        r"\b(?:I can(?!['’]t|not\b)|we can(?!['’]t|not\b)|would you (?:like|want)|do you want|"
+        r"want me to|shall I|can I|if you(?: would|['’]d)? like|if you want)"
+        r"[^.!?\n]{0,300}\b(?:optimiz\w*|solver|solve)\b"
+    )
+    offered = re.search(invitation, outcome.answer, re.IGNORECASE) is not None
+    return [CheckResult("offers to run optimization", offered)]
 
 
 def _check_optimizer_start_source(case: EvalCase, outcome: RunOutcome) -> list[CheckResult]:

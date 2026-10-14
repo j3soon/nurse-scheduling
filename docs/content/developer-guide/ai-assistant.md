@@ -450,28 +450,30 @@ renderers and middle truncation are not used by these tools.
 
 ## Autonomous roster validation
 
-Ready-for-use scheduling edits can be optimized while their proposal is pending.
-The agent first confirms missing rest and fairness policy. After a successful
+The prompt encourages an optimization and inspection loop for usable rosters.
+For scheduling edits alone, the agent offers the loop. Acceptance authorizes
+continued work within the agreed requirements, without permission at each
+iteration. Pending proposals can be tested before application. Selecting
+**Approve** remains necessary to apply their changes.
+
+The agent confirms missing rest and fairness policy before constructing a roster.
+After a successful
 optimizer start, the host emits a running message and ends the current exchange.
 It skips remaining tool calls in that batch and preserves queued user messages.
 The optimizer completion starts a review turn with the new submitted source and
-workbook. The agent checks staffing, requests, rest patterns and workload counts
-before reporting the result.
+workbook. The agent inspects whether the result meets the user's goals, then
+adjusts within the agreed requirements or retries optimization if needed.
+It stops when the result is ready or further progress needs a user decision.
+Draft, explanation and explicit no-optimization requests retain their scope.
 
-The prompt asks the agent to retry a failed quality review within the agreed
-policy and user budget, without another optimize request. It limits this guidance
-to three automatic runs and stops earlier on no improvement or API failure.
-This is model guidance, alongside the service's existing execution limits.
-A new policy choice still needs the user. Draft, import, explanation and explicit
-no-optimization requests do not authorize this workflow.
-
-`autonomous-optimize-updated-proposal` and `autonomous-policy-review-retry`
-improved from 0/3 to 3/3 in full-prompt comparisons with this clause removed or
-included. Both versions used the same host turn boundary and
-`unsloth/Qwen3.8-27B-NVFP4`, with four case jobs. Draft and read-only controls
-passed 3/3 in both versions. Provider calls and E2B commands were live. Completion
-fixtures used solver-checked assignments and real exported workbooks. These
-checks do not cover the HTTP optimizer queue or establish a cost saving.
+The 77-word clause replaces 315 words of mixed instructions.
+`optimization-loop-offer-after-edit` improved from 0/3 to 3/3 against the previous
+full prompt. Acceptance, refusal, outcome, authorized retry, draft and read-only
+cases passed 3/3 with the new wording. These checks measure initiative rather
+than the older automatic-only contracts. The unchanged immediate-start diagnostic
+passed 2/3, and the detailed automatic-policy-retry smoke offered another solve
+instead of starting it. Provider and E2B calls were live. Completion fixtures
+used checked assignments and exported workbooks, without HTTP optimizer jobs.
 
 ## Proposal lifecycle
 

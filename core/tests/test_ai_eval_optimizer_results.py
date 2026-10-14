@@ -29,6 +29,7 @@ import pytest
 from openpyxl import load_workbook
 
 from nurse_scheduling.ai.optimizer import WORKSPACE_OPTIMIZER_RESULT, optimizer_completion_message
+from nurse_scheduling.ai.optimizer_tool import OPTIMIZER_RUNNING_MESSAGE
 from nurse_scheduling.ai.provider import TextDelta, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
 from nurse_scheduling.ai.workspace import WORKSPACE_RESULT_CONTEXT, WORKSPACE_SCHEDULE
@@ -66,7 +67,6 @@ def test_completion_uses_the_production_message_and_mounts_a_fresh_result():
     case = CASE_BY_ID["optimizer-score-same-model"]
     provider = ScriptedProvider(
         [ToolCallRequest((ToolCall("start", "optimizer", '{"action":"start","timeout_seconds":60}'),))],
-        [TextDelta("Running in the background.")],
         [ToolCallRequest((ToolCall("inspect", "bash", '{"command":"inspect result"}'),))],
         [TextDelta(json.dumps(case.answer_json))],
     )
@@ -80,7 +80,7 @@ def test_completion_uses_the_production_message_and_mounts_a_fresh_result():
     completion = run.trajectory["prompts"][1][-2]
     assert completion == {"role": "user", "content": optimizer_completion_message(metadata)}
     assert run.trajectory["prompts"][1][-1]["content"].startswith("[Current status]")
-    assert run.trajectory["prompts"][1][-3]["content"] == "Running in the background."
+    assert run.trajectory["prompts"][1][-3]["content"] == OPTIMIZER_RUNNING_MESSAGE
     assert all(backend.closed for backend in factory.created)
     assert any(e["kind"] == "optimizer" for e in run.trajectory["events"])
 
@@ -127,7 +127,6 @@ def test_real_completion_factory_receives_the_actual_submitted_source(tmp_path):
     )
     provider = ScriptedProvider(
         [ToolCallRequest((ToolCall("start", "optimizer", '{"action":"start","timeout_seconds":60}'),))],
-        [TextDelta("Running in the background.")],
         [TextDelta('{"score":44011000000}')],
     )
     received = []
@@ -299,7 +298,6 @@ def test_multi_turn_completion_prewarms_the_expected_snapshot():
     provider = ScriptedProvider(
         [ToolCallRequest((ToolCall("write", "write", json.dumps({"path": WORKSPACE_SCHEDULE, "content": pending})),))],
         [ToolCallRequest((ToolCall("start", "optimizer", '{"action":"start","timeout_seconds":60}'),))],
-        [TextDelta("Running with the proposed input.")],
         [TextDelta(json.dumps(case.answer_json))],
     )
     runs = asyncio.run(run_all([case], settings(), provider, 4, _factory()))
@@ -318,7 +316,6 @@ def test_completion_context_matches_the_submitted_proposal():
             )
         ],
         [ToolCallRequest((ToolCall("start", "optimizer", '{"action":"start","timeout_seconds":60}'),))],
-        [TextDelta("Running with the proposed input.")],
         [ToolCallRequest((ToolCall("context", "read", json.dumps({"path": WORKSPACE_RESULT_CONTEXT})),))],
         [TextDelta(json.dumps(case.answer_json))],
     )

@@ -30,3 +30,10 @@ between results. Require a new successful submission before each completion,
 then check its source, distinct artifact and final quality counts. Grade a
 truthful running update without requiring incidental words in that update.
 Check that explicit draft and read-only requests still stop without optimizing.
+
+For initiative guidance, grade whether the agent offers or starts the loop,
+according to the user's intended behavior. Check submissions and source
+preservation independently of its explanation. An offer need not list every
+loop step. Keep policy counts and report formats in separate result-review
+cases. When the user changes the intended behavior, retain stronger existing
+cases as diagnostics and report the tradeoff.

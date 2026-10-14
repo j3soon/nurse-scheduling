@@ -242,10 +242,18 @@ checks direction and `optimizer-score-changed-model` guards comparability.
 `optimizer_completion`. Each is delivered only after another successful start,
 with the new submitted source and a fresh workbook. No user message is inserted
 between results. This checks autonomous retries rather than a user asking again.
-`autonomous-optimize-updated-proposal` checks that ready-for-use scheduling edits
-reach the optimizer without an explicit optimize request. `autonomous-policy-review-retry`
-checks a failed quality review, an unchanged-policy retry and a fresh passing result.
-Its quality goals name exact request weights and preferred policy targets.
+The `optimization-loop-*` cases isolate initiative. Outcome cases accept an
+unsolicited offer or a successful start with the correct source. Edit-only cases
+check the offer, acceptance and refusal without requiring the offer to list every
+loop step. `optimization-loop-authorized-retry` checks that explicit authorization
+continues through a missed request and a fresh satisfactory result, with every
+submitted source preserved. It does not require a particular report format.
+
+The stronger `autonomous-optimize-updated-proposal` diagnostic requires an
+immediate start. `autonomous-policy-review-retry` requires an automatic retry and
+exact final policy counts. Keep these separate from initiative evidence. The
+shorter guidance can offer further work rather than meet those automatic-only
+contracts. Their graders remain unchanged.
 
 Cases marked `optimizer_completion_only` seed a fixed successful start and acknowledgement without a provider call.
 The seed remains in the grading trace but is excluded from model tool and token metrics.

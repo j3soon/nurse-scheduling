@@ -1655,3 +1655,100 @@ def test_autonomous_retry_grader_checks_running_status_actions_and_final_quality
         ],
     )
     assert grade(case, outcome).passed is (mutation is None)
+
+
+@pytest.mark.parametrize("decision", ["after-edit", "accepted", "declined"])
+@pytest.mark.parametrize("mutation", [None, "no-offer", "no-optimization", "early-start", "wrong-edit"])
+def test_optimization_loop_cases_check_offer_scope_and_submitted_edit(decision, mutation):
+    case = load_cases(CASES_PATH / f"basics/12-optimizer-results/optimization-loop-offer-{decision}.json")[0]
+    source = SMALL_CLINIC_PATH.read_text().replace("weight: -1", "weight: -100", 1)
+    proposal = _load_yaml(source.encode())
+    if mutation == "wrong-edit":
+        proposal["preferences"][1]["weight"] = -10
+    offer = "I can optimize this proposal. Would you like that?"
+    if mutation == "no-offer":
+        offer = "The optimizer exists. The edit remains pending."
+    if mutation == "no-optimization":
+        offer = "I can explain the pending edit. Would you like that?"
+    start = {"kind": "tool", "name": "optimizer", "ok": True, "arguments": '{"action":"start"}'}
+    activity = [{"kind": "user", "turn": 1}]
+    if mutation == "early-start":
+        activity.append(start)
+    if decision != "after-edit":
+        activity.append({"kind": "user", "turn": 2})
+    if decision == "accepted":
+        activity.extend([start, {"kind": "optimizer_input", "schedule_yaml": source}])
+    outcome = RunOutcome(
+        answer=offer
+        if decision == "after-edit"
+        else "Running in the background."
+        if decision == "accepted"
+        else "The edit remains pending.",
+        initial=FIXTURE_SCHEDULES["small-clinic"],
+        proposed=proposal,
+        activity=activity,
+        intermediate_answers=[] if decision == "after-edit" else [offer],
+        proposal_turns=[True] if decision == "after-edit" else [True, decision == "accepted"],
+    )
+    assert grade(case, outcome).passed is (mutation is None)
+
+
+@pytest.mark.parametrize(
+    "answer, start, passed",
+    [
+        ("Would you like me to optimize this proposal?", "", True),
+        ("I can run the optimizer and inspect the result.", "", True),
+        ("The optimizer can inspect results.", "", False),
+        ("I can't optimize this.", "", False),
+        ("I cannot optimize this.", "", False),
+        ("I can explain the edit. Optimization is available.", "", False),
+        ("Select Approve to save the edit.", "", False),
+        ("Running in the background.", "correct", True),
+        ("Running in the background.", "stale-source", False),
+        ("I can optimize this proposal.", "failed", False),
+    ],
+)
+def test_outcome_initiative_accepts_offers_or_verified_starts(answer, start, passed):
+    case = load_cases(CASES_PATH / "basics/12-optimizer-results/optimization-loop-outcome-after-edit.json")[0]
+    original = SMALL_CLINIC_PATH.read_text()
+    updated = original.replace("weight: -1", "weight: -100", 1)
+    activity = []
+    if start:
+        activity.append(
+            {"kind": "tool", "name": "optimizer", "ok": start != "failed", "arguments": '{"action":"start"}'}
+        )
+        if start != "failed":
+            activity.append(
+                {"kind": "optimizer_input", "schedule_yaml": original if start == "stale-source" else updated}
+            )
+    outcome = RunOutcome(
+        answer=answer,
+        initial=FIXTURE_SCHEDULES["small-clinic"],
+        proposed=_load_yaml(updated.encode()),
+        activity=activity,
+    )
+    assert grade(case, outcome).passed is passed
+
+
+@pytest.mark.parametrize("mutation", [None, "changed-retry-source", "no-retry", "no-inputs"])
+def test_authorized_loop_checks_repeat_submission_and_preserved_sources(mutation):
+    case = load_cases(CASES_PATH / "basics/12-optimizer-results/optimization-loop-authorized-retry.json")[0]
+    source = (CASES_PATH.parent / f"fixtures/{case.fixture}.yaml").read_text()
+    activity = []
+    for turn in (1, 2, 3):
+        activity.append({"kind": "user" if turn == 1 else "optimizer", "turn": turn})
+        if turn == 3 or (turn == 2 and mutation == "no-retry"):
+            continue
+        activity.append({"kind": "tool", "name": "optimizer", "ok": True, "arguments": '{"action":"start"}'})
+        if mutation != "no-inputs":
+            submitted = source
+            if turn == 2 and mutation == "changed-retry-source":
+                submitted = source.replace("11000000000", "11000000")
+            activity.append({"kind": "optimizer_input", "schedule_yaml": submitted})
+    outcome = RunOutcome(
+        initial=FIXTURE_SCHEDULES[case.fixture],
+        answer="The result meets the agreed goals.",
+        intermediate_answers=["Running in the background.", "Running in the background."],
+        activity=activity,
+    )
+    assert grade(case, outcome).passed is (mutation is None)

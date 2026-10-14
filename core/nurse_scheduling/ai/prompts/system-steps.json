@@ -1022,59 +1022,70 @@
     "id": "autonomous-roster-validation",
     "file": "steps/autonomous-roster-validation.md",
     "cases": [
-      "autonomous-optimize-updated-proposal",
-      "autonomous-policy-review-retry",
+      "optimization-loop-outcome-after-edit",
+      "optimization-loop-offer-after-edit",
+      "optimization-loop-offer-accepted",
+      "optimization-loop-offer-declined",
+      "optimization-loop-outcome-holdout",
       "new-schedule-policy-declined",
-      "result-policy-misses"
+      "result-policy-misses",
+      "optimization-loop-authorized-retry"
     ],
-    "hypothesis": "Tests ready-for-use scheduling edits without another user message, reviews automatic results and retries within agreed policy, while preserving draft and read-only scope.",
-    "sha256": "da0b4966368555452856ce25b082903b3d4e20fdff2992b79faa3c666981b0cb",
+    "hypothesis": "Proposes or starts optimization and inspection for schedule outcomes, offers the loop after edits, and continues once authorized.",
+    "sha256": "fab20e40ade90d211a71b56c3de318289eb8c55912f790da4e0e6d73e1d4604d",
     "evidence": [
       {
-        "case": "autonomous-optimize-updated-proposal",
-        "input_sha256": "4d609c349c43bc9be3e74475f3f88003a94838a5e9d4867e2da1fcfb5f2bec58",
+        "case": "optimization-loop-offer-after-edit",
+        "input_sha256": "d6e64de18de4ae3a25dc93cdea9c07f31019c119237b43ac5ee7d4bbb129e05c",
         "before": "0/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
         "controls": [
           {
+            "case": "optimization-loop-offer-accepted",
+            "input_sha256": "00ee93708a63ee39555f87e21df732b8ef9b58c75d5b7a0ea02af502d4518ef6",
+            "before": "0/3",
+            "after": "3/3"
+          },
+          {
+            "case": "optimization-loop-offer-declined",
+            "input_sha256": "eed79b72d2068362616a545cd5d68af8af56f7a632ad2a943e4d41fc0748cec6",
+            "before": "0/3",
+            "after": "3/3"
+          },
+          {
+            "case": "optimization-loop-outcome-after-edit",
+            "input_sha256": "6d1031df9f5819ba96807d047406ab9d3691d47445db2b9911c93947cf6a8282",
+            "before": "3/3",
+            "after": "3/3"
+          },
+          {
+            "case": "optimization-loop-outcome-holdout",
+            "input_sha256": "ba9bb489e72bae4428b9e97e2a5b8e7745f5f67379dced3e274b824ec8b784b2",
+            "before": "2/3",
+            "after": "3/3"
+          },
+          {
             "case": "new-schedule-policy-declined",
-            "input_sha256": "1e4d411bd58398aa8c1323d25623f25c5fc3f3580af26a1324d4d53172efcfcc",
+            "input_sha256": "8c197d4991ddbfccdcf25efc698eb8b5e587c62570a32b0275ff476edec20781",
             "before": "3/3",
             "after": "3/3"
           },
           {
             "case": "result-policy-misses",
-            "input_sha256": "802c06cac72d8128e0a0332a4183d6e63dd2cb1b951cf478d1030f31a8e37cb0",
-            "before": "3/3",
-            "after": "3/3"
-          }
-        ],
-        "note": "Full prompt with step 31 removed versus the current full prompt, with the same backend-owned optimizer-start turn boundary in both arms. Three repetitions per version and four case jobs use live provider and E2B commands. Controlled completions use solver-checked fixed assignments and real exports, not HTTP optimizer jobs. The retry question defines agreed finite-weight quality goals explicitly. Rejected candidates, provider failures and corrected interim-answer grading remain preserved. No general token or latency saving is claimed."
-      },
-      {
-        "case": "autonomous-policy-review-retry",
-        "input_sha256": "2e088a5354d0acbea8c26913d9d41e701ce378c83a6da4c04511f185e4e36521",
-        "before": "0/3",
-        "after": "3/3",
-        "model": "unsloth/Qwen3.8-27B-NVFP4",
-        "infrastructure_errors": 0,
-        "controls": [
-          {
-            "case": "new-schedule-policy-declined",
-            "input_sha256": "1e4d411bd58398aa8c1323d25623f25c5fc3f3580af26a1324d4d53172efcfcc",
+            "input_sha256": "72d4dc52bcdbee6f2961316f1123a6fbf858bd19578e11f41f058b9499599822",
             "before": "3/3",
             "after": "3/3"
           },
           {
-            "case": "result-policy-misses",
-            "input_sha256": "802c06cac72d8128e0a0332a4183d6e63dd2cb1b951cf478d1030f31a8e37cb0",
+            "case": "optimization-loop-authorized-retry",
+            "input_sha256": "9aca75d6ddadf8fbd3ae389af397c112dfac645df7c4bd260e255c4f5bce12dc",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Full prompt with step 31 removed versus the current full prompt, with the same backend-owned optimizer-start turn boundary in both arms. Three repetitions per version and four case jobs use live provider and E2B commands. Controlled completions use solver-checked fixed assignments and real exports, not HTTP optimizer jobs. The retry question defines agreed finite-weight quality goals explicitly. Rejected candidates, provider failures and corrected interim-answer grading remain preserved. No general token or latency saving is claimed."
+        "note": "Full previous production prompt with a 315-word clause versus the same prompt with 77-word initiative guidance. Provider and E2B commands are live, with three repetitions per version and four case jobs. Offers need not enumerate loop steps. Actual starts, pending edits and every retry source are checked independently. Authorized retries use solver-checked exports, without HTTP optimizer jobs. The refusal receipt uses a clean recheck after an E2B failure. A larger policy control had five provider errors and remains diagnostic. The unchanged immediate-start case is 2/3 and the detailed automatic-policy-retry smoke is 0/1 with this wording. Those stronger automatic-only contracts are not certified by these decision cases. No general token saving or equivalence claim."
       }
     ]
   }
