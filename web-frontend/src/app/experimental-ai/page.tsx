@@ -1341,7 +1341,7 @@ export default function ExperimentalAiPage() {
                 aria-label={firefoxVersion >= FIREFOX_ON_DEVICE_SPEECH_VERSION
                   ? 'Enable experimental dictation in Firefox'
                   : 'Firefox dictation compatibility'}
-                className="group relative inline-flex h-10 w-10 items-center justify-center rounded-full text-amber-600 transition-colors hover:bg-amber-50 hover:text-amber-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+                className="group relative inline-flex h-10 w-10 items-center justify-center rounded-full text-amber-600 [@media(pointer:coarse)]:hidden transition-colors hover:bg-amber-50 hover:text-amber-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
               >
                 <FiMic aria-hidden="true" className="h-4 w-4" />
                 <span className="pointer-events-none absolute bottom-10 right-0 z-10 hidden w-72 rounded-lg bg-gray-900 px-3 py-2 text-left text-xs font-normal leading-5 text-white shadow-lg group-hover:block group-focus-visible:block">
@@ -1351,7 +1351,8 @@ export default function ExperimentalAiPage() {
                 </span>
               </a>
             ) : (
-              <div className="relative mr-1.5 sm:mr-0">
+              // Phone and tablet keyboards provide their own dictation, so touch screens omit this control.
+              <div className="relative mr-1.5 sm:mr-0 [@media(pointer:coarse)]:hidden">
                 <button
                   type="button"
                   onClick={toggleDictation}

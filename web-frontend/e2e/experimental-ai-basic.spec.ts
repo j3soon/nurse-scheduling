@@ -1058,6 +1058,8 @@ test.describe('phone chat keyboard', () => {
     await page.goto('/experimental-ai');
     const input = page.getByRole('textbox', { name: 'Ask about the current schedule' });
     await expect(input).toBeEnabled();
+    // Phone keyboards provide dictation, so the page omits its own microphone.
+    await expect(page.getByRole('button', { name: 'Start dictation' })).toBeHidden();
     await input.fill('First line');
     await input.press('End');
     await input.press('Enter');
