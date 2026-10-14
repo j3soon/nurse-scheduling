@@ -52,6 +52,14 @@ changed app source or public assets. Without explicit spec paths or `--full`,
 it fails rather than silently skipping those changes. Every Playwright run
 builds the current checkout, launches its own server on an OS-selected port,
 and shuts it down afterwards. Existing local servers are never reused.
+
+`next dev` can append a managed Next.js agent-rules block to this file. Browser
+tests that launch a dev server can also cause this edit. After those checks,
+inspect `git diff -- web-frontend/AGENTS.md` from the repository root. Review
+generated guidance separately from intentional edits. If it is outside the
+task scope, remove only the newly appended block after the dev server stops.
+Preserve existing guidance and user changes.
+
 New schedules contain no user-defined people, shift types, or groups. E2E tests
 that require populated entities must seed them explicitly.
 
