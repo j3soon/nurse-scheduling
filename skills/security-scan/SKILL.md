@@ -63,7 +63,7 @@ There is no NGINX or Cloudflare in this stack. The services trust forwarded
 headers from loopback, so the scanner sets `X-Forwarded-For` as NGINX would.
 Check NGINX's header replacement by reading `docker/nginx.backend.conf`.
 
-After changing the launcher, run its isolated configuration tests:
+After changing the scan scripts, run their regression tests:
 `python -m unittest discover -s skills/security-scan/scripts -p 'test_*.py'`.
 
 ## 3. Run the scripted checks
@@ -77,6 +77,8 @@ applications, so a new route is checked for authentication automatically. It
 covers authentication, stream tokens, CORS, per-address job limits, body and
 YAML bounds, error disclosure, owner cookies, session ownership, and attachment
 limits. Each line prints `PASS` or `FAIL`, and the script exits 1 on a failure.
+The AI reply check stops at a terminal event or its total wait limit, even when
+keepalives continue.
 When a scan finds a new issue, add a check here as its regression record.
 
 ## 4. Fuzz the HTTP schemas

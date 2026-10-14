@@ -25,8 +25,9 @@
 
 import re
 import sys
+import time
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -37,6 +38,7 @@ sys.path.insert(0, str(REPO_ROOT / "core"))
 
 from nurse_scheduling.ai.app import create_app as create_ai_app
 from nurse_scheduling.ai.config import AiSettings
+from nurse_scheduling.ai.lifecycle import TERMINAL_EVENTS
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxFactory
 from nurse_scheduling.server.app import create_app as create_api_app
 from nurse_scheduling.server.config import ServerSettings
@@ -121,6 +123,19 @@ def check_cors(client: httpx.Client, name: str, url: str, path: str, method: str
         if response.headers.get("access-control-allow-origin") != origin:
             missing.append(origin)
     check(f"{name}: trusted origins keep their CORS grant", not missing, ", ".join(missing))
+
+
+def received_stub_reply(lines: Iterable[str]) -> bool:
+    """Stop at a reply, a terminal event, or the total wait limit despite keepalives."""
+    deadline = time.monotonic() + 15
+    for line in lines:
+        if time.monotonic() >= deadline:
+            return False
+        if line.startswith("event:") and line.partition(":")[2].strip() in TERMINAL_EVENTS:
+            return False
+        if "Scan reply." in line:
+            return True
+    return False
 
 
 def check_api(client: httpx.Client, stack: dict[str, str]) -> None:
@@ -239,12 +254,8 @@ def check_ai(client: httpx.Client, stack: dict[str, str]) -> None:
         flags = {flag.strip().lower().split("=")[0] for flag in cookie.split(";")[1:]}
         check("ai: the owner cookie is HttpOnly and Secure", {"httponly", "secure"} <= flags, cookie.split(";", 1)[-1])
         owner.post(f"{url}/sessions/{session_id}/messages", json={"message": "hello"})
-        answered = False
         with owner.stream("GET", f"{url}/sessions/{session_id}/events", timeout=15) as events:
-            for line in events.iter_lines():
-                if "Scan reply." in line:
-                    answered = True
-                    break
+            answered = received_stub_reply(events.iter_lines())
         check("ai: the stub provider answers a message", answered)
         foreign = [
             intruder.get(f"{url}/sessions/{session_id}/export"),
