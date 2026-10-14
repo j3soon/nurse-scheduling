@@ -20,6 +20,12 @@ flaky test, incorrect workflow setup, a dependency mismatch, and a transient
 runner or external-service failure. Consult focused history when the intended
 behavior is unclear.
 
+When Playwright reports only that `config.webServer` could not start, inspect
+its command and run the build step directly with the same environment. Save
+stdout and stderr under the repository-root `artifacts/` directory. Compact
+output such as `--quiet` can hide build and TypeScript diagnostics. Diagnose
+those diagnostics before rerunning the browser suite.
+
 ## Repair
 
 Make the smallest change in the layer that owns the cause.
