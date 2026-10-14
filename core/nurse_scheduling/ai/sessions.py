@@ -476,6 +476,7 @@ class SessionStore:
         Returns the adopted schedule, or None when trusted validation refused the proposal.
         """
         session = self._get_owned(session_id, owner_token)
+        session.require_idle("approving a proposal")
         try:
             approved = session.approve_proposal(base_sha256, self._settings.max_schedule_bytes)
             self._cap_history(session)
@@ -493,6 +494,8 @@ class SessionStore:
     ) -> None:
         """Record a proposal decision and apply service retention limits."""
         session = self._get_owned(session_id, owner_token)
+        if decision == "rejected":
+            session.require_idle("rejecting a proposal")
         session.discard_proposal(decision)
         self._cap_history(session)
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds

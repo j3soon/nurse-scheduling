@@ -1090,7 +1090,7 @@ export default function ExperimentalAiPage() {
           <p className="mt-2 text-xs text-blue-900">
             Approving replaces the current schedule in one step, which you can undo.
           </p>
-          <div className="mt-3 flex gap-2">
+          {!isStreaming && !isReconnecting && <div className="mt-3 flex gap-2">
             <button
               type="button"
               onClick={applyProposal}
@@ -1107,7 +1107,7 @@ export default function ExperimentalAiPage() {
             >
               Reject
             </button>
-          </div>
+          </div>}
         </section>
       )}
 

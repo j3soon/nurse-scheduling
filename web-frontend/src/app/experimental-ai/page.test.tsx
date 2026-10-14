@@ -2682,6 +2682,36 @@ describe('ExperimentalAiPage', () => {
       expect(activity.compareDocumentPosition(response) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
+    it.each(['foreground', 'background'])('hides decisions while a %s response is running', async kind => {
+      let finish: (() => void) | undefined;
+      let background: SessionStreamOptions | undefined;
+      mockStreamSessionEvents.mockImplementation(async (_id, callbacks) => {
+        background = callbacks;
+        await new Promise<void>(() => {});
+      });
+      if (kind === 'foreground') {
+        mockRunEvents.mockImplementation(async (...args) => {
+          await proposingStream(...args);
+          await new Promise<void>(resolve => { finish = resolve; });
+        });
+      }
+      const user = userEvent.setup();
+      render(<ExperimentalAiPage />);
+      await ask(user);
+      await screen.findByRole('region', { name: 'Proposed schedule change' });
+      if (kind === 'background') {
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Approve' })).toBeVisible());
+        await act(async () => background?.onEvent({ type: 'run_start', runId: 'review', trigger: 'optimizer' }));
+      }
+      expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument();
+      expect(mockApproveProposal).not.toHaveBeenCalled();
+      if (kind === 'foreground') await act(async () => finish?.());
+      else await act(async () => background?.onEvent({ type: 'done', runId: 'review' }));
+      expect(await screen.findByRole('button', { name: 'Approve' })).toBeVisible();
+      expect(screen.getByRole('button', { name: 'Reject' })).toBeVisible();
+    });
+
     it('applies an approved proposal as one history entry', async () => {
       const user = userEvent.setup();
       render(<ExperimentalAiPage />);

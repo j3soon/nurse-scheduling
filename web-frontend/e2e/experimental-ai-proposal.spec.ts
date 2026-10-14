@@ -41,8 +41,8 @@ shiftTypes:
 preferences: []
 `;
 
-async function mockProposingBackend(page: Page): Promise<{ approvals: number; refreshed: string[] }> {
-  const state = { approvals: 0, refreshed: [] as string[] };
+async function mockProposingBackend(page: Page, holdAnswer = false) {
+  const state = { approvals: 0, refreshed: [] as string[], finishAnswer: () => {} };
   const baseURL = test.info().project.use.baseURL;
   if (!baseURL) throw new Error('Playwright baseURL is required for the AI backend mock.');
   const allowedOrigin = new URL(baseURL).origin;
@@ -130,9 +130,17 @@ async function mockProposingBackend(page: Page): Promise<{ approvals: number; re
       ].join('');
     for (const frame of frames.trim().split('\n\n')) {
       const lines = frame.split('\n');
-      publish(lines.find(line => line.startsWith('event: '))!.slice(7),
-        JSON.parse(lines.find(line => line.startsWith('data: '))!.slice(6)));
+      const type = lines.find(line => line.startsWith('event: '))!.slice(7);
+      if (!holdAnswer || type !== 'done') {
+        publish(type, JSON.parse(lines.find(line => line.startsWith('data: '))!.slice(6)));
+      }
     }
+    state.finishAnswer = () => {
+      publish('delta', { text: ' Final validation is complete.' });
+      publish('done', {});
+      wakeReader?.();
+      wakeReader = undefined;
+    };
     await route.fulfill({ status: 202, contentType: 'application/json', headers: corsHeaders, body: JSON.stringify({ run_id: runId }) });
     wakeReader?.();
     wakeReader = undefined;
@@ -221,4 +229,21 @@ test('keeps reasoning and tool detail out of the way until asked for', async ({ 
   await expect(page.getByText(/^Reasoning ·/)).toBeHidden();
   await page.reload();
   await expect(page.getByRole('checkbox', { name: 'Show reasoning' })).not.toBeChecked();
+});
+
+
+test('waits for the terminal answer before offering proposal decisions', async ({ page }) => {
+  const state = await mockProposingBackend(page, true);
+  await page.goto('/experimental-ai');
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Add a nurse.');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Proposed schedule change' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Approve', exact: true })).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Reject', exact: true })).toBeHidden();
+  expect(state.approvals).toBe(0);
+  state.finishAnswer();
+  await expect(page.getByText('I propose adding one nurse. Final validation is complete.')).toBeVisible();
+  await page.getByRole('button', { name: 'Approve', exact: true }).click();
+  await expect(page.getByText('The proposed schedule was applied. Undo reverts it in one step.')).toBeVisible();
+  expect(state.approvals).toBe(1);
 });

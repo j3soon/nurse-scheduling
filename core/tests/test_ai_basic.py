@@ -2905,7 +2905,7 @@ def test_session_approval_refuses_invalid_yaml_and_releases_proposal_text() -> N
     assert store.retained_bytes < retained
 
 
-def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved() -> None:
+def test_approval_waits_for_active_turn_and_uses_its_final_proposal() -> None:
     app = create_test_app(settings=make_settings(), provider=FakeProvider())
     store = app.state.session_store
     original = schedule_yaml()
@@ -2921,7 +2921,9 @@ def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved()
     ).proposal_saved
     active_turn_revision = store.begin(session.id, "browser-owner")
 
-    store.approve_proposal(session.id, "browser-owner", session.revision)
+    with pytest.raises(HTTPException, match="Wait for the active response") as exc_info:
+        store.approve_proposal(session.id, "browser-owner", session.revision)
+    assert exc_info.value.status_code == 409
     completion = store.finish(
         session.id,
         exchange("Stale edit", "Stale proposal"),
@@ -2929,14 +2931,17 @@ def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved()
         snapshot=active_turn_revision,
     )
 
-    assert not completion.run_saved
+    assert completion.run_saved
+    assert store.approve_proposal(session.id, "browser-owner", session.revision) == stale_proposal
     assert session.transcript == [
         UserMessage("First edit"),
         AssistantMessage("First proposal"),
+        UserMessage("Stale edit"),
+        AssistantMessage("Stale proposal"),
         ProposalDecisionEntry("approved"),
     ]
     with pytest.raises(HTTPException) as exc_info:
-        store.approve_proposal(session.id, "browser-owner", active_turn_revision)
+        store.approve_proposal(session.id, "browser-owner", session.revision)
     assert exc_info.value.status_code == 404
 
 
@@ -3332,3 +3337,27 @@ def test_background_review_reports_safe_reasons_and_keeps_private_errors_hidden(
             assert message == PROVIDER_ERROR
         assert "secret-token" not in message
         assert not any(event.type in {"proposal", "done"} for event in events)
+
+
+@pytest.mark.parametrize("decision", ["approve", "reject"])
+def test_proposal_decisions_wait_for_active_turn_without_changing_it(decision):
+    client, session_id, revision, _provider, _factory = proposal_decision_context()
+    store = client.app.state.session_store
+    session = store.get(session_id)
+    proposal = session.pending_proposal
+    version = session.version
+    snapshot = store.begin(session_id, session.owner_token)
+    response = client.post(
+        f"/sessions/{session_id}/proposal/{decision}",
+        json={"base_sha256": revision} if decision == "approve" else None,
+    )
+    assert response.status_code == 409
+    assert session.version == version
+    assert session.pending_proposal == proposal
+    assert session.active
+    store.abort(session_id, snapshot)
+    accepted = client.post(
+        f"/sessions/{session_id}/proposal/{decision}",
+        json={"base_sha256": revision} if decision == "approve" else None,
+    )
+    assert accepted.status_code == 200

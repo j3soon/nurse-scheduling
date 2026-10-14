@@ -985,7 +985,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
 
   const applyProposal = async () => {
     const sessionId = sessionIdRef.current;
-    if (sessionId === null || proposalDiff === null) return;
+    if (sessionId === null || proposalDiff === null || lifecycle.busy || isReconnecting || isApplyingProposal) return;
     const ownsConversation = lifecycle.capture();
     const baseSchedule = scheduleYaml;
     setIsApplyingProposal(true);
@@ -1019,10 +1019,10 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
 
   const discardProposal = async () => {
     const sessionId = sessionIdRef.current;
+    if (sessionId === null || lifecycle.busy || isReconnecting || isApplyingProposal) return;
     const ownsConversation = lifecycle.capture();
     setProposalDiff(null);
     setProposalNotice(null);
-    if (sessionId === null) return;
     try {
       const historySaved = await rejectProposal(sessionId, authToken, sessionEndpointRef.current ?? aiEndpoint);
       if (!ownsConversation()) return;

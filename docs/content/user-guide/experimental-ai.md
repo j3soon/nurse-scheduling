@@ -85,7 +85,9 @@ assistant proposes one instead of changing the schedule itself.
 1. Ask for the change in the usual way.
 2. Read **Proposed schedule change**, which lists every difference between your
    current schedule and the proposal.
-3. Select **Approve** to apply it, or **Reject** to discard it.
+3. Wait for the assistant to finish. Then select **Approve** to apply the
+   proposal, or **Reject** to discard it. These buttons stay hidden while the
+   assistant is answering.
 4. An approved proposal replaces the schedule in one step, so
    <kbd>Ctrl</kbd>+<kbd>Z</kbd> reverts the whole change.
 
