@@ -29,7 +29,7 @@ class RunFields(TypedDict):
 
 class RunStartEvent(RunFields):
     type: Literal["run_start"]
-    trigger: Literal["user", "optimizer"]
+    trigger: Literal["user", "optimizer", "proposal"]
 
 
 class TextEvent(RunFields):

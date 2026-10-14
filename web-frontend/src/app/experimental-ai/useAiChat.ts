@@ -203,6 +203,11 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   const [queuedMessages, setQueuedMessages] = useState<QueuedChatMessage[]>([]);
   const [steeringAssistantId, setSteeringAssistantId] = useState<string | null>(null);
   const [proposalDiff, setProposalDiff] = useState<string | null>(null);
+  const proposalVersionRef = useRef(0);
+  const receiveProposal = useCallback((diff: string | null) => {
+    proposalVersionRef.current += 1;
+    setProposalDiff(diff);
+  }, []);
   const [proposalNotice, setProposalNotice] = useState<string | null>(null);
   const [isApplyingProposal, setIsApplyingProposal] = useState(false);
   const syncedScheduleRef = useRef<string | null>(null);
@@ -465,7 +470,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
             return [{ ...message, runId, content: '', activity: [], status: 'pending' as const, responseCompletedAt: undefined }];
           });
         });
-        setProposalDiff(reset.proposalDiff);
+        receiveProposal(reset.proposalDiff);
         setActiveOptimization(null);
         lifecycle.finish(lifecycle.current('background'));
         const foreground = eventRouterRef.current.foreground;
@@ -500,7 +505,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
         resumeBackgroundMessage();
         updateBackgroundMessage(message => applyAssistantEvent(message, event));
       }, sandboxScheduleRef, scheduleYamlRef),
-      onProposal: diff => setProposalDiff(diff),
+      onProposal: receiveProposal,
       onOptimization: activity => {
         setActiveOptimization(current => applyOptimizationEvent(current, { type: 'optimization', activity }));
         if (activity.terminal) setMessages(previous => appendOptimizationResult(previous, activity, Date.now()));
@@ -556,7 +561,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
         if (isAuthenticationError(streamError)) reportRequestError(streamError, 'The AI session could not reconnect.');
       },
     });
-  }, [authToken, lifecycle, reportRequestError, updateContextUsage, sessionEvents, setError]);
+  }, [receiveProposal, authToken, lifecycle, reportRequestError, updateContextUsage, sessionEvents, setError]);
 
   useEffect(() => {
     if (!isClientReady || activeSessionId === null || conversationUnavailable) return;
@@ -778,7 +783,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
           const assistantId = activeAssistantId;
           setMessages(previous => applyModelInput(previous, input, { questionId: userMessage.id, assistantId }));
         },
-        onProposal: diff => setProposalDiff(diff),
+        onProposal: receiveProposal,
         onContextUsage: updateContextUsage,
         onHistoryTrimmed: setTrimmedHistoryCount,
       }, () => lifecycle.owns(operation) && !controller.signal.aborted);
@@ -988,6 +993,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     if (sessionId === null || proposalDiff === null || lifecycle.busy || isReconnecting || isApplyingProposal) return;
     const ownsConversation = lifecycle.capture();
     const baseSchedule = scheduleYaml;
+    const proposalVersion = proposalVersionRef.current;
     setIsApplyingProposal(true);
     setError(null);
     try {
@@ -1007,7 +1013,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       onApplySchedule(approvedYaml);
       syncedScheduleRef.current = approvedYaml;
       renewSessionExpiration();
-      setProposalDiff(null);
+      if (proposalVersionRef.current === proposalVersion) setProposalDiff(null);
       setProposalNotice('The proposed schedule was applied. Undo reverts it in one step.');
       if (!historySaved) setError(UNSAVED_APPROVAL_WARNING);
     } catch (approveError) {
@@ -1021,6 +1027,8 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     const sessionId = sessionIdRef.current;
     if (sessionId === null || lifecycle.busy || isReconnecting || isApplyingProposal) return;
     const ownsConversation = lifecycle.capture();
+    const pendingProposal = proposalDiff;
+    const proposalVersion = proposalVersionRef.current;
     setProposalDiff(null);
     setProposalNotice(null);
     try {
@@ -1029,7 +1037,8 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       renewSessionExpiration();
       if (!historySaved) setError(UNSAVED_REJECTION_WARNING);
     } catch (rejectError) {
-      if (ownsConversation() && isAuthenticationError(rejectError)) {
+      if (ownsConversation()) {
+        if (proposalVersionRef.current === proposalVersion) setProposalDiff(pendingProposal);
         reportRequestError(rejectError, 'The proposal could not be rejected.');
       }
     }

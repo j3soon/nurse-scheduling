@@ -491,15 +491,17 @@ class SessionStore:
         session_id: str,
         owner_token: str | None,
         decision: ProposalDecision = "rejected",
-    ) -> None:
+    ) -> bool:
         """Record a proposal decision and apply service retention limits."""
         session = self._get_owned(session_id, owner_token)
         if decision == "rejected":
             session.require_idle("rejecting a proposal")
+        had_proposal = session.pending_proposal is not None
         session.discard_proposal(decision)
         self._cap_history(session)
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
         self._recount(session)
+        return had_proposal
 
     def abort(self, session_id: str, snapshot: RunSnapshot) -> None:
         """Release an owned reservation and its accounted steering messages."""

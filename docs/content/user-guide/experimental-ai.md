@@ -90,6 +90,8 @@ assistant proposes one instead of changing the schedule itself.
    assistant is answering.
 4. An approved proposal replaces the schedule in one step, so
    <kbd>Ctrl</kbd>+<kbd>Z</kbd> reverts the whole change.
+5. The assistant continues automatically after either decision. It uses the
+   applied schedule after approval and keeps the current schedule after rejection.
 
 ## Reconnect or retry
 

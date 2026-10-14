@@ -377,16 +377,28 @@ def create_app(
             settings.optimizer_max_result_bytes,
         )
 
-    async def optimizer_completed(session_id: str, prompt: str, artifact: OptimizerArtifact | None) -> None:
+    def start_follow_up(
+        session_id: str,
+        prompt: str,
+        *,
+        trigger: Literal["optimizer", "proposal"],
+        artifact: OptimizerArtifact | None = None,
+    ) -> AgentRun | None:
         session = store.get(session_id)
         if session is None:
-            return
+            return None
         run = runs.start(
             session_id,
-            lambda run: session.run(run, prompt, runtime=runtime, background=True, artifact=artifact),
+            lambda run: session.run(run, prompt, runtime=runtime, background=True, trigger=trigger, artifact=artifact),
             background=True,
         )
         run.task.add_done_callback(recovery.pin(session_id))
+        return run
+
+    async def optimizer_completed(session_id: str, prompt: str, artifact: OptimizerArtifact | None) -> None:
+        run = start_follow_up(session_id, prompt, trigger="optimizer", artifact=artifact)
+        if run is None:
+            return
         try:
             await run.wait()
         finally:
@@ -862,6 +874,9 @@ def create_app(
         history_saved = await recovery.save(session_id)
         if approved is None:
             raise HTTPException(status_code=409, detail="The proposed schedule is no longer valid.")
+        start_follow_up(
+            session_id, "The user selected Approve. The proposal is now the current schedule.", trigger="proposal"
+        )
         refresh_owner_cookie(response, owner)
         return ProposalResponse(schedule_yaml=approved, history_saved=history_saved)
 
@@ -876,8 +891,12 @@ def create_app(
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> ProposalRejectionResponse:
         """Drop the pending proposal at the user's request."""
-        store.discard_proposal(session_id, owner)
+        had_proposal = store.discard_proposal(session_id, owner)
         history_saved = await recovery.save(session_id)
+        if had_proposal:
+            start_follow_up(
+                session_id, "The user selected Reject. The current schedule is unchanged.", trigger="proposal"
+            )
         refresh_owner_cookie(response, owner)
         return ProposalRejectionResponse(history_saved=history_saved)
 

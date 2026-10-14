@@ -248,6 +248,12 @@ model entries before tool execution.
 Consecutive text fragments can share a storage row. The browser reattaches with
 the same client message ID and replaces partial output with the snapshot.
 It does not start another model run.
+Proposal approval and rejection enqueue an assistant turn through `SessionRuns`,
+with a `proposal` trigger on the session stream. The decision is recorded before
+execution. The new turn reads the applied or unchanged schedule and the latest
+retained optimizer result. Repeating rejection after the proposal is cleared
+does not enqueue another turn.
+
 Foreground chat and optimization can proceed at the same time. Assistant turns
 remain serialized per session. The Stop control cancels either a foreground or
 background assistant turn and waits for the server outcome. It names the client

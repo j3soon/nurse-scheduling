@@ -271,19 +271,37 @@ def test_history_keeps_the_full_run_while_the_session_keeps_only_later_context(r
 
 @pytest.mark.parametrize("decision", ["approved", "rejected"])
 def test_proposal_decisions_join_the_run_that_proposed_them(recorded_history, decision):
-    client, session_id, revision = basic.proposing_client(history_postgres_url="test")
+    provider = basic.ScriptedToolProvider(
+        basic.rename_call(), [TextDelta("Proposed.")], [TextDelta("Decision followed up.")]
+    )
+    app = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test"),
+        provider=provider,
+        sandbox_factory=basic.rename_factory(),
+    )
+    client = basic.AuthenticatedTestClient(app)
     with client:
+        session_id = basic.create_session(client, basic.schedule_yaml())
+        client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P1."})
+        revision = app.state.session_store.get(session_id).revision
         if decision == "approved":
             response = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
         else:
             response = client.post(f"/sessions/{session_id}/proposal/reject")
         assert response.json()["history_saved"] is True
+
+        async def drain():
+            while app.state.runs.busy(session_id):
+                await asyncio.sleep(0)
+
+        client.portal.call(drain)
         # Without a pending proposal no decision is recorded, but the state is saved.
         saves = len(recorded_history["saves"])
         assert client.post(f"/sessions/{session_id}/proposal/reject").json()["history_saved"] is True
         assert len(recorded_history["saves"]) == saves + 1
 
-    (start,) = recorded_history["starts"]
+    start, follow_up = recorded_history["starts"]
+    assert follow_up["kind"] == "background"
     decisions = [
         (run_id, entry)
         for _seq, run_id, entry in recorded_history["entries"]

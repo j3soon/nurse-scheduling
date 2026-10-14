@@ -2752,6 +2752,46 @@ describe('ExperimentalAiPage', () => {
       expect(screen.queryByText('The proposed schedule was applied. Undo reverts it in one step.')).not.toBeInTheDocument();
     });
 
+    it('keeps a new follow-up proposal received before approval acknowledgement', async () => {
+      let approve: ((value: { scheduleYaml: string; historySaved: boolean }) => void) | undefined;
+      let background: SessionStreamOptions | undefined;
+      mockApproveProposal.mockImplementation(() => new Promise(resolve => { approve = resolve; }));
+      mockStreamSessionEvents.mockImplementation(async (_id, callbacks) => {
+        background = callbacks;
+        await new Promise<void>(() => {});
+      });
+      const user = userEvent.setup();
+      render(<ExperimentalAiPage />);
+      await ask(user);
+      await user.click(await screen.findByRole('button', { name: 'Approve' }));
+      await act(async () => {
+        background?.onEvent({ type: 'run_start', runId: 'decision-review', trigger: 'proposal' });
+        background?.onEvent({ type: 'proposal', diff: 'A new review proposal' });
+        background?.onEvent({ type: 'done', runId: 'decision-review' });
+        approve?.({ scheduleYaml: 'description: proposed schedule\n', historySaved: true });
+      });
+      expect(await screen.findByText('A new review proposal')).toBeVisible();
+      expect(mockLoadFromYaml).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps a proposal after a refused rejection', async () => {
+      mockRejectProposal.mockRejectedValue(new MockAiHttpError(
+        'Wait for the active response before rejecting a proposal.', 409,
+      ));
+      const user = userEvent.setup();
+      render(<ExperimentalAiPage />);
+      await ask(user);
+
+      await user.click(await screen.findByRole('button', { name: 'Reject' }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Wait for the active response before rejecting a proposal.',
+      );
+      expect(screen.getByRole('region', { name: 'Proposed schedule change' })).toBeVisible();
+      expect(screen.getByRole('button', { name: 'Reject' })).toBeEnabled();
+      expect(mockLoadFromYaml).not.toHaveBeenCalled();
+    });
+
     it('drops a rejected proposal', async () => {
       const user = userEvent.setup();
       render(<ExperimentalAiPage />);

@@ -49,6 +49,19 @@ async function mockProposingBackend(page: Page, holdAnswer = false) {
   const journal: string[] = [];
   let wakeReader: (() => void) | undefined;
 
+  const followUp = (decision: string) => {
+    const runId = `decision-${journal.length}`;
+    for (const [type, data] of [
+      ['run_start', { trigger: 'proposal' }],
+      ['delta', { text: `Automatic ${decision} follow-up.` }],
+      ['done', {}],
+    ] as const) {
+      journal.push(`id: ${journal.length + 1}\nevent: ${type}\ndata: ${JSON.stringify({ ...data, run_id: runId })}\n\n`);
+    }
+    wakeReader?.();
+    wakeReader = undefined;
+  };
+
   await page.route('**/ai/**', async route => {
     const request = route.request();
     const corsHeaders = {
@@ -100,6 +113,7 @@ async function mockProposingBackend(page: Page, holdAnswer = false) {
         headers: corsHeaders,
         body: JSON.stringify({ schedule_yaml: PROPOSED_YAML, history_saved: true }),
       });
+      followUp("approval");
       return;
     }
     if (request.url().endsWith('/proposal/reject')) {
@@ -109,6 +123,7 @@ async function mockProposingBackend(page: Page, holdAnswer = false) {
         headers: corsHeaders,
         body: JSON.stringify({ history_saved: true }),
       });
+      followUp("rejection");
       return;
     }
     if (request.url().endsWith('/proposal/reject')) {
@@ -167,6 +182,7 @@ test('approves a proposed schedule and applies it as one undoable step', async (
   await expect(page.getByText('The proposed schedule was applied. Undo reverts it in one step.')).toBeVisible();
   await expect(proposal).toBeHidden();
   expect(state.approvals).toBe(1);
+  await expect(page.getByText('Automatic approval follow-up.')).toBeVisible();
 
   await page.goto('/people');
   await expect(page.getByText('1. Proposed Nurse')).toBeVisible();
@@ -184,6 +200,7 @@ test('keeps the schedule when a proposal is rejected', async ({ page }) => {
   await page.getByRole('button', { name: 'Reject' }).click();
 
   await expect(page.getByRole('region', { name: 'Proposed schedule change' })).toBeHidden();
+  await expect(page.getByText('Automatic rejection follow-up.')).toBeVisible();
 
   await page.goto('/people');
   await expect(page.getByText('1. Proposed Nurse')).toBeHidden();

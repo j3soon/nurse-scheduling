@@ -33,7 +33,7 @@ from nurse_scheduling.ai.history import ChatHistory
 from nurse_scheduling.ai.lifecycle import SessionRuns
 from nurse_scheduling.ai.provider import ProviderError, TextDelta
 from nurse_scheduling.ai.session_event_stream import SessionEventStream
-from nurse_scheduling.ai.transcript import AssistantMessage, UserMessage
+from nurse_scheduling.ai.transcript import AssistantMessage, ProposalDecisionEntry, UserMessage
 
 from .ai_test_helper import schedule_yaml
 from .test_ai_basic import AI_AUTH_HEADERS, FakeProvider, create_test_app, make_settings
@@ -233,7 +233,7 @@ def test_schedule_round_trip_invalidates_an_in_flight_snapshot():
 
 
 @pytest.mark.parametrize("decision", ["reject", "stale-approval"])
-def test_discarding_a_proposal_revokes_a_turn_that_was_using_it(decision):
+def test_proposal_decision_cannot_discard_a_turn_that_is_using_it(decision):
     store = SessionStore(make_settings())
     session = store.create("owner", schedule_yaml())
     first = store.begin(session.id, "owner", run_id="proposal-run")
@@ -244,17 +244,24 @@ def test_discarding_a_proposal_revokes_a_turn_that_was_using_it(decision):
     revising = store.begin(session.id, "owner")
     captured = PendingProposal(proposal[0], proposal[1], "proposal-run")
     assert revising.pending_proposal == captured
+    with pytest.raises(HTTPException, match="Wait for the active response") as busy:
+        if decision == "reject":
+            store.discard_proposal(session.id, "owner")
+        else:
+            store.approve_proposal(session.id, "owner", "0" * 64)
+    assert busy.value.status_code == 409
+    assert store.finish(
+        session.id, [UserMessage("Revise"), AssistantMessage("Revised")], proposal, snapshot=revising
+    ).run_saved
+    assert session.pending_proposal is not None
+    assert revising.pending_proposal == captured
     if decision == "reject":
         store.discard_proposal(session.id, "owner")
     else:
         with pytest.raises(HTTPException) as stale:
             store.approve_proposal(session.id, "owner", "0" * 64)
         assert stale.value.status_code == 409
-    assert not store.finish(
-        session.id, [UserMessage("Revise"), AssistantMessage("Revised")], proposal, snapshot=revising
-    ).run_saved
     assert session.pending_proposal is None
-    assert revising.pending_proposal == captured
 
 
 @pytest.mark.parametrize("background", [False, True], ids=["foreground", "background"])
@@ -536,5 +543,47 @@ def test_retired_session_does_not_recreate_its_event_history():
         assert not app.state.session_event_stream.events_after(session.id)
         assert app.state.session_event_stream._retained_bytes == 0
         assert await anext(session.events(0), None) is None
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("decision", ["approve", "reject"])
+def test_proposal_decision_starts_one_background_follow_up_without_a_chat_message(decision):
+    async def exercise():
+        provider = FakeProvider([["Decision follow-up."]])
+        app = create_test_app(settings=make_settings(), provider=provider)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver", headers=AI_AUTH_HEADERS
+        ) as client:
+            session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
+            session = app.state.session_store.get(session_id)
+            original = session.schedule_yaml
+            proposal = original.replace("description: ''", "description: Updated", 1)
+            session.transcript = [UserMessage("Update the description."), AssistantMessage("Here is the proposal.")]
+            session.pending_proposal = PendingProposal(proposal, "description changed", "proposal-run")
+            response = await client.post(
+                f"/sessions/{session_id}/proposal/{decision}",
+                json={"base_sha256": session.revision} if decision == "approve" else None,
+            )
+            assert response.status_code == 200
+            while app.state.runs.busy(session_id):
+                await asyncio.sleep(0)
+            assert len(provider.calls) == 1
+            assert session.schedule_yaml == (proposal if decision == "approve" else original)
+            assert session.pending_proposal is None
+            entries = [entry for entry in session.transcript if isinstance(entry, ProposalDecisionEntry)]
+            assert entries == [ProposalDecisionEntry("approved" if decision == "approve" else "rejected")]
+            events = app.state.session_event_stream.events_after(session_id)
+            starts = [event for event in events if event.type == "run_start"]
+            assert len(starts) == 1 and starts[0].data["trigger"] == "proposal"
+            assert events[-1].type == "done"
+            assert any(event.type == "delta" and event.data["text"] == "Decision follow-up." for event in events)
+            assert any(
+                "user " + ("approved" if decision == "approve" else "rejected") in str(m) for m in provider.calls[0]
+            )
+            repeat = await client.post(f"/sessions/{session_id}/proposal/reject")
+            assert repeat.status_code == 200
+            assert len(provider.calls) == 1
+        await app.state.runs.close()
 
     asyncio.run(exercise())

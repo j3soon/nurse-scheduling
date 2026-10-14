@@ -655,7 +655,7 @@ class AgentSession:
         artifact: OptimizerArtifact | None,
         settings: AiSettings,
         events: RunEvents,
-        background: bool,
+        question_kind: str,
     ) -> tuple[list[ChatMessage], int, int]:
         """Project the reserved transcript and report the model input and its context usage."""
         history = project_history(snapshot.transcript, settings.max_history_chars)
@@ -674,9 +674,7 @@ class AgentSession:
             {
                 "type": "model_input",
                 "schedule_yaml": snapshot.schedule_yaml,
-                **model_input(
-                    messages, len(history.messages), dropped_history, "optimizer" if background else "question"
-                ),
+                **model_input(messages, len(history.messages), dropped_history, question_kind),
             }
         )
         events.emit({"type": "context_usage", **context_usage(history.used_chars, settings)})
@@ -845,6 +843,7 @@ class AgentSession:
         *,
         runtime: SessionRuntime,
         background: bool = False,
+        trigger: Literal["optimizer", "proposal"] = "optimizer",
         owner: str | None = None,
         credential_id: str | None = None,
         artifact: OptimizerArtifact | None = None,
@@ -894,16 +893,21 @@ class AgentSession:
                     raise
                 if not history_started:
                     raise HTTPException(status_code=503, detail=RECOVERY_UNAVAILABLE)
-            events.emit({"type": "run_start", "trigger": "optimizer" if background else "user"})
+            events.emit({"type": "run_start", "trigger": trigger if background else "user"})
             run.ready.set_result(True)
             if run.message_id is not None and run.message_id in self.stopped_message_ids:
                 # A Stop for this message arrived first, so its question never runs.
                 outcome = RunOutcome(terminal={"type": "stopped"})
                 return
-            if not background:
+            if not background or trigger == "proposal":
                 artifact = await runtime.session_optimizer.latest_result_artifact(session_id)
             messages, dropped_history, context_chars = self._prepare_run(
-                snapshot, question, artifact, settings, events, background
+                snapshot,
+                question,
+                artifact,
+                settings,
+                events,
+                ("app" if trigger == "proposal" else "optimizer") if background else "question",
             )
             await self._execute_run(snapshot, messages, artifact, runtime, background, output, events, context_chars)
             run_entries = [run_entries[0], *self.agent.state.messages]
