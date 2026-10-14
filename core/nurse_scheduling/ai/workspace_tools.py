@@ -97,8 +97,10 @@ class WorkspaceTools:
             if isinstance(optimizer_arguments, dict) and optimizer_arguments.get("action") in {"status", "finish_now"}:
                 return await self.execute_optimizer("", arguments)
             try:
-                current_schedule = (await self.sandbox.read_file(WORKSPACE_SCHEDULE)).decode("utf-8")
-            except (SandboxFileNotFoundError, UnicodeDecodeError):
+                current_schedule = (
+                    await self.sandbox.read_file(WORKSPACE_SCHEDULE, max_bytes=self.limits.max_schedule_bytes)
+                ).decode("utf-8")
+            except (SandboxFileNotFoundError, SandboxFileSizeError, UnicodeDecodeError):
                 return AgentToolOutcome("The current working schedule is unavailable or invalid.", False)
             review = review_schedule_candidate(self.schedule_yaml, current_schedule, self.limits.max_schedule_bytes)
             if not review.outcome.ok:
@@ -195,7 +197,7 @@ async def run_workspace(
                 except SandboxFileNotFoundError:
                     download = None
                 except SandboxFileSizeError as exc:
-                    raise SandboxDownloadValidationError(str(exc)) from exc
+                    raise SandboxDownloadValidationError("The generated ZIP exceeds the download size limit.") from exc
                 except SandboxError as exc:
                     raise SandboxDownloadError(str(exc)) from exc
                 if download is not None:

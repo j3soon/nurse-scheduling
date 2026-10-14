@@ -59,7 +59,7 @@ from .pi.write import (
     render_write_result,
     write_parameters,
 )
-from .sandbox import SandboxBackend, SandboxFileNotFoundError
+from .sandbox import SandboxBackend, SandboxFileNotFoundError, SandboxFileSizeError
 
 FULL_OUTPUT_DIRECTORY = "/tmp"
 SANDBOX_WORKSPACE = "/workspace"
@@ -115,7 +115,7 @@ class SandboxPiTools:
             return AgentToolOutcome(str(exc), False)
         try:
             content = await self._sandbox.read_file(_resolve_path(call.path))
-        except SandboxFileNotFoundError as exc:
+        except (SandboxFileNotFoundError, SandboxFileSizeError) as exc:
             return AgentToolOutcome(str(exc), False)
         try:
             result = render_read_result(content, call)
@@ -158,7 +158,7 @@ class SandboxPiTools:
         path = _resolve_path(call.path)
         try:
             content = await self._sandbox.read_file(path)
-        except SandboxFileNotFoundError as exc:
+        except (SandboxFileNotFoundError, SandboxFileSizeError) as exc:
             return AgentToolOutcome(str(exc), False)
         try:
             edited = apply_edit(content, call)

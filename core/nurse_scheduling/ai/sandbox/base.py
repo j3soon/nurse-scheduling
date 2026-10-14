@@ -28,6 +28,10 @@ from dataclasses import dataclass
 from typing import Protocol
 
 logger = logging.getLogger("nurse_scheduling.ai.sandbox")
+DEFAULT_MAX_FILE_BYTES = 16 * 1024 * 1024
+"""Default host-side bound for one sandbox file read, before text or image processing."""
+MAX_COMMAND_OUTPUT_BYTES = 4 * 1024 * 1024
+"""Combined UTF-8 stdout and stderr bytes accepted from one command."""
 
 
 class SandboxError(RuntimeError):
@@ -94,7 +98,7 @@ class SandboxBackend(Protocol):
         ...
 
     async def read_file(self, path: str, *, max_bytes: int | None = None) -> bytes:
-        """Read one file inside the sandbox."""
+        """Read a bounded file, using `DEFAULT_MAX_FILE_BYTES` when no limit is supplied."""
         ...
 
     async def run(self, command: str, *, timeout_seconds: float | None = None) -> CommandResult:

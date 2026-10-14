@@ -179,6 +179,8 @@ skipped does not validate persistence.
 - Bound uploads before provider calls and place them under fixed sandbox paths.
   Retain uploaded source files only until the user removes them or the session expires.
   Count retained files and generated downloads against the session memory budget.
+- Bound sandbox file and command output bytes while receiving them. Truncating
+  tool output after buffering does not bound the AI service's memory use.
 - Test file workflows across message boundaries and session expiry. Check the
   bytes delivered by the download API and the files loaded into the next VM.
   A printed workspace path does not prove delivery or retention.
