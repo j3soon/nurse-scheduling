@@ -723,8 +723,8 @@ export default function OptimizeAndExportPage() {
     servers: createDefaultServerEntries(),
     selectedServerEndpoint: 'auto' as ServerSelection,
   });
-  const [serverEntries, setServerEntries] = useState<OptimizeServerEntry[]>(initialServerOptions.current.servers);
-  const [selectedServerEndpoint, setSelectedServerEndpoint] = useState<ServerSelection>(initialServerOptions.current.selectedServerEndpoint);
+  const [serverEntries, setServerEntries] = useState<OptimizeServerEntry[]>(createDefaultServerEntries);
+  const [selectedServerEndpoint, setSelectedServerEndpoint] = useState<ServerSelection>('auto');
   const [editingServerEndpoint, setEditingServerEndpoint] = useState<string | null>(null);
   const [editingTokenEndpoint, setEditingTokenEndpoint] = useState<string | null>(null);
   const [addingServer, setAddingServer] = useState(false);
@@ -1067,7 +1067,7 @@ export default function OptimizeAndExportPage() {
     });
   }, [getServerToken]);
 
-  const getOptimizeJobStatus = useCallback(async (job: OptimizeJobResponse): Promise<OptimizeJobResponse> => {
+  const getOptimizeJobStatus = async (job: OptimizeJobResponse): Promise<OptimizeJobResponse> => {
     const response = await authorizedFetch(resolvedOptimizeEndpoint, job.links.self, {
       method: 'GET',
       cache: 'no-store',
@@ -1078,9 +1078,9 @@ export default function OptimizeAndExportPage() {
     }
 
     return await response.json() as OptimizeJobResponse;
-  }, [authorizedFetch, resolvedOptimizeEndpoint]);
+  };
 
-  const pollOptimizeJob = useCallback((job: OptimizeJobResponse): Promise<OptimizeJobResponse> => {
+  const pollOptimizeJob = (job: OptimizeJobResponse): Promise<OptimizeJobResponse> => {
     return new Promise((resolve, reject) => {
       const poll = async () => {
         try {
@@ -1101,9 +1101,9 @@ export default function OptimizeAndExportPage() {
 
       void poll();
     });
-  }, [getOptimizeJobStatus]);
+  };
 
-  const waitForOptimizeJob = useCallback((job: OptimizeJobResponse): Promise<OptimizeJobResponse> => {
+  const waitForOptimizeJob = (job: OptimizeJobResponse): Promise<OptimizeJobResponse> => {
     if (job.terminal) {
       return Promise.resolve(job);
     }
@@ -1193,7 +1193,7 @@ export default function OptimizeAndExportPage() {
     }
 
     return pollOptimizeJob(job);
-  }, [appendSseEvent, getOptimizeJobStatus, pollOptimizeJob, resolvedOptimizeEndpoint]);
+  };
 
   const handleOptimizeAndDownload = async () => {
     if (isRequiredDataMissing) {

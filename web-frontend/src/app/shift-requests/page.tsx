@@ -1140,8 +1140,8 @@ export default function ShiftRequestsPage() {
     if (isAddMode) {
       handleDraggedCell(selectedCellType, personId, identifier);
     }
-    document.documentElement.style.userSelect = 'none';
-    document.body.style.userSelect = 'none';
+    document.documentElement.style.setProperty('user-select', 'none');
+    document.body.style.setProperty('user-select', 'none');
   };
 
   const handleCellMouseUp = (event: React.MouseEvent) => {

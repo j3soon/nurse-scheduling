@@ -23,7 +23,11 @@ Run commands from `web-frontend/`:
 Use `bun run test:affected` for routine changes. Run the full unit/component
 and browser suites when checking the full app or broad shared behavior.
 Frontend unit/component tests use Vitest; browser integration tests use
-Playwright.
+Playwright. Keep test files and runner configuration outside the production
+TypeScript project. Validate them with their respective test runners.
+
+For row reorder tests, drop inside the intended half of the target row. Its
+midpoint separates insertion before and after, so center drops are ambiguous.
 
 Filesystem failure tests must accept the supported platforms' error codes.
 Assert the failed operation and path as well as output preservation.
