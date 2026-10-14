@@ -189,9 +189,12 @@ export function ChatTranscriptView({
               {message.role === 'assistant' && message.status === 'stopped' && (
                 <p className="mt-2 text-sm text-gray-500">Stopped before completion.</p>
               )}
+              {message.status === 'failed' && message.failureReason && message.content !== message.failureReason && (
+                <p className="mt-2 whitespace-pre-wrap text-sm text-red-700">{message.failureReason}</p>
+              )}
               {message.role === 'assistant' && message.status === 'failed' && message.retry && (
                 <div className="mt-3 border-t border-red-200 pt-3 text-sm text-red-700">
-                  <p>This response failed and will not be used as context for future messages.</p>
+                  <p>This response failed before completion.</p>
                   {message.retry.requiresAttachments ? (
                     <>
                       <p className="mt-1 text-xs">Prepare the question, then reattach its files before sending.</p>

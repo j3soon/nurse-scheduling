@@ -47,6 +47,7 @@ describe('stored conversation compatibility', () => {
   it('rejects corrupt activity and pending request data', () => {
     for (const change of [
       { messages: [{ id: 'answer', role: 'assistant', content: '', activity: [{ kind: 'tool' }] }] },
+      { messages: [{ id: 'answer', role: 'assistant', content: '', failureReason: 525 }] },
       { pendingRequest: { messageId: 'request', question: 'Question', questionId: 'question',
         assistantId: 'answer', createdAt: 'invalid' } },
       { sessionEventId: -1 },

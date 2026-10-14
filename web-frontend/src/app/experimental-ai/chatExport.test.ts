@@ -50,6 +50,19 @@ const metadata = {
 };
 
 describe('chat export', () => {
+  it.each(['', 'Partial answer.'])('exports the specific failure beside response text %j', content => {
+    const failureReason = 'Provider HTTP 525. Error ID: example. <script>unsafe</script>';
+    const message: ChatExportMessage = { role: 'assistant', content, status: 'failed', failureReason };
+    const html = buildHtmlChatExport([message], metadata);
+    const markdown = buildMarkdownChatExport([message], metadata);
+    const document = new DOMParser().parseFromString(html, 'text/html');
+    expect(document.querySelector('.failure')?.textContent).toBe(failureReason);
+    expect(document.querySelector('script')).toBeNull();
+    expect(markdown).toContain(`Error: ${failureReason}`);
+    expect(html).not.toContain('not saved to AI history');
+    if (content) expect(document.querySelector('.content')?.textContent).toBe(content);
+  });
+
   it.each([
     [59_400, '59s'],
     [59_600, '1m 0s'],

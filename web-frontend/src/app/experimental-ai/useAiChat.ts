@@ -63,6 +63,7 @@ import { useSessionEventStream } from './useSessionEventStream';
 import { SessionEventRouter } from './sessionEventRouter';
 import {
   applyAssistantEvent,
+  failResponse,
   stopResponse,
   messageId,
   interruptRunningTools,
@@ -428,7 +429,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       setMessages(previous => {
         const existing = [...previous].reverse().find(message => message.role === 'assistant' && (message.runId ?? message.id) === runId);
         return existing ? previous.map(message => message.id === existing.id
-          ? { ...message, runId, status: 'pending' as const, responseCompletedAt: undefined } : message)
+          ? { ...message, runId, status: 'pending' as const, failureReason: undefined, responseCompletedAt: undefined } : message)
           : [...previous, { id: runId, runId, role: 'assistant', content: '', status: 'pending', responseStartedAt: Date.now() }];
       });
     };
@@ -447,13 +448,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       });
     };
     const failBackgroundTurn = (message: string) => {
-      updateBackgroundMessage(entry => ({
-        ...entry,
-        content: entry.content || message,
-        status: 'failed',
-        responseCompletedAt: Date.now(),
-        activity: interruptRunningTools(entry.activity ?? []),
-      }));
+      updateBackgroundMessage(entry => failResponse(entry, message));
       lifecycle.finish(lifecycle.current('background'));
       setError(message);
     };
@@ -467,7 +462,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
             if (!reset.runIds.includes(runId)) return [message];
             if (message.role !== 'assistant' || keptRuns.has(runId)) return [];
             keptRuns.add(runId);
-            return [{ ...message, runId, content: '', activity: [], status: 'pending' as const, responseCompletedAt: undefined }];
+            return [{ ...message, runId, content: '', activity: [], status: 'pending' as const, failureReason: undefined, responseCompletedAt: undefined }];
           });
         });
         receiveProposal(reset.proposalDiff);
@@ -517,6 +512,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
         updateBackgroundMessage(message => ({
           ...message,
           status: undefined,
+          failureReason: undefined,
           responseCompletedAt: Date.now(),
         }), runId);
         lifecycle.finish(lifecycle.current('background'));
@@ -530,6 +526,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
           ...entry,
           content: message,
           status: 'failed',
+          failureReason: message,
           responseCompletedAt: Date.now(),
           activity: [{ kind: 'response', text: message }],
         }));
@@ -835,7 +832,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       setMessages(previous => previous.map(message => (
         message.id === activeAssistantId
           ? controller.signal.aborted ? stopResponse(message)
-            : { ...message, status: undefined, responseCompletedAt: Date.now() }
+            : { ...message, status: undefined, failureReason: undefined, responseCompletedAt: Date.now() }
           : message
       )));
     } catch (streamError) {
@@ -847,6 +844,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
           ...message,
           content: staleTurnMessage ?? message.content,
           status: 'failed',
+          failureReason: streamError instanceof Error ? streamError.message : 'The AI request failed.',
           responseCompletedAt: Date.now(),
           activity: staleTurnMessage === null
             ? interruptRunningTools(message.activity ?? [])

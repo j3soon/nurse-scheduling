@@ -2228,7 +2228,7 @@ describe('ExperimentalAiPage', () => {
     expect(screen.getByText('Partial answer.')).toBeInTheDocument();
     expect(screen.getByText('bash · interrupted')).toBeInTheDocument();
     expect(screen.queryByText('Stopped.')).not.toBeInTheDocument();
-    expect(screen.queryByText('This response failed and will not be used as context for future messages.')).not.toBeInTheDocument();
+    expect(screen.queryByText('This response failed before completion.')).not.toBeInTheDocument();
   });
 
   it('queues a drafted question while a response is streaming', async () => {
@@ -2555,7 +2555,8 @@ describe('ExperimentalAiPage', () => {
     expect(alert).toHaveTextContent(providerError);
     expect(screen.getByText('Can you help?')).toBeInTheDocument();
     expect(screen.getByText('Provisional response.')).toBeInTheDocument();
-    expect(screen.getByText('This response failed and will not be used as context for future messages.')).toBeInTheDocument();
+    expect(screen.getByText('This response failed before completion.')).toBeInTheDocument();
+    expect(screen.getByText('Provisional response.').closest('article')).toHaveTextContent(providerError);
 
     await user.click(screen.getByRole('button', { name: 'Retry' }));
 
@@ -2564,7 +2565,7 @@ describe('ExperimentalAiPage', () => {
     expect(mockRunEvents.mock.calls[1][1]).toBe('Can you help?');
     expect(screen.getAllByText('Can you help?')).toHaveLength(1);
     expect(screen.queryByText('Provisional response.')).not.toBeInTheDocument();
-    expect(screen.queryByText('This response failed and will not be used as context for future messages.')).not.toBeInTheDocument();
+    expect(screen.queryByText('This response failed before completion.')).not.toBeInTheDocument();
   });
 
   it('removes provisional output when the backend discards a stale turn', async () => {
@@ -2583,7 +2584,7 @@ describe('ExperimentalAiPage', () => {
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Change it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
-    expect(await screen.findByText('This response failed and will not be used as context for future messages.')).toBeInTheDocument();
+    expect(await screen.findByText('This response failed before completion.')).toBeInTheDocument();
     expect(screen.getByText('The schedule changed.')).toBeInTheDocument();
     expect(screen.queryByText('Obsolete response.')).not.toBeInTheDocument();
     expect(screen.queryByText('schedule edit')).not.toBeInTheDocument();

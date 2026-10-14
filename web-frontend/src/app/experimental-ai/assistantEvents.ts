@@ -123,11 +123,11 @@ export function interruptRunningTools(entries: ActivityEntry[]): ActivityEntry[]
 }
 
 export function resumeResponse<T extends ChatExportMessage>(message: T): T {
-  return { ...message, status: 'pending', responseCompletedAt: undefined };
+  return { ...message, status: 'pending', failureReason: undefined, responseCompletedAt: undefined };
 }
 
 export function completeResponse<T extends ChatExportMessage>(message: T, completedAt = Date.now()): T {
-  return { ...message, status: undefined, responseCompletedAt: completedAt };
+  return { ...message, status: undefined, failureReason: undefined, responseCompletedAt: completedAt };
 }
 
 export function failResponse<T extends ChatExportMessage>(message: T, fallbackText = '', completedAt = Date.now()): T {
@@ -135,6 +135,7 @@ export function failResponse<T extends ChatExportMessage>(message: T, fallbackTe
     ...message,
     content: message.content || fallbackText,
     status: 'failed',
+    failureReason: fallbackText || undefined,
     responseCompletedAt: completedAt,
     activity: interruptRunningTools(message.activity ?? []),
   };

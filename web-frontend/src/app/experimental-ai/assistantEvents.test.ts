@@ -94,6 +94,12 @@ describe('assistant events', () => {
     ]);
   });
 
+  it('keeps the failure reason when an answer already has text', () => {
+    const reason = 'The provider returned HTTP 525. Error ID: example.';
+    const message = reduce([{ type: 'delta', text: 'Partial answer.' }, { type: 'error', message: reason }]);
+    expect(message).toMatchObject({ content: 'Partial answer.', status: 'failed', failureReason: reason });
+  });
+
   it('diffs each preview against the previous working copy', () => {
     const events: AssistantEvent[] = [];
     const working = { current: null as string | null };

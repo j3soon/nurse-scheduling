@@ -23,6 +23,26 @@ import snapshot from '../../../../core/tests/ai_fixtures/chat-export.json';
 import { buildSavedChatExport, parseSavedChatSnapshot, projectSavedChat } from './savedChatExport';
 
 describe('saved chat export', () => {
+  it('keeps the saved error after a partial response in both export formats', () => {
+    const failed = {
+      ...snapshot,
+      runs: [{ ...snapshot.runs[0], id: 'failed', status: 'failed', finished_at: 3 }],
+      events: [
+        { type: 'delta', data: { run_id: 'failed', text: 'Partial response.' }, occurred_at: 1 },
+        { type: 'error', data: { run_id: 'failed', message: 'Provider HTTP 525. Error ID: example.' }, occurred_at: 2 },
+      ],
+    };
+    const { messages } = projectSavedChat(parseSavedChatSnapshot(failed));
+    expect(messages.at(-1)).toMatchObject({
+      content: 'Partial response.', status: 'failed', failureReason: 'Provider HTTP 525. Error ID: example.',
+    });
+    for (const format of ['html', 'markdown'] as const) {
+      const output = buildSavedChatExport(failed, format);
+      expect(output).toContain('Partial response.');
+      expect(output).toContain('Provider HTTP 525. Error ID: example.');
+    }
+  });
+
   it.each(['Approve', 'Reject'])('keeps the %s prompt beside its saved follow-up', decision => {
     const prompt = `The user selected ${decision}.`;
     const { messages } = projectSavedChat(parseSavedChatSnapshot({

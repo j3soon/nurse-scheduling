@@ -159,8 +159,9 @@ either kind. The choice is remembered on this browser.
 Approval is refused when the schedule changed after the proposal was made. Ask
 again so the assistant works from what you now have.
 
-If a turn fails, read the error below the chat. A provider error can include an
-HTTP status and an error ID to share when reporting the problem. A schedule
+If a turn fails, read the error beside its response. Chat exports retain that
+error with any partial answer. A provider error can include an HTTP status and
+an error ID to share when reporting the problem. A schedule
 validation error explains the invalid value or field. Failed validation discards
 that turn's edits and keeps your current schedule.
 

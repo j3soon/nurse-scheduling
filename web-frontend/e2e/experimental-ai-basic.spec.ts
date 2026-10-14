@@ -424,7 +424,9 @@ test('retries a failed text run without hiding its provisional activity', async 
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   await expect(page.getByText('Provisional response.')).toBeVisible();
-  await expect(page.getByText('This response failed and will not be used as context for future messages.')).toBeVisible();
+  await expect(page.getByText('This response failed before completion.')).toBeVisible();
+  const failedResponse = page.locator('article').filter({ hasText: 'Provisional response.' });
+  await expect(failedResponse).toContainText('The temporary AI sandbox failed.');
   await page.getByText('bash · interrupted').click();
   await expect(page.getByText('{"command":"sleep 30"}', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Retry' }).click();

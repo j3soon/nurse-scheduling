@@ -42,6 +42,7 @@ export interface ChatExportMessage {
   createdAt?: number;
   activity?: ActivityEntry[];
   status?: 'pending' | 'failed' | 'stopped';
+  failureReason?: string;
   responseStartedAt?: number;
   responseCompletedAt?: number;
 }
@@ -194,7 +195,10 @@ function fencedText(text: string): string[] {
 function messageDetails(message: ChatExportMessage): string[] {
   const details: string[] = [];
   if (message.createdAt !== undefined) details.push(`Sent: ${new Date(message.createdAt).toISOString()}`);
-  if (message.status === 'failed') details.push('Status: failed');
+  if (message.status === 'failed') {
+    details.push('Status: failed');
+    if (message.failureReason) details.push(`Error: ${message.failureReason.replaceAll('\n', '\n  ')}`);
+  }
   if (message.status === 'pending') details.push('Status: pending');
   if (message.status === 'stopped') details.push('Status: stopped');
   if (message.responseCompletedAt !== undefined) {
@@ -242,7 +246,7 @@ function renderHtmlMessageDetails(message: ChatExportMessage, timeZone?: 'UTC'):
   const status = message.status === 'pending' && !message.content
     ? '<p class="message-status" role="status">Thinking</p>'
     : message.status === 'failed'
-      ? '<p class="failure">This turn failed and was not saved to AI history.</p>'
+      ? `<p class="failure">${escapeHtml(message.failureReason || 'This response failed before completion.')}</p>`
       : message.status === 'stopped'
         ? '<p class="message-status">Stopped before completion.</p>'
         : '';
