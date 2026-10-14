@@ -56,6 +56,13 @@ widths. Use touch device emulation for tap and reorder checks. Resizing a deskto
 viewport alone does not exercise coarse-pointer controls or phone Enter behavior.
 Check the visual viewport separately for fixed composers. Browser emulation does
 not replace an iOS or Android keyboard check on a real device.
+Playwright `fullPage` screenshots under mobile emulation lose coarse-pointer
+styles, so touch-only controls disappear from the image. For a full-height phone
+screenshot, set the viewport height to the page height and take a normal capture.
+
+E2E builds use the checkout's `git describe` version without `-dirty`. A build
+from uncommitted changes otherwise shows a dirty-version warning on every YAML
+upload, and upload specs that expect no dialog fail.
 
 For deterministic checks of version-dependent UI, restart the dev server with
 an explicit version, for example:

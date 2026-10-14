@@ -34,6 +34,17 @@ const e2ePort = Number(process.env[portEnvName] ?? execFileSync(
 process.env[portEnvName] = String(e2ePort);
 const e2eBaseURL = `http://127.0.0.1:${e2ePort}`;
 
+// Uncommitted changes add `-dirty` to the Git-derived app version, and the app then warns
+// on every YAML upload. Build E2E runs as the clean checkout so results do not depend on it.
+function cleanAppVersion(): string | undefined {
+  try {
+    return execFileSync('git', ['-C', path.join(__dirname, '..'), 'describe', '--tags', '--always'], { encoding: 'utf8' }).trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+const e2eAppVersion = process.env.APP_VERSION_OVERRIDE?.trim() || cleanAppVersion();
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: false,
@@ -58,6 +69,7 @@ export default defineConfig({
       NEXT_PUBLIC_DISABLE_SENTRY: '1',
       NEXT_PUBLIC_DISABLE_HOSTED_OPTIMIZE_API: '1',
       NEXT_PUBLIC_AI_API_URL: '/ai',
+      ...(e2eAppVersion ? { APP_VERSION_OVERRIDE: e2eAppVersion } : {}),
     },
     url: e2eBaseURL,
     reuseExistingServer: false,
