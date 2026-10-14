@@ -1510,7 +1510,7 @@ export default function ShiftRequestsPage() {
         </div>
       )}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
-        <div className="flex min-w-0 flex-wrap items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           <h1 className="text-3xl font-bold text-gray-800">Shift Requests</h1>
           <PageDocumentationLink href={DOCUMENTATION_URLS.shiftRequests} label="Shift Requests" />
         </div>

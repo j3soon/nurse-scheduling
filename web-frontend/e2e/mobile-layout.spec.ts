@@ -152,3 +152,26 @@ test('keeps backend server names readable in the phone backend table', async ({ 
   await expect(page.getByRole('columnheader', { name: 'Activity', exact: true })).toBeHidden();
   expect((await header.boundingBox())!.width).toBeGreaterThan(100);
 });
+
+test('shows whole date lists, a collapsed copy panel, and a centered current tab on a phone', async ({ page }) => {
+  await page.goto('/shift-type-requirements');
+  const currentTab = page.getByRole('button', { name: '4. Shift Type Requirements', exact: true });
+  await expect(currentTab).toHaveAttribute('aria-current', 'page');
+  await expect.poll(async () => {
+    const box = (await currentTab.boundingBox())!;
+    return Math.abs(box.x + box.width / 2 - 180);
+  }).toBeLessThanOrEqual(2);
+  await page.getByRole('button', { name: 'Add Requirement', exact: true }).tap();
+  const lastDate = page.locator('label').filter({ has: page.locator('input[type="checkbox"]') }).filter({ hasText: /^31$/ });
+  // The list has no scroll box of its own, so its last row is not clipped.
+  expect(await lastDate.evaluate(label => {
+    for (let node = label.parentElement; node; node = node.parentElement) {
+      if (node.scrollHeight > node.clientHeight + 1 && getComputedStyle(node).overflowY !== 'visible') return node.tagName;
+    }
+    return null;
+  })).toBeNull();
+  await page.goto('/people');
+  await page.getByRole('button', { name: 'Add Person', exact: true }).tap();
+  await expect(page.getByText('Apply selection from another person', { exact: true })).toBeVisible();
+  await expect(page.getByRole('combobox', { name: 'Source person' })).toBeHidden();
+});

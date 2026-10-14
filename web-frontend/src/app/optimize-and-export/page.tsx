@@ -1878,7 +1878,7 @@ export default function OptimizeAndExportPage() {
     <div className="container mx-auto px-4 py-6 lg:py-8">
       <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
-          <div className="flex min-w-0 flex-wrap items-center gap-3">
+          <div className="flex min-w-0 items-center gap-3">
             <h1 className="text-3xl font-bold text-gray-900">Optimize and Export</h1>
             <PageDocumentationLink
               href={DOCUMENTATION_URLS.optimizeAndExport}

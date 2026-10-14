@@ -21,7 +21,7 @@
 'use client';
 
 import { usePathname, useRouter } from 'next/navigation';
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { useUnsavedEditingState } from '@/utils/unsavedEditingState';
 
@@ -70,6 +70,25 @@ export default function Navigation() {
 
     router.push(TABS[index].path);
   }, [currentTabIndex, hasTabSwitchWarningActive, router]);
+
+  const tabStripRef = useRef<HTMLDivElement>(null);
+  const hasCenteredTabRef = useRef(false);
+
+  // Phones show only a few tabs, so keep the current one and its neighbors in view.
+  useEffect(() => {
+    const strip = tabStripRef.current;
+    const tab = strip?.querySelector<HTMLElement>('[aria-current="page"]');
+    if (!strip || !tab) return;
+    const stripBox = strip.getBoundingClientRect();
+    const tabBox = tab.getBoundingClientRect();
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    // `scrollIntoView` could also scroll the page vertically, so only move the strip.
+    strip.scrollTo?.({
+      left: strip.scrollLeft + tabBox.left - stripBox.left - (stripBox.width - tabBox.width) / 2,
+      behavior: hasCenteredTabRef.current && !reduceMotion ? 'smooth' : 'auto',
+    });
+    hasCenteredTabRef.current = true;
+  }, [currentTabIndex]);
 
   const navigatePrevious = useCallback(() => navigateToTab(currentTabIndex - 1), [currentTabIndex, navigateToTab]);
   const navigateNext = useCallback(() => navigateToTab(currentTabIndex + 1), [currentTabIndex, navigateToTab]);
@@ -153,7 +172,7 @@ export default function Navigation() {
   return (
     <div className="relative">
       <nav className="bg-white shadow-sm">
-        <div className="overflow-x-auto">
+        <div ref={tabStripRef} className="overflow-x-auto">
           <div className="flex justify-start px-4 sm:px-6 lg:px-8">
             {TABS.map((tab, index) => {
               const showCustomExportIndicator = Boolean(tab.exportLayout && hasCustomExportLayout);
@@ -161,6 +180,7 @@ export default function Navigation() {
                 <button
                   key={tab.path}
                   onClick={() => navigateToTab(index)}
+                  aria-current={pathname === tab.path ? 'page' : undefined}
                   title={showCustomExportIndicator ? CUSTOM_EXPORT_LAYOUT_TOOLTIP : undefined}
                   className={`py-4 px-3 border-b-2 font-medium text-sm whitespace-nowrap ${
                     pathname === tab.path

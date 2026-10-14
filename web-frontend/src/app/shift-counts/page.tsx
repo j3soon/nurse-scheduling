@@ -29,7 +29,7 @@ import {
   SHIFT_COUNT,
   SUPPORTED_EXPRESSIONS
 } from '@/types/scheduling';
-import { CheckboxList } from '@/components/CheckboxList';
+import { CHECKBOX_LIST_SCROLL_CLASS_NAME, CheckboxList } from '@/components/CheckboxList';
 import { CountShiftTypeCoefficientFields } from '@/components/CountShiftTypeCoefficientFields';
 import { DraggableCardList } from '@/components/DraggableCardList';
 import ToggleButton from '@/components/ToggleButton';
@@ -339,7 +339,7 @@ export default function ShiftCountsPage() {
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
-        <div className="flex min-w-0 flex-wrap items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           <h1 className="text-3xl font-bold text-gray-800">Shift Counts</h1>
           <PageDocumentationLink href={DOCUMENTATION_URLS.shiftCounts} label="Shift Counts" />
         </div>
@@ -424,7 +424,7 @@ export default function ShiftCountsPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Count Dates *
                 </label>
-                <div className="max-h-32 overflow-y-auto">
+                <div className={CHECKBOX_LIST_SCROLL_CLASS_NAME}>
                   {dateData.items.length === 0 && dateData.groups.length === 0 ? (
                     <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
                       No dates available. Please set up dates in the{' '}

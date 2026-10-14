@@ -32,7 +32,7 @@ import {
   ExportRequestShape,
   ShiftCountTypeCoefficient
 } from '@/types/scheduling';
-import { CheckboxList } from '@/components/CheckboxList';
+import { CHECKBOX_LIST_SCROLL_CLASS_NAME, CheckboxList } from '@/components/CheckboxList';
 import { CountShiftTypeCoefficientFields } from '@/components/CountShiftTypeCoefficientFields';
 import ToggleButton from '@/components/ToggleButton';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
@@ -802,7 +802,7 @@ export default function ExportFormattingPage() {
     return (
       <div className="space-y-1">
         <label className="block text-sm font-medium text-gray-700">{label}</label>
-        <div className="flex min-w-0 flex-wrap items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           <div className="relative h-9 w-28">
             <input
               type="color"
@@ -876,7 +876,7 @@ export default function ExportFormattingPage() {
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-2">{label}</label>
         {scrollable && options.length > 0 ? (
-          <div className="max-h-32 overflow-y-auto">{content}</div>
+          <div className={CHECKBOX_LIST_SCROLL_CLASS_NAME}>{content}</div>
         ) : content}
         {renderErrorMessages(error, 'mt-1')}
       </div>
@@ -1092,7 +1092,7 @@ export default function ExportFormattingPage() {
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
-        <div className="flex min-w-0 flex-wrap items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           <h1 className="text-3xl font-bold text-gray-800">Export Layout</h1>
           <PageDocumentationLink href={DOCUMENTATION_URLS.exportLayout} label="Export Layout" />
         </div>
