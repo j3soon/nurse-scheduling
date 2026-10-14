@@ -598,7 +598,7 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
 def export_to_excel(df, output_buffer, cell_export_info=None):
     """
     Export DataFrame to Excel with frozen panes at B3 (first two rows and first column).
-    Also applies configured cell notes and styles.
+    Apply configured cell notes and styles. Keep all user text literal in every sheet.
 
     Args:
         output_buffer: BytesIO buffer to write to
@@ -607,7 +607,7 @@ def export_to_excel(df, output_buffer, cell_export_info=None):
 
     # Write to a temporary BytesIO buffer first
     temp_buffer = BytesIO()
-    df.to_excel(temp_buffer, index=False, header=False)
+    df.to_excel(temp_buffer, index=False, header=False, engine="openpyxl")
     temp_buffer.seek(0)
 
     # Load the workbook to apply additional formatting
@@ -698,6 +698,14 @@ def export_to_excel(df, output_buffer, cell_export_info=None):
                     vertical=existing_border.vertical,
                     horizontal=existing_border.horizontal,
                 )
+
+    # Schedule and note text must remain literal, including strings that Excel
+    # or the writer recognizes as formulas or error values. Preserve other types.
+    for sheet in wb.worksheets:
+        for row in sheet:
+            for cell in row:
+                if isinstance(cell.value, str):
+                    cell.data_type = "s"
 
     # Save to the output buffer
     wb.save(output_buffer)

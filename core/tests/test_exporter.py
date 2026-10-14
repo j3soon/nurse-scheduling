@@ -21,6 +21,7 @@
 
 import os
 import sys
+from datetime import date
 from io import BytesIO
 from types import SimpleNamespace
 
@@ -64,6 +65,31 @@ def test_export_to_csv_writes_utf8_bom():
     payload = output.getvalue()
     assert payload.startswith(b"\xef\xbb\xbf")
     assert payload.decode("utf-8-sig") == "A,B\nC,D\n"
+
+
+@pytest.mark.parametrize("text", ["=1+1", "+SUM(1,1)", "-SUM(1,1)", "@SUM(1,1)", "{=SUM(1,1)}", "#REF!", "\t=1+1"])
+def test_export_to_excel_preserves_user_text_in_schedule_and_notes(text):
+    output = BytesIO()
+    exporter.export_to_excel(pd.DataFrame([[text]]), output, {"comments": {(1, 1): [text]}})
+
+    workbook = load_workbook(output)
+    for sheet, coordinate in ((workbook.active, "A1"), (workbook["Notes"], "B2"), (workbook["Notes"], "C2")):
+        cell = sheet[coordinate]
+        assert cell.value == text
+        assert cell.data_type == "s"
+    assert workbook.active["A1"].hyperlink.target == "#'Notes'!A2"
+    assert workbook["Notes"]["A2"].hyperlink.target == "#'Sheet1'!A1"
+
+
+def test_export_to_excel_preserves_numbers_booleans_and_dates():
+    output = BytesIO()
+    timestamp = date(2026, 1, 2)
+    exporter.export_to_excel(pd.DataFrame([[17, -2.5, True, timestamp]]), output, None)
+
+    cells = list(load_workbook(output).active[1])
+    assert [cell.value for cell in cells[:3]] == [17, -2.5, True]
+    assert cells[3].value.date() == timestamp
+    assert [cell.data_type for cell in cells] == ["n", "n", "b", "d"]
 
 
 def test_export_to_excel_rejects_legacy_comment_info_shape():
