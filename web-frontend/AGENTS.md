@@ -62,7 +62,10 @@ an explicit version, for example:
 APP_VERSION_OVERRIDE=v0.0.0 bun run dev -- --port 3006
 ```
 
-Leave `APP_VERSION_OVERRIDE` unset for normal Git-derived versions.
+Leave `APP_VERSION_OVERRIDE` unset for normal Git-derived versions. Playwright
+builds default to `v0.0.0` so uncommitted changes do not trigger YAML version
+confirmations in unrelated tests. Set `APP_VERSION_OVERRIDE` explicitly when
+testing another version.
 
 Persist the saving app version with Optimize and Export backend settings. Add
 targeted migrations for known older app versions or legacy shapes, and preserve

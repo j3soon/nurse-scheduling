@@ -53,6 +53,7 @@ export default defineConfig({
   webServer: {
     command: `bun run build:e2e && bunx serve@latest out -l ${e2ePort}`,
     env: {
+      APP_VERSION_OVERRIDE: process.env.APP_VERSION_OVERRIDE?.trim() || 'v0.0.0',
       DISABLE_SENTRY: '1',
       E2E_COVERAGE: process.env.E2E_COVERAGE ?? '0',
       NEXT_PUBLIC_DISABLE_SENTRY: '1',
