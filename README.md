@@ -33,11 +33,20 @@ Keeping request coordination separate makes the optimizer hospital-system agnost
 
 Two hosted optimization servers are provided as free, shared, best-effort services. The lower-capacity secondary server is available as a fallback. Please use them fairly and do not abuse them. You can also self-host the backend software from this repository.
 
+## Milestones
+
+The project began in 2023 as a proof of concept verified by domain experts in a multi-ward scenario. In late 2025 it moved into real wards: three complex multi-ward scenarios with about 100 nurses, where ward templates were built in the web GUI and refined with head nurses, and the schedules were put into use with minimal adjustments. Since then, non-developer assistants have generated final schedules for real ward operations by learning the workflow and reusing templates, with little or no developer support. The public, free optimization server went online in June 2026; as of July 2026 the primary server had accumulated over 99.9% uptime, with a lower-capacity secondary server as backup. See the [timeline](https://dev.nursescheduling.org/docs/timeline/) for dated details.
+
 ## Privacy Notice
 
 The hosted application anonymizes individual people IDs and removes descriptions by default before sending a schedule for optimization. A schedule without direct identifiers may not identify anyone by itself, but dates, groups, and patterns can still be sensitive in context. Use nicknames or non-identifying IDs when in doubt. For greater control, self-host the open-source frontend and backend so your organization can inspect the code and apply its own security and retention policies. See [Privacy and Data Handling](https://github.com/j3soon/nurse-scheduling/blob/dev/PRIVACY.md) for details.
 
 ## AI Beta Access
+
+The experimental AI assistant follows the agent/session boundaries and selected
+default tools of [Pi v1.0.0](https://github.com/earendil-works/pi/releases/tag/v1.0.0)
+(`a13d35a`). See the [architectural comparison](https://dev.nursescheduling.org/docs/developer-guide/ai-assistant/#mapping-to-pi)
+for the sandbox, optimizer, and browser-specific differences.
 
 During the evaluation period, the hosted AI assistant is gated by an API key by default.
 
@@ -69,49 +78,41 @@ git clone https://github.com/j3soon/nurse-scheduling.git
 cd nurse-scheduling
 ```
 
-#### Linux (bash/zsh)
-
-Start frontend:
-
-```sh
-cd web-frontend
-bun install
-bun run dev
-```
-
-In a new terminal, start backend:
+On Linux and macOS (bash), set up all local environments (`core`,
+`web-frontend`, and `docs`) in one go:
 
 ```sh
-cd core
-uv venv --python 3.12
-source .venv/bin/activate
-uv pip install -r requirements.txt
-fastapi dev nurse_scheduling/serve.py
+./scripts/setup_env.sh
 ```
 
-#### macOS (bash/zsh)
-
-> macOS support is experimental.
-
-Start frontend:
+Then start the backend and the frontend in separate terminals:
 
 ```sh
-cd web-frontend
-bun install
-bun run dev
+./scripts/start_backend.sh
+./scripts/start_frontend.sh
 ```
 
-In a new terminal, start backend:
+Open `http://localhost:3000`.
 
-```sh
-cd core
-uv venv --python 3.12
-source .venv/bin/activate
-uv pip install -r requirements.txt
-fastapi dev nurse_scheduling/serve.py
-```
+On Windows, use WSL and the same commands, or install the environments
+manually with the commands in
+[core/README.md](https://github.com/j3soon/nurse-scheduling/blob/dev/core/README.md)
+and
+[web-frontend/README.md](https://github.com/j3soon/nurse-scheduling/blob/dev/web-frontend/README.md),
+then use the same start scripts (WSL) or the PowerShell block below.
 
-#### Windows (PowerShell)
+Module and deployment guides:
+
+- Core (CLI, backend, AI backend, configuration, tests): [core/README.md](https://github.com/j3soon/nurse-scheduling/blob/dev/core/README.md)
+- Web frontend (development, tests, builds, Netlify hosting): [web-frontend/README.md](https://github.com/j3soon/nurse-scheduling/blob/dev/web-frontend/README.md)
+- Documentation site (preview and build): [docs/README.md](https://github.com/j3soon/nurse-scheduling/blob/dev/docs/README.md)
+- Backend deployment (Docker Compose, tunnel, Sentry, reports): [docker/README.md](https://github.com/j3soon/nurse-scheduling/blob/dev/docker/README.md)
+
+Local optimization development needs no environment variables. The AI backend reads
+`docker/.env` (copied from the tracked `docker/.env.example`) for its provider
+and sandbox settings.
+
+### Windows (PowerShell)
 
 > Windows OS support is experimental.
 
@@ -133,11 +134,6 @@ uv venv --python 3.12
 uv pip install -r requirements.txt
 fastapi dev nurse_scheduling\serve.py
 ```
-
-`core/requirements.txt` holds only what the CLI and the backend need at
-runtime, which keeps the deployment image small. Install
-`core/requirements-optional.txt` instead to add the experimental solver
-backends and the test and lint tooling.
 
 ### Linux Development and Docker
 
