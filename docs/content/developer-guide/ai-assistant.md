@@ -410,6 +410,10 @@ final candidate.
 
 Configured tool-round and tool-call limits bound the model-tool loop alongside
 per-command and complete agent-turn deadlines.
+One provider response may contain up to 32 tool calls. Read-only batches run at
+most eight calls concurrently and keep results in call order. Mixed or mutating
+batches run sequentially. A larger valid batch does not discard earlier workspace
+changes or replay the provider request.
 
 The model-facing tool schemas and behavior are Python ports pinned to
 [Pi v1.0.0](https://github.com/earendil-works/pi/tree/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/coding-agent/src/core/tools).

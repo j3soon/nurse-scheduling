@@ -55,6 +55,7 @@ from .provider import (
 from .transcript import AgentMessage, AssistantMessage, ToolResultMessage, UserMessage
 
 logger = logging.getLogger("nurse_scheduling.ai.agent")
+MAX_PARALLEL_TOOL_CALLS = 8
 
 TRUNCATED_TOOL_CALL_RESULT = (
     "The response reached the output token limit before this tool call was complete, so it was not run. "
@@ -235,7 +236,13 @@ async def _execute_parallel_tool_calls(
     calls: Sequence[ToolCall],
     execute: ToolExecutor,
 ) -> list[AgentToolOutcome]:
-    tasks = [asyncio.create_task(execute(call.name, call.arguments)) for call in calls]
+    semaphore = asyncio.Semaphore(MAX_PARALLEL_TOOL_CALLS)
+
+    async def bounded_execute(call: ToolCall) -> AgentToolOutcome:
+        async with semaphore:
+            return await execute(call.name, call.arguments)
+
+    tasks = [asyncio.create_task(bounded_execute(call)) for call in calls]
     try:
         return await asyncio.gather(*tasks)
     except BaseException:

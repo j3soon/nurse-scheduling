@@ -25,8 +25,10 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import httpx
 import pytest
 
+from nurse_scheduling.ai import provider as provider_module
 from nurse_scheduling.ai.agent_types import (
     AgentEvent,
     AgentMessageEnd,
@@ -37,12 +39,20 @@ from nurse_scheduling.ai.agent_types import (
     AgentToolUse,
 )
 from nurse_scheduling.ai.attachment_tools.inspect_shift_requests import inspect_requests
+from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL, WORKSPACE_OPTIMIZER_RESULT
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.pi.edit import EDIT_TOOL
 from nurse_scheduling.ai.pi.read import READ_TOOL
 from nurse_scheduling.ai.pi.write import WRITE_TOOL
-from nurse_scheduling.ai.provider import ChatMessage, ProviderError, TextDelta, ToolCall, ToolCallRequest
+from nurse_scheduling.ai.provider import (
+    ChatMessage,
+    OpenAiCompatibleProvider,
+    ProviderError,
+    TextDelta,
+    ToolCall,
+    ToolCallRequest,
+)
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
 from nurse_scheduling.ai.schema import load_schedule_example, load_taiwan_holidays_reference, load_user_guide_references
@@ -69,6 +79,7 @@ from nurse_scheduling.ai.workspace import (
 from nurse_scheduling.ai.workspace_tools import run_workspace
 
 from .ai_test_helper import SCHEDULE_BYTE_LIMIT, base_schedule_payload, schedule_yaml
+from .test_ai_provider import _delta_chunk, _sse_body
 
 MESSAGES: list[ChatMessage] = [{"role": "user", "content": "Give P1 a description."}]
 
@@ -141,6 +152,76 @@ def _collect(
         ]
 
     return asyncio.run(collect())
+
+
+def test_large_provider_read_batch_preserves_workspace_and_proposal(monkeypatch):
+    def checkpoint(command, timeout, backend):
+        backend.files["/workspace/checkpoint.txt"] = b"kept"
+        return _rename_handler(command, timeout, backend)
+
+    responses = [
+        _sse_body(
+            _delta_chunk(
+                {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "setup",
+                            "function": {"name": BASH_TOOL, "arguments": '{"command":"checkpoint"}'},
+                        },
+                    ]
+                }
+            )
+        ),
+        _sse_body(
+            _delta_chunk(
+                {
+                    "tool_calls": [
+                        {
+                            "index": index,
+                            "id": f"read-{index}",
+                            "function": {
+                                "name": READ_TOOL,
+                                "arguments": '{"path":"/workspace/checkpoint.txt"}',
+                            },
+                        }
+                        for index in range(9)
+                    ]
+                }
+            )
+        ),
+        _sse_body(_delta_chunk({"content": "The checkpoint and proposal are preserved."})),
+    ]
+    requests = []
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, headers={"Content-Type": "text/event-stream"}, text=responses[len(requests) - 1])
+
+    real_client = httpx.AsyncClient
+    transport = httpx.MockTransport(respond)
+    monkeypatch.setattr(
+        provider_module.httpx, "AsyncClient", lambda **kwargs: real_client(transport=transport, **kwargs)
+    )
+    provider = OpenAiCompatibleProvider(
+        AiSettings(
+            provider_base_url="https://provider.example/v1",
+            provider_api_key="test",
+            provider_model="test-model",
+        )
+    )
+    factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=checkpoint))
+
+    events = _collect(provider, factory)
+
+    assert len(factory.created) == 1
+    assert factory.created[0].commands == [("checkpoint", None)]
+    assert factory.created[0].files["/workspace/checkpoint.txt"] == b"kept"
+    reads = [event for event in events if isinstance(event, AgentToolUse) and event.name == READ_TOOL]
+    assert len(reads) == 9 and all(event.ok and "kept" in event.result for event in reads)
+    assert "description: Head" in next(event for event in events if isinstance(event, AgentProposal)).text
+    replies = [message for message in requests[-1]["messages"] if message["role"] == "tool"]
+    assert [message["tool_call_id"] for message in replies[-9:]] == [f"read-{index}" for index in range(9)]
 
 
 def test_one_turn_hydrates_runs_reads_validates_proposes_and_closes():

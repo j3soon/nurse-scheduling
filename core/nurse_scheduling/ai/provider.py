@@ -41,7 +41,7 @@ SECRET_ASSIGNMENT_PATTERN = re.compile(
     r"(?i)(\b(?:api[_-]?key|access[_-]?token|authorization|secret)\b\s*[\"']?\s*[:=]\s*[\"']?)"
     r"([^\"'\s,;<}]+)"
 )
-MAX_TOOL_CALLS_PER_RESPONSE = 8
+MAX_TOOL_CALLS_PER_RESPONSE = 32
 MAX_TOOL_ARGUMENT_CHARS = 20_000
 MAX_RESPONSE_TEXT_CHARS = 200_000
 MAX_RESPONSE_REASONING_CHARS = 400_000

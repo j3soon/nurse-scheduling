@@ -341,6 +341,36 @@ def test_allowed_tool_batch_executes_concurrently_and_reports_in_call_order():
     assert all(isinstance(event, AgentToolStart) for event in events[1:3])
 
 
+@pytest.mark.parametrize("count", [8, 9, 32])
+def test_large_read_batches_limit_active_calls_and_keep_result_order(count):
+    active = peak = 0
+
+    async def execute(_name, arguments):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0)
+        active -= 1
+        return AgentToolOutcome(arguments, True)
+
+    async def collect():
+        provider = FakeProvider(_calls(count), _text("Done."))
+        return [
+            event
+            async for event in agent_loop(
+                provider,
+                QUESTION,
+                bind_agent_tools(TOOLS, execute, frozenset({BASH_TOOL})),
+            )
+        ]
+
+    events = asyncio.run(collect())
+    assert peak <= 8
+    uses = [event for event in events if isinstance(event, AgentToolUse)]
+    assert [event.tool_call_id for event in uses] == [f"call_{index}" for index in range(count)]
+    assert all(event.ok for event in uses)
+
+
 def test_parallel_tool_failure_cancels_siblings_without_wrapping_the_error():
     calls = (
         ToolCall("call_0", BASH_TOOL, '{"command":"fail"}'),
