@@ -25,7 +25,6 @@
 import argparse
 
 import uvicorn
-
 from nurse_scheduling.ai.app import create_app
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxFactory

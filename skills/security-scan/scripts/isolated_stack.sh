@@ -14,7 +14,7 @@
 #   API_KEYED_URL  optimizer API that requires API_TOKEN
 #   AI_URL         AI service that requires AI_TOKEN, using API_OPEN_URL for jobs
 #   PROVIDER_URL   stub model provider used by the AI service
-# Set JOB_REDIS_URL to back both APIs with Redis instead of process memory.
+# Set SECURITY_SCAN_REDIS_URL to a throwaway loopback Redis server to test Redis.
 
 set -euo pipefail
 
@@ -64,7 +64,9 @@ wait_ready() {
 start_service() {
   local name="$1"
   shift
-  ( cd "$repo_root/core" && exec env "$@" ) >"$state_dir/$name.log" 2>&1 &
+  # Never inherit deployment databases, keys, proxy settings, or Python startup hooks.
+  ( cd "$repo_root/core" && exec env -i PATH="$PATH" HOME="$HOME" LANG="${LANG:-C.UTF-8}" "$@" ) \
+    >"$state_dir/$name.log" 2>&1 &
   echo $! >"$state_dir/$name.pid"
 }
 
@@ -80,6 +82,25 @@ case "$action" in
     ;;
 esac
 
+redis_url="${SECURITY_SCAN_REDIS_URL:-}"
+if [[ -n "$redis_url" ]]; then
+  if ! python - "$redis_url" <<'PY'
+import sys
+from urllib.parse import urlsplit
+
+try:
+    url = urlsplit(sys.argv[1])
+    valid = url.scheme in {"redis", "rediss"} and url.hostname in {"127.0.0.1", "::1"}
+except ValueError:
+    valid = False
+sys.exit(0 if valid else 1)
+PY
+  then
+    printf 'error: SECURITY_SCAN_REDIS_URL must point to a throwaway Redis server on loopback\n' >&2
+    exit 2
+  fi
+fi
+
 mkdir -p "$state_dir"
 stop_stack
 
@@ -90,20 +111,21 @@ provider_port="$(free_port)"
 api_token="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 ai_token="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 job_backend=memory
-[[ -n "${JOB_REDIS_URL:-}" ]] && job_backend=redis
+[[ -n "$redis_url" ]] && job_backend=redis
+scan_id="$(python -c 'import uuid; print(uuid.uuid4().hex)')"
 
 # Mirror the Compose services, which trust forwarded headers from their proxy. Here the
 # scanner is that proxy, so it chooses X-Forwarded-For as NGINX would.
 uvicorn_api=(python -m uvicorn nurse_scheduling.serve:app --host 127.0.0.1 --proxy-headers
   --forwarded-allow-ips 127.0.0.1 --no-access-log)
-common_env=(DISABLE_SENTRY=1 JOB_BACKEND="$job_backend" JOB_REDIS_URL="${JOB_REDIS_URL:-}"
+common_env=(DISABLE_SENTRY=1 JOB_BACKEND="$job_backend" JOB_REDIS_URL="$redis_url"
   OPTIMIZE_MAX_TIMEOUT_SECONDS=60 OPTIMIZE_DEFAULT_TIMEOUT_SECONDS=5)
 
 start_service provider python "$skill_dir/stub_provider.py" --port "$provider_port"
 start_service api-open "${common_env[@]}" API_AUTH_REQUIRED=false \
-  JOB_REDIS_KEY_PREFIX="security-scan:open:v0" "${uvicorn_api[@]}" --port "$api_open_port"
+  JOB_REDIS_KEY_PREFIX="security-scan:$scan_id:open:v0" "${uvicorn_api[@]}" --port "$api_open_port"
 start_service api-keyed "${common_env[@]}" API_AUTH_REQUIRED=true API_AUTH_TOKEN="$api_token" \
-  JOB_REDIS_KEY_PREFIX="security-scan:keyed:v0" "${uvicorn_api[@]}" --port "$api_keyed_port"
+  JOB_REDIS_KEY_PREFIX="security-scan:$scan_id:keyed:v0" "${uvicorn_api[@]}" --port "$api_keyed_port"
 start_service ai DISABLE_SENTRY=1 PYTHONPATH="$repo_root/core" \
   AI_AUTH_REQUIRED=true AI_AUTH_TOKEN="$ai_token" AI_COOKIE_SECURE=1 \
   AI_PROVIDER_BASE_URL="http://127.0.0.1:$provider_port/v1" AI_PROVIDER_API_KEY=stub \

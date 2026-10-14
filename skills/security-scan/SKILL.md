@@ -49,17 +49,22 @@ and generated tokens to `artifacts/security-scan/stack/stack.env`:
 
 `scripts/serve_ai_isolated.py` reads the AI settings from the environment like
 the deployed service and replaces only the E2B sandbox with the in-memory fake.
-Both APIs use process memory. To test the Redis store, start a throwaway server
-and pass its URL:
+Services start with a clean environment. They do not inherit deployment keys,
+database URLs, or HTTP proxy settings. Both APIs use process memory by default.
+To test the Redis store, start a throwaway server and explicitly pass its
+loopback URL. Each scan uses a fresh Redis namespace:
 
 ```bash
 redis-server --bind 127.0.0.1 --port 26391 --save '' --appendonly no --daemonize yes
-JOB_REDIS_URL=redis://127.0.0.1:26391/0 bash skills/security-scan/scripts/isolated_stack.sh start "$PWD"
+SECURITY_SCAN_REDIS_URL=redis://127.0.0.1:26391/0 bash skills/security-scan/scripts/isolated_stack.sh start "$PWD"
 ```
 
 There is no NGINX or Cloudflare in this stack. The services trust forwarded
 headers from loopback, so the scanner sets `X-Forwarded-For` as NGINX would.
 Check NGINX's header replacement by reading `docker/nginx.backend.conf`.
+
+After changing the launcher, run its isolated configuration tests:
+`python -m unittest discover -s skills/security-scan/scripts -p 'test_*.py'`.
 
 ## 3. Run the scripted checks
 
