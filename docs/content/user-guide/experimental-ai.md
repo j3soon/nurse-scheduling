@@ -77,6 +77,10 @@ Each run records the exact YAML revision it used. If the browser schedule
 changes before the result returns, the assistant can distinguish that older
 result from the current accepted schedule.
 
+When you build a new roster, the assistant asks about missing rest and fairness
+rules together before creating it. You can decline forbidden transitions, work
+streak limits or balancing. It uses answers you already gave.
+
 ## Review a proposed change
 
 Ask for a change, such as renaming a person or adding a shift request, and the

@@ -365,6 +365,13 @@ both versions. These checks used real provider requests and E2B edits with four
 case jobs. The optimizer returned simulated running responses. The checks cover
 startup behavior and submitted schedule data.
 
+The `proactive-policy-intake` prompt asks about missing rest and fairness before
+new-roster construction. `new-schedule-policy-intake` improved from 0/3 to 3/3
+against the previous full prompt. Declined-rule and explanation-only controls
+passed 3/3 in both versions. These selected checks used live provider requests
+and E2B commands with four case jobs. Three provider failures from an earlier
+diagnostic batch remain separate from the clean comparison.
+
 ## Agent capabilities
 
 After an accepted edit to `/workspace/schedule.yaml`, the server refreshes

@@ -1589,3 +1589,27 @@ def test_context_refresh_cases_require_successful_inspection_and_exact_counts(ca
         ),
     )
     assert result.passed == (mutation is None)
+
+
+@pytest.mark.parametrize(
+    "answer,passed",
+    [
+        (
+            "Which transitions should we forbid? What consecutive work limit do you use? Do you want fair or balanced workloads?",
+            True,
+        ),
+        ("The staffing arithmetic looks fine. We can add consecutive limits and fairness later.", False),
+        ("Which rest transitions should we forbid? What consecutive work limit?", False),
+    ],
+)
+def test_new_schedule_intake_requires_rest_and_fairness_questions(answer, passed):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "new-schedule-policy-intake")
+    activity = [
+        {
+            "kind": "tool",
+            "name": "read",
+            "ok": True,
+            "arguments": json.dumps({"path": "/reference/user-guide/build-a-real-schedule.md"}),
+        }
+    ]
+    assert grade(case, RunOutcome(answer=answer, activity=activity)).passed is passed
