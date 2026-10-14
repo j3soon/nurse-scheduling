@@ -54,6 +54,7 @@ RESULT_ASSIGNMENTS = {
     "request-audit": ASSIGNMENTS,
     "request-audit-pending": ASSIGNMENTS,
     "request-audit-all-strong": {**ASSIGNMENTS, "Mira": ["D", "OFF", "OFF"]},
+    "request-audit-conflict": {**ASSIGNMENTS, "Mira": ["D", "OFF", "OFF"]},
     "request-audit-stale-summary": {**ASSIGNMENTS, "Mira": ["D", "OFF", "OFF"]},
     "request-audit-groups": {
         "Asha": ["OFF", "D", "N", "OFF"],
@@ -72,6 +73,8 @@ RESULT_SOURCES = {
         if name == "request-audit-groups"
         else FIXTURE.with_name("pending-request-audit.yaml")
         if name == "request-audit-pending"
+        else FIXTURE.with_name("request-audit-conflict.yaml")
+        if name == "request-audit-conflict"
         else FIXTURE
     )
     for name in RESULT_ASSIGNMENTS

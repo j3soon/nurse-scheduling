@@ -255,6 +255,13 @@ exact final policy counts. Keep these separate from initiative evidence. The
 shorter guidance can offer further work rather than meet those automatic-only
 contracts. Their graders remain unchanged.
 
+The `result-explanation` cases distinguish a compatible missed request from a
+same-day conflict. An unrestricted solve checks both fixtures independently.
+The summary cases also check unsolicited causal claims, including a retry that
+improves stronger requests while leaving a compatible request unmet. Their
+lexical checks catch observed claims and permit negation or uncertainty. Review
+explanations manually. Correct categories and counts do not prove accurate prose.
+
 Cases marked `optimizer_completion_only` seed a fixed successful start and acknowledgement without a provider call.
 The seed remains in the grading trace but is excluded from model tool and token metrics.
 `after_optimizer_turns` adds user messages after completion in fresh workspaces with the retained workbook.

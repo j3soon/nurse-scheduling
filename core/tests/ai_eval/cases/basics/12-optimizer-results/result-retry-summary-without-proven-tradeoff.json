@@ -1,0 +1,82 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "id": "result-retry-summary-without-proven-tradeoff",
+  "fixture": "request-audit",
+  "question": "Yes, run the optimization and inspection loop autonomously. Keep the existing rules and weights. Before handing the roster back, check that all shift requests at weight 11000000000 are satisfied. If any are missed, try another solve and inspect the new result.",
+  "expect_proposal": false,
+  "optimizer_completion": "request-audit",
+  "optimizer_completion_only": true,
+  "optimizer_follow_up_completions": [
+    "request-audit-all-strong"
+  ],
+  "intermediate_answer_contains": [
+    [
+      "background"
+    ],
+    [
+      [
+        "running",
+        "background"
+      ]
+    ]
+  ],
+  "tool_usage": {
+    "required_calls": [
+      {
+        "name": "optimizer",
+        "arguments": {
+          "action": "start"
+        }
+      }
+    ],
+    "max_per_tool": {
+      "optimizer": 2
+    }
+  },
+  "turn_tool_usage": [
+    {
+      "required_calls": [
+        {
+          "name": "optimizer",
+          "arguments": {
+            "action": "start"
+          }
+        }
+      ],
+      "max_per_tool": {
+        "optimizer": 1
+      }
+    },
+    {
+      "required_calls": [
+        {
+          "name": "optimizer",
+          "arguments": {
+            "action": "start"
+          }
+        }
+      ],
+      "max_per_tool": {
+        "optimizer": 1
+      }
+    },
+    {
+      "forbidden": [
+        "optimizer"
+      ]
+    }
+  ],
+  "tags": [
+    "optimizer-result",
+    "result-explanation"
+  ],
+  "note": "This testcase is mostly AI generated. Preserve the observed two-result context: a retry improves the strong request count while the weak request remains unmet in both results. All requests can coexist, as an unrestricted solve proves. Keep the original loop and every submitted source checked, and reject an unsupported final claim that the weak request was traded for stronger requests. Review explanations manually as well; the conservative language check covers the observed forms. No report format is prescribed.",
+  "semantic_check": "optimizer-inputs-preserved",
+  "answer_matches": [
+    "\\b(?:unmet|missed|unsatisfied|not satisfied)\\b"
+  ],
+  "answer_not_matches": [
+    "(?:^|[.!?\\n])(?!(?:[^.!?\\n])*\\b(?:not|no|cannot|can['’]t|may|might|could|possibly|possible|unproven|unknown)\\b)[^.!?\\n]*(?:\\b(?:traded|sacrificed)\\b[^.!?\\n]{0,160}\\b(?:for|against|favor|favour|higher|stronger)\\b|\\b(?:prioriti[sz]ed|favou?red|kept)\\b[^.!?\\n]{0,160}\\b(?:over|instead of|at the expense of)\\b|\\b(?:is|was|appears to be)\\b[^.!?\\n]{0,80}\\b(?:in conflict with|conflicts? with)\\b|\\b(?:left|kept|accepted)\\b[^.!?\\n]{0,80}\\btradeoff\\b[^.!?\\n]{0,80}\\bas.is\\b|\\b(?:genuine|reflect(?:ing|s)?|represents?)\\b[^.!?\\n]{0,80}\\btrade(?:[- ]?off)?\\b[^.!?\\n]{0,160}\\b(?:with|against|to secure|to satisfy|to protect)\\b|\\blost out\\b[^.!?\\n]{0,80}\\bto\\b[^.!?\\n]{0,80}\\b(?:higher|stronger|top)\\b|\\bspent\\b[^.!?\\n]{0,80}\\b(?:slot|cell)\\b[^.!?\\n]{0,80}\\b(?:higher|stronger|top)\\b)"
+  ]
+}

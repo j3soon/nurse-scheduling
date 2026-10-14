@@ -380,6 +380,7 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         "request-audit",
         "request-audit-pending",
         "request-audit-all-strong",
+        "request-audit-conflict",
         "request-audit-groups",
         "policy-audit-misses",
         "policy-audit-clean",

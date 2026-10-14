@@ -22,6 +22,11 @@ from agent and sandbox time.
 For automatic completion messages, preserve the production message role,
 format, and workbook. Uploading a workbook alone does not test that delivery.
 
+Correct counts do not prove a causal explanation. Contrast compatible missed
+preferences with requests that cannot both hold. Verify those facts against the
+source rules. Preserve multiple results when the error follows a retry, and
+review explanations as well as structured answer fields.
+
 See the [evaluation guide](../../../core/tests/ai_eval/README.md) for fixed-result
 tests and the on-demand real-optimizer check.
 

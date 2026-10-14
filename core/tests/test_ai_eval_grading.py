@@ -58,6 +58,7 @@ FIXTURE_SCHEDULES = {
     "request-audit-groups": _load_yaml((CASES_PATH.parent / "fixtures" / "request-audit-groups.yaml").read_bytes()),
     "weight-units": _load_yaml((CASES_PATH.parent / "fixtures" / "weight-units.yaml").read_bytes()),
     "request-audit": _load_yaml((CASES_PATH.parent / "fixtures" / "request-audit.yaml").read_bytes()),
+    "request-audit-conflict": _load_yaml((CASES_PATH.parent / "fixtures" / "request-audit-conflict.yaml").read_bytes()),
     "cross-year-unit": _load_yaml(CROSS_YEAR_UNIT_PATH.read_bytes()),
     "new-schedule": _load_yaml(NEW_SCHEDULE_PATH.read_bytes()),
     "small-clinic": _load_yaml(SMALL_CLINIC_PATH.read_bytes()),
@@ -1752,3 +1753,58 @@ def test_authorized_loop_checks_repeat_submission_and_preserved_sources(mutation
         activity=activity,
     )
     assert grade(case, outcome).passed is (mutation is None)
+
+
+@pytest.mark.parametrize("conflict", [False, True])
+@pytest.mark.parametrize("mutation", [None, "wrong-cause", "missing-explanation", "rerun"])
+def test_result_explanation_cases_check_cause_and_read_only_scope(conflict, mutation):
+    name = "result-miss-with-verified-conflict" if conflict else "result-miss-without-proven-conflict"
+    case = load_cases(CASES_PATH / f"basics/12-optimizer-results/{name}.json")[0]
+    answer = dict(case.answer_json)
+    answer["explanation"] = "The source proves the requests conflict." if conflict else "The cause is not established."
+    if mutation == "wrong-cause":
+        answer["reasonCategory"] = "not-established" if conflict else "verified-conflict"
+    if mutation == "missing-explanation":
+        answer.pop("explanation")
+    activity = [
+        {"kind": "user", "turn": 1},
+        {"kind": "tool", "name": "optimizer", "ok": True, "arguments": '{"action":"start"}'},
+        {"kind": "optimizer", "turn": 2},
+    ]
+    if mutation == "rerun":
+        activity.append({"kind": "tool", "name": "optimizer", "ok": True, "arguments": '{"action":"start"}'})
+    outcome = RunOutcome(answer=json.dumps(answer), activity=activity)
+    assert grade(case, outcome).passed is (mutation is None)
+
+
+@pytest.mark.parametrize(
+    "answer, passed",
+    [
+        ("One lower-priority request remains unmet. The solver traded it for stronger requests.", False),
+        ("One lower-priority request is unmet because it was sacrificed for the higher requests.", False),
+        ("One request is unmet. The optimizer kept the strong requests over it.", False),
+        (
+            "One request remains unmet, so it appears to be genuinely in conflict with the rest of the constraints.",
+            False,
+        ),
+        ("One request is unmet. It might be in conflict with the rest of the constraints.", True),
+        ("One request remains unmet. The solver traded it off against the 11B requests.", False),
+        ("One request remains unmet, so I left the tradeoff as-is rather than changing anything.", False),
+        ("One request remains unmet, so it looks like a genuine trade-off with the higher-weight goals.", False),
+        ("One request remains unmet, reflecting the trade the optimizer made to secure top-tier requests.", False),
+        ("One request is unmet. This does not establish a genuine trade-off with stronger requests.", True),
+        ("One request is unmet. It lost out to the higher-priority requests.", False),
+        ("One request is unmet. The solver spent that slot on the higher tier.", False),
+        ("One request is unmet. I cannot tell whether it lost out to stronger requests.", True),
+        ("One request is unmet. This does not prove it was traded for stronger requests.", True),
+        ("One request is unmet. It might have been traded for stronger requests.", True),
+        ("One request is unmet. A feasible timed-out result need not be optimal.", True),
+    ],
+)
+def test_summary_cause_oracle_distinguishes_affirmative_claims_from_uncertainty(answer, passed):
+    case = load_cases(CASES_PATH / "basics/12-optimizer-results/result-summary-without-proven-tradeoff.json")[0]
+    activity = [
+        {"kind": "tool", "name": "optimizer", "ok": True, "arguments": '{"action":"start"}'},
+        {"kind": "optimizer", "turn": 2},
+    ]
+    assert grade(case, RunOutcome(answer=answer, activity=activity)).passed is passed

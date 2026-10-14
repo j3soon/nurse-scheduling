@@ -114,6 +114,24 @@ def test_real_optimizer_solves_without_replaying_a_fixed_assignment(tmp_path):
     assert load_workbook(tmp_path / "result.xlsx").active.cell(8, 5).value == "OPTIMAL"
 
 
+@pytest.mark.parametrize("conflict", [False, True])
+def test_request_explanation_fixtures_distinguish_a_miss_from_a_proven_conflict(tmp_path, conflict):
+    from .ai_eval.optimizer_fixtures import RESULT_SOURCES
+    from .ai_eval.real_optimizer import solve
+
+    name = "request-audit-conflict" if conflict else "request-audit-all-strong"
+    source = RESULT_SOURCES[name].read_text()
+    assert validate_frontend_schedule_yaml(source, 1_000_000).valid
+    _, incumbent = completion_result(name, source)
+    weak = next(row for row in incumbent["request_audit"]["summary"] if row["weight"] == 11_000_000)
+    assert weak["unmet"] == 1
+    solved = solve(source, tmp_path, 5)["metadata"]
+    assert solved["result"]["solver_status"] == "OPTIMAL"
+    assert solved["result"]["score"] == (44_000_000_000 if conflict else 44_011_000_000)
+    weak = next(row for row in solved["request_audit"]["summary"] if row["weight"] == 11_000_000)
+    assert weak["unmet"] == int(conflict)
+
+
 def test_real_completion_factory_receives_the_actual_submitted_source(tmp_path):
     from .ai_eval.real_optimizer import solve
 

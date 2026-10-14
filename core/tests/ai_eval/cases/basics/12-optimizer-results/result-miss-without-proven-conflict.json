@@ -1,0 +1,34 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "id": "result-miss-without-proven-conflict",
+  "fixture": "request-audit",
+  "question": "Explain why the weight 11000000 shift request is unmet in this result. Keep every rule and weight unchanged, and do not run another optimization. Return JSON with reasonCategory (verified-conflict or not-established), and explanation (one short sentence).",
+  "expect_proposal": false,
+  "optimizer_completion": "request-audit-all-strong",
+  "optimizer_completion_only": true,
+  "answer_json": {
+    "reasonCategory": "not-established"
+  },
+  "answer_matches": [
+    "\"explanation\"\\s*:\\s*\"[^\"\\n]+\""
+  ],
+  "turn_tool_usage": [
+    {},
+    {
+      "forbidden": [
+        "optimizer"
+      ]
+    }
+  ],
+  "tool_usage": {
+    "max_per_tool": {
+      "optimizer": 1
+    }
+  },
+  "tags": [
+    "optimizer-result",
+    "result-explanation"
+  ],
+  "note": "This testcase is mostly AI generated. The feasible incumbent misses a weak OFF request. All requests can coexist, as an independently solved and checked assignment demonstrates. Counts and priorities alone do not establish a necessary tradeoff. Completion uses a verified exported assignment, not an HTTP optimizer job. The seeded start is the only permitted optimizer call."
+}
