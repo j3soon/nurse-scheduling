@@ -1351,7 +1351,7 @@ export default function ExperimentalAiPage() {
                 </span>
               </a>
             ) : (
-              <div className="relative">
+              <div className="relative mr-1.5 sm:mr-0">
                 <button
                   type="button"
                   onClick={toggleDictation}
@@ -1365,7 +1365,7 @@ export default function ExperimentalAiPage() {
                 >
                   <FiMic aria-hidden="true" className={`h-4 w-4 ${isListening ? 'animate-pulse' : ''}`} />
                 </button>
-                <span className="absolute -bottom-0.5 -right-0.5 h-6 w-6 sm:h-4 sm:w-4 rounded-full border border-gray-300 bg-white text-gray-600 shadow-sm focus-within:ring-2 focus-within:ring-blue-400">
+                <span className="absolute -bottom-1.5 -right-1.5 h-6 w-6 sm:-bottom-0.5 sm:-right-0.5 sm:h-4 sm:w-4 rounded-full border border-gray-300 bg-white text-gray-600 shadow-sm focus-within:ring-2 focus-within:ring-blue-400">
                   <select
                     value={speechLanguage}
                     onChange={event => setSpeechLanguage(event.target.value)}

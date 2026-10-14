@@ -280,4 +280,10 @@ describe('DataTable', () => {
     expect(onRowClick).not.toHaveBeenCalled();
   });
 
+  it('applies a column class to its header and body cells', () => {
+    render(<DataTable title="Rows" columns={[...columns, { header: 'Extra', accessor: 'id', className: 'hidden sm:table-cell' }]} data={[{ id: 'a', name: 'Alpha' }]} />);
+    expect(screen.getByRole('columnheader', { name: 'Extra' })).toHaveClass('hidden', 'sm:table-cell');
+    expect(screen.getAllByRole('cell').at(-1)).toHaveClass('hidden', 'sm:table-cell');
+  });
+
 });

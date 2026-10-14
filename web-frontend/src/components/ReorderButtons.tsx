@@ -32,6 +32,8 @@ interface ReorderButtonsProps {
 export function ReorderButtons({ label, onMove, canMoveUp, canMoveDown, horizontal = false }: ReorderButtonsProps) {
   const Back = horizontal ? FiArrowLeft : FiArrowUp;
   const Forward = horizontal ? FiArrowRight : FiArrowDown;
+  // A lone movable entry has nowhere to go, so two disabled buttons would only add clutter.
+  if (!canMoveUp && !canMoveDown) return null;
   return (
     <div className="hidden gap-1 [@media(pointer:coarse)]:inline-flex">
       {([-1, 1] as const).map(direction => {

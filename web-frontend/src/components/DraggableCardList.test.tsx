@@ -371,4 +371,10 @@ describe('DraggableCardList', () => {
     expect(onReorder).toHaveBeenCalledWith([items[1], items[0]]);
   });
 
+  it('omits move buttons for a single card', () => {
+    render(<DraggableCardList title="Rules" items={[{ title: 'Alpha' }]} emptyMessage="Empty"
+      renderContent={item => <span>{item.title}</span>} onEdit={vi.fn()} onDelete={vi.fn()} onReorder={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: /Move Rules item/ })).not.toBeInTheDocument();
+  });
+
 });

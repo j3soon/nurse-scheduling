@@ -28,6 +28,8 @@ interface Column<T> {
   accessor: ((item: T, index: number) => ReactNode) | keyof T;
   align?: 'left' | 'center' | 'right';
   width?: number;
+  // Applied to the header and body cells, e.g. to hide a column on phones.
+  className?: string;
 }
 
 interface DataTableProps<T> {
@@ -121,7 +123,7 @@ export function DataTable<T>({ title, columns, data, onReorder, getRowClassName,
                   key={index}
                   className={`px-2 ${isFirstColumn ? 'pl-4' : ''} py-3 text-xs font-medium text-gray-500 uppercase tracking-wider ${
                     column.align === 'right' ? 'text-right' : column.align === 'center' ? 'text-center' : 'text-left'
-                  }`}
+                  } ${column.className ?? ''}`}
                   style={width ? { width, minWidth: width, maxWidth: width } : undefined}
                 >
                   {column.header}
@@ -155,9 +157,9 @@ export function DataTable<T>({ title, columns, data, onReorder, getRowClassName,
                 return (
                   <td
                     key={colIndex}
-                    className={`${colIndex === 0 ? 'pl-4 pr-2' : 'px-2'} py-1 whitespace-nowrap text-sm font-medium text-gray-900 ${
+                    className={`${colIndex === 0 ? 'pl-4 pr-2' : 'px-2'} py-1 whitespace-normal sm:whitespace-nowrap text-sm font-medium text-gray-900 ${
                       column.align === 'right' ? 'text-right' : column.align === 'center' ? 'text-center' : 'text-left'
-                    }`}
+                    } ${column.className ?? ''}`}
                     style={width ? { width, minWidth: width, maxWidth: width } : undefined}
                   >
                     {typeof column.accessor === 'function'

@@ -144,3 +144,11 @@ test('reorders a succession pattern without dragging', async ({ page }) => {
   const saved = yaml.load(await page.getByPlaceholder('Enter YAML configuration...').inputValue()) as { preferences: { type: string; pattern?: string[] }[] };
   expect(saved.preferences.find(preference => preference.type === 'shift type successions')?.pattern).toEqual(['D', 'N']);
 });
+
+test('keeps backend server names readable in the phone backend table', async ({ page }) => {
+  await page.goto('/optimize-and-export');
+  const header = page.getByRole('columnheader', { name: 'Server', exact: true });
+  await expect(header).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Activity', exact: true })).toBeHidden();
+  expect((await header.boundingBox())!.width).toBeGreaterThan(100);
+});

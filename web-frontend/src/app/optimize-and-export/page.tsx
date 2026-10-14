@@ -1709,6 +1709,8 @@ export default function OptimizeAndExportPage() {
     {
       header: 'Activity',
       width: 150,
+      // Phones cannot fit this fixed column beside Status and Actions without collapsing Server.
+      className: 'hidden sm:table-cell',
       accessor: (row: BackendTableRow) => {
         const server = row.kind === 'auto' ? resolvedServer : row.server;
         const status = row.kind === 'auto' ? autoServerStatus : row.server.status;
