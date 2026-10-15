@@ -596,12 +596,10 @@ export default function ExperimentalAiPage() {
       setError(`Keep at most ${fileCapability.max_files} files in this chat. Remove unused uploads first.`);
       return;
     }
+    const megabytes = (bytes: number) => (bytes / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 1 });
     const maxFileBytes = fileCapability.max_bytes_per_file;
     if (files.some(file => file.size > maxFileBytes)) {
-      const maxMegabytes = (maxFileBytes / 1_000_000).toLocaleString(undefined, {
-        maximumFractionDigits: 1,
-      });
-      setError(`Each file must be ${maxMegabytes} MB or smaller.`);
+      setError(`Each file must be ${megabytes(maxFileBytes)} MB or smaller.`);
       return;
     }
 
@@ -609,7 +607,7 @@ export default function ExperimentalAiPage() {
       + selectedAttachments.reduce((total, attachment) => total + attachment.file.size, 0)
       + files.reduce((total, file) => total + file.size, 0);
     if (totalBytes > fileCapability.max_bytes_per_session) {
-      setError(`Files in this chat must total ${fileCapability.max_bytes_per_session / 1_000_000} MB or less. Remove unused uploads first.`);
+      setError(`Files in this chat must total ${megabytes(fileCapability.max_bytes_per_session)} MB or less. Remove unused uploads first.`);
       return;
     }
     setError(null);

@@ -535,7 +535,7 @@ cleaned while the AI service is offline.
 | `AI_COOKIE_SECURE` | `0` in the launcher | Use `0` for local HTTP and `1` for public HTTPS. Secure deployments use `SameSite=None` so approved cross-site frontends can retain session ownership. |
 | `AI_SESSION_TTL_SECONDS` | `2592000` | Idle session lifetime. Session activity renews it. |
 | `AI_MAX_SESSIONS` | `1000` | Maximum process-local sessions. With PostgreSQL, a new or restored session unloads the least recently used idle session instead of getting HTTP 429. That session loses its uploads, downloads, and optimizer results, as after a restart. A session stays loaded while a response, optimizer run, or recovery write is unfinished, and after a failed save until a later save succeeds. |
-| `AI_MAX_SESSION_BYTES` | `268435456` | Chat text budget across live sessions. New sessions, schedule updates, and queued steering that would exceed it get HTTP 429. A completed turn instead drops its session's oldest complete exchanges and warns the browser. Size the process above this budget plus the newest turn and any pending proposal of each session. |
+| `AI_MAX_SESSION_BYTES` | `1073741824` | Retained-byte budget across live sessions, including chat text, uploads, and generated downloads. It leaves room for several sessions at the `AI_MAX_ATTACHMENT_TOTAL_BYTES` limit. New sessions, uploads, schedule updates, and queued steering that would exceed it get HTTP 429. A completed turn instead drops its session's oldest complete exchanges and warns the browser. Size the process above this budget plus the newest turn and any pending proposal of each session. |
 | `AI_MAX_HISTORY_MESSAGES` | `1000` | Conversation messages retained per session. The effective minimum is two, so a completed question and answer survive when this is set to one. |
 | `AI_MAX_HISTORY_CHARS` | `200000` | Prompt budget for retained history. The newest messages that fit are sent, so a long session cannot outgrow the model context window. |
 | `AI_MAX_MESSAGE_CHARS` | `8000` | Maximum question length. |
@@ -543,7 +543,7 @@ cleaned while the AI service is offline.
 | `AI_MAX_CONCURRENT_REQUESTS` | `4` | Maximum simultaneous provider streams. |
 | `AI_MAX_ATTACHMENT_FILES` | `32` | Maximum retained files per session. |
 | `AI_MAX_ATTACHMENT_BYTES` | `25000000` | Maximum source bytes per file. The browser uploads one file per request. Keep this plus 64 KiB multipart overhead below NGINX's 64 MiB `/ai/` limit. |
-| `AI_MAX_ATTACHMENT_TOTAL_BYTES` | `200000000` | Maximum retained source bytes per session. Remove unused uploads to free capacity. |
+| `AI_MAX_ATTACHMENT_TOTAL_BYTES` | `200000000` | Maximum retained source bytes per session. These bytes also count toward `AI_MAX_SESSION_BYTES`. Remove unused uploads to free capacity. |
 
 Attachments are always enabled. Every upload is copied unchanged into the
 disposable sandbox, where the agent can inspect it with Pi-compatible tools.

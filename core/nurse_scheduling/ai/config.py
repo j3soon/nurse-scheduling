@@ -133,7 +133,7 @@ class AiSettings:
     request_log_enabled: bool = True
     """Whether incoming question previews are logged, which records chat text."""
     max_sessions: int = 1000
-    max_session_bytes: int = 256 * 1024 * 1024
+    max_session_bytes: int = 1024 * 1024 * 1024
     """Text and file budget across live sessions, enforced when content is retained.
 
     A completed turn is trimmed rather than refused, so retained text settles at this
@@ -215,7 +215,7 @@ class AiSettings:
             history_postgres_url=os.getenv("AI_HISTORY_POSTGRES_URL", "").strip(),
             request_log_enabled=_read_bool("AI_REQUEST_LOG_ENABLED", True),
             max_sessions=_read_positive_int("AI_MAX_SESSIONS", 1000),
-            max_session_bytes=_read_positive_int("AI_MAX_SESSION_BYTES", 256 * 1024 * 1024),
+            max_session_bytes=_read_positive_int("AI_MAX_SESSION_BYTES", 1024 * 1024 * 1024),
             max_history_messages=_read_positive_int("AI_MAX_HISTORY_MESSAGES", 1000),
             max_history_chars=_read_positive_int("AI_MAX_HISTORY_CHARS", DEFAULT_MAX_HISTORY_CHARS),
             max_message_chars=_read_positive_int("AI_MAX_MESSAGE_CHARS", 8000),

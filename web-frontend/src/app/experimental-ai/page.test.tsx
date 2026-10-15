@@ -2463,6 +2463,22 @@ describe('ExperimentalAiPage', () => {
     expect(mockUploadFiles).not.toHaveBeenCalled();
   });
 
+  it('rounds the session file total in its limit message', async () => {
+    mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, file_attachments: {
+      enabled: true, retained: true, max_files: 32, max_bytes_per_file: 25_000_000,
+      max_bytes_per_session: 123_456_789,
+    } });
+    mockGetUploads.mockResolvedValue([{ id: 'existing', filename: 'existing.txt', media_type: 'text/plain', bytes: 123_456_788 }]);
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await user.type(await screen.findByRole('textbox', { name: 'Ask about the current schedule' }), 'Hello');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByRole('button', { name: 'Remove existing.txt' });
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument());
+    await user.upload(screen.getByLabelText('Attach files'), new File(['abc'], 'extra.txt'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Files in this chat must total 123.5 MB or less.');
+  });
+
   it('uploads files individually before submitting the question', async () => {
     mockGetCapabilities.mockResolvedValueOnce({ ...defaultCapabilities, file_attachments: {
       enabled: true, retained: true, max_files: 32, max_bytes_per_file: 25,
