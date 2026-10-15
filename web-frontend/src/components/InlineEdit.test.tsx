@@ -162,4 +162,15 @@ describe('InlineEdit', () => {
     expect(onDoubleClick).toHaveBeenCalledTimes(2);
   });
 
+  it('ignores a touch tap when tap editing is off', async () => {
+    const user = userEvent.setup();
+    const onDoubleClick = vi.fn();
+    render(<InlineEdit value="Nurse A" isEditing={false} onSave={vi.fn()} onCancel={vi.fn()} onDoubleClick={onDoubleClick} tapToEdit={false} />);
+    const value = screen.getByText('Nurse A');
+    await user.pointer([{ keys: '[TouchA>]', target: value }, { keys: '[/TouchA]' }]);
+    expect(onDoubleClick).not.toHaveBeenCalled();
+    await user.dblClick(value);
+    expect(onDoubleClick).toHaveBeenCalledTimes(1);
+  });
+
 });

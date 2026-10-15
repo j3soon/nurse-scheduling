@@ -1668,6 +1668,8 @@ export default function OptimizeAndExportPage() {
                 }}
                 onCancel={finishBackendEndpointEdit}
                 onDoubleClick={isOptimizing ? undefined : () => setEditingServerEndpoint(server.endpoint)}
+                // A first tap selects the server, so only a tap on the selected server edits it.
+                tapToEdit={selectedServerEndpoint === server.endpoint}
                 className="min-w-0 truncate text-sm font-medium text-gray-900"
                 editClassName="w-full border-gray-300 bg-white text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
               />

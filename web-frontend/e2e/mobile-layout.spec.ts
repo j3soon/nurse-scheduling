@@ -151,6 +151,12 @@ test('keeps backend server names readable in the phone backend table', async ({ 
   await expect(header).toBeVisible();
   await expect(page.getByRole('columnheader', { name: 'Activity', exact: true })).toBeHidden();
   expect((await header.boundingBox())!.width).toBeGreaterThan(100);
+  const serverName = page.getByTestId('data-table-backend').getByText('http://localhost:8000', { exact: true });
+  await serverName.tap();
+  await expect(page.getByRole('radio', { name: 'Select http://localhost:8000' })).toBeChecked();
+  await expect(page.locator('input[type="text"]:focus')).toHaveCount(0);
+  await serverName.tap();
+  await expect(page.locator('input[type="text"]:focus')).toHaveValue('http://localhost:8000');
 });
 
 test('shows whole date lists, a collapsed copy panel, and a centered current tab on a phone', async ({ page }) => {
