@@ -27,6 +27,8 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 - Keep local service configuration in the ignored `docker/.env`. Its tracked
   `docker/.env.example` separates services with comment blocks and uses empty
   assignments for secrets and URLs.
+  When exposing a setting through Compose, update every supported Compose
+  variant and its environment file example together.
 - Derive Git versions on the host for local Docker builds. Never copy `.git`
   into build contexts because linked worktrees store metadata elsewhere.
 - Note wasteful token use and uninformative tests, scripts, or runs. Fix when
