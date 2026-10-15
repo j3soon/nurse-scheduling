@@ -1028,10 +1028,10 @@ test('keeps phone chat readable and the growing composer clear of the last reply
   const composer = page.getByRole('form', { name: 'Message composer' });
   expect((await composer.boundingBox())!.width).toBeGreaterThanOrEqual(328);
   await expect(page.getByText('All AI chats are logged', { exact: false })).toBeVisible();
+  // The mocked backend version differs from the build, so the collapsed panel opens to show the warning.
+  await expect(page.getByText('Frontend and backend versions do not match', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: 'Chat details and settings', exact: true }).click();
   await expect(page.getByRole('group', { name: 'AI versions' })).not.toBeVisible();
-  await page.getByRole('button', { name: 'Chat details and settings', exact: true }).click();
-  await expect(page.getByRole('group', { name: 'AI versions' })).toBeVisible();
-  await page.getByRole('button', { name: 'Chat details and settings', exact: true }).click();
   await input.fill('Question');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   const reply = page.getByText('Final reply for phone layout.', { exact: true });

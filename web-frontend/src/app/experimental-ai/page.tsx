@@ -1026,7 +1026,7 @@ export default function ExperimentalAiPage() {
           </div>
         )}
         <div className="mt-3">
-          <MobileDetails label="Chat details and settings">
+          <MobileDetails label="Chat details and settings" openWhen={hasVersionMismatch}>
             <p className="mt-2 text-xs font-medium text-gray-500">
               Current snapshot: {peopleData.items.length} people, {dateData.items.length} dates. Captured when you send the first question.
             </p>

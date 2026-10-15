@@ -25,8 +25,14 @@ import { type ReactNode, useId, useState } from 'react';
 import { FiChevronDown } from 'react-icons/fi';
 
 // Keep desktop content visible and let phone users expand secondary information.
-export function MobileDetails({ label, children, desktopCollapsible = false }: { label: string; children: ReactNode; desktopCollapsible?: boolean }) {
+// `openWhen` expands the phone panel once it becomes true, for content that needs attention.
+export function MobileDetails({ label, children, desktopCollapsible = false, openWhen = false }: { label: string; children: ReactNode; desktopCollapsible?: boolean; openWhen?: boolean }) {
   const [expanded, setExpanded] = useState(false);
+  const [openedForAttention, setOpenedForAttention] = useState(false);
+  if (openWhen && !openedForAttention) {
+    setOpenedForAttention(true);
+    setExpanded(true);
+  }
   const [desktopExpanded, setDesktopExpanded] = useState(true);
   const contentId = useId();
   return (
