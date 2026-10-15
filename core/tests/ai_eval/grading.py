@@ -1061,7 +1061,19 @@ def _answer_json_matches(actual: Any, expected: Any) -> bool:
         and (not isinstance(expected, float) or math.isfinite(expected))
     ):
         return isinstance(actual, (int, float)) and not isinstance(actual, bool) and actual == expected
-    return _key(actual) == _key(expected)
+    # `_key` keeps list contents exact, except that an integral float equals its integer.
+    return _key(_integral_numbers(actual)) == _key(_integral_numbers(expected))
+
+
+def _integral_numbers(value: Any) -> Any:
+    """Represent each integral float as an integer, so `2.0` and `2` serialize alike."""
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, list):
+        return [_integral_numbers(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _integral_numbers(item) for key, item in value.items()}
+    return value
 
 
 def _check_tool_usage(

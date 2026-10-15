@@ -69,7 +69,14 @@ from nurse_scheduling.loader import _load_yaml
 
 from .ai_eval.comparison import comparison_metrics_markdown, comparison_statistics
 from .ai_eval.grading import EvalCase, ExpectedDiff, RunOutcome, ToolUsageExpectation, TurnAction, grade, load_cases
-from .ai_eval.prompt_ladder import STEPS_PATH, case_digest, load_prompt_steps, prompt_at_step, validate_prompt_evidence
+from .ai_eval.prompt_ladder import (
+    STEPS_PATH,
+    case_digest,
+    load_prompt_steps,
+    oracle_sha256,
+    prompt_at_step,
+    validate_prompt_evidence,
+)
 from .ai_eval.runner import (
     CASES,
     DEFAULT_CASE_JOBS,
@@ -141,6 +148,18 @@ def test_file_workflow_prefixes_include_download_delivery_guidance():
                 else prompt_at_step(index)
             )
             assert delivery in before, f"{step.id} tests file delivery without the download contract"
+
+
+def test_grading_fingerprints_cover_called_helpers(monkeypatch):
+    from .ai_eval import grading
+
+    before = oracle_sha256(grading._answer_json_matches)
+
+    def changed_json_value(value, field_name=""):
+        return {"changed": value}
+
+    monkeypatch.setattr(grading, "_json_value", changed_json_value)
+    assert oracle_sha256(grading._answer_json_matches) != before
 
 
 def test_every_shipped_prompt_clause_has_current_repeated_benefit_evidence():

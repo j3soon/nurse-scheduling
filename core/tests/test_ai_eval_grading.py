@@ -95,6 +95,14 @@ SCHEDULE = {
         (False, 0, False),
         (9007199254740993, 9007199254740992.0, False),
         (["01", "02"], [1, 2], False),
+        ([2, 3], [2.0, 3.0], True),
+        ({"counts": [2, 3]}, {"counts": [2.0, 3.0]}, True),
+        ([{"entries": 2}], [{"entries": 2.0}], True),
+        ([1.5], [1.5], True),
+        ([2, 3], [2.0, 2.0, 3.0], False),
+        ([2], [2.5], False),
+        ([1], [True], False),
+        ([9007199254740993], [9007199254740992.0], False),
     ],
 )
 def test_answer_json_numeric_fields_compare_values_without_coercing_other_types(expected, actual, passed):

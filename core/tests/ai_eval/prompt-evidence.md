@@ -25,6 +25,8 @@ so a targeted deeper investigation can extend one witness without rerunning alre
 CI validates reviewed receipts locally. It does not call the provider or require ignored artifacts to exist.
 Receipts describe their tested context, not a fresh evaluation of every later prompt composition.
 Bind the JSON answer comparator for every answer shape, including scalar values.
+`oracle_sha256` hashes each grader with every grading helper that its source names, transitively,
+so a helper change also invalidates the receipts it can affect.
 For a fingerprint-only correction, verify each existing receipt with the previous calculation before
 refreshing its dependency hash. Preserve its measurements and label the correction separately from model runs.
 If a previously untracked grader changed earlier, audit that change separately. Regrade its historical outputs,
