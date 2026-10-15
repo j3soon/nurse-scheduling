@@ -186,6 +186,8 @@ skipped does not validate persistence.
 - Test file workflows across message boundaries and session expiry. Check the
   bytes delivered by the download API and the files loaded into the next VM.
   A printed workspace path does not prove delivery or retention.
+- Check workbook text types after all download processing, including person ID
+  restoration. User text that resembles a formula or an Excel error must stay text.
 - Put fixed model instructions in a manifest-tracked prompt segment under
   `ai/prompts/`, so they get a hash, linked cases, and a benefit witness.
   `build_provider_messages` appends only request-specific values, such as a

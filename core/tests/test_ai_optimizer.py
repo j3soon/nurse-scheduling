@@ -645,13 +645,14 @@ def test_progress_reaches_browser_updates_without_entering_the_agent_prompt() ->
     asyncio.run(scenario())
 
 
-def test_session_optimizer_restores_named_people_in_download_and_attached_result() -> None:
+@pytest.mark.parametrize("person_id", ["Alice", "=1+1", "#REF!"])
+def test_session_optimizer_restores_named_people_in_download_and_attached_result(person_id: str) -> None:
     async def scenario() -> None:
         payload = base_schedule_payload()
-        payload["people"]["items"][0]["id"] = "Alice"
+        payload["people"]["items"][0]["id"] = person_id
         payload["people"]["items"][1]["id"] = "Bob"
-        payload["people"]["groups"][0]["members"] = ["Alice", "Bob"]
-        payload["preferences"][1]["person"] = ["Alice"]
+        payload["people"]["groups"][0]["members"] = [person_id, "Bob"]
+        payload["preferences"][1]["person"] = [person_id]
         original_yaml = schedule_yaml(payload)
         backend = FakeOptimizerBackend(optimizer_workbook_bytes(("P1", "P2")))
         completed = asyncio.Event()
@@ -665,7 +666,7 @@ def test_session_optimizer_restores_named_people_in_download_and_attached_result
         optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
         started = await execute_optimizer_tool(optimizer, "session-1", original_yaml, '{"action":"start"}')
         assert started.ok
-        assert "Alice" not in backend.submissions[0][0]
+        assert person_id not in backend.submissions[0][0]
         assert "description" not in backend.submissions[0][0]
 
         backend.release.set()
@@ -674,6 +675,14 @@ def test_session_optimizer_restores_named_people_in_download_and_attached_result
         artifact = await optimizer.result_artifact("session-1", job_id)
         assert artifact.content != backend.result_bytes
         assert attached_result == artifact
+        workbook = load_workbook(BytesIO(artifact.content), read_only=True)
+        try:
+            assert workbook.active["A3"].value == person_id
+            assert workbook.active["A3"].data_type == "s"
+            assert workbook.active["A4"].value == "Bob"
+            assert workbook.active["A4"].data_type == "s"
+        finally:
+            workbook.close()
         await optimizer.close()
 
     asyncio.run(scenario())
