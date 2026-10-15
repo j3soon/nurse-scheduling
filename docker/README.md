@@ -4,6 +4,18 @@ This deployment scaffold publishes the FastAPI backend through Cloudflare
 Tunnel for `api.nursescheduling.org`. Cloudflare terminates public HTTPS, while
 `cloudflared` forwards requests to NGINX on a Docker network.
 
+## Environment
+
+The deployment reads the ignored `docker/.env` file. The tracked
+`docker/.env.example` documents every variable and is the source of truth.
+Variables that must be set before the first start:
+
+- `CLOUDFLARE_TUNNEL_TOKEN`: the token of the Cloudflare Tunnel from the dashboard.
+- `API_AUTH_TOKEN` or `API_AUTH_TOKENS`: the deployment images require at least one backend key.
+- `AI_PROVIDER_BASE_URL`, `AI_PROVIDER_API_KEY`, and `E2B_API_KEY`: the AI service starts with both Compose variants and fails startup without its provider and sandbox settings. Set `AI_AUTH_TOKEN` or `AI_AUTH_TOKENS` before starting unless you explicitly set `AI_AUTH_REQUIRED=false`.
+
+Notable optional variables: `SENTRY_BACKEND_DSN` (an unset DSN keeps the shared development project), `SENTRY_ENVIRONMENT`, `DISABLE_SENTRY`, `DIAGNOSTIC_TARGET_URL` and the other `DIAGNOSTIC_*` values, `USAGE_REPORT_TRANSPORT` with the Mailgun values, and the `OPTIMIZE_*` allowlist. Local optimization development needs no environment variables.
+
 ## Cloudflare Tunnel
 
 - Create a [Cloudflare Tunnel](https://developers.cloudflare.com/tunnel/setup/).
@@ -142,7 +154,7 @@ For local inspection, start the loopback-only pgAdmin UI and open
 `http://127.0.0.1:5050`:
 
 ```sh
-docker compose -f compose.backend.yml --profile inspection run --rm --service-ports pgadmin
+docker compose --env-file .env -f compose.backend.yml --profile inspection run --rm --service-ports pgadmin
 ```
 
 See [inspect chat history with pgAdmin](https://github.com/j3soon/nurse-scheduling/blob/dev/docs/content/developer-guide/ai-assistant.md#inspect-chat-history-with-pgadmin)
@@ -152,6 +164,119 @@ NGINX removes the `/ai` prefix before forwarding requests to this
 service and disables response buffering for its streaming endpoints. Keep the
 Cloudflare Tunnel hostname pointed at `http://nginx:8080`, not directly at
 either application container.
+
+## AI Chat History Backup and Restore
+
+Run these commands from `docker/`:
+
+```sh
+cd docker
+```
+
+The examples target production with `--env-file .env -f compose.backend.yml`.
+For staging, use `--env-file .env.staging -f compose.backend.yml` on every
+command, for example:
+
+```sh
+docker compose --env-file .env.staging -f compose.backend.yml exec -T postgres \
+  pg_dump --username=ai_history --dbname=ai_history --format=custom --no-owner --no-acl \
+  > "../backups/ai-history-staging-$(date +%Y%m%d-%H%M%S).dump"
+```
+
+Create `../backups` before either backup command. When the deployed variant
+uses `compose.backend.memory.yml`, substitute that file on every command and
+keep its production or staging environment file. Preserve any custom project
+name used by the deployment. The environment file selects the Compose project,
+including its PostgreSQL volume, so use the same selection for backup, dump
+verification, and every restore step.
+
+### Backup
+
+```sh
+mkdir -p ../backups
+
+docker compose --env-file .env -f compose.backend.yml exec -T postgres \
+  pg_dump \
+  --username=ai_history \
+  --dbname=ai_history \
+  --format=custom \
+  --no-owner \
+  --no-acl \
+  > "../backups/ai-history-$(date +%Y%m%d-%H%M%S).dump"
+```
+
+The dump is stored on the host at
+`<repo-root>/backups/ai-history-YYYYMMDD-HHMMSS.dump`. Check existing backups
+with:
+
+```sh
+ls -lh ../backups/
+```
+
+Verify that the selected dump is readable before restoring it:
+
+```sh
+docker compose --env-file .env -f compose.backend.yml exec -T postgres \
+  pg_restore --list < ../backups/ai-history-YYYYMMDD-HHMMSS.dump
+```
+
+### Restore
+
+Stop the AI service first:
+
+```sh
+docker compose --env-file .env -f compose.backend.yml stop ai
+```
+
+Recreate the database:
+
+```sh
+docker compose --env-file .env -f compose.backend.yml exec -T postgres \
+  dropdb --username=ai_history --if-exists ai_history
+
+docker compose --env-file .env -f compose.backend.yml exec -T postgres \
+  createdb --username=ai_history ai_history
+```
+
+Restore the selected backup:
+
+```sh
+docker compose --env-file .env -f compose.backend.yml exec -T postgres \
+  pg_restore \
+    --username=ai_history \
+    --dbname=ai_history \
+    --no-owner \
+    --no-acl \
+    --exit-on-error < ../backups/ai-history-YYYYMMDD-HHMMSS.dump
+```
+
+Restart the AI service only after a successful restore. If restore fails, leave
+the AI service stopped:
+
+```sh
+docker compose --env-file .env -f compose.backend.yml start ai
+```
+
+Verify the restored database:
+
+```sh
+docker compose --env-file .env -f compose.backend.yml exec postgres \
+  psql -U ai_history -d ai_history \
+  -c '\dt'
+```
+
+### Backup Retention
+
+For example, delete backups older than 30 days:
+
+```sh
+find ../backups -name 'ai-history-*.dump' -mtime +30 -delete
+```
+
+These backups may contain the full stored AI conversation history, including
+reasoning, tool calls and results, attachment filenames, and schedule or
+attachment text exposed through tools. Treat backup files as sensitive data
+and protect or encrypt off-host copies appropriately.
 
 ## Sentry
 

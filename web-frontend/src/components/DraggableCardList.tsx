@@ -19,6 +19,7 @@
 
 // A list component that allows reordering of card items by dragging.
 // Note that this file highly duplicates with DataTable.tsx.
+import { ReorderButtons } from './ReorderButtons';
 import { ReactNode, useState } from 'react';
 import { ERROR_SHOULD_NOT_HAPPEN } from '../constants/errors';
 import { FiCopy, FiEdit2, FiTrash2 } from 'react-icons/fi';
@@ -117,14 +118,27 @@ export function DraggableCardList<T>({
                 onDragLeave={isDraggable ? handleDragLeave : undefined}
                 onDrop={isDraggable ? (e) => handleDrop(e, index) : undefined}
               >
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
+                <div className="flex flex-col gap-2 items-start justify-between sm:flex-row">
+                  <div className="min-w-0 flex-1 [overflow-wrap:anywhere]">
                     {renderContent(item, index)}
                   </div>
-                  <div className="flex justify-end space-x-2 ml-4">
+                  <div className="flex flex-wrap items-center justify-end gap-2 sm:ml-4">
+                    {isDraggable && (
+                      <ReorderButtons
+                        label={`${title} item ${index + 1}`}
+                        canMoveUp={index > 0}
+                        canMoveDown={index < items.length - 1}
+                        onMove={direction => {
+                          const next = [...items];
+                          const [moved] = next.splice(index, 1);
+                          next.splice(index + direction, 0, moved);
+                          onReorder?.(next);
+                        }}
+                      />
+                    )}
                     <button
                       onClick={() => onEdit(index)}
-                      className="text-blue-600 hover:text-blue-900 flex items-center gap-1 text-sm"
+                      className="text-blue-600 hover:text-blue-900 flex min-h-11 sm:min-h-0 items-center gap-1 text-sm"
                     >
                       <FiEdit2 className="h-4 w-4" />
                       Edit
@@ -132,7 +146,7 @@ export function DraggableCardList<T>({
                     {onDuplicate && (
                       <button
                         onClick={() => onDuplicate(index)}
-                        className="text-indigo-600 hover:text-indigo-800 flex items-center gap-1 text-sm"
+                        className="text-indigo-600 hover:text-indigo-800 flex min-h-11 sm:min-h-0 items-center gap-1 text-sm"
                       >
                         <FiCopy className="h-4 w-4" />
                         Duplicate
@@ -140,7 +154,7 @@ export function DraggableCardList<T>({
                     )}
                     <button
                       onClick={() => onDelete(index)}
-                      className="text-red-600 hover:text-red-900 flex items-center gap-1 text-sm"
+                      className="text-red-600 hover:text-red-900 flex min-h-11 sm:min-h-0 items-center gap-1 text-sm"
                     >
                       <FiTrash2 className="h-4 w-4" />
                       Delete

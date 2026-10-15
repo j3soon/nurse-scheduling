@@ -255,7 +255,7 @@ export default function ShiftPreferenceEditor({
                     {preferences.length}
                   </span>
                 </h4>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {preferences
                     .filter(p => typeof p.weight === 'number')
                     .sort((a, b) => (b.weight as number) - (a.weight as number))

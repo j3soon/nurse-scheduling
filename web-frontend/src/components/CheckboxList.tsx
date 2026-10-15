@@ -47,6 +47,10 @@ interface CheckboxListProps {
   getItemStyle?: (item: CheckboxItem, index: number) => CSSProperties | undefined;
 }
 
+// Long option lists such as dates scroll in a short box on wider screens. Phones show the
+// whole list, because a nested scroll box there crops rows and traps page scrolling.
+export const CHECKBOX_LIST_SCROLL_CLASS_NAME = 'sm:max-h-32 sm:overflow-y-auto';
+
 export function CheckboxList({
   items,
   selectedIds,
@@ -149,7 +153,7 @@ export function CheckboxList({
         {items.map((item, index) => (
           <label
             key={item.id}
-            className={`inline-flex items-center px-1 py-1 ${getItemClassName?.(item, resolvedSelectedIds.includes(item.id)) ?? ''}`}
+            className={`inline-flex items-center px-1 py-1 [@media(pointer:coarse)]:min-h-11 ${getItemClassName?.(item, resolvedSelectedIds.includes(item.id)) ?? ''}`}
             style={getItemStyle?.(item, index)}
             title={item.description}
             onMouseEnter={inputType === 'checkbox' ? () => handleCheckboxMouseEnter(item.id) : undefined}

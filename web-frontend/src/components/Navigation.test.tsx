@@ -182,6 +182,30 @@ describe('Navigation', () => {
     expect(mockPush).not.toHaveBeenCalled();
   });
 
+  it('centers the current tab in the strip, smoothly after the first page', () => {
+    const scrollTo = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', { value: scrollTo, configurable: true });
+    try {
+      const { rerender } = renderNavigation();
+      expect(screen.getByRole('button', { name: '2. People' })).toHaveAttribute('aria-current', 'page');
+      expect(scrollTo).toHaveBeenLastCalledWith(expect.objectContaining({ behavior: 'auto' }));
+
+      mockUsePathname.mockReturnValue('/shift-counts');
+      rerender(
+        <UnsavedEditingStateProvider>
+          <SchedulingDataProvider>
+            <Navigation />
+          </SchedulingDataProvider>
+        </UnsavedEditingStateProvider>
+      );
+      expect(screen.getByRole('button', { name: '7. Shift Counts' })).toHaveAttribute('aria-current', 'page');
+      expect(screen.getByRole('button', { name: '2. People' })).not.toHaveAttribute('aria-current');
+      expect(scrollTo).toHaveBeenLastCalledWith(expect.objectContaining({ behavior: 'smooth' }));
+    } finally {
+      delete (HTMLElement.prototype as { scrollTo?: unknown }).scrollTo;
+    }
+  });
+
   it('updates active tab styling on rerender when pathname changes', () => {
     const { rerender } = renderNavigation();
 

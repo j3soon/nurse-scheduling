@@ -21,7 +21,7 @@
 'use client';
 
 import { usePathname, useRouter } from 'next/navigation';
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { useUnsavedEditingState } from '@/utils/unsavedEditingState';
 
@@ -70,6 +70,38 @@ export default function Navigation() {
 
     router.push(TABS[index].path);
   }, [currentTabIndex, hasTabSwitchWarningActive, router]);
+
+  const tabStripRef = useRef<HTMLDivElement>(null);
+  const hasCenteredTabRef = useRef(false);
+
+  // Phones show only a few tabs, so keep the current one and its neighbors in view.
+  // Center again after a rotation or width change, or when the custom export indicator widens a tab.
+  useEffect(() => {
+    const centerCurrentTab = (smooth: boolean) => {
+      const strip = tabStripRef.current;
+      const tab = strip?.querySelector<HTMLElement>('[aria-current="page"]');
+      if (!strip || !tab) return;
+      const stripBox = strip.getBoundingClientRect();
+      const tabBox = tab.getBoundingClientRect();
+      const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      // `scrollIntoView` could also scroll the page vertically, so only move the strip.
+      strip.scrollTo?.({
+        left: strip.scrollLeft + tabBox.left - stripBox.left - (stripBox.width - tabBox.width) / 2,
+        behavior: smooth && !reduceMotion ? 'smooth' : 'auto',
+      });
+    };
+    centerCurrentTab(hasCenteredTabRef.current);
+    hasCenteredTabRef.current = true;
+    // Phone toolbars change only the height while scrolling. Keep the user's swipe then.
+    let width = window.innerWidth;
+    const handleResize = () => {
+      if (window.innerWidth === width) return;
+      width = window.innerWidth;
+      centerCurrentTab(false);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [currentTabIndex, hasCustomExportLayout]);
 
   const navigatePrevious = useCallback(() => navigateToTab(currentTabIndex - 1), [currentTabIndex, navigateToTab]);
   const navigateNext = useCallback(() => navigateToTab(currentTabIndex + 1), [currentTabIndex, navigateToTab]);
@@ -153,7 +185,7 @@ export default function Navigation() {
   return (
     <div className="relative">
       <nav className="bg-white shadow-sm">
-        <div className="overflow-x-auto">
+        <div ref={tabStripRef} className="overflow-x-auto">
           <div className="flex justify-start px-4 sm:px-6 lg:px-8">
             {TABS.map((tab, index) => {
               const showCustomExportIndicator = Boolean(tab.exportLayout && hasCustomExportLayout);
@@ -161,6 +193,7 @@ export default function Navigation() {
                 <button
                   key={tab.path}
                   onClick={() => navigateToTab(index)}
+                  aria-current={pathname === tab.path ? 'page' : undefined}
                   title={showCustomExportIndicator ? CUSTOM_EXPORT_LAYOUT_TOOLTIP : undefined}
                   className={`py-4 px-3 border-b-2 font-medium text-sm whitespace-nowrap ${
                     pathname === tab.path
@@ -187,7 +220,7 @@ export default function Navigation() {
       {currentTabIndex > 0 && (
         <button
           onClick={navigatePrevious}
-          className="fixed left-0 top-1/2 transform -translate-y-1/2 p-3 transition-all duration-200 z-10 hover:scale-110 group cursor-pointer"
+          className="hidden sm:block fixed left-0 top-1/2 transform -translate-y-1/2 p-3 transition-all duration-200 z-10 hover:scale-110 group cursor-pointer"
           title="Previous tab (←)"
         >
           <svg className="w-8 h-8 text-gray-400 group-hover:text-gray-600 transition-colors duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -200,7 +233,7 @@ export default function Navigation() {
       {currentTabIndex < TABS.length - 1 && (
         <button
           onClick={navigateNext}
-          className="fixed right-0 top-1/2 transform -translate-y-1/2 p-3 transition-all duration-200 z-10 hover:scale-110 group cursor-pointer"
+          className="hidden sm:block fixed right-0 top-1/2 transform -translate-y-1/2 p-3 transition-all duration-200 z-10 hover:scale-110 group cursor-pointer"
           title="Next tab (→)"
         >
           <svg className="w-8 h-8 text-gray-400 group-hover:text-gray-600 transition-colors duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">

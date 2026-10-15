@@ -38,7 +38,8 @@ export default function Footer() {
   if (pathname === '/experimental-ai') return null;
 
   return (
-    <footer style={{ textAlign: 'center', padding: '1.5rem', marginTop: '2rem', fontSize: '0.875rem', color: 'gray' }}>
+    // The bottom padding on phones keeps the floating Feedback button clear of the text.
+    <footer className="px-6 pt-6 pb-20 sm:pb-6" style={{ textAlign: 'center', marginTop: '2rem', fontSize: '0.875rem', color: 'gray' }}>
       <div>
         <a href={GITHUB_LICENSE_URL} target="_blank" rel="noopener noreferrer" className="footer-link">Copyright ©</a>{' '}
         <a href={GITHUB_CODE_FREQUENCY_URL} target="_blank" rel="noopener noreferrer" className="footer-link">2023-{new Date().getFullYear()}</a>{' '}

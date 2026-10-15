@@ -4,6 +4,12 @@ Pass a solver code to the CLI with `--solver <code>`. OR-Tools/CP-SAT is the
 default and the only recommended backend. Other backends are experimental or
 limited.
 
+Timefold (formerly OptaPlanner) is the other major open-source scheduling
+solver framework. It was evaluated during early development and is not
+integrated. See the
+[design rationale](design-rationale.md#solver) for the solver
+choice.
+
 ## Support matrix
 
 ### [OR-Tools](https://developers.google.com/optimization)

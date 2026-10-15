@@ -1510,11 +1510,11 @@ export default function ShiftRequestsPage() {
         </div>
       )}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           <h1 className="text-3xl font-bold text-gray-800">Shift Requests</h1>
           <PageDocumentationLink href={DOCUMENTATION_URLS.shiftRequests} label="Shift Requests" />
         </div>
-        <div className="flex gap-4">
+        <div className="flex flex-wrap gap-3 sm:gap-4">
           <ToggleButton
             label="Quick Add Preference"
             isToggled={isAddMode}
@@ -1565,11 +1565,11 @@ export default function ShiftRequestsPage() {
       {hasRequiredData && isAddMode && (
         <div ref={quickAddRef} className="mb-6 bg-white shadow-md rounded-lg overflow-hidden">
           <div className="px-6 py-4">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex flex-col items-start justify-between gap-3 mb-4 sm:flex-row sm:items-center">
               <h2 className="text-lg font-semibold text-gray-800">
                 Add Shift Preference
               </h2>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <UploadButton
                   onFileUpload={processPeopleHistoryFile}
                   acceptedFileTypes={['.csv', '.txt']}

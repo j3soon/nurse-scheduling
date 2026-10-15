@@ -25,7 +25,8 @@ import Link from 'next/link';
 import { FiAlertCircle } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { ShiftTypeSuccessionsPreference, SHIFT_TYPE_SUCCESSIONS } from '@/types/scheduling';
-import { CheckboxList } from '@/components/CheckboxList';
+import { CHECKBOX_LIST_SCROLL_CLASS_NAME, CheckboxList } from '@/components/CheckboxList';
+import { ReorderButtons } from '@/components/ReorderButtons';
 import { DraggableCardList } from '@/components/DraggableCardList';
 import ToggleButton from '@/components/ToggleButton';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
@@ -317,14 +318,14 @@ export default function ShiftTypeSuccessionsPage() {
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           <h1 className="text-3xl font-bold text-gray-800">Shift Type Successions</h1>
           <PageDocumentationLink
             href={DOCUMENTATION_URLS.shiftTypeSuccessions}
             label="Shift Type Successions"
           />
         </div>
-        <div className="flex gap-4">
+        <div className="flex flex-wrap gap-3 sm:gap-4">
           <ToggleButton
             label="Add Succession"
             isToggled={isFormVisible}
@@ -477,6 +478,13 @@ export default function ShiftTypeSuccessionsPage() {
                                   isDragOver={false} // Never highlight the element itself
                                 />
 
+                                <ReorderButtons
+                                  label={`${shiftTypeId} at position ${index + 1}`}
+                                  horizontal
+                                  canMoveUp={index > 0}
+                                  canMoveDown={index < formData.pattern.length - 1}
+                                  onMove={direction => movePatternItem(index, index + direction)}
+                                />
                                 {/* Gap after each element */}
                                 <div
                                   className="w-3 h-8 flex justify-center items-center"
@@ -515,7 +523,7 @@ export default function ShiftTypeSuccessionsPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Dates *
                 </label>
-                <div className="max-h-32 overflow-y-auto">
+                <div className={CHECKBOX_LIST_SCROLL_CLASS_NAME}>
                   {dateData.items.length === 0 && dateData.groups.length === 0 ? (
                     <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
                       No dates available. Please set up dates in the{' '}

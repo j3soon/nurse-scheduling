@@ -22,6 +22,13 @@ Run commands from `web-frontend/`:
 
 Use `bun run test:affected` for routine changes. Run the full unit/component
 and browser suites when checking the full app or broad shared behavior.
+After a large frontend change, such as a commit series or a change to shared
+components, layout, or global CSS, run `bun run test:e2e:affected --full` once
+before the branch is pushed. Changed-spec runs miss other specs that the change
+breaks. CI stops at the first E2E failure, so each push can show only one of
+them. The full suite takes about two minutes in the dev container. If you
+cannot run it, tell the user that it was not run and that they can run it before
+pushing.
 Frontend unit/component tests use Vitest; browser integration tests use
 Playwright. Keep test files and runner configuration outside the production
 TypeScript project. Validate them with their respective test runners.
@@ -63,6 +70,23 @@ Preserve existing guidance and user changes.
 New schedules contain no user-defined people, shift types, or groups. E2E tests
 that require populated entities must seed them explicitly.
 
+For responsive UI changes, check populated pages and open editing forms at phone
+widths. Use touch device emulation for tap and reorder checks. Resizing a desktop
+viewport alone does not exercise coarse-pointer controls or phone Enter behavior.
+Check the visual viewport separately for fixed composers. Browser emulation does
+not replace an iOS or Android keyboard check on a real device.
+Text width depends on the system font. Chromium on the Ubuntu CI runner uses
+DejaVu Sans, which is wider than phone, macOS, and Windows fonts. Size text that
+must stay on one line so it fits in DejaVu Sans. Before you trust a local layout
+result, check that `fc-match system-ui` reports DejaVu Sans.
+Playwright `fullPage` screenshots under mobile emulation lose coarse-pointer
+styles, so touch-only controls disappear from the image. For a full-height phone
+screenshot, set the viewport height to the page height and take a normal capture.
+
+E2E builds use the checkout's `git describe` version without `-dirty`. A build
+from uncommitted changes otherwise shows a dirty-version warning on every YAML
+upload, and upload specs that expect no dialog fail.
+
 For deterministic checks of version-dependent UI, restart the dev server with
 an explicit version, for example:
 
@@ -70,10 +94,8 @@ an explicit version, for example:
 APP_VERSION_OVERRIDE=v0.0.0 bun run dev -- --port 3006
 ```
 
-Leave `APP_VERSION_OVERRIDE` unset for normal Git-derived versions. Playwright
-builds default to `v0.0.0` so uncommitted changes do not trigger YAML version
-confirmations in unrelated tests. Set `APP_VERSION_OVERRIDE` explicitly when
-testing another version.
+Leave `APP_VERSION_OVERRIDE` unset for normal Git-derived versions. Set it
+explicitly when an E2E build must use another version.
 
 Persist the saving app version with Optimize and Export backend settings. Add
 targeted migrations for known older app versions or legacy shapes, and preserve

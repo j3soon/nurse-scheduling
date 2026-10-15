@@ -317,11 +317,11 @@ export default function SaveAndLoadPage() {
       }}
     >
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           <h1 className="text-3xl font-bold text-gray-800">Save and Load</h1>
           <PageDocumentationLink href={DOCUMENTATION_URLS.saveAndLoad} label="Save and Load" />
         </div>
-        <div className="flex gap-4">
+        <div className="flex flex-wrap gap-3 sm:gap-4">
           <button
             onClick={handleDownload}
             className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500"
