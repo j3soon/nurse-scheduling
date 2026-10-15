@@ -36,14 +36,22 @@ const e2eBaseURL = `http://127.0.0.1:${e2ePort}`;
 
 // Uncommitted changes add `-dirty` to the Git-derived app version, and the app then warns
 // on every YAML upload. Build E2E runs as the clean checkout so results do not depend on it.
+// Like next.config.ts, trust the repository so a checkout owned by another user still works.
 function cleanAppVersion(): string | undefined {
+  const repo = path.join(__dirname, '..');
   try {
-    return execFileSync('git', ['-C', path.join(__dirname, '..'), 'describe', '--tags', '--always'], { encoding: 'utf8' }).trim() || undefined;
+    return execFileSync(
+      'git',
+      ['-c', `safe.directory=${repo}`, '-C', repo, 'describe', '--tags', '--always'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10_000 },
+    ).trim() || undefined;
   } catch {
     return undefined;
   }
 }
 const e2eAppVersion = process.env.APP_VERSION_OVERRIDE?.trim() || cleanAppVersion();
+// Reuse the result when test workers reload this config.
+if (e2eAppVersion) process.env.APP_VERSION_OVERRIDE = e2eAppVersion;
 
 export default defineConfig({
   testDir: './e2e',
