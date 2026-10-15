@@ -1705,6 +1705,9 @@ def _evaluation_metadata(
         "sandbox_configuration": {
             "backend": settings.sandbox_backend,
             "command_timeout_seconds": settings.sandbox_command_timeout_seconds,
+            "turn_timeout_seconds": settings.sandbox_turn_timeout_seconds,
+            "max_tool_rounds": settings.agent_max_tool_rounds,
+            "max_tool_calls": settings.agent_max_tool_calls,
             "control_request_timeout_seconds": settings.sandbox_control_request_timeout_seconds,
             "pause_request_timeout_seconds": settings.sandbox_pause_request_timeout_seconds,
             "max_attempts": settings.sandbox_max_attempts,

@@ -23,6 +23,7 @@ import asyncio
 import json
 import os
 import shlex
+import time
 
 import pytest
 from e2b import AsyncSandbox
@@ -62,7 +63,7 @@ def test_prebuilt_e2b_template_supports_the_raw_backend_lifecycle():
         factory = E2BSandboxFactory(
             api_key=E2B_API_KEY,
             template=os.getenv("E2B_TEMPLATE", "nurse-scheduling-ai-sandbox"),
-            turn_timeout_seconds=30,
+            run_timeout_seconds=30,
             command_timeout_seconds=5,
         )
         async with managed_sandbox(factory, cleanup_timeout_seconds=10) as sandbox:
@@ -96,7 +97,7 @@ def test_prebuilt_e2b_template_supports_the_selected_pi_tools():
         factory = E2BSandboxFactory(
             api_key=E2B_API_KEY,
             template=os.getenv("E2B_TEMPLATE", "nurse-scheduling-ai-sandbox"),
-            turn_timeout_seconds=30,
+            run_timeout_seconds=30,
             command_timeout_seconds=5,
         )
         async with managed_sandbox(factory, cleanup_timeout_seconds=10) as sandbox:
@@ -129,7 +130,7 @@ def test_prebuilt_e2b_template_creates_and_extracts_zip_bytes():
         factory = E2BSandboxFactory(
             api_key=E2B_API_KEY,
             template=os.getenv("E2B_TEMPLATE", "nurse-scheduling-ai-sandbox"),
-            turn_timeout_seconds=30,
+            run_timeout_seconds=30,
             command_timeout_seconds=5,
         )
         async with managed_sandbox(factory, cleanup_timeout_seconds=10) as sandbox:
@@ -148,25 +149,26 @@ def test_prebuilt_e2b_template_creates_and_extracts_zip_bytes():
     asyncio.run(exercise())
 
 
-def test_explicit_pause_auto_resumes_the_same_sandbox():
+def test_six_hour_turn_repeatedly_pauses_and_resumes_the_same_sandbox():
     async def exercise() -> None:
         factory = E2BSandboxFactory(
             api_key=E2B_API_KEY,
             template=os.getenv("E2B_TEMPLATE", "nurse-scheduling-ai-sandbox"),
-            turn_timeout_seconds=30,
-            command_timeout_seconds=5,
+            run_timeout_seconds=21600,
+            command_timeout_seconds=60,
         )
         async with managed_sandbox(factory, cleanup_timeout_seconds=10) as raw_sandbox:
             assert isinstance(raw_sandbox, E2BSandboxBackend)
+            sandbox_id = raw_sandbox.sandbox_id
             await raw_sandbox.write_file("/workspace/timeout-check.txt", b"preserved")
-            await wait_until_paused(raw_sandbox)
-
-            assert await raw_sandbox.read_file("/workspace/timeout-check.txt") == b"preserved"
+            for _ in range(3):
+                await wait_until_paused(raw_sandbox)
+                assert await raw_sandbox.read_file("/workspace/timeout-check.txt") == b"preserved"
+                assert raw_sandbox.sandbox_id == sandbox_id
             metrics = raw_sandbox.lifecycle_metrics
-            assert metrics.pause_count == 1
-            assert metrics.resume_count == 1
+            assert metrics.pause_count == 3
+            assert metrics.resume_count == 3
             assert metrics.resume_wait_seconds > 0
-
         assert raw_sandbox.lifecycle_state is E2BSandboxState.CLOSED
 
     asyncio.run(exercise())
@@ -177,17 +179,21 @@ def test_application_deadline_explicitly_kills_and_prevents_resume():
         factory = E2BSandboxFactory(
             api_key=E2B_API_KEY,
             template=os.getenv("E2B_TEMPLATE", "nurse-scheduling-ai-sandbox"),
-            turn_timeout_seconds=30,
-            command_timeout_seconds=5,
+            run_timeout_seconds=21600,
+            command_timeout_seconds=60,
         )
         raw_sandbox: E2BSandboxBackend | None = None
+        deadline_started = False
         with pytest.raises(TimeoutError):
             async with managed_sandbox(factory, cleanup_timeout_seconds=10) as created:
-                async with asyncio.timeout(0.5):
-                    assert isinstance(created, E2BSandboxBackend)
-                    raw_sandbox = created
+                assert isinstance(created, E2BSandboxBackend)
+                raw_sandbox = created
+                await created.write_file("/workspace/deadline-check.txt", b"preserved until deadline")
+                await wait_until_paused(created)
+                deadline_started = True
+                async with asyncio.timeout(0.1):
                     await asyncio.Event().wait()
-
+        assert deadline_started
         assert raw_sandbox is not None
         assert raw_sandbox.lifecycle_state is E2BSandboxState.CLOSED
         with pytest.raises(SandboxNotFoundException):
@@ -271,7 +277,7 @@ def test_command_timeout_recovers_only_after_process_cleanup(attempt, escaped):
         factory = E2BSandboxFactory(
             api_key=E2B_API_KEY,
             template=os.getenv("E2B_TEMPLATE", "nurse-scheduling-ai-sandbox"),
-            turn_timeout_seconds=30,
+            run_timeout_seconds=30,
             command_timeout_seconds=1,
         )
         async with managed_sandbox(factory, cleanup_timeout_seconds=10) as sandbox:
@@ -307,5 +313,28 @@ def test_command_timeout_recovers_only_after_process_cleanup(attempt, escaped):
                 assert sandbox.sandbox_id == sandbox_id
         with pytest.raises(SandboxNotFoundException):
             await AsyncSandbox.connect(sandbox_id, api_key=E2B_API_KEY)
+
+    asyncio.run(exercise())
+
+
+def test_short_vm_timeout_refresh_keeps_a_long_batch_running(monkeypatch):
+    # Scale the active window to three seconds while keeping the real E2B API.
+    monkeypatch.setattr("nurse_scheduling.ai.sandbox.e2b.ACTIVE_TIMEOUT_BUFFER_SECONDS", 1)
+
+    async def exercise():
+        factory = E2BSandboxFactory(
+            api_key=E2B_API_KEY,
+            template=os.getenv("E2B_TEMPLATE", "nurse-scheduling-ai-sandbox"),
+            run_timeout_seconds=21600,
+            command_timeout_seconds=2,
+        )
+        async with managed_sandbox(factory, cleanup_timeout_seconds=10) as sandbox:
+            started = time.perf_counter()
+            async with sandbox.activity_batch():
+                for _ in range(4):
+                    result = await sandbox.run("sleep 1")
+                    assert result.exit_code == 0
+                    assert not result.timed_out
+            assert time.perf_counter() - started > 3
 
     asyncio.run(exercise())

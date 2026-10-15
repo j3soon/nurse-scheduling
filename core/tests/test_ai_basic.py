@@ -2030,9 +2030,9 @@ def test_environment_configuration_defaults_to_extended_sandbox_turn_limits(
     settings = AiSettings.from_env()
     assert settings.provider_timeout_seconds == 180
     assert settings.sandbox_command_timeout_seconds == 60
-    assert settings.sandbox_turn_timeout_seconds == 3600
-    assert settings.agent_max_tool_rounds == 200
-    assert settings.agent_max_tool_calls == 400
+    assert settings.sandbox_turn_timeout_seconds == 21600
+    assert settings.agent_max_tool_rounds == 2000
+    assert settings.agent_max_tool_calls == 6000
 
 
 def test_backend_proxy_read_timeout_outlasts_every_default_turn_deadline(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -199,6 +199,8 @@ skipped does not validate persistence.
   dependencies, and output format. Reuse loading and validation instead of
   adding a sibling script. Keep a separate helper when its interface is useful
   independently.
+- Keep the agent run deadline separate from the sandbox provider's continuous
+  runtime limit. Paused time still counts toward the agent run deadline.
 - Separate command execution deadlines from provider connection timeouts. Reuse a
   sandbox after a command timeout only when process cleanup is verified. Keep
   shell commands single-attempt because a lost acknowledgement does not prove

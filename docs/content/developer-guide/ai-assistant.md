@@ -300,6 +300,26 @@ contain `bash`, `edit`, or `write` remain sequential so filesystem mutations
 have deterministic ordering. E2B stays active for either kind of batch and
 pauses again before the next provider reasoning turn.
 
+An agent run spans the model/tool loop until the agent finishes. Pi uses a turn
+for one model response and its tool results. VM lifecycle code uses run.
+
+Agent runs default to a six-hour deadline (`AI_SANDBOX_TURN_TIMEOUT_SECONDS=21600`),
+2,000 tool rounds and 6,000 tool calls (`AI_AGENT_MAX_TOOL_ROUNDS` and
+`AI_AGENT_MAX_TOOL_CALLS`). The deadline includes provider responses, sandbox
+operations and paused time.
+Each optimizer follow-up is a separate run with its own limits. Stop still cancels
+an active run.
+
+The VM active timeout is independent of the agent run deadline. It uses the
+command timeout plus a 30-second buffer, which gives 90 seconds by default.
+Timeout pauses the VM with memory preserved. Refreshing the timeout before each
+operation prevents a batch of several commands from outlasting one active window.
+The application also pauses the VM after each tool batch. Cleanup metadata keeps
+the full run deadline, and run completion or cancellation destroys the VM.
+E2B auto-resume grants at least five minutes, so each operation resets the active
+timeout to the configured command timeout plus the buffer.
+See [E2B timeout after auto-resume](https://docs.e2b.dev/sandbox/auto-resume#timeout-after-auto-resume).
+
 When a Bash command changes the schedule, the backend reads the working copy
 and validates it outside the sandbox before emitting `schedule_change`. The
 event contains that validated working copy. The browser compares it with the
@@ -437,7 +457,9 @@ range option. The `xlsx-formulas-and-caches` control passed 3/3 with both versio
 These checks used real provider requests and E2B commands with four case jobs.
 They did not submit optimizer jobs or establish a token or latency saving.
 The Nurse Scheduling adapter delegates file and command operations to
-`SandboxBackend` and enforces the configured command timeout ceiling. E2B
+`SandboxBackend`. `AI_SANDBOX_COMMAND_TIMEOUT_SECONDS` defaults to 60 seconds
+and caps each command at that duration. The agent can run many commands within
+the separate turn deadline. E2B
 returns completed stdout and stderr separately, so the adapter concatenates
 them and cannot reproduce Pi's live
 stream interleaving exactly. Nonzero and missing command exit codes produce

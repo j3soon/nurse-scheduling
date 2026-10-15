@@ -55,6 +55,7 @@ logger = logging.getLogger("nurse_scheduling.ai.sandbox.e2b")
 E2B_USER = "user"
 E2B_WORKSPACE = "/workspace"
 COMMAND_TIMEOUT_EXIT_CODE = 124
+ACTIVE_TIMEOUT_BUFFER_SECONDS = 30
 CreateSandbox = Callable[..., Awaitable[Any]]
 RequestResult = TypeVar("RequestResult")
 NON_RETRYABLE_E2B_ERRORS = (
@@ -118,14 +119,14 @@ class E2BSandboxState(str, Enum):
 
 
 class E2BSandboxFactory:
-    """Create one internet-disabled E2B Cloud sandbox for an agent turn."""
+    """Create one internet-disabled E2B Cloud sandbox for an agent run."""
 
     def __init__(
         self,
         *,
         api_key: str,
         template: str,
-        turn_timeout_seconds: float,
+        run_timeout_seconds: float,
         command_timeout_seconds: float,
         max_attempts: int = 3,
         retry_backoff_seconds: float = 0.5,
@@ -139,8 +140,8 @@ class E2BSandboxFactory:
             raise ValueError("api_key must not be empty")
         if not template:
             raise ValueError("template must not be empty")
-        if turn_timeout_seconds <= 0:
-            raise ValueError("turn_timeout_seconds must be positive")
+        if run_timeout_seconds <= 0:
+            raise ValueError("run_timeout_seconds must be positive")
         if command_timeout_seconds <= 0:
             raise ValueError("command_timeout_seconds must be positive")
         if max_attempts <= 0:
@@ -155,7 +156,7 @@ class E2BSandboxFactory:
             raise ValueError("reaper_interval_seconds must be positive")
         self._api_key = api_key
         self._template = template
-        self._turn_timeout_seconds = turn_timeout_seconds
+        self._run_timeout_seconds = run_timeout_seconds
         self._command_timeout_seconds = command_timeout_seconds
         self._max_attempts = max_attempts
         self._retry_backoff_seconds = retry_backoff_seconds
@@ -175,7 +176,7 @@ class E2BSandboxFactory:
         return cls(
             api_key=settings.e2b_api_key,
             template=settings.e2b_template,
-            turn_timeout_seconds=settings.sandbox_turn_timeout_seconds,
+            run_timeout_seconds=settings.sandbox_turn_timeout_seconds,
             command_timeout_seconds=settings.sandbox_command_timeout_seconds,
             max_attempts=settings.sandbox_max_attempts,
             retry_backoff_seconds=settings.sandbox_retry_backoff_seconds,
@@ -203,10 +204,10 @@ class E2BSandboxFactory:
         creation = asyncio.create_task(
             self._create_sandbox(
                 template=self._template,
-                timeout=math.ceil(self._turn_timeout_seconds),
+                timeout=math.ceil(self._command_timeout_seconds) + ACTIVE_TIMEOUT_BUFFER_SECONDS,
                 secure=True,
                 allow_internet_access=False,
-                metadata=self._cleanup_manager.metadata_for_turn(self._turn_timeout_seconds),
+                metadata=self._cleanup_manager.metadata_for_run(self._run_timeout_seconds),
                 lifecycle={
                     # Retain memory because filesystem-only snapshots cold-boot on resume.
                     "on_timeout": {"action": "pause", "keep_memory": True},
@@ -390,7 +391,7 @@ class E2BSandboxBackend:
     async def write_files(self, files: Mapping[str, str | bytes]) -> None:
         """Upload a whole file set in one provider request.
 
-        Turn hydration writes roughly twenty files, and a per-file request would pay a
+        Run hydration writes roughly twenty files, and a per-file request would pay a
         round trip each while holding the exclusive mutation slot.
         """
         if not files:
@@ -582,6 +583,16 @@ class E2BSandboxBackend:
             self._cancel_pending_pause_locked()
             self._ensure_open()
             await self._resume_locked()
+            try:
+                await self._request_with_retry(
+                    "set_timeout",
+                    lambda: self._sandbox.set_timeout(
+                        math.ceil(self._command_timeout_seconds) + ACTIVE_TIMEOUT_BUFFER_SECONDS,
+                        request_timeout=self._control_request_timeout_seconds,
+                    ),
+                )
+            except Exception as exc:
+                raise SandboxError("E2B could not refresh the sandbox active timeout.") from exc
             if not read_only:
                 self._mutation_active = True
             if self._active_operations == 0:

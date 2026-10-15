@@ -50,8 +50,8 @@ from .workspace import (
     SandboxTurnTimeoutError,
     WorkspaceLimits,
     WorkspaceMetrics,
-    _LazySandboxTurn,
-    _measured_sandbox_turn,
+    _LazySandboxRun,
+    _measured_sandbox_run,
     _read_candidate,
     _ScheduleCandidateTracker,
 )
@@ -64,7 +64,7 @@ class WorkspaceTools:
 
     def __init__(
         self,
-        sandbox: _LazySandboxTurn,
+        sandbox: _LazySandboxRun,
         schedule_yaml: str,
         limits: WorkspaceLimits,
         execute_optimizer: Callable[[str, str], Awaitable[AgentToolOutcome]] | None,
@@ -143,12 +143,12 @@ async def run_workspace(
     agent: Agent | None = None,
     request_clock: Callable[[], datetime] | None = None,
 ) -> AsyncIterator[AgentEvent | AgentScheduleChange | AgentDownload]:
-    """Hydrate, run, read, validate, and destroy one fresh sandbox turn."""
+    """Hydrate, run, read, validate, and destroy one fresh sandbox run."""
     agent = agent or Agent()
     metrics = metrics or WorkspaceMetrics()
     try:
         async with asyncio.timeout(limits.turn_timeout_seconds):
-            async with _measured_sandbox_turn(
+            async with _measured_sandbox_run(
                 factory,
                 limits.cleanup_timeout_seconds,
                 metrics,

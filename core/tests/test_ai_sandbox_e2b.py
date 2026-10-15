@@ -63,6 +63,7 @@ class FakeE2BSandbox:
             disconnect=AsyncMock(),
         )
         self.commands = SimpleNamespace(run=AsyncMock(return_value=self.handle))
+        self.set_timeout = AsyncMock()
         self.pause = AsyncMock(return_value=True)
         self.connect = AsyncMock(return_value=self)
         self.kill = AsyncMock(return_value=True)
@@ -93,9 +94,19 @@ async def wait_for_state(e2b_backend: E2BSandboxBackend, state: E2BSandboxState)
             await asyncio.sleep(0.001)
 
 
-def test_factory_creates_a_secure_internet_disabled_auto_pause_sandbox():
+@pytest.mark.parametrize(("run_seconds", "command_seconds", "sandbox_seconds"), [(12.1, 3, 33), (21600, 60, 90)])
+def test_factory_creates_a_secure_internet_disabled_auto_pause_sandbox(run_seconds, command_seconds, sandbox_seconds):
     async def exercise() -> tuple[E2BSandboxBackend, dict]:
         captured = {}
+        from nurse_scheduling.ai.sandbox.e2b_cleanup import E2BSandboxCleanupManager
+
+        cleanup = E2BSandboxCleanupManager(
+            api_key="secret-key",
+            request_timeout_seconds=2,
+            retry_backoff_seconds=0,
+            reaper_interval_seconds=30,
+            wall_clock=lambda: 1000,
+        )
         sandbox = FakeE2BSandbox()
 
         async def create_sandbox(**kwargs):
@@ -105,8 +116,9 @@ def test_factory_creates_a_secure_internet_disabled_auto_pause_sandbox():
         factory = E2BSandboxFactory(
             api_key="secret-key",
             template="template-name",
-            turn_timeout_seconds=12.1,
-            command_timeout_seconds=3,
+            cleanup_manager=cleanup,
+            run_timeout_seconds=run_seconds,
+            command_timeout_seconds=command_seconds,
             create_sandbox=create_sandbox,
         )
         return await factory.create(), captured
@@ -115,10 +127,10 @@ def test_factory_creates_a_secure_internet_disabled_auto_pause_sandbox():
     assert backend.sandbox_id == "sandbox-123"
     metadata = captured.pop("metadata")
     assert metadata["nurse_scheduling_ai_managed"] == "true"
-    assert float(metadata["nurse_scheduling_ai_hard_deadline"]) > 0
+    assert float(metadata["nurse_scheduling_ai_hard_deadline"]) == 1000 + run_seconds
     assert captured == {
         "template": "template-name",
-        "timeout": 13,
+        "timeout": sandbox_seconds,
         "secure": True,
         "allow_internet_access": False,
         "lifecycle": {
@@ -142,7 +154,7 @@ def test_factory_redacts_provider_creation_failures():
         factory = E2BSandboxFactory(
             api_key="secret-key",
             template="template-name",
-            turn_timeout_seconds=10,
+            run_timeout_seconds=10,
             command_timeout_seconds=3,
             create_sandbox=create_sandbox,
         )
@@ -168,7 +180,7 @@ def test_factory_cancellation_kills_a_sandbox_created_by_the_in_flight_request()
         factory = E2BSandboxFactory(
             api_key="secret-key",
             template="template-name",
-            turn_timeout_seconds=10,
+            run_timeout_seconds=10,
             command_timeout_seconds=3,
             create_sandbox=create_sandbox,
         )
@@ -1004,6 +1016,54 @@ def test_bounded_file_read_stops_and_closes_the_stream():
                 await backend.read_file("/workspace/download.zip", max_bytes=4)
             assert stream.closed
             sandbox.files.read.assert_awaited_once_with("/workspace/download.zip", format="stream", user="user")
+        finally:
+            await backend.close()
+
+    asyncio.run(exercise())
+
+
+def test_each_command_refreshes_the_vm_timeout_within_a_long_batch():
+    async def exercise():
+        sandbox = FakeE2BSandbox()
+        now = 0
+        expires_at = 90
+        renewals = []
+
+        async def renew(seconds, **_kwargs):
+            nonlocal expires_at
+            expires_at = now + seconds
+            renewals.append((now, seconds))
+
+        async def complete():
+            nonlocal now
+            assert expires_at - now >= 60
+            now += 60
+            return SimpleNamespace(stdout="ok", stderr="", exit_code=0)
+
+        sandbox.set_timeout.side_effect = renew
+        sandbox.handle.wait.side_effect = complete
+        backend = E2BSandboxBackend(sandbox, command_timeout_seconds=60)
+        try:
+            async with backend.activity_batch():
+                assert (await backend.run("first")).exit_code == 0
+                assert (await backend.run("second")).exit_code == 0
+            assert now == 120
+            assert renewals == [(0, 90), (60, 90)]
+        finally:
+            await backend.close()
+
+    asyncio.run(exercise())
+
+
+def test_failed_timeout_refresh_does_not_execute_the_command():
+    async def exercise():
+        sandbox = FakeE2BSandbox()
+        sandbox.set_timeout.side_effect = InvalidArgumentException("rejected timeout")
+        backend = make_backend(sandbox)
+        try:
+            with pytest.raises(SandboxError, match="refresh the sandbox active timeout"):
+                await backend.run("must-not-run")
+            sandbox.commands.run.assert_not_awaited()
         finally:
             await backend.close()
 

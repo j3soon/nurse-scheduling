@@ -143,7 +143,7 @@ class SandboxAttachment:
 
 @dataclass(frozen=True)
 class WorkspaceLimits:
-    """Trusted orchestration and AI-context limits for one sandbox turn."""
+    """Trusted orchestration and AI-context limits for one sandbox run."""
 
     max_schedule_bytes: int
     turn_timeout_seconds: float
@@ -188,7 +188,7 @@ class WorkspaceMetrics:
 
 
 @asynccontextmanager
-async def _measured_sandbox_turn(
+async def _measured_sandbox_run(
     factory: SandboxFactory,
     cleanup_timeout_seconds: float,
     metrics: WorkspaceMetrics,
@@ -201,7 +201,7 @@ async def _measured_sandbox_turn(
 ) -> AsyncIterator[SandboxBackend]:
     """Create, hydrate, and measure a sandbox only when a tool needs it."""
     stack = AsyncExitStack()
-    sandbox = _LazySandboxTurn(
+    sandbox = _LazySandboxRun(
         factory,
         cleanup_timeout_seconds,
         metrics,
@@ -223,7 +223,7 @@ async def _measured_sandbox_turn(
         sandbox.finish_metrics()
 
 
-class _LazySandboxTurn:
+class _LazySandboxRun:
     """Sandbox protocol adapter that defers allocation until tool execution."""
 
     def __init__(

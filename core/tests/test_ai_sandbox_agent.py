@@ -71,7 +71,7 @@ from nurse_scheduling.ai.workspace import (
     SandboxTurnTimeoutError,
     WorkspaceLimits,
     WorkspaceMetrics,
-    _measured_sandbox_turn,
+    _measured_sandbox_run,
     _ScheduleCandidateTracker,
     attachment_path,
     hydrate_sandbox,
@@ -481,7 +481,7 @@ def test_parallel_reads_retry_failed_hydration_before_using_the_sandbox(failure_
     factory = FakeSandboxFactory(Backend)
 
     async def read() -> list:
-        async with _measured_sandbox_turn(
+        async with _measured_sandbox_run(
             factory, 1, WorkspaceMetrics(), schedule_yaml(), "", "", (), None, None
         ) as sandbox:
             async with sandbox.activity_batch():
@@ -926,6 +926,27 @@ def test_whole_turn_timeout_before_a_tool_call_does_not_start_a_sandbox():
         _collect(WaitingProvider(), factory, turn_timeout_seconds=0.01)
 
     assert factory.created == []
+
+
+def test_turn_deadline_closes_the_workspace_while_waiting_for_the_next_response():
+    class WaitingAfterRead:
+        requests = 0
+
+        async def stream_events(self, _messages, tools=None):
+            self.requests += 1
+            if self.requests == 1:
+                yield ToolCallRequest((ToolCall("read", READ_TOOL, '{"path":"/workspace/schedule.yaml"}'),))
+            else:
+                await asyncio.Event().wait()
+                yield TextDelta("unreachable")
+
+    provider = WaitingAfterRead()
+    factory = FakeSandboxFactory()
+    with pytest.raises(SandboxTurnTimeoutError):
+        _collect(provider, factory, turn_timeout_seconds=0.2)
+    assert provider.requests == 2
+    assert len(factory.created) == 1
+    assert factory.created[0].closed
 
 
 def test_terminal_command_timeout_is_reported_before_any_further_sandbox_operation():

@@ -476,6 +476,22 @@ def test_tool_calls_continue_until_the_model_finishes():
     assert events[-1] == AgentText("Done.")
 
 
+def test_default_tool_budgets_allow_more_than_two_hundred_rounds_and_four_hundred_calls():
+    from nurse_scheduling.ai.config import AiSettings
+
+    settings = AiSettings(
+        provider_base_url="https://provider.example/v1", provider_api_key="test", provider_model="test"
+    )
+    provider = FakeProvider(*[_calls(2) for _ in range(225)], _text("Done."))
+    events = _run(
+        provider, max_tool_rounds=settings.agent_max_tool_rounds, max_tool_calls=settings.agent_max_tool_calls
+    )
+    uses = [event for event in events if isinstance(event, AgentToolUse)]
+    assert len(uses) == 450
+    assert all(event.ok for event in uses)
+    assert events[-1] == AgentText("Done.")
+
+
 def test_tool_round_budget_returns_one_final_answer_without_executing_more_calls():
     provider = FakeProvider(_calls(), _calls(), _text("I could not finish."))
 

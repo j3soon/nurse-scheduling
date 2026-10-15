@@ -152,9 +152,9 @@ class AiSettings:
     e2b_api_key: str = ""
     e2b_template: str = "nurse-scheduling-ai-sandbox"
     sandbox_command_timeout_seconds: float = 60.0
-    sandbox_turn_timeout_seconds: float = 3600.0
-    agent_max_tool_rounds: int = 200
-    agent_max_tool_calls: int = 400
+    sandbox_turn_timeout_seconds: float = 21600.0
+    agent_max_tool_rounds: int = 2000
+    agent_max_tool_calls: int = 6000
     sandbox_cleanup_timeout_seconds: float = 10.0
     sandbox_max_attempts: int = 3
     sandbox_retry_backoff_seconds: float = 0.5
@@ -227,9 +227,9 @@ class AiSettings:
             e2b_api_key=e2b_api_key,
             e2b_template=e2b_template,
             sandbox_command_timeout_seconds=_read_positive_float("AI_SANDBOX_COMMAND_TIMEOUT_SECONDS", 60.0),
-            sandbox_turn_timeout_seconds=_read_positive_float("AI_SANDBOX_TURN_TIMEOUT_SECONDS", 3600.0),
-            agent_max_tool_rounds=_read_positive_int("AI_AGENT_MAX_TOOL_ROUNDS", 200),
-            agent_max_tool_calls=_read_positive_int("AI_AGENT_MAX_TOOL_CALLS", 400),
+            sandbox_turn_timeout_seconds=_read_positive_float("AI_SANDBOX_TURN_TIMEOUT_SECONDS", 21600.0),
+            agent_max_tool_rounds=_read_positive_int("AI_AGENT_MAX_TOOL_ROUNDS", 2000),
+            agent_max_tool_calls=_read_positive_int("AI_AGENT_MAX_TOOL_CALLS", 6000),
             sandbox_cleanup_timeout_seconds=_read_positive_float("AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS", 10.0),
             sandbox_max_attempts=_read_positive_int("AI_SANDBOX_MAX_ATTEMPTS", 3),
             sandbox_retry_backoff_seconds=_read_non_negative_float("AI_SANDBOX_RETRY_BACKOFF_SECONDS", 0.5),

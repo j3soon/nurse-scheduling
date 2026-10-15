@@ -88,11 +88,11 @@ class E2BSandboxCleanupManager:
         """Return the number of deletions awaiting confirmation."""
         return len(self._pending)
 
-    def metadata_for_turn(self, turn_timeout_seconds: float) -> dict[str, str]:
+    def metadata_for_run(self, run_timeout_seconds: float) -> dict[str, str]:
         """Tag a sandbox so a later process can enforce its hard deadline."""
         return {
             MANAGED_METADATA_KEY: MANAGED_METADATA_VALUE,
-            HARD_DEADLINE_METADATA_KEY: str(self._wall_clock() + turn_timeout_seconds),
+            HARD_DEADLINE_METADATA_KEY: str(self._wall_clock() + run_timeout_seconds),
         }
 
     async def start(self) -> None:

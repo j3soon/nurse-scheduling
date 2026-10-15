@@ -53,7 +53,7 @@ def test_metadata_records_ownership_and_the_turn_hard_deadline():
         wall_clock=lambda: 100.25,
     )
 
-    assert manager.metadata_for_turn(900) == {
+    assert manager.metadata_for_run(900) == {
         MANAGED_METADATA_KEY: MANAGED_METADATA_VALUE,
         HARD_DEADLINE_METADATA_KEY: "1000.25",
     }
