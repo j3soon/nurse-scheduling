@@ -34,7 +34,7 @@ interface InlineEditProps {
   displayValue?: string; // For cases where display differs from edit value
   emptyText?: string; // Text to show when value is empty
   emptyClassName?: string;
-  tapToEdit?: boolean; // Start editing on a single touch tap
+  tapToEdit?: boolean; // Start editing on a single touch or pen tap
 }
 
 export function InlineEdit({
@@ -98,7 +98,7 @@ export function InlineEdit({
     <div
       onDoubleClick={onDoubleClick}
       onPointerUp={event => {
-        if (onDoubleClick && tapToEdit && event.pointerType === 'touch') {
+        if (onDoubleClick && tapToEdit && (event.pointerType === 'touch' || event.pointerType === 'pen')) {
           onDoubleClick();
         }
       }}
