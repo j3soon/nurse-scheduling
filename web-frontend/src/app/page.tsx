@@ -128,10 +128,11 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-[calc(100vh-4rem)] flex flex-col items-center justify-center px-4 sm:px-6 lg:px-8">
+    // Phones align the content to the top because the banner and tabs are taller than 4rem there.
+    <div className="min-h-[calc(100vh-4rem)] flex flex-col items-center justify-start px-4 pt-8 sm:justify-center sm:px-6 sm:pt-0 lg:px-8">
       <div className="w-full max-w-3xl text-center">
         <div className="mb-8 flex items-center justify-center gap-3">
-          <h1 className="text-4xl font-bold text-gray-800">Nurse Scheduling System</h1>
+          <h1 className="text-2xl font-bold text-gray-800 sm:text-4xl">Nurse Scheduling System</h1>
           <PageDocumentationLink href={DOCUMENTATION_URLS.home} label="Home" />
         </div>
         <p className="text-lg text-gray-600 mb-8">
@@ -145,10 +146,10 @@ export default function Home() {
           </div>
         )}
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
-          <div ref={newScheduleDropdownRef} className="relative inline-flex">
+          <div ref={newScheduleDropdownRef} className="relative flex sm:inline-flex">
             <button
               onClick={() => handleStartNew('empty')}
-              className="rounded-l-lg bg-blue-600 px-6 py-3 text-white transition-colors hover:bg-blue-700"
+              className="flex-1 rounded-l-lg bg-blue-600 px-6 py-3 text-white transition-colors hover:bg-blue-700"
             >
               New Schedule
             </button>
@@ -192,7 +193,8 @@ export default function Home() {
       </div>
 
       {/* Build Selector Dropdown */}
-      <div ref={dropdownRef} className="fixed bottom-20 right-8 z-20">
+      {/* Phones show the build selector below the buttons instead of over the page. */}
+      <div ref={dropdownRef} className="relative z-10 mt-8 sm:fixed sm:bottom-20 sm:right-8 sm:z-20 sm:mt-0">
         <button
           onClick={() => setIsDropdownOpen(!isDropdownOpen)}
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white border border-gray-200 rounded-full shadow-sm hover:shadow"
@@ -205,7 +207,7 @@ export default function Home() {
         </button>
 
         {isDropdownOpen && (
-          <div className="absolute bottom-full mb-2 right-0 w-64 max-h-64 overflow-y-auto bg-white rounded-lg shadow-lg border border-gray-200">
+          <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 sm:left-auto sm:right-0 sm:translate-x-0 w-64 max-h-64 overflow-y-auto bg-white rounded-lg shadow-lg border border-gray-200">
             {buildUrls.map((build) => (
               <button
                 key={build.label}

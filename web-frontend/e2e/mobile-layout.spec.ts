@@ -145,6 +145,22 @@ test('reorders a succession pattern without dragging', async ({ page }) => {
   expect(saved.preferences.find(preference => preference.type === 'shift type successions')?.pattern).toEqual(['D', 'N']);
 });
 
+test('fits the home page title and actions to a phone', async ({ page }) => {
+  await page.goto('/');
+  const title = page.getByRole('heading', { name: 'Nurse Scheduling System', level: 1 });
+  // One line of text, starting near the top instead of the vertical center.
+  const titleBox = (await title.boundingBox())!;
+  expect(titleBox.height).toBeLessThan(40);
+  expect(titleBox.y).toBeLessThan(250);
+  const newSchedule = (await page.getByRole('button', { name: 'New Schedule', exact: true }).boundingBox())!;
+  const menu = (await page.getByRole('button', { name: 'Choose new schedule type' }).boundingBox())!;
+  const continueBox = (await page.getByRole('button', { name: 'Continue', exact: true }).boundingBox())!;
+  expect(Math.abs(newSchedule.width + menu.width - continueBox.width)).toBeLessThanOrEqual(2);
+  // The build selector follows the actions instead of floating over them.
+  const build = (await page.getByRole('button', { name: /^Build:/ }).boundingBox())!;
+  expect(build.y).toBeGreaterThan(continueBox.y + continueBox.height);
+});
+
 test('keeps backend server names readable in the phone backend table', async ({ page }) => {
   await page.goto('/optimize-and-export');
   const header = page.getByRole('columnheader', { name: 'Server', exact: true });
