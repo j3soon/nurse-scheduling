@@ -56,6 +56,10 @@ widths. Use touch device emulation for tap and reorder checks. Resizing a deskto
 viewport alone does not exercise coarse-pointer controls or phone Enter behavior.
 Check the visual viewport separately for fixed composers. Browser emulation does
 not replace an iOS or Android keyboard check on a real device.
+Text width depends on the system font. Chromium on the Ubuntu CI runner uses
+DejaVu Sans, which is wider than phone, macOS, and Windows fonts. Size text that
+must stay on one line so it fits in DejaVu Sans. Before you trust a local layout
+result, check that `fc-match system-ui` reports DejaVu Sans.
 Playwright `fullPage` screenshots under mobile emulation lose coarse-pointer
 styles, so touch-only controls disappear from the image. For a full-height phone
 screenshot, set the viewport height to the page height and take a normal capture.

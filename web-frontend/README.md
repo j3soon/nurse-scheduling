@@ -37,6 +37,10 @@ bun run test:e2e
 bun run test:e2e:ui
 ```
 
+On Linux, install `fonts-dejavu-core` if `fc-match system-ui` does not report DejaVu Sans.
+The Ubuntu CI runner renders page text with DejaVu Sans, which is wider than most fallback
+fonts. Without it, layout tests can pass locally and fail in CI.
+
 When using the repository `docker/Dockerfile.dev`, Chromium is preinstalled in the image at
 build time using the frontend's locked Playwright version. If you rebuild the
 image after Playwright version changes, `bun run test:e2e` and
