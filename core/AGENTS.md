@@ -428,6 +428,15 @@ skipped does not validate persistence.
   unescalated rather than drop it or change the response. Keep the salt private.
   The deployment ID is public and cannot serve as a salt by itself.
 
+## Server Concurrency
+- Synchronous routes and `run_in_threadpool` calls share one bounded thread
+  pool per worker. Write a long-lived response, such as an SSE stream, as an
+  async generator. Let it wait on the event loop and offload only short store
+  reads. A synchronous generator holds a pool thread for its whole wait, so a
+  few idle clients can stall every synchronous route.
+  `test_idle_event_streams_do_not_hold_worker_threads` guards the job event
+  stream.
+
 ## Input Limits
 - Bound submitted scheduling data by its alias expansion and nesting depth as
   well as its byte size. `loader.measure_yaml_expansion` measures both from the
