@@ -379,13 +379,13 @@ with four case jobs and did not submit optimizer jobs. Some runs still used
 handwritten YAML, and one repaired generated-script errors. No cost saving or
 universal use of the requested coding method is claimed.
 
-Successful optimizer startup acknowledgements tell the assistant to stop tool
-calls in that turn and return a running update. With the same full prompt,
-`optimizer-authorized-policy-change` improved from 4/5 to 5/5 against the previous
-acknowledgement. The start-only and later explicit-status controls passed 3/3 in
-both versions. These checks used real provider requests and E2B edits with four
-case jobs. The optimizer returned simulated running responses. The checks cover
-startup behavior and submitted schedule data.
+A successful optimizer start ends the assistant turn. The server skips later
+calls in the same batch and sends a fixed running update. An earlier startup
+acknowledgement told the assistant to stop tool calls and return that update.
+With the same full prompt, `optimizer-authorized-policy-change` improved from 4/5
+to 5/5 against the acknowledgement before it. The forced end of turn made that
+instruction redundant, so the acknowledgement now reports only the job and
+wake-up behavior.
 
 The `proactive-policy-intake` prompt asks about missing rest and fairness before
 new-roster construction. `new-schedule-policy-intake` improved from 0/3 to 3/3
