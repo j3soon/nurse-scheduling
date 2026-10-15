@@ -166,6 +166,12 @@ const DISABLED_FILE_CAPABILITY: AiCapabilities['file_attachments'] = {
   max_bytes_per_file: 1,
 };
 
+// Phone keyboards have no Shift+Enter, so Enter adds a new line there. A tablet with a
+// trackpad or mouse also reports a fine pointer and keeps Enter to send.
+function isTouchOnlyPointer(): boolean {
+  return Boolean(window.matchMedia?.('(pointer: coarse)').matches && !window.matchMedia('(any-pointer: fine)').matches);
+}
+
 function fileExtension(filename: string): string {
   const lastDot = filename.lastIndexOf('.');
   return lastDot < 0 ? '' : filename.slice(lastDot).toLowerCase();
@@ -1318,7 +1324,7 @@ export default function ExperimentalAiPage() {
             onChange={event => setDraft(event.target.value)}
             onKeyDown={event => {
               if (event.key === 'Enter' && !event.shiftKey && !isImeCompositionKeyEvent(event)
-                && !window.matchMedia?.('(pointer: coarse)').matches) {
+                && !isTouchOnlyPointer()) {
                 event.preventDefault();
                 event.currentTarget.form?.requestSubmit();
               }
