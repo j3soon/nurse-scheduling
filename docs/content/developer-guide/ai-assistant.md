@@ -310,6 +310,14 @@ operations and paused time.
 Each optimizer follow-up is a separate run with its own limits. Stop still cancels
 an active run.
 
+Each run holds one `AI_MAX_CONCURRENT_REQUESTS` slot, four by default, from
+its start until it ends. A run does not hold a slot while its optimizer job
+solves. Other runs wait for a free slot, so four long runs can delay every other
+session for up to the run deadline. Autonomous optimization can also chain
+follow-up runs without a user message until the session reaches
+`AI_OPTIMIZER_MAX_RUNS_PER_SESSION`. Raise the concurrency limit when a
+deployment expects long runs, or lower the deadline and tool limits.
+
 The VM active timeout is independent of the agent run deadline. It is one
 hour, which is the E2B Hobby tier maximum. Timeout pauses the VM with memory
 preserved. Each auto-resume restarts the one-hour countdown, and the

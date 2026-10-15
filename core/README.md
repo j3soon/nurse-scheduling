@@ -540,7 +540,7 @@ cleaned while the AI service is offline.
 | `AI_MAX_HISTORY_CHARS` | `200000` | Prompt budget for retained history. The newest messages that fit are sent, so a long session cannot outgrow the model context window. |
 | `AI_MAX_MESSAGE_CHARS` | `8000` | Maximum question length. |
 | `AI_MAX_SCHEDULE_BYTES` | `1000000` | Maximum UTF-8 YAML snapshot size. |
-| `AI_MAX_CONCURRENT_REQUESTS` | `4` | Maximum simultaneous provider streams. |
+| `AI_MAX_CONCURRENT_REQUESTS` | `4` | Maximum simultaneous agent runs. Each run holds a slot until it ends, which can take up to `AI_SANDBOX_TURN_TIMEOUT_SECONDS`, and other runs wait. |
 | `AI_MAX_ATTACHMENT_FILES` | `32` | Maximum retained files per session. |
 | `AI_MAX_ATTACHMENT_BYTES` | `25000000` | Maximum source bytes per file. The browser uploads one file per request. Keep this plus 64 KiB multipart overhead below NGINX's 64 MiB `/ai/` limit. |
 | `AI_MAX_ATTACHMENT_TOTAL_BYTES` | `200000000` | Maximum retained source bytes per session. These bytes also count toward `AI_MAX_SESSION_BYTES`. Remove unused uploads to free capacity. |
