@@ -482,6 +482,17 @@ def test_live_event_stream_emits_keepalive_after_catching_up(store):
     assert next(resumed) is None
 
 
+def test_event_stream_delivers_terminal_events_stored_while_a_batch_is_consumed(store):
+    controller = _controller(store)
+    created = _create(controller)
+    events = store.stream_events(created.id, after_id=None, keepalive_seconds=0.01)
+    assert next(events).data["state"] == "queued"
+
+    controller.cancel_job(created.id)
+
+    assert [event.data["state"] for event in events if event is not None] == ["cancelled"]
+
+
 def test_store_reads_events_after_a_cursor_without_waiting(store):
     controller = _controller(store)
     created = _create(controller)

@@ -720,7 +720,9 @@ class RedisJobStore:
                     event = _decode_event(raw_id, fields)
                     last_id = event.id
                     yield event
-            if terminal or self.get(job_id).state.terminal:
+            # Stop only after a read that began after the job became terminal. A job that
+            # turned terminal during this batch may have appended its final events since.
+            if terminal:
                 return
 
     def read_events(self, job_id: str, after_id: str | None) -> tuple[list[JobEvent], bool]:
