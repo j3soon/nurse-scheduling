@@ -131,8 +131,10 @@ export default function Home() {
     // Phones align the content to the top because the banner and tabs are taller than 4rem there.
     <div className="min-h-[calc(100vh-4rem)] flex flex-col items-center justify-start px-4 pt-8 sm:justify-center sm:px-6 sm:pt-0 lg:px-8">
       <div className="w-full max-w-3xl text-center">
-        <div className="mb-8 flex items-center justify-center gap-3">
-          <h1 className="text-2xl font-bold text-gray-800 sm:text-4xl">Nurse Scheduling System</h1>
+        {/* Phones scale the title with the screen width. It stays on one line from 340px wide, */}
+        {/* even with wide system fonts such as DejaVu Sans on Linux. */}
+        <div className="mb-8 flex items-center justify-center gap-2 sm:gap-3">
+          <h1 className="text-[length:min(1.5rem,5.3vw)] font-bold text-gray-800 sm:text-4xl">Nurse Scheduling System</h1>
           <PageDocumentationLink href={DOCUMENTATION_URLS.home} label="Home" />
         </div>
         <p className="text-lg text-gray-600 mb-8">

@@ -150,7 +150,8 @@ test('fits the home page title and actions to a phone', async ({ page }) => {
   const title = page.getByRole('heading', { name: 'Nurse Scheduling System', level: 1 });
   // One line of text, starting near the top instead of the vertical center.
   const titleBox = (await title.boundingBox())!;
-  expect(titleBox.height).toBeLessThan(40);
+  const lineHeight = await title.evaluate(element => parseFloat(getComputedStyle(element).lineHeight));
+  expect(titleBox.height).toBeLessThan(lineHeight * 1.5);
   expect(titleBox.y).toBeLessThan(250);
   const newSchedule = (await page.getByRole('button', { name: 'New Schedule', exact: true }).boundingBox())!;
   const menu = (await page.getByRole('button', { name: 'Choose new schedule type' }).boundingBox())!;
