@@ -199,6 +199,7 @@ async def agent_loop(
                         break
                     if end_turn_message is not None:
                         for skipped in calls[index + 1 :]:
+                            yield AgentToolStart(skipped.name, skipped.arguments, skipped.id)
                             yield _record_tool_result(
                                 conversation,
                                 skipped,

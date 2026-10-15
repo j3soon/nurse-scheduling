@@ -679,7 +679,8 @@ def test_tool_can_finish_with_verified_text_without_losing_queued_steering(steer
     assert AssistantMessage("Running in the background.") in messages
     skipped = [event for event in events if isinstance(event, AgentToolUse) and not event.ok]
     assert len(skipped) == 1 and "not executed" in skipped[0].result
-    assert [event.tool_call_id for event in events if isinstance(event, AgentToolStart)] == ["call_0"]
+    # Like refused calls, a skipped call reports its start before its result.
+    assert [event.tool_call_id for event in events if isinstance(event, AgentToolStart)] == ["call_0", "call_1"]
     if steering:
         assert AgentSteering("follow-up", "What is the current status?") in events
         assert AgentText("Answered the queued question.") in events
