@@ -55,7 +55,7 @@ import {
   sendMessage,
   stopSession,
   updateSessionSchedule,
-  uploadFiles,
+  uploadFile,
 } from './aiClient';
 import type { SessionReset, ToolStartActivity, OptimizationProgressActivity } from './aiClient';
 import type { SessionEvent } from './sessionEvents';
@@ -227,6 +227,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   const conversationStorageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const persistConversationRef = useRef<(() => void) | null>(null);
   const checkedSessionRef = useRef<string | null>(null);
+  const uploadedFilesRef = useRef(uploadedFiles);
   const resetRuntime = useCallback(() => {
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
@@ -250,6 +251,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   }, [lifecycle, sessionEvents, onReset]);
 
   scheduleYamlRef.current = scheduleYaml;
+  uploadedFilesRef.current = uploadedFiles;
   sessionRetentionSecondsRef.current = sessionRetentionSeconds;
 
   useEffect(() => {
@@ -286,7 +288,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
             return request ? { messageId: request.id, question: request.question, questionId: request.questionId,
               assistantId: request.assistantId, activeAssistantId: request.activeAssistantId,
               createdAt: messages.find(message => message.id === request.questionId)?.createdAt ?? Date.now(),
-              uploading: request.uploading } : null;
+              uploading: request.uploading, pendingFiles: request.pendingFiles } : null;
           })(),
         };
         window.sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify(stored));
@@ -597,6 +599,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       assistantId: resume?.assistantId ?? messageId(), active: true,
       // Recovery must not send the question without files whose upload never finished.
       uploading: attachmentsForMessage.length > 0,
+      pendingFiles: attachmentsForMessage.length > 0 ? attachmentsForMessage.map(file => file.name) : undefined,
     };
     currentRequestRef.current = { id: request.id, stopped: false };
     const currentRequest = currentRequestRef.current;
@@ -793,11 +796,17 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       controller.signal.addEventListener('abort', aborted, { once: true });
       try {
         if (attachmentsForMessage.length > 0) {
-          for (const file of attachmentsForMessage) {
+          const knownUploadIds = new Set(uploadedFilesRef.current.map(file => file.id));
+          for (const [index, file] of attachmentsForMessage.entries()) {
             if (currentRequest.stopped) break;
-            const uploaded = await uploadFiles(sessionId, [file], authToken, sessionEndpoint, controller.signal);
+            const uploaded = await uploadFile(sessionId, file, controller.signal, authToken, sessionEndpoint, knownUploadIds);
             if (!lifecycle.owns(operation)) return;
+            uploaded.forEach(upload => knownUploadIds.add(upload.id));
             setUploadedFiles(previous => [...previous, ...uploaded]);
+            const pendingFiles = attachmentsForMessage.slice(index + 1).map(pending => pending.name);
+            request.pendingFiles = pendingFiles;
+            setMessages(previous => previous.map(message => message.request?.id === request.id
+              ? { ...message, request: { ...message.request, pendingFiles } } : message));
           }
           if (!currentRequest.stopped) {
             activeQuestionRequiresAttachments = false;
@@ -858,6 +867,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
           retry: {
             question: activeQuestion,
             requiresAttachments: activeQuestionRequiresAttachments,
+            ...(activeQuestionRequiresAttachments ? { missingFiles: request.pendingFiles } : {}),
           },
         };
       }));
@@ -947,7 +957,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       ...(message.request?.id === pending.id ? { request: { ...message.request, active: false } } : {}),
       ...(message.id === pending.assistantId ? {
         status: 'failed' as const, responseCompletedAt: Date.now(), request: { ...pending, active: false },
-        retry: { question: pending.question, requiresAttachments: true },
+        retry: { question: pending.question, requiresAttachments: true, missingFiles: pending.pendingFiles },
       } : {}),
     })));
   };

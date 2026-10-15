@@ -205,7 +205,11 @@ export function ChatTranscriptView({
                   <p>This response failed before completion.</p>
                   {message.retry.requiresAttachments ? (
                     <>
-                      <p className="mt-1 text-xs">Prepare the question, then reattach its files before sending.</p>
+                      <p className="mt-1 text-xs">
+                        {message.retry.missingFiles?.length
+                          ? `Uploaded files stay in this chat. Prepare the question, then reattach ${message.retry.missingFiles.join(', ')} before sending.`
+                          : 'Prepare the question, then reattach its files before sending.'}
+                      </p>
                       <button
                         type="button"
                         onClick={() => prepareAttachmentRetry(message.retry?.question ?? '')}

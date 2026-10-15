@@ -26,7 +26,12 @@ import { messageId } from './assistantEvents';
 export interface ChatMessage extends ChatExportMessage {
   id: string;
   requestId?: string;
-  request?: { id: string; question: string; questionId: string; assistantId: string; activeAssistantId?: string; active: boolean; uploading?: boolean };
+  request?: {
+    id: string; question: string; questionId: string; assistantId: string; activeAssistantId?: string; active: boolean;
+    uploading?: boolean;
+    // Names of attached files that the server has not confirmed yet, in upload order.
+    pendingFiles?: string[];
+  };
   downloadId?: string;
   // Absolute history position of an app event, so a retried turn does not show it twice.
   historyIndex?: number;
@@ -34,6 +39,8 @@ export interface ChatMessage extends ChatExportMessage {
   retry?: {
     question: string;
     requiresAttachments: boolean;
+    // Confirmed uploads stay in the chat, so a retry needs only these files.
+    missingFiles?: string[];
   };
   optimizerJob?: Pick<OptimizationActivity, 'jobId' | 'downloadable'>;
 }

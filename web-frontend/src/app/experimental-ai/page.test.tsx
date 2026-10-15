@@ -30,6 +30,7 @@ const mockRemoveUpload = vi.hoisted(() => vi.fn());
 const mockDownloadGeneratedZip = vi.hoisted(() => vi.fn());
 const mockRemoveGeneratedZip = vi.hoisted(() => vi.fn());
 const mockUploadFiles = vi.hoisted(() => vi.fn());
+const mockUploadFile = vi.hoisted(() => vi.fn());
 const mockDownloadOptimization = vi.hoisted(() => vi.fn());
 const mockCancelOptimization = vi.hoisted(() => vi.fn());
 const mockGetBackendVersion = vi.hoisted(() => vi.fn());
@@ -89,6 +90,7 @@ vi.mock('./aiClient', async importOriginal => {
   approveProposal: mockApproveProposal,
   rejectProposal: mockRejectProposal,
   updateSessionSchedule: mockUpdateSessionSchedule,
+  uploadFile: mockUploadFile,
   uploadFiles: mockUploadFiles,
 });
 });
@@ -157,6 +159,9 @@ describe('ExperimentalAiPage', () => {
     mockUploadFiles.mockReset().mockImplementation(async (_sessionId: string, files: File[]) => files.map(file => ({
       id: `upload-${++uploadIndex}`, filename: file.name, media_type: file.type || 'application/octet-stream', bytes: file.size,
     })));
+    // uploadFile retries inside the client, so page tests see one upload request per file.
+    mockUploadFile.mockReset().mockImplementation((sessionId: string, file: File, signal: AbortSignal, authToken: string | null,
+      endpoint: string) => mockUploadFiles(sessionId, [file], authToken, endpoint, signal));
     mockDownloadOptimization.mockReset().mockResolvedValue(new Blob(['workbook']));
     mockGetCapabilities.mockReset().mockResolvedValue(defaultCapabilities);
     mockGetBackendVersion.mockReset().mockResolvedValue('v0.4.3');
@@ -682,7 +687,7 @@ describe('ExperimentalAiPage', () => {
   it('asks for files again instead of recovering a request whose upload never finished', async () => {
     const pendingRequest = {
       messageId: 'original-request', question: 'Read these files', questionId: 'question', assistantId: 'answer',
-      createdAt: Date.now() - 1000, uploading: true,
+      createdAt: Date.now() - 1000, uploading: true, pendingFiles: ['second.xlsx'],
     };
     window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
       sessionId: 'restored-session', endpoint: '/ai', expiresAt: Date.now() + 60_000, retentionSeconds: 2592000,
@@ -695,6 +700,8 @@ describe('ExperimentalAiPage', () => {
     render(<ExperimentalAiPage />);
 
     expect(await screen.findByRole('button', { name: 'Prepare retry' })).toBeInTheDocument();
+    expect(screen.getByText('Uploaded files stay in this chat. Prepare the question, then reattach second.xlsx before sending.'))
+      .toBeInTheDocument();
     expect(mockSendMessage).not.toHaveBeenCalled();
     await waitFor(() => {
       const stored = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
@@ -2484,19 +2491,27 @@ describe('ExperimentalAiPage', () => {
       enabled: true, retained: true, max_files: 32, max_bytes_per_file: 25,
       max_bytes_per_session: 200,
     } });
+    mockGetUploads.mockResolvedValue([{ id: 'existing', filename: 'existing.txt', media_type: 'text/plain', bytes: 3 }]);
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
-    mockUploadFiles.mockImplementation(async (_sessionId: string, files: File[]) => files.map(file => ({
-      id: file.name, filename: file.name, media_type: 'text/plain', bytes: file.size,
-    })));
+    await user.type(await screen.findByRole('textbox', { name: 'Ask about the current schedule' }), 'Hello');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByRole('button', { name: 'Remove existing.txt' });
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument());
+    // A retry must not treat uploads that the chat already had as copies of this file.
+    const knownUploadIds: string[][] = [];
+    mockUploadFile.mockImplementation(async (_sessionId: string, file: File, _signal: AbortSignal, _authToken: string | null,
+      _endpoint: string, known: ReadonlySet<string>) => {
+      knownUploadIds.push([...known]);
+      return [{ id: file.name, filename: file.name, media_type: 'text/plain', bytes: file.size }];
+    });
     const files = ['one.txt', 'two.txt', 'three.txt'].map(name => new File(['abc'], name));
-    await user.upload(await screen.findByLabelText('Attach files'), files);
+    await user.upload(screen.getByLabelText('Attach files'), files);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Read the files.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
-    await waitFor(() => expect(mockSendMessage).toHaveBeenCalledOnce());
-    expect(mockUploadFiles.mock.calls.map(call => (call[1] as File[]).map(file => file.name))).toEqual([
-      ['one.txt'], ['two.txt'], ['three.txt'],
-    ]);
+    await waitFor(() => expect(mockSendMessage).toHaveBeenCalledTimes(2));
+    expect(mockUploadFile.mock.calls.map(call => (call[1] as File).name)).toEqual(['one.txt', 'two.txt', 'three.txt']);
+    expect(knownUploadIds).toEqual([['existing'], ['existing', 'one.txt'], ['existing', 'one.txt', 'two.txt']]);
   });
 
   it('keeps successful uploads visible when a later upload fails', async () => {
@@ -2514,6 +2529,8 @@ describe('ExperimentalAiPage', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Later batch failed.');
     expect(within(screen.getByLabelText('Session files')).getByText('one.txt')).toBeInTheDocument();
+    expect(screen.getByText('Uploaded files stay in this chat. Prepare the question, then reattach two.txt before sending.'))
+      .toBeInTheDocument();
     expect(mockSendMessage).not.toHaveBeenCalled();
   });
 
@@ -2686,7 +2703,8 @@ describe('ExperimentalAiPage', () => {
     await user.click(await screen.findByRole('button', { name: 'Prepare retry' }));
 
     expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toHaveValue('Check this image.');
-    expect(screen.getByText('Prepare the question, then reattach its files before sending.')).toBeInTheDocument();
+    expect(screen.getByText('Uploaded files stay in this chat. Prepare the question, then reattach ward.png before sending.'))
+      .toBeInTheDocument();
     expect(mockRunEvents).not.toHaveBeenCalled();
   });
 

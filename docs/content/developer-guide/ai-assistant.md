@@ -824,8 +824,13 @@ source files per session. MB uses 1,000,000 bytes.
 and `max_bytes_per_session`.
 The browser checks existing uploads and selected files against these limits.
 It uploads one file per request, sequentially, before submitting the question.
-If a later upload fails, earlier successful uploads remain in Session files.
-The question is not submitted. Remove unused uploads to free session capacity.
+A connection failure or server error is retried up to three times. Upload
+requests are not idempotent, so before each retry the browser lists the chat's
+uploads. A new upload with the file's size counts as the stored file, so a lost
+response does not create a duplicate. If an upload still fails, earlier
+successful uploads remain in Session files. The question is not submitted, and
+the retry asks only for the files that did not upload. Remove unused uploads to
+free session capacity.
 The backend bounds each streamed request body to the per-file limit plus
 64 KiB for multipart overhead. NGINX permits 64 MiB per `/ai/` request.
 

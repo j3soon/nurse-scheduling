@@ -42,7 +42,12 @@ export interface StoredChatConversation {
   trimmedHistoryCount?: number;
   pendingRequest?: {
     messageId: string; question: string; questionId: string; assistantId: string; activeAssistantId?: string; createdAt: number; uploading?: boolean;
+    pendingFiles?: string[];
   } | null;
+}
+
+function isOptionalStringArray(value: unknown): boolean {
+  return value === undefined || (Array.isArray(value) && value.every(item => typeof item === 'string'));
 }
 
 function isActivityEntry(value: unknown): value is ActivityEntry {
@@ -82,6 +87,7 @@ function isChatMessage(value: unknown): value is ChatMessage {
       && message.retry !== null
       && typeof message.retry.question === 'string'
       && typeof message.retry.requiresAttachments === 'boolean'
+      && isOptionalStringArray(message.retry.missingFiles)
     ))
     && (message.requestId === undefined || typeof message.requestId === 'string')
     && (message.request === undefined || (typeof message.request === 'object' && message.request !== null
@@ -89,7 +95,8 @@ function isChatMessage(value: unknown): value is ChatMessage {
       && typeof message.request.questionId === 'string' && typeof message.request.assistantId === 'string'
       && (message.request.activeAssistantId === undefined || typeof message.request.activeAssistantId === 'string')
       && typeof message.request.active === 'boolean'
-      && (message.request.uploading === undefined || typeof message.request.uploading === 'boolean')))
+      && (message.request.uploading === undefined || typeof message.request.uploading === 'boolean')
+      && isOptionalStringArray(message.request.pendingFiles)))
     && (message.downloadId === undefined || typeof message.downloadId === 'string')
     && (message.optimizerJob === undefined || (message.optimizerJob !== null
       && typeof message.optimizerJob.jobId === 'string'
@@ -145,10 +152,12 @@ export function readStoredConversation(): StoredChatConversation | null {
       if (typeof pending.messageId !== 'string' || !pending.messageId || typeof pending.question !== 'string'
         || typeof pending.questionId !== 'string' || typeof pending.assistantId !== 'string'
         || (pending.activeAssistantId !== undefined && typeof pending.activeAssistantId !== 'string')
-        || !Number.isFinite(pending.createdAt) || (pending.uploading !== undefined && typeof pending.uploading !== 'boolean')) return null;
+        || !Number.isFinite(pending.createdAt) || (pending.uploading !== undefined && typeof pending.uploading !== 'boolean')
+        || !isOptionalStringArray(pending.pendingFiles)) return null;
       value.messages = value.messages.map(message => message.id === pending.questionId
         ? { ...message, request: { id: pending.messageId, question: pending.question, questionId: pending.questionId,
-          assistantId: pending.assistantId, activeAssistantId: pending.activeAssistantId, active: true, uploading: pending.uploading } } : message);
+          assistantId: pending.assistantId, activeAssistantId: pending.activeAssistantId, active: true, uploading: pending.uploading,
+          pendingFiles: pending.pendingFiles } } : message);
     }
     return {
       ...value,

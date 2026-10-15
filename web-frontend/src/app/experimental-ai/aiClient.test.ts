@@ -44,6 +44,7 @@ import {
   streamSessionEvents,
   stopSession,
   updateSessionSchedule,
+  uploadFile,
   uploadFiles,
 } from './aiClient';
 
@@ -548,6 +549,56 @@ describe('AI client', () => {
       .rejects.toThrow('File attachment is too large.');
     await expect(sendMessage('session-id', 'Question', new AbortController().signal, null))
       .rejects.toThrow('Too many retained files.');
+  });
+
+  it('retries an upload and reuses a copy that a lost response stored', async () => {
+    vi.useFakeTimers();
+    try {
+      const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+      const fetchMock = vi.fn()
+        .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+        .mockResolvedValueOnce(json([]))
+        .mockResolvedValueOnce(json({ detail: 'The AI service is shutting down.' }, 503))
+        .mockResolvedValueOnce(json([
+          { id: 'earlier', filename: 'ward.png', media_type: 'image/png', bytes: 3 },
+          { id: 'stored', filename: 'ward (1).png', media_type: 'image/png', bytes: 3 },
+        ]));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const uploaded = uploadFile(
+        'session-id', new File(['png'], 'ward.png'), new AbortController().signal, null, undefined, new Set(['earlier']),
+      );
+      await vi.runAllTimersAsync();
+
+      await expect(uploaded).resolves.toEqual([{ id: 'stored', filename: 'ward (1).png', media_type: 'image/png', bytes: 3 }]);
+      expect(fetchMock.mock.calls.map(([, request]) => (request as RequestInit).method ?? 'GET'))
+        .toEqual(['POST', 'GET', 'POST', 'GET']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops retrying an upload after a client error or the last attempt', async () => {
+    vi.useFakeTimers();
+    try {
+      const refused = vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: 'Too many retained files.' }), { status: 413 }));
+      vi.stubGlobal('fetch', refused);
+      await expect(uploadFile('session-id', new File(['data'], 'one.txt'), new AbortController().signal, null))
+        .rejects.toThrow('Too many retained files.');
+      expect(refused).toHaveBeenCalledTimes(1);
+
+      const offline = vi.fn((_url: string, request?: RequestInit) => request?.method === 'POST'
+        ? Promise.reject(new TypeError('Failed to fetch'))
+        : Promise.resolve(new Response('[]')));
+      vi.stubGlobal('fetch', offline);
+      const uploaded = uploadFile('session-id', new File(['data'], 'one.txt'), new AbortController().signal, null);
+      const rejected = expect(uploaded).rejects.toThrow('Failed to fetch');
+      await vi.runAllTimersAsync();
+      await rejected;
+      expect(offline.mock.calls.filter(([, request]) => request?.method === 'POST')).toHaveLength(4);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('forwards the model input and rejects a malformed one', async () => {

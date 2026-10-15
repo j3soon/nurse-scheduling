@@ -629,7 +629,7 @@ export interface SendMessageOptions {
 }
 
 /**
- * Post a question and return its run ID. Upload its files first with `uploadFiles`, so the
+ * Post a question and return its run ID. Upload its files first with `uploadFile`, so the
  * backend records them as their own event.
  *
  * A lost response can hide an accepted message, so connection failures retry with the same
@@ -858,6 +858,38 @@ export async function uploadFiles(
   });
   if (!response.ok) throw await responseError(response);
   return parseUploadList(await response.json());
+}
+
+const UPLOAD_ATTEMPTS = 4;
+
+/**
+ * Upload one file, and retry connection failures and server errors before the caller asks the
+ * user to retry. Upload requests are not idempotent, so each retry first lists the chat's uploads.
+ * An upload outside `knownUploadIds` with the file's size is a copy that a lost response hid.
+ */
+export async function uploadFile(
+  sessionId: string,
+  file: File,
+  signal: AbortSignal,
+  authToken: string | null,
+  endpoint = getAiBaseUrl(),
+  knownUploadIds: ReadonlySet<string> = new Set(),
+): Promise<UploadedFile[]> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      if (attempt > 1) {
+        const stored = (await getUploads(sessionId, authToken, endpoint, signal))
+          .find(upload => !knownUploadIds.has(upload.id) && upload.bytes === file.size);
+        if (stored) return [stored];
+      }
+      return await uploadFiles(sessionId, [file], authToken, endpoint, signal);
+    } catch (error) {
+      // fetch rejects with a TypeError when the connection fails.
+      const retryable = error instanceof TypeError || (error instanceof AiHttpError && error.status >= 500);
+      if (signal.aborted || !retryable || attempt === UPLOAD_ATTEMPTS) throw error;
+    }
+    await waitForReconnect(1000 * 2 ** (attempt - 1), signal);
+  }
 }
 
 function parseUploadList(files: unknown): UploadedFile[] {
