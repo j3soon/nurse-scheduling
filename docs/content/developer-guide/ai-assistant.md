@@ -571,12 +571,17 @@ The provider boundary uses OpenAI-compatible chat completions. The
 [Cloudflare Tunnel example](https://github.com/j3soon/local-llm-notes/tree/main/examples/basic-secure-api/cloudflare)
 shows one compatible deployment pattern.
 
-A provider request gets three total attempts by default. A timeout before the
-first streamed event waits one second before the second attempt and two seconds
-before the third. Once text, reasoning, token usage, or a tool call has reached
-the application, the request is not replayed because that could duplicate
-visible output or tool work. The complete sandbox-turn deadline still applies
-across provider attempts and may end a turn before every retry is available.
+A provider request gets three total attempts by default. Timeouts wait one
+second before the second attempt and two seconds before the third. If text has
+already reached the application, the next request includes that partial answer
+and asks the model to continue without repeating it. This starts a new completion,
+so continuation quality depends on the model. Reasoning is not sent back.
+Incomplete tool calls are discarded. Tools run only after a complete response,
+so an interrupted request cannot have executed them. Text and reasoning limits
+apply across all attempts. Exhausted attempts report either "The AI provider
+timed out before starting the response." or "The AI provider timed out while
+streaming the response." The complete sandbox-turn deadline still applies across
+provider attempts and may end a turn before every retry is available.
 
 Replay-safe E2B requests also get three total attempts with exponential
 backoff. This covers file reads and replacements, automatic resume, and sandbox

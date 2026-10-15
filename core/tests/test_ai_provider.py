@@ -29,6 +29,8 @@ import httpx
 import pytest
 
 from nurse_scheduling.ai import provider as provider_module
+from nurse_scheduling.ai.agent_loop import agent_loop
+from nurse_scheduling.ai.agent_types import AgentToolOutcome
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.provider import (
     ChatMessage,
@@ -43,6 +45,8 @@ from nurse_scheduling.ai.provider import (
     ToolCall,
     ToolCallRequest,
 )
+
+from .ai_test_helper import bind_agent_tools
 
 
 async def _collect(stream: AsyncIterator) -> list:
@@ -266,27 +270,34 @@ def test_reports_timeout_after_all_attempts(monkeypatch: pytest.MonkeyPatch) -> 
         provider_retry_backoff_seconds=0,
     )
 
-    with pytest.raises(ProviderError, match="The AI provider timed out"):
+    with pytest.raises(ProviderError, match="timed out before starting the response"):
         _events(provider)
 
     assert len(attempts) == 3
 
 
-class _TimeoutAfterText(httpx.AsyncByteStream):
-    """Emit visible output before simulating a stalled response body."""
+class _InterruptedStream(httpx.AsyncByteStream):
+    """Emit SSE fragments before simulating a stalled response body."""
+
+    def __init__(self, *chunks: dict) -> None:
+        self.body = "".join(f"data: {json.dumps(chunk)}\n\n" for chunk in chunks)
+        self.closed = False
 
     async def __aiter__(self) -> AsyncIterator[bytes]:
-        yield b'data: {"choices":[{"delta":{"content":"Partial"}}]}\n\n'
+        yield self.body.encode()
         raise httpx.ReadTimeout("provider stalled")
 
+    async def aclose(self) -> None:
+        self.closed = True
 
-def test_does_not_retry_after_streaming_has_started(monkeypatch: pytest.MonkeyPatch) -> None:
+
+def test_reports_streaming_timeout_after_all_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
     attempts: list[httpx.Request] = []
     events: list[object] = []
 
     def handle(request: httpx.Request) -> httpx.Response:
         attempts.append(request)
-        return httpx.Response(200, stream=_TimeoutAfterText())
+        return httpx.Response(200, stream=_InterruptedStream(_delta_chunk({"content": "Partial"})))
 
     provider = _transport_provider(
         monkeypatch,
@@ -300,11 +311,137 @@ def test_does_not_retry_after_streaming_has_started(monkeypatch: pytest.MonkeyPa
         async for event in provider.stream_events(messages):
             events.append(event)
 
-    with pytest.raises(ProviderError, match="The AI provider timed out"):
+    with pytest.raises(ProviderError, match="timed out while streaming the response"):
         asyncio.run(consume())
 
-    assert events == [TextDelta("Partial")]
-    assert len(attempts) == 1
+    assert events == [TextDelta("Partial")] * 3
+    assert len(attempts) == 3
+
+
+def test_continues_partial_answer_with_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    requests: list[dict] = []
+    delays: list[float] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        if len(requests) < 3:
+            return httpx.Response(
+                200,
+                stream=_InterruptedStream(
+                    _delta_chunk({"content": "First. " if len(requests) == 1 else "Second. "}),
+                    _delta_chunk({"reasoning_content": "Private reasoning"}),
+                ),
+            )
+        return httpx.Response(200, text=_sse_body(_delta_chunk({"content": "Third."})))
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr(provider_module.asyncio, "sleep", record_sleep)
+    provider = _transport_provider(monkeypatch, handle)
+    events = _events(provider, TOOLS)
+    assert "".join(event.text for event in events if isinstance(event, TextDelta)) == "First. Second. Third."
+    assert events[-1] == ResponseEnd(None)
+    assert delays == [1, 2]
+    for request, partial in zip(requests[1:], ["First. ", "First. Second. "], strict=True):
+        assert request["messages"][:-2] == requests[0]["messages"]
+        assert request["messages"][-2] == {"role": "assistant", "content": partial}
+        assert "Continue from the end" in request["messages"][-1]["content"]
+        assert "Private reasoning" not in json.dumps(request)
+        assert request["tools"] == TOOLS
+
+
+def test_cancellation_during_backoff_stops_retries(monkeypatch: pytest.MonkeyPatch) -> None:
+    streams: list[_InterruptedStream] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        stream = _InterruptedStream(_delta_chunk({"content": "Partial"}))
+        streams.append(stream)
+        return httpx.Response(200, stream=stream)
+
+    async def cancel_sleep(delay: float) -> None:
+        assert streams[0].closed
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(provider_module.asyncio, "sleep", cancel_sleep)
+    provider = _transport_provider(monkeypatch, handle)
+    with pytest.raises(asyncio.CancelledError):
+        _events(provider)
+    assert len(streams) == 1
+
+
+@pytest.mark.parametrize(
+    "chunk",
+    [
+        _delta_chunk({"reasoning_content": "Thinking"}),
+        _delta_chunk({}),
+        {"choices": [], "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}},
+    ],
+    ids=["reasoning", "empty", "usage"],
+)
+def test_retries_without_partial_answer(monkeypatch: pytest.MonkeyPatch, chunk: dict) -> None:
+    requests: list[dict] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        if len(requests) == 1:
+            return httpx.Response(200, stream=_InterruptedStream(chunk))
+        return httpx.Response(200, text=_sse_body(_delta_chunk({"content": "Recovered"})))
+
+    provider = _transport_provider(monkeypatch, handle, provider_retry_backoff_seconds=0)
+    assert TextDelta("Recovered") in _events(provider)
+    assert requests[0] == requests[1]
+
+
+@pytest.mark.parametrize(
+    ("field", "limit", "message"),
+    [
+        ("content", "MAX_RESPONSE_TEXT_CHARS", "more text"),
+        ("reasoning_content", "MAX_RESPONSE_REASONING_CHARS", "more reasoning"),
+    ],
+)
+def test_output_limits_apply_across_retries(monkeypatch: pytest.MonkeyPatch, field, limit, message) -> None:
+    monkeypatch.setattr(provider_module, limit, 5)
+    streams: list[_InterruptedStream] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        stream = _InterruptedStream(_delta_chunk({field: "1234"}))
+        streams.append(stream)
+        return httpx.Response(200, stream=stream)
+
+    provider = _transport_provider(monkeypatch, handle, provider_retry_backoff_seconds=0)
+    with pytest.raises(ProviderResponseLimitError, match=message):
+        _events(provider)
+    assert len(streams) == 2
+    assert all(stream.closed for stream in streams)
+
+
+def test_interrupted_tool_call_is_regenerated_and_executed_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    requests: list[dict] = []
+    executed: list[tuple[str, str]] = []
+    partial = {"index": 0, "id": "lost", "function": {"name": "schedule_patch", "arguments": '{"lost":'}}
+    complete = {"index": 0, "id": "retry", "function": {"name": "schedule_patch", "arguments": "{}"}}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        if len(requests) == 1:
+            body = _delta_chunk({"content": "Checking. ", "tool_calls": [partial]})
+            return httpx.Response(200, stream=_InterruptedStream(body))
+        if len(requests) == 2:
+            return httpx.Response(200, text=_sse_body(_delta_chunk({"tool_calls": [complete]})))
+        return httpx.Response(200, text=_sse_body(_delta_chunk({"content": "Done."})))
+
+    async def execute(name: str, arguments: str) -> AgentToolOutcome:
+        executed.append((name, arguments))
+        return AgentToolOutcome("Applied", True)
+
+    provider = _transport_provider(monkeypatch, handle, provider_retry_backoff_seconds=0)
+    tools = bind_agent_tools(TOOLS, execute)
+    asyncio.run(_collect(agent_loop(provider, [{"role": "user", "content": "Edit"}], tools)))
+    assert executed == [("schedule_patch", "{}")]
+    assert len(requests) == 3
+    assert '"lost"' not in json.dumps(requests[1:])
+    assert requests[-1]["messages"][-1] == {"role": "tool", "tool_call_id": "retry", "content": "Applied"}
 
 
 def test_reconstructs_one_tool_call_from_streamed_fragments(monkeypatch: pytest.MonkeyPatch) -> None:

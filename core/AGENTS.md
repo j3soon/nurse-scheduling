@@ -374,9 +374,11 @@ skipped does not validate persistence.
 - When changing `ai/pi`, compare with the exact upstream Pi revision cited in
   the module header. Preserve model-facing wording and edge-case behavior, add
   focused regression tests, and document intentional differences beside the port.
-- Retry a provider timeout only before any stream event reaches the caller.
-  Once text, reasoning, usage, or a tool call is visible, surface the timeout
-  rather than replaying the request and risking duplicate output or tool work.
+- Retry provider timeouts with bounded exponential backoff. After visible text,
+  continue with the partial answer as context instead of replaying the original
+  request. Discard incomplete tool calls and release tools only after confirmed
+  response completion. Keep output limits cumulative across attempts and use
+  distinct errors for timeouts before and during streaming.
 
 ## Server Authentication
 - `API_AUTH_TOKEN` is the optional legacy credential. Authentication is
