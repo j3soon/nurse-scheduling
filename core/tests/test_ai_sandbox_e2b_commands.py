@@ -29,7 +29,7 @@ from pathlib import Path
 
 import pytest
 
-from nurse_scheduling.ai.sandbox.e2b_commands import isolated_command, stop_command_group
+from nurse_scheduling.ai.sandbox.e2b_commands import STOP_GROUP_SOURCE, isolated_command, stop_command_group
 
 pytestmark = pytest.mark.skipif(sys.platform != "linux", reason="E2B command cleanup uses Linux /proc")
 
@@ -46,7 +46,7 @@ def test_isolation_preserves_literal_shell_arguments_and_normal_exit_status():
 def _live(pid):
     try:
         return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] not in {"Z", "X"}
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
         return False
 
 
@@ -79,7 +79,7 @@ def test_cleanup_stops_children_or_rejects_an_escaped_descendant(tmp_path, escap
                 if int(fields[1]) == parent.pid:
                     child_pid = candidate
                     break
-            except (FileNotFoundError, ValueError):
+            except (FileNotFoundError, ProcessLookupError, ValueError):
                 pass
             time.sleep(0.01)
         assert child_pid is not None
@@ -103,6 +103,37 @@ def test_cleanup_stops_children_or_rejects_an_escaped_descendant(tmp_path, escap
         except ProcessLookupError:
             pass
         parent.communicate(timeout=3)
+
+
+def test_cleanup_skips_a_process_that_exits_while_its_status_is_read():
+    # Linux raises ESRCH when a process exits between opening and reading its stat file.
+    # The patch makes that happen for PID 1, which is never in the command group.
+    exited_process = """import pathlib
+read_text = pathlib.Path.read_text
+def read_exited_stat(path, *args, **kwargs):
+    if str(path) == "/proc/1/stat":
+        raise ProcessLookupError(3, "No such process")
+    return read_text(path, *args, **kwargs)
+pathlib.Path.read_text = read_exited_stat
+"""
+    parent = subprocess.Popen(["bash", "-c", isolated_command("sleep 30 & wait")])
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if Path(f"/proc/{parent.pid}/stat").read_text().rsplit(")", 1)[1].split()[2] == str(parent.pid):
+                break
+            time.sleep(0.01)
+        result = subprocess.run(
+            ["python3", "-c", exited_process + STOP_GROUP_SOURCE, str(parent.pid)],
+            capture_output=True,
+            timeout=3,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr.decode()
+        assert parent.wait(timeout=3) == -signal.SIGKILL
+    finally:
+        parent.kill()
+        parent.wait(timeout=3)
 
 
 def test_cleanup_refuses_a_pid_that_is_not_a_dedicated_command_group():
