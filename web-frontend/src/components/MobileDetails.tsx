@@ -42,7 +42,7 @@ export function MobileDetails({ label, children, desktopCollapsible = false, ope
         aria-expanded={expanded}
         aria-controls={contentId}
         onClick={() => setExpanded(value => !value)}
-        className="flex min-h-11 w-full items-center justify-between gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-left text-sm font-medium text-gray-700 sm:hidden"
+        className={`flex min-h-11 w-full items-center justify-between gap-2 border border-gray-200 bg-gray-50 px-3 py-2 text-left text-sm font-medium text-gray-700 sm:hidden ${expanded ? 'rounded-t-lg' : 'rounded-lg'}`}
       >
         {label}
         <FiChevronDown aria-hidden="true" className={`shrink-0 ${expanded ? 'rotate-180' : ''}`} />
@@ -59,7 +59,8 @@ export function MobileDetails({ label, children, desktopCollapsible = false, ope
           <FiChevronDown aria-hidden="true" className={`shrink-0 ${desktopExpanded ? 'rotate-180' : ''}`} />
         </button>
       )}
-      <div id={contentId} className={`${expanded ? 'block' : 'hidden'} ${desktopExpanded ? 'sm:block' : 'sm:hidden'}`}>
+      {/* On phones, the open content shares the toggle's border so it reads as one panel. */}
+      <div id={contentId} className={`${expanded ? 'block' : 'hidden'} ${desktopExpanded ? 'sm:block' : 'sm:hidden'} rounded-b-lg border border-t-0 border-gray-200 px-3 pb-3 pt-px sm:rounded-none sm:border-0 sm:p-0`}>
         {children}
       </div>
     </div>
