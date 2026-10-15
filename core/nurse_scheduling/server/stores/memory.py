@@ -19,7 +19,7 @@
 
 import secrets
 import threading
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from uuid import uuid4
@@ -88,8 +88,6 @@ class MemoryJobStore:
         """Maximum replayable events retained for any one job."""
         self._lock = threading.RLock()
         """Re-entrant lock guarding all record, queue, artifact, and event access."""
-        self._changed = threading.Condition(self._lock)
-        """Condition backed by `_lock` that adds `wait()` and `notify_all()` for job changes."""
         self._client_key_salt = secrets.token_hex(32)
         """Private salt for client keys, which only this process compares."""
 
@@ -117,7 +115,7 @@ class MemoryJobStore:
             StoreWriteConflictError: If the job ID already exists.
             JobCapacityError: If pending, per-client, or retained capacity is exhausted.
         """
-        with self._changed:
+        with self._lock:
             if job.id in self._records:
                 raise StoreWriteConflictError(f"Job already exists: {job.id}")
             pending_count = sum(not record.job.state.terminal for record in self._records.values())
@@ -143,8 +141,6 @@ class MemoryJobStore:
             created = self._with_queue_position(record.job)
             self._append_events(record, self._with_initial_queue_position(events, created.queue_position))
             self._append_queue_position_events_for_queued_jobs(job.created_at, exclude_job_id=job.id)
-            # notify() may wake an unrelated stream; extra notify_all() wake-ups are acceptable because pending jobs are bounded.
-            self._changed.notify_all()
             return created
 
     def get(self, job_id: str) -> Job:
@@ -203,7 +199,7 @@ class MemoryJobStore:
 
         Return the claimed running job, or `None` when the queue is empty.
         """
-        with self._changed:
+        with self._lock:
             worker = self._get_worker_for_live_lease_locked(lease, started_at)
             if worker is None or worker.active_job_id is not None:
                 return None
@@ -242,37 +238,32 @@ class MemoryJobStore:
                 ],
             )
             self._append_queue_position_events_for_queued_jobs(started_at)
-            # notify() may wake an unrelated stream; extra notify_all() wake-ups are acceptable because pending jobs are bounded.
-            self._changed.notify_all()
             return claimed
 
     def register_worker(self, lease: WorkerLease, registered_at: datetime) -> bool:
         """Register an idle worker without replacing a live or unresolved lease."""
-        with self._changed:
+        with self._lock:
             existing = self._workers.get(lease.worker_id)
             if existing is not None and (existing.expires_at > registered_at or existing.active_job_id is not None):
                 return False
             self._workers[lease.worker_id] = _MemoryWorkerLease(token=lease.token, expires_at=lease.expires_at)
-            self._changed.notify_all()
             return True
 
     def renew_worker(self, lease: WorkerLease, renewed_at: datetime, lease_expires_at: datetime) -> bool:
         """Renew an existing lease only before its current expiry."""
-        with self._changed:
+        with self._lock:
             worker = self._get_worker_for_live_lease_locked(lease, renewed_at)
             if worker is None:
                 return False
             worker.expires_at = lease_expires_at
-            self._changed.notify_all()
             return True
 
     def unregister_worker(self, lease: WorkerLease) -> None:
         """Remove matching worker presence and ownership state."""
-        with self._changed:
+        with self._lock:
             worker = self._workers.get(lease.worker_id)
             if worker is not None and worker.token == lease.token:
                 del self._workers[lease.worker_id]
-            self._changed.notify_all()
 
     def live_worker_owns_job(self, worker_id: str, job_id: str, observed_at: datetime) -> bool:
         """Return whether a live worker is associated with the job."""
@@ -317,7 +308,7 @@ class MemoryJobStore:
             JobNotFoundError: If the job does not exist.
             StoreWriteConflictError: If the stored revision no longer matches.
         """
-        with self._changed:
+        with self._lock:
             record = self._record(job.id)
             if record.job.revision != expected_revision:
                 raise StoreWriteConflictError(f"Job revision changed: {job.id}")
@@ -340,49 +331,7 @@ class MemoryJobStore:
             if was_queued and updated_job.state != JobState.QUEUED:
                 occurred_at = events[-1].occurred_at if events else datetime.now(updated_job.created_at.tzinfo)
                 self._append_queue_position_events_for_queued_jobs(occurred_at)
-            # notify() may wake an unrelated stream; extra notify_all() wake-ups are acceptable because pending jobs are bounded.
-            self._changed.notify_all()
             return self._with_queue_position(updated_job)
-
-    def stream_events(
-        self,
-        job_id: str,
-        after_id: str | None,
-        keepalive_seconds: float,
-    ) -> Iterator[JobEvent | None]:
-        """Yield events after the requested ID until the job becomes terminal.
-
-        Iteration blocks up to the keepalive interval when no newer event exists.
-        Yield `None` when the keepalive interval passes without a new event.
-
-        Raises:
-            JobNotFoundError: If the job does not exist or is deleted while streaming.
-        """
-        last_seen = _event_cursor(after_id)
-        while True:
-            with self._changed:
-                record = self._record(job_id)
-                available = [event for event in record.events if int(event.id or 0) > last_seen]
-                if not available and not record.job.state.terminal:
-                    self._changed.wait(timeout=keepalive_seconds)
-                    record = self._record(job_id)
-                    available = [event for event in record.events if int(event.id or 0) > last_seen]
-                    if not available:
-                        keepalive = True
-                    else:
-                        keepalive = False
-                else:
-                    keepalive = False
-                terminal = record.job.state.terminal
-
-            if keepalive:
-                yield None
-                continue
-            for event in available:
-                last_seen = int(event.id or last_seen)
-                yield event
-            if terminal:
-                return
 
     def read_events(self, job_id: str, after_id: str | None) -> tuple[list[JobEvent], bool]:
         """Return stored events after the cursor and whether the job is terminal, without waiting.
@@ -427,12 +376,10 @@ class MemoryJobStore:
 
     def remove_expired_worker_leases(self, observed_at: datetime) -> list[str]:
         """Remove worker leases at or before the supplied time."""
-        with self._changed:
+        with self._lock:
             expired_ids = [worker_id for worker_id, worker in self._workers.items() if worker.expires_at <= observed_at]
             for worker_id in expired_ids:
                 del self._workers[worker_id]
-            if expired_ids:
-                self._changed.notify_all()
             return expired_ids
 
     def check_health(self) -> None:
@@ -445,13 +392,11 @@ class MemoryJobStore:
             JobNotFoundError: If the job does not exist.
             StoreWriteConflictError: If the stored revision no longer matches.
         """
-        with self._changed:
+        with self._lock:
             record = self._record(job_id)
             if record.job.revision != expected_revision:
                 raise StoreWriteConflictError(f"Job revision changed: {job_id}")
             del self._records[job_id]
-            # notify() may wake an unrelated stream; extra notify_all() wake-ups are acceptable because pending jobs are bounded.
-            self._changed.notify_all()
 
     def _record(self, job_id: str) -> _MemoryJobRecord:
         """Return the internal record for a job.

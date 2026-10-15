@@ -17,7 +17,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
 from typing import Protocol
 
@@ -151,21 +151,6 @@ class JobStore(Protocol):
         Raises:
             JobNotFoundError: If the job does not exist.
             StoreWriteConflictError: If the stored revision no longer matches.
-        """
-        ...
-
-    def stream_events(
-        self,
-        job_id: str,
-        after_id: str | None,
-        keepalive_seconds: float,
-    ) -> Iterator[JobEvent | None]:
-        """Yield new job events, using `None` as a keepalive signal.
-
-        Iteration blocks up to the keepalive interval when no newer event exists.
-
-        Raises:
-            JobNotFoundError: If the job does not exist or is deleted while streaming.
         """
         ...
 

@@ -353,8 +353,9 @@ def test_intermediate_score_round_requires_progress_event(monkeypatch):
         lambda *_args: (100.0, "2", _job(state="running", result=None, schedule=None)),
     )
     store = SimpleNamespace(
-        stream_events=lambda *_args, **_kwargs: iter(
-            [SimpleNamespace(type="job.progressed", data={"source": "ortools/cp-sat:solution-callback"})]
+        read_events=lambda *_args: (
+            [SimpleNamespace(id="3", type="job.progressed", data={"source": "ortools/cp-sat:solution-callback"})],
+            True,
         ),
     )
     client = SimpleNamespace(get=lambda _path: SimpleNamespace(json=lambda: terminal))

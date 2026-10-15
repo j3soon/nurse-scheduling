@@ -18,7 +18,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import logging
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, TypeVar
@@ -468,22 +468,6 @@ class JobController:
         return (
             job.state.terminal or lost_claim or expired_claim or job.cancel_requested or job.early_completion_requested
         )
-
-    def stream_events(
-        self,
-        job_id: str,
-        *,
-        after_id: str | None,
-        keepalive_seconds: float,
-    ) -> Iterator[JobEvent | None]:
-        """Stream persisted events after a cursor until the job becomes terminal.
-
-        Iteration blocks up to the keepalive interval when no newer event exists.
-
-        Raises:
-            JobNotFoundError: If the job does not exist or is deleted while streaming.
-        """
-        return self._store.stream_events(job_id, after_id, keepalive_seconds)
 
     def read_events(self, job_id: str, *, after_id: str | None) -> tuple[list[JobEvent], bool]:
         """Return stored events after a cursor and whether the job is terminal, without waiting.

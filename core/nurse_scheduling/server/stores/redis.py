@@ -18,9 +18,8 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import json
-import math
 import secrets
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, overload
@@ -55,8 +54,6 @@ from ..retry import retry_with_backoff
 from ..suspicion import address_digest
 from ..usage_metrics import RedisUsageMetrics, schedule_basics_for
 
-SOCKET_TIMEOUT_MARGIN_SECONDS = 5.0
-"""Additional socket time allowed beyond one blocking event-stream read."""
 REDIS_OPERATION_TIMEOUT_SECONDS = 2.0
 """Short timeout for ordinary Redis operations and deployment probes."""
 REDIS_RETRY_ATTEMPTS = 2
@@ -67,21 +64,16 @@ REDIS_RETRY_BACKOFF_CAP_SECONDS = 0.2
 """Maximum delay between Redis connection retries."""
 
 
-def _connection_retry(*, retry_on_timeout: bool) -> Retry:
-    """Build a bounded retry policy for one Redis client.
+def _connection_retry() -> Retry:
+    """Build a bounded retry policy for the Redis client.
 
     `redis.Redis.from_url` otherwise leaves connections with zero retries, so a
-    single slow or dropped connection surfaces as a failed operation. Callers
-    that treat a read timeout as control flow must exclude it, since retrying
-    would stall them for another full timeout.
+    single slow or dropped connection surfaces as a failed operation.
     """
-    supported_errors: tuple[type[Exception], ...] = (redis.exceptions.ConnectionError,)
-    if retry_on_timeout:
-        supported_errors += (redis.exceptions.TimeoutError,)
     return Retry(
         ExponentialBackoff(base=REDIS_RETRY_BACKOFF_BASE_SECONDS, cap=REDIS_RETRY_BACKOFF_CAP_SECONDS),
         retries=REDIS_RETRY_ATTEMPTS,
-        supported_errors=supported_errors,
+        supported_errors=(redis.exceptions.ConnectionError, redis.exceptions.TimeoutError),
     )
 
 
@@ -142,7 +134,6 @@ class RedisJobStore:
         *,
         url: str,
         key_prefix: str,
-        event_stream_keepalive_seconds: float = 10.0,
         max_events_per_job: int = 1_000,
         usage_metrics_key_prefix: str | None = None,
         usage_metrics_retention_days: int = 30,
@@ -159,32 +150,19 @@ class RedisJobStore:
             raise ValueError("JOB_REDIS_KEY_PREFIX must not be empty")
         if usage_metrics_key_prefix is not None and usage_metrics_key_prefix.rstrip(":") == self._prefix:
             raise ValueError("USAGE_METRICS_KEY_PREFIX must differ from JOB_REDIS_KEY_PREFIX")
-        if not math.isfinite(event_stream_keepalive_seconds) or event_stream_keepalive_seconds <= 0:
-            raise ValueError("event_stream_keepalive_seconds must be positive")
         if max_events_per_job <= 0:
             raise ValueError("max_events_per_job must be positive")
         self._max_events_per_job = max_events_per_job
         """Maximum entries retained in each replayable event stream."""
-        # Bound ordinary Redis waits without inheriting the longer timeout
-        # required by blocking event-stream reads.
+        # Event streams poll without blocking, so one short timeout bounds every Redis wait.
         self._redis = redis.Redis.from_url(
             url,
             decode_responses=False,
             socket_connect_timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
             socket_timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
-            retry=_connection_retry(retry_on_timeout=True),
+            retry=_connection_retry(),
         )
-        """Binary-safe Redis client for bounded ordinary operations."""
-        # `stream_events` reads a blocking-read timeout as its keepalive tick, so
-        # this client must not retry one.
-        self._stream_redis = redis.Redis.from_url(
-            url,
-            decode_responses=False,
-            socket_connect_timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
-            socket_timeout=event_stream_keepalive_seconds + SOCKET_TIMEOUT_MARGIN_SECONDS,
-            retry=_connection_retry(retry_on_timeout=False),
-        )
-        """Redis client whose read timeout exceeds one blocking event-stream read."""
+        """Binary-safe Redis client for all bounded store operations."""
         self._redis.ping()
         self._usage_metrics = (
             RedisUsageMetrics(
@@ -682,48 +660,6 @@ class RedisJobStore:
                 return self.get(updated_job.id)
             except redis.WatchError:
                 continue
-
-    def stream_events(
-        self,
-        job_id: str,
-        after_id: str | None,
-        keepalive_seconds: float,
-    ) -> Iterator[JobEvent | None]:
-        """Yield events after the requested ID until the job becomes terminal.
-
-        Iteration blocks up to the keepalive interval when no newer event exists.
-        Yield `None` when the keepalive interval passes without a new event.
-
-        Raises:
-            JobNotFoundError: If the job does not exist or is deleted while streaming.
-            redis.RedisError: If a Redis operation fails.
-        """
-        self.get(job_id)
-        last_id = _normalize_stream_id(after_id)
-        block_ms = max(1, int(keepalive_seconds * 1000))
-        while True:
-            terminal = self.get(job_id).state.terminal
-            try:
-                streams = self._stream_redis.xread(
-                    {self._events_key(job_id): last_id},
-                    block=None if terminal else block_ms,
-                )
-            except redis.exceptions.TimeoutError:
-                streams = []
-            if not streams:
-                if terminal:
-                    return
-                yield None
-                continue
-            for _stream, entries in streams:
-                for raw_id, fields in entries:
-                    event = _decode_event(raw_id, fields)
-                    last_id = event.id
-                    yield event
-            # Stop only after a read that began after the job became terminal. A job that
-            # turned terminal during this batch may have appended its final events since.
-            if terminal:
-                return
 
     def read_events(self, job_id: str, after_id: str | None) -> tuple[list[JobEvent], bool]:
         """Return stored events after the cursor and whether the job is terminal, without waiting.
