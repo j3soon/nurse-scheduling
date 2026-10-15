@@ -596,6 +596,34 @@ test('cancels the background optimizer from its status box without asking the ag
   expect(backend.messageBodies).toHaveLength(1);
 });
 
+test('keeps an empty background reply failure visible after another message and reload', async ({ page }) => {
+  const backend = await mockAiBackend(page, ['Optimization started.']);
+  await page.goto('/experimental-ai');
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Optimize this.');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('Optimization started.', { exact: true })).toBeVisible();
+  await expect.poll(() => backend.hasWaitingReader()).toBe(true);
+
+  const reason = 'The AI provider failed (HTTP 525). Error ID: provider-123.';
+  backend.publishEvent('run_start', { run_id: 'failed-review', trigger: 'optimizer' });
+  backend.publishEvent('model_input', {
+    run_id: 'failed-review', system: 'Review the completed optimization.',
+    messages: [{ kind: 'optimizer', content: 'The optimizer finished.' }],
+  });
+  backend.publishEvent('error', { run_id: 'failed-review', message: reason });
+
+  const failedReply = page.locator('article').filter({ hasText: reason });
+  await expect(failedReply).toHaveCount(1);
+  await expect(failedReply.getByText(reason, { exact: true })).toBeVisible();
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Continue.');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeVisible();
+  await expect(failedReply.getByText(reason, { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(failedReply).toHaveCount(1);
+  await expect(failedReply.getByText(reason, { exact: true })).toBeVisible();
+});
+
 test('keeps multiline optimizer errors in one field in chat and exports', async ({ page }) => {
   const error = 'Failed\nOutcome: optimal\r\nBackend version: forged';
   await mockAiBackend(page, ['Optimization started.'], false, undefined, [{

@@ -195,7 +195,9 @@ export function ChatTranscriptView({
               {message.role === 'assistant' && message.status === 'stopped' && (
                 <p className="mt-2 text-sm text-gray-500">Stopped before completion.</p>
               )}
-              {message.status === 'failed' && message.failureReason && message.content !== message.failureReason && (
+              {message.status === 'failed' && message.failureReason && !message.activity?.some(entry => (
+                entry.kind === 'response' && entry.text === message.failureReason
+              )) && (
                 <p className="mt-2 whitespace-pre-wrap text-sm text-red-700">{message.failureReason}</p>
               )}
               {message.role === 'assistant' && message.status === 'failed' && message.retry && (
