@@ -22,6 +22,13 @@ Run commands from `web-frontend/`:
 
 Use `bun run test:affected` for routine changes. Run the full unit/component
 and browser suites when checking the full app or broad shared behavior.
+After a large frontend change, such as a commit series or a change to shared
+components, layout, or global CSS, run `bun run test:e2e:affected --full` once
+before the branch is pushed. Changed-spec runs miss other specs that the change
+breaks. CI stops at the first E2E failure, so each push can show only one of
+them. The full suite takes about two minutes in the dev container. If you
+cannot run it, tell the user that it was not run and that they can run it before
+pushing.
 Frontend unit/component tests use Vitest; browser integration tests use
 Playwright.
 
