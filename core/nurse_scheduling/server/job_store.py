@@ -169,6 +169,16 @@ class JobStore(Protocol):
         """
         ...
 
+    def read_events(self, job_id: str, after_id: str | None) -> tuple[list[JobEvent], bool]:
+        """Return stored events after a cursor and whether the job is terminal, without waiting.
+
+        A terminal result includes every event of the job, so the reader can stop.
+
+        Raises:
+            JobNotFoundError: If the job does not exist.
+        """
+        ...
+
     def find_finished_before(self, cutoff: datetime) -> list[Job]:
         """Return jobs finished before the retention cutoff.
 

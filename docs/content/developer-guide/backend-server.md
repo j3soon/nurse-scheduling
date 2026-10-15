@@ -447,7 +447,7 @@ All server settings are read once when the application is constructed.
 | `JOB_CLAIM_POLL_SECONDS` | `1` | Set the delay between attempts to claim work. |
 | `JOB_WORKER_LEASE_SECONDS` | `90` | Set how long a worker remains online without renewal. |
 | `JOB_MAINTENANCE_INTERVAL_SECONDS` | `30` | Set the delay between maintenance passes. |
-| `JOB_SSE_KEEPALIVE_SECONDS` | `10` | Set the maximum SSE wait before a keepalive. |
+| `JOB_SSE_KEEPALIVE_SECONDS` | `10` | Set the maximum SSE wait before a keepalive. Streams check for new events every second, or at this interval when it is shorter. |
 | `OPTIMIZE_MAX_YAML_BYTES` | `2097152` | Limit the submitted YAML size. |
 | `OPTIMIZE_SOLVERS` | `ortools/cp-sat` | Set the ordered comma-separated solver allowlist. |
 | `OPTIMIZE_DEFAULT_SOLVER` | `ortools/cp-sat` | Set the solver used when a request omits one. |

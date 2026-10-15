@@ -32,6 +32,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+import anyio
 import httpx
 import pytest
 from fastapi.testclient import TestClient
@@ -49,6 +50,7 @@ from nurse_scheduling.server.config import (
     ClaimedPerformance,
     ServerSettings,
 )
+from nurse_scheduling.server.errors import JobNotFoundError
 from nurse_scheduling.server.jobs.controller import JobController
 from nurse_scheduling.server.jobs.models import (
     Job,
@@ -612,6 +614,102 @@ def test_synchronous_store_reads_do_not_block_the_asgi_event_loop():
     assert info.status_code == 200
     assert info_elapsed < 0.5
     assert job_response.status_code == 200
+
+
+def _create_queued_job(controller: JobController) -> Job:
+    return controller.create_job(
+        input_name="input.yaml",
+        client_id="client",
+        solver="ortools/cp-sat",
+        prettify=False,
+        timeout_seconds=60,
+        input_bytes=b"apiVersion: alpha\n",
+    )
+
+
+def test_idle_event_streams_do_not_hold_worker_threads():
+    # Synchronous routes share one thread pool. If each idle stream held a pool
+    # thread until its keepalive, a few streams on a queued job would stall them.
+    app = create_app(
+        settings=_settings(sse_keepalive_seconds=3),
+        store=MemoryJobStore(),
+        runner=SuccessfulRunner(),
+        start_background=False,
+    )
+    controller = app.state.job_controller
+    created = _create_queued_job(controller)
+    stream_count = 2
+
+    async def exercise_requests():
+        anyio.to_thread.current_default_thread_limiter().total_tokens = stream_count
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            streams = [asyncio.create_task(client.get(f"/optimize/{created.id}/events")) for _ in range(stream_count)]
+            try:
+                await asyncio.sleep(0.2)
+                started_at = time.monotonic()
+                options = await client.get("/optimize/options")
+                options_elapsed = time.monotonic() - started_at
+            finally:
+                controller.cancel_job(created.id)
+            return options, options_elapsed, await asyncio.gather(*streams)
+
+    options, options_elapsed, streams = asyncio.run(exercise_requests())
+
+    assert options.status_code == 200
+    assert options_elapsed < 0.5
+    for stream in streams:
+        assert stream.status_code == 200
+        assert '"state": "cancelled"' in stream.text
+
+
+def test_event_stream_sends_keepalives_at_the_configured_interval(monkeypatch):
+    # The stream checks the store more often than the keepalive interval, and idle checks send no frame.
+    monkeypatch.setattr("nurse_scheduling.server.api.optimize.EVENT_POLL_SECONDS", 0.01)
+    app = create_app(
+        settings=_settings(sse_keepalive_seconds=0.2),
+        store=MemoryJobStore(),
+        runner=SuccessfulRunner(),
+        start_background=False,
+    )
+    controller = app.state.job_controller
+    created = _create_queued_job(controller)
+
+    async def stream_until_cancelled():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            stream = asyncio.create_task(client.get(f"/optimize/{created.id}/events"))
+            try:
+                await asyncio.sleep(0.5)
+            finally:
+                controller.cancel_job(created.id)
+            return await stream
+
+    response = asyncio.run(stream_until_cancelled())
+
+    assert 1 <= response.text.count(": keepalive") <= 3
+    assert response.text.rstrip().endswith('"cancellable": false, "early_completion_available": false}}')
+
+
+def test_event_stream_fails_instead_of_retrying_when_its_job_disappears():
+    class DisappearingJobStore(MemoryJobStore):
+        reads = 0
+
+        def read_events(self, job_id, after_id):
+            self.reads += 1
+            if self.reads > 1:
+                raise JobNotFoundError(job_id)
+            return super().read_events(job_id, after_id)
+
+    store = DisappearingJobStore()
+    app = create_app(settings=_settings(), store=store, runner=SuccessfulRunner(), start_background=False)
+    created = _create_queued_job(app.state.job_controller)
+
+    # The 200 response has already started, so the error aborts the connection.
+    with pytest.raises(RuntimeError, match="response already started") as error:
+        TestClient(app).get(f"/optimize/{created.id}/events")
+    assert isinstance(error.value.__cause__, JobNotFoundError)
+    assert store.reads == 2
 
 
 def test_job_creation_offloads_the_synchronous_store_write():

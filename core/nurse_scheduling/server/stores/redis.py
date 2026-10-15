@@ -124,6 +124,16 @@ def _decode(value: bytes | str | None) -> str | None:
     return value.decode("utf-8") if isinstance(value, bytes) else value
 
 
+def _decode_event(raw_id: bytes, fields: Mapping[bytes, bytes]) -> JobEvent:
+    """Convert one Redis stream entry to a job event."""
+    return JobEvent(
+        id=_decode(raw_id),
+        type=_decode(fields.get(b"type")) or "job.event",
+        data=json.loads(_decode(fields.get(b"data")) or "{}"),
+        occurred_at=datetime.fromisoformat(_decode(fields.get(b"occurred_at")) or ""),
+    )
+
+
 class RedisJobStore:
     """Store jobs, queue state, events, input, and artifacts in Redis."""
 
@@ -707,15 +717,26 @@ class RedisJobStore:
                 continue
             for _stream, entries in streams:
                 for raw_id, fields in entries:
-                    last_id = _decode(raw_id)
-                    yield JobEvent(
-                        id=last_id,
-                        type=_decode(fields.get(b"type")) or "job.event",
-                        data=json.loads(_decode(fields.get(b"data")) or "{}"),
-                        occurred_at=datetime.fromisoformat(_decode(fields.get(b"occurred_at")) or ""),
-                    )
+                    event = _decode_event(raw_id, fields)
+                    last_id = event.id
+                    yield event
             if terminal or self.get(job_id).state.terminal:
                 return
+
+    def read_events(self, job_id: str, after_id: str | None) -> tuple[list[JobEvent], bool]:
+        """Return stored events after the cursor and whether the job is terminal, without waiting.
+
+        A terminal transition appends its events in the same transaction, so reading the state
+        before the events makes a terminal result include every event of the job.
+
+        Raises:
+            JobNotFoundError: If the job does not exist.
+            redis.RedisError: If a Redis operation fails.
+        """
+        terminal = self.get(job_id).state.terminal
+        streams = self._redis.xread({self._events_key(job_id): _normalize_stream_id(after_id)})
+        events = [_decode_event(raw_id, fields) for _stream, entries in streams for raw_id, fields in entries]
+        return events, terminal
 
     def find_finished_before(self, cutoff: datetime) -> list[Job]:
         """Return jobs finished before the retention cutoff.

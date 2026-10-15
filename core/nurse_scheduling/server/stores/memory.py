@@ -36,6 +36,14 @@ from ..jobs.models import Job, JobEvent, JobState, ServerActivity, StoredArtifac
 from ..suspicion import address_digest
 
 
+def _event_cursor(after_id: str | None) -> int:
+    """Parse a client event ID, replaying from the start when it is missing or invalid."""
+    try:
+        return int(after_id) if after_id is not None else 0
+    except ValueError:
+        return 0
+
+
 @dataclass
 class _MemoryJobRecord:
     """All process-local data retained for one job."""
@@ -350,11 +358,7 @@ class MemoryJobStore:
         Raises:
             JobNotFoundError: If the job does not exist or is deleted while streaming.
         """
-        try:
-            last_seen = int(after_id) if after_id is not None else 0
-        except ValueError:
-            last_seen = 0
-
+        last_seen = _event_cursor(after_id)
         while True:
             with self._changed:
                 record = self._record(job_id)
@@ -379,6 +383,19 @@ class MemoryJobStore:
                 yield event
             if terminal:
                 return
+
+    def read_events(self, job_id: str, after_id: str | None) -> tuple[list[JobEvent], bool]:
+        """Return stored events after the cursor and whether the job is terminal, without waiting.
+
+        Both values come from one locked read, so a terminal result includes every event of the job.
+
+        Raises:
+            JobNotFoundError: If the job does not exist.
+        """
+        last_seen = _event_cursor(after_id)
+        with self._lock:
+            record = self._record(job_id)
+            return [event for event in record.events if int(event.id or 0) > last_seen], record.job.state.terminal
 
     def find_finished_before(self, cutoff: datetime) -> list[Job]:
         """Return jobs finished before the retention cutoff.

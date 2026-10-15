@@ -485,6 +485,14 @@ class JobController:
         """
         return self._store.stream_events(job_id, after_id, keepalive_seconds)
 
+    def read_events(self, job_id: str, *, after_id: str | None) -> tuple[list[JobEvent], bool]:
+        """Return stored events after a cursor and whether the job is terminal, without waiting.
+
+        Raises:
+            JobNotFoundError: If the job does not exist.
+        """
+        return self._store.read_events(job_id, after_id)
+
     def delete_job(self, job_id: str) -> None:
         """Delete a terminal job and all associated data.
 

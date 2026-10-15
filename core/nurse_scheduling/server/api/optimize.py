@@ -17,6 +17,8 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import asyncio
+import time
 from dataclasses import replace
 from datetime import datetime, timezone
 from io import BytesIO
@@ -45,6 +47,8 @@ CLIENT_ID_COOKIE_NAME = "nurse_scheduling_client_id"
 """Cookie used to correlate jobs from the same browser for diagnostics."""
 CLIENT_ID_COOKIE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 """Seven-day correlation lifetime; the cookie does not control job liveness."""
+EVENT_POLL_SECONDS = 1.0
+"""Maximum delay between a stored job event and its delivery to an open event stream."""
 
 
 def _controller(request: Request) -> JobController:
@@ -244,37 +248,50 @@ def stream_events(request: Request, job_id: str, last_event_id: str | None = Hea
     controller = _controller(request)
     job = controller.get_job(job_id)
     _report_foreign_job_access(request, job)
+    keepalive_seconds = _settings(request).sse_keepalive_seconds
+    poll_seconds = min(EVENT_POLL_SECONDS, keepalive_seconds)
 
-    def generate():
-        """Yield SSE frames, blocking up to the configured keepalive interval."""
-        for event in controller.stream_events(
-            job_id,
-            after_id=last_event_id,
-            keepalive_seconds=_settings(request).sse_keepalive_seconds,
-        ):
-            if event is None:
-                yield ": keepalive\n\n"
-                continue
-            if event.type == "job.state_changed":
-                job = controller.get_job(job_id)
-                event_state = JobState(str(event.data["state"]))
-                supports_finish_now = solver_supports_finish_now(job.request.solver)
-                cancel_requested = bool(event.data.get("cancel_requested", False))
-                early_completion_requested = bool(event.data.get("early_completion_requested", False))
-                event = replace(
-                    event,
-                    data={
-                        **event.data,
-                        "terminal": event_state.terminal,
-                        "controls": {
-                            "cancellable": not event_state.terminal and not cancel_requested,
-                            "early_completion_available": event_state == JobState.RUNNING
-                            and supports_finish_now
-                            and not early_completion_requested,
+    async def generate():
+        """Yield SSE frames until the job is terminal.
+
+        Synchronous routes share a bounded thread pool. An idle stream therefore waits on the
+        event loop and uses a pool thread only for each short store read.
+        """
+        after_id = last_event_id
+        last_frame_at = time.monotonic()
+        while True:
+            events, terminal = await run_in_threadpool(controller.read_events, job_id, after_id=after_id)
+            for event in events:
+                after_id = event.id or after_id
+                if event.type == "job.state_changed":
+                    job = await run_in_threadpool(controller.get_job, job_id)
+                    event_state = JobState(str(event.data["state"]))
+                    supports_finish_now = solver_supports_finish_now(job.request.solver)
+                    cancel_requested = bool(event.data.get("cancel_requested", False))
+                    early_completion_requested = bool(event.data.get("early_completion_requested", False))
+                    event = replace(
+                        event,
+                        data={
+                            **event.data,
+                            "terminal": event_state.terminal,
+                            "controls": {
+                                "cancellable": not event_state.terminal and not cancel_requested,
+                                "early_completion_available": event_state == JobState.RUNNING
+                                and supports_finish_now
+                                and not early_completion_requested,
+                            },
                         },
-                    },
-                )
-            yield format_sse_event(event)
+                    )
+                yield format_sse_event(event)
+                last_frame_at = time.monotonic()
+            if terminal:
+                return
+            idle_seconds = time.monotonic() - last_frame_at
+            if idle_seconds >= keepalive_seconds:
+                yield ": keepalive\n\n"
+                last_frame_at = time.monotonic()
+                idle_seconds = 0
+            await asyncio.sleep(min(poll_seconds, keepalive_seconds - idle_seconds))
 
     return StreamingResponse(
         generate(),

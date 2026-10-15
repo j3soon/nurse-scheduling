@@ -482,6 +482,23 @@ def test_live_event_stream_emits_keepalive_after_catching_up(store):
     assert next(resumed) is None
 
 
+def test_store_reads_events_after_a_cursor_without_waiting(store):
+    controller = _controller(store)
+    created = _create(controller)
+
+    events, terminal = store.read_events(created.id, after_id=None)
+    assert [(event.type, event.data["state"]) for event in events] == [("job.state_changed", "queued")]
+    assert terminal is False
+    assert store.read_events(created.id, after_id=events[-1].id) == ([], False)
+
+    controller.cancel_job(created.id)
+    final_events, terminal = store.read_events(created.id, after_id=events[-1].id)
+    assert [event.data["state"] for event in final_events] == ["cancelled"]
+    assert terminal is True
+    with pytest.raises(JobNotFoundError):
+        store.read_events("missing", after_id=None)
+
+
 @pytest.mark.parametrize(
     "after_id",
     [
