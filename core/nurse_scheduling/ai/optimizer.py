@@ -97,7 +97,7 @@ class OptimizerBackend(Protocol):
 
     async def get(self, job_id: str) -> OptimizerJobPayload: ...
 
-    def progress_events(self, job_id: str) -> AsyncIterator[dict[str, Any]]: ...
+    def progress_events(self, job_id: str, client_address: str | None = None) -> AsyncIterator[dict[str, Any]]: ...
 
     async def finish_now(self, job_id: str) -> OptimizerJobPayload: ...
 
@@ -124,6 +124,8 @@ class SessionOptimization:
     schedule_yaml: str
     backend: dict[str, Any] = field(default_factory=dict)
     request: dict[str, Any] = field(default_factory=dict)
+    client_address: str | None = None
+    """Browser address that the optimizer bounds this job's submission and event streams by."""
     artifact: "OptimizerArtifact | None" = None
     retired: asyncio.Event = field(default_factory=asyncio.Event)
     deleted: bool = False
@@ -347,6 +349,7 @@ class SessionOptimizer:
                     "timeout_seconds", self._default_timeout_seconds if timeout_seconds is None else timeout_seconds
                 ),
             },
+            client_address=client_address,
         )
         if retired:
             job.retired.set()
@@ -495,7 +498,7 @@ class SessionOptimizer:
 
     async def _relay_progress(self, job: SessionOptimization) -> None:
         try:
-            async for progress in self._backend.progress_events(job.remote_id):
+            async for progress in self._backend.progress_events(job.remote_id, job.client_address):
                 if self._jobs.get(job.id) is not job:
                     return
                 if self._on_update is not None:

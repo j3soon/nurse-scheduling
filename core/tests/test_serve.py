@@ -712,6 +712,81 @@ def test_event_stream_fails_instead_of_retrying_when_its_job_disappears():
     assert store.reads == 2
 
 
+async def _open_event_stream(app, job_id: str, address: str, *, headers=(), query: bytes = b""):
+    """Start an event stream through raw ASGI calls, so the test decides when the client disconnects.
+
+    Return the response status, its headers, and a coroutine function that disconnects the client
+    and waits for the response to finish.
+    """
+    disconnected = asyncio.Event()
+    started = asyncio.get_running_loop().create_future()
+    request_sent = False
+
+    async def receive():
+        nonlocal request_sent
+        if not request_sent:
+            request_sent = True
+            return {"type": "http.request", "body": b"", "more_body": False}
+        await disconnected.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        if message["type"] == "http.response.start" and not started.done():
+            started.set_result(message)
+
+    path = f"/optimize/{job_id}/events"
+    scope = {
+        "type": "http",
+        # Uvicorn reports ASGI 2.3, so Starlette watches for the disconnect message.
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": query,
+        "root_path": "",
+        "headers": [(b"host", b"testserver"), *headers],
+        "client": (address, 40000),
+        "server": ("testserver", 80),
+    }
+    call = asyncio.create_task(app(scope, receive, send))
+    start = await asyncio.wait_for(started, timeout=2)
+
+    async def disconnect():
+        disconnected.set()
+        await asyncio.wait_for(call, timeout=2)
+
+    return start["status"], dict(start["headers"]), disconnect
+
+
+def test_open_event_streams_are_capped_per_client_address_until_they_disconnect():
+    app = create_app(
+        settings=_settings(max_event_streams_per_client=2),
+        store=MemoryJobStore(),
+        runner=SuccessfulRunner(),
+        start_background=False,
+    )
+    created = _create_queued_job(app.state.job_controller)
+
+    async def exercise_streams():
+        opened = [await _open_event_stream(app, created.id, "198.51.100.7") for _ in range(3)]
+        other_address = await _open_event_stream(app, created.id, "198.51.100.8")
+        await opened[0][2]()
+        reopened = await _open_event_stream(app, created.id, "198.51.100.7")
+        for _status, _headers, disconnect in [*opened[1:], other_address, reopened]:
+            await disconnect()
+        return opened, other_address, reopened
+
+    opened, other_address, reopened = asyncio.run(exercise_streams())
+
+    assert [status for status, _headers, _disconnect in opened] == [200, 200, 429]
+    assert opened[2][1][b"retry-after"] == b"1"
+    assert other_address[0] == 200
+    # The disconnected stream released its slot.
+    assert reopened[0] == 200
+
+
 def test_job_creation_offloads_the_synchronous_store_write():
     class ThreadRecordingStore(MemoryJobStore):
         create_thread_id = None
@@ -751,6 +826,7 @@ def test_job_creation_offloads_the_synchronous_store_write():
         ({"sse_keepalive_seconds": 0}, "sse_keepalive_seconds must be positive"),
         ({"timeout_grace_seconds": 0}, "timeout_grace_seconds must be positive"),
         ({"max_events_per_job": 0}, "max_events_per_job must be positive"),
+        ({"max_event_streams_per_client": 0}, "max_event_streams_per_client must be positive"),
         (
             {"default_timeout_seconds": 61, "max_timeout_seconds": 60},
             "default_timeout_seconds must not exceed max_timeout_seconds",
@@ -2549,6 +2625,33 @@ def test_event_stream_accepts_either_the_shared_token_or_a_stream_token():
 
         assert _stream_status(client, MISSING_JOB_ID, f"?token={stream_token}") == 404
         assert _stream_status(client, MISSING_JOB_ID, headers=_auth_header()) == 404
+
+
+def test_stream_token_holders_share_the_address_cap_and_bearer_keys_are_exempt():
+    # A stream token travels in a URL and can leak, while a bearer key belongs to a trusted
+    # service such as the AI service relaying progress for many browsers.
+    app = create_app(
+        settings=_settings(auth_token=AUTH_TOKEN, max_event_streams_per_client=1),
+        store=MemoryJobStore(),
+        runner=SuccessfulRunner(),
+        start_background=False,
+    )
+    created = _create_queued_job(app.state.job_controller)
+    token_query = f"token={create_stream_token(AUTH_TOKEN, created.id, ttl_seconds=60)}".encode()
+    bearer = [(b"authorization", f"Bearer {AUTH_TOKEN}".encode())]
+
+    async def exercise_streams():
+        streams = [
+            await _open_event_stream(app, created.id, "198.51.100.7", headers=bearer),
+            await _open_event_stream(app, created.id, "198.51.100.7", headers=bearer),
+            await _open_event_stream(app, created.id, "198.51.100.7", query=token_query),
+            await _open_event_stream(app, created.id, "198.51.100.7", query=token_query),
+        ]
+        for _status, _headers, disconnect in streams:
+            await disconnect()
+        return [status for status, _headers, _disconnect in streams]
+
+    assert asyncio.run(exercise_streams()) == [200, 200, 200, 429]
 
 
 def test_identified_token_mints_a_resolvable_stream_token_without_a_credential_hint():

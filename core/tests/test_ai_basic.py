@@ -2183,7 +2183,9 @@ class BackgroundTestOptimizer:
             result={"outcome": "feasible", "score": 23},
         )
 
-    async def progress_events(self, _job_id: str) -> AsyncIterator[dict[str, object]]:
+    async def progress_events(
+        self, _job_id: str, _client_address: str | None = None
+    ) -> AsyncIterator[dict[str, object]]:
         yield {"currentBestScore": 23, "elapsedSeconds": 2}
         while not self.release.is_set():
             await asyncio.sleep(0.001)

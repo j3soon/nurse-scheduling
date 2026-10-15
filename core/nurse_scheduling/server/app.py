@@ -36,9 +36,11 @@ from ..sentry import SentryClientAddressMiddleware, capture_invalid_request, ini
 from ..service_logging import configure_service_logging
 from .api.optimize import events_router as optimize_events_router
 from .api.optimize import router as optimize_router
+from .api.sse import EventStreamLimiter
 from .auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry, create_stream_auth_dependency
 from .config import ServerSettings
 from .errors import (
+    EventStreamCapacityError,
     JobArtifactNotFoundError,
     JobArtifactNotReadyError,
     JobCapacityError,
@@ -251,13 +253,14 @@ def create_app(
     app.state.runtime_identity = runtime_identity
     app.state.claimed_performance = claimed_performance
     app.state.suspicion_tracker = suspicion_tracker
+    app.state.event_stream_limiter = EventStreamLimiter(settings.max_event_streams_per_client)
 
     @app.exception_handler(ServerApplicationError)
     async def application_error_handler(request: Request, exc: ServerApplicationError):
         """Translate application failures into stable JSON HTTP errors."""
         if isinstance(exc, (JobNotFoundError, JobInputNotFoundError, JobArtifactNotFoundError)):
             status_code = 404
-        elif isinstance(exc, JobCapacityError):
+        elif isinstance(exc, (JobCapacityError, EventStreamCapacityError)):
             status_code = 429
         elif isinstance(exc, (JobOperationNotAllowedError, JobOperationContentionError, JobArtifactNotReadyError)):
             # Internal store write conflicts are consumed by the controller, not mapped here.

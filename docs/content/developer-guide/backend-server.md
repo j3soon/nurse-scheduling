@@ -313,7 +313,8 @@ Lifecycle and storage errors use a stable JSON envelope:
 
 Request parsing and validation errors retain FastAPI's standard error format.
 Common status codes include `404` for missing resources, `409` for invalid job
-operations, `413` for oversized YAML, and `429` when job capacity is exhausted.
+operations, `413` for oversized YAML, and `429` when job capacity is exhausted
+or one address holds too many open event streams.
 
 Every job runs on the same workers in submission order. Without another limit,
 one address could fill the queue with long jobs and delay every other user for
@@ -323,9 +324,19 @@ code `client_job_capacity_exceeded`. A request with a bearer key is not counted,
 because keys belong to trusted clients such as the diagnostic. The store keeps a
 salted digest of the address, not the address itself. The Redis store shares its
 salt through Redis, so every API process derives the same digest. The AI service
-forwards the browser's address when it submits optimizer jobs, so assistant users
-do not share the AI container's address. Many people behind one network address
-share one budget. Raise the limit if a site's users run several jobs at once.
+forwards the browser's address when it submits optimizer jobs and opens their
+event streams, so assistant users do not share the AI container's address. Many
+people behind one network address share one budget. Raise the limit if a site's
+users run several jobs at once.
+
+Each open job event stream also reads the job store once per second. One address
+may therefore hold at most `JOB_MAX_EVENT_STREAMS_PER_CLIENT` open streams in each
+API process. Past that limit, the request gets `429` with the code
+`event_stream_capacity_exceeded`, and the address can retry after one of its
+streams closes. A browser holds one or two streams. Requests with a bearer key are
+not counted. Requests with a stream token are counted, because the token is part
+of the URL and can leak through logs or shared links. Each Uvicorn worker counts
+its own streams, so the limit per address grows with the number of workers.
 
 The frontend and CLI serialize plain, valid YAML, so aliases and parse failures
 both indicate a client that built its request by hand. Both are reported without
@@ -353,6 +364,7 @@ contract are sent to Sentry, because a scanner cannot produce them:
 | `foreign_job_access` | A browser read, controlled, downloaded, or deleted a job that a different browser created. A caller sending no cookie is not reported. | warning |
 | `job_capacity_exceeded` | One address met a full job queue, which repeats only when that address filled it. | warning |
 | `client_job_capacity_exceeded` | One address reached its active job limit, so it submits faster than the queue drains. | warning |
+| `event_stream_capacity_exceeded` | One address reached its open event stream limit, which a browser with one or two streams does not reach. | warning |
 | `job_id_probe` | A job of the shape this server issues was requested and does not exist. | warning |
 | `rejected_bearer_token` | A request presented a bearer token that is not the configured one. | warning |
 | `timeout_out_of_range` | An optimization timeout fell outside the range advertised by `GET /optimize/options`. | warning |
@@ -441,6 +453,7 @@ All server settings are read once when the application is constructed.
 | `JOB_REDIS_KEY_PREFIX` | `nurse_scheduling:jobs:v0` | Namespace and schema version for Redis keys. |
 | `JOB_MAX_PENDING` | `32` | Limit queued, running, and cancelling jobs. |
 | `JOB_MAX_PENDING_PER_CLIENT` | `3` | Limit the queued, running, and cancelling jobs that one address holds through unauthenticated requests. |
+| `JOB_MAX_EVENT_STREAMS_PER_CLIENT` | `32` | Limit the job event streams that one address holds open in one API process without a bearer key. |
 | `JOB_MAX_RETAINED` | `128` | Limit all retained jobs, including terminal jobs. |
 | `JOB_RETENTION_SECONDS` | `86400` | Retain terminal jobs for this duration. |
 | `JOB_MAX_EVENTS_PER_JOB` | `1000` | Limit replayable events retained per job. |

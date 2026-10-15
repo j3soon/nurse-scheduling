@@ -189,7 +189,7 @@ class FakeOptimizerBackend:
             links={"schedule": f"/optimize/{job_id}/xlsx"},
         )
 
-    async def progress_events(self, job_id: str) -> AsyncIterator[dict[str, object]]:
+    async def progress_events(self, job_id: str, client_address: str | None = None) -> AsyncIterator[dict[str, object]]:
         if False:
             yield {"job_id": job_id}
 
@@ -333,14 +333,21 @@ def test_http_backend_forwards_the_browser_address_only_when_known() -> None:
 
         def handle(request: httpx.Request) -> httpx.Response:
             forwarded.append(request.headers.get("X-Forwarded-For"))
+            if request.url.path.endswith("/events"):
+                return httpx.Response(
+                    200, text='id: 1\nevent: job.state_changed\ndata: {"state": "completed", "terminal": true}\n\n'
+                )
             return httpx.Response(202, json={"id": f"remote-{len(forwarded)}", "state": "queued"})
 
         backend = HttpOptimizerBackend("http://api:8000", "", 5, 1_000_000, transport=httpx.MockTransport(handle))
         await backend.submit(TEST_SCHEDULE, 30, client_address="203.0.113.1")
         await backend.submit(TEST_SCHEDULE, 30)
+        # The optimizer bounds open event streams per address as well as submitted jobs.
+        assert [point async for point in backend.progress_events("remote-1", "203.0.113.1")] == []
+        assert [point async for point in backend.progress_events("remote-2")] == []
         await backend.close()
 
-        assert forwarded == ["203.0.113.1", None]
+        assert forwarded == ["203.0.113.1", None, "203.0.113.1", None]
 
     asyncio.run(scenario())
 
@@ -595,12 +602,18 @@ def test_start_returns_immediately_and_completion_wakes_the_agent() -> None:
 
 def test_progress_reaches_browser_updates_without_entering_the_agent_prompt() -> None:
     class ProgressBackend(FakeOptimizerBackend):
-        async def progress_events(self, job_id: str) -> AsyncIterator[dict[str, object]]:
+        progress_addresses: list[str | None]
+
+        async def progress_events(
+            self, job_id: str, client_address: str | None = None
+        ) -> AsyncIterator[dict[str, object]]:
+            self.progress_addresses.append(client_address)
             yield {"currentBestScore": 23, "elapsedSeconds": 2, "source": "solver"}
             await self.release.wait()
 
     async def scenario() -> None:
         backend = ProgressBackend()
+        backend.progress_addresses = []
         updates: list[dict[str, object]] = []
         prompts: list[str] = []
         progress_seen = asyncio.Event()
@@ -618,9 +631,10 @@ def test_progress_reaches_browser_updates_without_entering_the_agent_prompt() ->
         optimizer = SessionOptimizer(
             backend, poll_interval_seconds=0.001, on_completion=on_completion, on_update=on_update
         )
-        await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')
+        await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}', "203.0.113.1")
         await asyncio.wait_for(progress_seen.wait(), timeout=1)
         assert updates[1]["progress"] == {"currentBestScore": 23, "elapsedSeconds": 2, "source": "solver"}
+        assert backend.progress_addresses == ["203.0.113.1"]
         assert not prompts
 
         backend.release.set()

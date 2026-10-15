@@ -112,12 +112,18 @@ class HttpOptimizerBackend:
     async def get(self, job_id: str) -> OptimizerJobPayload:
         return await self._request_job("GET", f"optimize/{job_id}")
 
-    async def progress_events(self, job_id: str) -> AsyncIterator[dict[str, Any]]:
-        """Resume the optimizer event stream without exposing its credential."""
+    async def progress_events(self, job_id: str, client_address: str | None = None) -> AsyncIterator[dict[str, Any]]:
+        """Resume the optimizer event stream without exposing its credential.
+
+        Forward the browser address as `submit` does, so the optimizer bounds open streams per
+        person rather than counting every assistant user against this service's address.
+        """
         cursor: str | None = None
         url = urljoin(self._base_url, f"optimize/{job_id}/events")
         while True:
-            headers = {"Last-Event-ID": cursor} if cursor is not None else None
+            headers = {"X-Forwarded-For": client_address} if client_address else {}
+            if cursor is not None:
+                headers["Last-Event-ID"] = cursor
             try:
                 async with self._client.stream("GET", url, headers=headers) as response:
                     response.raise_for_status()

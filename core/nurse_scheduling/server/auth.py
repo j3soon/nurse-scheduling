@@ -330,6 +330,7 @@ def create_stream_auth_dependency(registry: AuthTokenRegistry) -> Callable[[Requ
         Raises:
             HTTPException: With status 401 when credentials are missing or invalid.
         """
+        request.state.auth_by_stream_token = False
         if not registry.enabled:
             request.state.auth_credential_id = None
             return
@@ -344,6 +345,7 @@ def create_stream_auth_dependency(registry: AuthTokenRegistry) -> Callable[[Requ
         )
         if stream_credential is not None:
             request.state.auth_credential_id = stream_credential.id
+            request.state.auth_by_stream_token = True
             return
         raise HTTPException(
             status_code=401,
