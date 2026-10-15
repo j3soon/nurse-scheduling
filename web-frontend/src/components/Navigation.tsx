@@ -75,7 +75,7 @@ export default function Navigation() {
   const hasCenteredTabRef = useRef(false);
 
   // Phones show only a few tabs, so keep the current one and its neighbors in view.
-  // Center again after a rotation or resize, or when the custom export indicator widens a tab.
+  // Center again after a rotation or width change, or when the custom export indicator widens a tab.
   useEffect(() => {
     const centerCurrentTab = (smooth: boolean) => {
       const strip = tabStripRef.current;
@@ -92,8 +92,14 @@ export default function Navigation() {
     };
     centerCurrentTab(hasCenteredTabRef.current);
     hasCenteredTabRef.current = true;
-    const handleResize = () => centerCurrentTab(false);
-    window.addEventListener('resize', handleResize, { passive: true });
+    // Phone toolbars change only the height while scrolling. Keep the user's swipe then.
+    let width = window.innerWidth;
+    const handleResize = () => {
+      if (window.innerWidth === width) return;
+      width = window.innerWidth;
+      centerCurrentTab(false);
+    };
+    window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, [currentTabIndex, hasCustomExportLayout]);
 
