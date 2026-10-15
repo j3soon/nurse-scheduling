@@ -46,7 +46,7 @@ from nurse_scheduling.server.config import ServerSettings
 LONG_SCHEDULE = REPO_ROOT / "core/tests/testcases/real/large-ward-with-87-people-2025-11.yaml"
 PUBLIC_API_ROUTES = {"/info", "/ready"}
 PUBLIC_AI_ROUTES = {"/health", "/ready", "/capabilities"}
-TRUSTED_ORIGINS = ["https://nursescheduling.org", "https://app.nursescheduling.org", "http://localhost:3000"]
+ALLOWED_ORIGINS = ["https://nursescheduling.org", "https://app.nursescheduling.org", "http://localhost:3000"]
 HOSTILE_ORIGINS = [
     "https://evil.example",
     "https://nursescheduling.org.evil.example",
@@ -118,11 +118,11 @@ def check_cors(client: httpx.Client, name: str, url: str, path: str, method: str
             allowed_wrongly.append(origin)
     check(f"{name}: hostile origins get no CORS grant", not allowed_wrongly, ", ".join(allowed_wrongly))
     missing = []
-    for origin in TRUSTED_ORIGINS:
+    for origin in ALLOWED_ORIGINS:
         response = client.options(url + path, headers={"Origin": origin, "Access-Control-Request-Method": method})
         if response.headers.get("access-control-allow-origin") != origin:
             missing.append(origin)
-    check(f"{name}: trusted origins keep their CORS grant", not missing, ", ".join(missing))
+    check(f"{name}: allowed origins keep their CORS grant", not missing, ", ".join(missing))
 
 
 def received_stub_reply(lines: Iterable[str]) -> bool:
