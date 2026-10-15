@@ -21,6 +21,7 @@
 
 'use client';
 
+import * as Sentry from '@sentry/nextjs';
 import Image from 'next/image';
 import { MobileDetails } from '@/components/MobileDetails';
 import { ChatTranscriptView } from './ChatTranscriptView';
@@ -170,6 +171,12 @@ const DISABLED_FILE_CAPABILITY: AiCapabilities['file_attachments'] = {
 // trackpad or mouse also reports a fine pointer and keeps Enter to send.
 function isTouchOnlyPointer(): boolean {
   return Boolean(window.matchMedia?.('(pointer: coarse)').matches && !window.matchMedia('(any-pointer: fine)').matches);
+}
+
+// A module-level callback ref keeps the Sentry form attached across rerenders, so
+// streaming output does not close an open form. React runs the returned cleanup.
+function attachFeedbackForm(element: HTMLButtonElement | null) {
+  return element ? Sentry.getFeedback()?.attachTo(element) : undefined;
 }
 
 function fileExtension(filename: string): string {
@@ -1059,6 +1066,16 @@ export default function ExperimentalAiPage() {
                 Show tool activity
               </label>
             </div>
+            {process.env.NEXT_PUBLIC_DISABLE_SENTRY !== '1' && (
+              // FeedbackWidget hides the floating Feedback button here on phones.
+              <button
+                type="button"
+                ref={attachFeedbackForm}
+                className="mt-1 flex min-h-11 items-center gap-1.5 text-xs text-blue-600 underline sm:hidden"
+              >
+                Send feedback
+              </button>
+            )}
             <div role="group" aria-label="AI versions" className={`mt-3 rounded-md border px-3 py-2 text-xs ${hasVersionMismatch ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-gray-200 bg-gray-50 text-gray-600'}`}>
               <div className="flex flex-wrap gap-x-4 gap-y-1">
                 <span>

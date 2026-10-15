@@ -21,6 +21,7 @@
 import type { Metadata, Viewport } from "next";
 import Script from "next/script";
 import Navigation from "@/components/Navigation";
+import FeedbackWidget from "@/components/FeedbackWidget";
 import Footer from "@/components/Footer";
 import VersionWarningBanner from "@/components/VersionWarningBanner";
 import { SchedulingDataProvider } from "@/hooks/useSchedulingData";
@@ -69,6 +70,7 @@ export default function RootLayout({
               {children}
             </main>
             <Footer />
+            <FeedbackWidget />
           </SchedulingDataProvider>
         </UnsavedEditingStateProvider>
       </body>
