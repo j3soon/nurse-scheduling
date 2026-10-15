@@ -162,6 +162,7 @@ const DISABLED_FILE_CAPABILITY: AiCapabilities['file_attachments'] = {
   enabled: false,
   max_files: 1,
   max_bytes_per_file: 1,
+  max_bytes_per_session: 1,
 };
 
 function fileExtension(filename: string): string {
@@ -591,18 +592,26 @@ export default function ExperimentalAiPage() {
       setError('File attachments are unavailable.');
       return;
     }
-    if (selectedAttachments.length + files.length > fileCapability.max_files) {
-      setError(`Attach at most ${fileCapability.max_files} files to one question.`);
+    if (uploadedFiles.length + selectedAttachments.length + files.length > fileCapability.max_files) {
+      setError(`Keep at most ${fileCapability.max_files} files in this chat. Remove unused uploads first.`);
       return;
     }
-    if (files.some(file => file.size > fileCapability.max_bytes_per_file)) {
-      const maxMegabytes = (fileCapability.max_bytes_per_file / 1_000_000).toLocaleString(undefined, {
+    const maxFileBytes = fileCapability.max_bytes_per_file;
+    if (files.some(file => file.size > maxFileBytes)) {
+      const maxMegabytes = (maxFileBytes / 1_000_000).toLocaleString(undefined, {
         maximumFractionDigits: 1,
       });
       setError(`Each file must be ${maxMegabytes} MB or smaller.`);
       return;
     }
 
+    const totalBytes = uploadedFiles.reduce((total, file) => total + file.bytes, 0)
+      + selectedAttachments.reduce((total, attachment) => total + attachment.file.size, 0)
+      + files.reduce((total, file) => total + file.size, 0);
+    if (totalBytes > fileCapability.max_bytes_per_session) {
+      setError(`Files in this chat must total ${fileCapability.max_bytes_per_session / 1_000_000} MB or less. Remove unused uploads first.`);
+      return;
+    }
     setError(null);
     setSelectedAttachments(previous => [
       ...previous,
@@ -781,7 +790,7 @@ export default function ExperimentalAiPage() {
   const attachmentPickerDisabled = isStreaming
     || composerUnavailable
     || !fileCapability.enabled
-    || selectedAttachments.length >= fileCapability.max_files;
+    || uploadedFiles.length + selectedAttachments.length >= fileCapability.max_files;
   const isFileDrag = (event: DragEvent<HTMLElement>) => event.dataTransfer.types.includes('Files');
   const enterAttachmentDropZone = (event: DragEvent<HTMLFormElement>) => {
     if (attachmentPickerDisabled || !isFileDrag(event)) return;

@@ -412,6 +412,11 @@ class SessionStore:
         session.require_idle("uploading files")
         if len(session.uploads) + len(uploads) > self._settings.max_attachment_files:
             raise HTTPException(status_code=413, detail="Too many retained files. Remove unused uploads first.")
+        total_bytes = sum(len(item.data) for item in session.uploads.values()) + sum(len(item.data) for item in uploads)
+        if total_bytes > self._settings.max_attachment_total_bytes:
+            raise HTTPException(
+                status_code=413, detail="Session files exceed the total attachment limit. Remove unused uploads first."
+            )
         filenames = {item.filename for item in session.uploads.values()}
         retained = []
         for upload in uploads:

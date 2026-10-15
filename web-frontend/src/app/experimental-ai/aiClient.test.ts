@@ -97,6 +97,7 @@ describe('AI client', () => {
         enabled: true,
         max_files: 5,
         max_bytes_per_file: 5000000,
+        max_bytes_per_session: 200_000_000,
       },
     }), { status: 200, headers: { 'Content-Type': 'application/json' } })));
 
@@ -107,6 +108,7 @@ describe('AI client', () => {
         enabled: true,
         max_files: 5,
         max_bytes_per_file: 5000000,
+        max_bytes_per_session: 200_000_000,
       },
     });
   });
@@ -160,6 +162,7 @@ describe('AI client', () => {
         enabled: true,
         max_files: 1,
         max_bytes_per_file: 1,
+        max_bytes_per_session: 200_000_000,
       },
     }), { status: 200, headers: { 'Content-Type': 'application/json' } })));
 

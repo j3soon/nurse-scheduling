@@ -83,6 +83,9 @@ destroys that state.
 
 Experimental AI controls must follow backend `/capabilities` responses. The
 backend remains authoritative for feature enablement and input limits.
+For retained attachments, count existing uploads toward session limits. Keep
+per-file and session totals separate. Upload one file per request and preserve
+confirmed uploads when a later upload fails.
 AI operation state belongs to `ChatLifecycle`. Finish only the operation that
 owns a completion, and derive busy and Stop state from its phases. Scope stream
 callbacks to their connection and other async completions to their conversation.

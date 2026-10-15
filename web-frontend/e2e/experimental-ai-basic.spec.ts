@@ -34,6 +34,7 @@ interface CapturedRequests {
   messageBodies: string[];
   messageContentType: string;
   uploadBody: string;
+  uploadBatches: string[][];
   uploadContentType: string;
   authorizationHeaders: string[];
 }
@@ -75,7 +76,7 @@ async function startCancelableAiBackend(retainUploads = false) {
         file_attachments: {
           enabled: true,
           max_files: 8,
-          max_bytes_per_file: 5_000_000,
+          max_bytes_per_file: 5_000_000, max_bytes_per_session: 200_000_000,
           retained: retainUploads,
         },
       }));
@@ -159,6 +160,7 @@ async function mockAiBackend(
     messageBodies: [] as string[],
     messageContentType: '',
     uploadBody: '',
+    uploadBatches: [] as string[][],
     uploadContentType: '',
     authorizationHeaders: [] as string[],
   };
@@ -200,7 +202,7 @@ async function mockAiBackend(
           file_attachments: {
             enabled: true,
             max_files: 8,
-            max_bytes_per_file: 5_000_000,
+            max_bytes_per_file: 5_000_000, max_bytes_per_session: 200_000_000,
           },
         }),
       });
@@ -246,9 +248,11 @@ async function mockAiBackend(
     }
 
     if (request.url().endsWith('/sessions/browser-session/uploads') && request.method() === 'POST') {
-      captured.uploadBody = request.postDataBuffer()?.toString('latin1') ?? '';
+      const uploadBody = request.postDataBuffer()?.toString('latin1') ?? '';
+      captured.uploadBody += uploadBody;
       captured.uploadContentType = request.headers()['content-type'] ?? '';
-      const filenames = [...captured.uploadBody.matchAll(/filename="([^"]+)"/g)].map(match => match[1]);
+      const filenames = [...uploadBody.matchAll(/filename="([^"]+)"/g)].map(match => match[1]);
+      captured.uploadBatches.push(filenames);
       pendingAppEvents.push(`[App event] The user uploaded files: ${JSON.stringify(filenames.map(filename => ({ filename, bytes: 1 })))}`);
       await route.fulfill({
         status: 201,
@@ -753,6 +757,27 @@ test('previews and sends an image attachment', async ({ page }) => {
   await expect(systemPrompt.locator('pre')).toHaveText('Mock system prompt');
 });
 
+test('uploads one file per request before sending the question', async ({ page }) => {
+  const captured = await mockAiBackend(page);
+  await page.route('**/ai/capabilities', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ file_attachments: {
+      enabled: true, max_files: 32, max_bytes_per_file: 25,
+      max_bytes_per_session: 200,
+    } }),
+  }));
+  await page.goto('/experimental-ai');
+  await page.getByLabel('Attach files').setInputFiles(
+    ['one.txt', 'two.txt', 'three.txt'].map(name => ({ name, mimeType: 'text/plain', buffer: Buffer.from('abc') })),
+  );
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Read these files.');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByLabel('Chat messages').getByText('The image and schedule were received.')).toBeVisible();
+  expect(captured.uploadBatches).toEqual([['one.txt'], ['two.txt'], ['three.txt']]);
+  expect(JSON.parse(captured.messageBody).message).toBe('Read these files.');
+  await page.screenshot({ path: '../artifacts/six-hour-agents/attachment-batches.png', fullPage: true });
+});
+
 test('previews and sends arbitrary file attachments', async ({ page }) => {
   const captured = await mockAiBackend(page);
 
@@ -783,7 +808,8 @@ test('previews and sends arbitrary file attachments', async ({ page }) => {
   await expect(page.getByText('The image and schedule were received.')).toBeVisible();
   // File names stay visible while the exact app message starts collapsed.
   const upload = page.getByLabel('Chat messages').locator('article', { hasText: 'User · App - Files Uploaded' });
-  await expect(upload.locator('pre')).toBeHidden();
+  await expect(upload.locator('pre')).toHaveCount(3);
+  for (const entry of await upload.locator('pre').all()) await expect(entry).toBeHidden();
   await expect(upload.getByRole('listitem')).toHaveText([
     'staff.csv (0.001 KB)', 'notes.pdf (0.001 KB)', 'coverage.custom (0.001 KB)',
   ]);
@@ -856,7 +882,7 @@ test('places uploads beside desktop chat and below mobile controls and allows re
   let retained = false;
   await page.route('**/ai/capabilities', route => route.fulfill({
     contentType: 'application/json',
-    body: JSON.stringify({ auth: { required: true, scheme: 'bearer' }, file_attachments: { enabled: true, retained: true, max_files: 8, max_bytes_per_file: 5000000 } }),
+    body: JSON.stringify({ auth: { required: true, scheme: 'bearer' }, file_attachments: { enabled: true, retained: true, max_files: 8, max_bytes_per_file: 5000000, max_bytes_per_session: 200_000_000 } }),
   }));
   await page.route('**/ai/sessions/*/uploads', route => {
     if (route.request().method() === 'POST') retained = true;
@@ -951,7 +977,7 @@ for (const { interruption, steered } of (['network pause', 'reload', 'tab switch
       if (request.url === '/ai/capabilities') {
         json({
           auth: { required: true, scheme: 'bearer' },
-          file_attachments: { enabled: true, retained: true, max_files: 8, max_bytes_per_file: 5000000 },
+          file_attachments: { enabled: true, retained: true, max_files: 8, max_bytes_per_file: 5000000, max_bytes_per_session: 200_000_000 },
           session_retention_seconds: 2592000,
         });
         return;

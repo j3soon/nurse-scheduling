@@ -128,6 +128,7 @@ const defaultCapabilities = {
     enabled: true,
     max_files: 8,
     max_bytes_per_file: 5_000_000,
+    max_bytes_per_session: 200_000_000,
   },
 };
 
@@ -152,8 +153,9 @@ describe('ExperimentalAiPage', () => {
     mockRemoveUpload.mockReset().mockResolvedValue(undefined);
     mockDownloadGeneratedZip.mockReset().mockResolvedValue(new Blob(['zip']));
     mockRemoveGeneratedZip.mockReset().mockResolvedValue(undefined);
-    mockUploadFiles.mockReset().mockImplementation(async (_sessionId: string, files: File[]) => files.map((file, index) => ({
-      id: `upload-${index + 1}`, filename: file.name, media_type: file.type || 'application/octet-stream', bytes: file.size,
+    let uploadIndex = 0;
+    mockUploadFiles.mockReset().mockImplementation(async (_sessionId: string, files: File[]) => files.map(file => ({
+      id: `upload-${++uploadIndex}`, filename: file.name, media_type: file.type || 'application/octet-stream', bytes: file.size,
     })));
     mockDownloadOptimization.mockReset().mockResolvedValue(new Blob(['workbook']));
     mockGetCapabilities.mockReset().mockResolvedValue(defaultCapabilities);
@@ -2437,12 +2439,75 @@ describe('ExperimentalAiPage', () => {
     expect(screen.getByAltText('Preview of dropped.png')).toBeInTheDocument();
   });
 
+  it.each([
+    { maxFiles: 1, totalBytes: 20 },
+    { maxFiles: 32, totalBytes: 6 },
+  ])('includes retained uploads in picker limits ($maxFiles files, $totalBytes bytes)', async ({ maxFiles, totalBytes }) => {
+    mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, file_attachments: {
+      enabled: true, retained: true, max_files: maxFiles, max_bytes_per_file: 25,
+      max_bytes_per_session: totalBytes
+    } });
+    mockGetUploads.mockResolvedValue([{ id: 'existing', filename: 'existing.txt', media_type: 'text/plain', bytes: 4 }]);
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await user.type(await screen.findByRole('textbox', { name: 'Ask about the current schedule' }), 'Hello');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByRole('button', { name: 'Remove existing.txt' });
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument());
+    if (maxFiles === 1) {
+      expect(screen.getByLabelText('Attach files')).toBeDisabled();
+    } else {
+      await user.upload(screen.getByLabelText('Attach files'), new File(['abc'], 'extra.txt'));
+      expect(await screen.findByRole('alert')).toHaveTextContent('Files in this chat must total');
+    }
+    expect(mockUploadFiles).not.toHaveBeenCalled();
+  });
+
+  it('uploads files individually before submitting the question', async () => {
+    mockGetCapabilities.mockResolvedValueOnce({ ...defaultCapabilities, file_attachments: {
+      enabled: true, retained: true, max_files: 32, max_bytes_per_file: 25,
+      max_bytes_per_session: 200,
+    } });
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    mockUploadFiles.mockImplementation(async (_sessionId: string, files: File[]) => files.map(file => ({
+      id: file.name, filename: file.name, media_type: 'text/plain', bytes: file.size,
+    })));
+    const files = ['one.txt', 'two.txt', 'three.txt'].map(name => new File(['abc'], name));
+    await user.upload(await screen.findByLabelText('Attach files'), files);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Read the files.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(mockSendMessage).toHaveBeenCalledOnce());
+    expect(mockUploadFiles.mock.calls.map(call => (call[1] as File[]).map(file => file.name))).toEqual([
+      ['one.txt'], ['two.txt'], ['three.txt'],
+    ]);
+  });
+
+  it('keeps successful uploads visible when a later upload fails', async () => {
+    mockGetCapabilities.mockResolvedValueOnce({ ...defaultCapabilities, file_attachments: {
+      enabled: true, retained: true, max_files: 32, max_bytes_per_file: 25,
+      max_bytes_per_session: 200,
+    } });
+    mockGetUploads.mockResolvedValue([{ id: 'first', filename: 'one.txt', media_type: 'text/plain', bytes: 3 }]);
+    mockUploadFiles.mockResolvedValueOnce([{ id: 'first', filename: 'one.txt', media_type: 'text/plain', bytes: 3 }])
+      .mockRejectedValueOnce(new Error('Later batch failed.'));
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await user.upload(await screen.findByLabelText('Attach files'), [new File(['abc'], 'one.txt'), new File(['def'], 'two.txt')]);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Read the files.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Later batch failed.');
+    expect(within(screen.getByLabelText('Session files')).getByText('one.txt')).toBeInTheDocument();
+    expect(mockSendMessage).not.toHaveBeenCalled();
+  });
+
   it('accepts and sends an arbitrary file type', async () => {
     mockGetCapabilities.mockResolvedValueOnce({
       file_attachments: {
         enabled: true,
         max_files: 2,
         max_bytes_per_file: 5_000_000,
+        max_bytes_per_session: 200_000_000,
       },
     });
     const user = userEvent.setup();
@@ -2485,15 +2550,13 @@ describe('ExperimentalAiPage', () => {
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Read both files.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
-    expect(mockUploadFiles).toHaveBeenCalledWith(
-      'session-id',
-      [
-        expect.objectContaining({ name: 'notes.pdf', type: '' }),
-        expect.objectContaining({ name: 'coverage.xlsx', type: '' }),
-      ],
-      null,
-      '/ai',
-      expect.any(AbortSignal),
+    expect(mockUploadFiles).toHaveBeenNthCalledWith(
+      1, 'session-id', [expect.objectContaining({ name: 'notes.pdf', type: '' })],
+      null, '/ai', expect.any(AbortSignal),
+    );
+    expect(mockUploadFiles).toHaveBeenNthCalledWith(
+      2, 'session-id', [expect.objectContaining({ name: 'coverage.xlsx', type: '' })],
+      null, '/ai', expect.any(AbortSignal),
     );
     expect(mockRunEvents).toHaveBeenCalledWith(
       'session-id',

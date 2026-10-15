@@ -816,6 +816,17 @@ controls. `/capabilities.app_version` identifies the AI service. The parent
 | `DELETE /sessions/{id}/uploads/{upload_id}` | Remove one retained file. |
 | `POST /sessions/{id}/messages` | Stream one answer to a JSON `message`. |
 
+The default limits are 32 retained files, 25 MB per file, and 200 MB of retained
+source files per session. MB uses 1,000,000 bytes.
+`/capabilities.file_attachments` publishes `max_files`, `max_bytes_per_file`,
+and `max_bytes_per_session`.
+The browser checks existing uploads and selected files against these limits.
+It uploads one file per request, sequentially, before submitting the question.
+If a later upload fails, earlier successful uploads remain in Session files.
+The question is not submitted. Remove unused uploads to free session capacity.
+The backend bounds each streamed request body to the per-file limit plus
+64 KiB for multipart overhead. NGINX permits 64 MiB per `/ai/` request.
+
 Upload requests contain only repeated `files` fields. Other field names are
 rejected. Uploads are refused while a response is active. Every turn can read
 all retained files. Sessions are process-local. Use one AI backend instance

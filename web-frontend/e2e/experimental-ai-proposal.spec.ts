@@ -87,7 +87,7 @@ async function mockProposingBackend(page: Page, holdAnswer = false) {
         contentType: 'application/json',
         headers: corsHeaders,
         body: JSON.stringify({
-          file_attachments: { enabled: true, max_files: 8, max_bytes_per_file: 5_000_000 },
+          file_attachments: { enabled: true, max_files: 8, max_bytes_per_file: 5_000_000, max_bytes_per_session: 200_000_000 },
         }),
       });
       return;

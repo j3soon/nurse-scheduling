@@ -1098,6 +1098,7 @@ def test_capabilities_report_configured_attachment_limits(monkeypatch: pytest.Mo
             settings=make_settings(
                 max_attachment_files=5,
                 max_attachment_bytes=4321,
+                max_attachment_total_bytes=12345,
             ),
             provider=FakeProvider(),
         )
@@ -1113,6 +1114,7 @@ def test_capabilities_report_configured_attachment_limits(monkeypatch: pytest.Mo
             "enabled": True,
             "max_files": 5,
             "max_bytes_per_file": 4321,
+            "max_bytes_per_session": 12345,
             "retained": True,
         },
         "session_retention_seconds": 2592000,
@@ -1685,11 +1687,13 @@ def test_environment_configuration_reads_attachment_limits(monkeypatch: pytest.M
     monkeypatch.setenv("E2B_API_KEY", "e2b-key")
     monkeypatch.setenv("AI_MAX_ATTACHMENT_FILES", "6")
     monkeypatch.setenv("AI_MAX_ATTACHMENT_BYTES", "6000000")
+    monkeypatch.setenv("AI_MAX_ATTACHMENT_TOTAL_BYTES", "12000000")
 
     settings = AiSettings.from_env()
 
     assert settings.max_attachment_files == 6
     assert settings.max_attachment_bytes == 6_000_000
+    assert settings.max_attachment_total_bytes == 12_000_000
 
 
 def test_environment_configuration_reads_provider_retry_settings(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3357,3 +3361,56 @@ def test_proposal_decisions_wait_for_active_turn_without_changing_it(decision):
         json={"base_sha256": revision} if decision == "approve" else None,
     )
     assert accepted.status_code == 200
+
+
+def test_session_attachment_total_counts_existing_files_and_releases_removed_bytes():
+    client = AuthenticatedTestClient(
+        create_test_app(settings=make_settings(max_attachment_total_bytes=6), provider=FakeProvider())
+    )
+    session_id = create_session(client)
+    first = client.post(
+        f"/sessions/{session_id}/uploads", files=[("files", ("one.txt", b"1234", "text/plain"))]
+    ).json()[0]
+    rejected = client.post(f"/sessions/{session_id}/uploads", files=[("files", ("two.txt", b"567", "text/plain"))])
+    assert rejected.status_code == 413
+    assert client.get(f"/sessions/{session_id}/uploads").json() == [first]
+    assert client.delete(f"/sessions/{session_id}/uploads/{first['id']}").is_success
+    assert client.post(
+        f"/sessions/{session_id}/uploads", files=[("files", ("exact.txt", b"123456", "text/plain"))]
+    ).is_success
+
+
+def test_chunked_upload_body_is_bounded_before_the_whole_file_is_spooled():
+    async def exercise():
+        app = create_test_app(
+            settings=make_settings(max_attachment_bytes=4),
+            provider=FakeProvider(),
+        )
+        consumed = []
+
+        async def body():
+            yield b'--test-boundary\r\nContent-Disposition: form-data; name="files"; filename="large.txt"\r\n\r\n'
+            for index in range(10):
+                consumed.append(index)
+                yield b"x" * 10_000
+            yield b"\r\n--test-boundary--\r\n"
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver", headers=AI_AUTH_HEADERS
+        ) as client:
+            session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
+            accepted = await client.post(
+                f"/sessions/{session_id}/uploads", files=[("files", ("exact.txt", b"1234", "text/plain"))]
+            )
+            assert accepted.status_code == 201
+            response = await client.post(
+                f"/sessions/{session_id}/uploads",
+                content=body(),
+                headers={"Content-Type": "multipart/form-data; boundary=test-boundary"},
+            )
+            assert response.status_code == 413
+            assert response.json()["detail"] == "Attachment request is too large."
+            assert len(consumed) < 10
+            assert (await client.get(f"/sessions/{session_id}/uploads")).json() == accepted.json()
+
+    asyncio.run(exercise())

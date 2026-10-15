@@ -793,12 +793,18 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       controller.signal.addEventListener('abort', aborted, { once: true });
       try {
         if (attachmentsForMessage.length > 0) {
-          const uploaded = await uploadFiles(sessionId, attachmentsForMessage, authToken, sessionEndpoint, controller.signal);
-          setUploadedFiles(previous => [...previous, ...uploaded]);
-          activeQuestionRequiresAttachments = false;
-          request.uploading = false;
-          setMessages(previous => previous.map(message => message.request?.id === request.id
-            ? { ...message, request: { ...message.request, uploading: false } } : message));
+          for (const file of attachmentsForMessage) {
+            if (currentRequest.stopped) break;
+            const uploaded = await uploadFiles(sessionId, [file], authToken, sessionEndpoint, controller.signal);
+            if (!lifecycle.owns(operation)) return;
+            setUploadedFiles(previous => [...previous, ...uploaded]);
+          }
+          if (!currentRequest.stopped) {
+            activeQuestionRequiresAttachments = false;
+            request.uploading = false;
+            setMessages(previous => previous.map(message => message.request?.id === request.id
+              ? { ...message, request: { ...message.request, uploading: false } } : message));
+          }
         }
         if (currentRequest.stopped) {
           controller.abort();

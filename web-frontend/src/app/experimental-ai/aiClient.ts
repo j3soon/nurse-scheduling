@@ -88,6 +88,7 @@ export interface AiCapabilities {
     enabled: boolean;
     max_files: number;
     max_bytes_per_file: number;
+    max_bytes_per_session: number;
     retained?: boolean;
   };
 }
@@ -265,6 +266,8 @@ export async function getCapabilities(signal?: AbortSignal, endpoint = getAiBase
     || files.max_files <= 0
     || !Number.isInteger(files.max_bytes_per_file)
     || files.max_bytes_per_file <= 0
+    || !Number.isSafeInteger(files.max_bytes_per_session)
+    || files.max_bytes_per_session <= 0
     || (files.retained !== undefined && typeof files.retained !== 'boolean')
     || (body.saved_chat_export !== undefined && typeof body.saved_chat_export !== 'boolean')
   ) {
