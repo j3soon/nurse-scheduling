@@ -75,20 +75,27 @@ export default function Navigation() {
   const hasCenteredTabRef = useRef(false);
 
   // Phones show only a few tabs, so keep the current one and its neighbors in view.
+  // Center again after a rotation or resize, or when the custom export indicator widens a tab.
   useEffect(() => {
-    const strip = tabStripRef.current;
-    const tab = strip?.querySelector<HTMLElement>('[aria-current="page"]');
-    if (!strip || !tab) return;
-    const stripBox = strip.getBoundingClientRect();
-    const tabBox = tab.getBoundingClientRect();
-    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    // `scrollIntoView` could also scroll the page vertically, so only move the strip.
-    strip.scrollTo?.({
-      left: strip.scrollLeft + tabBox.left - stripBox.left - (stripBox.width - tabBox.width) / 2,
-      behavior: hasCenteredTabRef.current && !reduceMotion ? 'smooth' : 'auto',
-    });
+    const centerCurrentTab = (smooth: boolean) => {
+      const strip = tabStripRef.current;
+      const tab = strip?.querySelector<HTMLElement>('[aria-current="page"]');
+      if (!strip || !tab) return;
+      const stripBox = strip.getBoundingClientRect();
+      const tabBox = tab.getBoundingClientRect();
+      const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      // `scrollIntoView` could also scroll the page vertically, so only move the strip.
+      strip.scrollTo?.({
+        left: strip.scrollLeft + tabBox.left - stripBox.left - (stripBox.width - tabBox.width) / 2,
+        behavior: smooth && !reduceMotion ? 'smooth' : 'auto',
+      });
+    };
+    centerCurrentTab(hasCenteredTabRef.current);
     hasCenteredTabRef.current = true;
-  }, [currentTabIndex]);
+    const handleResize = () => centerCurrentTab(false);
+    window.addEventListener('resize', handleResize, { passive: true });
+    return () => window.removeEventListener('resize', handleResize);
+  }, [currentTabIndex, hasCustomExportLayout]);
 
   const navigatePrevious = useCallback(() => navigateToTab(currentTabIndex - 1), [currentTabIndex, navigateToTab]);
   const navigateNext = useCallback(() => navigateToTab(currentTabIndex + 1), [currentTabIndex, navigateToTab]);

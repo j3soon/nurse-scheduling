@@ -167,6 +167,13 @@ test('shows whole date lists, a collapsed copy panel, and a centered current tab
     const box = (await currentTab.boundingBox())!;
     return Math.abs(box.x + box.width / 2 - 180);
   }).toBeLessThanOrEqual(2);
+  // Rotating the phone keeps the current tab centered.
+  await page.setViewportSize({ width: 740, height: 360 });
+  await expect.poll(async () => {
+    const box = (await currentTab.boundingBox())!;
+    return Math.abs(box.x + box.width / 2 - 370);
+  }).toBeLessThanOrEqual(2);
+  await page.setViewportSize({ width: 360, height: 740 });
   await page.getByRole('button', { name: 'Add Requirement', exact: true }).tap();
   const lastDate = page.locator('label').filter({ has: page.locator('input[type="checkbox"]') }).filter({ hasText: /^31$/ });
   // The list has no scroll box of its own, so its last row is not clipped.
