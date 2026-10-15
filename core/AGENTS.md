@@ -440,6 +440,8 @@ skipped does not validate persistence.
   stream.
 
 ## Input Limits
+- Match middleware routes relative to the ASGI `root_path`. Test authentication
+  and body limits at the application root and under a mounted URL prefix.
 - Bound submitted scheduling data by its alias expansion and nesting depth as
   well as its byte size. `loader.measure_yaml_expansion` measures both from the
   parse events without building the structure, and both the API and `load_data`

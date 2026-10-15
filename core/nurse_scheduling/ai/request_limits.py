@@ -21,6 +21,7 @@
 
 from collections.abc import Callable
 
+from starlette._utils import get_route_path
 from starlette.datastructures import Headers
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
@@ -50,7 +51,7 @@ class AiRequestLimitsMiddleware:
         if scope["type"] != "http":
             await self._app(scope, receive, send)
             return
-        path = scope["path"].rstrip("/")
+        path = get_route_path(scope).rstrip("/")
         if scope["method"] != "OPTIONS" and (path == "/sessions" or path.startswith("/sessions/")):
             try:
                 self._require_auth(Request(scope))
