@@ -11,7 +11,7 @@
     "evidence": [
       {
         "case": "current-chat-identity",
-        "input_sha256": "3d0d49b16f94e3f9cf6f052fdd6284f6124eb0719e301ac2749fd4196541b7ff",
+        "input_sha256": "ec2150749e8694adfa2b9322f20d808d549dae2717c1f42462a69b0cbacdedc4",
         "before": "0/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
@@ -19,12 +19,13 @@
         "controls": [
           {
             "case": "colleague-open-ai-chat",
-            "input_sha256": "0e7c9899573e4f4021ea540b87f7588b40f26ff979bd3fd72c10e9fb2e089208",
+            "input_sha256": "850ce4ddf48cd280537ed220fa5b8afcb3fa785682a1c7bc678a780fb4ccb695",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Full-prompt ablation over three user turns. Without the clause, the agent answers that it cannot tell whether this is the Experimental AI chat. Navigation advice for a colleague on another page stays correct."
+        "note": "Full-prompt ablation over three user turns. Without the clause, the agent answers that it cannot tell whether this is the Experimental AI chat. Navigation advice for a colleague on another page stays correct.",
+        "fingerprint_note": "Expanded JSON comparator dependency coverage. Grading, model inputs and historical measurements are unchanged."
       }
     ],
     "comparison_mode": "ablation"
@@ -448,7 +449,7 @@
     "evidence": [
       {
         "case": "result-stale-summary-control",
-        "input_sha256": "bc74623d3d6fe3a2e03e0f69155c68891a324d8c109860a9ab68b6f393b12722",
+        "input_sha256": "b2f745830af519f590102d4e2da95f1d304dd07623c4376a603f63c7ce1a15ab",
         "before": "0/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
@@ -456,18 +457,19 @@
         "controls": [
           {
             "case": "result-grouped-cross-month",
-            "input_sha256": "41926ef473412fa3d93a4a106ff1f6868b384614d131db6b9defb21b9f7e0431",
+            "input_sha256": "9d32031d64954af459643c2a2ec9237922a474cad41e87fca128b97eabf7a754",
             "before": "3/3",
             "after": "3/3"
           },
           {
             "case": "result-single-tier-summary",
-            "input_sha256": "0b51d2f81eda6b6387ccdb203ec7d04bf8a1f003970463bd854834e7f889f715",
+            "input_sha256": "f92d06e1d70e5887429683246ee0d5bc948116d11e75d7fb3fb961f2e1814b5d",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Full-prompt ablation with the A1-range helper, before moving download delivery earlier. The stale-summary witness uses the current workbook instead of archived summary counts. Both count controls pass. No cost target was declared."
+        "note": "Full-prompt ablation with the A1-range helper, before moving download delivery earlier. The stale-summary witness uses the current workbook instead of archived summary counts. Both count controls pass. No cost target was declared.",
+        "fingerprint_note": "Expanded JSON comparator dependency coverage. Grading, model inputs and historical measurements are unchanged."
       }
     ],
     "comparison_mode": "ablation"
@@ -486,7 +488,7 @@
     "evidence": [
       {
         "case": "xlsx-sheet-inventory",
-        "input_sha256": "75bca49c83cdd3774d2a217adf1b0c8d4e235cd639d2629f2e3ad5bdf3572c3d",
+        "input_sha256": "06d6baf35a6e73d864da5a42a4cb909c81b9cd2d94d863997ad945f08679f0fe",
         "before": "3/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
@@ -494,19 +496,19 @@
         "controls": [
           {
             "case": "xlsx-color-fallback",
-            "input_sha256": "9087b8d44221d38a52623a758d6f9b72b5f7343d3a77e1dc74b7acd5a41f7e35",
+            "input_sha256": "92013dd0680e45bea625c5691a40feebcae7ec72c5ccbcaed58e6c44ab586909",
             "before": "3/3",
             "after": "3/3"
           },
           {
             "case": "xlsx-formulas-and-caches",
-            "input_sha256": "c493d062b016c89e61b7074e018693bcd80850fb5d860c01b247c1baef142e47",
+            "input_sha256": "21bfeafad324f00c9e187d3feb68c0b7eb249ad8c6d9591bf505a19db77132be",
             "before": "3/3",
             "after": "3/3"
           },
           {
             "case": "xlsx-styled-requests-and-caches",
-            "input_sha256": "8281e591144e93c08aecafaa243b15ce976724a7c95c26f1a9fe203b138268a8",
+            "input_sha256": "5be778c544d938513706de997ccf149ff36923549d8efdaee3a3786df7643707",
             "before": "3/3",
             "after": "3/3"
           }
@@ -515,7 +517,8 @@
         "cost_metric": "total-tokens",
         "cost_ratio": 0.39351841987514113,
         "cost_target": 0.8,
-        "grading_note": "Regraded saved outputs after numeric comparison correction. Case and fixture fingerprints match. Pass counts and costs are unchanged."
+        "grading_note": "Regraded saved outputs after numeric comparison correction. Case and fixture fingerprints match. Pass counts and costs are unchanged.",
+        "fingerprint_note": "Expanded JSON comparator dependency coverage. Grading, model inputs and historical measurements are unchanged."
       }
     ]
   },
@@ -544,17 +547,18 @@
             "case": "pdf-specified-text-page",
             "before": "3/3",
             "after": "3/3",
-            "input_sha256": "fdd8aa86a6311746610c2f43e2101a96da2b47b6fa6aeb25091ca974b4dae024"
+            "input_sha256": "eb4fb5f336ea10cd938f053c0635b1678abdf5fa599fcb23fee0c1ab120ddb22"
           },
           {
             "case": "pdf-visual-layout",
             "before": "5/5",
             "after": "5/5",
-            "input_sha256": "f0bea39bd2f861223be16a7e0d6623a2898575ff3b82927890ae3f58456dd1fc"
+            "input_sha256": "dcfd14f94a25b299cfdff604f24d6a462deef6991980f00398120122a4b80dff"
           }
         ],
         "note": "Search paragraph removed from the full prompt, with inspect_pdf.py --find available in both arms and the other PDF instructions unchanged. Search has five paired attempts, known-page text has three, and visual inspection has five. Visual inspection uses 5% more tokens with similar time. The known-page grader accepts correct read-tool answers. Initial restrictive-grader attempts and all distributions remain in ignored artifacts.",
-        "input_sha256": "d576cc2b8753c67f897bf4be503d8b41b12fd4db1a9fdee1a41061528591188b"
+        "input_sha256": "04c2d66bb248f5313f0c251baa745812c1d464628617adfa928714f174d3b4b5",
+        "fingerprint_note": "Expanded JSON comparator dependency coverage. Grading, model inputs and historical measurements are unchanged."
       }
     ]
   },
@@ -571,7 +575,7 @@
     "evidence": [
       {
         "case": "request-tier-counts-large",
-        "input_sha256": "4728e535fc57adc9141fd5bb6e9432b75034bb77becf5a6e3b0ea5d65c4b2e91",
+        "input_sha256": "c0b8bd1a67d3835a3e7c38780bb46bf21e53a16250843b2566beabaa29324ba3",
         "before": "3/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
@@ -582,18 +586,19 @@
         "controls": [
           {
             "case": "request-filtered-cross-month",
-            "input_sha256": "37f23c09edb3110a94fca4342858726a3039c57b2e6d448b0b8c126ba63cab2f",
-            "before": "1/3",
+            "input_sha256": "62a3a978f3fd09c4c4ff01cad8f5eb9e2595193c0ce2bbe6b2fbe983d2dd4d94",
+            "before": "0/3",
             "after": "3/3"
           },
           {
             "case": "request-bans-counts-large",
-            "input_sha256": "aa9a15679355d87c471f514f28db28f4c2dd2669c745a468fa07a5562beffdfe",
+            "input_sha256": "d7d8c7cd27c978dffe56673db9942bdde3e5645d6730a14d21fb1c9fc4c53ac2",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Plain-language rewrite compared with the previous prompt step, not with the old wording. Request counts stayed correct with 69% fewer mean tokens, with substantial variation between runs. The cross-month case improved from 1/3 to 3/3. Ban counts stayed correct, without a confirmed time reduction."
+        "note": "The historical adjacent-prefix request-count witness stays correct with 69% fewer mean tokens. Ban counts stay correct without a confirmed time gain. A fresh current-prefix cross-month control gives 0/3 before and 3/3 after. Its older 1/3 baseline is unconfirmed because failed outputs are unavailable. This control recheck makes no new cost claim.",
+        "fingerprint_note": "Expanded JSON comparator dependency coverage. Historical witness measurements are unchanged. The filtered control was rerun separately."
       }
     ]
   },
@@ -610,7 +615,7 @@
     "evidence": [
       {
         "case": "request-bans-counts-large",
-        "input_sha256": "ac2c8ead4d14b39340622d8835d3c00e568e6498066915d049918dfbf1cc051f",
+        "input_sha256": "15a78403598bd69e78a83e85e83567e12aba3eb3b3c8c8b46dca87af05aac198",
         "before": "5/5",
         "after": "5/5",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
@@ -621,13 +626,14 @@
         "controls": [
           {
             "case": "optimizer-independent-request-check",
-            "input_sha256": "80bc0f79a65ed7f2c01894fcca1c46d92c4e896b643cc8b8bff4d191e51379a3",
+            "input_sha256": "b741a19b281596e47d12e1c4b654c5a9bad96ba51b48d74d91edc5936526c4ac",
             "before": "3/3",
             "after": "3/3"
           }
         ],
         "note": "The unchanged request-count witness remains valid. Independent checking remains authorized when requested. Stale-policy conclusions are not confirmed in the new comparison, so that testcase remains linked without a passing control receipt. Failed attempts remain in ignored artifacts.",
-        "grading_note": "Regraded saved outputs after numeric comparison correction. Case and fixture fingerprints match. Pass counts and costs are unchanged."
+        "grading_note": "Regraded saved outputs after numeric comparison correction. Case and fixture fingerprints match. Pass counts and costs are unchanged.",
+        "fingerprint_note": "Expanded JSON comparator dependency coverage. Grading, model inputs and historical measurements are unchanged."
       }
     ]
   },
@@ -644,7 +650,7 @@
     "evidence": [
       {
         "case": "request-tier-inventory-large",
-        "input_sha256": "e249fefa5d404bde9ad487ce2ee2f9c2193aed30edf1a616b93204655de26caa",
+        "input_sha256": "2e7057baa718b55d620cf6da8d16dc718b7e893bd761894fc878bec0196b962b",
         "before": "3/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
@@ -655,18 +661,19 @@
         "controls": [
           {
             "case": "request-filtered-cross-month",
-            "input_sha256": "125e0c94473d5e0def012d12d36c05185f75e9705f7f70c6a97ffa14f3d873e7",
+            "input_sha256": "aee8db29b9177baa7b03bb32ae58631a21b9b250dc2f2223c6aaa084a565bffd",
             "before": "3/3",
             "after": "3/3"
           },
           {
             "case": "request-bans-counts-large",
-            "input_sha256": "f8b1b951fc7898412d8b185fb0ce590509852099479a07e4fedde1f28421ca58",
+            "input_sha256": "c56b0f930f8970d95ede52481c7c97823a7c104a5df624c61c5c258620685b47",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Full prompt with and without this final pointer, with identical helpers available. All tier counts must match independently checked selectors. Exact JSON object shape clarified in both arms after diagnostic array-only replies. Earlier format failures and cost outliers remain in ignored artifacts. Baseline cost variance is high."
+        "note": "Full prompt with and without this final pointer, with identical helpers available. All tier counts must match independently checked selectors. Exact JSON object shape clarified in both arms after diagnostic array-only replies. Earlier format failures and cost outliers remain in ignored artifacts. Baseline cost variance is high.",
+        "fingerprint_note": "Expanded JSON comparator dependency coverage. Grading, model inputs and historical measurements are unchanged."
       }
     ]
   },
@@ -733,7 +740,7 @@
     "evidence": [
       {
         "case": "month-end-full-history",
-        "input_sha256": "877e07a459afdeb2558cb9ad16b643189a6412a998f33e6608070ccd56c329a4",
+        "input_sha256": "ac33a30d9db428b4fc1f86c17dce6d92887fa85f57b24d45ddde526960223210",
         "before": "2/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
@@ -753,7 +760,8 @@
           }
         ],
         "note": "Full-prompt comparison of immediately previous wording with scoped wording, with the same code, helpers, cases, and attachments. Full-history arrays improve from 2/3 to 3/3. Both one-row shorthand CSV controls pass 3/3 with both wordings. Calendar order and all supplied days remain semantic. No optimizer jobs ran.",
-        "grading_note": "Regraded saved outputs after numeric comparison correction. Case and fixture fingerprints match. Pass counts and costs are unchanged."
+        "grading_note": "Regraded saved outputs after numeric comparison correction. Case and fixture fingerprints match. Pass counts and costs are unchanged.",
+        "fingerprint_note": "Expanded JSON comparator dependency coverage. Grading, model inputs and historical measurements are unchanged."
       }
     ],
     "comparison_mode": "ablation"
@@ -825,13 +833,14 @@
           },
           {
             "case": "optimizer-independent-request-check",
-            "input_sha256": "c5af550e95046772a2d6a8accdc47717c84a69edf70e02c9045bf82ea613f02a",
+            "input_sha256": "1afcbe79914273d4be247cf862ce35a90b69ab9adfca399bdc1e8a0ac901f776",
             "before": "3/3",
             "after": "3/3"
           }
         ],
         "note": "Adjacent full-prompt prefixes. Goal witness preserves submitted policy with 69% fewer mean tokens. Two of three starts are direct. Edit and independent-check controls stay correct. Authorized edits use 38% more tokens, so the combined cost gate fails. Baseline token variance is high. Controlled starts do not grade solver quality.",
-        "grading_note": "Regraded saved outputs after numeric comparison correction. Case and fixture fingerprints match. Pass counts and costs are unchanged."
+        "grading_note": "Regraded saved outputs after numeric comparison correction. Case and fixture fingerprints match. Pass counts and costs are unchanged.",
+        "fingerprint_note": "Expanded JSON comparator dependency coverage. Grading, model inputs and historical measurements are unchanged."
       }
     ]
   },
@@ -885,7 +894,7 @@
     "evidence": [
       {
         "case": "keep-generated-file-for-next-message",
-        "input_sha256": "973ee96d8218b63c18749bb214759ba10e8c94bb5a3f26df644029f928c8a8da",
+        "input_sha256": "da4fe31359bb11e43320971d8be7890ea4976df9cf8f952a4c0d2bc82a673166",
         "before": "0/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
@@ -893,7 +902,7 @@
         "controls": [
           {
             "case": "temporary-output-lifetime",
-            "input_sha256": "5d6e2a97fd7b8156caa6131417e8fa3fbcf847d4c872f8b9c4b6a55e92d5f91f",
+            "input_sha256": "f8407bffb8cea5f8e7c4e91cc699a00758e9b7281a27a753215aa102100e1a3c",
             "before": "2/3",
             "after": "3/3"
           },
@@ -904,16 +913,18 @@
             "after": "3/3"
           }
         ],
-        "note": "Adjacent full-prompt prefixes. Without the section, every attempt promised to keep an ordinary workspace file for the next message. With it, every attempt said the file is lost. The lifetime check and download delivery stay correct."
+        "note": "Adjacent full-prompt prefixes. Without the section, every attempt promised to keep an ordinary workspace file for the next message. With it, every attempt said the file is lost. The lifetime check and download delivery stay correct.",
+        "fingerprint_note": "Expanded JSON comparator dependency coverage. Grading, model inputs and historical measurements are unchanged."
       },
       {
         "case": "earlier-download-availability",
-        "input_sha256": "877e82e02b1221d1051331c492d9df2f5aabf70d36d08ff507948297f88a2e5f",
+        "input_sha256": "a4c4e6d214ee6a85b5624ef41f98b0488cbf3760bc3332bacc634de97dc50529",
         "before": "0/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
-        "note": "Adjacent full-prompt prefixes. Without the section, every attempt treated the earlier download as lost after finding no ZIP in the new VM. An earlier wording that only said the ZIP is kept also failed 0/3. Stating that the button stays available while the next VM lacks the ZIP passes 3/3."
+        "note": "Adjacent full-prompt prefixes. Without the section, every attempt treated the earlier download as lost after finding no ZIP in the new VM. An earlier wording that only said the ZIP is kept also failed 0/3. Stating that the button stays available while the next VM lacks the ZIP passes 3/3.",
+        "fingerprint_note": "Expanded JSON comparator dependency coverage. Grading, model inputs and historical measurements are unchanged."
       }
     ]
   },
@@ -945,13 +956,14 @@
           },
           {
             "case": "new-schedule-qualified-slots",
-            "input_sha256": "6f64582f70aa47b1c0d8a5fa45a9824fec3d36fbbb53d6d84119e6a3b060b0ed",
+            "input_sha256": "1a5307d1517b74458d5ee5e1e32a77523e09051c87cfa2fdebc0d8db21935963",
             "before": "3/3",
             "after": "3/3"
           }
         ],
         "note": "Compare the previous full prompt with the explicit included-versus-additional arithmetic. The first corrected baseline creates three day slots in one of three runs. All five candidate runs pass, including its first three used for this paired receipt. A separate five-run baseline also passes 5/5, so the longer comparison ties and does not establish a general success-rate or cost gain. The explicit additional-slot control stays correct. The explanation control is rerun in both versions with numeric staffing counts, valid N or N+ names, and a rejection rule limited to claims that the app cannot represent senior staffing. Earlier false failures remain diagnostic reports.",
-        "grading_note": "Regraded saved outputs after numeric comparison correction. Case and fixture fingerprints match. Pass counts and costs are unchanged."
+        "grading_note": "Regraded saved outputs after numeric comparison correction. Case and fixture fingerprints match. Pass counts and costs are unchanged.",
+        "fingerprint_note": "Expanded JSON comparator dependency coverage. Grading, model inputs and historical measurements are unchanged."
       }
     ]
   },
@@ -1014,13 +1026,14 @@
           },
           {
             "case": "new-schedule-qualified-slots",
-            "input_sha256": "2a0e355140e06c8cbe6dffb7424ef242f61a2d6fc13b82407a0a85a184f3e8b0",
+            "input_sha256": "4a8269036477994a840d006679ac0e37460a41bccc0a3faec721c747140c21a2",
             "before": "3/3",
             "after": "3/3"
           }
         ],
         "note": "Full previous production prompt versus the same prompt plus policy intake. Provider and E2B commands are live. Initial diagnostic batch has three provider failures and remains preserved. Clean intake/declined recheck and unchanged qualified explanation control are used here. No optimization or general cost benefit is claimed.",
-        "grading_note": "Regraded saved outputs after numeric comparison correction. Case and fixture fingerprints match. Pass counts and costs are unchanged."
+        "grading_note": "Regraded saved outputs after numeric comparison correction. Case and fixture fingerprints match. Pass counts and costs are unchanged.",
+        "fingerprint_note": "Expanded JSON comparator dependency coverage. Grading, model inputs and historical measurements are unchanged."
       }
     ]
   },
@@ -1080,7 +1093,7 @@
           },
           {
             "case": "result-policy-misses",
-            "input_sha256": "72d4dc52bcdbee6f2961316f1123a6fbf858bd19578e11f41f058b9499599822",
+            "input_sha256": "5896a5c07730447e5133246c26752d2b3c1494ef2befe4911be2e490a9711759",
             "before": "3/3",
             "after": "3/3"
           },
@@ -1091,7 +1104,8 @@
             "after": "3/3"
           }
         ],
-        "note": "Full previous production prompt with a 315-word clause versus the same prompt with 77-word initiative guidance. Provider and E2B commands are live, with three repetitions per version and four case jobs. Offers need not enumerate loop steps. Actual starts, pending edits and every retry source are checked independently. Authorized retries use solver-checked exports, without HTTP optimizer jobs. The refusal receipt uses a clean recheck after an E2B failure. A larger policy control had five provider errors and remains diagnostic. The unchanged immediate-start case is 2/3 and the detailed automatic-policy-retry smoke is 0/1 with this wording. Those stronger automatic-only contracts are not certified by these decision cases. No general token saving or equivalence claim."
+        "note": "Full previous production prompt with a 315-word clause versus the same prompt with 77-word initiative guidance. Provider and E2B commands are live, with three repetitions per version and four case jobs. Offers need not enumerate loop steps. Actual starts, pending edits and every retry source are checked independently. Authorized retries use solver-checked exports, without HTTP optimizer jobs. The refusal receipt uses a clean recheck after an E2B failure. A larger policy control had five provider errors and remains diagnostic. The unchanged immediate-start case is 2/3 and the detailed automatic-policy-retry smoke is 0/1 with this wording. Those stronger automatic-only contracts are not certified by these decision cases. No general token saving or equivalence claim.",
+        "fingerprint_note": "Expanded JSON comparator dependency coverage. Grading, model inputs and historical measurements are unchanged."
       }
     ]
   }

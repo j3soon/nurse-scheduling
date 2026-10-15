@@ -24,6 +24,11 @@ parsed testcase, and fixture. Editing any of these invalidates the receipt. Help
 so a targeted deeper investigation can extend one witness without rerunning already verified controls.
 CI validates reviewed receipts locally. It does not call the provider or require ignored artifacts to exist.
 Receipts describe their tested context, not a fresh evaluation of every later prompt composition.
+Bind the JSON answer comparator for every answer shape, including scalar values.
+For a fingerprint-only correction, verify each existing receipt with the previous calculation before
+refreshing its dependency hash. Preserve its measurements and label the correction separately from model runs.
+If a previously untracked grader changed earlier, audit that change separately. Regrade its historical outputs,
+or replace missing evidence with a clearly labeled fresh comparison.
 
 ## Reproduce a comparison
 

@@ -104,10 +104,10 @@ def case_digest(case: EvalCase) -> str:
             fields.pop(optional)
     if fields["download_count"] is None:
         fields.pop("download_count")
-    if any(isinstance(value, dict) for value in case.answer_json.values()):
+    if case.answer_json:
         from .grading import _answer_json_matches
 
-        fields["nested_json_oracle_sha256"] = hashlib.sha256(
+        fields["answer_json_oracle_sha256"] = hashlib.sha256(
             inspect.getsource(_answer_json_matches).encode()
         ).hexdigest()
     if case.import_attachment:

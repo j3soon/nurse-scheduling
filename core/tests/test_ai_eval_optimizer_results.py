@@ -222,19 +222,33 @@ def test_independent_analysis_case_accepts_a_valid_extra_date_and_rejects_starti
     assert not grade(case, outcome).passed
 
 
-def test_nested_json_evidence_fingerprint_tracks_its_oracle_without_staling_scalar_cases(monkeypatch):
+@pytest.mark.parametrize(
+    ("expected", "actual"),
+    [
+        ({"day": "OFF"}, {"day": "D"}),
+        (1, 2),
+        (1.5, 2.5),
+        ("Ada", "Bela"),
+        (True, False),
+        (["01"], ["02"]),
+    ],
+)
+def test_json_evidence_fingerprint_tracks_the_comparator_for_every_answer_shape(monkeypatch, expected, actual):
     from .ai_eval import grading
 
-    nested = EvalCase("nested", "new-schedule", "Witness", False, answer_json={"witness": {"day": "OFF"}})
-    scalar = EvalCase("scalar", "new-schedule", "Count", False, answer_json={"count": 1})
-    before = case_digest(nested), case_digest(scalar)
+    case = EvalCase("json-answer", "new-schedule", "Return JSON.", False, answer_json={"value": expected})
+    no_json = EvalCase("text-answer", "new-schedule", "Explain.", False)
+    before = case_digest(case), case_digest(no_json)
+    outcome = RunOutcome(answer=json.dumps({"value": actual}))
+    assert not grade(case, outcome).passed
 
     def different_oracle(actual, expected):
         return True
 
     monkeypatch.setattr(grading, "_answer_json_matches", different_oracle)
-    assert case_digest(nested) != before[0]
-    assert case_digest(scalar) == before[1]
+    assert grade(case, outcome).passed
+    assert case_digest(case) != before[0]
+    assert case_digest(no_json) == before[1]
 
 
 @pytest.mark.parametrize("edit_before_start", [False, True])
