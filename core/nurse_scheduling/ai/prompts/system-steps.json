@@ -1076,13 +1076,13 @@
           },
           {
             "case": "optimization-loop-outcome-after-edit",
-            "input_sha256": "b90731668b15080bb9e2c277443ba852e0dad6ca8f83810c3e3c68f7dc5b13c6",
+            "input_sha256": "01f8f71402d0ec2672d6a7822c9e26741e8b3e9c4ea89693bb72f1bcab421e65",
             "before": "3/3",
             "after": "3/3"
           },
           {
             "case": "optimization-loop-outcome-holdout",
-            "input_sha256": "006a3182bf237f782ce74dcdaf8ca52b6155c330b1b1d2a613461aa40ef69e1d",
+            "input_sha256": "9b799cb7e9e543e2f107c2cb4ce21c0b223f5f32376ca5bacdd4496d331d3532",
             "before": "2/3",
             "after": "3/3"
           },
@@ -1106,7 +1106,7 @@
           }
         ],
         "note": "Full previous production prompt with a 315-word clause versus the same prompt with 77-word initiative guidance. Provider and E2B commands are live, with three repetitions per version and four case jobs. Offers need not enumerate loop steps. Actual starts, pending edits and every retry source are checked independently. Authorized retries use solver-checked exports, without HTTP optimizer jobs. The refusal receipt uses a clean recheck after an E2B failure. A larger policy control had five provider errors and remains diagnostic. The unchanged immediate-start case is 2/3 and the detailed automatic-policy-retry smoke is 0/1 with this wording. Those stronger automatic-only contracts are not certified by these decision cases. No general token saving or equivalence claim.",
-        "fingerprint_note": "Expanded JSON comparator dependency coverage. Grading, model inputs and historical measurements are unchanged. Grading helpers are fingerprinted transitively, and list numbers compare by value. Model inputs, measurements, and grades of saved outputs are unchanged."
+        "fingerprint_note": "Expanded JSON comparator dependency coverage. Grading, model inputs and historical measurements are unchanged. Grading helpers are fingerprinted transitively, and list numbers compare by value. Model inputs, measurements, and grades of saved outputs are unchanged. The offer check now requires a proposed optimization action. Regrading 27 saved outputs from both arms changes no result."
       }
     ]
   }

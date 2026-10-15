@@ -805,10 +805,13 @@ def _check_optimizer_initiative(case: EvalCase, outcome: RunOutcome) -> list[Che
     if any(event.get("kind") == "tool" and event.get("name") == "optimizer" for event in outcome.activity):
         required = ToolUsageExpectation(required_calls=(("optimizer", {"action": "start"}),))
         return [*_check_optimizer_start_source(case, outcome), *_check_tool_usage(outcome.activity, required)]
+    # The offer must propose running optimization, not only mention the solver or its result.
     invitation = (
-        r"\b(?:I can(?!['’]t|not\b)|we can(?!['’]t|not\b)|would you (?:like|want)|do you want|"
-        r"want me to|shall I|can I|if you(?: would|['’]d)? like|if you want)"
-        r"[^.!?\n]{0,300}\b(?:optimiz\w*|solver|solve)\b"
+        r"\b(?:I can(?!['’]t|\s*not\b)|we can(?!['’]t|\s*not\b)|would you (?:like|want)|do you want|"
+        r"want me to|shall I|should I|can I|if you(?: would|['’]d)? like|if you want)"
+        r"[^.!?\n]{0,300}?(?:\b(?:re-?)?optimi[sz]e\b|\bsolve\b"
+        r"|\b(?:run|start|launch|rerun|re-run|try|submit)\b[^.!?\n]{0,60}?\b(?:optimi[sz]\w*|solver)\b"
+        r"|\boptimi[sz]ation (?:run|pass|job)\b)"
     )
     offered = re.search(invitation, outcome.answer, re.IGNORECASE) is not None
     return [CheckResult("offers to run optimization", offered)]
