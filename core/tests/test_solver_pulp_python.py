@@ -30,8 +30,8 @@ from nurse_scheduling.solver_pulp_python import PuLPHiGHSSolver, PuLPSCIPSolver
 @pytest.mark.parametrize(
     ("solver_class", "engine", "pulp_solver_class"),
     [
-        (PuLPHiGHSSolver, "highs", pulp.HiGHS),
-        (PuLPSCIPSolver, "scip", pulp.SCIP_PY),
+        pytest.param(PuLPHiGHSSolver, "highs", pulp.HiGHS, marks=pytest.mark.requires_solver("pulp/highs")),
+        pytest.param(PuLPSCIPSolver, "scip", pulp.SCIP_PY, marks=pytest.mark.requires_solver("pulp/scip")),
     ],
 )
 def test_pulp_python_api_backends_solve_integer_model(solver_class, engine, pulp_solver_class):
@@ -52,7 +52,13 @@ def test_pulp_python_api_backends_solve_integer_model(solver_class, engine, pulp
     assert events[-1].currentBestScore == 1
 
 
-@pytest.mark.parametrize("solver_class", [PuLPHiGHSSolver, PuLPSCIPSolver])
+@pytest.mark.parametrize(
+    "solver_class",
+    [
+        pytest.param(PuLPHiGHSSolver, marks=pytest.mark.requires_solver("pulp/highs")),
+        pytest.param(PuLPSCIPSolver, marks=pytest.mark.requires_solver("pulp/scip")),
+    ],
+)
 def test_pulp_python_api_backends_support_deterministic_solve(solver_class):
     solver = solver_class()
     x = solver.new_bool_var("x")

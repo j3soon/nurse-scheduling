@@ -963,7 +963,12 @@ def test_app_startup_fails_when_mathopt_probe_is_not_optimal(monkeypatch):
 
 @pytest.mark.parametrize(
     "solver",
-    ["ortools/cp-sat", "ortools/mpsolver/cbc", "ortools/mathopt/highs", "pulp/highs"],
+    [
+        "ortools/cp-sat",
+        "ortools/mpsolver/cbc",
+        "ortools/mathopt/highs",
+        pytest.param("pulp/highs", marks=pytest.mark.requires_solver("pulp/highs")),
+    ],
 )
 def test_installed_solver_runtimes_are_available(solver):
     assert solver_is_available(solver)

@@ -19,7 +19,11 @@
 
 # This test is mostly AI generated.
 
+import pytest
+
 from .schedule_test_helper import run_schedule_regression_test
+
+pytestmark = pytest.mark.requires_solver("pulp/scip")
 
 
 def test_schedule_pulp_scip():
