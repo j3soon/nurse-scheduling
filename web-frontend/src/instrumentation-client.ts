@@ -17,6 +17,8 @@ if (!isSentryDisabled) {
     integrations: [
       Sentry.replayIntegration(),
       Sentry.feedbackIntegration({
+        // FeedbackWidget places the button so it can stay clear of page controls.
+        autoInject: false,
         colorScheme: "light",
         enableScreenshot: true,
         triggerLabel: "Feedback",

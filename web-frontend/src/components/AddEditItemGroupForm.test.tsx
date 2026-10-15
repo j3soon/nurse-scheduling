@@ -291,4 +291,32 @@ describe('AddEditItemGroupForm', () => {
 
     expect(onApplySelection).toHaveBeenCalledWith(['Team A']);
   });
+
+  it.each([[false, true], [true, false]])('opens the copy panel by default unless the screen is phone-sized (phone: %s)', (phone, open) => {
+    // jsdom has no matchMedia, so the test supplies the screen width the form reads.
+    Object.defineProperty(window, 'matchMedia', { value: (query: string) => ({ matches: phone, media: query }), configurable: true });
+    try {
+      const { container } = render(
+        <AddEditItemGroupForm
+          mode={Mode.ADDING}
+          draft={{ id: '', description: '', groups: [], members: [], isItem: true }}
+          items={[{ id: 'P1', description: '' }]}
+          groups={[{ id: 'Team A', description: '', members: ['P1'] }]}
+          itemLabel="Person"
+          itemLabelPlural="People"
+          error=""
+          filterItemGroups={entries => entries}
+          onIdChange={() => undefined}
+          onDescriptionChange={() => undefined}
+          onMemberToggle={() => undefined}
+          onApplySelection={() => undefined}
+          onSave={() => undefined}
+          onCancel={() => undefined}
+        />,
+      );
+      expect(container.querySelector('[data-membership-apply]')).toHaveProperty('open', open);
+    } finally {
+      delete (window as { matchMedia?: unknown }).matchMedia;
+    }
+  });
 });

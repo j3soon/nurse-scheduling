@@ -1668,6 +1668,8 @@ export default function OptimizeAndExportPage() {
                 }}
                 onCancel={finishBackendEndpointEdit}
                 onDoubleClick={isOptimizing ? undefined : () => setEditingServerEndpoint(server.endpoint)}
+                // A first tap selects the server, so only a tap on the selected server edits it.
+                tapToEdit={selectedServerEndpoint === server.endpoint}
                 className="min-w-0 truncate text-sm font-medium text-gray-900"
                 editClassName="w-full border-gray-300 bg-white text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
               />
@@ -1709,6 +1711,8 @@ export default function OptimizeAndExportPage() {
     {
       header: 'Activity',
       width: 150,
+      // Phones cannot fit this fixed column beside Status and Actions without collapsing Server.
+      className: 'hidden sm:table-cell',
       accessor: (row: BackendTableRow) => {
         const server = row.kind === 'auto' ? resolvedServer : row.server;
         const status = row.kind === 'auto' ? autoServerStatus : row.server.status;
@@ -1876,7 +1880,7 @@ export default function OptimizeAndExportPage() {
     <div className="container mx-auto px-4 py-6 lg:py-8">
       <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 items-center gap-3">
             <h1 className="text-3xl font-bold text-gray-900">Optimize and Export</h1>
             <PageDocumentationLink
               href={DOCUMENTATION_URLS.optimizeAndExport}
@@ -1947,7 +1951,7 @@ export default function OptimizeAndExportPage() {
         </div>
       )}
 
-      <div className="mb-6 grid gap-6 xl:grid-cols-[minmax(0,0.95fr)_minmax(380px,1.05fr)]">
+      <div className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,0.95fr)_minmax(380px,1.05fr)]">
         <section className="rounded-lg border border-gray-200 bg-white">
           <div className="border-b border-gray-200 px-5 py-4">
             <h2 className="text-base font-semibold text-gray-900">Setup and Run</h2>

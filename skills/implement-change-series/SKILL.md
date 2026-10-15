@@ -139,7 +139,9 @@ After the last slice:
    then run appropriate combined validation. A contiguous series may use
    `base..HEAD`. If unrelated commits landed, derive the paths from the tracked
    commits instead. Do not rely on a helper that only sees uncommitted changes
-   after the slices have already been committed.
+   after the slices have already been committed. When the series changes
+   `web-frontend/`, include the full E2E suite that its `AGENTS.md` requires
+   before pushing.
 2. Run the repository whitespace check over the contiguous series range or its
    tracked commits, then inspect the final worktree state.
 3. Report the ordered commits, validation evidence, intentionally skipped

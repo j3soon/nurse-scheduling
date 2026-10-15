@@ -21,7 +21,9 @@
 
 'use client';
 
+import * as Sentry from '@sentry/nextjs';
 import Image from 'next/image';
+import { MobileDetails } from '@/components/MobileDetails';
 import { ChatTranscriptView } from './ChatTranscriptView';
 import { useAiChat } from './useAiChat';
 import { readStoredConversation } from './chatConversation';
@@ -35,6 +37,7 @@ import type { OptimizationProgressPoint } from '@/components/OptimizationProgres
 import PageDocumentationLink from '@/components/PageDocumentationLink';
 import { DOCUMENTATION_URLS, FIREFOX_NIGHTLY_URL, FIREFOX_SPEECH_RECOGNITION_STATUS_URL, GITHUB_AI_BETA_ACCESS_URL, GITHUB_PRIVACY_URL, GITHUB_TAGS_URL } from '@/constants/urls';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
+import { isImeCompositionKeyEvent } from '@/utils/keyboardEvents';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 import { CURRENT_APP_VERSION, hasAppVersionMismatch } from '@/utils/version';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
@@ -164,6 +167,18 @@ const DISABLED_FILE_CAPABILITY: AiCapabilities['file_attachments'] = {
   max_bytes_per_file: 1,
 };
 
+// Phone keyboards have no Shift+Enter, so Enter adds a new line there. A tablet with a
+// trackpad or mouse also reports a fine pointer and keeps Enter to send.
+function isTouchOnlyPointer(): boolean {
+  return Boolean(window.matchMedia?.('(pointer: coarse)').matches && !window.matchMedia('(any-pointer: fine)').matches);
+}
+
+// A module-level callback ref keeps the Sentry form attached across rerenders, so
+// streaming output does not close an open form. React runs the returned cleanup.
+function attachFeedbackForm(element: HTMLButtonElement | null) {
+  return element ? Sentry.getFeedback()?.attachTo(element) : undefined;
+}
+
 function fileExtension(filename: string): string {
   const lastDot = filename.lastIndexOf('.');
   return lastDot < 0 ? '' : filename.slice(lastDot).toLowerCase();
@@ -205,6 +220,8 @@ export default function ExperimentalAiPage() {
   // A turn's first report has no provider call yet, so keep the latest token figures until a new call reports.
 
   const [draft, setDraft] = useState('');
+  const [composerHeight, setComposerHeight] = useState(144);
+  const [keyboardInset, setKeyboardInset] = useState(0);
   const [downloadingOptimizationId, setDownloadingOptimizationId] = useState<string | null>(null);
   const [cancellingOptimizationId, setCancellingOptimizationId] = useState<string | null>(null);
   const [isClientReady, setIsClientReady] = useState(false);
@@ -487,6 +504,35 @@ export default function ExperimentalAiPage() {
     input.style.height = `${Math.min(Math.max(input.scrollHeight, 24), 160)}px`;
     input.style.overflowY = input.scrollHeight > 160 ? 'auto' : 'hidden';
   }, [draft]);
+
+  useEffect(() => {
+    const composer = composerRef.current;
+    if (!composer || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => setComposerHeight(composer.getBoundingClientRect().height));
+    observer.observe(composer);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    const updateViewport = () => {
+      const inputFocused = composerRef.current?.contains(document.activeElement);
+      setKeyboardInset(inputFocused && viewport.scale === 1
+        ? Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop)
+        : 0);
+    };
+    viewport.addEventListener('resize', updateViewport);
+    viewport.addEventListener('scroll', updateViewport);
+    document.addEventListener('focusin', updateViewport);
+    document.addEventListener('focusout', updateViewport);
+    return () => {
+      viewport.removeEventListener('resize', updateViewport);
+      viewport.removeEventListener('scroll', updateViewport);
+      document.removeEventListener('focusin', updateViewport);
+      document.removeEventListener('focusout', updateViewport);
+    };
+  }, []);
 
   const scrollToPageBottom = () => {
     followPageBottomRef.current = true;
@@ -809,10 +855,18 @@ export default function ExperimentalAiPage() {
   const hasVersionMismatch = backendVersion !== undefined && hasAppVersionMismatch(CURRENT_APP_VERSION, backendVersion);
   const serverLocked = activeSessionId !== null || messages.length > 0;
 
+  const contextDescription = contextUsage !== null
+    ? `${contextUsage.usedChars.toLocaleString()} of ${contextUsage.maxChars.toLocaleString()} characters in retained chat history. Excludes instructions, schedule, tools, and attachments.${
+      contextUsage.usedTokens !== undefined
+        ? ' Tokens count the latest model request, including instructions, tool output, and the reply.'
+        : ' The AI server does not report model tokens.'
+    }`
+    : 'The AI server has not reported context usage. Update the AI server to a version that reports its chat history budget.';
+
   // The Session files panel is fixed on the right at xl, so the chat and composer reserve
   // equal space on both sides to stay centered without overlapping it.
   return (
-    <main className={`mx-auto flex min-h-[calc(100dvh-3.5rem)] max-w-5xl flex-col px-4 pb-36 pt-8 sm:px-6 ${fileCapability.retained ? 'xl:max-w-[min(64rem,calc(100vw-36rem))]' : ''}`}>
+    <main className={`mx-auto flex min-h-[calc(100dvh-3.5rem)] max-w-5xl min-w-0 flex-col px-2 pt-4 sm:px-6 sm:pt-8 ${fileCapability.retained ? 'xl:max-w-[min(64rem,calc(100vw-36rem))]' : ''}`} style={{ paddingBottom: composerHeight + keyboardInset + 56 }}>
       <div className="mb-6">
         <div className="mb-2 flex flex-wrap items-center gap-3">
           <h1 className="text-3xl font-bold text-gray-900">Schedule AI Chat</h1>
@@ -844,12 +898,6 @@ export default function ExperimentalAiPage() {
             Privacy details
           </a>
           .
-        </p>
-        <p className="mt-2 text-xs font-medium text-gray-500">
-          Current snapshot: {peopleData.items.length} people, {dateData.items.length} dates. Captured when you send the first question.
-        </p>
-        <p className="mt-1 text-xs text-gray-500">
-          Chat sessions expire after {retentionLabel(sessionRetentionSeconds)} of inactivity. Each new message renews this period.
         </p>
         {trimmedHistoryCount > 0 && (
           <p className="mt-2 max-w-3xl rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900" role="status">
@@ -942,28 +990,8 @@ export default function ExperimentalAiPage() {
           )}
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-gray-500">
-          <div className="flex flex-wrap gap-4">
-            <label className="flex items-center gap-1.5">
-              <input
-                type="checkbox"
-                checked={showReasoning}
-                onChange={event => rememberPreferences({ showReasoning: event.target.checked, showTools })}
-                className="h-3 w-3 accent-gray-400"
-              />
-              Show reasoning
-            </label>
-            <label className="flex items-center gap-1.5">
-              <input
-                type="checkbox"
-                checked={showTools}
-                onChange={event => rememberPreferences({ showReasoning, showTools: event.target.checked })}
-                className="h-3 w-3 accent-gray-400"
-              />
-              Show tool activity
-            </label>
-          </div>
           {messages.length > 0 && (
-            <div className="ml-auto flex items-center gap-2">
+            <div className="ml-auto flex flex-wrap items-center gap-2">
               <FiDownload aria-hidden="true" className="h-3.5 w-3.5" />
               <span>Export chat:</span>
               <button
@@ -1010,39 +1038,78 @@ export default function ExperimentalAiPage() {
             )}
           </div>
         )}
-        <div role="group" aria-label="AI versions" className={`mt-3 rounded-md border px-3 py-2 text-xs ${hasVersionMismatch ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-gray-200 bg-gray-50 text-gray-600'}`}>
-          <div className="flex flex-wrap gap-x-4 gap-y-1">
-            <span>
-              Frontend{' '}
-              <AppVersionText
-                version={CURRENT_APP_VERSION}
-                versionHref={GITHUB_TAGS_URL}
-                versionClassName="hover:text-gray-600"
-                commitClassName="hover:text-gray-600"
-              />
-            </span>
-            <span>
-              Backend{' '}
-              <AppVersionText
-                version={backendVersion ?? 'unknown'}
-                versionHref={GITHUB_TAGS_URL}
-                versionClassName="hover:text-gray-600"
-                commitClassName="hover:text-gray-600"
-              />
-            </span>
-          </div>
-          {hasVersionMismatch && (
-            <p className="mt-1 font-medium text-amber-700">
-              Frontend and backend versions do not match. If nothing breaks, you can continue.
+        <div className="mt-3">
+          <MobileDetails label="Chat details and settings" openWhen={hasVersionMismatch}>
+            <p className="mt-2 text-xs font-medium text-gray-500">
+              Current snapshot: {peopleData.items.length} people, {dateData.items.length} dates. Captured when you send the first question.
             </p>
-          )}
+            <p className="mt-1 text-xs text-gray-500">
+              Chat sessions expire after {retentionLabel(sessionRetentionSeconds)} of inactivity. Each new message renews this period.
+            </p>
+            <div className="flex flex-wrap gap-4">
+              <label className="flex min-h-11 items-center gap-1.5 sm:min-h-0">
+                <input
+                  type="checkbox"
+                  checked={showReasoning}
+                  onChange={event => rememberPreferences({ showReasoning: event.target.checked, showTools })}
+                  className="h-4 w-4 accent-gray-400 sm:h-3 sm:w-3"
+                />
+                Show reasoning
+              </label>
+              <label className="flex min-h-11 items-center gap-1.5 sm:min-h-0">
+                <input
+                  type="checkbox"
+                  checked={showTools}
+                  onChange={event => rememberPreferences({ showReasoning, showTools: event.target.checked })}
+                  className="h-4 w-4 accent-gray-400 sm:h-3 sm:w-3"
+                />
+                Show tool activity
+              </label>
+            </div>
+            {process.env.NEXT_PUBLIC_DISABLE_SENTRY !== '1' && (
+              // FeedbackWidget hides the floating Feedback button here on phones.
+              <button
+                type="button"
+                ref={attachFeedbackForm}
+                className="mt-1 flex min-h-11 items-center gap-1.5 text-xs text-blue-600 underline sm:hidden"
+              >
+                Send feedback
+              </button>
+            )}
+            <div role="group" aria-label="AI versions" className={`mt-3 rounded-md border px-3 py-2 text-xs ${hasVersionMismatch ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-gray-200 bg-gray-50 text-gray-600'}`}>
+              <div className="flex flex-wrap gap-x-4 gap-y-1">
+                <span>
+                  Frontend{' '}
+                  <AppVersionText
+                    version={CURRENT_APP_VERSION}
+                    versionHref={GITHUB_TAGS_URL}
+                    versionClassName="hover:text-gray-600"
+                    commitClassName="hover:text-gray-600"
+                  />
+                </span>
+                <span>
+                  Backend{' '}
+                  <AppVersionText
+                    version={backendVersion ?? 'unknown'}
+                    versionHref={GITHUB_TAGS_URL}
+                    versionClassName="hover:text-gray-600"
+                    commitClassName="hover:text-gray-600"
+                  />
+                </span>
+              </div>
+              {hasVersionMismatch && (
+                <p className="mt-1 font-medium text-amber-700">
+                  Frontend and backend versions do not match. If nothing breaks, you can continue.
+                </p>
+              )}
+            </div>
+          </MobileDetails>
         </div>
       </div>
 
       {fileCapability.retained && (
         <aside aria-label="Session files" className="mb-4 rounded-xl border border-gray-200 bg-white p-4 xl:fixed xl:right-4 xl:top-24 xl:z-10 xl:max-h-[calc(100dvh-8rem)] xl:w-64 xl:overflow-y-auto">
-          <details open>
-            <summary className="cursor-pointer font-semibold">Uploaded files ({uploadedFiles.length})</summary>
+          <MobileDetails label={`Uploaded files (${uploadedFiles.length})`} desktopCollapsible>
             <p className="mt-2 text-xs text-gray-600">Uploaded files are temporary and may disappear after a server restart without prior notice. Keep your original files. A repeated filename gets a number, such as ward (1).csv.</p>
             {uploadedFiles.length === 0 ? <p className="mt-3 text-sm text-gray-500">No uploaded files.</p> : (
               <ul className="mt-3 space-y-3">
@@ -1055,7 +1122,7 @@ export default function ExperimentalAiPage() {
                 ))}
               </ul>
             )}
-          </details>
+          </MobileDetails>
         </aside>
       )}
 
@@ -1137,7 +1204,8 @@ export default function ExperimentalAiPage() {
         onDragLeave={leaveAttachmentDropZone}
         onDrop={dropAttachments}
         aria-label="Message composer"
-        className={`fixed inset-x-10 bottom-0 z-30 mx-auto max-w-5xl space-y-3 ${fileCapability.retained ? 'xl:inset-x-72' : ''} bg-gradient-to-t from-white via-white to-white/90 px-4 pb-4 pt-3 sm:px-6 ${
+        style={{ bottom: keyboardInset }}
+        className={`fixed inset-x-2 bottom-0 sm:inset-x-10 z-30 mx-auto max-w-5xl space-y-3 ${fileCapability.retained ? 'xl:inset-x-72' : ''} bg-gradient-to-t from-white via-white to-white/90 px-2 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 sm:px-6 ${
           isDraggingFiles ? 'rounded-xl ring-2 ring-blue-400 ring-offset-2' : ''
         }`}
       >
@@ -1272,7 +1340,8 @@ export default function ExperimentalAiPage() {
             value={draft}
             onChange={event => setDraft(event.target.value)}
             onKeyDown={event => {
-              if (event.key === 'Enter' && !event.shiftKey) {
+              if (event.key === 'Enter' && !event.shiftKey && !isImeCompositionKeyEvent(event)
+                && !isTouchOnlyPointer()) {
                 event.preventDefault();
                 event.currentTarget.form?.requestSubmit();
               }
@@ -1282,7 +1351,7 @@ export default function ExperimentalAiPage() {
             maxLength={8000}
             aria-label="Ask about the current schedule"
             placeholder="Ask anything…"
-            className="min-h-6 max-h-40 flex-1 resize-none bg-transparent px-2 py-2 text-base leading-6 text-gray-900 outline-none disabled:text-gray-400"
+            className="min-h-6 max-h-40 min-w-0 flex-1 resize-none bg-transparent px-2 py-2 text-base leading-6 text-gray-900 outline-none disabled:text-gray-400"
           />
           <div className="flex shrink-0 items-center gap-1">
             {isClientReady && firefoxVersion !== null && !speechSupported ? (
@@ -1295,7 +1364,7 @@ export default function ExperimentalAiPage() {
                 aria-label={firefoxVersion >= FIREFOX_ON_DEVICE_SPEECH_VERSION
                   ? 'Enable experimental dictation in Firefox'
                   : 'Firefox dictation compatibility'}
-                className="group relative inline-flex h-10 w-10 items-center justify-center rounded-full text-amber-600 transition-colors hover:bg-amber-50 hover:text-amber-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+                className="group relative inline-flex h-10 w-10 items-center justify-center rounded-full text-amber-600 [@media(pointer:coarse)]:hidden transition-colors hover:bg-amber-50 hover:text-amber-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
               >
                 <FiMic aria-hidden="true" className="h-4 w-4" />
                 <span className="pointer-events-none absolute bottom-10 right-0 z-10 hidden w-72 rounded-lg bg-gray-900 px-3 py-2 text-left text-xs font-normal leading-5 text-white shadow-lg group-hover:block group-focus-visible:block">
@@ -1305,7 +1374,8 @@ export default function ExperimentalAiPage() {
                 </span>
               </a>
             ) : (
-              <div className="relative">
+              // Phone and tablet keyboards provide their own dictation, so touch screens omit this control.
+              <div className="relative mr-1.5 sm:mr-0 [@media(pointer:coarse)]:hidden">
                 <button
                   type="button"
                   onClick={toggleDictation}
@@ -1319,7 +1389,7 @@ export default function ExperimentalAiPage() {
                 >
                   <FiMic aria-hidden="true" className={`h-4 w-4 ${isListening ? 'animate-pulse' : ''}`} />
                 </button>
-                <span className="absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full border border-gray-300 bg-white text-gray-600 shadow-sm focus-within:ring-2 focus-within:ring-blue-400">
+                <span className="absolute -bottom-1.5 -right-1.5 h-6 w-6 sm:-bottom-0.5 sm:-right-0.5 sm:h-4 sm:w-4 rounded-full border border-gray-300 bg-white text-gray-600 shadow-sm focus-within:ring-2 focus-within:ring-blue-400">
                   <select
                     value={speechLanguage}
                     onChange={event => setSpeechLanguage(event.target.value)}
@@ -1372,23 +1442,17 @@ export default function ExperimentalAiPage() {
           </div>
         </div>
         {(contextUsage !== null || messages.length > 0) && (
-          <p
-            className="mt-2 text-center text-[0.6875rem] text-gray-500"
-            title={contextUsage !== null
-              ? `${contextUsage.usedChars.toLocaleString()} of ${contextUsage.maxChars.toLocaleString()} characters in retained chat history. Excludes instructions, schedule, tools, and attachments.${
-                contextUsage.usedTokens !== undefined
-                  ? ' Tokens count the latest model request, including instructions, tool output, and the reply.'
-                  : ' The AI server does not report model tokens.'
-              }`
-              : 'The AI server has not reported context usage. Update the AI server to a version that reports its chat history budget.'}
-          >
-            Chat history context: {contextUsage !== null
-              ? `${(100 * contextUsage.usedChars / contextUsage.maxChars).toFixed(1)}%`
-              : 'unavailable'}
-            {contextUsage?.usedTokens !== undefined && (
-              <> · Tokens: {contextUsage.usedTokens.toLocaleString('en-US')} / {contextUsage.maxTokens?.toLocaleString('en-US') ?? 'unavailable'}</>
-            )}
-          </p>
+          <details className="mt-2 text-center text-[0.6875rem] text-gray-500">
+            <summary className="min-h-8 cursor-pointer list-none rounded py-1 focus-visible:ring-2 focus-visible:ring-blue-400 sm:min-h-0 sm:py-0" title={contextDescription}>
+              Chat history context: {contextUsage !== null
+                ? `${(100 * contextUsage.usedChars / contextUsage.maxChars).toFixed(1)}%`
+                : 'unavailable'}
+              {contextUsage?.usedTokens !== undefined && (
+                <> · Tokens: {contextUsage.usedTokens.toLocaleString('en-US')} / {contextUsage.maxTokens?.toLocaleString('en-US') ?? 'unavailable'}</>
+              )}
+            </summary>
+            <p className="max-h-24 overflow-y-auto px-2 py-2 text-left text-xs">{contextDescription}</p>
+          </details>
         )}
       </form>
     </main>

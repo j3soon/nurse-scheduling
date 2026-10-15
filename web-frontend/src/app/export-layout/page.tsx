@@ -32,7 +32,7 @@ import {
   ExportRequestShape,
   ShiftCountTypeCoefficient
 } from '@/types/scheduling';
-import { CheckboxList } from '@/components/CheckboxList';
+import { CHECKBOX_LIST_SCROLL_CLASS_NAME, CheckboxList } from '@/components/CheckboxList';
 import { CountShiftTypeCoefficientFields } from '@/components/CountShiftTypeCoefficientFields';
 import ToggleButton from '@/components/ToggleButton';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
@@ -802,7 +802,7 @@ export default function ExportFormattingPage() {
     return (
       <div className="space-y-1">
         <label className="block text-sm font-medium text-gray-700">{label}</label>
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           <div className="relative h-9 w-28">
             <input
               type="color"
@@ -876,7 +876,7 @@ export default function ExportFormattingPage() {
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-2">{label}</label>
         {scrollable && options.length > 0 ? (
-          <div className="max-h-32 overflow-y-auto">{content}</div>
+          <div className={CHECKBOX_LIST_SCROLL_CLASS_NAME}>{content}</div>
         ) : content}
         {renderErrorMessages(error, 'mt-1')}
       </div>
@@ -1092,7 +1092,7 @@ export default function ExportFormattingPage() {
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           <h1 className="text-3xl font-bold text-gray-800">Export Layout</h1>
           <PageDocumentationLink href={DOCUMENTATION_URLS.exportLayout} label="Export Layout" />
         </div>
@@ -1194,7 +1194,7 @@ export default function ExportFormattingPage() {
               </div>
 
               <div className="flex flex-wrap items-start gap-4">
-                <div className="min-w-[180px]">
+                <div className="w-full min-w-0 sm:w-auto sm:min-w-[180px]">
                   <label className="block text-sm font-medium text-gray-700 mb-2">Rule Kind</label>
                   <select
                     value={draft.kind}
@@ -1222,7 +1222,7 @@ export default function ExportFormattingPage() {
 
                 {draft.kind === 'style' ? (
                   <>
-                    <div className="min-w-[180px]">
+                    <div className="w-full min-w-0 sm:w-auto sm:min-w-[180px]">
                       <label className="block text-sm font-medium text-gray-700 mb-2">Type</label>
                       <select
                         value={draft.type}
@@ -1247,22 +1247,22 @@ export default function ExportFormattingPage() {
                         <option value="cell">cell</option>
                       </select>
                     </div>
-                    <div className="min-w-[260px]">
+                    <div className="w-full min-w-0 sm:w-auto sm:min-w-[260px]">
                       {renderColorField('backgroundColor', 'Background Color')}
                     </div>
-                    <div className="min-w-[260px]">
+                    <div className="w-full min-w-0 sm:w-auto sm:min-w-[260px]">
                       {renderColorField('bottomBorderColor', 'Bottom Border Color')}
                     </div>
-                    <div className="min-w-[260px]">
+                    <div className="w-full min-w-0 sm:w-auto sm:min-w-[260px]">
                       {renderColorField('rightBorderColor', 'Right Border Color')}
                     </div>
-                    <div className="min-w-[260px]">
+                    <div className="w-full min-w-0 sm:w-auto sm:min-w-[260px]">
                       {renderColorField('fontColor', 'Font Color')}
                     </div>
                   </>
                 ) : (
                   <>
-                    <div className="min-w-[280px]">
+                    <div className="w-full min-w-0 sm:w-auto sm:min-w-[280px]">
                       <label className="block text-sm font-medium text-gray-700 mb-2">
                         {draft.kind === 'extra column' ? 'Column Header' : 'Row Header'}
                       </label>
@@ -1278,7 +1278,7 @@ export default function ExportFormattingPage() {
                       />
                       {renderErrorMessages(errors.header)}
                     </div>
-                    <div className="min-w-[260px]">
+                    <div className="w-full min-w-0 sm:w-auto sm:min-w-[260px]">
                       {draft.kind === 'extra column'
                         ? renderColorField('rightBorderColor', 'Right Border Color')
                         : renderColorField('bottomBorderColor', 'Bottom Border Color')}
