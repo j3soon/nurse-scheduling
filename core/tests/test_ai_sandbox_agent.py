@@ -21,6 +21,7 @@
 
 import asyncio
 import json
+import threading
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -1085,6 +1086,35 @@ def test_invalid_or_deleted_schedule_keeps_previous_inspection_context(invalid):
         if invalid is not None:
             with pytest.raises(ValueError, match="stale"):
                 inspect_requests(json.loads(previous), invalid)
+
+    asyncio.run(check())
+
+
+def test_inspection_context_builds_off_the_event_loop_and_tolerates_a_failed_write(monkeypatch):
+    async def check():
+        base = schedule_yaml()
+        backend = FakeSandboxBackend("context-write-failure")
+        await hydrate_sandbox(backend, base)
+        tracker = _ScheduleCandidateTracker(backend, base, SCHEDULE_BYTE_LIMIT)
+        build_threads = []
+
+        def build(source):
+            build_threads.append(threading.current_thread())
+            return {"source": source}
+
+        write_file = backend.write_file
+
+        async def fail_context_write(path, content):
+            if path == WORKSPACE_SOURCE_CONTEXT:
+                raise SandboxError("context write failed")
+            await write_file(path, content)
+
+        monkeypatch.setattr("nurse_scheduling.ai.workspace.build_result_context", build)
+        monkeypatch.setattr(backend, "write_file", fail_context_write)
+        await write_file(WORKSPACE_SCHEDULE, base.replace("description: ''", "description: Updated", 1))
+        outcome, candidate = await tracker.review_if_changed()
+        assert outcome.ok and candidate is not None
+        assert build_threads and build_threads[0] is not threading.main_thread()
 
     asyncio.run(check())
 

@@ -447,6 +447,10 @@ async def _read_candidate(sandbox: SandboxBackend, max_schedule_bytes: int) -> s
         raise SandboxCandidateError("The sandbox candidate is not valid UTF-8.") from exc
 
 
+def _source_context_json(schedule_yaml: str) -> str:
+    return json.dumps(build_result_context(schedule_yaml), ensure_ascii=False, allow_nan=False)
+
+
 class _ScheduleCandidateTracker:
     """Give the model trusted validation feedback after a shell edit."""
 
@@ -499,12 +503,21 @@ class _ScheduleCandidateTracker:
         )
         if review.outcome.ok:
             try:
-                context = json.dumps(build_result_context(candidate), ensure_ascii=False, allow_nan=False)
+                # Compiling a large schedule would otherwise block every session's stream.
+                context = await asyncio.to_thread(_source_context_json, candidate)
             except Exception:
                 # Accepted incomplete drafts can still require direct YAML inspection.
                 logger.debug("Updated schedule inspection context unavailable", exc_info=True)
             else:
-                await self._sandbox.write_file(WORKSPACE_SOURCE_CONTEXT, context)
+                try:
+                    await self._sandbox.write_file(WORKSPACE_SOURCE_CONTEXT, context)
+                except SandboxError:
+                    # The context is optional, and its helpers reject a copy for other YAML.
+                    logger.warning(
+                        "Updated schedule inspection context not written sandbox_id=%s",
+                        self._sandbox.sandbox_id,
+                        exc_info=True,
+                    )
         if review.proposal is not None:
             return (
                 AgentToolOutcome(
