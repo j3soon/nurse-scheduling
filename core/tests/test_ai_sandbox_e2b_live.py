@@ -23,11 +23,11 @@ import asyncio
 import json
 import os
 import shlex
-import time
 
 import pytest
 from e2b import AsyncSandbox
-from e2b.exceptions import SandboxNotFoundException
+from e2b.api.client.models.sandbox_state import SandboxState
+from e2b.exceptions import SandboxException, SandboxNotFoundException
 
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.pi.edit import EDIT_TOOL
@@ -149,7 +149,7 @@ def test_prebuilt_e2b_template_creates_and_extracts_zip_bytes():
     asyncio.run(exercise())
 
 
-def test_six_hour_turn_repeatedly_pauses_and_resumes_the_same_sandbox():
+def test_long_run_settings_repeatedly_pause_and_resume_the_same_sandbox():
     async def exercise() -> None:
         factory = E2BSandboxFactory(
             api_key=E2B_API_KEY,
@@ -317,9 +317,9 @@ def test_command_timeout_recovers_only_after_process_cleanup(attempt, escaped):
     asyncio.run(exercise())
 
 
-def test_short_vm_timeout_refresh_keeps_a_long_batch_running(monkeypatch):
-    # Scale the active window to three seconds while keeping the real E2B API.
-    monkeypatch.setattr("nurse_scheduling.ai.sandbox.e2b.ACTIVE_TIMEOUT_BUFFER_SECONDS", 1)
+def test_timeout_pause_after_a_failed_explicit_pause_auto_resumes(monkeypatch):
+    # Scale the active timeout to three seconds while keeping the real E2B API.
+    monkeypatch.setattr("nurse_scheduling.ai.sandbox.e2b.ACTIVE_TIMEOUT_SECONDS", 3)
 
     async def exercise():
         factory = E2BSandboxFactory(
@@ -328,13 +328,27 @@ def test_short_vm_timeout_refresh_keeps_a_long_batch_running(monkeypatch):
             run_timeout_seconds=21600,
             command_timeout_seconds=2,
         )
-        async with managed_sandbox(factory, cleanup_timeout_seconds=10) as sandbox:
-            started = time.perf_counter()
-            async with sandbox.activity_batch():
-                for _ in range(4):
-                    result = await sandbox.run("sleep 1")
-                    assert result.exit_code == 0
-                    assert not result.timed_out
-            assert time.perf_counter() - started > 3
+        async with managed_sandbox(factory, cleanup_timeout_seconds=10) as raw_sandbox:
+            assert isinstance(raw_sandbox, E2BSandboxBackend)
+            pause_attempted = asyncio.Event()
+
+            async def fail_pause(**_kwargs):
+                pause_attempted.set()
+                raise SandboxException("simulated pause failure")
+
+            monkeypatch.setattr(raw_sandbox._sandbox, "pause", fail_pause)
+            await raw_sandbox.write_file("/workspace/timeout-check.txt", b"preserved")
+            async with asyncio.timeout(30):
+                await pause_attempted.wait()
+                while (await AsyncSandbox.get_info(raw_sandbox.sandbox_id, api_key=E2B_API_KEY)).state != (
+                    SandboxState.PAUSED
+                ):
+                    await asyncio.sleep(0.5)
+            # The application still sees a running VM, and file and command requests auto-resume it.
+            assert raw_sandbox.lifecycle_state is E2BSandboxState.RUNNING
+            assert await raw_sandbox.read_file("/workspace/timeout-check.txt") == b"preserved"
+            result = await raw_sandbox.run("cat /workspace/timeout-check.txt")
+            assert result.exit_code == 0
+            assert result.stdout == "preserved"
 
     asyncio.run(exercise())

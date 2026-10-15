@@ -522,7 +522,7 @@ cleaned while the AI service is offline.
 | `E2B_API_KEY` | Required for E2B | E2B Cloud credential used only by the trusted application. |
 | `E2B_TEMPLATE` | `nurse-scheduling-ai-sandbox` | Prebuilt E2B template alias. |
 | `AI_SANDBOX_COMMAND_TIMEOUT_SECONDS` | `60` | Default and maximum deadline for one shell command. |
-| `AI_SANDBOX_TURN_TIMEOUT_SECONDS` | `21600` | Six-hour agent run deadline, including paused time. E2B uses the command timeout plus a 30-second buffer and pauses between tool batches. The Compose NGINX proxy waits up to 21660 seconds between response bytes. |
+| `AI_SANDBOX_TURN_TIMEOUT_SECONDS` | `21600` | Six-hour agent run deadline, including paused time. The E2B VM has a one-hour active timeout that each auto-resume restarts, and the application pauses it between tool batches. The Compose NGINX proxy waits up to 21660 seconds between response bytes. |
 | `AI_AGENT_MAX_TOOL_ROUNDS` | `2000` | Maximum model tool-call rounds before the agent must answer from verified results. |
 | `AI_AGENT_MAX_TOOL_CALLS` | `6000` | Maximum total tool calls in one sandbox-backed user message. |
 | `AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS` | `10` | Deadline for destroying a sandbox. |

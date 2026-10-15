@@ -21,7 +21,6 @@
 
 import asyncio
 import logging
-import math
 import os
 import subprocess
 import sys
@@ -55,7 +54,9 @@ logger = logging.getLogger("nurse_scheduling.ai.sandbox.e2b")
 E2B_USER = "user"
 E2B_WORKSPACE = "/workspace"
 COMMAND_TIMEOUT_EXIT_CODE = 124
-ACTIVE_TIMEOUT_BUFFER_SECONDS = 30
+# E2B pauses the VM when this active timeout expires, and each auto-resume
+# restarts it. One hour is the E2B Hobby tier maximum.
+ACTIVE_TIMEOUT_SECONDS = 3600
 CreateSandbox = Callable[..., Awaitable[Any]]
 RequestResult = TypeVar("RequestResult")
 NON_RETRYABLE_E2B_ERRORS = (
@@ -204,7 +205,7 @@ class E2BSandboxFactory:
         creation = asyncio.create_task(
             self._create_sandbox(
                 template=self._template,
-                timeout=math.ceil(self._command_timeout_seconds) + ACTIVE_TIMEOUT_BUFFER_SECONDS,
+                timeout=ACTIVE_TIMEOUT_SECONDS,
                 secure=True,
                 allow_internet_access=False,
                 metadata=self._cleanup_manager.metadata_for_run(self._run_timeout_seconds),
@@ -583,16 +584,6 @@ class E2BSandboxBackend:
             self._cancel_pending_pause_locked()
             self._ensure_open()
             await self._resume_locked()
-            try:
-                await self._request_with_retry(
-                    "set_timeout",
-                    lambda: self._sandbox.set_timeout(
-                        math.ceil(self._command_timeout_seconds) + ACTIVE_TIMEOUT_BUFFER_SECONDS,
-                        request_timeout=self._control_request_timeout_seconds,
-                    ),
-                )
-            except Exception as exc:
-                raise SandboxError("E2B could not refresh the sandbox active timeout.") from exc
             if not read_only:
                 self._mutation_active = True
             if self._active_operations == 0:

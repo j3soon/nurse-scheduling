@@ -310,14 +310,16 @@ operations and paused time.
 Each optimizer follow-up is a separate run with its own limits. Stop still cancels
 an active run.
 
-The VM active timeout is independent of the agent run deadline. It uses the
-command timeout plus a 30-second buffer, which gives 90 seconds by default.
-Timeout pauses the VM with memory preserved. Refreshing the timeout before each
-operation prevents a batch of several commands from outlasting one active window.
-The application also pauses the VM after each tool batch. Cleanup metadata keeps
-the full run deadline, and run completion or cancellation destroys the VM.
-E2B auto-resume grants at least five minutes, so each operation resets the active
-timeout to the configured command timeout plus the buffer.
+The VM active timeout is independent of the agent run deadline. It is one
+hour, which is the E2B Hobby tier maximum. Timeout pauses the VM with memory
+preserved. Each auto-resume restarts the one-hour countdown, and the
+application pauses the VM after each tool batch. A long run reaches the timeout
+only when the VM stays active for a full hour without a pause. If that happens
+because an explicit pause failed, the next file or command request auto-resumes
+the VM. The application sends no timeout refresh requests. A VM that the
+application loses, for example after a backend crash, stays active for at most
+one hour. Cleanup metadata keeps the full run deadline, and run completion or
+cancellation destroys the VM.
 See [E2B timeout after auto-resume](https://docs.e2b.dev/sandbox/auto-resume#timeout-after-auto-resume).
 
 When a Bash command changes the schedule, the backend reads the working copy
