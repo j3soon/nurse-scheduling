@@ -258,11 +258,18 @@ function renderAssistantTimelineHtml(message: ChatExportMessage): string {
   return `<div class="assistant-activity" aria-label="Assistant activity">${activity}</div>`;
 }
 
+// A background failure can already show its reason as the response text.
+function htmlFailureText(message: ChatExportMessage): string {
+  const reason = message.failureReason;
+  const shown = htmlAssistantTimeline(message).some(entry => entry.kind === 'response' && entry.text === reason);
+  return reason && !shown ? reason : 'This response failed before completion.';
+}
+
 function renderHtmlMessageDetails(message: ChatExportMessage, timeZone?: 'UTC'): string {
   const status = message.status === 'pending' && !message.content
     ? '<p class="message-status" role="status">Thinking</p>'
     : message.status === 'failed'
-      ? `<p class="failure">${escapeHtml(message.failureReason || 'This response failed before completion.')}</p>`
+      ? `<p class="failure">${escapeHtml(htmlFailureText(message))}</p>`
       : message.status === 'stopped'
         ? '<p class="message-status">Stopped before completion.</p>'
         : '';

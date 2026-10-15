@@ -85,6 +85,19 @@ describe('chat export', () => {
     expect(markdown.indexOf('- requests.tsv (0.02 KB)')).toBeLessThan(markdown.indexOf('Read the requests.'));
   });
 
+  it.each([
+    { content: 'The AI response failed.', activity: undefined },
+    { content: '', activity: [{ kind: 'response' as const, text: 'The AI response failed.' }] },
+  ])('does not repeat a failure reason already shown as the response', ({ content, activity }) => {
+    const failureReason = 'The AI response failed.';
+    const message: ChatExportMessage = { role: 'assistant', content, activity, status: 'failed', failureReason };
+    const html = buildHtmlChatExport([message], metadata);
+    const document = new DOMParser().parseFromString(html, 'text/html');
+    expect(document.querySelector('.content')?.textContent).toBe(failureReason);
+    expect(document.querySelector('.failure')?.textContent).toBe('This response failed before completion.');
+    expect(html.split(failureReason)).toHaveLength(2);
+  });
+
   it.each(['', 'Partial answer.'])('exports the specific failure beside response text %j', content => {
     const failureReason = 'Provider HTTP 525. Error ID: example. <script>unsafe</script>';
     const message: ChatExportMessage = { role: 'assistant', content, status: 'failed', failureReason };
