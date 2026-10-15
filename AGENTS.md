@@ -15,7 +15,19 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   exists), Python dependencies are already installed system-wide. Do not run
   the setup script, install `uv`, or create a virtual environment there. Run
   `python`, `pytest`, and `ruff` directly. In the cuOpt image, `python3` is the
-  base 3.10 interpreter without project packages, so use `python`.
+  base 3.10 interpreter without project packages, so use `python`. That
+  interpreter is Python 3.14, while CI uses 3.12.
+- Dev containers have no SSH key, so `git fetch` and `git push` through an SSH
+  `origin` fail. Fetch from the HTTPS URL, such as
+  `git fetch https://github.com/j3soon/nurse-scheduling.git dev`, and compare
+  with `FETCH_HEAD`. Ask the user to push from the host.
+- Dev containers authenticate GitHub CLI with `GH_TOKEN` when the host exports
+  it, as `README.md` describes. If `gh auth status` reports no login, read the
+  public repository through the GitHub REST API with `curl`. Unauthenticated
+  requests are limited to 60 per hour, so batch them and save the responses.
+  They cannot download job logs or use GraphQL, which reports review thread
+  resolution. Reproduce a failing CI step locally, or ask the user to restart
+  the container with `GH_TOKEN`.
 - Keep edits scoped to the requested module. Preserve existing patterns.
 - When resuming another agent's session, verify compatibility claims and pending
   check results against current code, configuration, and saved outputs. Treat
@@ -37,6 +49,10 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   Omit task-specific or temporary details.
 - Store project skills in the repository-root `skills/` directory, not in a
   machine-local skills directory, so they remain available across machines.
+- Store agent notes and memory in the repository, in the nearest relevant
+  `AGENTS.md` or a skill. Never write machine-local agent memory, such as
+  Claude Code memory under `~/.claude/projects/`. Recloning the repository or
+  moving it to another machine erases those notes.
 - After finishing a task, suggest improvements to `AGENTS.md`, skills, scripts,
   or other agent-facing configuration when the task exposed one. Propose only
   guidance that generalizes to recurring work. Keep session-specific findings in
