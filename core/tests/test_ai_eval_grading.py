@@ -572,6 +572,50 @@ def test_intake_questions_allow_topic_before_question_words(answer, passed):
 
 
 @pytest.mark.parametrize(
+    "case_id,answer,passed",
+    [
+        ("new-schedule-rest-intake", "Which transitions should we forbid? Maximum consecutive working days?", True),
+        (
+            "new-schedule-rest-intake",
+            "Which transitions should we forbid? What consecutive work limit do you use?",
+            True,
+        ),
+        (
+            "new-schedule-rest-intake",
+            "Which transitions should we forbid? Do you have a limit on consecutive days?",
+            True,
+        ),
+        (
+            "new-schedule-rest-intake",
+            "Which transitions should we forbid? How many consecutive days can nurses work?",
+            True,
+        ),
+        ("new-schedule-rest-intake", "Which transitions should we forbid? Consecutive workdays: what limit?", True),
+        (
+            "new-schedule-rest-intake",
+            "Which transitions should we forbid? A common limit is five consecutive days.",
+            False,
+        ),
+        ("new-schedule-rest-intake", "Should I forbid Night to Day and cap consecutive working days at five?", False),
+        ("new-schedule-rest-intake", "Do you want balanced workloads?", False),
+        ("new-schedule-rest-intake", "I will forbid transitions and limit consecutive working days.", False),
+        ("new-schedule-fairness-intake", "Do you want to balance working days or shift types?", True),
+        ("new-schedule-fairness-intake", "Which transitions should we forbid? Maximum consecutive days?", False),
+        ("new-schedule-fairness-intake", "I will balance everyone's working days.", False),
+    ],
+)
+def test_separate_intake_cases_grade_only_their_policy(case_id, answer, passed):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == case_id)
+    read = {
+        "kind": "tool",
+        "name": "read",
+        "arguments": json.dumps({"path": "/reference/user-guide/build-a-real-schedule.md"}),
+        "ok": True,
+    }
+    assert grade(case, RunOutcome(answer=answer, activity=[read])).passed is passed
+
+
+@pytest.mark.parametrize(
     "answer, passed",
     [
         ("Which transitions should we forbid? What consecutive-day limit and fairness rules do you want?", False),

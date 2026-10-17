@@ -391,12 +391,11 @@ to 5/5 against the acknowledgement before it. The forced end of turn made that
 instruction redundant, so the acknowledgement now reports only the job and
 wake-up behavior.
 
-The `proactive-policy-intake` prompt asks about missing rest and fairness before
-new-roster construction. `new-schedule-policy-intake` improved from 0/3 to 3/3
-against the previous full prompt. Declined-rule and explanation-only controls
-passed 3/3 in both versions. These selected checks used live provider requests
-and E2B commands with four case jobs. Three provider failures from an earlier
-diagnostic batch remain separate from the clean comparison.
+New-roster intake uses separate prompt steps for guide order, rest questions,
+fairness questions and optional primary shift groups. Each step states its own
+trigger and scope limits and has a separate evaluation witness. The combined
+`new-schedule-policy-intake` case also checks rest and fairness together.
+Declined-rule and explanation-only cases check that intake respects the user's scope.
 
 ## Agent capabilities
 

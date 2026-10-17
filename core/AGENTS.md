@@ -291,8 +291,14 @@ skipped does not validate persistence.
   tune prompts directly against one held-out trajectory.
 - Keep `nurse_scheduling/ai/prompts/system-steps.json` aligned with the ordered
   production prompt sections. Give independently evaluated policies separate
-  prompt fragments and targeted cases. Keep each receipt tied to that policy's
-  comparison. Compare a changed step against its immediately
+  prompt fragments and targeted cases. Each step must have one intent and be
+  understandable on its own, including its trigger and scope limits. A shared
+  workflow or testcase does not make independent behaviors one intent.
+  Split a new intent before evaluating it, including one exposed by a failed
+  control. After splitting a step, measure each extracted policy separately.
+  Do not copy the bundled receipt to the new steps.
+  Keep each receipt tied to that policy's comparison.
+  Compare a changed step against its immediately
   previous prefix on its targeted cases, repeating three to five times. Treat linked
   cases as hypotheses until a clean comparison shows better outcomes or an
   explicit relative cost gain. Run full-prompt ablation only when requested or

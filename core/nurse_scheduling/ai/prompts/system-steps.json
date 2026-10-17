@@ -948,47 +948,128 @@
     ]
   },
   {
-    "id": "proactive-policy-intake",
-    "file": "steps/proactive-policy-intake.md",
+    "id": "new-roster-guide-order",
+    "file": "steps/new-roster-guide-order.md",
     "cases": [
-      "new-schedule-policy-intake",
-      "new-schedule-policy-declined",
+      "new-schedule-guide-before-intake",
       "new-schedule-qualified-slots",
-      "new-schedule-primary-shift-groups"
+      "new-schedule-policy-declined"
     ],
-    "hypothesis": "Confirms missing rest rules, fairness goals and optional primary shift people groups before roster construction, while respecting declined rules and explanation-only requests.",
-    "sha256": "1d8cc789343cccb1c0625ba5018bac50df6d2353126748aede4bc50af9e55b59",
+    "hypothesis": "Reads the setup guide before holiday questions when creating the first date range.",
+    "sha256": "449b97422ebdcb0fc72bc4a1456d6b298df54064802484ece7d01d98c1e2de80",
     "evidence": [
       {
-        "case": "new-schedule-primary-shift-groups",
-        "input_sha256": "55348ca713c93968d441afe292c8542cb9f1d60fef35c48fde1b1007298fff3a",
+        "case": "new-schedule-guide-before-intake",
+        "input_sha256": "12e169694484b6fb19b3529dc2726ccaf1bbdda1d27ff2a75aab7b62e7e43a94",
+        "before": "2/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "new-schedule-qualified-slots",
+            "input_sha256": "c1bcd8b11e58953937e9e0c19eb07ae70fb2698f15738a687619a9d48147993d",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Full-prompt ablation of this step only, with the other intake policies fixed. Real provider and E2B commands, four concurrent case jobs, no optimizer jobs. The baseline sometimes asks about holidays without reading the setup guide. No cost improvement is claimed."
+      }
+    ],
+    "comparison_mode": "ablation"
+  },
+  {
+    "id": "new-roster-rest-intake",
+    "file": "steps/new-roster-rest-intake.md",
+    "cases": [
+      "new-schedule-rest-intake",
+      "new-schedule-qualified-slots",
+      "new-schedule-policy-declined"
+    ],
+    "hypothesis": "Asks about missing rest rules before building a roster without inventing workplace defaults.",
+    "sha256": "783fdb4a391187e258298fbb49c474d4bbce9472b7e298af0f1644c132692ef9",
+    "evidence": [
+      {
+        "case": "new-schedule-rest-intake",
+        "input_sha256": "fc83689a3b3da9386a2af430dba636609a660801e6821c4ebf4f1ae67ecd3221",
         "before": "0/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
         "controls": [
           {
-            "case": "new-schedule-policy-declined",
-            "input_sha256": "6776106bbe4cf7420abe6b9e901b66411f812b690ec3126ac8fa20d9f3fb0cbf",
-            "before": "3/3",
-            "after": "3/3"
-          },
-          {
-            "case": "new-schedule-policy-intake",
-            "input_sha256": "ccf4c99b934960b8bc1e998309cfe0fb7f46e4199148bb3ca5721815ad4b67d0",
-            "before": "2/3",
-            "after": "3/3"
-          },
-          {
             "case": "new-schedule-qualified-slots",
-            "input_sha256": "380a73d3d20fc5d2404061e04c56e7680a9bf885c478edde2bd4d628c75723e5",
+            "input_sha256": "dfa11089aa51430d5c30ef2a4c788cbeb32f853420f0fde867af3ce62681da9a",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Previous full prompt versus the same full prompt with only this section reworded. Cases, fixtures, tools and references are unchanged. Real provider and E2B commands where needed, four concurrent case jobs. No cost improvement is claimed. The rest/fairness control was rerun in both versions after correcting question matching. Earlier failed candidates and an interrupted batch are retained separately."
+        "note": "Full-prompt ablation of this step only. Saved outputs were regraded after requiring a direct question about the consecutive-work limit. Original testcase and fixture fingerprints were verified first. Questions, prompts, tools and raw measurements are unchanged. The baseline suggests defaults or asks only whether to add rest rules. Real provider and E2B commands, four case jobs, no optimizer jobs or cost claim."
       }
-    ]
+    ],
+    "comparison_mode": "ablation"
+  },
+  {
+    "id": "new-roster-fairness-intake",
+    "file": "steps/new-roster-fairness-intake.md",
+    "cases": [
+      "new-schedule-fairness-intake",
+      "new-schedule-qualified-slots",
+      "new-schedule-policy-declined"
+    ],
+    "hypothesis": "Asks about missing workload balance goals before building a roster while respecting the requested scope.",
+    "sha256": "a7ac7de65824e7eabd451f6065e8a72c29b7b3141730e3132d10872b71ea0302",
+    "evidence": [
+      {
+        "case": "new-schedule-fairness-intake",
+        "input_sha256": "be1896c8451433f8dbafc8ff26d3a9b3a20da74a69c53067a299fbcc14ef409c",
+        "before": "0/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "new-schedule-qualified-slots",
+            "input_sha256": "7bb88e6b8162aaeb5dd583b4c408a882cb9d3c5c5af460e3f89855f79113e912",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Full-prompt ablation of this step only, with the other intake policies fixed. The baseline omits a direct fairness question. Real provider and E2B commands, four concurrent case jobs, no optimizer jobs. No cost improvement is claimed."
+      }
+    ],
+    "comparison_mode": "ablation"
+  },
+  {
+    "id": "new-roster-primary-shift-groups",
+    "file": "steps/new-roster-primary-shift-groups.md",
+    "cases": [
+      "new-schedule-primary-shift-groups",
+      "new-schedule-qualified-slots",
+      "new-schedule-policy-declined"
+    ],
+    "hypothesis": "Offers optional people groups for shared primary shift preferences or eligibility rules before building a roster.",
+    "sha256": "a5b4e8d7724403e35c7e1de231c6dd19e06bfed18b4e4b025eab124a6c2cd211",
+    "evidence": [
+      {
+        "case": "new-schedule-primary-shift-groups",
+        "input_sha256": "459c2c97393d45085d9fbc182c514a24b83392116f8b857bf7a54a699da3d4ee",
+        "before": "0/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "new-schedule-qualified-slots",
+            "input_sha256": "50867b20a7f2372d0f7af8131d200e69562c8ad5d96e2aabdeceebed3b054e15",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Full-prompt ablation of this step only, with the other intake policies fixed. The baseline omits the optional primary shift people-group offer. Real provider and E2B commands, four concurrent case jobs, no optimizer jobs. No cost improvement is claimed."
+      }
+    ],
+    "comparison_mode": "ablation"
   },
   {
     "id": "autonomous-roster-validation",

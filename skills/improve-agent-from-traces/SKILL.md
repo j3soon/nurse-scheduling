@@ -145,8 +145,14 @@ When a boundary input skips existing logic, check whether that logic belongs
 outside the loop or behind a different condition before adding a duplicate branch.
 
 Use a focused prompt instruction for a decision or interpretation the model
-needs to learn. Extend an existing segment when it covers that behavior. Keep the
-instruction general enough to handle changed IDs and equivalent structures.
+needs to learn. Extend an existing segment only for the same intent. Each prompt
+step must be minimal and self-contained, with one decision or action, its trigger
+and its scope limits. Sharing a workflow is not enough to combine policies.
+If a failed control exposes another intent, put that fix in a separate step
+and evaluate it separately. When splitting existing guidance, recover its
+rationale and measure each extracted policy. Do not reuse the bundled benefit
+receipt for the new steps. Keep the instruction general enough to handle changed
+IDs and equivalent structures.
 Examples may clarify the policy, but must not encode the testcase's answer.
 Apply the repository's plain technical English rule. Explain when to act, what
 to do, and what the result means. Retest wording changes before accepting them.
