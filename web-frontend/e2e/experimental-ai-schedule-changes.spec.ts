@@ -256,7 +256,7 @@ test('keeps reasoning and tool detail out of the way until asked for', async ({ 
   await page.getByRole('checkbox', { name: 'Show reasoning' }).uncheck();
   await page.getByRole('checkbox', { name: 'Show tool activity' }).uncheck();
   await expect(page.getByText(/^Reasoning ·/)).toBeHidden();
-  await expect(page.getByText('Schedule check passed')).toBeHidden();
+  await expect(page.getByText('Schedule check passed')).toBeVisible();
   // The applied change stays visible, because it changed the user's schedule.
   await expect(page.getByText('Applied to your schedule')).toBeVisible();
   await page.reload();

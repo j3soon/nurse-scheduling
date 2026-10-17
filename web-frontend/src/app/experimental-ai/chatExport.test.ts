@@ -180,7 +180,7 @@ describe('chat export', () => {
     expect(html).toContain('<details class="system-prompt"><summary>21 characters</summary>');
     expect(html).not.toMatch(/<details class="system-prompt" open/);
     expect(html).toContain('class="message user app"');
-    expect(html).toContain('.user.optimizer { align-self: flex-start;');
+    expect(html).toContain('.user { align-self: flex-end;');
     expect(html).toContain('uploaded files: [&lt;b&gt;]');
   });
 
@@ -292,7 +292,7 @@ describe('chat export', () => {
     expect(markdown).toContain('Optimization finished. Download the optimized schedule to review it.');
     expect(html).toContain('class="message optimizer"');
     expect(html).toContain('<div class="label">Optimizer</div>');
-    expect(html).toContain('.optimizer { align-self: flex-start;');
+    expect(html).toContain('.optimizer { align-self: center;');
     expect(html).toContain('<dt>Final score:</dt> <dd>0</dd>');
     expect(html).toContain('<dd>https://optimizer.example.test:8443/path</dd>');
     expect(html).toContain('<dd>&lt;script&gt;unsafe&lt;/script&gt;\nsecond line</dd>');

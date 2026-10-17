@@ -103,21 +103,23 @@ export function ChatTranscriptView({
             <article
               key={message.id}
               className={`min-w-0 rounded-xl px-3 py-3 sm:px-4 ${
-                message.role === 'system'
-                  ? 'border border-dashed border-gray-300 bg-gray-50 text-gray-700'
-                  : message.role === 'user' && message.source === undefined
-                    ? 'ml-auto max-w-[95%] sm:max-w-[85%] bg-blue-600 text-white'
-                    : message.source === 'optimizer'
-                      // Optimizer messages align left like the optimizer notice, in the chat and in exports.
-                      ? 'mr-auto max-w-[95%] sm:max-w-[85%] border border-emerald-200 bg-emerald-50 text-emerald-950'
+                message.role === 'optimizer'
+                  ? 'mx-auto max-w-[95%] sm:max-w-[85%] border border-emerald-200 bg-emerald-50 text-emerald-950'
+                  : message.role === 'system'
+                    ? 'ml-auto max-w-[95%] sm:max-w-[85%] border border-dashed border-gray-300 bg-gray-50 text-gray-700'
+                    : message.role === 'user' && message.source === undefined
+                      ? 'ml-auto max-w-[95%] sm:max-w-[85%] bg-blue-600 text-white'
                       : message.role === 'user'
                         ? 'ml-auto max-w-[95%] sm:max-w-[85%] border border-blue-200 bg-blue-50 text-blue-950'
-                        : message.role === 'optimizer'
-                          ? 'mr-auto max-w-[95%] sm:max-w-[85%] border border-emerald-200 bg-emerald-50 text-emerald-950'
-                          : 'mr-auto max-w-[95%] sm:max-w-[85%] border border-gray-200 bg-white text-gray-900'
+                        : 'mr-auto max-w-[95%] sm:max-w-[85%] border border-gray-200 bg-white text-gray-900'
               }`}
             >
               <p className="mb-1 text-xs font-semibold uppercase tracking-wide opacity-70">{messageLabel(message)}</p>
+              {(message.role === 'system' || message.source !== undefined || message.role === 'optimizer') && (
+                <p className="mb-2 text-xs opacity-70">
+                  {message.role === 'optimizer' ? 'App notice. Not sent to AI.' : 'Sent to AI.'}
+                </p>
+              )}
               {uploads.length > 0 && (
                 <ul aria-label="Uploaded files in this message" className="mb-2 list-inside list-disc text-xs">
                   {uploads.map((file, index) => <li key={index}>{file}</li>)}
@@ -126,7 +128,7 @@ export function ChatTranscriptView({
               {message.activity && (
                 <AssistantActivity
                   entries={message.activity.filter(entry => (
-                    entry.kind === 'response' || entry.kind === 'schedule-applied'
+                    entry.kind === 'response' || entry.kind === 'schedule-applied' || entry.kind === 'schedule-check'
                       || (entry.kind === 'reasoning' ? showReasoning : showTools)
                   ))}
                 />

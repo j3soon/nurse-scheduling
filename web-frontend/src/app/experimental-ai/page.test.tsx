@@ -959,7 +959,7 @@ describe('ExperimentalAiPage', () => {
     });
     const optimizerInput = screen.getByText('Optimizer result with score 23.').closest('article');
     expect(optimizerInput?.querySelector('p')).toHaveTextContent('User · Optimizer');
-    expect(optimizerInput).toHaveClass('mr-auto');
+    expect(optimizerInput).toHaveClass('ml-auto');
     expect(optimizerInput?.previousElementSibling).toHaveTextContent('Background system prompt');
     expect(optimizerInput?.nextElementSibling).toHaveTextContent('Optimization result: result.xlsx.');
     // Background tools stay in message activity. The status area is reserved for optimizer jobs.
@@ -2842,7 +2842,7 @@ describe('ExperimentalAiPage', () => {
       render(<ExperimentalAiPage />);
       await ask(user);
 
-      await user.click(await screen.findByText('Schedule check failed'));
+      await screen.findByText('Schedule check failed');
       expect(screen.getByText('schedule.yaml introduces problems and cannot be applied.')).toBeVisible();
     });
 

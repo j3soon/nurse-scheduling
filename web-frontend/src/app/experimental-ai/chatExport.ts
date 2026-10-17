@@ -182,7 +182,7 @@ function renderActivityDetailsHtml(entry: Exclude<ActivityEntry, { kind: 'respon
       : '';
     body = `<div class="tool-body">${argumentsOutput}${resultOutput}${interrupted}</div>`;
   }
-  return `<details class="activity-details">
+  return `<details class="activity-details"${entry.kind === 'schedule-check' && !entry.ok ? ' open' : ''}>
             <summary>${escapeHtml(activitySummary(entry))}</summary>
             <div class="activity-body">${body}</div>
           </details>`;
@@ -354,6 +354,7 @@ export function buildHtmlChatExport(
     return `
       <article class="message ${message.role}${message.source ? ` ${message.source}` : ''}">
         <div class="label">${escapeHtml(messageLabel(message))}</div>
+        ${message.role === 'optimizer' ? '<p class="message-status">App notice. Not sent to AI.</p>' : message.role === 'system' || message.source !== undefined ? '<p class="message-status">Sent to AI.</p>' : ''}
         ${uploads.length ? `<ul class="attachments">${uploads.map(file => `<li>${escapeHtml(file)}</li>`).join('')}</ul>` : ''}
         ${timeline}
         ${renderHtmlMessageDetails(message, metadata.timeZone)}
@@ -380,13 +381,12 @@ export function buildHtmlChatExport(
     .message { box-sizing: border-box; width: 85%; min-width: 0; max-width: 85%; padding: 12px 16px; border-radius: 12px; }
     .user { align-self: flex-end; background: #155dfc; color: white; }
     .assistant { align-self: flex-start; border: 1px solid #e5e7eb; background: white; }
-    .optimizer { align-self: flex-start; border: 1px solid #a7f3d0; background: #ecfdf5; color: #022c22; }
+    .optimizer { align-self: center; border: 1px solid #a7f3d0; background: #ecfdf5; color: #022c22; }
     .optimizer-details { display: grid; gap: 6px; margin: 12px 0 0; font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }
     .optimizer-details dt { display: inline; font-weight: 600; }
     .optimizer-details dd { display: inline; margin: 0; white-space: pre-wrap; }
-    .system { align-self: stretch; width: auto; max-width: none; border: 1px dashed #d1d5db; background: #f9fafb; color: #374151; }
+    .system { align-self: flex-end; border: 1px dashed #d1d5db; background: #f9fafb; color: #374151; }
     .user.app, .user.status, .user.optimizer { border: 1px solid #bfdbfe; background: #eff6ff; color: #1e3a8a; font: 12px/1.625 ui-monospace, monospace; }
-    .user.optimizer { align-self: flex-start; border-color: #a7f3d0; background: #ecfdf5; color: #022c22; }
     @media (max-width: 639px) {
       main { padding: 16px; }
       .chat { padding: 8px; }
