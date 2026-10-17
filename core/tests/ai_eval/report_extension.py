@@ -43,15 +43,15 @@ class ReportExtension:
 
 def read_completed_reports(root: Path) -> dict[str, SavedReport]:
     """Require complete, uniquely numbered attempts in every saved arm."""
-    progress = json.loads((root / "progress.json").read_text())
+    progress = json.loads((root / "progress.json").read_text(encoding="utf-8"))
     if progress["status"] != "complete":
         raise ValueError("Only completed reports can be extended")
     paired = (root / "before").exists() or (root / "after").exists()
     directories = [root / "before", root / "after"] if paired else [root]
     reports = {}
     for directory in directories:
-        metadata = json.loads((directory / "metadata.json").read_text())
-        records = [json.loads(line) for line in (directory / "results.jsonl").read_text().splitlines()]
+        metadata = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))
+        records = [json.loads(line) for line in (directory / "results.jsonl").read_text(encoding="utf-8").splitlines()]
         if not records:
             raise ValueError("Saved report has no attempts")
         label = directory.name if paired else records[0]["prompt_variant"]
@@ -132,7 +132,7 @@ def prepare_extension(
             case_id, repetition = record["case_id"], record["repetition"]
             suffix = f"--run-{repetition}" if report.metadata["repetitions"] > 1 else ""
             path = report.directory / "cases" / f"{case_id}{suffix}.json"
-            detail = json.loads(path.read_text())
+            detail = json.loads(path.read_text(encoding="utf-8"))
             if any(key not in detail or detail[key] != value for key, value in record.items()):
                 raise ValueError(f"Saved trajectory differs from its result: {case_id}#{repetition}")
             trajectories.append((record, detail))

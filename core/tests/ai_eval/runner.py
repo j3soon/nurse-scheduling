@@ -1478,7 +1478,7 @@ def _selected_cases(argv: Sequence[str] | None) -> tuple[argparse.Namespace, lis
                 CaseRun.from_saved(record, detail) for record, detail in arguments.extension.trajectories
             ]
             if len(reports) == 2:
-                gate = json.loads((arguments.extend_report / "comparison.json").read_text())
+                gate = json.loads((arguments.extend_report / "comparison.json").read_text(encoding="utf-8"))
                 old_target = (gate["cost_metric"], gate["cost_ratio"])
                 target = (arguments.cost_metric, arguments.cost_ratio)
                 if target != (None, None) and target != old_target:

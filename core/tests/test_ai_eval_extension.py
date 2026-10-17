@@ -21,6 +21,7 @@
 
 import asyncio
 import json
+from pathlib import Path
 
 import pytest
 
@@ -147,6 +148,49 @@ def test_extension_keeps_original_attempts_and_runs_only_missing_selected_pairs(
     statistics = json.loads((output / "comparison.json").read_text())
     assert statistics["cases"][cases[0].id]["metrics"]["total_tokens"]["pairs"] == 5
     assert statistics["cases"][cases[1].id]["metrics"]["total_tokens"]["pairs"] == 3
+
+
+def test_extension_preserves_utf8_reports_with_a_legacy_windows_default(tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    _cases, runs = saved_report(source, paired=True)
+    for run in runs:
+        run.answer = "姓名"
+        run.trajectory["events"] = [{"kind": "text", "text": "原始紀錄"}]
+    for label in ("before", "after"):
+        directory = source / label
+        metadata = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))
+        metadata["note"] = "評估紀錄"
+        runner.write_report(
+            [run for run in runs if run.prompt_variant == label], directory, metadata=metadata, checkpointed=True
+        )
+    (source / "comparison.json").write_text(
+        json.dumps({"cost_metric": None, "cost_ratio": None, "note": "比較紀錄"}, ensure_ascii=False), encoding="utf-8"
+    )
+    calls = []
+    install_fake_runner(monkeypatch, calls)
+    original_read_text = Path.read_text
+
+    def legacy_read_text(path, encoding=None, errors=None, **kwargs):
+        return original_read_text(path, encoding="cp1252" if encoding is None else encoding, errors=errors, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", legacy_read_text)
+    output = tmp_path / "extended"
+    # A correctness tie returns 1. Both arms still contain four passing attempts per case.
+    assert (
+        runner.main(
+            ["--extend-report", str(source), "--prompt-compare-step", "1", "--repeat", "4", "--output-dir", str(output)]
+        )
+        == 1
+    )
+    assert len(calls) == 4
+    for label in ("before", "after"):
+        records = runner._load_report_records(output / label)
+        assert all(record["answer"] == "姓名" for record in records if record["repetition"] <= 3)
+        for path in (source / label / "cases").glob("*.json"):
+            assert json.loads(path.read_text(encoding="utf-8")) == json.loads(
+                (output / label / "cases" / path.name).read_text(encoding="utf-8")
+            )
+        assert json.loads((output / label / "metadata.json").read_text(encoding="utf-8"))["note"] == "評估紀錄"
 
 
 def test_single_arm_extension_preserves_failures_and_can_be_extended_again(tmp_path, monkeypatch):

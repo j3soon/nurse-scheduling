@@ -492,8 +492,8 @@ skipped does not validate persistence.
   and suppresses the full schedule output.
 - Core tests run on Linux, macOS, and Windows in CI. Keep tests platform
   neutral, including paths, line endings, and environment limits.
-  Read UTF-8 fixture text with explicit `encoding="utf-8"`, because Windows can
-  use a legacy default encoding. Compare text-loaded references with UTF-8 text
+  Read UTF-8 fixtures and generated reports with explicit `encoding="utf-8"`.
+  Windows can use a legacy default encoding. Compare text-loaded references with UTF-8 text
   because text reads normalize checkout line endings. Use byte comparisons
   only when exact bytes are required.
 - `tests/test_ai_eval_grading.py` simulates legacy Windows decoding for implicit
