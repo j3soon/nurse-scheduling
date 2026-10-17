@@ -22,6 +22,8 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   the handoff summary as a lead to investigate.
 - Run affected tests and lint checks before finishing.
 - Avoid trailing spaces. End files with a newline.
+- Several docs pages are symbolic links. Edit the link target, because `sed -i`
+  and similar in-place rewrites replace a link with a regular file.
 - Store screenshots and other disposable review output in the Git-ignored
   repository-root `artifacts/`.
 - Keep local service configuration in the ignored `docker/.env`. Its tracked
