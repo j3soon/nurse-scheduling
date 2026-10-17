@@ -59,7 +59,7 @@
     "proactive-optimization",
     "control"
   ],
-  "note": "This testcase is mostly AI generated. Acceptance authorizes the offered loop without per-step confirmation. Require a successful start from the exact pending edit, with no earlier start.",
+  "note": "This testcase is mostly AI generated. Acceptance authorizes the offered loop without per-step confirmation. Grade the edit on turn 1, then require a successful start from that applied edit without another schedule change or an earlier start.",
   "user_turns": [
     "Set Ana's existing N avoidance on the date selector ['06'] from weight -1 to -100. Keep the date selector exactly as ['06']. Preserve all other preferences.",
     "Yes, please go ahead with that loop."
@@ -102,7 +102,6 @@
   ],
   "semantic_check": "optimizer-start-source",
   "proposal_turns": [
-    1,
-    2
+    1
   ]
 }

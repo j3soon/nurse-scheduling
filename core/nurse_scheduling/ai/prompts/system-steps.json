@@ -1004,9 +1004,12 @@
         "controls": [
           {
             "case": "optimization-loop-offer-accepted",
-            "input_sha256": "3a7d9661d707a68161cf05a7cf5ffdf5cdf916cd073ad57521e2da16d2485fc6",
+            "input_sha256": "2bf7ec43d96105c45f2c3b624a69fa3e348588a1d2b779d801f9e0503e1f22e9",
             "before": "0/3",
-            "after": "3/3"
+            "after": "3/3",
+            "model": "unsloth/Qwen3.8-27B-NVFP4",
+            "infrastructure_errors": 0,
+            "note": "Fresh adjacent comparison after grading the applied edit on turn 1. Optimization starts on turn 2 from that edit without another proposal. Three repetitions per arm and four concurrent case jobs."
           },
           {
             "case": "optimization-loop-offer-declined",

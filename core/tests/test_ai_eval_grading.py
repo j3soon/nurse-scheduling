@@ -1715,7 +1715,7 @@ def test_optimization_loop_cases_check_offer_scope_and_submitted_edit(decision, 
         proposed=proposal,
         activity=activity,
         intermediate_answers=[] if decision == "after-edit" else [offer],
-        proposal_turns=[True] if decision == "after-edit" else [True, decision == "accepted"],
+        proposal_turns=[True] if decision == "after-edit" else [True, False],
     )
     assert grade(case, outcome).passed is (mutation is None)
 

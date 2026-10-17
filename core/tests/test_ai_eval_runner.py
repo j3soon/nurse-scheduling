@@ -1120,6 +1120,33 @@ def test_the_next_turn_starts_from_the_applied_schedule():
     assert b"description: Ready" in factory.created[1].files[WORKSPACE_SCHEDULE]
 
 
+@pytest.mark.parametrize("decision", ["accepted", "declined"])
+def test_optimization_offer_decisions_keep_the_first_turn_edit(decision):
+    case = CASE_BY_ID[f"optimization-loop-offer-{decision}"]
+    provider = ScriptedProvider(
+        [ToolCallRequest((ToolCall("edit", BASH_TOOL, '{"command":"edit avoidance"}'),))],
+        [TextDelta("I can optimize this schedule. Would you like that?")],
+        [ToolCallRequest((ToolCall("start", "optimizer", '{"action":"start"}'),))]
+        if decision == "accepted"
+        else [TextDelta("I will keep the edit and skip optimization.")],
+        *([[TextDelta("Running in the background.")]] if decision == "accepted" else []),
+    )
+
+    def edit(_command, _timeout, backend):
+        current = backend.files[WORKSPACE_SCHEDULE].decode("utf-8")
+        backend.files[WORKSPACE_SCHEDULE] = current.replace("weight: -1", "weight: -100", 1).encode("utf-8")
+        return CommandResult("updated\n", "", 0)
+
+    run = asyncio.run(run_case(provider, settings(), case, _factory(edit)))
+
+    assert run.passed, run.failures
+    assert run.proposed
+    assert sum(event["kind"] == "proposal" for event in run.trajectory["events"]) == 1
+    submitted = [event["schedule_yaml"] for event in run.trajectory["events"] if event["kind"] == "optimizer_input"]
+    expected = fixture_text(case.fixture).replace("weight: -1", "weight: -100", 1)
+    assert submitted == ([expected] if decision == "accepted" else [])
+
+
 def test_an_unknown_case_id_stops_the_run():
     with pytest.raises(SystemExit, match="no-such-case"):
         select(load_cases(CASES), ["no-such-case"], [])
