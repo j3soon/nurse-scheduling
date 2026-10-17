@@ -400,19 +400,37 @@ describe('ExperimentalAiPage', () => {
     mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, saved_chat_export: true });
     const user = userEvent.setup();
     const blob = vi.spyOn(URL, 'createObjectURL');
-    const clicked: { href: string; download: string }[] = [];
-    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function(this: HTMLAnchorElement) {
-      clicked.push({ href: this.href, download: this.download });
-    });
+    const replace = vi.fn();
+    const tab = { document: document.implementation.createHTMLDocument(), location: { replace }, close: vi.fn(), closed: false, opener: window };
+    const open = vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window);
+    let finishPreparation!: (url: string) => void;
+    mockGetChatExportUrl.mockReturnValue(new Promise<string>(resolve => { finishPreparation = resolve; }));
     render(<ExperimentalAiPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await user.click(screen.getByRole('button', { name: 'Export Chat', exact: true }));
+    expect(open).toHaveBeenCalledExactlyOnceWith('about:blank', '_blank');
+    expect(tab.opener).toBeNull();
+    expect(tab.document.body.textContent).toContain('Preparing the chat download');
+    expect(replace).not.toHaveBeenCalled();
     expect(mockGetChatExportUrl).toHaveBeenCalledWith('session-id', null, '/ai');
-    expect(clicked).toEqual([{ href: expect.stringContaining('/ai/sessions/session-id/export?token=temporary'), download: 'schedule-ai-chat-session-id.zip' }]);
+    finishPreparation('/ai/sessions/session-id/export?token=temporary');
+    await waitFor(() => expect(replace).toHaveBeenCalledExactlyOnceWith('/ai/sessions/session-id/export?token=temporary'));
     expect(blob).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: 'HTML', exact: true })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Markdown', exact: true })).not.toBeInTheDocument();
+  });
+
+  it('reports a blocked export tab before requesting an archive', async () => {
+    mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, saved_chat_export: true });
+    vi.spyOn(window, 'open').mockReturnValue(null);
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await user.click(screen.getByRole('button', { name: 'Export Chat', exact: true }));
+    expect(screen.getByText('Allow pop-ups for this site to export the chat, then try again.')).toBeVisible();
+    expect(mockGetChatExportUrl).not.toHaveBeenCalled();
   });
 
   it('disables chat export when the server has no saved history', async () => {

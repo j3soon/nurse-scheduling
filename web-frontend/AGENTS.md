@@ -33,6 +33,10 @@ Frontend unit/component tests use Vitest; browser integration tests use
 Playwright. Keep test files and runner configuration outside the production
 TypeScript project. Validate them with their respective test runners.
 
+For native downloads, open any download tab during the click before awaiting
+authorization. Test preparation and download failures separately. Keep large
+archives out of browser Blobs.
+
 For row reorder tests, drop inside the intended half of the target row. Its
 midpoint separates insertion before and after, so center drops are ambiguous.
 

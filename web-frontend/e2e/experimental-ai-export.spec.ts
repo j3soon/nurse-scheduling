@@ -30,12 +30,12 @@ interface ExportBackend {
   endpoint: string;
   requests: string[];
   saved: boolean;
-  error: boolean;
+  error: 'POST' | 'GET' | null;
 }
 
 const test = base.extend<{ backend: ExportBackend }>({
   backend: async ({ baseURL }, runTest) => {
-    const backend: ExportBackend = { endpoint: '', requests: [], saved: true, error: false };
+    const backend: ExportBackend = { endpoint: '', requests: [], saved: true, error: null };
     // Native Chromium downloads bypass route interception. Serve real bytes over HTTP.
     const server = createServer((request, response) => {
       request.resume();
@@ -57,7 +57,7 @@ const test = base.extend<{ backend: ExportBackend }>({
         };
       } else if (path.endsWith('/export')) {
         backend.requests.push(request.method!);
-        if (backend.error) {
+        if (backend.error === request.method) {
           response.statusCode = 503;
           body = { detail: 'Saved history is temporarily unavailable.' };
         } else if (request.method === 'POST') body = { download_token: null };
@@ -99,9 +99,9 @@ const test = base.extend<{ backend: ExportBackend }>({
 });
 test.use({ timezoneId: 'Pacific/Honolulu', locale: 'zh-TW' });
 
-async function openChat(page: Page, backend: ExportBackend, options: { saved?: boolean; error?: boolean } = {}) {
+async function openChat(page: Page, backend: ExportBackend, options: { saved?: boolean; error?: 'POST' | 'GET' } = {}) {
   backend.saved = options.saved ?? true;
-  backend.error = options.error ?? false;
+  backend.error = options.error ?? null;
   await page.addInitScript(endpoint => localStorage.setItem('nurse-scheduling-ai-server', endpoint), backend.endpoint);
   await page.goto('/experimental-ai');
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Export the saved chat.');
@@ -112,7 +112,8 @@ async function openChat(page: Page, backend: ExportBackend, options: { saved?: b
 
 test('one Export Chat control downloads the server ZIP without changing its bytes', async ({ page, backend }) => {
   const requests = await openChat(page, backend);
-  const download = page.waitForEvent('download');
+  const popup = page.context().waitForEvent('page');
+  const download = popup.then(tab => tab.waitForEvent('download'));
   await page.getByRole('button', { name: 'Export Chat', exact: true }).click();
   const delivered = await download;
   expect(delivered.url()).toBe(`${backend.endpoint}/sessions/export-session/export`);
@@ -123,10 +124,23 @@ test('one Export Chat control downloads the server ZIP without changing its byte
   await expect(page.getByRole('button', { name: 'Markdown', exact: true })).toHaveCount(0);
 });
 
-test('an export request failure keeps the chat available for retry', async ({ page, backend }) => {
-  await openChat(page, backend, { error: true });
+test('an export preparation failure keeps the chat available for retry', async ({ page, backend }) => {
+  await openChat(page, backend, { error: 'POST' });
+  const popup = page.context().waitForEvent('page');
   await page.getByRole('button', { name: 'Export Chat', exact: true }).click();
   await expect(page.getByText('Saved history is temporarily unavailable.')).toBeVisible();
+  await expect(page.getByText('The server has the complete chat archive.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Export Chat', exact: true })).toBeEnabled();
+  await expect.poll(() => popup.then(tab => tab.isClosed())).toBe(true);
+});
+
+test('a native export GET failure appears in its tab and leaves the chat available', async ({ page, backend }) => {
+  const requests = await openChat(page, backend, { error: 'GET' });
+  const popup = page.context().waitForEvent('page');
+  await page.getByRole('button', { name: 'Export Chat', exact: true }).click();
+  const tab = await popup;
+  await expect(tab.locator('body')).toContainText('Saved history is temporarily unavailable.');
+  expect(requests).toEqual(['POST', 'GET']);
   await expect(page.getByText('The server has the complete chat archive.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Export Chat', exact: true })).toBeEnabled();
 });

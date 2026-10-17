@@ -721,19 +721,24 @@ export default function ExperimentalAiPage() {
     const session = captureSession();
     if (session === null) return;
     setIsExportingChat(true);
+    let downloadWindow: Window | null = null;
     try {
+      // Reserve the native download tab while this click still has user activation.
+      downloadWindow = window.open('about:blank', '_blank');
+      if (downloadWindow === null) throw new Error('Allow pop-ups for this site to export the chat, then try again.');
+      downloadWindow.opener = null;
+      downloadWindow.document.title = 'Export Chat';
+      downloadWindow.document.body.textContent = 'Preparing the chat download…';
       const url = await getChatExportUrl(session.id, authToken, session.endpoint);
-      if (!session.ownsConversation()) return;
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `schedule-ai-chat-${session.id}.zip`;
-      link.referrerPolicy = 'no-referrer';
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
+      if (!session.ownsConversation()) {
+        downloadWindow.close();
+        return;
+      }
+      if (downloadWindow.closed) return;
+      downloadWindow.document.body.textContent = 'The ZIP download will start when the archive is ready. You can close this tab after the download starts. Any server error will appear here.';
+      downloadWindow.location.replace(url);
     } catch (exportError) {
+      downloadWindow?.close();
       if (session.ownsConversation()) reportRequestError(exportError, 'The chat could not be exported.');
     } finally {
       if (session.ownsConversation()) setIsExportingChat(false);

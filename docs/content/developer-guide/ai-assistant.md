@@ -854,6 +854,10 @@ uses the existing signing primitive with a separate export scope and never
 contains the bearer credential. The request-limit middleware and route both
 check it. A bearer-authenticated `GET` remains available for API clients.
 Both responses use `Cache-Control: no-store`.
+The browser opens its download tab during the click, before awaiting the POST,
+so slow preparation does not lose popup permission. Preparation errors appear
+in the chat. Native GET errors appear in the download tab, leaving the chat
+available for retry. The ZIP is never buffered in JavaScript.
 
 ## HTTP API
 
