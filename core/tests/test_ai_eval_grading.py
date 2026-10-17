@@ -1677,7 +1677,7 @@ def test_autonomous_retry_grader_checks_running_status_actions_and_final_quality
 @pytest.mark.parametrize("mutation", [None, "no-offer", "no-optimization", "early-start", "wrong-edit"])
 def test_optimization_loop_cases_check_offer_scope_and_submitted_edit(decision, mutation):
     case = load_cases(CASES_PATH / f"basics/12-optimizer-results/optimization-loop-offer-{decision}.json")[0]
-    source = SMALL_CLINIC_PATH.read_text().replace("weight: -1", "weight: -100", 1)
+    source = SMALL_CLINIC_PATH.read_text(encoding="utf-8").replace("weight: -1", "weight: -100", 1)
     proposal = _load_yaml(source.encode())
     if mutation == "wrong-edit":
         proposal["preferences"][1]["weight"] = -10
@@ -1732,7 +1732,7 @@ def test_optimization_loop_cases_check_offer_scope_and_submitted_edit(decision, 
 )
 def test_outcome_initiative_accepts_offers_or_verified_starts(answer, start, passed):
     case = load_cases(CASES_PATH / "basics/12-optimizer-results/optimization-loop-outcome-after-edit.json")[0]
-    original = SMALL_CLINIC_PATH.read_text()
+    original = SMALL_CLINIC_PATH.read_text(encoding="utf-8")
     updated = original.replace("weight: -1", "weight: -100", 1)
     activity = []
     if start:
@@ -1755,7 +1755,7 @@ def test_outcome_initiative_accepts_offers_or_verified_starts(answer, start, pas
 @pytest.mark.parametrize("mutation", [None, "changed-retry-source", "no-retry", "no-inputs"])
 def test_authorized_loop_checks_repeat_submission_and_preserved_sources(mutation):
     case = load_cases(CASES_PATH / "basics/12-optimizer-results/optimization-loop-authorized-retry.json")[0]
-    source = (CASES_PATH.parent / f"fixtures/{case.fixture}.yaml").read_text()
+    source = (CASES_PATH.parent / f"fixtures/{case.fixture}.yaml").read_text(encoding="utf-8")
     activity = []
     for turn in (1, 2, 3):
         activity.append({"kind": "user" if turn == 1 else "optimizer", "turn": turn})
