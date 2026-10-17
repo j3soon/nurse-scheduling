@@ -291,6 +291,8 @@ request, showing material changes and the checks that support them.
 
 - [Core guidance](../../core/AGENTS.md), including AI evaluation policy.
 - [Prompt steps](../../core/nurse_scheduling/ai/prompts/system-steps.json).
+- [Receipt helper](../../core/tests/ai_eval/receipt.py). It records an edited
+  section's hash and writes a receipt after checking the report's inputs.
 - [Evaluation runner](../../core/tests/ai_eval/runner.py) and
   [grader](../../core/tests/ai_eval/grading.py).
 - [Evaluation launcher](../../scripts/run_ai_eval.sh). Inspect its current CLI

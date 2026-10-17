@@ -1619,6 +1619,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             json.dumps(
                 {
                     **statistics,
+                    "step": step.id,
                     "improved": improved,
                     "cost_metric": arguments.cost_metric,
                     "cost_ratio": arguments.cost_ratio,

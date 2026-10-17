@@ -63,6 +63,17 @@ Inspect the raw trajectories before replacing a receipt. Require all after attem
 errors, and either a correctness gain or a predeclared relative cost gain with both arms passing. Retain behavioral
 failures. Infrastructure-invalid pairs may be rerun only with the original failures preserved in artifacts.
 
+The evaluation stops when a section's text no longer matches its ledger hash. After editing a section, record its
+new hash so that its comparison can run. After reviewing the report, write the witness receipt from it. The `write`
+command checks that the report measured the current prompt, testcases, and fixtures. It lists the report's other
+cases as controls and replaces the step's earlier receipt for the same witness. CI then checks the receipt.
+
+```bash
+cd core
+python -m tests.ai_eval.receipt hash STEP_ID
+python -m tests.ai_eval.receipt write ../artifacts/REPORT_DIR --case CASE_ID --note "Concise scope note."
+```
+
 For a stronger witness, freeze the case and grading before comparing, then confirm a promising gain in an
 independent batch with unchanged inputs. Difficulty alone is not evidence. Keep passing ties as controls,
 and do not require a guide read as a substitute for correct app behavior. Correct grader mistakes in both
