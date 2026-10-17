@@ -496,6 +496,9 @@ skipped does not validate persistence.
   use a legacy default encoding. Compare text-loaded references with UTF-8 text
   because text reads normalize checkout line endings. Use byte comparisons
   only when exact bytes are required.
+- `tests/test_ai_eval_grading.py` simulates legacy Windows decoding for implicit
+  `Path.read_text` calls. Run it locally after changing evaluation fixtures or
+  grading tests, so encoding regressions fail before a push.
 - Write hash-bound fixture inputs as exact encoded bytes to avoid platform
   newline translation. Fix ZIP creator metadata as well as timestamps when
   generated archive bytes must match across platforms.
