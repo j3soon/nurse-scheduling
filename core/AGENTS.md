@@ -185,7 +185,8 @@ skipped does not validate persistence.
   With recovery storage, keep upload metadata in sessions and run snapshots.
   Release bytes only after a successful save, and load persisted files one at a
   time during sandbox hydration. Count all pending file writes, memory-only uploads, and
-  generated downloads against the session memory budget.
+  generated downloads against the session memory budget. Count every stored file
+  version, including removed files, against `AI_MAX_ARCHIVE_BYTES` before accepting it.
 - Bound sandbox file and command output bytes while receiving them. Truncating
   tool output after buffering does not bound the AI service's memory use.
 - Test file workflows across message boundaries and session expiry. Check the

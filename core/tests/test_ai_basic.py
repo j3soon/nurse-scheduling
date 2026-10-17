@@ -1684,12 +1684,14 @@ def test_environment_configuration_reads_attachment_limits(monkeypatch: pytest.M
     monkeypatch.setenv("AI_MAX_ATTACHMENT_FILES", "6")
     monkeypatch.setenv("AI_MAX_ATTACHMENT_BYTES", "6000000")
     monkeypatch.setenv("AI_MAX_ATTACHMENT_TOTAL_BYTES", "12000000")
+    monkeypatch.setenv("AI_MAX_ARCHIVE_BYTES", "30000000")
 
     settings = AiSettings.from_env()
 
     assert settings.max_attachment_files == 6
     assert settings.max_attachment_bytes == 6_000_000
     assert settings.max_attachment_total_bytes == 12_000_000
+    assert settings.max_archive_bytes == 30_000_000
 
 
 def test_environment_configuration_reads_provider_retry_settings(monkeypatch: pytest.MonkeyPatch) -> None:

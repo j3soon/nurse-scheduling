@@ -378,6 +378,9 @@ class ChatHistory:
                 "SELECT coalesce(max(last_event_id), 0) FROM chat_session_events WHERE session_id = %s",
                 (session_id,),
             ).fetchone()
+            (archive_bytes,) = connection.execute(
+                "SELECT coalesce(sum(octet_length(data)), 0) FROM chat_files WHERE session_id = %s", (session_id,)
+            ).fetchone()
             unfinished = connection.execute(
                 "SELECT r.id, r.kind, r.status, r.schedule_change, (SELECT e.type FROM chat_session_events e "
                 "WHERE e.session_id = r.session_id AND e.run_id = r.id "
@@ -400,6 +403,7 @@ class ChatHistory:
             ],
             "next_entry_seq": int(next_entry_seq),
             "last_event_id": int(last_event_id),
+            "archive_bytes": int(archive_bytes),
             "unfinished_runs": [
                 {
                     "id": str(run_id),

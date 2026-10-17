@@ -82,7 +82,9 @@ PROVIDER_ERROR = "The AI provider failed. Please try again."
 SANDBOX_COMMAND_TIMEOUT_ERROR = (
     "An AI shell command timed out. The temporary workspace was discarded. Please try again."
 )
-DOWNLOAD_RETENTION_WARNING = "The generated ZIP could not be retained because the service memory limit was reached."
+DOWNLOAD_RETENTION_WARNING = (
+    "The generated ZIP could not be retained because a chat or service storage limit was reached."
+)
 SANDBOX_RUN_TIMEOUT_ERROR = "The AI response timed out. Please try again."
 STALE_RUN_ERROR = "The schedule changed while this response was generated, so the response was discarded."
 BACKGROUND_RECOVERY_ERROR = "AI message recovery is unavailable, so the optimizer result was not reviewed."
@@ -265,6 +267,8 @@ class AgentSession:
     downloads: dict[str, bytes | None] = field(default_factory=dict)
     pending_download_removals: set[str] = field(default_factory=set)
     pending_archive_files: dict[tuple[str, str], dict] = field(default_factory=dict)
+    # Bytes of every file version that recovery storage keeps for this session, including removed files.
+    archive_bytes: int = 0
     # Last owner access, which orders eviction. A restored session keeps its stored expiry.
     last_used: float = field(default_factory=time.monotonic)
     latest_message: AcceptedMessage | None = None
@@ -350,6 +354,7 @@ class AgentSession:
         entries: Sequence[AgentMessage],
         next_entry_seq: int,
         uploads: Sequence[SandboxAttachment] = (),
+        archive_bytes: int = 0,
         event_stream: SessionEventStream | None,
         entry_log: Callable[[str, EntryRow], None] | None,
     ) -> "AgentSession":
@@ -368,6 +373,7 @@ class AgentSession:
             export_metadata=state.get("export_metadata", {}),
             transcript=retained_entries(entries),
             uploads={upload.id: upload for upload in uploads},
+            archive_bytes=archive_bytes,
             downloads=dict.fromkeys(state.get("downloads", [])),
             dropped_history_messages=state["dropped_history_messages"],
             dropped_entries=state["dropped_entries"],

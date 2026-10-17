@@ -148,6 +148,8 @@ class AiSettings:
     max_attachment_files: int = 32
     max_attachment_bytes: int = 25_000_000
     max_attachment_total_bytes: int = 200_000_000
+    max_archive_bytes: int = 1_000_000_000
+    """File bytes that recovery storage keeps per session, including removed files."""
     max_download_bytes: int = 50_000_000
     sandbox_backend: SandboxBackendName = "none"
     e2b_api_key: str = ""
@@ -224,6 +226,7 @@ class AiSettings:
             max_attachment_files=_read_positive_int("AI_MAX_ATTACHMENT_FILES", 32),
             max_attachment_bytes=_read_positive_int("AI_MAX_ATTACHMENT_BYTES", 25_000_000),
             max_attachment_total_bytes=_read_positive_int("AI_MAX_ATTACHMENT_TOTAL_BYTES", 200_000_000),
+            max_archive_bytes=_read_positive_int("AI_MAX_ARCHIVE_BYTES", 1_000_000_000),
             max_download_bytes=_read_positive_int("AI_MAX_DOWNLOAD_BYTES", 50_000_000),
             sandbox_backend=sandbox_backend,
             e2b_api_key=e2b_api_key,

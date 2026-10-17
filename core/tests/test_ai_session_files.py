@@ -28,6 +28,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 
 from nurse_scheduling.ai.downloads import WORKSPACE_DOWNLOAD
 from nurse_scheduling.ai.history import ChatHistory, _migrate_legacy_transcripts
@@ -36,6 +37,7 @@ from nurse_scheduling.ai.provider import TextDelta, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.sandbox import CommandResult
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
 from nurse_scheduling.ai.sessions import SessionStore
+from nurse_scheduling.ai.workspace import SandboxAttachment
 
 from . import test_ai_basic as basic
 from .test_ai_downloads import archive_bytes
@@ -58,6 +60,34 @@ def test_pending_downloads_share_the_retained_byte_budget(history_url):
     store.release_saved_downloads(session.id, dict(session.downloads))
     assert store.save_download(session.id, "second", b"b" * 4000)
     assert store.retained_bytes < 10_000
+
+
+@pytest.mark.parametrize("history_url", ["", "test"], ids=["memory", "postgres"])
+def test_stored_file_limit_counts_removed_files_of_every_kind(history_url):
+    store = SessionStore(basic.make_settings(history_postgres_url=history_url, max_archive_bytes=10_000))
+    session = store.create("owner", "schedule")
+    upload = SandboxAttachment("roster.xlsx", "application/octet-stream", b"a" * 6000)
+    upload_id = str(uuid4())
+    (retained,) = store.retain_uploads(session.id, "owner", [upload], upload_id=upload_id)
+    # A retried upload stores nothing new.
+    assert store.retain_uploads(session.id, "owner", [upload], upload_id=upload_id) == (retained,)
+    store.remove_upload(session.id, "owner", retained.id)
+    workbook = {"kind": "optimizer-workbook", "source_id": "job", "filename": "result.xlsx"}
+    workbook |= {"media_type": "application/octet-stream", "data": b"w" * 5000}
+    if history_url:
+        # Recovery storage keeps the removed upload, so these files would exceed the limit.
+        with pytest.raises(HTTPException) as refused:
+            store.retain_uploads(session.id, "owner", [upload])
+        assert refused.value.status_code == 413
+        assert not store.save_download(session.id, "run", b"z" * 5000)
+        with pytest.raises(HTTPException):
+            store.retain_archive_files(session.id, [workbook])
+        assert store.save_download(session.id, "run", b"z" * 4000)
+        assert session.archive_bytes == 10_000
+    else:
+        store.retain_uploads(session.id, "owner", [upload])
+        assert store.save_download(session.id, "run", b"z" * 5000)
+        store.retain_archive_files(session.id, [workbook])
 
 
 def test_generated_download_survives_restart_and_removal(postgres_history):
@@ -88,6 +118,8 @@ def test_generated_download_survives_restart_and_removal(postgres_history):
         assert client.get(f"/sessions/{session}/downloads/{download_id}").content == content
         assert client.delete(f"/sessions/{session}/downloads/{download_id}").status_code == 204
         assert client.get(f"/sessions/{session}/downloads/{download_id}").status_code == 404
+        # The removed ZIP still counts toward the per-session stored file limit after a restart.
+        assert restarted.state.session_store.get(session).archive_bytes == len(content)
         owner = cookies[basic.OWNER_COOKIE]
     assert postgres_history.load_file(session, owner, "download", download_id) is None
     assert postgres_history.load_file(session, owner, "download", download_id, True) == content
@@ -168,7 +200,7 @@ def test_optimizer_files_survive_restart_without_cached_workbooks(postgres_histo
             ),
             schedule_yaml=backend.submitted_yaml,
         )
-        assert client.portal.call(restarted.state.recovery.save_optimizer_result, failed, None)
+        assert client.portal.call(restarted.state.recovery.save_optimizer_result, failed, None) is None
         assert client.portal.call(restarted.state.session_optimizer.latest_result_artifact, session) is None
         with postgres_history._connect() as connection:
             (status,) = connection.execute(
@@ -204,7 +236,7 @@ def test_failed_optimizer_file_write_is_retained_and_retried(postgres_history, m
         artifact = OptimizerArtifact(b"workbook", "optimized-schedule.xlsx", "application/xlsx", b"{}")
         with monkeypatch.context() as patch:
             patch.setattr(ChatHistory, "save_session", unavailable)
-            assert not client.portal.call(app.state.recovery.save_optimizer_result, job, artifact)
+            assert client.portal.call(app.state.recovery.save_optimizer_result, job, artifact) is not None
         live = app.state.session_store.get(session)
         assert len(live.pending_archive_files) == 5
         assert not app.state.recovery.evictable(session)

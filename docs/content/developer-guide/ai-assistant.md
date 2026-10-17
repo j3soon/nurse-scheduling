@@ -881,6 +881,12 @@ controls. `/capabilities.app_version` identifies the AI service. The parent
 
 The default limits are 32 retained files, 25 MB per file, and 200 MB of retained
 source files per session. MB uses 1,000,000 bytes.
+With PostgreSQL, `AI_MAX_ARCHIVE_BYTES` also limits the file bytes stored per
+session, 1 GB by default. It counts every stored upload, generated ZIP, and
+optimizer file, including removed files, because removal keeps the stored copy.
+A full session refuses new uploads with HTTP 413. It keeps the answer without a
+new generated ZIP, and an optimizer result that cannot be stored reports this
+limit to the agent. Restore recounts the stored bytes from `chat_files`.
 `/capabilities.file_attachments` publishes `max_files`, `max_bytes_per_file`,
 and `max_bytes_per_session`.
 The browser checks existing uploads and selected files against these limits.

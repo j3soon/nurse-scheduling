@@ -544,6 +544,7 @@ cleaned while the AI service is offline.
 | `AI_MAX_ATTACHMENT_FILES` | `32` | Maximum retained files per session. |
 | `AI_MAX_ATTACHMENT_BYTES` | `25000000` | Maximum source bytes per file. The browser uploads one file per request. Keep this plus 64 KiB multipart overhead below NGINX's 64 MiB `/ai/` limit. |
 | `AI_MAX_ATTACHMENT_TOTAL_BYTES` | `200000000` | Maximum retained source bytes per session. These bytes also count toward `AI_MAX_SESSION_BYTES`. Remove unused uploads to free capacity. |
+| `AI_MAX_ARCHIVE_BYTES` | `1000000000` | Maximum file bytes that PostgreSQL stores per session: uploads, generated ZIPs, and optimizer files, including removed files. Removal does not free this capacity. A full session refuses new uploads with HTTP 413 and does not keep new generated ZIPs or optimizer results. Without PostgreSQL, this limit does not apply. |
 
 Attachments are always enabled. Every upload is copied unchanged into the
 disposable sandbox, where the agent can inspect it with Pi-compatible tools.

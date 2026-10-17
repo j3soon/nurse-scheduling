@@ -124,8 +124,9 @@ Hosted deployments use PostgreSQL to
 recover messages after a backend restart. A restart interrupts active responses,
 but the saved question, partial output, uploaded source files, generated ZIPs,
 and optimizer files remain available. Removing an upload or ZIP hides it from
-active use but keeps it in the session archive. All archived files expire with
-the chat. Without PostgreSQL, chats and files remain in memory only.
+active use but keeps it in the session archive. Removed files still count toward
+the chat's stored file limit, 1 GB by default. When a chat reaches it, start a
+new chat to save more files. All archived files expire with the chat. Without PostgreSQL, chats and files remain in memory only.
 Keep your original files.
 
 ## See what the assistant did

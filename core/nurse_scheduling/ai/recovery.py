@@ -250,7 +250,8 @@ class SessionRecovery:
             raise HTTPException(status_code=404, detail="The session file is no longer available.")
         return data
 
-    async def save_optimizer_result(self, job: SessionOptimization, artifact: OptimizerArtifact | None) -> bool:
+    async def save_optimizer_result(self, job: SessionOptimization, artifact: OptimizerArtifact | None) -> str | None:
+        """Store the job files and return the reason when they were not saved."""
         files = []
 
         def add(kind, filename, media_type, data):
@@ -279,9 +280,9 @@ class SessionRecovery:
                 add("optimizer-context", "schedule-context.json", "application/json", artifact.schedule_context)
         try:
             self._store.retain_archive_files(job.session_id, files)
-        except HTTPException:
-            return False
-        return await self.save(job.session_id)
+        except HTTPException as exc:
+            return str(exc.detail)
+        return None if await self.save(job.session_id) else "The optimizer files could not be saved."
 
     async def load_optimizer_result(self, session_id: str, job_id: str | None) -> OptimizerArtifact | None:
         assert self.history is not None
@@ -449,6 +450,7 @@ class SessionRecovery:
                 entries=record["entries"],
                 next_entry_seq=record["next_entry_seq"],
                 uploads=record.get("uploads", ()),
+                archive_bytes=record.get("archive_bytes", 0),
             )
             self._event_stream.restore(session_id, record["last_event_id"])
             release = self.pin(session_id)

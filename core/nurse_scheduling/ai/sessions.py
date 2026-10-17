@@ -42,6 +42,7 @@ from .workspace import SandboxAttachment
 __all__ = ["SessionStore", "schedule_revision"]
 
 SESSION_RETENTION_LIMIT_MESSAGE = "The AI service has reached its session text and file retention limit."
+ARCHIVE_LIMIT_MESSAGE = "This chat has reached its stored file limit. Start a new chat to save more files."
 
 
 def _text_bytes(value: str) -> int:
@@ -271,6 +272,7 @@ class SessionStore:
         entries: Sequence[AgentMessage],
         next_entry_seq: int,
         uploads: Sequence[SandboxAttachment] = (),
+        archive_bytes: int = 0,
     ) -> AgentSession:
         """Load a saved session and its rebuilt conversation with the stored expiry.
 
@@ -292,6 +294,7 @@ class SessionStore:
             entries=entries,
             next_entry_seq=next_entry_seq,
             uploads=uploads,
+            archive_bytes=archive_bytes,
             event_stream=self._event_stream,
             entry_log=self._on_entry,
         )
@@ -444,6 +447,10 @@ class SessionStore:
             raise HTTPException(
                 status_code=413, detail="Session files exceed the total attachment limit. Remove unused uploads first."
             )
+        # Removing an upload keeps its stored copy, so removal does not free this limit.
+        new_bytes = sum(item.byte_count for item in uploads)
+        if not self._archive_fits(session, new_bytes):
+            raise HTTPException(status_code=413, detail=ARCHIVE_LIMIT_MESSAGE)
         filenames = {item.filename for item in session.uploads.values()}
         retained = []
         for upload in uploads:
@@ -455,6 +462,7 @@ class SessionStore:
         event = upload_event(retained, len(session.uploads) + 1)
         self._require_capacity(sum(len(upload.data or b"") for upload in retained) + _text_bytes(event))
         session.add_uploads(retained, event)
+        session.archive_bytes += new_bytes
         self._cap_history(session)
         self._recount(session)
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
@@ -494,9 +502,12 @@ class SessionStore:
         if session is None or len(content) > self._settings.max_download_bytes:
             return False
         delta = len(content) - len(session.downloads.get(download_id) or b"")
-        if self._retained_bytes + delta > self._settings.max_session_bytes:
+        if self._retained_bytes + delta > self._settings.max_session_bytes or not self._archive_fits(
+            session, len(content)
+        ):
             return False
         session.downloads[download_id] = content
+        session.archive_bytes += len(content)
         self._charge(session, delta)
         return True
 
@@ -508,9 +519,18 @@ class SessionStore:
             - len(session.pending_archive_files.get((file["kind"], file["source_id"]), {}).get("data", b""))
             for file in files
         )
+        if not self._archive_fits(session, delta):
+            raise HTTPException(status_code=413, detail=ARCHIVE_LIMIT_MESSAGE)
         self._require_capacity(max(0, delta))
         session.pending_archive_files.update(((file["kind"], file["source_id"]), file) for file in files)
+        session.archive_bytes += delta
         self._charge(session, delta)
+
+    def _archive_fits(self, session: AgentSession, size: int) -> bool:
+        """Report whether recovery storage may keep this many more file bytes for the session."""
+        return (
+            not self._settings.history_postgres_url or session.archive_bytes + size <= self._settings.max_archive_bytes
+        )
 
     def release_saved_archive_files(self, session_id: str, files: Sequence[dict]) -> None:
         session = self._sessions[session_id]

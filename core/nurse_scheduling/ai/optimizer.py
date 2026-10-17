@@ -183,7 +183,7 @@ class SessionOptimizer:
         max_result_bytes: int = 10_000_000,
         max_cached_result_bytes: int = 100_000_000,
         max_schedule_bytes: int = 1_000_000,
-        save_result: Callable[[SessionOptimization, OptimizerArtifact | None], Awaitable[bool]] | None = None,
+        save_result: Callable[[SessionOptimization, OptimizerArtifact | None], Awaitable[str | None]] | None = None,
         load_artifact: Callable[[str, str | None], Awaitable[OptimizerArtifact | None]] | None = None,
     ) -> None:
         self._backend = backend
@@ -550,10 +550,10 @@ class SessionOptimizer:
                 artifact_error = str(exc)
                 artifact = None
         if self._save_result is not None and self._jobs.get(job.id) is job:
-            saved = await self._save_result(job, artifact)
-            job.artifact_saved = saved and artifact is not None
-            if not saved:
-                artifact_error = "The optimizer files could not be saved."
+            save_error = await self._save_result(job, artifact)
+            job.artifact_saved = save_error is None and artifact is not None
+            if save_error is not None:
+                artifact_error = save_error
         job.schedule_yaml = ""
         job.submitted_yaml = ""
         await self._delete_retired(job)
