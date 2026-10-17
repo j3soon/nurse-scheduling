@@ -24,9 +24,9 @@ import json
 import logging
 import re
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .agent_types import AgentToolOutcome
@@ -135,11 +135,23 @@ class SandboxAttachment:
 
     filename: str
     media_type: str
-    data: bytes
+    data: bytes | None
     id: str = ""
     # Includes the source filename and media type, before retention renames duplicate filenames.
     request_sha256: str | None = None
     size_bytes: int = 0
+
+    @property
+    def byte_count(self) -> int:
+        """Return the source size without loading persisted bytes."""
+        return len(self.data) if self.data is not None else self.size_bytes
+
+    def reference(self) -> "SandboxAttachment":
+        """Keep metadata and the source size without retaining file contents."""
+        return replace(self, data=None, size_bytes=self.byte_count)
+
+
+AttachmentLoader = Callable[[SandboxAttachment], Awaitable[bytes]]
 
 
 @dataclass(frozen=True)
@@ -197,6 +209,7 @@ async def _measured_sandbox_run(
     attachments: Sequence[SandboxAttachment],
     optimizer_result: bytes | None,
     optimizer_context: bytes | None,
+    load_attachment: AttachmentLoader | None = None,
 ) -> AsyncIterator[SandboxBackend]:
     """Create, hydrate, and measure a sandbox only when a tool needs it."""
     stack = AsyncExitStack()
@@ -209,6 +222,7 @@ async def _measured_sandbox_run(
         attachments,
         optimizer_result,
         optimizer_context,
+        load_attachment,
     )
     try:
         async with stack:
@@ -233,6 +247,7 @@ class _LazySandboxRun:
         attachments: Sequence[SandboxAttachment],
         optimizer_result: bytes | None,
         optimizer_context: bytes | None,
+        load_attachment: AttachmentLoader | None = None,
     ) -> None:
         self._factory = factory
         self._cleanup_timeout_seconds = cleanup_timeout_seconds
@@ -242,6 +257,7 @@ class _LazySandboxRun:
         self._attachments = tuple(attachments)
         self._optimizer_result = optimizer_result
         self._optimizer_context = optimizer_context
+        self._load_attachment = load_attachment
         self._sandbox: SandboxBackend | None = None
         self._hydrated = False
         self._start_lock = asyncio.Lock()
@@ -279,6 +295,7 @@ class _LazySandboxRun:
                     self._attachments,
                     self._optimizer_result,
                     self._optimizer_context,
+                    self._load_attachment,
                 )
                 self._hydrated = True
             return self._sandbox
@@ -354,6 +371,7 @@ async def hydrate_sandbox(
     attachments: Sequence[SandboxAttachment] = (),
     optimizer_result: bytes | None = None,
     optimizer_context: bytes | None = None,
+    load_attachment: AttachmentLoader | None = None,
 ) -> None:
     """Copy trusted application state and searchable references into one turn."""
     started = time.perf_counter()
@@ -377,7 +395,8 @@ async def hydrate_sandbox(
         files[destination] = source.read_text(encoding="utf-8")
     files["/reference/tools/README.md"] = inspection_helper_catalog()
     for index, attachment in enumerate(attachments, start=1):
-        files[attachment_path(attachment, index)] = attachment.data
+        if attachment.data is not None:
+            files[attachment_path(attachment, index)] = attachment.data
     if optimizer_result is not None:
         files[WORKSPACE_OPTIMIZER_RESULT] = optimizer_result
         files[WORKSPACE_RESULT_CONTEXT] = (
@@ -387,12 +406,23 @@ async def hydrate_sandbox(
                 build_result_context(schedule_yaml, workbook=optimizer_result), ensure_ascii=False, allow_nan=False
             )
         )
-    # One request, because hydration now precedes the first tool result rather than the turn.
+    # Batch trusted references before loading attachments.
     await sandbox.write_files(files)
+    # Load and deliver persisted files one at a time.
+    for index, attachment in enumerate(attachments, start=1):
+        if attachment.data is not None:
+            continue
+        if load_attachment is None:
+            raise SandboxError("Uploaded file storage is unavailable.")
+        data = await load_attachment(attachment)
+        try:
+            await sandbox.write_file(attachment_path(attachment, index), data)
+        finally:
+            del data
     logger.info(
         "sandbox hydrated sandbox_id=%s files=%s schedule_bytes=%s latency_seconds=%.3f",
         sandbox.sandbox_id,
-        len(files),
+        len(files) + sum(attachment.data is None for attachment in attachments),
         len(schedule_yaml.encode("utf-8")),
         time.perf_counter() - started,
     )

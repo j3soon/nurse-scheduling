@@ -190,6 +190,14 @@ they remain in process memory only. Conversation context keeps filenames and att
 while recovery entries can retain inspected document content and tool output.
 The prompt gives the agent workspace paths for schedules and attachments.
 
+Persisted uploads keep only metadata in live sessions and run snapshots.
+Recovery and text-only responses do not read their bytes. Sandbox hydration
+loads and delivers one file at a time, which limits attachment buffering to one
+file per active sandbox. This adds a storage read and sandbox write per file.
+Upload requests can still buffer files within the configured request limits.
+Failed saves retain unsaved bytes for retry and count them against the memory
+budget until a later state save succeeds.
+
 ### Optimizer jobs and result reviews
 
 The background status box has a **Cancel optimizer** control. It posts to
@@ -706,7 +714,9 @@ byte cap. Event replay keeps at most 4 MiB of serialized events per session and
 64 MiB for the process. It drops completed run output first and retains final
 events longest. Without PostgreSQL, an incomplete reset snapshot sets
 `incomplete: true`. These replay limits are separate from `AI_MAX_SESSION_BYTES`, which
-bounds live schedule, transcript, receipt, upload, and download retention.
+bounds live schedule, transcript, receipt, unsaved or memory-only upload, and
+download retention. Persisted upload sizes still count toward the attachment
+limits, independently of retained memory.
 PostgreSQL can supply output no longer retained by the in-memory projection.
 Replay limits do not cap database retention.
 

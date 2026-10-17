@@ -128,6 +128,8 @@ class ChatHistory:
         )
         _insert_entries(connection, session_id, entries)
         for upload in uploads:
+            if upload.data is None:
+                continue
             connection.execute(
                 "INSERT INTO chat_uploads (session_id, id, data) VALUES (%s, %s, %s) "
                 "ON CONFLICT (session_id, id) DO UPDATE SET data = EXCLUDED.data",
@@ -309,15 +311,6 @@ class ChatHistory:
             ).fetchone()
             if row is None:
                 return None
-            uploads = []
-            for metadata in row[0].get("uploads", []):
-                blob = connection.execute(
-                    "SELECT data FROM chat_uploads WHERE session_id = %s AND id = %s",
-                    (session_id, metadata["id"]),
-                ).fetchone()
-                if blob is None:
-                    raise psycopg.DataError("Saved chat upload is missing")
-                uploads.append(SandboxAttachment(data=blob[0], **metadata))
             entries = connection.execute(
                 "SELECT e.type, e.payload, r.status FROM chat_session_entries e LEFT JOIN chat_runs r ON r.id = e.run_id "
                 "WHERE e.session_id = %s AND e.type <> 'tool_result' "
@@ -342,7 +335,7 @@ class ChatHistory:
             ).fetchall()
         return {
             "state": row[0],
-            "uploads": uploads,
+            "uploads": [SandboxAttachment(data=None, **metadata) for metadata in row[0].get("uploads", [])],
             "expires_at": float(row[1]),
             "entries": [
                 replace(entry, stop_reason="aborted" if status == "cancelled" else "error")
@@ -383,6 +376,17 @@ class ChatHistory:
             (first, last, None if run_id is None else str(run_id), kind, data)
             for first, last, run_id, kind, data in rows
         ]
+
+    def load_upload(self, session_id: str, owner: str, upload_id: str, size_bytes: int) -> bytes | None:
+        """Read one owned, unexpired file whose byte count still matches its saved metadata."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT u.data FROM chat_uploads u JOIN chat_sessions s ON s.id = u.session_id "
+                "WHERE u.session_id = %s AND u.id = %s AND s.owner_hash = %s AND s.expires_at > now() "
+                "AND octet_length(u.data) = %s",
+                (session_id, upload_id, _owner_hash(owner), size_bytes),
+            ).fetchone()
+        return None if row is None else row[0]
 
     def export_snapshot(self, session_id: str) -> dict[str, Any] | None:
         """Read complete saved events and metadata in one consistent, read-only transaction."""

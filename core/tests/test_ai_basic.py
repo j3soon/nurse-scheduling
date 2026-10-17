@@ -2262,6 +2262,17 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
     if history_enabled:
         monkeypatch.setattr(ChatHistory, "initialize", lambda _self: None)
         monkeypatch.setattr(ChatHistory, "finish_run", lambda *_args, **_kwargs: None)
+        stored_files = {}
+
+        def save_uploads(_self, session_id, *, uploads=(), **_kwargs):
+            stored_files.update(((session_id, upload.id), upload.data) for upload in uploads if upload.data is not None)
+
+        monkeypatch.setattr(ChatHistory, "save_session", save_uploads)
+        monkeypatch.setattr(
+            ChatHistory,
+            "load_upload",
+            lambda _self, session_id, _owner, upload_id, _size: stored_files[(session_id, upload_id)],
+        )
 
         def record_start(
             _self: ChatHistory,

@@ -179,6 +179,8 @@ class RunRecorder(Protocol):
 
     async def stop_message(self, session_id: str, message_id: str) -> None: ...
 
+    async def read_upload(self, session_id: str, owner: str, upload: SandboxAttachment) -> bytes: ...
+
     async def start_run(
         self,
         session_id: str,
@@ -312,7 +314,7 @@ class AgentSession:
                     "id": upload.id,
                     "filename": upload.filename,
                     "media_type": upload.media_type,
-                    "size_bytes": len(upload.data),
+                    "size_bytes": upload.byte_count,
                     "request_sha256": upload.request_sha256,
                 }
                 for upload in self.uploads.values()
@@ -320,7 +322,7 @@ class AgentSession:
             "export_metadata": {
                 **self.export_metadata,
                 "uploaded_files": [
-                    {"filename": upload.filename, "bytes": len(upload.data)} for upload in self.uploads.values()
+                    {"filename": upload.filename, "bytes": upload.byte_count} for upload in self.uploads.values()
                 ],
             },
             "dropped_history_messages": self.dropped_history_messages,
@@ -668,6 +670,7 @@ class AgentSession:
                     runtime.session_optimizer, self.id, current_yaml, arguments, self.client_address
                 ),
                 attachments=snapshot.uploads,
+                load_attachment=lambda upload: runtime.recorder.read_upload(self.id, self.owner_token, upload),
                 optimizer_result=artifact.content if artifact is not None else None,
                 optimizer_context=artifact.schedule_context if artifact is not None else None,
                 agent=self.agent,

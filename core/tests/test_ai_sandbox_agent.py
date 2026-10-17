@@ -586,6 +586,32 @@ def test_hydration_places_untrusted_attachments_under_safe_paths():
     assert b"inspect_pdf" in backend.files["/reference/tools/inspect_pdf.py"]
 
 
+def test_hydration_loads_and_delivers_each_persisted_file_before_reading_the_next():
+    actions = []
+    payloads = {"one": b"first", "two": b"second"}
+
+    class Backend(FakeSandboxBackend):
+        async def write_file(self, path, content):
+            actions.append(("write", path, content))
+            await super().write_file(path, content)
+
+    async def load(upload):
+        actions.append(("load", upload.id))
+        return payloads[upload.id]
+
+    backend = Backend("hydration")
+    uploads = tuple(SandboxAttachment(name, "text/plain", data, id=name).reference() for name, data in payloads.items())
+    asyncio.run(hydrate_sandbox(backend, schedule_yaml(), uploads, load_attachment=load))
+
+    assert actions == [
+        ("load", "one"),
+        ("write", "/workspace/attachments/one-one", b"first"),
+        ("load", "two"),
+        ("write", "/workspace/attachments/two-two", b"second"),
+    ]
+    assert backend.write_files_calls == 1
+
+
 def test_hydration_keeps_optimizer_result_outside_user_attachments():
     factory = FakeSandboxFactory()
     provider = ScriptedProvider(

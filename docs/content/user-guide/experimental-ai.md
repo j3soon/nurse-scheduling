@@ -244,8 +244,9 @@ The complete schedule YAML is sent to the configured AI service and placed in
 the assistant's temporary workspace. Relevant schedule content reaches the
 model when the assistant inspects it. Uploaded source files stay with the chat
 until removed or the session expires. The service loads them into each new
-workspace. The file count and per-file size limits apply to retained uploads,
-and their bytes share the service's session memory budget.
+workspace. File count and size limits apply to retained uploads. With PostgreSQL,
+the service loads saved file contents only when a response uses its workspace.
+Without PostgreSQL, their bytes share the service's session memory budget.
 
 Each message uses a fresh temporary virtual machine, not your computer or a
 persistent desktop. The service loads the current schedule, relevant references,

@@ -303,7 +303,7 @@ async def _parse_upload_request(request: Request, settings: AiSettings) -> list[
 
 def _upload_metadata(upload: SandboxAttachment) -> dict[str, str | int]:
     """Describe one retained source file without its contents."""
-    return {"id": upload.id, "filename": upload.filename, "media_type": upload.media_type, "bytes": len(upload.data)}
+    return {"id": upload.id, "filename": upload.filename, "media_type": upload.media_type, "bytes": upload.byte_count}
 
 
 def create_app(

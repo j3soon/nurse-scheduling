@@ -180,7 +180,10 @@ skipped does not validate persistence.
   that work. Treat such stream timings as an upper bound.
 - Bound uploads before provider calls and place them under fixed sandbox paths.
   Retain uploaded source files only until the user removes them or the session expires.
-  Count retained files and generated downloads against the session memory budget.
+  With recovery storage, keep upload metadata in sessions and run snapshots.
+  Release bytes only after a successful save, and load persisted files one at a
+  time during sandbox hydration. Count unsaved or memory-only uploads and
+  generated downloads against the session memory budget.
 - Bound sandbox file and command output bytes while receiving them. Truncating
   tool output after buffering does not bound the AI service's memory use.
 - Test file workflows across message boundaries and session expiry. Check the

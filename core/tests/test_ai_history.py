@@ -797,6 +797,7 @@ def test_postgres_uploads_survive_restart_and_removal(postgres_history):
         assert client.get(f"/sessions/{session}/uploads").status_code == 404
         client.cookies.update(cookies)
         assert client.get(f"/sessions/{session}/uploads").json() == [first, duplicate]
+        assert all(upload.data is None for upload in restarted.state.session_store.get(session).uploads.values())
         retry = client.post(f"/sessions/{session}/uploads?upload_id={upload_id}", files=payload)
         assert retry.status_code == 201 and retry.json() == [first]
         conflict = client.post(
@@ -841,11 +842,13 @@ def test_postgres_failed_upload_is_not_acknowledged_and_can_retry(postgres_histo
         save = ChatHistory.save_session
         monkeypatch.setattr(ChatHistory, "save_session", unavailable)
         assert client.post(f"/sessions/{session}/uploads?upload_id={upload_id}", files=payload).status_code == 503
+        assert app.state.session_store.get(session).uploads[upload_id].data == b"handover"
         with postgres_history._connect() as connection:
             assert connection.execute("SELECT count(*) FROM chat_uploads").fetchone() == (0,)
             assert not connection.execute("SELECT state FROM chat_sessions").fetchone()[0]["uploads"]
         monkeypatch.setattr(ChatHistory, "save_session", save)
         assert client.post(f"/sessions/{session}/uploads?upload_id={upload_id}", files=payload).status_code == 201
+        assert app.state.session_store.get(session).uploads[upload_id].data is None
         assert len(client.get(f"/sessions/{session}/uploads").json()) == 1
         monkeypatch.setattr(ChatHistory, "save_session", unavailable)
         assert client.delete(f"/sessions/{session}/uploads/{upload_id}").status_code == 503
@@ -882,6 +885,129 @@ def test_postgres_upload_write_is_atomic(postgres_history, monkeypatch):
     with postgres_history._connect() as connection:
         assert connection.execute("SELECT count(*) FROM chat_sessions").fetchone() == (0,)
         assert connection.execute("SELECT count(*) FROM chat_uploads").fetchone() == (0,)
+
+
+def test_postgres_uploads_load_only_when_a_sandbox_is_used(postgres_history, monkeypatch):
+    loads = []
+    load = ChatHistory.load_upload
+
+    def record_load(self, session_id, owner, upload_id, size_bytes):
+        loads.append((upload_id, size_bytes))
+        return load(self, session_id, owner, upload_id, size_bytes)
+
+    monkeypatch.setattr(ChatHistory, "load_upload", record_load)
+    read = ToolCallRequest((ToolCall("read", "read", json.dumps({"path": "/workspace/schedule.yaml"})),))
+    provider = basic.ScriptedToolProvider([TextDelta("No files needed")], [read], [TextDelta("Read")])
+    factory = FakeSandboxFactory()
+    app = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test", max_sessions=1),
+        provider=provider,
+        sandbox_factory=factory,
+    )
+    with basic.AuthenticatedTestClient(app) as client:
+        session = basic.create_session(client)
+        payload = b"x" * 1_000_000
+        response = client.post(
+            f"/sessions/{session}/uploads",
+            files=[("files", (name, payload, "text/plain")) for name in ("one.txt", "two.txt")],
+        )
+        assert response.status_code == 201
+        metadata = response.json()
+        store = app.state.session_store
+        assert all(
+            upload.data is None and upload.byte_count == len(payload) for upload in store.get(session).uploads.values()
+        )
+        assert store.retained_bytes < len(payload)
+        # A full store unloads the first chat. Restoring its metadata must not read file bytes.
+        basic.create_session(client)
+        assert store.get(session) is None
+        assert client.get(f"/sessions/{session}/uploads").json() == metadata
+        assert all(upload.data is None for upload in store.get(session).uploads.values())
+        assert store.retained_bytes < len(payload)
+        assert client.post(f"/sessions/{session}/messages", json={"message": "Hello"}).status_code == 200
+        assert loads == [] and factory.created == []
+        assert client.post(f"/sessions/{session}/messages", json={"message": "Read files"}).status_code == 200
+        assert loads == [(file["id"], len(payload)) for file in metadata]
+        assert all(upload.data is None for upload in store.get(session).uploads.values())
+        assert store.retained_bytes < len(payload)
+
+
+@pytest.mark.parametrize("failure", ["unavailable", "missing"], ids=["database-outage", "missing-file"])
+def test_postgres_upload_read_failure_releases_run(postgres_history, monkeypatch, failure):
+    read = ToolCallRequest((ToolCall("read", "read", json.dumps({"path": "/workspace/schedule.yaml"})),))
+    factory = FakeSandboxFactory()
+    app = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test"),
+        provider=basic.ScriptedToolProvider([read], [TextDelta("Read")]),
+        sandbox_factory=factory,
+    )
+    with basic.AuthenticatedTestClient(app) as client:
+        session = basic.create_session(client)
+        assert (
+            client.post(f"/sessions/{session}/uploads", files={"files": ("notes.txt", b"hi", "text/plain")}).status_code
+            == 201
+        )
+        if failure == "unavailable":
+            monkeypatch.setattr(ChatHistory, "load_upload", unavailable)
+        else:
+            with postgres_history._connect() as connection:
+                connection.execute("DELETE FROM chat_uploads")
+        response = client.post(f"/sessions/{session}/messages", json={"message": "Read files"})
+        assert response.status_code == 200
+        assert any(kind == "error" for kind, _data in basic.parse_sse(response.text))
+        assert "secret-database-url" not in response.text
+        assert not app.state.session_store.get(session).active
+        assert factory.created[0].closed
+        assert all(upload.data is None for upload in app.state.session_store.get(session).uploads.values())
+
+
+def test_postgres_run_saves_pending_upload_before_loading_it(postgres_history, monkeypatch):
+    read = ToolCallRequest((ToolCall("read", "read", json.dumps({"path": "/workspace/schedule.yaml"})),))
+    factory = FakeSandboxFactory()
+    app = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test"),
+        provider=basic.ScriptedToolProvider([read], [TextDelta("Read")]),
+        sandbox_factory=factory,
+    )
+    with basic.AuthenticatedTestClient(app) as client:
+        session = basic.create_session(client)
+        with monkeypatch.context() as patch:
+            patch.setattr(ChatHistory, "save_session", unavailable)
+            assert (
+                client.post(
+                    f"/sessions/{session}/uploads", files={"files": ("notes.txt", b"pending", "text/plain")}
+                ).status_code
+                == 503
+            )
+        live = app.state.session_store.get(session)
+        upload = next(iter(live.uploads.values()))
+        assert upload.data == b"pending"
+        load = ChatHistory.load_upload
+
+        def check_snapshot(self, *args):
+            assert live.snapshot is not None
+            assert all(item.data is None for item in live.snapshot.uploads)
+            return load(self, *args)
+
+        monkeypatch.setattr(ChatHistory, "load_upload", check_snapshot)
+        assert client.post(f"/sessions/{session}/messages", json={"message": "Read files"}).status_code == 200
+        assert factory.created[0].files[f"/workspace/attachments/{upload.id}-notes.txt"] == b"pending"
+        assert live.uploads[upload.id].data is None
+        assert not live.active
+
+
+def test_postgres_upload_read_checks_owner_expiry_and_size(postgres_history):
+    store = SessionStore(basic.make_settings())
+    session = store.create(str(uuid4()), basic.schedule_yaml())
+    uploads = store.retain_uploads(session.id, session.owner_token, [SandboxAttachment("notes", "text/plain", b"hi")])
+    postgres_history.save_session(session.id, store.recovery_state(session.id), uploads=uploads)
+    args = (session.id, session.owner_token, uploads[0].id)
+    assert postgres_history.load_upload(*args, 2) == b"hi"
+    assert postgres_history.load_upload(session.id, str(uuid4()), uploads[0].id, 2) is None
+    assert postgres_history.load_upload(*args, 1) is None
+    with postgres_history._connect() as connection:
+        connection.execute("UPDATE chat_sessions SET expires_at = now() - interval '1 second'")
+    assert postgres_history.load_upload(*args, 2) is None
 
 
 def test_postgres_duplicates_and_reconnection(postgres_history):

@@ -42,6 +42,7 @@ from .workspace import (
     WORKSPACE_SCHEDULE,
     AgentDownload,
     AgentScheduleChange,
+    AttachmentLoader,
     SandboxAttachment,
     SandboxCandidateError,
     SandboxCommandTimeoutError,
@@ -147,6 +148,7 @@ async def run_workspace(
     optimizer_context: bytes | None = None,
     agent: Agent | None = None,
     request_clock: Callable[[], datetime] | None = None,
+    load_attachment: AttachmentLoader | None = None,
 ) -> AsyncIterator[AgentEvent | AgentScheduleChange | AgentDownload]:
     """Hydrate, run, read, validate, and destroy one fresh sandbox run."""
     agent = agent or Agent()
@@ -161,6 +163,7 @@ async def run_workspace(
                 attachments,
                 optimizer_result,
                 optimizer_context,
+                load_attachment,
             ) as sandbox:
                 toolset = WorkspaceTools(sandbox, schedule_yaml, limits, execute_optimizer)
                 events = agent.prompt(

@@ -52,6 +52,7 @@ def _text_bytes(value: str) -> int:
 def _upload_revision(upload: SandboxAttachment) -> str:
     """Identify the complete source file, including its original metadata."""
     digest = hashlib.sha256(json.dumps([upload.filename, upload.media_type]).encode())
+    assert upload.data is not None
     digest.update(upload.data)
     return digest.hexdigest()
 
@@ -66,7 +67,7 @@ def _session_bytes(session: "AgentSession") -> int:
     total += sum(_text_bytes(entry_text(entry)) for entry in session.transcript)
     total += sum(_receipt_bytes(receipt) for receipt in session.accepted_messages.values())
     total += sum(_text_bytes(text) for text in session.queued_steering)
-    total += sum(len(upload.data) for upload in session.uploads.values())
+    total += sum(len(upload.data or b"") for upload in session.uploads.values())
     return total + sum(map(len, session.downloads.values()))
 
 
@@ -320,6 +321,8 @@ class SessionStore:
 
     def _reserve(self, session: AgentSession, *, accepting_steering: bool, run_id: str | None) -> RunSnapshot:
         snapshot = session.begin_run(accepting_steering=accepting_steering, run_id=run_id)
+        if self._settings.history_postgres_url:
+            snapshot.uploads = tuple(upload.reference() for upload in snapshot.uploads)
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
         return snapshot
 
@@ -427,7 +430,9 @@ class SessionStore:
         session.require_idle("uploading files")
         if len(session.uploads) + len(uploads) > self._settings.max_attachment_files:
             raise HTTPException(status_code=413, detail="Too many retained files. Remove unused uploads first.")
-        total_bytes = sum(len(item.data) for item in session.uploads.values()) + sum(len(item.data) for item in uploads)
+        total_bytes = sum(item.byte_count for item in session.uploads.values()) + sum(
+            item.byte_count for item in uploads
+        )
         if total_bytes > self._settings.max_attachment_total_bytes:
             raise HTTPException(
                 status_code=413, detail="Session files exceed the total attachment limit. Remove unused uploads first."
@@ -441,7 +446,7 @@ class SessionStore:
                 replace(upload, filename=filename, id=upload_id or str(uuid4()), request_sha256=request_sha256)
             )
         event = upload_event(retained, len(session.uploads) + 1)
-        self._require_capacity(sum(len(upload.data) for upload in retained) + _text_bytes(event))
+        self._require_capacity(sum(len(upload.data or b"") for upload in retained) + _text_bytes(event))
         session.add_uploads(retained, event)
         self._cap_history(session)
         self._recount(session)
@@ -451,6 +456,16 @@ class SessionStore:
     def attachments(self, session_id: str, owner_token: str | None) -> tuple[SandboxAttachment, ...]:
         """List the retained source files of an owned session."""
         return tuple(self._get_owned(session_id, owner_token).uploads.values())
+
+    def release_saved_uploads(self, session_id: str, uploads: Sequence[SandboxAttachment]) -> None:
+        """Release only the exact file versions that the database has accepted."""
+        session = self._sessions[session_id]
+        released_bytes = 0
+        for upload in uploads:
+            if upload.data is not None and session.uploads.get(upload.id) is upload:
+                released_bytes += len(upload.data)
+                session.uploads[upload.id] = upload.reference()
+        self._charge(session, -released_bytes)
 
     def remove_upload(self, session_id: str, owner_token: str | None, upload_id: str) -> None:
         """Remove an unused source file between runs and reclaim its bytes."""
