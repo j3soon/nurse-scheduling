@@ -1541,6 +1541,36 @@ describe('ExperimentalAiPage', () => {
     expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
   });
 
+  it('delivers queued steering during optimizer review without sending it again', async () => {
+    const user = userEvent.setup();
+    let background: SessionStreamOptions | undefined;
+    mockStreamSessionEvents.mockImplementation(async (_id: string, callbacks: SessionStreamOptions) => {
+      background = callbacks;
+      await new Promise<void>(() => {});
+    });
+    render(<ExperimentalAiPage />);
+    const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+    await user.type(composer, 'Optimize it.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    act(() => background?.onEvent({ type: 'run_start', runId: 'review', trigger: 'optimizer' }));
+    await user.type(composer, 'Check night coverage first.');
+    await user.click(screen.getByRole('button', { name: 'Queue message' }));
+    const queuedId = mockQueueMessage.mock.calls[0][1] as string;
+    expect(screen.getByText('Queued for steering')).toBeInTheDocument();
+    act(() => {
+      background?.onEvent({ type: 'tool', runId: 'review', activity: { name: 'read', arguments: '{}', result: 'Read complete', ok: true } });
+      background?.onEvent({ type: 'steering', runId: 'review', messageId: queuedId, message: 'Check night coverage first.' });
+      background?.onEvent({ type: 'delta', runId: 'review', text: 'Night coverage checked.' });
+    });
+    expect(screen.queryByText('Queued for steering')).not.toBeInTheDocument();
+    expect(screen.getByText('Check night coverage first.')).toBeInTheDocument();
+    expect(screen.getByText('Night coverage checked.')).toBeInTheDocument();
+    act(() => background?.onEvent({ type: 'done', runId: 'review' }));
+    await screen.findByRole('button', { name: 'Send' });
+    expect(mockRunEvents).toHaveBeenCalledTimes(1);
+  });
+
   it('stops a background assistant turn through the session endpoint', async () => {
     const user = userEvent.setup();
     let backgroundCallbacks: SessionStreamOptions | undefined;

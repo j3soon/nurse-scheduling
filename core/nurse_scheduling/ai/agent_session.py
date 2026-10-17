@@ -649,7 +649,7 @@ class AgentSession:
                 snapshot.schedule_yaml,
                 messages,
                 WorkspaceLimits.from_settings(runtime.settings),
-                take_steering=None if background else lambda close: runtime.store.take_steering(self.id, close),
+                take_steering=lambda close: runtime.store.take_steering(self.id, close),
                 execute_optimizer=lambda current_yaml, arguments: execute_optimizer_tool(
                     runtime.session_optimizer, self.id, current_yaml, arguments, self.client_address
                 ),

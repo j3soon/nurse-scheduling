@@ -509,6 +509,8 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       onSteering: (queuedId, content) => {
         const runId = lifecycle.current('background')?.id;
         if (!runId) return;
+        queuedMessagesRef.current = queuedMessagesRef.current.filter(message => message.id !== queuedId);
+        setQueuedMessages(queuedMessagesRef.current);
         const nextId = messageId();
         setMessages(previous => {
           if (previous.some(message => message.id === queuedId)) return previous;

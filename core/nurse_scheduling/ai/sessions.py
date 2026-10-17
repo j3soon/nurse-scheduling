@@ -314,7 +314,7 @@ class SessionStore:
         session = self._sessions.get(session_id)
         if session is None or session.active:
             return None
-        return self._reserve(session, accepting_steering=False, run_id=run_id)
+        return self._reserve(session, accepting_steering=True, run_id=run_id)
 
     def _reserve(self, session: AgentSession, *, accepting_steering: bool, run_id: str | None) -> RunSnapshot:
         snapshot = session.begin_run(accepting_steering=accepting_steering, run_id=run_id)

@@ -2762,11 +2762,12 @@ def test_the_applied_schedule_starts_the_next_run() -> None:
     assert not any(str(message["content"]).startswith("[App event]") for message in provider.calls[2])
 
 
-def test_session_store_queues_steering_once_and_retains_it_with_the_turn() -> None:
+@pytest.mark.parametrize("background", [False, True])
+def test_session_store_queues_steering_once_and_retains_it_with_the_turn(background) -> None:
     app = create_test_app(settings=make_settings(), provider=FakeProvider())
     store = app.state.session_store
     session = store.create("browser-owner", schedule_yaml())
-    revision = store.begin(session.id, "browser-owner")
+    revision = store.begin_background(session.id) if background else store.begin(session.id, "browser-owner")
 
     store.queue_steering(session.id, "browser-owner", "queued-1", "Focus on P2 instead.")
     store.queue_steering(session.id, "browser-owner", "queued-1", "Focus on P2 instead.")
@@ -2975,6 +2976,49 @@ def test_a_browser_may_send_the_newer_schedule_across_origins() -> None:
 
     assert preflight.status_code == 200
     assert "PUT" in preflight.headers["access-control-allow-methods"]
+
+
+def test_background_review_delivers_steering_after_tool_before_next_model_request():
+    provider = ScriptedToolProvider(
+        [ToolCallRequest((ToolCall("start", OPTIMIZER_TOOL, '{"action":"start"}'),))],
+        [ToolCallRequest((ToolCall("inspect", BASH_TOOL, '{"command":"inspect"}'),))],
+        [TextDelta("Night coverage checked.")],
+    )
+    optimizer = BackgroundTestOptimizer()
+    executed = []
+
+    def inspect(command, _timeout, _backend):
+        executed.append(command)
+        store = app.state.session_store
+        owner = store._sessions[session_id].owner_token
+        store.queue_steering(session_id, owner, "queued-review", "Check night coverage first.")
+        return CommandResult("Read complete", "", 0)
+
+    factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=inspect))
+    app = create_test_app(
+        settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT, optimizer_poll_interval_seconds=0.001),
+        provider=provider,
+        sandbox_factory=factory,
+        optimizer_backend=optimizer,
+    )
+    with AuthenticatedTestClient(app) as client:
+        session_id = create_session(client, schedule_yaml())
+        client.post(f"/sessions/{session_id}/messages", json={"message": "Optimize."})
+        optimizer.release.set()
+        events = review_run_events(app, session_id)
+        assert events[-1].type == "done"
+        steering = next(event for event in events if event.type == "steering")
+        assert steering.data["message_id"] == "queued-review"
+        request = provider.calls[-1]
+        tool_index = next(index for index, message in enumerate(request) if message.get("tool_call_id") == "inspect")
+        steering_index = next(
+            index for index, message in enumerate(request) if message.get("content") == "Check night coverage first."
+        )
+        assert tool_index < steering_index
+        assert executed == ["inspect"]
+        assert sum(event.type == "steering" for event in events) == 1
+        session = app.state.session_store._sessions[session_id]
+        assert sum(entry == UserMessage("Check night coverage first.") for entry in session.transcript) == 1
 
 
 def test_background_command_timeout_preserves_tool_result_and_reports_the_actual_cause():
