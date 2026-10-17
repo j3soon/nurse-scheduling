@@ -632,12 +632,12 @@ retries the final write with the current state. A process crash recovers the
 accepted question and saved output but does not rerun interrupted model calls
 or mutating tools. Without PostgreSQL, recovery is process-local.
 
-Completed foreground replay and background snapshots have separate memory
-cache budgets, each set by `AI_MAX_SESSION_BYTES`. PostgreSQL supplies output
-that was evicted from these caches. Without PostgreSQL, the foreground cache
-keeps the newest turn of each session, and a background snapshot drops its
-oldest output. Active or unsaved foreground turns can exceed the budget. The
-caches do not limit database retention.
+Event replay keeps at most 4 MiB of serialized events for each session and
+64 MiB for the process. These fixed limits are separate from
+`AI_MAX_SESSION_BYTES`. Replay drops the output of completed runs first and
+keeps their final events longest. PostgreSQL supplies dropped output when a
+browser resets. Without PostgreSQL, the reset snapshot from memory sets
+`incomplete: true`. The replay limits do not limit database retention.
 
 ### History entries and streaming
 
