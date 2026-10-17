@@ -1,0 +1,68 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "fixture": "new-schedule",
+  "expect_proposal": true,
+  "semantic_check": "qualified-staffing",
+  "changes": [
+    "description",
+    "dates",
+    "people",
+    "shiftTypes",
+    "preferences"
+  ],
+  "tool_usage": {
+    "forbidden": [
+      "optimizer"
+    ],
+    "max_total": 15
+  },
+  "tags": [
+    "new-schedule",
+    "proactive-policy",
+    "control"
+  ],
+  "note": "This testcase is mostly AI generated. The user explicitly declines rest and fairness rules and prohibits optimization. Propose only one daily D requirement and the required daily rule. Do not ask again.",
+  "id": "new-schedule-policy-declined",
+  "question": "Create a one-day schedule for March 1, 2026 with nurses P1 and P2 and the working shift D. Require exactly one D nurse from ALL. Use only that staffing rule and at most one shift per day. I do not want forbidden transitions, work-streak limits or fairness rules for this draft. Propose the YAML now. Do not optimize.",
+  "staffing_contract": {
+    "counts": {
+      "D": 1
+    },
+    "qualified": {}
+  },
+  "assert": [
+    {
+      "path": "dates.range.startDate",
+      "equals": "2026-03-01"
+    },
+    {
+      "path": "dates.range.endDate",
+      "equals": "2026-03-01"
+    },
+    {
+      "path": "people.items[].id",
+      "count": 2
+    },
+    {
+      "path": "people.items[].id",
+      "contains": "P1"
+    },
+    {
+      "path": "people.items[].id",
+      "contains": "P2"
+    },
+    {
+      "path": "shiftTypes.items[].id",
+      "count": 1
+    },
+    {
+      "path": "shiftTypes.items[].id",
+      "contains": "D"
+    },
+    {
+      "path": "preferences",
+      "count": 2
+    }
+  ]
+}

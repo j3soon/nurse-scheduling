@@ -25,6 +25,7 @@ import json
 import logging
 import re
 from collections.abc import AsyncIterator, Sequence
+from contextlib import aclosing
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, TypedDict
 from uuid import uuid4
@@ -41,7 +42,7 @@ SECRET_ASSIGNMENT_PATTERN = re.compile(
     r"(?i)(\b(?:api[_-]?key|access[_-]?token|authorization|secret)\b\s*[\"']?\s*[:=]\s*[\"']?)"
     r"([^\"'\s,;<}]+)"
 )
-MAX_TOOL_CALLS_PER_RESPONSE = 8
+MAX_TOOL_CALLS_PER_RESPONSE = 32
 MAX_TOOL_ARGUMENT_CHARS = 20_000
 MAX_RESPONSE_TEXT_CHARS = 200_000
 MAX_RESPONSE_REASONING_CHARS = 400_000
@@ -299,7 +300,7 @@ class OpenAiCompatibleProvider:
         messages: Sequence[ChatMessage],
         tools: Sequence[dict[str, Any]] | None = None,
     ) -> AsyncIterator[ChatStreamEvent]:
-        """Translate provider SSE chunks and retry safe pre-stream timeouts."""
+        """Translate SSE chunks and continue interrupted responses after timeouts."""
         if self._include_usage:
             await self._load_context_tokens()
         timeout = httpx.Timeout(self._settings.provider_timeout_seconds, connect=10.0)
@@ -316,22 +317,63 @@ class OpenAiCompatibleProvider:
             payload["tool_choice"] = "auto"
 
         stream_started = False
+        answer: list[str] = []
+        text_chars = 0
+        reasoning_chars = 0
         for attempt in range(1, self._settings.provider_max_attempts + 1):
             if self._include_attempts:
                 yield ProviderAttempt(attempt)
             try:
-                async for event in self._stream_attempt(timeout, headers, payload):
-                    stream_started = True
+                # Keep tool calls private until the HTTP attempt also closes cleanly.
+                completed: list[ToolCallRequest | ResponseEnd] = []
+                async with aclosing(self._stream_attempt(timeout, headers, payload)) as events:
+                    async for event in events:
+                        if isinstance(event, (ToolCallRequest, ResponseEnd)):
+                            completed.append(event)
+                            continue
+                        stream_started = True
+                        if isinstance(event, TextDelta):
+                            text_chars += len(event.text)
+                            if text_chars > MAX_RESPONSE_TEXT_CHARS:
+                                raise ProviderResponseLimitError.for_user(
+                                    "The AI provider returned more text than one answer may contain."
+                                )
+                            answer.append(event.text)
+                        elif isinstance(event, ReasoningDelta):
+                            reasoning_chars += len(event.text)
+                            if reasoning_chars > MAX_RESPONSE_REASONING_CHARS:
+                                raise ProviderResponseLimitError.for_user(
+                                    "The AI provider returned more reasoning than one answer may contain."
+                                )
+                        yield event
+                for event in completed:
                     yield event
                 return
             except ProviderError:
                 raise
             except httpx.TimeoutException as exc:
-                if stream_started or attempt == self._settings.provider_max_attempts:
-                    raise ProviderError.for_user("The AI provider timed out.") from exc
+                if attempt == self._settings.provider_max_attempts:
+                    message = (
+                        "The AI provider timed out while streaming the response."
+                        if stream_started
+                        else "The AI provider timed out before starting the response."
+                    )
+                    raise ProviderError.for_user(message) from exc
+                if answer:
+                    # A fresh completion cannot resume transport state. Keep visible
+                    # text as context, but never replay reasoning or partial tool JSON.
+                    payload["messages"] = [
+                        *messages,
+                        ChatMessage(role="assistant", content="".join(answer)),
+                        ChatMessage(
+                            role="user",
+                            content=f"[App event] The response was interrupted after {text_chars} text characters.",
+                        ),
+                    ]
                 delay = self._settings.provider_retry_backoff_seconds * (2 ** (attempt - 1))
                 logger.warning(
-                    "AI provider timed out before streaming attempt=%s max_attempts=%s retry_in_seconds=%.3f",
+                    "AI provider timed out stream_started=%s attempt=%s max_attempts=%s retry_in_seconds=%.3f",
+                    stream_started,
                     attempt,
                     self._settings.provider_max_attempts,
                     delay,
@@ -386,8 +428,6 @@ class OpenAiCompatibleProvider:
             partial_calls: dict[int, _PartialToolCall] = {}
             finish_reason: str | None = None
             done_received = False
-            text_chars = 0
-            reasoning_chars = 0
             async for line in response.aiter_lines():
                 if not line.startswith("data:"):
                     continue
@@ -431,20 +471,10 @@ class OpenAiCompatibleProvider:
                 except (json.JSONDecodeError, KeyError, TypeError) as exc:
                     raise ProviderError.for_user("The AI provider returned an invalid stream.") from exc
                 if isinstance(content, str) and content:
-                    text_chars += len(content)
-                    if text_chars > MAX_RESPONSE_TEXT_CHARS:
-                        raise ProviderResponseLimitError.for_user(
-                            "The AI provider returned more text than one answer may contain."
-                        )
                     yield TextDelta(content)
                 # Providers name this field either way, and llama.cpp uses the first.
                 reasoning = delta.get("reasoning_content") or delta.get("reasoning")
                 if isinstance(reasoning, str) and reasoning:
-                    reasoning_chars += len(reasoning)
-                    if reasoning_chars > MAX_RESPONSE_REASONING_CHARS:
-                        raise ProviderResponseLimitError.for_user(
-                            "The AI provider returned more reasoning than one answer may contain."
-                        )
                     yield ReasoningDelta(reasoning)
                 _merge_tool_call_fragments(partial_calls, delta.get("tool_calls"))
             # Pi checks completion before releasing tools. Accept [DONE] for endpoints

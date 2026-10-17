@@ -1,4 +1,4 @@
-"""Session state, message steering, and schedule proposal ownership."""
+"""Session state, message steering, and session ownership."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -19,6 +19,8 @@
 
 # This file is mostly AI generated.
 
+import hashlib
+import json
 import math
 import time
 from collections.abc import Callable, Sequence
@@ -29,13 +31,12 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from .agent_session import AcceptedMessage, AgentSession, RunCompletion, schedule_revision
-from .candidate import PendingProposal
 from .config import AiSettings
-from .context import PROPOSAL_DECISION_HISTORY, history_chars, project_history, projected_history, upload_event
+from .context import history_chars, project_history, projected_history, upload_event
 from .history import EntryRow
 from .lifecycle import RunSnapshot
 from .session_event_stream import SessionEventStream
-from .transcript import AgentMessage, ProposalDecision, ProposalDecisionEntry, entry_text, starts_exchange
+from .transcript import AgentMessage, entry_text, starts_exchange
 from .workspace import SandboxAttachment
 
 __all__ = ["SessionStore", "schedule_revision"]
@@ -48,8 +49,11 @@ def _text_bytes(value: str) -> int:
     return len(value.encode("utf-8"))
 
 
-def _proposal_bytes(proposal: PendingProposal | None) -> int:
-    return 0 if proposal is None else _text_bytes(proposal.schedule_yaml) + _text_bytes(proposal.diff)
+def _upload_revision(upload: SandboxAttachment) -> str:
+    """Identify the complete source file, including its original metadata."""
+    digest = hashlib.sha256(json.dumps([upload.filename, upload.media_type]).encode())
+    digest.update(upload.data)
+    return digest.hexdigest()
 
 
 def _receipt_bytes(receipt: AcceptedMessage) -> int:
@@ -58,13 +62,8 @@ def _receipt_bytes(receipt: AcceptedMessage) -> int:
 
 def _session_bytes(session: "AgentSession") -> int:
     """Return the text and file bytes one session retains."""
-    total = _text_bytes(session.schedule_yaml) + _proposal_bytes(session.pending_proposal)
-    total += sum(
-        _text_bytes(
-            PROPOSAL_DECISION_HISTORY[entry.decision] if isinstance(entry, ProposalDecisionEntry) else entry_text(entry)
-        )
-        for entry in session.transcript
-    )
+    total = _text_bytes(session.schedule_yaml)
+    total += sum(_text_bytes(entry_text(entry)) for entry in session.transcript)
     total += sum(_receipt_bytes(receipt) for receipt in session.accepted_messages.values())
     total += sum(_text_bytes(text) for text in session.queued_steering)
     total += sum(len(upload.data) for upload in session.uploads.values())
@@ -186,13 +185,13 @@ class SessionStore:
         """Drop this session's oldest context until retained text fits the budget.
 
         A run adds output without another capacity check. Initially small sessions
-        would otherwise accumulate answers and proposals far past the budget and
+        would otherwise accumulate answers far past the budget and
         hold them until they expire. Older context is the part a later run needs least,
         and the message cap already truncates from the same end.
 
         Keep the entire completed run so its answer still has the question and any
         steering that produced it. Retained text therefore settles at the budget plus
-        one run and any pending proposal per session.
+        one run per session.
         """
         while self._retained_bytes > self._settings.max_session_bytes:
             removed = self._drop_oldest_exchange(session, protected_messages)
@@ -339,7 +338,7 @@ class SessionStore:
         self,
         session_id: str,
         entries: Sequence[AgentMessage],
-        proposal: tuple[str, str] | None = None,
+        schedule_yaml: str | None = None,
         *,
         snapshot: RunSnapshot,
     ) -> RunCompletion:
@@ -348,7 +347,7 @@ class SessionStore:
         session = self._sessions.get(session_id)
         if session is None:
             return RunCompletion(False, False)
-        completion = session.finish_run(snapshot, entries, proposal)
+        completion = session.finish_run(snapshot, entries, schedule_yaml)
         if completion.run_saved:
             self._cap_history(session)
         self._recount(session)
@@ -390,14 +389,12 @@ class SessionStore:
         return queued
 
     def update_schedule(self, session_id: str, owner_token: str | None, schedule_yaml: str) -> None:
-        """Replace the schedule snapshot, which drops any proposal made against the old one."""
+        """Replace the schedule snapshot, which makes an in-flight run stale."""
         session = self._get_owned(session_id, owner_token)
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
         if session.schedule_yaml == schedule_yaml:
             return
-        additional_bytes = (
-            _text_bytes(schedule_yaml) - _text_bytes(session.schedule_yaml) - _proposal_bytes(session.pending_proposal)
-        )
+        additional_bytes = _text_bytes(schedule_yaml) - _text_bytes(session.schedule_yaml)
         if additional_bytes > 0:
             self._require_capacity(additional_bytes)
         session.update_schedule(schedule_yaml)
@@ -405,19 +402,42 @@ class SessionStore:
         self._recount(session)
 
     def retain_uploads(
-        self, session_id: str, owner_token: str | None, uploads: Sequence[SandboxAttachment]
+        self,
+        session_id: str,
+        owner_token: str | None,
+        uploads: Sequence[SandboxAttachment],
+        *,
+        upload_id: str | None = None,
     ) -> tuple[SandboxAttachment, ...]:
         """Retain new uploads between runs without replacing a file a message may reference."""
         session = self._get_owned(session_id, owner_token)
+        request_sha256 = None
+        if upload_id is not None:
+            if len(uploads) != 1:
+                raise HTTPException(status_code=422, detail="An upload ID must identify exactly one file.")
+            request_sha256 = _upload_revision(uploads[0])
+            if previous := session.uploads.get(upload_id):
+                if previous.request_sha256 != request_sha256:
+                    raise HTTPException(status_code=409, detail="The upload ID was already used for a different file.")
+                # A known retry changes no files, so it remains safe while a run reads them.
+                session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
+                return (previous,)
         session.require_idle("uploading files")
         if len(session.uploads) + len(uploads) > self._settings.max_attachment_files:
             raise HTTPException(status_code=413, detail="Too many retained files. Remove unused uploads first.")
+        total_bytes = sum(len(item.data) for item in session.uploads.values()) + sum(len(item.data) for item in uploads)
+        if total_bytes > self._settings.max_attachment_total_bytes:
+            raise HTTPException(
+                status_code=413, detail="Session files exceed the total attachment limit. Remove unused uploads first."
+            )
         filenames = {item.filename for item in session.uploads.values()}
         retained = []
         for upload in uploads:
             filename = _unique_filename(upload.filename, filenames)
             filenames.add(filename)
-            retained.append(replace(upload, filename=filename, id=str(uuid4())))
+            retained.append(
+                replace(upload, filename=filename, id=upload_id or str(uuid4()), request_sha256=request_sha256)
+            )
         event = upload_event(retained, len(session.uploads) + 1)
         self._require_capacity(sum(len(upload.data) for upload in retained) + _text_bytes(event))
         session.add_uploads(retained, event)
@@ -469,34 +489,6 @@ class SessionStore:
             raise HTTPException(status_code=404, detail="This generated ZIP is no longer available.") from None
         self._charge(session, -len(content))
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
-
-    def approve_proposal(self, session_id: str, owner_token: str | None, base_sha256: str) -> str | None:
-        """Check ownership, decide the proposal, and account for every mutation.
-
-        Returns the adopted schedule, or None when trusted validation refused the proposal.
-        """
-        session = self._get_owned(session_id, owner_token)
-        try:
-            approved = session.approve_proposal(base_sha256, self._settings.max_schedule_bytes)
-            self._cap_history(session)
-            session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
-            return approved
-        finally:
-            # A stale revision discards the proposal before raising HTTP 409.
-            self._recount(session)
-
-    def discard_proposal(
-        self,
-        session_id: str,
-        owner_token: str | None,
-        decision: ProposalDecision = "rejected",
-    ) -> None:
-        """Record a proposal decision and apply service retention limits."""
-        session = self._get_owned(session_id, owner_token)
-        session.discard_proposal(decision)
-        self._cap_history(session)
-        session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
-        self._recount(session)
 
     def abort(self, session_id: str, snapshot: RunSnapshot) -> None:
         """Release an owned reservation and its accounted steering messages."""

@@ -70,7 +70,7 @@ test('saved HTML and Markdown browser downloads byte-match the backend CLI', asy
       await route.fulfill({ json: {
         app_version: 'v0.4.3', saved_chat_export: true, session_retention_seconds: 3600,
         auth: { required: false, scheme: 'bearer' },
-        file_attachments: { enabled: true, retained: true, max_files: 8, max_bytes_per_file: 5000000 },
+        file_attachments: { enabled: true, retained: true, max_files: 8, max_bytes_per_file: 5000000, max_bytes_per_session: 200_000_000 },
       } });
     } else if (path.endsWith('/export')) {
       await route.fulfill({ json: snapshot });
@@ -106,7 +106,7 @@ test('saved HTML and Markdown browser downloads byte-match the backend CLI', asy
     const content = browserBytes.toString('utf8');
     expect(content).toContain('Command exited with code 7');
     expect(content).toContain('Keep the original names.');
-    expect(content).toContain('Pending proposal');
+    expect(content).toContain('Applied to your schedule');
     expect(content).not.toContain('Saved history is ready to export.');
   }
 });

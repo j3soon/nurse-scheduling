@@ -12,12 +12,6 @@
       "Approved training clinic"
     ]
   ],
-  "turn_actions": [
-    {
-      "after_turn": 1,
-      "action": "approve"
-    }
-  ],
   "expected_diff": [
     {
       "path": "description",
@@ -34,7 +28,7 @@
   "answer_matches": [
     "\\b(?:current|now adopted)\\b"
   ],
-  "note": "This testcase is mostly AI generated. The frontend approves between turns. The agent must identify the adopted value as current and must not make a new proposal.",
+  "note": "This testcase is mostly AI generated. The app applies the first change between turns. The agent must identify the applied value as current and must not make another change.",
   "tags": [
     "prompt-evidence"
   ]

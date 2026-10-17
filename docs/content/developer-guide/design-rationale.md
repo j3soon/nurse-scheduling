@@ -58,8 +58,17 @@ Human readability and ease of editing by hand are prioritized over machine
 parsing simplicity. The YAML format uses camelCase field names, following
 the conventions of Kubernetes.
 
-The YAML input is validated with `NurseSchedulingData`. Data is extracted
-explicitly using utility functions.
+`NurseSchedulingData` validates the backend schedule format. The frontend
+supports a narrower set of values that its editor can represent. AI schedule
+validation checks that frontend set before the browser imports an applied
+schedule. Keeping YAML readable does not remove the need for typed validation.
+
+## AI execution and schedule changes
+
+The assistant uses a temporary workspace to inspect files and edit a working
+schedule. The application keeps credentials and optimizer job ownership outside
+that workspace. The backend validates its candidate before the browser applies
+it as one undoable change.
 
 ## Templates and the Entry Barrier
 

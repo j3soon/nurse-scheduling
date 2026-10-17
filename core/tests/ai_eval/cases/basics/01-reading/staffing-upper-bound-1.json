@@ -1,0 +1,24 @@
+{
+  "_license": "Copyright (C) 2023-2026 Johnson Sun. SPDX-License-Identifier: AGPL-3.0-or-later",
+  "_comment": "This test is mostly AI generated.",
+  "id": "staffing-upper-bound-1",
+  "fixture": "small-clinic",
+  "expect_proposal": false,
+  "question": "This is a read-only question about the scheduling engine, not a request to edit or optimize the current schedule. A shift type requirement selects A and three eligible people, with requiredNumPeople=1, preferredNumPeople=1, and weight=-1. Two of those people each request A on the same day with weight=10000000000. Under the unchanged staffing rule, can the solver assign two people to A? Can increasing the request weights remove any staffing upper bound? Are those finite-weight requests hard constraints? Reply as JSON with integer fields hard_min and hard_max and boolean fields can_staff_two, increasing_request_weight_removes_ceiling, and requests_are_hard. Include a brief explanation after the JSON.",
+  "answer_json": {
+    "hard_min": 1,
+    "hard_max": 1,
+    "can_staff_two": false,
+    "increasing_request_weight_removes_ceiling": false,
+    "requests_are_hard": false
+  },
+  "tool_usage": {
+    "forbidden": [
+      "optimizer"
+    ]
+  },
+  "tags": [
+    "staffing"
+  ],
+  "note": "Synthetic interpretation probe motivated by a result review that mistook a hard staffing ceiling for a soft target. The larger-bound case distinguishes permitted assignments from guaranteed finite-weight requests."
+}

@@ -98,7 +98,7 @@ skipped does not validate persistence.
 ## Experimental AI
 - Prioritize maintainability, readability, and simplicity. Avoid over-engineering.
   Use Pi agent v1.0.0 as a reference for AI chat architecture and design philosophy.
-- `AgentSession` owns conversation changes, steering, proposal decisions, and
+- `AgentSession` owns conversation changes, steering, applied schedules, and
   the shared foreground and optimizer-review execution path. `SessionStore`
   owns access, expiry, and retained-byte budgets. `SessionRecovery` owns ordered
   recovery writes and eviction pins. `SessionEventStream` owns bounded replay.
@@ -191,7 +191,7 @@ skipped does not validate persistence.
 - Put fixed model instructions in a manifest-tracked prompt segment under
   `ai/prompts/`, so they get a hash, linked cases, and a benefit witness.
   `build_provider_messages` appends only request-specific values, such as a
-  configured limit or the pending-proposal state.
+  configured limit or the current time.
 - Keep model-facing prompts and intermediate messages concise. Avoid repeated
   warnings about malicious uploads or prescribed workbook-inspection commands.
   Rely on sandbox and server controls for security, and give generated artifacts
@@ -205,6 +205,8 @@ skipped does not validate persistence.
   dependencies, and output format. Reuse loading and validation instead of
   adding a sibling script. Keep a separate helper when its interface is useful
   independently.
+- Keep the agent run deadline separate from the sandbox provider's continuous
+  runtime limit. Paused time still counts toward the agent run deadline.
 - Separate command execution deadlines from provider connection timeouts. Reuse a
   sandbox after a command timeout only when process cleanup is verified. Keep
   shell commands single-attempt because a lost acknowledgement does not prove
@@ -372,9 +374,11 @@ skipped does not validate persistence.
 - When changing `ai/pi`, compare with the exact upstream Pi revision cited in
   the module header. Preserve model-facing wording and edge-case behavior, add
   focused regression tests, and document intentional differences beside the port.
-- Retry a provider timeout only before any stream event reaches the caller.
-  Once text, reasoning, usage, or a tool call is visible, surface the timeout
-  rather than replaying the request and risking duplicate output or tool work.
+- Retry provider timeouts with bounded exponential backoff. After visible text,
+  continue with the partial answer as context instead of replaying the original
+  request. Discard incomplete tool calls and release tools only after confirmed
+  response completion. Keep output limits cumulative across attempts and use
+  distinct errors for timeouts before and during streaming.
 
 ## Server Authentication
 - `API_AUTH_TOKEN` is the optional legacy credential. Authentication is
@@ -488,8 +492,13 @@ skipped does not validate persistence.
   and suppresses the full schedule output.
 - Core tests run on Linux, macOS, and Windows in CI. Keep tests platform
   neutral, including paths, line endings, and environment limits.
-  Compare text-loaded references with UTF-8 text because text reads normalize
-  checkout line endings. Use byte comparisons only when exact bytes are required.
+  Read UTF-8 fixtures and generated reports with explicit `encoding="utf-8"`.
+  Windows can use a legacy default encoding. Compare text-loaded references with UTF-8 text
+  because text reads normalize checkout line endings. Use byte comparisons
+  only when exact bytes are required.
+- `tests/test_ai_eval_grading.py` simulates legacy Windows decoding for implicit
+  `Path.read_text` calls. Run it locally after changing evaluation fixtures or
+  grading tests, so encoding regressions fail before a push.
 - Write hash-bound fixture inputs as exact encoded bytes to avoid platform
   newline translation. Fix ZIP creator metadata as well as timestamps when
   generated archive bytes must match across platforms.

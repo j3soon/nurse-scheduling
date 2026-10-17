@@ -325,7 +325,9 @@ def test_schema_separates_the_two_counting_preferences():
     assert "counts how many shifts one person works across dates" in reference
     assert "number of people a shift type needs on a date" in reference
     assert "Do not express this as a `shift count` preference" in reference
-    assert "Without `preferredNumPeople`, `requiredNumPeople` is an exact hard staffing count" in reference
+    assert "Without `preferredNumPeople`, staffing must equal `requiredNumPeople`" in reference
+    assert "between `requiredNumPeople` and `preferredNumPeople`, inclusive" in reference
+    assert "Both bounds are hard constraints" in reference
     assert "requires a finite `weight`" in reference
     assert "not the people needed on a shift" in reference
     assert "use `shift type requirement` instead" in reference

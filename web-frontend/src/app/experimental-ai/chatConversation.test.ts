@@ -47,9 +47,17 @@ describe('stored conversation compatibility', () => {
   it('rejects corrupt activity and pending request data', () => {
     for (const change of [
       { messages: [{ id: 'answer', role: 'assistant', content: '', activity: [{ kind: 'tool' }] }] },
+      { messages: [{ id: 'answer', role: 'assistant', content: '', failureReason: 525 }] },
       { pendingRequest: { messageId: 'request', question: 'Question', questionId: 'question',
         assistantId: 'answer', createdAt: 'invalid' } },
+      { pendingRequest: { messageId: 'request', question: 'Question', questionId: 'question',
+        assistantId: 'answer', createdAt: 100, uploading: true, pendingFiles: [1] } },
+      { messages: [{ id: 'answer', role: 'assistant', content: '', retry: {
+        question: 'Question', requiresAttachments: true, missingFiles: 'two.txt' } }] },
       { sessionEventId: -1 },
+      { appliedScheduleRuns: { run: 123 } },
+      { appliedScheduleRuns: [] },
+      { syncedBrowserSchedule: 123 },
     ]) {
       sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify({ ...conversation(), ...change }));
       expect(readStoredConversation()).toBeNull();

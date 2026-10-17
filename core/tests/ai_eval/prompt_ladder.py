@@ -19,10 +19,12 @@
 
 # This test is mostly AI generated.
 
+import ast
 import hashlib
 import inspect
 import json
-from collections.abc import Mapping
+import textwrap
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -84,12 +86,32 @@ def prompt_at_step(step: int, *, omit: int | None = None) -> str:
     return compose_system_prompt(step, omit=omit)
 
 
+def oracle_sha256(*functions: Callable[..., Any]) -> str:
+    """Hash grader functions together with every grading helper they reach by name."""
+    from . import grading
+
+    sources: dict[str, str] = {}
+    pending = list(functions)
+    while pending:
+        function = pending.pop()
+        name = f"{function.__module__}.{function.__qualname__}"
+        if name in sources:
+            continue
+        sources[name] = inspect.getsource(function)
+        for node in ast.walk(ast.parse(textwrap.dedent(sources[name]))):
+            helper = getattr(grading, node.id, None) if isinstance(node, ast.Name) else None
+            if inspect.isfunction(helper) and helper.__module__ == grading.__name__:
+                pending.append(helper)
+    return hashlib.sha256("".join(sources[name] for name in sorted(sources)).encode()).hexdigest()
+
+
 def case_digest(case: EvalCase) -> str:
     """Bind a receipt to the parsed input and grading contract, not JSON formatting."""
     fields = asdict(case)
     for optional in (
         "optimizer_completion",
         "optimizer_completion_only",
+        "optimizer_follow_up_completions",
         "answer_json",
         "download_files",
         "import_attachment",
@@ -98,28 +120,37 @@ def case_digest(case: EvalCase) -> str:
         "after_optimizer_turns",
         "optimizer_download_file",
         "staffing_contract",
+        "provider_timeout_after_text",
     ):
         if not fields[optional]:
             fields.pop(optional)
     if fields["download_count"] is None:
         fields.pop("download_count")
-    if any(isinstance(value, dict) for value in case.answer_json.values()):
+    if case.answer_json:
         from .grading import _answer_json_matches
 
-        fields["nested_json_oracle_sha256"] = hashlib.sha256(
-            inspect.getsource(_answer_json_matches).encode()
-        ).hexdigest()
+        fields["answer_json_oracle_sha256"] = oracle_sha256(_answer_json_matches)
     if case.import_attachment:
         from .grading import _check_import_schedule
 
-        fields["import_oracle_sha256"] = hashlib.sha256(inspect.getsource(_check_import_schedule).encode()).hexdigest()
+        fields["import_oracle_sha256"] = oracle_sha256(_check_import_schedule)
     helper_names = set()
+    if case.provider_timeout_after_text:
+        from .provider_fixtures import TimeoutOnceProvider
+
+        fields["provider_timeout_fixture_sha256"] = hashlib.sha256(
+            inspect.getsource(TimeoutOnceProvider).encode()
+        ).hexdigest()
     if case.optimizer_completion:
         from nurse_scheduling.ai.result_context import _project_context
 
         from .optimizer_fixtures import RESULT_SOURCES, fixture_digest
 
         fields["optimizer_fixture_sha256"] = fixture_digest(case.optimizer_completion)
+        if case.optimizer_follow_up_completions:
+            fields["optimizer_follow_up_fixtures_sha256"] = [
+                fixture_digest(name) for name in case.optimizer_follow_up_completions
+            ]
         fields["request_context_sha256"] = hashlib.sha256(inspect.getsource(_project_context).encode()).hexdigest()
         helper_names.update(("inspect_optimizer_result.py", "inspect_xlsx.py"))
         from nurse_scheduling.loader import _load_yaml
@@ -160,29 +191,29 @@ def case_digest(case: EvalCase) -> str:
     if case.semantic_check == "optimizer-start-source":
         from .grading import _check_optimizer_start_source
 
-        fields["optimizer_input_oracle_sha256"] = hashlib.sha256(
-            inspect.getsource(_check_optimizer_start_source).encode()
-        ).hexdigest()
+        fields["optimizer_input_oracle_sha256"] = oracle_sha256(_check_optimizer_start_source)
+    if case.semantic_check == "optimizer-initiative":
+        from .grading import _check_optimizer_initiative
+
+        fields["optimizer_initiative_oracle_sha256"] = oracle_sha256(_check_optimizer_initiative)
+    if case.semantic_check == "optimizer-inputs-preserved":
+        from .grading import _check_optimizer_inputs_preserved
+
+        fields["optimizer_sequence_source_oracle_sha256"] = oracle_sha256(_check_optimizer_inputs_preserved)
     if case.semantic_check == "current-time-context":
         from .grading import _check_vm_clock_queries
 
-        fields["clock_query_oracle_sha256"] = hashlib.sha256(
-            inspect.getsource(_check_vm_clock_queries).encode()
-        ).hexdigest()
+        fields["clock_query_oracle_sha256"] = oracle_sha256(_check_vm_clock_queries)
     if case.semantic_check == "qualified-staffing":
         from nurse_scheduling.preference_types import staffing_expression
 
         from .grading import _check_staffing_contract
 
-        fields["staffing_oracle_sha256"] = hashlib.sha256(
-            inspect.getsource(_check_staffing_contract).encode() + inspect.getsource(staffing_expression).encode()
-        ).hexdigest()
+        fields["staffing_oracle_sha256"] = oracle_sha256(_check_staffing_contract, staffing_expression)
     if case.semantic_check == "optimizer-download":
         from .grading import _check_optimizer_download
 
-        fields["optimizer_download_oracle_sha256"] = hashlib.sha256(
-            inspect.getsource(_check_optimizer_download).encode()
-        ).hexdigest()
+        fields["optimizer_download_oracle_sha256"] = oracle_sha256(_check_optimizer_download)
     if case.semantic_check == "yaml-generator":
         fields["generator_sha256"] = [
             hashlib.sha256(attachment.data).hexdigest() for attachment in load_attachment_fixtures(case.attachments)

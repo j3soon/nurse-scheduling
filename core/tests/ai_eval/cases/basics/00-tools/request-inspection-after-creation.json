@@ -1,0 +1,101 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "id": "request-inspection-after-creation",
+  "fixture": "new-schedule",
+  "question": "Create a frontend schedule from this JSON: {\"apiVersion\": \"alpha\", \"description\": \"\", \"dates\": {\"range\": {\"startDate\": \"2026-01-01\", \"endDate\": \"2026-01-02\"}, \"items\": [], \"groups\": [{\"id\": \"FIRST\", \"description\": \"\", \"members\": [\"2026-01-01\"]}]}, \"people\": {\"items\": [{\"id\": \"P1\", \"description\": \"\", \"history\": []}, {\"id\": \"P2\", \"description\": \"\", \"history\": []}], \"groups\": [{\"id\": \"PEOPLE\", \"description\": \"\", \"members\": [\"P1\", \"P2\"]}]}, \"shiftTypes\": {\"items\": [{\"id\": \"D\", \"description\": \"\"}, {\"id\": \"N\", \"description\": \"\"}], \"groups\": [{\"id\": \"WORK\", \"description\": \"\", \"members\": [\"D\", \"N\"]}]}, \"preferences\": [{\"type\": \"at most one shift per day\"}, {\"type\": \"shift request\", \"person\": [\"P1\"], \"date\": [\"FIRST\"], \"shiftType\": [\"D\"], \"weight\": 1}]}. After the write passes trusted server validation, run exactly `python /reference/tools/inspect_shift_requests.py --max-requests 0` as a separate bash tool call. Use its counts to return JSON with integer requestEntries and personDateTargets. Do not optimize.",
+  "expect_proposal": true,
+  "changes": [
+    "apiVersion",
+    "description",
+    "dates",
+    "people",
+    "shiftTypes",
+    "preferences",
+    "export"
+  ],
+  "answer_json": {
+    "requestEntries": 1,
+    "personDateTargets": 1
+  },
+  "tool_usage": {
+    "required_calls": [
+      {
+        "name": "bash",
+        "arguments": {
+          "command": "python /reference/tools/inspect_shift_requests.py --max-requests 0"
+        }
+      }
+    ],
+    "forbidden": [
+      "optimizer"
+    ]
+  },
+  "tags": [
+    "request-inspection"
+  ],
+  "note": "This testcase is mostly AI generated. Explicit complete synthetic input isolates context creation from workbook parsing. The initial draft has no compiled context. The successful command and independent counts are both required. Empty optional fields and equivalent day selectors do not affect the count oracle.",
+  "assert": [
+    {
+      "path": "dates.range.startDate",
+      "equals": "2026-01-01"
+    },
+    {
+      "path": "dates.range.endDate",
+      "equals": "2026-01-02"
+    },
+    {
+      "path": "dates.groups[?id=FIRST].members",
+      "count": 1
+    },
+    {
+      "path": "people.items",
+      "equals": [
+        {
+          "id": "P1",
+          "description": "",
+          "history": []
+        },
+        {
+          "id": "P2",
+          "description": "",
+          "history": []
+        }
+      ]
+    },
+    {
+      "path": "shiftTypes.items",
+      "equals": [
+        {
+          "id": "D",
+          "description": ""
+        },
+        {
+          "id": "N",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "path": "preferences",
+      "equals": [
+        {
+          "type": "at most one shift per day"
+        },
+        {
+          "type": "shift request",
+          "person": [
+            "P1"
+          ],
+          "date": [
+            "FIRST"
+          ],
+          "shiftType": [
+            "D"
+          ],
+          "weight": 1
+        }
+      ]
+    }
+  ]
+}

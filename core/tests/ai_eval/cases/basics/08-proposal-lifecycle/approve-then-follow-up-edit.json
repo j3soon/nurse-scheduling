@@ -10,9 +10,6 @@
   ],
   "expect_proposal": true,
   "proposal_turns": [1, 2],
-  "turn_actions": [
-    {"after_turn": 1, "action": "approve"}
-  ],
   "expected_diff": [
     {"path": "description", "before": "", "after": "March training roster"},
     {
@@ -23,5 +20,5 @@
     }
   ],
   "changes": ["description", "people.items"],
-  "tags": ["difficult", "tuning", "proposal-lifecycle", "proposal-approval", "adopted-state"]
+  "tags": ["difficult", "tuning", "proposal-lifecycle", "adopted-state"]
 }

@@ -22,7 +22,6 @@
 import {
   AiStaleRunError,
   PRODUCTION_AI_API_URL,
-  approveProposal,
   cancelOptimization,
   createSession,
   downloadGeneratedZip,
@@ -35,15 +34,14 @@ import {
   getUploads,
   isOfficialAiEndpoint,
   queueMessage,
-  rejectProposal,
   removeGeneratedZip,
   removeUpload,
-  scheduleRevision,
   streamMessage,
   sendMessage,
   streamSessionEvents,
   stopSession,
   updateSessionSchedule,
+  uploadFile,
   uploadFiles,
 } from './aiClient';
 
@@ -97,6 +95,7 @@ describe('AI client', () => {
         enabled: true,
         max_files: 5,
         max_bytes_per_file: 5000000,
+        max_bytes_per_session: 200_000_000,
       },
     }), { status: 200, headers: { 'Content-Type': 'application/json' } })));
 
@@ -107,6 +106,7 @@ describe('AI client', () => {
         enabled: true,
         max_files: 5,
         max_bytes_per_file: 5000000,
+        max_bytes_per_session: 200_000_000,
       },
     });
   });
@@ -160,6 +160,7 @@ describe('AI client', () => {
         enabled: true,
         max_files: 1,
         max_bytes_per_file: 1,
+        max_bytes_per_session: 200_000_000,
       },
     }), { status: 200, headers: { 'Content-Type': 'application/json' } })));
 
@@ -196,7 +197,7 @@ describe('AI client', () => {
         { type: 'delta', data: { run_id: 'r', text: 'Recovered answer.' } },
         { type: 'tool', data: { run_id: 'r', tool_call_id: 't', name: 'read', result: 'Read', ok: true } },
       ],
-      active_run_id: 'r', incomplete: true, proposal_diff: '',
+      active_run_id: 'r', incomplete: true,
     };
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
       `id: 8\nevent: session_reset\ndata: ${JSON.stringify(recovery)}\n\n`,
@@ -209,14 +210,13 @@ describe('AI client', () => {
       lastEventId: 5, onEvent: event => events.push(event), onEventId: cursor,
     }, new AbortController().signal, null);
     expect(events).toEqual([
-      { type: 'session_reset', reset: { runIds: ['r'], terminalRunIds: [], activeRunId: 'r', incomplete: true, proposalDiff: null } },
+      { type: 'session_reset', reset: { runIds: ['r'], terminalRunIds: [], activeRunId: 'r', incomplete: true } },
       { type: 'run_context', runId: 'r' },
       { type: 'run_start', runId: 'r', trigger: 'user' },
       { type: 'run_context', runId: 'r' },
       { type: 'delta', runId: 'r', text: 'Recovered answer.' },
       { type: 'run_context', runId: 'r' },
       { type: 'tool', runId: 'r', activity: { toolCallId: 't', name: 'read', arguments: '', result: 'Read', ok: true } },
-      { type: 'proposal', diff: '' },
       { type: 'run_context', runId: 'r' },
       { type: 'done', runId: 'r' },
     ]);
@@ -300,10 +300,7 @@ describe('AI client', () => {
     }, new AbortController().signal, null);
 
     expect(onEvent.mock.calls).toEqual([
-      [{ type: 'session_reset', reset: {
-        runIds: [], terminalRunIds: [], activeRunId: null, incomplete: false, proposalDiff: null,
-      } }],
-      [{ type: 'proposal', diff: '' }],
+      [{ type: 'session_reset', reset: { runIds: [], terminalRunIds: [], activeRunId: null, incomplete: false } }],
     ]);
     expect(cursor).toHaveBeenCalledExactlyOnceWith(8);
   });
@@ -547,6 +544,71 @@ describe('AI client', () => {
       .rejects.toThrow('Too many retained files.');
   });
 
+  it('retries the same upload ID without substituting a same-size retained file', async () => {
+    vi.useFakeTimers();
+    try {
+      const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+      const uploadId = '00000000-0000-4000-8000-000000000001';
+      vi.spyOn(crypto, 'randomUUID').mockReturnValue(uploadId);
+      const fetchMock = vi.fn()
+        .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+        .mockResolvedValueOnce(json({ detail: 'The AI service is shutting down.' }, 503))
+        .mockResolvedValueOnce(json([
+          { id: uploadId, filename: 'ward (1).png', media_type: 'image/png', bytes: 3 },
+        ]))
+        // Listing uploads would expose an unrelated same-size file. No attempt should use it.
+        .mockImplementation(async (_url: string, request: RequestInit) => json(request.method === 'GET'
+          ? [{ id: 'earlier', filename: 'old.txt', media_type: 'text/plain', bytes: 3 }] : []));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const uploaded = uploadFile(
+        'session-id', new File(['png'], 'ward.png'), new AbortController().signal, null,
+      );
+      await vi.runAllTimersAsync();
+
+      await expect(uploaded).resolves.toEqual([{ id: uploadId, filename: 'ward (1).png', media_type: 'image/png', bytes: 3 }]);
+      expect(fetchMock.mock.calls.map(([, request]) => (request as RequestInit).method ?? 'GET'))
+        .toEqual(['POST', 'POST', 'POST']);
+      expect(new Set(fetchMock.mock.calls.map(([url]) => String(url)))).toEqual(new Set([
+        `https://api.nursescheduling.org/ai/sessions/session-id/uploads?upload_id=${uploadId}`,
+      ]));
+    } finally {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    }
+  });
+
+  it('rejects a response for a different upload ID', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify([
+      { id: 'another-upload', filename: 'one.txt', media_type: 'text/plain', bytes: 3 },
+    ]))));
+    await expect(uploadFile('session-id', new File(['abc'], 'one.txt'), new AbortController().signal, null))
+      .rejects.toThrow('different upload ID');
+  });
+
+  it('stops retrying an upload after a client error or the last attempt', async () => {
+    vi.useFakeTimers();
+    try {
+      const refused = vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: 'Too many retained files.' }), { status: 413 }));
+      vi.stubGlobal('fetch', refused);
+      await expect(uploadFile('session-id', new File(['data'], 'one.txt'), new AbortController().signal, null))
+        .rejects.toThrow('Too many retained files.');
+      expect(refused).toHaveBeenCalledTimes(1);
+
+      const offline = vi.fn((_url: string, request?: RequestInit) => request?.method === 'POST'
+        ? Promise.reject(new TypeError('Failed to fetch'))
+        : Promise.resolve(new Response('[]')));
+      vi.stubGlobal('fetch', offline);
+      const uploaded = uploadFile('session-id', new File(['data'], 'one.txt'), new AbortController().signal, null);
+      const rejected = expect(uploaded).rejects.toThrow('Failed to fetch');
+      await vi.runAllTimersAsync();
+      await rejected;
+      expect(offline.mock.calls.filter(([, request]) => request?.method === 'POST')).toHaveLength(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('forwards the model input and rejects a malformed one', async () => {
     const input = {
       system: 'System',
@@ -591,16 +653,16 @@ describe('AI client', () => {
     expect(onEvent).toHaveBeenLastCalledWith({ type: 'done', runId: 'completed-run' });
   });
 
-  it('forwards tool use and a proposal to the caller', async () => {
+  it('forwards tool use, its schedule check and the applied schedule to the caller', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
       'event: reasoning\ndata: {"text":"Checking people."}\n\n',
       'event: tool_start\ndata: {"tool_call_id":"call-1","name":"bash","arguments":"{\\"command\\":\\"sed -n 1p schedule.yaml\\"}"}\n\n',
-      'event: tool\ndata: {"tool_call_id":"call-1","name":"bash","arguments":"{\\"command\\":\\"sed -n 1p schedule.yaml\\"}","result":"exit_code: 0","ok":true}\n\n',
+      'event: tool\ndata: {"tool_call_id":"call-1","name":"bash","arguments":"{\\"command\\":\\"sed -n 1p schedule.yaml\\"}","result":"exit_code: 0","ok":true,"schedule_check":{"ok":true,"text":"Valid."}}\n\n',
       'event: steering\ndata: {"message_id":"queued-1","message":"Focus on P2."}\n\n',
       'event: schedule_change\ndata: {"schedule_yaml":"people:\\n  - id: Head\\n"}\n\n',
       'event: delta\ndata: {"text":"Renamed P1."}\n\n',
       'event: truncated\ndata: {}\n\n',
-      'event: proposal\ndata: {"diff":"- people.items[0].id"}\n\n',
+      'event: schedule_applied\ndata: {"run_id":"change-run","schedule_yaml":"people: []\\n","base_sha256":"a","sha256":"b","diff":"- people.items[0].id"}\n\n',
       'event: done\ndata: {"run_id":"1"}\n\n',
     ])));
     const events: SessionEvent[] = [];
@@ -616,12 +678,16 @@ describe('AI client', () => {
     expect(events).toEqual([
       { type: 'reasoning', text: 'Checking people.' },
       { type: 'tool_start', activity: { toolCallId: 'call-1', name: 'bash', arguments: '{"command":"sed -n 1p schedule.yaml"}' } },
-      { type: 'tool', activity: { toolCallId: 'call-1', name: 'bash', arguments: '{"command":"sed -n 1p schedule.yaml"}', result: 'exit_code: 0', ok: true } },
+      { type: 'tool', activity: {
+        toolCallId: 'call-1', name: 'bash', arguments: '{"command":"sed -n 1p schedule.yaml"}', result: 'exit_code: 0', ok: true,
+        scheduleCheck: { ok: true, text: 'Valid.' },
+      } },
       { type: 'steering', messageId: 'queued-1', message: 'Focus on P2.' },
       { type: 'schedule_change', scheduleYaml: 'people:\n  - id: Head\n' },
       { type: 'delta', text: 'Renamed P1.' },
       { type: 'truncated' },
-      { type: 'proposal', diff: '- people.items[0].id' },
+      { type: 'run_context', runId: 'change-run' },
+      { type: 'schedule_applied', runId: 'change-run', applied: { runId: 'change-run', scheduleYaml: 'people: []\n', baseSha256: 'a', sha256: 'b', diff: '- people.items[0].id' } },
       { type: 'run_context', runId: '1' },
       { type: 'done', runId: '1' },
     ]);
@@ -958,50 +1024,14 @@ describe('AI client', () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
-  it('approves a proposal with the revision the browser holds', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(
-      JSON.stringify({ schedule_yaml: 'description: approved\n', history_saved: false }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } },
-    ));
+  it('refreshes a session schedule', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(null, { status: 204 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(approveProposal('session-id', 'description: test', 'proposal-token')).resolves.toEqual({
-      scheduleYaml: 'description: approved\n', historySaved: false,
-    });
-    expect(fetchMock).toHaveBeenCalledWith('https://api.nursescheduling.org/ai/sessions/session-id/proposal/approve', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer proposal-token' },
-      body: JSON.stringify({ base_sha256: await scheduleRevision('description: test') }),
-    });
-  });
-
-  it('reports the backend reason when a proposal cannot be approved', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(
-      JSON.stringify({ detail: 'The schedule changed after this proposal was created, so it was discarded.' }),
-      { status: 409, headers: { 'Content-Type': 'application/json' } },
-    )));
-
-    await expect(approveProposal('session-id', 'description: test', null)).rejects.toThrow(
-      'The schedule changed after this proposal was created, so it was discarded.',
-    );
-  });
-
-  it('rejects a proposal and refreshes a session schedule', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ history_saved: true }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(null, { status: 204 }));
-    vi.stubGlobal('fetch', fetchMock);
-
-    await expect(rejectProposal('session-id', 'session-token')).resolves.toBe(true);
     await updateSessionSchedule('session-id', 'description: newer', 'session-token');
 
-    expect(fetchMock.mock.calls[0][0]).toBe('https://api.nursescheduling.org/ai/sessions/session-id/proposal/reject');
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.nursescheduling.org/ai/sessions/session-id/schedule');
     expect(fetchMock.mock.calls[0][1]).toMatchObject({
-      headers: { Authorization: 'Bearer session-token' },
-    });
-    expect(fetchMock.mock.calls[1][0]).toBe('https://api.nursescheduling.org/ai/sessions/session-id/schedule');
-    expect(fetchMock.mock.calls[1][1]).toMatchObject({
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer session-token' },
       body: JSON.stringify({ schedule_yaml: 'description: newer' }),

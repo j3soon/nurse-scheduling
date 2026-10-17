@@ -111,7 +111,7 @@ def main() -> int:
     factory = E2BSandboxFactory(
         api_key=api_key,
         template=os.getenv("E2B_TEMPLATE", "nurse-scheduling-ai-sandbox").strip(),
-        turn_timeout_seconds=300,
+        run_timeout_seconds=300,
         command_timeout_seconds=10,
     )
     result = asyncio.run(

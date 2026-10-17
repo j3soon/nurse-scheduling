@@ -1,7 +1,7 @@
 {
   "id": "import-complete-uploaded-yaml",
   "fixture": "new-schedule",
-  "question": "Replace the entire current schedule with the attached schedule-source.yaml and propose it for approval. Preserve every setting and rule from that file. Do not start optimization.",
+  "question": "Replace the entire current schedule with the attached schedule-source.yaml. Preserve every setting and rule from that file. Do not start optimization.",
   "attachments": [
     "schedule-yaml"
   ],

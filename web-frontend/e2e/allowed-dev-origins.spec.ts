@@ -174,7 +174,7 @@ test('hydrates through a non-loopback development origin', async ({ page, devSer
       file_attachments: {
         enabled: true,
         max_files: 8,
-        max_bytes_per_file: 5000000,
+        max_bytes_per_file: 5000000, max_bytes_per_session: 200_000_000,
       },
     }),
   }));

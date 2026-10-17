@@ -21,12 +21,15 @@
 
 import asyncio
 import json
+import threading
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import httpx
 import pytest
 
+from nurse_scheduling.ai import provider as provider_module
 from nurse_scheduling.ai.agent_types import (
     AgentEvent,
     AgentMessageEnd,
@@ -36,21 +39,27 @@ from nurse_scheduling.ai.agent_types import (
     AgentToolStart,
     AgentToolUse,
 )
+from nurse_scheduling.ai.attachment_tools.inspect_shift_requests import inspect_requests
+from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL, WORKSPACE_OPTIMIZER_RESULT
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.pi.edit import EDIT_TOOL
 from nurse_scheduling.ai.pi.read import READ_TOOL
 from nurse_scheduling.ai.pi.write import WRITE_TOOL
-from nurse_scheduling.ai.provider import ChatMessage, ProviderError, TextDelta, ToolCall, ToolCallRequest
+from nurse_scheduling.ai.provider import (
+    ChatMessage,
+    OpenAiCompatibleProvider,
+    ProviderError,
+    TextDelta,
+    ToolCall,
+    ToolCallRequest,
+)
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
 from nurse_scheduling.ai.schema import load_schedule_example, load_taiwan_holidays_reference, load_user_guide_references
 from nurse_scheduling.ai.workspace import (
     REFERENCE_SCHEMAS,
     REFERENCE_USER_GUIDE,
-    WORKSPACE_PENDING_DIFF,
-    WORKSPACE_PENDING_PROPOSAL,
-    WORKSPACE_PENDING_RESULT_CONTEXT,
     WORKSPACE_RESULT_CONTEXT,
     WORKSPACE_SCHEDULE,
     WORKSPACE_SOURCE_CONTEXT,
@@ -60,7 +69,7 @@ from nurse_scheduling.ai.workspace import (
     SandboxTurnTimeoutError,
     WorkspaceLimits,
     WorkspaceMetrics,
-    _measured_sandbox_turn,
+    _measured_sandbox_run,
     _read_candidate,
     _ScheduleCandidateTracker,
     attachment_path,
@@ -68,7 +77,8 @@ from nurse_scheduling.ai.workspace import (
 )
 from nurse_scheduling.ai.workspace_tools import run_workspace
 
-from .ai_test_helper import SCHEDULE_BYTE_LIMIT, schedule_yaml
+from .ai_test_helper import SCHEDULE_BYTE_LIMIT, base_schedule_payload, schedule_yaml
+from .test_ai_provider import _delta_chunk, _sse_body
 
 MESSAGES: list[ChatMessage] = [{"role": "user", "content": "Give P1 a description."}]
 
@@ -137,8 +147,6 @@ def _collect(
     provider,
     factory,
     *,
-    pending_proposal_yaml: str = "",
-    pending_proposal_diff: str = "",
     attachments: Sequence[SandboxAttachment] = (),
     optimizer_result: bytes | None = None,
     **limit_overrides,
@@ -152,14 +160,82 @@ def _collect(
                 schedule_yaml(),
                 MESSAGES,
                 _limits(**limit_overrides),
-                pending_proposal_yaml=pending_proposal_yaml,
-                pending_proposal_diff=pending_proposal_diff,
                 attachments=attachments,
                 optimizer_result=optimizer_result,
             )
         ]
 
     return asyncio.run(collect())
+
+
+def test_large_provider_read_batch_preserves_workspace_and_proposal(monkeypatch):
+    def checkpoint(command, timeout, backend):
+        backend.files["/workspace/checkpoint.txt"] = b"kept"
+        return _rename_handler(command, timeout, backend)
+
+    responses = [
+        _sse_body(
+            _delta_chunk(
+                {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "setup",
+                            "function": {"name": BASH_TOOL, "arguments": '{"command":"checkpoint"}'},
+                        },
+                    ]
+                }
+            )
+        ),
+        _sse_body(
+            _delta_chunk(
+                {
+                    "tool_calls": [
+                        {
+                            "index": index,
+                            "id": f"read-{index}",
+                            "function": {
+                                "name": READ_TOOL,
+                                "arguments": '{"path":"/workspace/checkpoint.txt"}',
+                            },
+                        }
+                        for index in range(9)
+                    ]
+                }
+            )
+        ),
+        _sse_body(_delta_chunk({"content": "The checkpoint and proposal are preserved."})),
+    ]
+    requests = []
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, headers={"Content-Type": "text/event-stream"}, text=responses[len(requests) - 1])
+
+    real_client = httpx.AsyncClient
+    transport = httpx.MockTransport(respond)
+    monkeypatch.setattr(
+        provider_module.httpx, "AsyncClient", lambda **kwargs: real_client(transport=transport, **kwargs)
+    )
+    provider = OpenAiCompatibleProvider(
+        AiSettings(
+            provider_base_url="https://provider.example/v1",
+            provider_api_key="test",
+            provider_model="test-model",
+        )
+    )
+    factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=checkpoint))
+
+    events = _collect(provider, factory)
+
+    assert len(factory.created) == 1
+    assert factory.created[0].commands == [("checkpoint", None)]
+    assert factory.created[0].files["/workspace/checkpoint.txt"] == b"kept"
+    reads = [event for event in events if isinstance(event, AgentToolUse) and event.name == READ_TOOL]
+    assert len(reads) == 9 and all(event.ok and "kept" in event.result for event in reads)
+    assert "description: Head" in next(event for event in events if isinstance(event, AgentProposal)).text
+    replies = [message for message in requests[-1]["messages"] if message["role"] == "tool"]
+    assert [message["tool_call_id"] for message in replies[-9:]] == [f"read-{index}" for index in range(9)]
 
 
 def test_one_turn_hydrates_runs_reads_validates_proposes_and_closes():
@@ -173,6 +249,7 @@ def test_one_turn_hydrates_runs_reads_validates_proposes_and_closes():
     assert WORKSPACE_SCHEDULE in backend.files
     context = json.loads(backend.files[WORKSPACE_SOURCE_CONTEXT])
     assert context["people"] == ["P1", "P2"]
+    assert inspect_requests(context, backend.files[WORKSPACE_SCHEDULE])["request_entries"] == 1
     assert set(REFERENCE_SCHEMAS.values()) <= backend.files.keys()
     assert b"# Experimental AI Chat" in backend.files[f"{REFERENCE_USER_GUIDE}/experimental-ai.md"]
     assert b"# People" in backend.files[f"{REFERENCE_USER_GUIDE}/people.md"]
@@ -418,9 +495,7 @@ def test_parallel_reads_retry_failed_hydration_before_using_the_sandbox(failure_
     factory = FakeSandboxFactory(Backend)
 
     async def read() -> list:
-        async with _measured_sandbox_turn(
-            factory, 1, WorkspaceMetrics(), schedule_yaml(), "", "", (), None, None
-        ) as sandbox:
+        async with _measured_sandbox_run(factory, 1, WorkspaceMetrics(), schedule_yaml(), (), None, None) as sandbox:
             async with sandbox.activity_batch():
                 results = await asyncio.gather(
                     sandbox.read_file(WORKSPACE_SCHEDULE),
@@ -456,25 +531,6 @@ def test_failed_bash_result_reaches_the_model_and_allows_the_next_tool_call():
         for message in provider.requests[1][0]
     )
     assert backend.commands == [("failed", None), ("retry", None)]
-
-
-def test_pending_proposal_is_hydrated_as_trusted_read_only_context():
-    factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id))
-
-    _collect(
-        ScriptedProvider(
-            [ToolCallRequest((ToolCall("call-1", READ_TOOL, json.dumps({"path": WORKSPACE_PENDING_PROPOSAL})),))],
-            [TextDelta("The pending description is Ready.")],
-        ),
-        factory,
-        pending_proposal_yaml="apiVersion: alpha\ndescription: Ready\n",
-        pending_proposal_diff='- description: "" -> "Ready"',
-    )
-
-    backend = factory.created[0]
-    assert backend.files[WORKSPACE_PENDING_PROPOSAL] == b"apiVersion: alpha\ndescription: Ready\n"
-    assert backend.files[WORKSPACE_PENDING_DIFF] == b'- description: "" -> "Ready"'
-    assert backend.write_files_calls == 1
 
 
 def test_hydration_uploads_every_reference_in_one_request():
@@ -546,21 +602,6 @@ def test_hydration_keeps_optimizer_result_outside_user_attachments():
     assert context["schema_version"] == 1
     assert context["people"] == ["P1", "P2"]
     assert b"inspect_optimizer_result.py" in backend.files["/reference/tools/README.md"]
-
-
-def test_result_contexts_keep_pending_and_current_sources_distinct():
-    factory = FakeSandboxFactory()
-    provider = ScriptedProvider(
-        [ToolCallRequest((ToolCall("call-1", READ_TOOL, json.dumps({"path": WORKSPACE_RESULT_CONTEXT})),))],
-        [TextDelta("Inspected.")],
-    )
-    pending = schedule_yaml().replace("description: ''", "description: Pending", 1)
-    _collect(provider, factory, optimizer_result=b"workbook", pending_proposal_yaml=pending)
-    files = factory.created[0].files
-    current_context = json.loads(files[WORKSPACE_RESULT_CONTEXT])
-    pending_context = json.loads(files[WORKSPACE_PENDING_RESULT_CONTEXT])
-    assert pending_context["source_sha256"] != current_context["source_sha256"]
-    assert pending_context["people"] == current_context["people"]
 
 
 def test_reference_sources_are_read_from_disk_once_per_process():
@@ -763,6 +804,12 @@ def test_intermediate_trusted_validation_lets_the_model_repair_a_bad_edit():
 
     tools = [event for event in events if isinstance(event, AgentToolUse)]
     assert not tools[0].ok
+    # The browser receives the same check as the model, and only a valid copy as a preview.
+    assert tools[0].details["schedule_check"]["ok"] is False
+    assert tools[0].result.endswith("\n\n" + tools[0].details["schedule_check"]["text"])
+    assert tools[0].details["schedule_yaml"] is None
+    assert tools[1].details["schedule_check"]["ok"] is True
+    assert "description: Head" in tools[1].details["schedule_yaml"]
     assert "working copy retains this command's changes" in tools[0].result
     assert "Repair the reported problems before finishing" in tools[0].result
     assert "introduces problems" in tools[0].result
@@ -865,6 +912,27 @@ def test_whole_turn_timeout_before_a_tool_call_does_not_start_a_sandbox():
     assert factory.created == []
 
 
+def test_turn_deadline_closes_the_workspace_while_waiting_for_the_next_response():
+    class WaitingAfterRead:
+        requests = 0
+
+        async def stream_events(self, _messages, tools=None):
+            self.requests += 1
+            if self.requests == 1:
+                yield ToolCallRequest((ToolCall("read", READ_TOOL, '{"path":"/workspace/schedule.yaml"}'),))
+            else:
+                await asyncio.Event().wait()
+                yield TextDelta("unreachable")
+
+    provider = WaitingAfterRead()
+    factory = FakeSandboxFactory()
+    with pytest.raises(SandboxTurnTimeoutError):
+        _collect(provider, factory, turn_timeout_seconds=0.2)
+    assert provider.requests == 2
+    assert len(factory.created) == 1
+    assert factory.created[0].closed
+
+
 def test_terminal_command_timeout_is_reported_before_any_further_sandbox_operation():
     from nurse_scheduling.ai.workspace import SandboxCommandTimeoutError
 
@@ -946,3 +1014,119 @@ def test_uncompilable_draft_keeps_yaml_without_a_source_context(has_result):
     assert WORKSPACE_SOURCE_CONTEXT not in backend.files
     if has_result:
         assert backend.files[WORKSPACE_RESULT_CONTEXT] == context
+
+
+@pytest.mark.parametrize("new_schedule", [False, True])
+def test_accepted_schedule_edits_refresh_request_inspection_context(new_schedule):
+    async def check():
+        base = (
+            (Path(__file__).parent / "ai_eval/fixtures/new-schedule.yaml").read_text(encoding="utf-8")
+            if new_schedule
+            else schedule_yaml()
+        )
+        backend = FakeSandboxBackend("context-refresh")
+        archived = b'{"source_sha256":"optimizer-submission"}'
+        await hydrate_sandbox(backend, base, optimizer_result=b"workbook", optimizer_context=archived)
+        tracker = _ScheduleCandidateTracker(backend, base, SCHEDULE_BYTE_LIMIT)
+        payload = base_schedule_payload()
+        payload["preferences"].append(
+            {"type": "shift request", "person": ["P2"], "date": ["FIRST"], "shiftType": ["N"], "weight": 2}
+        )
+        await backend.write_file(WORKSPACE_SCHEDULE, schedule_yaml(payload))
+        outcome, candidate = await tracker.review_if_changed()
+        assert outcome.ok and candidate is not None
+        context = json.loads(backend.files[WORKSPACE_SOURCE_CONTEXT])
+        counts = inspect_requests(context, backend.files[WORKSPACE_SCHEDULE])
+        assert (counts["request_entries"], counts["person_date_targets"]) == (2, 2)
+        assert backend.files[WORKSPACE_RESULT_CONTEXT] == archived
+        if not new_schedule:
+            await backend.write_file(WORKSPACE_SCHEDULE, base)
+            outcome, candidate = await tracker.review_if_changed()
+            assert outcome.ok and candidate == base
+            restored = json.loads(backend.files[WORKSPACE_SOURCE_CONTEXT])
+            assert inspect_requests(restored, backend.files[WORKSPACE_SCHEDULE])["request_entries"] == 1
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize("invalid", [b"not a schedule", b"\xff", None])
+def test_invalid_or_deleted_schedule_keeps_previous_inspection_context(invalid):
+    async def check():
+        base = schedule_yaml()
+        backend = FakeSandboxBackend("invalid-context")
+        await hydrate_sandbox(backend, base)
+        previous = backend.files[WORKSPACE_SOURCE_CONTEXT]
+        tracker = _ScheduleCandidateTracker(backend, base, SCHEDULE_BYTE_LIMIT)
+        if invalid is None:
+            del backend.files[WORKSPACE_SCHEDULE]
+        else:
+            await backend.write_file(WORKSPACE_SCHEDULE, invalid)
+        outcome, candidate = await tracker.review_if_changed()
+        assert not outcome.ok and candidate is None
+        assert backend.files[WORKSPACE_SOURCE_CONTEXT] == previous
+        if invalid is not None:
+            with pytest.raises(ValueError, match="stale"):
+                inspect_requests(json.loads(previous), invalid)
+
+    asyncio.run(check())
+
+
+def test_inspection_context_builds_off_the_event_loop_and_tolerates_a_failed_write(monkeypatch):
+    async def check():
+        base = schedule_yaml()
+        backend = FakeSandboxBackend("context-write-failure")
+        await hydrate_sandbox(backend, base)
+        tracker = _ScheduleCandidateTracker(backend, base, SCHEDULE_BYTE_LIMIT)
+        build_threads = []
+
+        def build(source):
+            build_threads.append(threading.current_thread())
+            return {"source": source}
+
+        write_file = backend.write_file
+
+        async def fail_context_write(path, content):
+            if path == WORKSPACE_SOURCE_CONTEXT:
+                raise SandboxError("context write failed")
+            await write_file(path, content)
+
+        monkeypatch.setattr("nurse_scheduling.ai.workspace.build_result_context", build)
+        monkeypatch.setattr(backend, "write_file", fail_context_write)
+        await write_file(WORKSPACE_SCHEDULE, base.replace("description: ''", "description: Updated", 1))
+        outcome, candidate = await tracker.review_if_changed()
+        assert outcome.ok and candidate is not None
+        assert build_threads and build_threads[0] is not threading.main_thread()
+
+    asyncio.run(check())
+
+
+def test_unchanged_schedule_does_not_rebuild_inspection_context(monkeypatch):
+    async def check():
+        base = schedule_yaml()
+        backend = FakeSandboxBackend("unchanged-context")
+        await hydrate_sandbox(backend, base)
+        tracker = _ScheduleCandidateTracker(backend, base, SCHEDULE_BYTE_LIMIT)
+
+        def unexpected_build(_source):
+            pytest.fail("Unchanged YAML must not rebuild its compiled context")
+
+        monkeypatch.setattr("nurse_scheduling.ai.workspace.build_result_context", unexpected_build)
+        assert await tracker.review_if_changed() is None
+
+    asyncio.run(check())
+
+
+def test_accepted_incomplete_draft_keeps_yaml_without_inspection_context():
+    async def check():
+        base = (Path(__file__).parent / "ai_eval/fixtures/new-schedule.yaml").read_text(encoding="utf-8")
+        backend = FakeSandboxBackend("incomplete-context")
+        await hydrate_sandbox(backend, base)
+        tracker = _ScheduleCandidateTracker(backend, base, SCHEDULE_BYTE_LIMIT)
+        candidate = base.replace("description: ''", "description: Draft")
+        await backend.write_file(WORKSPACE_SCHEDULE, candidate)
+        outcome, accepted = await tracker.review_if_changed()
+        assert outcome.ok and accepted == candidate
+        assert backend.files[WORKSPACE_SCHEDULE] == candidate.encode()
+        assert WORKSPACE_SOURCE_CONTEXT not in backend.files
+
+    asyncio.run(check())

@@ -1,0 +1,95 @@
+{
+  "_license": "Copyright (C) 2023-2026 Johnson Sun. SPDX-License-Identifier: AGPL-3.0-or-later",
+  "_comment": "This test is mostly AI generated.",
+  "fixture": "small-clinic",
+  "expect_proposal": true,
+  "semantic_check": "qualified-staffing",
+  "changes": [
+    "description",
+    "dates",
+    "people",
+    "shiftTypes",
+    "preferences"
+  ],
+  "tool_usage": {
+    "forbidden": [
+      "optimizer"
+    ],
+    "max_total": 15
+  },
+  "tags": [
+    "staffing",
+    "clarification"
+  ],
+  "note": "This testcase is mostly AI generated. Exact override control for staffing-conflicting-day-total. The user resolves the original-versus-new total and authorizes the changed counts, so no clarification is needed.",
+  "id": "staffing-explicit-day-total-override",
+  "question": "Build a new schedule for March 1, 2026 only. Nurses S1 and S2 are seniors. J1, J2 and J3 are other nurses. Use D for general day slots, D+ for senior day slots, E for evening and N for night. All nurses can fill general slots. Use exact staffing counts, no preferred counts, and only staffing plus at most one shift per day. Evening 1 and Night 1. Do not optimize. Change the original staffing D 1 and D+ 1 to a total of 3 day slots including exactly 1 senior slot. Increase general D slots from 1 to 2. This explicitly replaces the old day staffing. Propose the YAML now.",
+  "staffing_contract": {
+    "counts": {
+      "D": 2,
+      "D+": 1,
+      "E": 1,
+      "N": 1
+    },
+    "qualified": {
+      "D+": [
+        "S1",
+        "S2"
+      ]
+    }
+  },
+  "assert": [
+    {
+      "path": "dates.range.startDate",
+      "equals": "2026-03-01"
+    },
+    {
+      "path": "dates.range.endDate",
+      "equals": "2026-03-01"
+    },
+    {
+      "path": "people.items[].id",
+      "count": 5
+    },
+    {
+      "path": "people.items[].id",
+      "contains": "S1"
+    },
+    {
+      "path": "people.items[].id",
+      "contains": "S2"
+    },
+    {
+      "path": "people.items[].id",
+      "contains": "J1"
+    },
+    {
+      "path": "people.items[].id",
+      "contains": "J2"
+    },
+    {
+      "path": "people.items[].id",
+      "contains": "J3"
+    },
+    {
+      "path": "shiftTypes.items[].id",
+      "count": 4
+    },
+    {
+      "path": "shiftTypes.items[].id",
+      "contains": "D"
+    },
+    {
+      "path": "shiftTypes.items[].id",
+      "contains": "D+"
+    },
+    {
+      "path": "shiftTypes.items[].id",
+      "contains": "E"
+    },
+    {
+      "path": "shiftTypes.items[].id",
+      "contains": "N"
+    }
+  ]
+}

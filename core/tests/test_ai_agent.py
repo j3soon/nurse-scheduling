@@ -341,6 +341,36 @@ def test_allowed_tool_batch_executes_concurrently_and_reports_in_call_order():
     assert all(isinstance(event, AgentToolStart) for event in events[1:3])
 
 
+@pytest.mark.parametrize("count", [8, 9, 32])
+def test_large_read_batches_limit_active_calls_and_keep_result_order(count):
+    active = peak = 0
+
+    async def execute(_name, arguments):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0)
+        active -= 1
+        return AgentToolOutcome(arguments, True)
+
+    async def collect():
+        provider = FakeProvider(_calls(count), _text("Done."))
+        return [
+            event
+            async for event in agent_loop(
+                provider,
+                QUESTION,
+                bind_agent_tools(TOOLS, execute, frozenset({BASH_TOOL})),
+            )
+        ]
+
+    events = asyncio.run(collect())
+    assert peak <= 8
+    uses = [event for event in events if isinstance(event, AgentToolUse)]
+    assert [event.tool_call_id for event in uses] == [f"call_{index}" for index in range(count)]
+    assert all(event.ok for event in uses)
+
+
 def test_parallel_tool_failure_cancels_siblings_without_wrapping_the_error():
     calls = (
         ToolCall("call_0", BASH_TOOL, '{"command":"fail"}'),
@@ -443,6 +473,22 @@ def test_tool_calls_continue_until_the_model_finishes():
 
     assert len([event for event in events if isinstance(event, AgentToolUse)]) == 6
     assert len(provider.requests) == 7
+    assert events[-1] == AgentText("Done.")
+
+
+def test_default_tool_budgets_allow_more_than_two_hundred_rounds_and_four_hundred_calls():
+    from nurse_scheduling.ai.config import AiSettings
+
+    settings = AiSettings(
+        provider_base_url="https://provider.example/v1", provider_api_key="test", provider_model="test"
+    )
+    provider = FakeProvider(*[_calls(2) for _ in range(225)], _text("Done."))
+    events = _run(
+        provider, max_tool_rounds=settings.agent_max_tool_rounds, max_tool_calls=settings.agent_max_tool_calls
+    )
+    uses = [event for event in events if isinstance(event, AgentToolUse)]
+    assert len(uses) == 450
+    assert all(event.ok for event in uses)
     assert events[-1] == AgentText("Done.")
 
 
@@ -594,3 +640,47 @@ def test_refused_tools_consume_steering_before_the_next_provider_request(call_co
     assert len(requests) == 2
     assert events.count(AgentSteering("cancel-edit", instruction)) == 1
     assert events[-2:] == [AgentText("I will only explain."), AgentMessageEnd(AssistantMessage("I will only explain."))]
+
+
+@pytest.mark.parametrize("steering", [False, True])
+def test_tool_can_finish_with_verified_text_without_losing_queued_steering(steering):
+    provider = FakeProvider(_calls(2), _text("Answered the queued question."))
+    executed = []
+    queued = [("follow-up", "What is the current status?")] if steering else []
+    messages = []
+
+    async def execute(name, arguments):
+        executed.append((name, arguments))
+        return AgentToolOutcome("Started successfully", True, end_turn_message="Running in the background.")
+
+    def take_steering(_close):
+        if not executed:
+            return []
+        result = queued[:]
+        queued.clear()
+        return result
+
+    async def collect():
+        return [
+            event
+            async for event in agent_loop(
+                provider,
+                QUESTION,
+                bind_agent_tools(TOOLS, execute),
+                run_messages=messages,
+                take_steering=take_steering,
+            )
+        ]
+
+    events = asyncio.run(collect())
+    assert len(executed) == 1
+    assert len(provider.requests) == (2 if steering else 1)
+    assert AgentText("Running in the background.") in events
+    assert AssistantMessage("Running in the background.") in messages
+    skipped = [event for event in events if isinstance(event, AgentToolUse) and not event.ok]
+    assert len(skipped) == 1 and "not executed" in skipped[0].result
+    # Like refused calls, a skipped call reports its start before its result.
+    assert [event.tool_call_id for event in events if isinstance(event, AgentToolStart)] == ["call_0", "call_1"]
+    if steering:
+        assert AgentSteering("follow-up", "What is the current status?") in events
+        assert AgentText("Answered the queued question.") in events

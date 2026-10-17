@@ -26,7 +26,7 @@ import json
 import os
 import subprocess
 import time
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -48,7 +48,6 @@ from nurse_scheduling.ai.agent_types import (
 )
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.context import (
-    SCHEDULE_CHANGED_DISCARDED_EVENT,
     SCHEDULE_CHANGED_EVENT,
     build_provider_messages,
     cap_transcript,
@@ -83,7 +82,6 @@ from nurse_scheduling.ai.transcript import (
     AgentMessage,
     AppEventEntry,
     AssistantMessage,
-    ProposalDecisionEntry,
     UserMessage,
 )
 from nurse_scheduling.ai.workspace import (
@@ -112,6 +110,8 @@ from .grading import (
 )
 from .optimizer_fixtures import RESULT_SOURCES, completion_result
 from .prompt_ladder import case_digest, load_prompt_steps, prompt_at_step
+from .provider_fixtures import TimeoutOnceProvider
+from .report_extension import prepare_extension, read_completed_reports
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 CASES = Path(__file__).resolve().parent / "cases"
@@ -121,6 +121,7 @@ FIXTURES = {
     "request-audit-groups": Path(__file__).resolve().parent / "fixtures" / "request-audit-groups.yaml",
     "weight-units": Path(__file__).resolve().parent / "fixtures" / "weight-units.yaml",
     "request-audit": Path(__file__).resolve().parent / "fixtures" / "request-audit.yaml",
+    "request-audit-conflict": Path(__file__).resolve().parent / "fixtures" / "request-audit-conflict.yaml",
     "cross-year-unit": Path(__file__).resolve().parent / "fixtures" / "cross-year-unit.yaml",
     "new-schedule": Path(__file__).resolve().parent / "fixtures" / "new-schedule.yaml",
     "small-clinic": Path(__file__).resolve().parent / "fixtures" / "small-clinic.yaml",
@@ -158,9 +159,78 @@ class CaseRun:
     tool_batch_metrics: list[AgentToolBatchMetrics] = field(default_factory=list)
     repetition: int = 1
     prompt_variant: str = "production"
+    saved_record: dict[str, Any] | None = None
+
+    @classmethod
+    def from_saved(cls, record: dict[str, Any], trajectory: dict[str, Any]) -> "CaseRun":
+        """Restore summary inputs while retaining the exact measured record and trace."""
+        run = cls(
+            **{
+                key: record[key]
+                for key in (
+                    "case_id",
+                    "category",
+                    "passed",
+                    "seconds",
+                    "turns",
+                    "tools",
+                    "failures",
+                    "answer",
+                    "proposed",
+                    "reasoning_chars",
+                    "error",
+                    "repetition",
+                    "prompt_variant",
+                )
+            }
+        )
+        run.saved_record = record
+        run.trajectory = trajectory
+        usage = record["token_usage"]
+        run.token_usage_turns = usage["reported_turns"]
+        if usage["available"]:
+            run.token_usage = TokenUsage(
+                **{
+                    key: usage[key]
+                    for key in (
+                        "prompt_tokens",
+                        "completion_tokens",
+                        "total_tokens",
+                        "cached_prompt_tokens",
+                        "reasoning_tokens",
+                    )
+                }
+            )
+        timing = record["timing"]
+        run.llm_inference_seconds = timing["llm_inference_seconds"]
+        run.llm_turn_seconds = timing["llm_turn_seconds"]
+        sandbox = timing["sandbox"]
+        if sandbox["available"]:
+            run.sandbox_metrics = WorkspaceMetrics(
+                **{
+                    **{key: value for key, value in sandbox.items() if key not in {"available", "suspension"}},
+                    **sandbox["suspension"],
+                }
+            )
+        requests = record["provider_requests"]
+        run.provider_attempts = requests["attempts"]
+        run.provider_attempts_per_turn = requests["attempts_per_turn"]
+        batches = record["tool_batches"]
+        run.tool_calls_per_turn = batches["calls_per_turn"]
+        run.tool_batch_metrics = [
+            AgentToolBatchMetrics(count, parallel, seconds)
+            for count, parallel, seconds in zip(
+                batches["calls_per_batch"],
+                batches["parallel_per_batch"],
+                batches["execution_seconds_per_batch"],
+            )
+        ]
+        return run
 
     def as_record(self) -> dict[str, Any]:
         """Render one result as a line of the report."""
+        if self.saved_record is not None:
+            return self.saved_record
         return {
             "case_id": self.case_id,
             "repetition": self.repetition,
@@ -271,6 +341,8 @@ async def run_case(
     """Answer one case the way the service would, then grade what it produced."""
     text = fixture_text(case.fixture)
     initial_text = text
+    if case.provider_timeout_after_text:
+        provider = TimeoutOnceProvider(settings, provider, case.provider_timeout_after_text)
     counting = _CountingProvider(provider)
 
     history: list[AgentMessage] = []
@@ -281,7 +353,6 @@ async def run_case(
     tools: list[str] = []
     events: list[dict[str, Any]] = []
     proposal_event: AgentProposal | None = None
-    pending_proposal: AgentProposal | None = None
     turn_actions = {action.after_turn: action for action in case.turn_actions}
     sandbox_metrics = WorkspaceMetrics()
     tool_batch_metrics: list[AgentToolBatchMetrics] = []
@@ -332,10 +403,11 @@ async def run_case(
     try:
         if sandbox_factory is None:
             raise ValueError("sandbox_factory is required for AI evaluation")
-        turns = [(question, False) for question in case.user_turns]
+        turns = [(question, "") for question in case.user_turns]
         if case.optimizer_completion:
-            turns.append(("", True))
-        turns.extend((question, False) for question in case.after_optimizer_turns)
+            turns.append(("", case.optimizer_completion))
+            turns.extend(("", name) for name in case.optimizer_follow_up_completions)
+        turns.extend((question, "") for question in case.after_optimizer_turns)
         for turn_index, (question, completion) in enumerate(turns):
             if case.optimizer_completion_only and not completion and turn_index < len(case.user_turns):
                 arguments = json.dumps({"action": "start", "timeout_seconds": 60})
@@ -374,10 +446,10 @@ async def run_case(
                     break
                 try:
                     if optimizer_completion_factory is None:
-                        optimizer_result, result_data = completion_result(case.optimizer_completion, optimizer_source)
+                        optimizer_result, result_data = completion_result(completion, optimizer_source)
                     else:
                         optimizer_result, result_data = await asyncio.to_thread(
-                            optimizer_completion_factory, case.optimizer_completion, optimizer_source
+                            optimizer_completion_factory, completion, optimizer_source
                         )
                 except ValueError as error:
                     events.append({"kind": "evaluation_stop", "reason": str(error)})
@@ -397,7 +469,6 @@ async def run_case(
                 attachments,
                 system_prompt=system_prompt,
                 max_download_bytes=settings.max_download_bytes,
-                pending_proposal=pending_proposal is not None,
                 optimizer_result_available=optimizer_result is not None,
                 frontend_timezone=case.frontend_timezone or "UTC",
                 now=request_clock() if request_clock else None,
@@ -417,8 +488,6 @@ async def run_case(
                 WorkspaceLimits.from_settings(settings),
                 sandbox_metrics,
                 tool_batch_metrics.append,
-                pending_proposal_yaml=pending_proposal.text if pending_proposal else "",
-                pending_proposal_diff=pending_proposal.diff if pending_proposal else "",
                 execute_optimizer=execute_optimizer,
                 attachments=attachments,
                 optimizer_result=optimizer_result,
@@ -496,7 +565,8 @@ async def run_case(
             answers.append(answer_text)
             proposal_turns.append(turn_proposal is not None)
             if turn_proposal is not None:
-                pending_proposal = turn_proposal
+                # The app applies a run's validated schedule, so the next turn starts from it.
+                text = turn_proposal.text
             if turn_index < len(turns) - 1:
                 intermediate_proposals.append(turn_proposal is not None)
             if turn_index + 1 == case.proposal_turn:
@@ -512,7 +582,7 @@ async def run_case(
                 break
             action = turn_actions.get(turn_index + 1)
             if action is not None:
-                text, pending_proposal = _apply_turn_action(action, text, pending_proposal, history, events)
+                text = _apply_turn_action(action, text, history, events)
     except (ProviderError, SandboxError) as error:
         behavior_failure = isinstance(
             error, (SandboxCommandTimeoutError, SandboxDownloadValidationError, ProviderResponseLimitError)
@@ -596,30 +666,17 @@ def _record_text(events: list[dict[str, Any]], kind: str, text: str) -> None:
 def _apply_turn_action(
     action: Any,
     text: str,
-    pending: AgentProposal | None,
     history: list[AgentMessage],
     events: list[dict[str, Any]],
-) -> tuple[str, AgentProposal | None]:
-    """Apply one trusted proposal lifecycle action between user turns."""
-    if action.action in {"approve", "reject"} and pending is None:
-        events.append({"kind": "turn_action", "turn": action.after_turn, "action": action.action, "ok": False})
-        return text, None
-    if action.action == "approve":
-        text = pending.text
-        history.append(ProposalDecisionEntry("approved"))
-    elif action.action == "reject":
-        history.append(ProposalDecisionEntry("rejected"))
-    else:
-        schedule = _load_yaml(text.encode("utf-8"))
-        schedule.update(dict(action.schedule_patch))
-        stream = StringIO()
-        YAML().dump(schedule, stream)
-        text = stream.getvalue()
-        history.append(
-            AppEventEntry(SCHEDULE_CHANGED_DISCARDED_EVENT if pending is not None else SCHEDULE_CHANGED_EVENT)
-        )
+) -> str:
+    """Apply one trusted external schedule update between user turns."""
+    schedule = _load_yaml(text.encode("utf-8"))
+    schedule.update(dict(action.schedule_patch))
+    stream = StringIO()
+    YAML().dump(schedule, stream)
+    history.append(AppEventEntry(SCHEDULE_CHANGED_EVENT))
     events.append({"kind": "turn_action", "turn": action.after_turn, "action": action.action, "ok": True})
-    return text, None
+    return stream.getvalue()
 
 
 def _trajectory(
@@ -633,6 +690,11 @@ def _trajectory(
     return {
         "fixture": case.fixture,
         "question": case.question,
+        **(
+            {"provider_timeout_after_text": case.provider_timeout_after_text}
+            if case.provider_timeout_after_text
+            else {}
+        ),
         "user_turns": list(case.user_turns),
         "proposal_turns": list(case.proposal_turns),
         "turn_actions": [
@@ -962,7 +1024,8 @@ def write_report(
             json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
     summary = output_dir / "summary.md"
-    timing = f"\nWall time: {wall_seconds:.1f} seconds\n" if wall_seconds is not None else ""
+    wall_label = "Extension wall time" if metadata and metadata.get("extensions") else "Wall time"
+    timing = f"\n{wall_label}: {wall_seconds:.1f} seconds\n" if wall_seconds is not None else ""
     stability = stability_markdown(runs)
     comparison = ""
     if baseline_report:
@@ -1186,10 +1249,14 @@ async def run_all(
     prompt_variants: Sequence[tuple[str, str]] | None = None,
     fail_fast: bool = True,
     on_complete: Callable[[CaseRun], None] | None = None,
+    repetition_starts: Mapping[str, int] | None = None,
 ) -> list[CaseRun]:
     """Run selected cases with bounded parallelism and preserve dataset order."""
     if jobs <= 0 or repetitions <= 0:
         raise ValueError("jobs and repetitions must be positive")
+    starts = {case.id: (repetition_starts or {}).get(case.id, 1) for case in cases}
+    if any(type(start) is not int or start <= 0 for start in starts.values()):
+        raise ValueError("repetition starts must be positive integers")
 
     # Fixture solving and exporting are setup, outside timed model attempts.
     for case in cases:
@@ -1210,13 +1277,14 @@ async def run_all(
         scheduled = [
             (case, repetition, variants[0][0], variants[0][1])
             for case in cases
-            for repetition in range(1, repetitions + 1)
+            for repetition in range(starts[case.id], repetitions + 1)
         ]
     else:
         scheduled = [
             (case, repetition, label, prompt)
             for repetition in range(1, repetitions + 1)
             for case in cases
+            if repetition >= starts[case.id]
             for label, prompt in (variants if repetition % 2 else reversed(variants))
         ]
 
@@ -1269,20 +1337,25 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         action="store_true",
         help="compare every prompt section, then run all ladder cases with the production prompt",
     )
-    parser.add_argument("--plan-only", action="store_true", help="print the ladder audit plan without provider work")
+    parser.add_argument(
+        "--plan-only", action="store_true", help="print the audit or extension plan without provider work"
+    )
     prompt_scope = parser.add_mutually_exclusive_group()
     prompt_scope.add_argument("--prompt-step", type=int, help="run with the first N prompt sections (0 is empty)")
     prompt_scope.add_argument("--prompt-compare-step", type=int, help="compare prompt steps N-1 and N")
     prompt_scope.add_argument(
         "--prompt-ablate-step", type=int, help="compare the full prompt without N to the full prompt"
     )
-    parser.add_argument("--repeat", type=int, default=None, help="run every selected case this many times")
+    parser.add_argument(
+        "--repeat", type=int, default=None, help="attempts per case, or target total with --extend-report"
+    )
     parser.add_argument(
         "--cost-metric",
         choices=("tool-calls", "turns", "uncached-tokens", "completion-tokens", "total-tokens", "seconds"),
     )
     parser.add_argument("--cost-ratio", type=float, help="maximum after/before cost ratio for a cost benefit")
     parser.add_argument("--baseline-report", type=Path, help="compare with a prior report directory or results.jsonl")
+    parser.add_argument("--extend-report", type=Path, help="extend a completed report into a new directory")
     parser.add_argument("--cases-dir", type=Path, default=CASES, help="directory holding the cases")
     parser.add_argument("--output-dir", type=Path, default=None, help="new directory for the report")
     parser.add_argument(
@@ -1294,7 +1367,9 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     arguments = parser.parse_args(argv)
     comparing = arguments.prompt_compare_step is not None or arguments.prompt_ablate_step is not None
     arguments.repeat = (
-        arguments.repeat if arguments.repeat is not None else (3 if comparing or arguments.ladder_audit else 1)
+        arguments.repeat
+        if arguments.repeat is not None
+        else (5 if arguments.extend_report else 3 if comparing or arguments.ladder_audit else 1)
     )
     if arguments.jobs <= 0 or arguments.repeat <= 0:
         parser.error("--jobs and --repeat must be positive")
@@ -1308,6 +1383,8 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         parser.error("cost targets require a prompt comparison")
     if arguments.baseline_report is not None and comparing:
         parser.error("--baseline-report cannot be combined with a prompt comparison")
+    if arguments.extend_report and (arguments.baseline_report or arguments.ladder_audit):
+        parser.error("--extend-report cannot be combined with --baseline-report or --ladder-audit")
     steps = (
         load_prompt_steps()
         if arguments.ladder_audit
@@ -1328,8 +1405,8 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     if any(not value.strip() for value in arguments.case + arguments.category + arguments.tag):
         parser.error("case, category, and tag selectors must not be empty")
     selected = bool(arguments.case or arguments.category or arguments.tag)
-    if arguments.plan_only and not arguments.ladder_audit:
-        parser.error("--plan-only requires --ladder-audit")
+    if arguments.plan_only and not (arguments.ladder_audit or arguments.extend_report):
+        parser.error("--plan-only requires --ladder-audit or --extend-report")
     if arguments.ladder_audit and (
         selected
         or comparing
@@ -1340,7 +1417,9 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         parser.error("--ladder-audit defines its own cases, prompts, and failure policy")
     if selected and (arguments.tuning or arguments.full):
         parser.error("--tuning and --full cannot be combined with case, category, or tag selectors")
-    if not selected and not (arguments.tuning or arguments.full or comparing or arguments.ladder_audit):
+    if not selected and not (
+        arguments.tuning or arguments.full or comparing or arguments.ladder_audit or arguments.extend_report
+    ):
         parser.error("choose --case, --category, or --tag, or explicitly pass --tuning or --full")
     return arguments
 
@@ -1348,10 +1427,19 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 def _selected_cases(argv: Sequence[str] | None) -> tuple[argparse.Namespace, list[EvalCase]]:
     """Validate the CLI scope and resolve its cases without provider work."""
     arguments = _parse_args(argv)
+    arguments.extension = None
+    reports = None
+    if arguments.extend_report:
+        try:
+            reports = read_completed_reports(arguments.extend_report)
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            raise SystemExit(f"Cannot extend report: {error}") from error
     step = arguments.prompt_compare_step or arguments.prompt_ablate_step
     default_ids = (
         tuple(dict.fromkeys(case for entry in load_prompt_steps() for case in entry.cases))
         if arguments.ladder_audit
+        else tuple(next(iter(reports.values())).metadata["case_ids"])
+        if reports and not (arguments.case or arguments.category or arguments.tag or arguments.tuning or arguments.full)
         else load_prompt_steps()[step - 1].cases
         if step and not (arguments.case or arguments.category or arguments.tag or arguments.tuning or arguments.full)
         else ()
@@ -1363,13 +1451,51 @@ def _selected_cases(argv: Sequence[str] | None) -> tuple[argparse.Namespace, lis
     ):
         raise SystemExit(f"Prompt step {step} has no targeted cases. Add one or select an explicit evaluation scope.")
     # --tuning opts into select's default tagged set when no filters are given.
+    all_cases = load_cases(arguments.cases_dir)
     cases = select(
-        load_cases(arguments.cases_dir),
+        all_cases,
         [*arguments.case, *default_ids],
         arguments.category,
         arguments.tag,
         full=arguments.full,
     )
+    if reports:
+        try:
+            source_ids = next(iter(reports.values())).metadata["case_ids"]
+            by_id = {case.id: case for case in all_cases}
+            source_cases = [by_id[case_id] for case_id in source_ids]
+            variants = _prompt_variants(arguments)
+            if len(reports) == len(variants) == 1:
+                variants = ((next(iter(reports)), variants[0][1]),)
+            arguments.extension_variants = variants
+            current = {
+                label: _evaluation_metadata(
+                    AiSettings.from_env(),
+                    source_cases,
+                    arguments.repeat,
+                    prompt,
+                    fail_fast=not arguments.continue_after_failure,
+                )
+                for label, prompt in variants
+            }
+            arguments.extension = prepare_extension(
+                reports, current, [case.id for case in cases], arguments.repeat, arguments.extend_report
+            )
+            # Validate all saved records before provisioning or authenticating.
+            arguments.saved_runs = [
+                CaseRun.from_saved(record, detail) for record, detail in arguments.extension.trajectories
+            ]
+            if len(reports) == 2:
+                gate = json.loads((arguments.extend_report / "comparison.json").read_text(encoding="utf-8"))
+                old_target = (gate["cost_metric"], gate["cost_ratio"])
+                target = (arguments.cost_metric, arguments.cost_ratio)
+                if target != (None, None) and target != old_target:
+                    raise ValueError("An extension cannot change the saved cost target")
+                arguments.cost_metric, arguments.cost_ratio = old_target
+            if arguments.output_dir and arguments.output_dir.exists():
+                raise ValueError("The extension output directory must be new")
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            raise SystemExit(f"Cannot extend report: {error}") from error
     if arguments.ladder_audit:
         from .ladder_audit import build_plan
 
@@ -1386,6 +1512,23 @@ def _selected_cases(argv: Sequence[str] | None) -> tuple[argparse.Namespace, lis
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the evaluation from the command line."""
     arguments, cases = _selected_cases(argv)
+    if arguments.plan_only and arguments.extension:
+        print(
+            json.dumps(
+                {
+                    "source_report": str(arguments.extend_report.resolve()),
+                    "jobs": arguments.jobs,
+                    "variants": [label for label, _ in arguments.extension_variants],
+                    "saved_attempts": len(arguments.saved_runs),
+                    "new_attempts": sum(arguments.repeat - first + 1 for first in arguments.extension.starts.values())
+                    * len(arguments.extension_variants),
+                    "first_repetitions": arguments.extension.starts,
+                    "repetitions_by_case": next(iter(arguments.extension.metadata.values()))["repetitions_by_case"],
+                },
+                indent=2,
+            )
+        )
+        return 0
     if arguments.ladder_audit:
         from .ladder_audit import build_plan, run_audit
 
@@ -1412,15 +1555,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_audit(plan, root, unchanged=unchanged)
     settings = AiSettings.from_env()
     sandbox_factory = create_sandbox_factory(settings)
-    variants = _prompt_variants(arguments)
+    variants = arguments.extension_variants if arguments.extension else _prompt_variants(arguments)
     output_dir = (arguments.output_dir or default_output_dir()).resolve()
-    metadata = {
-        label: _evaluation_metadata(
-            settings, cases, arguments.repeat, prompt, fail_fast=not arguments.continue_after_failure
-        )
-        for label, prompt in variants
-    }
-    checkpoints = RunCheckpoints(output_dir, metadata, arguments.repeat, len(cases) * arguments.repeat * len(variants))
+    metadata = (
+        arguments.extension.metadata
+        if arguments.extension
+        else {
+            label: _evaluation_metadata(
+                settings, cases, arguments.repeat, prompt, fail_fast=not arguments.continue_after_failure
+            )
+            for label, prompt in variants
+        }
+    )
+    saved_runs = arguments.saved_runs if arguments.extension else []
+    starts = arguments.extension.starts if arguments.extension else None
+    if arguments.extension:
+        cases = [case for case in cases if case.id in starts]
+    expected = len(saved_runs) + sum(arguments.repeat - (starts or {}).get(case.id, 1) + 1 for case in cases) * len(
+        variants
+    )
+    report_repetitions = max(value["repetitions"] for value in metadata.values())
+    checkpoints = RunCheckpoints(output_dir, metadata, report_repetitions, expected)
+    for run in saved_runs:
+        checkpoints.record(run)
     started = time.perf_counter()
     try:
         runs = asyncio.run(
@@ -1434,12 +1591,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 prompt_variants=variants,
                 fail_fast=not arguments.continue_after_failure,
                 on_complete=checkpoints.record,
+                repetition_starts=starts,
             )
         )
     except BaseException:
         checkpoints.set_status("interrupted")
         raise
     wall_seconds = time.perf_counter() - started
+    runs = [*saved_runs, *runs]
+    case_order = {case_id: index for index, case_id in enumerate(next(iter(metadata.values()))["case_ids"])}
+    runs.sort(key=lambda run: (case_order[run.case_id], run.repetition, run.prompt_variant))
 
     if len(variants) == 2:
         for label, prompt in variants:
@@ -1466,6 +1627,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             json.dumps(
                 {
                     **statistics,
+                    "step": step.id,
                     "improved": improved,
                     "cost_metric": arguments.cost_metric,
                     "cost_ratio": arguments.cost_ratio,
@@ -1490,7 +1652,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     checkpoints.set_status("complete")
     print()
     print(summarize(runs))
-    print(f"Wall time: {wall_seconds:.1f} seconds with {arguments.jobs} case job(s)")
+    wall_label = "Extension wall time" if arguments.extension else "Wall time"
+    print(f"{wall_label}: {wall_seconds:.1f} seconds with {arguments.jobs} case job(s)")
     print()
     print(f"Evaluation report: {summary}")
     return 0 if improved else 1
@@ -1533,6 +1696,9 @@ def _evaluation_metadata(
         "sandbox_configuration": {
             "backend": settings.sandbox_backend,
             "command_timeout_seconds": settings.sandbox_command_timeout_seconds,
+            "turn_timeout_seconds": settings.sandbox_turn_timeout_seconds,
+            "max_tool_rounds": settings.agent_max_tool_rounds,
+            "max_tool_calls": settings.agent_max_tool_calls,
             "control_request_timeout_seconds": settings.sandbox_control_request_timeout_seconds,
             "pause_request_timeout_seconds": settings.sandbox_pause_request_timeout_seconds,
             "max_attempts": settings.sandbox_max_attempts,

@@ -23,6 +23,50 @@ import snapshot from '../../../../core/tests/ai_fixtures/chat-export.json';
 import { buildSavedChatExport, parseSavedChatSnapshot, projectSavedChat } from './savedChatExport';
 
 describe('saved chat export', () => {
+  it('keeps the saved error after a partial response in both export formats', () => {
+    const failed = {
+      ...snapshot,
+      runs: [{ ...snapshot.runs[0], id: 'failed', status: 'failed', finished_at: 3 }],
+      events: [
+        { type: 'delta', data: { run_id: 'failed', text: 'Partial response.' }, occurred_at: 1 },
+        { type: 'error', data: { run_id: 'failed', message: 'Provider HTTP 525. Error ID: example.' }, occurred_at: 2 },
+      ],
+    };
+    const { messages } = projectSavedChat(parseSavedChatSnapshot(failed));
+    expect(messages.at(-1)).toMatchObject({
+      content: 'Partial response.', status: 'failed', failureReason: 'Provider HTTP 525. Error ID: example.',
+    });
+    for (const format of ['html', 'markdown'] as const) {
+      const output = buildSavedChatExport(failed, format);
+      expect(output).toContain('Partial response.');
+      expect(output).toContain('Provider HTTP 525. Error ID: example.');
+    }
+  });
+
+  it.each(['Approve', 'Reject'])('keeps the %s prompt beside its saved follow-up', decision => {
+    const prompt = `The user selected ${decision}.`;
+    const { messages } = projectSavedChat(parseSavedChatSnapshot({
+      ...snapshot,
+      runs: [
+        { ...snapshot.runs[0], id: 'original', kind: 'foreground', prompt: 'Make a proposal', started_at: 1, finished_at: 3 },
+        { ...snapshot.runs[0], id: 'decision', kind: 'background', prompt, started_at: 4, finished_at: 7 },
+      ],
+      events: [
+        { type: 'delta', data: { run_id: 'original', text: 'Proposed' }, occurred_at: 2 },
+        { type: 'done', data: { run_id: 'original' }, occurred_at: 3 },
+        { type: 'model_input', data: {
+          run_id: 'decision', system: 'Policy',
+          messages: [{ kind: 'app', index: 2, content: 'Decision recorded' }, { kind: 'app', index: 3, content: prompt }],
+        }, occurred_at: 5 },
+        { type: 'delta', data: { run_id: 'decision', text: 'Decision follow-up' }, occurred_at: 6 },
+        { type: 'done', data: { run_id: 'decision' }, occurred_at: 7 },
+      ],
+    }));
+    expect(messages.map(message => message.content)).toEqual([
+      'Make a proposal', 'Proposed', 'Policy', 'Decision recorded', prompt, 'Decision follow-up',
+    ]);
+  });
+
   it('keeps every role and ordered activity from the saved journal', () => {
     const projected = projectSavedChat(parseSavedChatSnapshot(snapshot));
     expect(projected.messages.filter(message => message.role === 'system')).toHaveLength(2);
@@ -42,7 +86,8 @@ describe('saved chat export', () => {
 
   it.each(['html', 'markdown'] as const)('exports the complete example as %s', format => {
     const output = buildSavedChatExport(snapshot, format);
-    for (const content of ['staff.csv', 'ward.png', 'Command exited with code 7', 'score 17', 'Pending proposal',
+    for (const content of ['staff.csv', 'ward.png', 'Command exited with code 7', 'score 17', 'Schedule check passed',
+      'Applied to your schedule',
       'Optimization running', 'Keep the original names.', 'Download the generated files', 'The current schedule changed.']) {
       expect(output).toContain(content);
     }

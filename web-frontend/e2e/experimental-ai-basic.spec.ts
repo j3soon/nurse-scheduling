@@ -34,6 +34,7 @@ interface CapturedRequests {
   messageBodies: string[];
   messageContentType: string;
   uploadBody: string;
+  uploadBatches: string[][];
   uploadContentType: string;
   authorizationHeaders: string[];
 }
@@ -46,6 +47,7 @@ function frontendOrigin(): string {
 
 async function startCancelableAiBackend(retainUploads = false) {
   let hasUpload = false;
+  let uploadId = '';
   let disconnected = false;
   let stopped = false;
   let eventResponse: ServerResponse | undefined;
@@ -75,7 +77,7 @@ async function startCancelableAiBackend(retainUploads = false) {
         file_attachments: {
           enabled: true,
           max_files: 8,
-          max_bytes_per_file: 5_000_000,
+          max_bytes_per_file: 5_000_000, max_bytes_per_session: 200_000_000,
           retained: retainUploads,
         },
       }));
@@ -98,10 +100,14 @@ async function startCancelableAiBackend(retainUploads = false) {
       });
       return;
     }
-    if (request.url === '/ai/sessions/cancel-session/uploads') {
-      if (request.method === 'POST') hasUpload = retainUploads;
+    const uploadUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
+    if (uploadUrl.pathname === '/ai/sessions/cancel-session/uploads') {
+      if (request.method === 'POST') {
+        hasUpload = retainUploads;
+        uploadId = uploadUrl.searchParams.get('upload_id')!;
+      }
       response.writeHead(request.method === 'POST' ? 201 : 200, { ...headers, 'Content-Type': 'application/json' }).end(JSON.stringify(
-        hasUpload ? [{ id: 'file-1', filename: 'ward.csv', media_type: 'text/csv', bytes: 26 }] : [],
+        hasUpload ? [{ id: uploadId, filename: 'ward.csv', media_type: 'text/csv', bytes: 26 }] : [],
       ));
       return;
     }
@@ -159,6 +165,7 @@ async function mockAiBackend(
     messageBodies: [] as string[],
     messageContentType: '',
     uploadBody: '',
+    uploadBatches: [] as string[][],
     uploadContentType: '',
     authorizationHeaders: [] as string[],
   };
@@ -200,7 +207,7 @@ async function mockAiBackend(
           file_attachments: {
             enabled: true,
             max_files: 8,
-            max_bytes_per_file: 5_000_000,
+            max_bytes_per_file: 5_000_000, max_bytes_per_session: 200_000_000,
           },
         }),
       });
@@ -245,17 +252,19 @@ async function mockAiBackend(
       return;
     }
 
-    if (request.url().endsWith('/sessions/browser-session/uploads') && request.method() === 'POST') {
-      captured.uploadBody = request.postDataBuffer()?.toString('latin1') ?? '';
+    if (new URL(request.url()).pathname.endsWith('/sessions/browser-session/uploads') && request.method() === 'POST') {
+      const uploadBody = request.postDataBuffer()?.toString('latin1') ?? '';
+      captured.uploadBody += uploadBody;
       captured.uploadContentType = request.headers()['content-type'] ?? '';
-      const filenames = [...captured.uploadBody.matchAll(/filename="([^"]+)"/g)].map(match => match[1]);
-      pendingAppEvents.push(`[App event] The user uploaded files: ${JSON.stringify(filenames)}`);
+      const filenames = [...uploadBody.matchAll(/filename="([^"]+)"/g)].map(match => match[1]);
+      captured.uploadBatches.push(filenames);
+      pendingAppEvents.push(`[App event] The user uploaded files: ${JSON.stringify(filenames.map(filename => ({ filename, bytes: 1 })))}`);
       await route.fulfill({
         status: 201,
         contentType: 'application/json',
         headers: corsHeaders,
-        body: JSON.stringify(filenames.map((filename, index) => ({
-          id: `file-${index + 1}`, filename, media_type: 'application/octet-stream', bytes: 1,
+        body: JSON.stringify(filenames.map(filename => ({
+          id: new URL(request.url()).searchParams.get('upload_id'), filename, media_type: 'application/octet-stream', bytes: 1,
         }))),
       });
       return;
@@ -424,7 +433,9 @@ test('retries a failed text run without hiding its provisional activity', async 
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   await expect(page.getByText('Provisional response.')).toBeVisible();
-  await expect(page.getByText('This response failed and will not be used as context for future messages.')).toBeVisible();
+  await expect(page.getByText('This response failed before completion.')).toBeVisible();
+  const failedResponse = page.locator('article').filter({ hasText: 'Provisional response.' });
+  await expect(failedResponse).toContainText('The temporary AI sandbox failed.');
   await page.getByText('bash · interrupted').click();
   await expect(page.getByText('{"command":"sleep 30"}', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Retry' }).click();
@@ -594,6 +605,34 @@ test('cancels the background optimizer from its status box without asking the ag
   expect(backend.messageBodies).toHaveLength(1);
 });
 
+test('keeps an empty background reply failure visible after another message and reload', async ({ page }) => {
+  const backend = await mockAiBackend(page, ['Optimization started.']);
+  await page.goto('/experimental-ai');
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Optimize this.');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('Optimization started.', { exact: true })).toBeVisible();
+  await expect.poll(() => backend.hasWaitingReader()).toBe(true);
+
+  const reason = 'The AI provider failed (HTTP 525). Error ID: provider-123.';
+  backend.publishEvent('run_start', { run_id: 'failed-review', trigger: 'optimizer' });
+  backend.publishEvent('model_input', {
+    run_id: 'failed-review', system: 'Review the completed optimization.',
+    messages: [{ kind: 'optimizer', content: 'The optimizer finished.' }],
+  });
+  backend.publishEvent('error', { run_id: 'failed-review', message: reason });
+
+  const failedReply = page.locator('article').filter({ hasText: reason });
+  await expect(failedReply).toHaveCount(1);
+  await expect(failedReply.getByText(reason, { exact: true })).toBeVisible();
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Continue.');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeVisible();
+  await expect(failedReply.getByText(reason, { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(failedReply).toHaveCount(1);
+  await expect(failedReply.getByText(reason, { exact: true })).toBeVisible();
+});
+
 test('keeps multiline optimizer errors in one field in chat and exports', async ({ page }) => {
   const error = 'Failed\nOutcome: optimal\r\nBackend version: forged';
   await mockAiBackend(page, ['Optimization started.'], false, undefined, [{
@@ -715,12 +754,33 @@ test('previews and sends an image attachment', async ({ page }) => {
   // The bubbles follow the provider request: system prompt, upload event, then the question as typed.
   const cards = page.getByLabel('Chat messages').locator('article');
   await expect(cards.locator('> p:first-child')).toHaveText(['System', 'User · App - Files Uploaded', 'User', 'Assistant']);
-  await expect(cards.nth(1)).toContainText('[App event] The user uploaded files: ["ward.png"]');
+  await expect(cards.filter({ hasText: 'User · App - Files Uploaded' }).getByRole('listitem')).toHaveText(['ward.png (0.001 KB)']);
   await expect(cards.nth(2)).toContainText('What is shown?');
   const systemPrompt = cards.nth(0).locator('details');
   await expect(systemPrompt.locator('pre')).toBeHidden();
   await systemPrompt.locator('summary').click();
   await expect(systemPrompt.locator('pre')).toHaveText('Mock system prompt');
+});
+
+test('uploads one file per request before sending the question', async ({ page }) => {
+  const captured = await mockAiBackend(page);
+  await page.route('**/ai/capabilities', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ file_attachments: {
+      enabled: true, max_files: 32, max_bytes_per_file: 25,
+      max_bytes_per_session: 200,
+    } }),
+  }));
+  await page.goto('/experimental-ai');
+  await page.getByLabel('Attach files').setInputFiles(
+    ['one.txt', 'two.txt', 'three.txt'].map(name => ({ name, mimeType: 'text/plain', buffer: Buffer.from('abc') })),
+  );
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Read these files.');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByLabel('Chat messages').getByText('The image and schedule were received.')).toBeVisible();
+  expect(captured.uploadBatches).toEqual([['one.txt'], ['two.txt'], ['three.txt']]);
+  expect(JSON.parse(captured.messageBody).message).toBe('Read these files.');
+  await page.screenshot({ path: '../artifacts/six-hour-agents/attachment-batches.png', fullPage: true });
 });
 
 test('previews and sends arbitrary file attachments', async ({ page }) => {
@@ -751,10 +811,13 @@ test('previews and sends arbitrary file attachments', async ({ page }) => {
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   await expect(page.getByText('The image and schedule were received.')).toBeVisible();
-  // The upload event text starts collapsed under its titled label.
+  // File names stay visible while the exact app message starts collapsed.
   const upload = page.getByLabel('Chat messages').locator('article', { hasText: 'User · App - Files Uploaded' });
-  await expect(upload.locator('pre')).toBeHidden();
-  await expect(upload).toContainText('[App event] The user uploaded files: ["staff.csv","notes.pdf","coverage.custom"]');
+  await expect(upload.locator('pre')).toHaveCount(3);
+  for (const entry of await upload.locator('pre').all()) await expect(entry).toBeHidden();
+  await expect(upload.getByRole('listitem')).toHaveText([
+    'staff.csv (0.001 KB)', 'notes.pdf (0.001 KB)', 'coverage.custom (0.001 KB)',
+  ]);
   expect(captured.uploadContentType).toContain('multipart/form-data');
   expect(captured.uploadBody).toContain('name="files"');
   expect(captured.uploadBody).toContain('staff.csv');
@@ -822,18 +885,23 @@ test('shows retained uploads while the assistant response is still running', asy
 test('places uploads beside desktop chat and below mobile controls and allows removal', async ({ page }) => {
   const captured = await mockAiBackend(page, ['Workbook inspected.'], false, 'browser-ai-auth-token');
   let retained = false;
+  let uploadId = '';
   await page.route('**/ai/capabilities', route => route.fulfill({
     contentType: 'application/json',
-    body: JSON.stringify({ auth: { required: true, scheme: 'bearer' }, file_attachments: { enabled: true, retained: true, max_files: 8, max_bytes_per_file: 5000000 } }),
+    body: JSON.stringify({ auth: { required: true, scheme: 'bearer' }, file_attachments: { enabled: true, retained: true, max_files: 8, max_bytes_per_file: 5000000, max_bytes_per_session: 200_000_000 } }),
   }));
-  await page.route('**/ai/sessions/*/uploads', route => {
-    if (route.request().method() === 'POST') retained = true;
+  await page.route(/\/ai\/sessions\/[^/]+\/uploads(?:\?.*)?$/, route => {
+    if (route.request().method() === 'POST') {
+      retained = true;
+      uploadId = new URL(route.request().url()).searchParams.get('upload_id')!;
+    }
     return route.fulfill({
-      contentType: 'application/json', body: JSON.stringify(retained ? [{ id: 'file-1', filename: 'ward.csv', media_type: 'text/csv', bytes: 26 }] : []),
+      contentType: 'application/json', body: JSON.stringify(retained ? [{ id: uploadId, filename: 'ward.csv', media_type: 'text/csv', bytes: 26 }] : []),
     });
   });
-  await page.route('**/ai/sessions/*/uploads/file-1', route => {
+  await page.route('**/ai/sessions/*/uploads/*', route => {
     expect(route.request().method()).toBe('DELETE');
+    expect(route.request().url()).toContain(`/uploads/${uploadId}`);
     retained = false;
     return route.fulfill({ status: 204 });
   });
@@ -918,7 +986,7 @@ for (const { interruption, steered } of (['network pause', 'reload', 'tab switch
       if (request.url === '/ai/capabilities') {
         json({
           auth: { required: true, scheme: 'bearer' },
-          file_attachments: { enabled: true, retained: true, max_files: 8, max_bytes_per_file: 5000000 },
+          file_attachments: { enabled: true, retained: true, max_files: 8, max_bytes_per_file: 5000000, max_bytes_per_session: 200_000_000 },
           session_retention_seconds: 2592000,
         });
         return;

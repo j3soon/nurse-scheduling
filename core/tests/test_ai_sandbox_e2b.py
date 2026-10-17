@@ -106,9 +106,19 @@ async def wait_for_state(e2b_backend: E2BSandboxBackend, state: E2BSandboxState)
             await asyncio.sleep(0.001)
 
 
-def test_factory_creates_a_secure_internet_disabled_auto_pause_sandbox():
+@pytest.mark.parametrize("run_seconds", [12.1, 21600])
+def test_factory_creates_a_secure_internet_disabled_auto_pause_sandbox(run_seconds):
     async def exercise() -> tuple[E2BSandboxBackend, dict]:
         captured = {}
+        from nurse_scheduling.ai.sandbox.e2b_cleanup import E2BSandboxCleanupManager
+
+        cleanup = E2BSandboxCleanupManager(
+            api_key="secret-key",
+            request_timeout_seconds=2,
+            retry_backoff_seconds=0,
+            reaper_interval_seconds=30,
+            wall_clock=lambda: 1000,
+        )
         sandbox = FakeE2BSandbox()
 
         async def create_sandbox(**kwargs):
@@ -118,7 +128,8 @@ def test_factory_creates_a_secure_internet_disabled_auto_pause_sandbox():
         factory = E2BSandboxFactory(
             api_key="secret-key",
             template="template-name",
-            turn_timeout_seconds=12.1,
+            cleanup_manager=cleanup,
+            run_timeout_seconds=run_seconds,
             command_timeout_seconds=3,
             create_sandbox=create_sandbox,
         )
@@ -128,10 +139,10 @@ def test_factory_creates_a_secure_internet_disabled_auto_pause_sandbox():
     assert backend.sandbox_id == "sandbox-123"
     metadata = captured.pop("metadata")
     assert metadata["nurse_scheduling_ai_managed"] == "true"
-    assert float(metadata["nurse_scheduling_ai_hard_deadline"]) > 0
+    assert float(metadata["nurse_scheduling_ai_hard_deadline"]) == 1000 + run_seconds
     assert captured == {
         "template": "template-name",
-        "timeout": 13,
+        "timeout": 3600,
         "secure": True,
         "allow_internet_access": False,
         "lifecycle": {
@@ -155,7 +166,7 @@ def test_factory_redacts_provider_creation_failures():
         factory = E2BSandboxFactory(
             api_key="secret-key",
             template="template-name",
-            turn_timeout_seconds=10,
+            run_timeout_seconds=10,
             command_timeout_seconds=3,
             create_sandbox=create_sandbox,
         )
@@ -181,7 +192,7 @@ def test_factory_cancellation_kills_a_sandbox_created_by_the_in_flight_request()
         factory = E2BSandboxFactory(
             api_key="secret-key",
             template="template-name",
-            turn_timeout_seconds=10,
+            run_timeout_seconds=10,
             command_timeout_seconds=3,
             create_sandbox=create_sandbox,
         )

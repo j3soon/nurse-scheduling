@@ -55,6 +55,7 @@ from .provider import (
 from .transcript import AgentMessage, AssistantMessage, ToolResultMessage, UserMessage
 
 logger = logging.getLogger("nurse_scheduling.ai.agent")
+MAX_PARALLEL_TOOL_CALLS = 8
 
 TRUNCATED_TOOL_CALL_RESULT = (
     "The response reached the output token limit before this tool call was complete, so it was not run. "
@@ -166,6 +167,7 @@ async def agent_loop(
         batch_scope = activity_batch or _unbatched_activity
         async with batch_scope():
             terminal = False
+            end_turn_message = None
             completed_calls = 0
             parallel = len(calls) > 1 and all(
                 call.name in registered and registered[call.name].read_only for call in calls
@@ -181,9 +183,10 @@ async def agent_loop(
                     yield _record_tool_result(conversation, call, outcome)
                     completed_calls += 1
                     terminal = terminal or outcome.terminal
+                    end_turn_message = end_turn_message or outcome.end_turn_message
             else:
                 execution_seconds = 0.0
-                for call in calls:
+                for index, call in enumerate(calls):
                     yield AgentToolStart(call.name, call.arguments, call.id)
                     started = time.perf_counter()
                     outcome = await execute(call.name, call.arguments)
@@ -191,12 +194,36 @@ async def agent_loop(
                     yield _record_tool_result(conversation, call, outcome)
                     completed_calls += 1
                     terminal = terminal or outcome.terminal
+                    end_turn_message = outcome.end_turn_message
                     if terminal:
+                        break
+                    if end_turn_message is not None:
+                        for skipped in calls[index + 1 :]:
+                            yield AgentToolStart(skipped.name, skipped.arguments, skipped.id)
+                            yield _record_tool_result(
+                                conversation,
+                                skipped,
+                                AgentToolOutcome(
+                                    "This call was not executed because the previous tool ended the assistant turn.",
+                                    False,
+                                ),
+                            )
                         break
             if observe_tool_batch is not None:
                 observe_tool_batch(AgentToolBatchMetrics(completed_calls, parallel, execution_seconds))
         if terminal:
             return
+        if end_turn_message is not None:
+            closing = AssistantMessage(end_turn_message)
+            conversation.append(closing)
+            yield AgentText(end_turn_message)
+            yield AgentMessageEnd(closing)
+            steering = tuple(take_steering(True)) if take_steering is not None else ()
+            if not steering:
+                return
+            for message_id, text in steering:
+                conversation.append(UserMessage(text))
+                yield AgentSteering(message_id, text)
 
 
 def _record_tool_result(conversation: list[AgentMessage], call: ToolCall, outcome: AgentToolOutcome) -> AgentToolUse:
@@ -210,7 +237,13 @@ async def _execute_parallel_tool_calls(
     calls: Sequence[ToolCall],
     execute: ToolExecutor,
 ) -> list[AgentToolOutcome]:
-    tasks = [asyncio.create_task(execute(call.name, call.arguments)) for call in calls]
+    semaphore = asyncio.Semaphore(MAX_PARALLEL_TOOL_CALLS)
+
+    async def bounded_execute(call: ToolCall) -> AgentToolOutcome:
+        async with semaphore:
+            return await execute(call.name, call.arguments)
+
+    tasks = [asyncio.create_task(bounded_execute(call)) for call in calls]
     try:
         return await asyncio.gather(*tasks)
     except BaseException:

@@ -120,6 +120,9 @@ destroys that state.
 
 Experimental AI controls must follow backend `/capabilities` responses. The
 backend remains authoritative for feature enablement and input limits.
+For retained attachments, count existing uploads toward session limits. Keep
+per-file and session totals separate. Upload one file per request and preserve
+confirmed uploads when a later upload fails.
 AI operation state belongs to `ChatLifecycle`. Finish only the operation that
 owns a completion, and derive busy and Stop state from its phases. Scope stream
 callbacks to their connection and other async completions to their conversation.
@@ -163,6 +166,9 @@ offline emulation alone can leave an existing stream open. Assert that reconnect
 uses the same request ID and executes the accepted question only once. Mock
 `/capabilities` with the real authentication and attachment-limit contract so
 reload recovery follows the production path.
+For session actions, check the action's full server event sequence through the
+client decoder and transcript. Include `model_input`, not only `run_start`, text,
+and `done`. Isolated server and UI mocks can both pass while their contracts differ.
 Replay must replace existing messages in their original positions, including
 optimizer input and steering replies. Capture the message ID before queuing React
 state updates because one replay snapshot can contain several replies.

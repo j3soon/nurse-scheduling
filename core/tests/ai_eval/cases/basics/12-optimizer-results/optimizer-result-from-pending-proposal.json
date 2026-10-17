@@ -58,10 +58,10 @@
   },
   "tags": [
     "optimizer-result",
-    "pending-result",
+    "applied-result",
     "optimizer-snapshot"
   ],
-  "note": "This testcase is mostly AI generated. The approved input has one strong miss. The pending input promotes another missed OFF target and therefore has two. The actual job snapshot and proposal are checked independently of the answer.",
+  "note": "This testcase is mostly AI generated. The original input has one strong miss. The edited input promotes another missed OFF target and therefore has two. The app applies the edit before the optimizer result turn. The actual job snapshot and proposal are checked independently of the answer.",
   "optimizer_completion": "request-audit-pending",
   "proposal_turn": 1,
   "answer_json": {

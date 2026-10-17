@@ -1,4 +1,4 @@
-"""Structural differences between two schedules, for proposal review."""
+"""Structural differences between two schedules, for reviewing a schedule change."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #

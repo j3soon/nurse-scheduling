@@ -1,0 +1,19 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "id": "provider-uninterrupted-answer",
+  "fixture": "new-schedule",
+  "question": "Reply with ALPHA, BRAVO, CHARLIE separated by |, in that order. Whitespace is allowed. Do not add other words.",
+  "expect_proposal": false,
+  "answer_matches": [
+    "^\\s*ALPHA\\s*\\|\\s*BRAVO\\s*\\|\\s*CHARLIE\\s*$"
+  ],
+  "tool_usage": {
+    "max_total": 0
+  },
+  "tags": [
+    "provider-recovery",
+    "control"
+  ],
+  "note": "The same exact answer without an injected timeout checks that continuation guidance does not remove the beginning of an ordinary response."
+}

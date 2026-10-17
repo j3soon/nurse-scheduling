@@ -1,0 +1,119 @@
+{
+  "_license": "Copyright (C) 2023-2026 Johnson Sun. SPDX-License-Identifier: AGPL-3.0-or-later",
+  "_comment": "This test is mostly AI generated.",
+  "fixture": "small-clinic",
+  "expect_proposal": true,
+  "semantic_check": "qualified-staffing",
+  "changes": [
+    "description",
+    "dates",
+    "people",
+    "shiftTypes",
+    "preferences"
+  ],
+  "tool_usage": {
+    "forbidden": [
+      "optimizer"
+    ],
+    "max_total": 15
+  },
+  "tags": [
+    "staffing",
+    "clarification"
+  ],
+  "note": "This testcase is mostly AI generated. Synthetic conflicting total and retained component counts, motivated by a silent choice in a customer chat. Clarify before any write or proposal. The reply selects the original smaller total rather than the newer number.",
+  "id": "staffing-conflicting-day-total",
+  "staffing_contract": {
+    "counts": {
+      "D": 1,
+      "D+": 1,
+      "E": 1,
+      "N": 1
+    },
+    "qualified": {
+      "D+": [
+        "S1",
+        "S2"
+      ]
+    }
+  },
+  "assert": [
+    {
+      "path": "dates.range.startDate",
+      "equals": "2026-03-01"
+    },
+    {
+      "path": "dates.range.endDate",
+      "equals": "2026-03-01"
+    },
+    {
+      "path": "people.items[].id",
+      "count": 5
+    },
+    {
+      "path": "people.items[].id",
+      "contains": "S1"
+    },
+    {
+      "path": "people.items[].id",
+      "contains": "S2"
+    },
+    {
+      "path": "people.items[].id",
+      "contains": "J1"
+    },
+    {
+      "path": "people.items[].id",
+      "contains": "J2"
+    },
+    {
+      "path": "people.items[].id",
+      "contains": "J3"
+    },
+    {
+      "path": "shiftTypes.items[].id",
+      "count": 4
+    },
+    {
+      "path": "shiftTypes.items[].id",
+      "contains": "D"
+    },
+    {
+      "path": "shiftTypes.items[].id",
+      "contains": "D+"
+    },
+    {
+      "path": "shiftTypes.items[].id",
+      "contains": "E"
+    },
+    {
+      "path": "shiftTypes.items[].id",
+      "contains": "N"
+    }
+  ],
+  "user_turns": [
+    "Build a new schedule for March 1, 2026 only. Nurses S1 and S2 are seniors. J1, J2 and J3 are other nurses. Use D for general day slots, D+ for senior day slots, E for evening and N for night. All nurses can fill general slots. Use exact staffing counts, no preferred counts, and only staffing plus at most one shift per day. Evening 1 and Night 1. Do not optimize. Day staffing must total 3 including the senior slot. Keep the original staffing settings unchanged: D 1 and D+ 1. Propose the YAML when the staffing is clear.",
+    "Keep the original total of 2 day slots, including 1 senior slot. The stated total of 3 was a mistake. Propose the YAML now."
+  ],
+  "proposal_turn": 2,
+  "intermediate_answer_contains": [
+    [
+      "2",
+      "3"
+    ]
+  ],
+  "turn_tool_usage": [
+    {
+      "forbidden": [
+        "optimizer",
+        "write",
+        "edit"
+      ]
+    },
+    {
+      "forbidden": [
+        "optimizer"
+      ]
+    }
+  ]
+}

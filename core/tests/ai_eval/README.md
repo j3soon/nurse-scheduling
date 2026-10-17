@@ -37,7 +37,8 @@ token comparisons remain unavailable rather than inventing cache misses.
 Store one JSON object per case under `cases/<dataset>/<category>/<id>.json`. Existing synthetic coverage lives under
 `cases/basics/`, mirroring the normal YAML testcase layout under `tests/testcases/basics/`. Reserve sibling dataset
 directories such as `cases/real/` for cases derived from real user scenarios. Every case names a fixture, one question or a
-`user_turns` sequence, and whether one turn should propose a schedule change. Proposal cases default to the final
+`user_turns` sequence, and whether one turn should change the schedule. Like the app, the runner applies each
+turn's validated change before the next turn. Proposal cases, which grade that change, default to the final
 turn. Set the one-based `proposal_turn` when a later turn should discuss an earlier proposal without reproposing it.
 Every other turn is explicitly graded as producing no proposal.
 
@@ -46,8 +47,8 @@ with the first turn, matching the frontend request lifecycle. Attachment cases s
 that prove the sandbox inspected the file rather than relying on its declared media type.
 
 Use ordered `proposal_turns` when revisions should produce more than one proposal. The last listed proposal is graded
-by `expected_diff`. Use `turn_actions` to apply a trusted frontend `approve`, `reject`, or external `update` after a
-turn. An update supplies a shallow top-level `schedule_patch` and invalidates any pending proposal.
+by `expected_diff` against the fixture. Use `turn_actions` to apply a trusted external `update` after a turn. An
+update supplies a shallow top-level `schedule_patch` and adds a schedule-change app event.
 
 Use `expected_diff` for a deterministic mutation to a list-valued path. Each entry gives the complete semantic
 multiset delta, so an unlisted addition or removal at that path fails:
@@ -91,6 +92,10 @@ answer wording is correct.
 Use `optimizer_error` to simulate an optimizer API outage, and `tool_usage.required_errors` to require an observed
 tool failure. This exercises the agent's response to a tool error without treating a controlled outage as a provider
 or sandbox infrastructure failure.
+Use `provider_timeout_after_text` to inject one partial assistant answer followed by a stream timeout.
+The production retry policy sends the retained answer and interruption status to the live provider.
+Only that recovery request is live. The initial text and timeout are synthetic, so their timing does not measure
+a real provider outage. The ordinary response control runs without this field.
 Use `tool_usage.max_validation_errors` to bound failed trusted schedule checks. A valid final proposal does not erase
 an invalid intermediate mutation. Unrelated tool errors are not schedule-validation repairs.
 
@@ -137,6 +142,33 @@ Completed attempts are saved immediately to `results.jsonl` and `cases/`, with i
 attempts and are not complete comparisons. Final reports restore dataset order. Existing output directories
 are rejected before model work starts.
 
+Extend a completed comparison from three to five attempts per case from the repository root:
+
+```sh
+AI_ENV_FILE=docker/.env.staging ./scripts/run_ai_eval.sh \
+  --extend-report artifacts/ai-evals/three-runs \
+  --prompt-compare-step 5 --repeat 5 \
+  --output-dir artifacts/ai-evals/five-runs
+```
+
+Use the original prompt selector, such as `--prompt-step`, `--prompt-compare-step` or
+`--prompt-ablate-step`. `--repeat` is the target total and defaults to five for an extension.
+Only missing repetitions run, with the same global four-job limit. Add `--case ID` to extend
+only a noisy case. The new report keeps the other cases at their original repetition counts.
+Single-prompt reports can also be extended. Omit the prompt selector when the original report
+used the current production prompt.
+
+The runner checks the saved cases, fixtures, attachments, prompt, references, provider model,
+sandbox configuration and failure policy before provider work. Changed inputs require a new
+comparison. Incomplete reports, duplicate repetitions and inconsistent trajectories are rejected.
+The original report stays unchanged. The new report preserves old failures and missing usage,
+records each extension's source and Git revision, and recomputes summaries and paired statistics
+from all attempts. An extension retains the original cost target. Its wall time covers only
+the new execution, while per-attempt timings include the saved attempts. Review the extended
+comparison before updating prompt receipts.
+Add `--plan-only` to verify fingerprints and print the missing attempts without provider calls
+or creating the output directory.
+
 Cases tagged `holdout` use schedules that differ from the primary tuning fixtures. Run them to check generalization,
 but do not rewrite prompts to match one held-out trajectory. Promote a recurring failure pattern into a separate
 tuning case before changing agent guidance.
@@ -152,8 +184,8 @@ one a stable ID, hypothesis, and targeted case set. The production and evaluatio
 Leading SPDX license blocks and AI provenance comments are excluded from model-facing text.
 Run `python3 scripts/print_ai_system_prompt.py` from the repository root to print the assembled prompt to stdout.
 The script uses the production assembler and needs only Python's standard library. The app appends request-specific
-context, such as the schedule pointer and download size limit, when building a request. Changing state, such as a
-pending proposal, goes into a final status message. Case attachments enter history as an upload event before the first
+context, such as the schedule pointer and download size limit, when building a request. Changing state, such as the
+current time, goes into a final status message. Case attachments enter history as an upload event before the first
 question, as production uploads do.
 Section hashes make the evaluation fail fast if prompt text changes without updating the manifest.
 Keep section filenames stable and change their order in the manifest. Linked cases are candidates for evidence, not
@@ -211,6 +243,30 @@ and workbook hashes match. `result-policy-misses`, `result-policy-clean`, and
 Score-bearing completions report `score_direction: maximize` and restrict score
 comparisons to unchanged constraints and weights. `optimizer-score-same-model`
 checks direction and `optimizer-score-changed-model` guards comparability.
+`optimizer_follow_up_completions` adds at most two named completion fixtures after
+`optimizer_completion`. Each is delivered only after another successful start,
+with the new submitted source and a fresh workbook. No user message is inserted
+between results. This checks autonomous retries rather than a user asking again.
+The `optimization-loop-*` cases isolate initiative. Outcome cases accept an
+unsolicited offer or a successful start with the correct source. Edit-only cases
+check the offer, acceptance and refusal without requiring the offer to list every
+loop step. `optimization-loop-authorized-retry` checks that explicit authorization
+continues through a missed request and a fresh satisfactory result, with every
+submitted source preserved. It does not require a particular report format.
+
+The stronger `autonomous-optimize-updated-proposal` diagnostic requires an
+immediate start. `autonomous-policy-review-retry` requires an automatic retry and
+exact final policy counts. Keep these separate from initiative evidence. The
+shorter guidance can offer further work rather than meet those automatic-only
+contracts. Their graders remain unchanged.
+
+The `result-explanation` cases distinguish a compatible missed request from a
+same-day conflict. An unrestricted solve checks both fixtures independently.
+The summary cases also check unsolicited causal claims, including a retry that
+improves stronger requests while leaving a compatible request unmet. Their
+lexical checks catch observed claims and permit negation or uncertainty. Review
+explanations manually. Correct categories and counts do not prove accurate prose.
+
 Cases marked `optimizer_completion_only` seed a fixed successful start and acknowledgement without a provider call.
 The seed remains in the grading trace but is excluded from model tool and token metrics.
 `after_optimizer_turns` adds user messages after completion in fresh workspaces with the retained workbook.

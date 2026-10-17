@@ -355,6 +355,19 @@ def _pptx() -> bytes:
 
 
 _FIXTURES: dict[str, tuple[str, str, Callable[[], bytes]]] = {
+    "request-table-csv": (
+        "requests.csv",
+        "text/csv",
+        lambda: (
+            'person,date,shift,weight\r\nP1,01,D,1e10\r\n"P2, Jr",02,OFF,1e7\r\n'
+            'P1,03,OFF,1e7\r\n"P2, Jr",03,D,1e10\r\nP3,04,OFF,0\r\n'
+        ).encode("utf-8-sig"),
+    ),
+    "headerless-history-csv": (
+        "history.csv",
+        "text/csv",
+        lambda: b"P1,OFF,2\nP2,D,3\n",
+    ),
     "workbook-intake-xlsx": (
         "roster.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

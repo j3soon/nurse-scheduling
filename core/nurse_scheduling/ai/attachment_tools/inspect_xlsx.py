@@ -28,6 +28,7 @@ from zipfile import BadZipFile, ZipFile
 from defusedxml import ElementTree
 from openpyxl import load_workbook
 from openpyxl.cell.read_only import ReadOnlyCell
+from openpyxl.utils.cell import range_boundaries
 from openpyxl.xml.functions import DEFUSEDXML
 
 MAX_ARCHIVE_ENTRIES = 1_000
@@ -277,6 +278,27 @@ def inspect_workbook(
             cached_book.close()
 
 
+def _parse_cell_range(value: str) -> tuple[str | None, int, int, int, int]:
+    """Convert an optional sheet name and finite A1 range to a bounded window."""
+    sheet = None
+    if "!" in value:
+        sheet, value = value.rsplit("!", 1)
+        if sheet.startswith("'") and sheet.endswith("'"):
+            sheet = sheet[1:-1].replace("''", "'")
+        if not sheet:
+            raise ValueError("A sheet-qualified range must include a sheet name")
+    first_column, first_row, last_column, last_row = range_boundaries(value)
+    if any(position is None for position in (first_column, first_row, last_column, last_row)):
+        raise ValueError("Select a cell or finite rectangle, such as B3 or B3:D8")
+    if not (1 <= first_row <= last_row <= 1_048_576 and 1 <= first_column <= last_column <= 16_384):
+        raise ValueError("Range endpoints must be ordered cells within XLSX worksheet limits")
+    max_rows = last_row - first_row + 1
+    max_columns = last_column - first_column + 1
+    if max_rows * max_columns > 10_000:
+        raise ValueError("Select at most 10,000 cells per sheet")
+    return sheet, first_row, first_column, max_rows, max_columns
+
+
 def main() -> None:
     """Run the workbook inspector from the sandbox shell."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -292,18 +314,37 @@ def main() -> None:
         action="store_true",
         help="Include stored font/fill colors, borders, alignment, and number formats. Styles are deduplicated. Conditional formatting, tint rendering, and comments are not evaluated.",
     )
-    parser.add_argument("--start-row", type=int, default=1)
-    parser.add_argument("--start-column", type=int, default=1)
-    parser.add_argument("--max-rows", type=int, default=200)
-    parser.add_argument("--max-columns", type=int, default=50)
+    parser.add_argument(
+        "--range",
+        dest="cell_range",
+        help="Select at most 10,000 cells with an A1 range, such as B3:D8 or 'Sheet name'!B3:D8. Cannot be combined with --overview or row/column window options.",
+    )
+    parser.add_argument("--start-row", type=int)
+    parser.add_argument("--start-column", type=int)
+    parser.add_argument("--max-rows", type=int)
+    parser.add_argument("--max-columns", type=int)
     args = parser.parse_args()
+    window = (args.start_row, args.start_column, args.max_rows, args.max_columns)
+    if args.cell_range is not None:
+        if args.overview or any(value is not None for value in window):
+            parser.error("--range cannot be combined with --overview or row/column window options")
+        try:
+            sheet, *window = _parse_cell_range(args.cell_range)
+        except ValueError as exc:
+            parser.error(str(exc))
+        if sheet is not None:
+            if args.sheet is not None and args.sheet != sheet:
+                parser.error("--sheet conflicts with the sheet name in --range")
+            args.sheet = sheet
+    else:
+        window = tuple(value if value is not None else default for value, default in zip(window, (1, 1, 200, 50)))
     result = inspect_workbook(
         args.path,
         sheet_name=args.sheet,
-        start_row=args.start_row,
-        start_column=args.start_column,
-        max_rows=args.max_rows,
-        max_columns=args.max_columns,
+        start_row=window[0],
+        start_column=window[1],
+        max_rows=window[2],
+        max_columns=window[3],
         styles=args.styles,
         overview=args.overview,
     )

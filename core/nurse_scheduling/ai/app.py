@@ -36,9 +36,11 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import AfterValidator, BaseModel, Field, ValidationError
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.formparsers import MultiPartException
 
 from ..sentry import SentryClientAddressMiddleware, init_sentry
 from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry
+from ..server.request_limits import MULTIPART_OVERHEAD_BYTES
 from ..service_logging import configure_service_logging
 from ..version import get_app_version
 from .agent_session import AgentSession, SessionRuntime
@@ -106,25 +108,6 @@ def _question_log_preview(question: str) -> str:
     return preview
 
 
-class ProposalResponse(BaseModel):
-    """The approved schedule the browser should apply."""
-
-    schedule_yaml: str
-    history_saved: bool
-
-
-class ProposalRejectionResponse(BaseModel):
-    """Whether recovery storage saved the rejection, which already took effect."""
-
-    history_saved: bool
-
-
-class ApproveProposalRequest(BaseModel):
-    """The revision the browser holds when it approves a proposal."""
-
-    base_sha256: str = Field(min_length=64, max_length=64)
-
-
 class UpdateScheduleRequest(BaseModel):
     """A newer schedule snapshot for an existing session."""
 
@@ -188,6 +171,7 @@ class FileAttachmentCapability(BaseModel):
     enabled: bool
     max_files: int
     max_bytes_per_file: int
+    max_bytes_per_session: int
     retained: bool = True
 
 
@@ -223,11 +207,7 @@ async def _session_sse(
             data = event.data
             reset = cast(SessionResetData, data) if event.type == "session_reset" else None
             if reset is not None:
-                data = {
-                    **data,
-                    "proposal_diff": session.pending_proposal.diff if session.pending_proposal else "",
-                    "active_run_id": session.snapshot.run_id if session.snapshot else None,
-                }
+                data = {**data, "active_run_id": session.snapshot.run_id if session.snapshot else None}
             yield f"id: {event.id}\nevent: {event.type}\ndata: {json.dumps(data)}\n\n"
             if until_run is not None and (
                 (data.get("run_id") == until_run.id and event.type in TERMINAL_EVENTS)
@@ -278,7 +258,7 @@ async def _parse_upload_request(request: Request, settings: AiSettings) -> list[
         raise HTTPException(status_code=415, detail="Upload files as multipart form data.")
 
     content_length = request.headers.get("content-length")
-    max_body_bytes = settings.max_attachment_files * settings.max_attachment_bytes + 65_536
+    max_body_bytes = settings.max_attachment_bytes + MULTIPART_OVERHEAD_BYTES
     if content_length is not None:
         try:
             if int(content_length) > max_body_bytes:
@@ -286,8 +266,21 @@ async def _parse_upload_request(request: Request, settings: AiSettings) -> list[
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid Content-Length header.") from None
 
+    received_bytes = 0
+
+    async def bounded_receive():
+        nonlocal received_bytes
+        message = await request.receive()
+        if message["type"] == "http.request":
+            received_bytes += len(message.get("body", b""))
+            if received_bytes > max_body_bytes:
+                # Starlette closes spooled files when multipart parsing raises this.
+                raise MultiPartException("Attachment request is too large.")
+        return message
+
+    bounded_request = Request(request.scope, receive=bounded_receive)
     try:
-        async with request.form(max_files=settings.max_attachment_files, max_fields=0) as form:
+        async with bounded_request.form(max_files=settings.max_attachment_files, max_fields=0) as form:
             if any(key != "files" for key in form):
                 raise HTTPException(status_code=422, detail="Unexpected multipart field.")
             uploads: list[UploadFile] = []
@@ -299,6 +292,8 @@ async def _parse_upload_request(request: Request, settings: AiSettings) -> list[
                 raise HTTPException(status_code=422, detail="Upload at least one file.")
             return await _read_files(uploads, settings)
     except StarletteHTTPException as exc:
+        if exc.status_code == 400 and exc.detail == "Attachment request is too large.":
+            raise HTTPException(status_code=413, detail=exc.detail) from exc
         if exc.status_code == 400 and str(exc.detail).startswith("Too many files"):
             raise HTTPException(status_code=413, detail="Too many file attachments.") from exc
         if exc.status_code == 400 and str(exc.detail).startswith("Too many fields"):
@@ -507,6 +502,7 @@ def create_app(
                 enabled=True,
                 max_files=settings.max_attachment_files,
                 max_bytes_per_file=settings.max_attachment_bytes,
+                max_bytes_per_session=settings.max_attachment_total_bytes,
             ),
             session_retention_seconds=settings.session_ttl_seconds,
             auth={"required": auth_registry.enabled, "scheme": AUTH_SCHEME},
@@ -622,6 +618,7 @@ def create_app(
         request: Request,
         response: Response,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+        upload_id: UUID | None = None,
     ) -> list[dict[str, str | int]]:
         """Retain source files for later messages and return their metadata."""
         store.require_owned(session_id, owner)
@@ -631,7 +628,7 @@ def create_app(
             uploads = await _parse_upload_request(request, settings)
         finally:
             release()
-        retained = store.retain_uploads(session_id, owner, uploads)
+        retained = store.retain_uploads(session_id, owner, uploads, upload_id=str(upload_id) if upload_id else None)
         await recovery.save(session_id)
         refresh_owner_cookie(response, owner)
         return [_upload_metadata(item) for item in retained]
@@ -841,47 +838,5 @@ def create_app(
         response = Response(status_code=status.HTTP_204_NO_CONTENT)
         refresh_owner_cookie(response, owner)
         return response
-
-    @app.post(
-        "/sessions/{session_id}/proposal/approve",
-        response_model=ProposalResponse,
-        dependencies=[Depends(require_auth), Depends(restore_session)],
-    )
-    async def approve_proposal(
-        session_id: str,
-        request: ApproveProposalRequest,
-        response: Response,
-        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
-    ) -> ProposalResponse:
-        """Return the proposed schedule once the browser proves it holds the base revision."""
-        try:
-            approved = store.approve_proposal(session_id, owner, request.base_sha256)
-        except HTTPException as exc:
-            if exc.status_code == 409:
-                # A stale revision discards the proposal before refusing approval.
-                await recovery.save(session_id)
-            raise
-        # The decision already took effect, so a failed save is reported rather than refused.
-        history_saved = await recovery.save(session_id)
-        if approved is None:
-            raise HTTPException(status_code=409, detail="The proposed schedule is no longer valid.")
-        refresh_owner_cookie(response, owner)
-        return ProposalResponse(schedule_yaml=approved, history_saved=history_saved)
-
-    @app.post(
-        "/sessions/{session_id}/proposal/reject",
-        response_model=ProposalRejectionResponse,
-        dependencies=[Depends(require_auth), Depends(restore_session)],
-    )
-    async def reject_proposal(
-        session_id: str,
-        response: Response,
-        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
-    ) -> ProposalRejectionResponse:
-        """Drop the pending proposal at the user's request."""
-        store.discard_proposal(session_id, owner)
-        history_saved = await recovery.save(session_id)
-        refresh_owner_cookie(response, owner)
-        return ProposalRejectionResponse(history_saved=history_saved)
 
     return app

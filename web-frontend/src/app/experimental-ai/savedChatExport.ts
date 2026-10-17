@@ -31,7 +31,6 @@ export interface SavedChatSnapshot {
   snapshot_at: number;
   frontend_version: string;
   metadata: { endpoint?: string; backend_version?: string; uploaded_files?: { filename: string; bytes: number }[] };
-  pending_proposal_diff: string | null;
   runs: { id: string; kind: string; status: string; prompt: string; started_at: number; finished_at: number | null }[];
   events: { type: string; data: Record<string, unknown>; occurred_at: number }[];
 }
@@ -42,7 +41,6 @@ const timestamp = (value: unknown): value is number => typeof value === 'number'
 export function parseSavedChatSnapshot(value: unknown): SavedChatSnapshot {
   if (!record(value) || value.schema_version !== 1 || typeof value.session_id !== 'string'
     || !timestamp(value.snapshot_at) || typeof value.frontend_version !== 'string' || !record(value.metadata)
-    || (value.pending_proposal_diff !== null && typeof value.pending_proposal_diff !== 'string')
     || !Array.isArray(value.runs) || !value.runs.every(run => record(run) && typeof run.id === 'string'
       && typeof run.kind === 'string' && typeof run.status === 'string' && typeof run.prompt === 'string'
       && timestamp(run.started_at) && (run.finished_at === null || timestamp(run.finished_at)))
@@ -128,7 +126,7 @@ export function projectSavedChat(snapshot: SavedChatSnapshot): { messages: ChatM
     metadata: {
       endpoint: snapshot.metadata.endpoint ?? 'unknown', exportedAt: new Date(snapshot.snapshot_at),
       frontendVersion: snapshot.frontend_version, backendVersion: snapshot.metadata.backend_version,
-      uploadedFiles: snapshot.metadata.uploaded_files, pendingProposalDiff: snapshot.pending_proposal_diff ?? undefined,
+      uploadedFiles: snapshot.metadata.uploaded_files,
       runningOptimization: activeOptimization === null ? undefined : {
         jobId: activeOptimization.jobId, state: activeOptimization.state,
         solver: activeOptimization.request?.solver, timeoutSeconds: activeOptimization.request?.timeoutSeconds,

@@ -29,6 +29,7 @@ import pytest
 from openpyxl import load_workbook
 
 from nurse_scheduling.ai.optimizer import WORKSPACE_OPTIMIZER_RESULT, optimizer_completion_message
+from nurse_scheduling.ai.optimizer_tool import OPTIMIZER_RUNNING_MESSAGE
 from nurse_scheduling.ai.provider import TextDelta, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
 from nurse_scheduling.ai.workspace import WORKSPACE_RESULT_CONTEXT, WORKSPACE_SCHEDULE
@@ -41,7 +42,7 @@ from .test_ai_eval_runner import CASE_BY_ID, FIXTURE_DIGESTS, ScriptedProvider, 
 
 
 def test_controlled_completion_exports_the_verified_assignment():
-    source = FIXTURE.read_text()
+    source = FIXTURE.read_text(encoding="utf-8")
     assert validate_frontend_schedule_yaml(source, 1_000_000).valid
     workbook, metadata = completion_result("request-audit", source)
     assert metadata["source_sha256"] == hashlib.sha256(source.encode()).hexdigest()
@@ -66,7 +67,6 @@ def test_completion_uses_the_production_message_and_mounts_a_fresh_result():
     case = CASE_BY_ID["optimizer-score-same-model"]
     provider = ScriptedProvider(
         [ToolCallRequest((ToolCall("start", "optimizer", '{"action":"start","timeout_seconds":60}'),))],
-        [TextDelta("Running in the background.")],
         [ToolCallRequest((ToolCall("inspect", "bash", '{"command":"inspect result"}'),))],
         [TextDelta(json.dumps(case.answer_json))],
     )
@@ -80,7 +80,7 @@ def test_completion_uses_the_production_message_and_mounts_a_fresh_result():
     completion = run.trajectory["prompts"][1][-2]
     assert completion == {"role": "user", "content": optimizer_completion_message(metadata)}
     assert run.trajectory["prompts"][1][-1]["content"].startswith("[Current status]")
-    assert run.trajectory["prompts"][1][-3]["content"] == "Running in the background."
+    assert run.trajectory["prompts"][1][-3]["content"] == OPTIMIZER_RUNNING_MESSAGE
     assert all(backend.closed for backend in factory.created)
     assert any(e["kind"] == "optimizer" for e in run.trajectory["events"])
 
@@ -110,8 +110,26 @@ def test_real_optimizer_solves_without_replaying_a_fixed_assignment(tmp_path):
     assert all(row["unmet"] == 0 for row in metadata["request_audit"]["summary"])
     assert metadata["request_audit"]["policy"]["staffing"][0]["preferred_shortfall"] == 0
     assert metadata["request_audit"]["policy"]["successions"][0]["unmet"] == 0
-    assert (tmp_path / "submitted.yaml").read_text() == source
+    assert (tmp_path / "submitted.yaml").read_text(encoding="utf-8") == source
     assert load_workbook(tmp_path / "result.xlsx").active.cell(8, 5).value == "OPTIMAL"
+
+
+@pytest.mark.parametrize("conflict", [False, True])
+def test_request_explanation_fixtures_distinguish_a_miss_from_a_proven_conflict(tmp_path, conflict):
+    from .ai_eval.optimizer_fixtures import RESULT_SOURCES
+    from .ai_eval.real_optimizer import solve
+
+    name = "request-audit-conflict" if conflict else "request-audit-all-strong"
+    source = RESULT_SOURCES[name].read_text(encoding="utf-8")
+    assert validate_frontend_schedule_yaml(source, 1_000_000).valid
+    _, incumbent = completion_result(name, source)
+    weak = next(row for row in incumbent["request_audit"]["summary"] if row["weight"] == 11_000_000)
+    assert weak["unmet"] == 1
+    solved = solve(source, tmp_path, 5)["metadata"]
+    assert solved["result"]["solver_status"] == "OPTIMAL"
+    assert solved["result"]["score"] == (44_000_000_000 if conflict else 44_011_000_000)
+    weak = next(row for row in solved["request_audit"]["summary"] if row["weight"] == 11_000_000)
+    assert weak["unmet"] == int(conflict)
 
 
 def test_real_completion_factory_receives_the_actual_submitted_source(tmp_path):
@@ -127,7 +145,6 @@ def test_real_completion_factory_receives_the_actual_submitted_source(tmp_path):
     )
     provider = ScriptedProvider(
         [ToolCallRequest((ToolCall("start", "optimizer", '{"action":"start","timeout_seconds":60}'),))],
-        [TextDelta("Running in the background.")],
         [TextDelta('{"score":44011000000}')],
     )
     received = []
@@ -205,19 +222,33 @@ def test_independent_analysis_case_accepts_a_valid_extra_date_and_rejects_starti
     assert not grade(case, outcome).passed
 
 
-def test_nested_json_evidence_fingerprint_tracks_its_oracle_without_staling_scalar_cases(monkeypatch):
+@pytest.mark.parametrize(
+    ("expected", "actual"),
+    [
+        ({"day": "OFF"}, {"day": "D"}),
+        (1, 2),
+        (1.5, 2.5),
+        ("Ada", "Bela"),
+        (True, False),
+        (["01"], ["02"]),
+    ],
+)
+def test_json_evidence_fingerprint_tracks_the_comparator_for_every_answer_shape(monkeypatch, expected, actual):
     from .ai_eval import grading
 
-    nested = EvalCase("nested", "new-schedule", "Witness", False, answer_json={"witness": {"day": "OFF"}})
-    scalar = EvalCase("scalar", "new-schedule", "Count", False, answer_json={"count": 1})
-    before = case_digest(nested), case_digest(scalar)
+    case = EvalCase("json-answer", "new-schedule", "Return JSON.", False, answer_json={"value": expected})
+    no_json = EvalCase("text-answer", "new-schedule", "Explain.", False)
+    before = case_digest(case), case_digest(no_json)
+    outcome = RunOutcome(answer=json.dumps({"value": actual}))
+    assert not grade(case, outcome).passed
 
     def different_oracle(actual, expected):
         return True
 
     monkeypatch.setattr(grading, "_answer_json_matches", different_oracle)
-    assert case_digest(nested) != before[0]
-    assert case_digest(scalar) == before[1]
+    assert grade(case, outcome).passed
+    assert case_digest(case) != before[0]
+    assert case_digest(no_json) == before[1]
 
 
 @pytest.mark.parametrize("edit_before_start", [False, True])
@@ -225,7 +256,7 @@ def test_edit_then_optimize_grades_the_submitted_snapshot(edit_before_start):
     from nurse_scheduling.loader import _load_yaml
 
     case = CASE_BY_ID["optimizer-edit-before-start"]
-    initial = FIXTURE.read_text()
+    initial = FIXTURE.read_text(encoding="utf-8")
     updated = initial.replace("weight: 11000000}", "weight: 11000000000}")
     result = grade(
         case,
@@ -253,7 +284,7 @@ def test_optimizer_only_input_must_preserve_original_policy(alter_source):
     from nurse_scheduling.loader import _load_yaml
 
     case = CASE_BY_ID["optimizer-start-preserves-ward"]
-    source = FIXTURE.read_text()
+    source = FIXTURE.read_text(encoding="utf-8")
     submitted = source.replace("weight: 11000000000}", "weight: 11}") if alter_source else source
     result = grade(
         case,
@@ -276,8 +307,8 @@ def test_optimizer_only_input_must_preserve_original_policy(alter_source):
 def test_pending_completion_uses_the_modified_input_snapshot():
     from .ai_eval.optimizer_fixtures import RESULT_SOURCES
 
-    approved = FIXTURE.read_text()
-    pending = RESULT_SOURCES["request-audit-pending"].read_text()
+    approved = FIXTURE.read_text(encoding="utf-8")
+    pending = RESULT_SOURCES["request-audit-pending"].read_text(encoding="utf-8")
     _, approved_result = completion_result("request-audit", approved)
     _, pending_result = completion_result("request-audit-pending", pending)
     assert approved_result["source_sha256"] != pending_result["source_sha256"]
@@ -295,11 +326,10 @@ def test_multi_turn_completion_prewarms_the_expected_snapshot():
     from .ai_eval.runner import run_all
 
     case = CASE_BY_ID["optimizer-result-from-pending-proposal"]
-    pending = RESULT_SOURCES[case.optimizer_completion].read_text()
+    pending = RESULT_SOURCES[case.optimizer_completion].read_text(encoding="utf-8")
     provider = ScriptedProvider(
         [ToolCallRequest((ToolCall("write", "write", json.dumps({"path": WORKSPACE_SCHEDULE, "content": pending})),))],
         [ToolCallRequest((ToolCall("start", "optimizer", '{"action":"start","timeout_seconds":60}'),))],
-        [TextDelta("Running with the proposed input.")],
         [TextDelta(json.dumps(case.answer_json))],
     )
     runs = asyncio.run(run_all([case], settings(), provider, 4, _factory()))
@@ -310,7 +340,7 @@ def test_completion_context_matches_the_submitted_proposal():
     from .ai_eval.optimizer_fixtures import RESULT_SOURCES
 
     case = CASE_BY_ID["optimizer-result-from-pending-proposal"]
-    submitted = RESULT_SOURCES[case.optimizer_completion].read_text()
+    submitted = RESULT_SOURCES[case.optimizer_completion].read_text(encoding="utf-8")
     provider = ScriptedProvider(
         [
             ToolCallRequest(
@@ -318,7 +348,6 @@ def test_completion_context_matches_the_submitted_proposal():
             )
         ],
         [ToolCallRequest((ToolCall("start", "optimizer", '{"action":"start","timeout_seconds":60}'),))],
-        [TextDelta("Running with the proposed input.")],
         [ToolCallRequest((ToolCall("context", "read", json.dumps({"path": WORKSPACE_RESULT_CONTEXT})),))],
         [TextDelta(json.dumps(case.answer_json))],
     )
@@ -333,13 +362,13 @@ def test_completion_context_matches_the_submitted_proposal():
 
 
 @pytest.mark.parametrize("review_changes_workspace", [False, True])
-def test_pending_result_review_must_not_create_another_proposal(review_changes_workspace):
+def test_result_review_must_not_create_another_proposal(review_changes_workspace):
     from nurse_scheduling.loader import _load_yaml
 
     from .ai_eval.optimizer_fixtures import RESULT_SOURCES
 
     case = CASE_BY_ID["optimizer-result-from-pending-proposal"]
-    pending = RESULT_SOURCES[case.optimizer_completion].read_text()
+    pending = RESULT_SOURCES[case.optimizer_completion].read_text(encoding="utf-8")
     result = grade(
         case,
         RunOutcome(
@@ -371,7 +400,10 @@ def test_current_request_fingerprint_ignores_unrelated_result_cli_changes(tmp_pa
     before = case_digest(current), case_digest(completed)
     key = "/reference/tools/inspect_optimizer_result.py"
     changed = tmp_path / "inspect_optimizer_result.py"
-    changed.write_text(workspace.REFERENCE_ATTACHMENT_TOOLS[key].read_text() + "\n# Changed result CLI\n")
+    changed.write_text(
+        workspace.REFERENCE_ATTACHMENT_TOOLS[key].read_text(encoding="utf-8") + "\n# Changed result CLI\n",
+        encoding="utf-8",
+    )
     monkeypatch.setitem(workspace.REFERENCE_ATTACHMENT_TOOLS, key, changed)
     assert case_digest(current) == before[0]
     assert case_digest(completed) != before[1]

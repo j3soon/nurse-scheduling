@@ -50,6 +50,48 @@ def _live(pid):
         return False
 
 
+@pytest.mark.parametrize("read_error", ["FileNotFoundError", "ProcessLookupError"])
+def test_cleanup_ignores_disappearing_unrelated_process(read_error):
+    read_errno = 2 if read_error == "FileNotFoundError" else 3
+    parent = subprocess.Popen(
+        ["bash", "-c", isolated_command("sleep 30")], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        deadline = time.monotonic() + 5
+        while os.getpgid(parent.pid) != parent.pid and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert os.getpgid(parent.pid) == parent.pid
+        # A proc entry can disappear after it was opened. Keep the real target
+        # group available while injecting that read error for an unrelated PID.
+        probe = (
+            f"""import pathlib
+previous_read = pathlib.Path.read_text
+def read_stat(path, *args, **kwargs):
+    if str(path) == "/proc/{unrelated.pid}/stat":
+        raise {read_error}({read_errno}, "Process exited during read")
+    return previous_read(path, *args, **kwargs)
+pathlib.Path.read_text = read_stat
+"""
+            + STOP_GROUP_SOURCE
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", probe, str(parent.pid)], capture_output=True, timeout=3, check=False
+        )
+        assert result.returncode == 0, result.stderr.decode()
+        parent.communicate(timeout=3)
+        assert parent.returncode == -signal.SIGKILL
+        assert unrelated.poll() is None
+    finally:
+        try:
+            os.killpg(parent.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        parent.communicate(timeout=3)
+        unrelated.terminate()
+        unrelated.wait(timeout=3)
+
+
 @pytest.mark.parametrize("escaped", [False, True], ids=["ordinary-child", "detached-orphan"])
 def test_cleanup_stops_children_or_rejects_an_escaped_descendant(tmp_path, escaped):
     ready = tmp_path / "ready"

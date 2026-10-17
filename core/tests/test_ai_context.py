@@ -25,7 +25,6 @@ import pytest
 
 from nurse_scheduling.ai.context import (
     ABORTED_RESPONSE_HISTORY,
-    PROPOSAL_APPROVED_HISTORY,
     SCHEDULE_CHANGED_EVENT,
     build_provider_messages,
     cap_transcript,
@@ -41,7 +40,6 @@ from nurse_scheduling.ai.sessions import SessionStore
 from nurse_scheduling.ai.transcript import (
     AppEventEntry,
     AssistantMessage,
-    ProposalDecisionEntry,
     ToolCall,
     ToolResultImage,
     ToolResultMessage,
@@ -142,8 +140,8 @@ def test_provider_receives_all_tool_replies_before_images_and_steering():
     assert all(message["content"][-1]["type"] == "image_url" for message in request[3:5])
 
 
-@pytest.mark.parametrize("tail", [AssistantMessage("orphan answer"), ProposalDecisionEntry("approved")])
-def test_history_budget_drops_an_answer_or_decision_without_its_prompt(tail):
+def test_history_budget_drops_an_answer_without_its_prompt():
+    tail = AssistantMessage("orphan answer")
     entries = [UserMessage("q" * 300), tail]
     selected = project_history(entries, history_chars(projected_history([tail])))
     assert selected.messages == []
@@ -167,19 +165,19 @@ def test_history_budget_starts_at_an_app_event_and_counts_serialized_unicode():
 
 def test_retention_keeps_the_whole_newest_run_including_steering():
     newest = [UserMessage("edit"), AssistantMessage("first"), UserMessage("steer"), AssistantMessage("last")]
-    transcript = [UserMessage("old"), AssistantMessage("old answer"), ProposalDecisionEntry("rejected"), *newest]
+    transcript = [UserMessage("old"), AssistantMessage("old answer"), AppEventEntry(SCHEDULE_CHANGED_EVENT), *newest]
     assert cap_transcript(transcript, 2, 1, len(newest)) == 3
     assert transcript == newest
 
 
-def test_legacy_recovery_preserves_the_next_provider_request_after_decisions_and_failure():
+def test_legacy_recovery_preserves_the_next_provider_request_after_app_events_and_failure():
     store = SessionStore(make_settings())
     session = store.create("owner", schedule_yaml())
     snapshot = store.begin(session.id, "owner")
     entries = [
         UserMessage("Change it"),
-        AssistantMessage("Proposal"),
-        ProposalDecisionEntry("approved"),
+        AssistantMessage("Changed"),
+        AppEventEntry(SCHEDULE_CHANGED_EVENT),
         UserMessage("Next"),
         AssistantMessage("Provisional", "error"),
     ]
@@ -188,7 +186,6 @@ def test_legacy_recovery_preserves_the_next_provider_request_after_decisions_and
     owner, expires, state = store.recovery_state(session.id)
     assert set(state) == {
         "schedule_yaml",
-        "pending_proposal",
         "dropped_history_messages",
         "dropped_entries",
         "frontend_version",
@@ -196,7 +193,7 @@ def test_legacy_recovery_preserves_the_next_provider_request_after_decisions_and
         "export_metadata",
     }
     records = [entry_record(entry) for entry in session.transcript]
-    assert ("proposal_decision", {"decision": "approved"}) in records
+    assert ("app_event", {"text": SCHEDULE_CHANGED_EVENT}) in records
     recovered = SessionStore(make_settings())
     recovered.restore(
         session.id,
@@ -213,8 +210,8 @@ def test_legacy_recovery_preserves_the_next_provider_request_after_decisions_and
 
 @pytest.mark.parametrize(
     "question",
-    [PROPOSAL_APPROVED_HISTORY, SCHEDULE_CHANGED_EVENT, "Ordinary question"],
-    ids=["decision-text", "app-event-text", "ordinary"],
+    [SCHEDULE_CHANGED_EVENT, "Ordinary question"],
+    ids=["app-event-text", "ordinary"],
 )
 def test_typed_recovery_preserves_user_origin_and_interrupted_output(question):
     store = SessionStore(make_settings())
@@ -246,7 +243,6 @@ def test_typed_entry_storage_preserves_tool_calls_and_excludes_image_bytes():
         UserMessage("Question"),
         AssistantMessage("Checking", "tool_use", "Reasoning", (call,)),
         ToolResultMessage(call.id, call.name, "Result", True, ToolResultImage("image/png", b"private bytes")),
-        ProposalDecisionEntry("approved"),
         AppEventEntry("Upload event"),
     ]
     records = json.loads(json.dumps([entry_record(entry) for entry in entries]))
@@ -256,6 +252,11 @@ def test_typed_entry_storage_preserves_tool_calls_and_excludes_image_bytes():
         ToolResultMessage(call.id, call.name, "Result", True),
         *entries[3:],
     ]
+    # Earlier versions stored the user's approval. It restores as the app event the model received.
+    legacy = entry_from_record("proposal_decision", {"decision": "approved"})
+    assert legacy == AppEventEntry(
+        "[App event] The user approved the previous schedule proposal. Its changes are now part of the current schedule."
+    )
 
 
 def test_legacy_text_history_converts_to_typed_entries():

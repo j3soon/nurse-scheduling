@@ -26,7 +26,6 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from .candidate import PendingProposal
 from .transcript import AgentMessage
 from .workspace import SandboxAttachment
 
@@ -41,7 +40,6 @@ class RunSnapshot:
     transcript: list[AgentMessage]
     schedule_yaml: str
     version: int
-    pending_proposal: PendingProposal | None
     previously_dropped: int = 0
     run_id: str | None = None
     # Uploads cannot change while a run is active, so this stays valid for the whole run.

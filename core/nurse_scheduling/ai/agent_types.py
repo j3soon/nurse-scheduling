@@ -80,7 +80,7 @@ class AgentSteering:
 
 @dataclass(frozen=True)
 class AgentProposal:
-    """The schedule the run ended with, waiting for the user to approve it."""
+    """The validated schedule the run ended with, which becomes the current schedule."""
 
     text: str
     diff: str
@@ -110,6 +110,8 @@ class AgentToolOutcome:
     image: ToolResultImage | None = None
     terminal: bool = False
     details: dict[str, Any] | None = None
+    # Finish this exchange with verified text, then honor accepted steering.
+    end_turn_message: str | None = None
 
 
 @dataclass(frozen=True)

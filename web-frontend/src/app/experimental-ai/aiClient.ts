@@ -34,6 +34,22 @@ export interface ToolActivity {
   arguments: string;
   result: string;
   ok: boolean;
+  // The trusted schedule check that `result` ends with, when the tool changed the working copy.
+  scheduleCheck?: ScheduleCheck;
+}
+
+export interface ScheduleCheck {
+  ok: boolean;
+  text: string;
+}
+
+// A run's validated schedule, which the backend adopted. The browser applies it only over its base revision.
+export interface ScheduleApplied {
+  runId: string;
+  scheduleYaml: string;
+  baseSha256: string;
+  sha256: string;
+  diff: string;
 }
 
 export type ToolStartActivity = Pick<ToolActivity, 'toolCallId' | 'name' | 'arguments'>;
@@ -76,7 +92,6 @@ export interface SessionReset {
   activeRunId: string | null;
   terminalRunIds: string[];
   incomplete: boolean;
-  proposalDiff: string | null;
 }
 
 export interface AiCapabilities {
@@ -88,6 +103,7 @@ export interface AiCapabilities {
     enabled: boolean;
     max_files: number;
     max_bytes_per_file: number;
+    max_bytes_per_session: number;
     retained?: boolean;
   };
 }
@@ -165,7 +181,9 @@ interface SsePayload {
   events?: unknown;
   incomplete?: unknown;
   active_run_id?: unknown;
-  proposal_diff?: unknown;
+  schedule_check?: unknown;
+  base_sha256?: unknown;
+  sha256?: unknown;
 }
 
 // Older backends omit the ID, so callers fall back to matching by tool name.
@@ -265,6 +283,8 @@ export async function getCapabilities(signal?: AbortSignal, endpoint = getAiBase
     || files.max_files <= 0
     || !Number.isInteger(files.max_bytes_per_file)
     || files.max_bytes_per_file <= 0
+    || !Number.isSafeInteger(files.max_bytes_per_session)
+    || files.max_bytes_per_session <= 0
     || (files.retained !== undefined && typeof files.retained !== 'boolean')
     || (body.saved_chat_export !== undefined && typeof body.saved_chat_export !== 'boolean')
   ) {
@@ -427,14 +447,8 @@ function consumeEvent(block: string, callbacks: SessionStreamOptions): void {
           ? [event.data.run_id] : []),
       activeRunId: typeof payload.active_run_id === 'string' ? payload.active_run_id : null,
       incomplete: payload.incomplete === true,
-      proposalDiff: typeof payload.proposal_diff === 'string' && payload.proposal_diff ? payload.proposal_diff : null,
     };
-    events = [
-      { type: 'session_reset', reset },
-      ...recoveredEvents,
-      // Proposal ownership may have changed since the retained run produced it.
-      { type: 'proposal', diff: reset.proposalDiff ?? '' },
-    ];
+    events = [{ type: 'session_reset', reset }, ...recoveredEvents];
   } else {
     events = decodeEvent(eventType, payload);
   }
@@ -483,6 +497,9 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
         arguments: typeof payload.arguments === 'string' ? payload.arguments : '',
         result: typeof payload.result === 'string' ? payload.result : '',
         ok: payload.ok !== false,
+        ...(isRecord(payload.schedule_check) && typeof payload.schedule_check.ok === 'boolean'
+          && typeof payload.schedule_check.text === 'string'
+          ? { scheduleCheck: { ok: payload.schedule_check.ok, text: payload.schedule_check.text } } : {}),
       },
     });
   } else if (
@@ -498,8 +515,14 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
     emit({ type: 'schedule_change', scheduleYaml: payload.schedule_yaml });
   } else if (eventType === 'download' && typeof payload.download_id === 'string') {
     emit({ type: 'download', downloadId: payload.download_id });
-  } else if (eventType === 'proposal' && typeof payload.diff === 'string') {
-    emit({ type: 'proposal', diff: payload.diff });
+  } else if (eventType === 'schedule_applied') {
+    if (!runId || typeof payload.schedule_yaml !== 'string' || typeof payload.base_sha256 !== 'string'
+      || typeof payload.sha256 !== 'string' || typeof payload.diff !== 'string') {
+      throw new Error('The AI backend returned an invalid schedule change.');
+    }
+    emit({ type: 'schedule_applied', applied: {
+      runId, scheduleYaml: payload.schedule_yaml, baseSha256: payload.base_sha256, sha256: payload.sha256, diff: payload.diff,
+    } });
   } else if (
     eventType === 'optimization'
     && typeof payload.job_id === 'string'
@@ -626,7 +649,7 @@ export interface SendMessageOptions {
 }
 
 /**
- * Post a question and return its run ID. Upload its files first with `uploadFiles`, so the
+ * Post a question and return its run ID. Upload its files first with `uploadFile`, so the
  * backend records them as their own event.
  *
  * A lost response can hide an accepted message, so connection failures retry with the same
@@ -847,14 +870,47 @@ export async function uploadFiles(
   authToken: string | null,
   endpoint = getAiBaseUrl(),
   signal?: AbortSignal,
+  uploadId?: string,
 ): Promise<UploadedFile[]> {
   const form = new FormData();
   files.forEach(file => form.append('files', file, file.name));
-  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/uploads`, {
+  const suffix = uploadId ? `?upload_id=${encodeURIComponent(uploadId)}` : '';
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/uploads${suffix}`, {
     method: 'POST', credentials: 'include', headers: authorizedHeaders(authToken), body: form, signal,
   });
   if (!response.ok) throw await responseError(response);
   return parseUploadList(await response.json());
+}
+
+const UPLOAD_ATTEMPTS = 4;
+
+/**
+ * Upload one file, and retry connection failures and server errors before the caller asks the
+ * user to retry. Every attempt uses the same upload ID, so the server returns the retained
+ * file when an earlier attempt succeeded but its response was lost.
+ */
+export async function uploadFile(
+  sessionId: string,
+  file: File,
+  signal: AbortSignal,
+  authToken: string | null,
+  endpoint = getAiBaseUrl(),
+): Promise<UploadedFile[]> {
+  const uploadId = crypto.randomUUID();
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const uploaded = await uploadFiles(sessionId, [file], authToken, endpoint, signal, uploadId);
+      if (uploaded.length !== 1 || uploaded[0].id !== uploadId) {
+        throw new Error('The AI backend returned a different upload ID.');
+      }
+      return uploaded;
+    } catch (error) {
+      // fetch rejects with a TypeError when the connection fails.
+      const retryable = error instanceof TypeError || (error instanceof AiHttpError && error.status >= 500);
+      if (signal.aborted || !retryable || attempt === UPLOAD_ATTEMPTS) throw error;
+    }
+    await waitForReconnect(1000 * 2 ** (attempt - 1), signal);
+  }
 }
 
 function parseUploadList(files: unknown): UploadedFile[] {
@@ -912,42 +968,4 @@ export async function updateSessionSchedule(
     body: JSON.stringify({ schedule_yaml: scheduleYaml }),
   });
   if (!response.ok) throw await responseError(response);
-}
-
-export async function approveProposal(
-  sessionId: string,
-  scheduleYaml: string,
-  authToken: string | null,
-  endpoint = getAiBaseUrl(),
-): Promise<{ scheduleYaml: string; historySaved: boolean }> {
-  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/proposal/approve`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ base_sha256: await scheduleRevision(scheduleYaml) }),
-  });
-  if (!response.ok) throw await responseError(response);
-
-  const body = await response.json() as { schedule_yaml?: unknown; history_saved?: unknown };
-  if (typeof body.schedule_yaml !== 'string' || !body.schedule_yaml || typeof body.history_saved !== 'boolean') {
-    throw new Error('The AI backend returned an invalid proposal.');
-  }
-  return { scheduleYaml: body.schedule_yaml, historySaved: body.history_saved };
-}
-
-/** Reject the pending proposal and return whether recovery storage saved the rejection. */
-export async function rejectProposal(
-  sessionId: string,
-  authToken: string | null,
-  endpoint = getAiBaseUrl(),
-): Promise<boolean> {
-  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/proposal/reject`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: authorizedHeaders(authToken),
-  });
-  if (!response.ok) throw await responseError(response);
-  const body = await response.json() as { history_saved?: unknown };
-  if (typeof body.history_saved !== 'boolean') throw new Error('The AI backend returned an invalid rejection.');
-  return body.history_saved;
 }

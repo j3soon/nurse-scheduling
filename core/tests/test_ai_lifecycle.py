@@ -27,7 +27,6 @@ import pytest
 from fastapi import HTTPException
 
 from nurse_scheduling.ai.app import OWNER_COOKIE, SessionStore
-from nurse_scheduling.ai.candidate import PendingProposal
 from nurse_scheduling.ai.context import ABORTED_RESPONSE_HISTORY
 from nurse_scheduling.ai.history import ChatHistory
 from nurse_scheduling.ai.lifecycle import SessionRuns
@@ -230,31 +229,6 @@ def test_schedule_round_trip_invalidates_an_in_flight_snapshot():
     store.update_schedule(session.id, "owner", original)
     assert not store.finish(session.id, [UserMessage("question"), AssistantMessage("answer")], snapshot=turn).run_saved
     assert session.transcript == []
-
-
-@pytest.mark.parametrize("decision", ["reject", "stale-approval"])
-def test_discarding_a_proposal_revokes_a_turn_that_was_using_it(decision):
-    store = SessionStore(make_settings())
-    session = store.create("owner", schedule_yaml())
-    first = store.begin(session.id, "owner", run_id="proposal-run")
-    proposal = (schedule_yaml() + "\n", "proposal diff")
-    assert store.finish(
-        session.id, [UserMessage("Edit"), AssistantMessage("Proposal")], proposal, snapshot=first
-    ).proposal_saved
-    revising = store.begin(session.id, "owner")
-    captured = PendingProposal(proposal[0], proposal[1], "proposal-run")
-    assert revising.pending_proposal == captured
-    if decision == "reject":
-        store.discard_proposal(session.id, "owner")
-    else:
-        with pytest.raises(HTTPException) as stale:
-            store.approve_proposal(session.id, "owner", "0" * 64)
-        assert stale.value.status_code == 409
-    assert not store.finish(
-        session.id, [UserMessage("Revise"), AssistantMessage("Revised")], proposal, snapshot=revising
-    ).run_saved
-    assert session.pending_proposal is None
-    assert revising.pending_proposal == captured
 
 
 @pytest.mark.parametrize("background", [False, True], ids=["foreground", "background"])
@@ -484,9 +458,8 @@ def test_message_ack_and_get_replay_keep_execution_independent_of_readers():
             count = len(observed)
 
             # A missed required event restores a compact snapshot, not a silently
-            # truncated stream. Current proposal ownership accompanies that snapshot.
+            # truncated stream.
             app.state.session_event_stream._max_events = 1
-            session.pending_proposal = PendingProposal(schedule_yaml(), "Pending schedule changes", run_id)
             session.publish(
                 {
                     "type": "tool",
@@ -501,7 +474,6 @@ def test_message_ack_and_get_replay_keep_execution_independent_of_readers():
             recovery = await read_until("session_reset")
             data = json.loads(next(line[6:] for line in recovery.splitlines() if line.startswith("data: ")))
             assert data["active_run_id"] is None
-            assert data["proposal_diff"] == "Pending schedule changes"
             assert any(event["type"] == "done" for event in data["events"])
             assert len(observed) == count
 
@@ -536,5 +508,112 @@ def test_retired_session_does_not_recreate_its_event_history():
         assert not app.state.session_event_stream.events_after(session.id)
         assert app.state.session_event_stream._retained_bytes == 0
         assert await anext(session.events(0), None) is None
+
+    asyncio.run(exercise())
+
+
+def test_optimizer_completion_can_retry_and_review_again_without_a_user_turn():
+    from io import BytesIO
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from nurse_scheduling import schedule
+    from nurse_scheduling.ai.attachment_tools.inspect_optimizer_result import inspect_result
+    from nurse_scheduling.ai.optimizer import OptimizerArtifact
+    from nurse_scheduling.ai.provider import ToolCall, ToolCallRequest
+    from nurse_scheduling.ai.sandbox import CommandResult
+    from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
+    from nurse_scheduling.ai.workspace import WORKSPACE_RESULT_CONTEXT
+
+    from .test_ai_basic import ScriptedToolProvider
+    from .test_ai_optimizer import FakeOptimizerBackend
+
+    async def exercise():
+        class Backend(FakeOptimizerBackend):
+            async def get(self, job_id):
+                payload = await super().get(job_id)
+                if payload.state == "completed":
+                    payload.result = {
+                        "outcome": "feasible",
+                        "solver_status": "FEASIBLE",
+                        "score": 0 if job_id == "remote-1" else 1,
+                    }
+                return payload
+
+            async def result_artifact(self, job):
+                source = self.submissions[int(job.id.rsplit("-", 1)[1]) - 1][0]
+                first = job.id == "remote-1"
+                forced = {
+                    (day, shift, person): int(day == 0 and person == 0 and shift == (1 if first else 0))
+                    for day in range(2)
+                    for shift in range(2)
+                    for person in range(2)
+                }
+                output = schedule(
+                    source.encode(), solver="ortools/cp-sat", forced_solution=forced, timeout=5, prettify=True
+                )
+                from nurse_scheduling.exporter import export_to_excel
+
+                output.dataframe.data.loc[output.dataframe.data.iloc[:, 0] == "Status"] = output.dataframe.data.loc[
+                    output.dataframe.data.iloc[:, 0] == "Status"
+                ].replace("OPTIMAL", "FEASIBLE")
+                data = BytesIO()
+                export_to_excel(output.dataframe, data, output.cell_export_info)
+                return OptimizerArtifact(
+                    data.getvalue(), "result.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+
+        audits = []
+
+        def inspect(_command, _timeout, sandbox):
+            with TemporaryDirectory() as directory:
+                workbook = Path(directory) / "result.xlsx"
+                workbook.write_bytes(sandbox.files["/workspace/optimizer-results/optimized-schedule.xlsx"])
+                context = json.loads(sandbox.files[WORKSPACE_RESULT_CONTEXT])
+                result = inspect_result(workbook, context, context["source_sha256"])
+            audits.append(result)
+            return CommandResult(json.dumps(result), "", 0)
+
+        start = [ToolCallRequest((ToolCall("start", "optimizer", '{"action":"start"}'),))]
+        review = [ToolCallRequest((ToolCall("review", "bash", '{"command":"inspect result"}'),))]
+        provider = ScriptedToolProvider(
+            start,
+            review,
+            start,
+            review,
+            [TextDelta("Reviewed fresh result.")],
+        )
+        backend = Backend()
+        backend.release.set()
+        factory = FakeSandboxFactory(lambda id: FakeSandboxBackend(id, command_handler=inspect))
+        app = create_test_app(
+            settings=make_settings(optimizer_poll_interval_seconds=0.001),
+            provider=provider,
+            sandbox_factory=factory,
+            optimizer_backend=backend,
+        )
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://testserver",
+                headers={**AI_AUTH_HEADERS, "Accept": "application/json"},
+            ) as client,
+        ):
+            sid = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
+            response = await client.post(f"/sessions/{sid}/messages", json={"message": "Prepare and check the roster."})
+            assert response.status_code == 202
+            async with asyncio.timeout(5):
+                while len(audits) < 2 or app.state.runs.busy(sid):
+                    await asyncio.sleep(0.001)
+            assert [a["summary"][0]["unmet"] for a in audits] == [1, 0]
+            assert len(backend.submissions) == 2
+            assert backend.deleted == ["remote-1", "remote-2"]
+            events = app.state.session_event_stream.events_after(sid)
+            assert [e.data["trigger"] for e in events if e.type == "run_start"] == ["user", "optimizer", "optimizer"]
+            assert sum(e.type == "done" for e in events) == 3
+            assert not any(e.type in {"stale", "error", "stopped"} for e in events)
+            session = app.state.session_store.get(sid)
+            assert session.transcript[-1] == AssistantMessage("Reviewed fresh result.")
 
     asyncio.run(exercise())

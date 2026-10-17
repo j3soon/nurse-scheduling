@@ -29,6 +29,7 @@ from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 
+import httpx
 import pytest
 from ruamel.yaml import YAML
 
@@ -68,8 +69,15 @@ from nurse_scheduling.ai.workspace import (
 from nurse_scheduling.loader import _load_yaml
 
 from .ai_eval.comparison import comparison_metrics_markdown, comparison_statistics
-from .ai_eval.grading import EvalCase, ExpectedDiff, RunOutcome, ToolUsageExpectation, TurnAction, grade, load_cases
-from .ai_eval.prompt_ladder import STEPS_PATH, case_digest, load_prompt_steps, prompt_at_step, validate_prompt_evidence
+from .ai_eval.grading import EvalCase, ExpectedDiff, RunOutcome, ToolUsageExpectation, grade, load_cases
+from .ai_eval.prompt_ladder import (
+    STEPS_PATH,
+    case_digest,
+    load_prompt_steps,
+    oracle_sha256,
+    prompt_at_step,
+    validate_prompt_evidence,
+)
 from .ai_eval.runner import (
     CASES,
     DEFAULT_CASE_JOBS,
@@ -125,6 +133,34 @@ def test_prompt_steps_reconstruct_production_and_link_real_cases():
     for index in range(1, len(steps) + 1):
         assert prompt_at_step(index).startswith(prompt_at_step(index - 1))
         assert sections[index - 1] not in prompt_at_step(index, omit=index)
+
+
+def test_file_workflow_prefixes_include_download_delivery_guidance():
+    steps = load_prompt_steps()
+    delivery_index = next(index for index, step in enumerate(steps) if step.id == "generated-downloads")
+    delivery = load_system_prompt_sections()[delivery_index]
+    for index, step in enumerate(steps):
+        if step.id == "generated-downloads":
+            continue
+        if any(CASE_BY_ID[case_id].download_files for case_id in step.cases):
+            before = (
+                prompt_at_step(len(steps), omit=index + 1)
+                if step.comparison_mode == "ablation"
+                else prompt_at_step(index)
+            )
+            assert delivery in before, f"{step.id} tests file delivery without the download contract"
+
+
+def test_grading_fingerprints_cover_called_helpers(monkeypatch):
+    from .ai_eval import grading
+
+    before = oracle_sha256(grading._answer_json_matches)
+
+    def changed_json_value(value, field_name=""):
+        return {"changed": value}
+
+    monkeypatch.setattr(grading, "_json_value", changed_json_value)
+    assert oracle_sha256(grading._answer_json_matches) != before
 
 
 def test_every_shipped_prompt_clause_has_current_repeated_benefit_evidence():
@@ -505,7 +541,6 @@ def test_optimizer_status_control_requires_a_fresh_call_in_the_later_user_turn()
     case = CASE_BY_ID["tool-optimizer-status-on-request"]
     responses = [
         [ToolCallRequest((ToolCall("start", "optimizer", '{"action":"start"}'),))],
-        [TextDelta("Optimization is running in the background. You can keep chatting.")],
     ]
     provider = ScriptedProvider(
         *responses,
@@ -604,7 +639,7 @@ def test_missing_required_tool_does_not_stop_a_run_before_later_success():
     )
     run = asyncio.run(run_case(provider, settings(), case, _factory()))
     assert run.passed
-    assert len(provider.messages) == 3
+    assert len(provider.messages) == 2
 
 
 def test_provider_wait_time_is_recorded_per_inference_turn():
@@ -883,7 +918,6 @@ def test_cases_are_selected_by_id_and_by_category():
         "dates-range-shrink",
         "direct-combined-exact-edits",
         "download-generated-zip",
-        "external-update-invalidates-pending",
         "explain-ai-attachments",
         "guide-add-person",
         "guide-load-yaml",
@@ -902,12 +936,10 @@ def test_cases_are_selected_by_id_and_by_category():
         "pref-modify-one-near-duplicate",
         "pref-requirement-modify-existing",
         "pronoun-selects-second-request",
-        "question-then-approve-pending",
         "reject-contradicting-follow-up",
         "reject-conflicting-shift-request",
         "reject-shift-type-rename-collision",
         "reject-unknown-person",
-        "reject-then-narrower-edit",
         "revise-unapproved-proposal-twice",
         "shift-type-remove-cascade",
         "shift-type-rename-cascade",
@@ -1056,34 +1088,91 @@ def test_a_multi_user_turn_case_can_grade_an_earlier_proposal():
     assert run.passed
 
 
-def test_approval_adopts_the_proposal_and_adds_trusted_history():
+def test_the_next_turn_starts_from_the_applied_schedule():
     case = EvalCase(
-        id="approval",
+        id="applied",
         fixture="new-schedule",
         question="Set the description.",
         expect_proposal=True,
         proposal_turn=1,
         user_turns=("Set the description.", "Is it current?"),
-        turn_actions=(TurnAction(1, "approve"),),
         expected_diff=(ExpectedDiff(path="description", before="", after="Ready", compares_value=True),),
         changes=("description",),
         answer_contains=("current",),
     )
     provider = ScriptedProvider(
         [ToolCallRequest((ToolCall("call_0", BASH_TOOL, '{"command":"edit description"}'),))],
-        [TextDelta("I propose Ready.")],
+        [TextDelta("I set Ready.")],
+        [ToolCallRequest((ToolCall("call_1", BASH_TOOL, '{"command":"cat schedule.yaml"}'),))],
         [TextDelta("It is current.")],
     )
 
-    def edit(_command: str, _timeout: float | None, backend: FakeSandboxBackend) -> CommandResult:
-        current = backend.files[WORKSPACE_SCHEDULE].decode()
-        backend.files[WORKSPACE_SCHEDULE] = current.replace("description: ''", "description: Ready", 1).encode()
+    def edit(command: str, _timeout: float | None, backend: FakeSandboxBackend) -> CommandResult:
+        if command == "edit description":
+            current = backend.files[WORKSPACE_SCHEDULE].decode()
+            backend.files[WORKSPACE_SCHEDULE] = current.replace("description: ''", "description: Ready", 1).encode()
+        return CommandResult("updated\n", "", 0)
+
+    factory = _factory(edit)
+    run = asyncio.run(run_case(provider, settings(), case, factory))
+
+    assert run.passed
+    # The second turn reads the schedule without editing it, so its VM starts from the applied change.
+    assert b"description: Ready" in factory.created[1].files[WORKSPACE_SCHEDULE]
+
+
+@pytest.mark.parametrize("decision", ["accepted", "declined"])
+def test_optimization_offer_decisions_keep_the_first_turn_edit(decision):
+    case = CASE_BY_ID[f"optimization-loop-offer-{decision}"]
+    provider = ScriptedProvider(
+        [ToolCallRequest((ToolCall("edit", BASH_TOOL, '{"command":"edit avoidance"}'),))],
+        [TextDelta("I can optimize this schedule. Would you like that?")],
+        [ToolCallRequest((ToolCall("start", "optimizer", '{"action":"start"}'),))]
+        if decision == "accepted"
+        else [TextDelta("I will keep the edit and skip optimization.")],
+        *([[TextDelta("Running in the background.")]] if decision == "accepted" else []),
+    )
+
+    def edit(_command, _timeout, backend):
+        current = backend.files[WORKSPACE_SCHEDULE].decode("utf-8")
+        backend.files[WORKSPACE_SCHEDULE] = current.replace("weight: -1", "weight: -100", 1).encode("utf-8")
         return CommandResult("updated\n", "", 0)
 
     run = asyncio.run(run_case(provider, settings(), case, _factory(edit)))
 
-    assert run.passed
-    assert any("approved the previous schedule proposal" in message["content"] for message in provider.messages[2])
+    assert run.passed, run.failures
+    assert run.proposed
+    assert sum(event["kind"] == "proposal" for event in run.trajectory["events"]) == 1
+    submitted = [event["schedule_yaml"] for event in run.trajectory["events"] if event["kind"] == "optimizer_input"]
+    expected = fixture_text(case.fixture).replace("weight: -1", "weight: -100", 1)
+    assert submitted == ([expected] if decision == "accepted" else [])
+
+
+@pytest.mark.parametrize("repeats_prefix", [False, True])
+def test_provider_timeout_case_checks_the_retried_request_and_complete_answer(monkeypatch, repeats_prefix):
+    from .test_ai_provider import _delta_chunk, _sse_body, _transport_provider
+
+    case = CASE_BY_ID["provider-text-timeout-continuation"]
+    requests = []
+    continuation = "\n\nALPHA|BRAVO|CHARLIE" if repeats_prefix else "\n\nBRAVO|CHARLIE"
+
+    def handle(request):
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": []})
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, text=_sse_body(_delta_chunk({"content": continuation})))
+
+    provider = _transport_provider(monkeypatch, handle)
+    run = asyncio.run(run_case(provider, replace(settings(), provider_retry_backoff_seconds=0), case, _factory()))
+
+    assert run.passed is (not repeats_prefix), run.failures
+    assert run.answer == case.provider_timeout_after_text + continuation
+    assert run.provider_attempts_per_turn == [2]
+    assert len(requests) == 1
+    assert requests[0]["messages"][-2:] == [
+        {"role": "assistant", "content": case.provider_timeout_after_text},
+        {"role": "user", "content": "[App event] The response was interrupted after 6 text characters."},
+    ]
 
 
 def test_an_unknown_case_id_stops_the_run():
@@ -1899,3 +1988,61 @@ def test_history_import_case_checks_every_source_history():
             person["history"] = []
     wrong = grade(case, RunOutcome(answer="", initial=initial, proposed=proposal, activity=[]))
     assert len(wrong.failures()) == 31
+
+
+@pytest.mark.parametrize("retry", [False, True])
+def test_autonomous_review_delivers_each_completed_workbook_only_after_its_start(retry):
+    from nurse_scheduling.ai.attachment_tools.inspect_optimizer_result import inspect_result
+
+    from .ai_eval.optimizer_fixtures import completion_result
+
+    case = CASE_BY_ID["autonomous-policy-review-retry"]
+    delivered = []
+
+    def completion(name, source):
+        workbook, metadata = completion_result(name, source)
+        delivered.append(name)
+        return workbook, metadata
+
+    def audit(_command, _timeout, backend):
+        import tempfile
+        from pathlib import Path
+
+        from nurse_scheduling.ai.workspace import WORKSPACE_RESULT_CONTEXT
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "result.xlsx"
+            path.write_bytes(backend.files["/workspace/optimizer-results/optimized-schedule.xlsx"])
+            context = json.loads(backend.files[WORKSPACE_RESULT_CONTEXT])
+            counts = inspect_result(path, context, context["source_sha256"], max_unmet=0)
+        return CommandResult(json.dumps(counts), "", 0)
+
+    factory = _factory(audit)
+    first_tools = [ToolCallRequest((ToolCall("inspect-1", BASH_TOOL, '{"command":"audit"}'),))]
+    provider = ScriptedProvider(
+        [TextDelta("Preferred staffing and succession checks failed."), *first_tools],
+        (
+            [ToolCallRequest((ToolCall("retry", "optimizer", '{"action":"start"}'),))]
+            if retry
+            else [TextDelta("Please tell me to retry.")]
+        ),
+        [ToolCallRequest((ToolCall("inspect-2", BASH_TOOL, '{"command":"audit"}'),))],
+        [
+            TextDelta(
+                '{"strongUnmet":0,"preferredStaffingMisses":0,"successionViolations":0,"reviewedPolicySatisfied":true}'
+            )
+        ],
+    )
+    run = asyncio.run(run_case(provider, settings(), case, factory, optimizer_completion_factory=completion))
+    assert run.passed is retry
+    assert delivered == (["policy-audit-misses", "policy-audit-clean"] if retry else ["policy-audit-misses"])
+    if retry:
+        contexts = [
+            json.loads(backend.files["/workspace/optimizer-results/schedule-context.json"])
+            for backend in factory.created
+        ]
+        assert len(contexts) == 2
+        assert contexts[0]["workbook_sha256"] != contexts[1]["workbook_sha256"]
+        assert contexts[0]["source_sha256"] == contexts[1]["source_sha256"]
+        assert len(run.trajectory["user_turns"]) == 1
+        assert sum(event["kind"] == "optimizer_artifact" for event in run.trajectory["events"]) == 2

@@ -1,0 +1,20 @@
+{
+  "_license": "Copyright (C) 2023-2026 Johnson Sun. SPDX-License-Identifier: AGPL-3.0-or-later",
+  "_comment": "This test is mostly AI generated.",
+  "id": "csv-request-table-inspection",
+  "fixture": "new-schedule",
+  "attachments": ["request-table-csv"],
+  "question": "Verify requests.csv with code. It has a header. Report JSON with headers, row_count, first_date, second_person, shift_counts and weight_sum. Preserve date IDs as strings and names exactly. Sum the finite numeric weights. Do not edit or optimize the schedule.",
+  "expect_proposal": false,
+  "answer_json": {
+    "headers": ["person", "date", "shift", "weight"],
+    "row_count": 5,
+    "first_date": "01",
+    "second_person": "P2, Jr",
+    "shift_counts": {"D": 2, "OFF": 3},
+    "weight_sum": 20020000000
+  },
+  "tool_usage": {"required": ["bash"], "forbidden": ["optimizer"]},
+  "tags": ["attachment", "csv-inspection"],
+  "note": "BOM, quoted commas, scientific notation and padded IDs reproduce general parsing risks without copying customer data. Correct custom parsers are accepted."
+}

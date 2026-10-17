@@ -134,7 +134,7 @@ class ChatHistory:
         *,
         entries: Sequence[EntryRow] = (),
     ) -> None:
-        """Keep session ownership, expiry, schedule, proposal, and new conversation entries."""
+        """Keep session ownership, expiry, schedule, and new conversation entries."""
         with self._connect() as connection:
             self._save_state(connection, session_id, state, entries, credential_id)
 
@@ -185,6 +185,7 @@ class ChatHistory:
         session_id: str,
         state: SessionState,
         entries: Sequence[EntryRow] = (),
+        schedule_change: dict[str, Any] | None = None,
     ) -> None:
         """Commit the run outcome with the resulting session state, keeping the first terminal result.
 
@@ -193,9 +194,17 @@ class ChatHistory:
         with self._connect() as connection:
             self._save_state(connection, session_id, state, entries)
             connection.execute(
-                "UPDATE chat_runs SET status = %s, error_code = %s, usage = %s, committed = %s, finished_at = now() "
+                "UPDATE chat_runs SET status = %s, error_code = %s, usage = %s, committed = %s, "
+                "schedule_change = %s, finished_at = now() "
                 "WHERE id = %s AND status = 'running'",
-                (status, error_code, Jsonb(asdict(usage)) if usage else None, committed, run_id),
+                (
+                    status,
+                    error_code,
+                    Jsonb(asdict(usage)) if usage else None,
+                    committed,
+                    _jsonb(schedule_change) if schedule_change is not None else None,
+                    run_id,
+                ),
             )
 
     def append_events(self, session_id: str, rows: Sequence[EventRow]) -> None:
@@ -299,7 +308,7 @@ class ChatHistory:
                 (session_id,),
             ).fetchone()
             unfinished = connection.execute(
-                "SELECT r.id, r.kind, r.status, (SELECT e.type FROM chat_session_events e "
+                "SELECT r.id, r.kind, r.status, r.schedule_change, (SELECT e.type FROM chat_session_events e "
                 "WHERE e.session_id = r.session_id AND e.run_id = r.id "
                 "AND e.type IN ('done', 'stopped', 'stale', 'error') ORDER BY e.event_id DESC LIMIT 1) "
                 "FROM chat_runs r WHERE r.session_id = %s AND (r.status = 'running' OR NOT EXISTS ("
@@ -320,8 +329,14 @@ class ChatHistory:
             "next_entry_seq": int(next_entry_seq),
             "last_event_id": int(last_event_id),
             "unfinished_runs": [
-                {"id": str(run_id), "kind": kind, "status": status, "terminal_type": terminal}
-                for run_id, kind, status, terminal in unfinished
+                {
+                    "id": str(run_id),
+                    "kind": kind,
+                    "status": status,
+                    "terminal_type": terminal,
+                    "schedule_change": schedule_change,
+                }
+                for run_id, kind, status, schedule_change, terminal in unfinished
             ],
         }
 
@@ -373,7 +388,6 @@ class ChatHistory:
             "snapshot_at": milliseconds(max([created_at, *(row[2] for row in events)])),
             "frontend_version": state.get("frontend_version") or "unknown",
             "metadata": state.get("export_metadata", {}),
-            "pending_proposal_diff": (state.get("pending_proposal") or {}).get("diff"),
             "runs": [
                 {
                     "id": str(run_id),

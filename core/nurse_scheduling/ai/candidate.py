@@ -1,4 +1,4 @@
-"""Trusted validation and proposal creation for AI schedule candidates."""
+"""Trusted validation and change review for AI schedule candidates."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -40,24 +40,15 @@ class CandidateOutcome:
 
 @dataclass(frozen=True)
 class ScheduleProposal:
-    """A validated schedule the user can approve, with what it changes."""
+    """A validated schedule change, applied when its run finishes, with what it changes."""
 
     text: str
     diff: ScheduleDiff
 
 
 @dataclass(frozen=True)
-class PendingProposal:
-    """A session proposal and the run that produced it."""
-
-    schedule_yaml: str
-    diff: str
-    run_id: str | None
-
-
-@dataclass(frozen=True)
 class ScheduleCandidateReview:
-    """Trusted validation and proposal result for one complete candidate."""
+    """Trusted validation and change result for one complete candidate."""
 
     outcome: CandidateOutcome
     proposal: ScheduleProposal | None
@@ -84,7 +75,7 @@ def review_schedule_candidate(base_text: str, candidate: str, max_bytes: int) ->
         problems = "\n".join(f"- {issue.location}: {issue.message}" for issue in introduced)
         return ScheduleCandidateReview(
             CandidateOutcome(
-                f"{SCHEDULE_FILENAME} introduces problems and cannot become a proposal.\n{problems}",
+                f"{SCHEDULE_FILENAME} introduces problems and cannot be applied.\n{problems}",
                 False,
             ),
             None,

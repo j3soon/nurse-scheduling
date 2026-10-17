@@ -23,7 +23,7 @@ import { FiDownload } from 'react-icons/fi';
 
 import { AssistantActivity } from './AssistantActivity';
 import CollapsedText from './CollapsedText';
-import { messageLabel } from './chatExport';
+import { messageLabel, messageUploadedFileLines } from './chatExport';
 import { formatResponseDuration, formatResponseTime, formatSessionExpiration, retentionLabel } from './chatPresentation';
 import { parseOptimizerMessage } from './optimizerMessage';
 
@@ -96,6 +96,7 @@ export function ChatTranscriptView({
           </div>
         )}
         {messages.map(message => {
+          const uploads = messageUploadedFileLines(message);
           const timestamp = message.responseCompletedAt ?? message.createdAt;
           const optimizer = message.role === 'optimizer' ? parseOptimizerMessage(message.content) : null;
           return (
@@ -117,10 +118,16 @@ export function ChatTranscriptView({
               }`}
             >
               <p className="mb-1 text-xs font-semibold uppercase tracking-wide opacity-70">{messageLabel(message)}</p>
+              {uploads.length > 0 && (
+                <ul aria-label="Uploaded files in this message" className="mb-2 list-inside list-disc text-xs">
+                  {uploads.map((file, index) => <li key={index}>{file}</li>)}
+                </ul>
+              )}
               {message.activity && (
                 <AssistantActivity
                   entries={message.activity.filter(entry => (
-                    entry.kind === 'response' || (entry.kind === 'reasoning' ? showReasoning : showTools)
+                    entry.kind === 'response' || entry.kind === 'schedule-applied'
+                      || (entry.kind === 'reasoning' ? showReasoning : showTools)
                   ))}
                 />
               )}
@@ -189,12 +196,21 @@ export function ChatTranscriptView({
               {message.role === 'assistant' && message.status === 'stopped' && (
                 <p className="mt-2 text-sm text-gray-500">Stopped before completion.</p>
               )}
+              {message.status === 'failed' && message.failureReason && !message.activity?.some(entry => (
+                entry.kind === 'response' && entry.text === message.failureReason
+              )) && (
+                <p className="mt-2 whitespace-pre-wrap text-sm text-red-700">{message.failureReason}</p>
+              )}
               {message.role === 'assistant' && message.status === 'failed' && message.retry && (
                 <div className="mt-3 border-t border-red-200 pt-3 text-sm text-red-700">
-                  <p>This response failed and will not be used as context for future messages.</p>
+                  <p>This response failed before completion.</p>
                   {message.retry.requiresAttachments ? (
                     <>
-                      <p className="mt-1 text-xs">Prepare the question, then reattach its files before sending.</p>
+                      <p className="mt-1 text-xs">
+                        {message.retry.missingFiles?.length
+                          ? `Uploaded files stay in this chat. Prepare the question, then reattach ${message.retry.missingFiles.join(', ')} before sending.`
+                          : 'Prepare the question, then reattach its files before sending.'}
+                      </p>
                       <button
                         type="button"
                         onClick={() => prepareAttachmentRetry(message.retry?.question ?? '')}

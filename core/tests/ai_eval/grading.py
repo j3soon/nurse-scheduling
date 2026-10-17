@@ -94,7 +94,7 @@ class ToolUsageExpectation:
 
 @dataclass(frozen=True)
 class TurnAction:
-    """A trusted frontend action applied after one assistant turn."""
+    """A trusted external schedule update applied after one assistant turn."""
 
     after_turn: int
     action: str
@@ -118,6 +118,7 @@ class EvalCase:
     attachments: tuple[str, ...] = ()
     optimizer_error: str = ""
     optimizer_completion: str = ""
+    optimizer_follow_up_completions: tuple[str, ...] = ()
     optimizer_completion_only: bool = False
     answer_json: dict[str, Any] = field(default_factory=dict)
     download_files: dict[str, str] = field(default_factory=dict)
@@ -139,6 +140,7 @@ class EvalCase:
     download_count: int | None = None
     optimizer_download_file: str = ""
     staffing_contract: dict[str, Any] = field(default_factory=dict)
+    provider_timeout_after_text: str = ""
 
     def __post_init__(self) -> None:
         """Keep direct test construction compatible with single-turn cases."""
@@ -244,10 +246,12 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         "optimizer_error",
         "optimizer_completion",
         "optimizer_completion_only",
+        "optimizer_follow_up_completions",
         "answer_json",
         "download_count",
         "optimizer_download_file",
         "staffing_contract",
+        "provider_timeout_after_text",
         "changes",
         "answer_contains",
         "answer_matches",
@@ -258,6 +262,9 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     unknown = entry.keys() - allowed
     if unknown:
         raise EvalCaseError(f"{source} has unknown case fields: {', '.join(sorted(unknown))}.")
+    timeout_text = entry.get("provider_timeout_after_text", "")
+    if not isinstance(timeout_text, str):
+        raise EvalCaseError(f"{source} provider_timeout_after_text must be a string.")
     for required in ("id", "fixture", "expect_proposal"):
         if required not in entry:
             raise EvalCaseError(f"{source} is missing `{required}`.")
@@ -282,6 +289,16 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         or not all(isinstance(turn, str) and turn for turn in raw_turns)
     ):
         raise EvalCaseError(f"{source} `user_turns` must be a non-empty list of strings.")
+    follow_up_completions = entry.get("optimizer_follow_up_completions", [])
+    if (
+        not isinstance(follow_up_completions, list)
+        or len(follow_up_completions) > 2
+        or not all(isinstance(name, str) and name for name in follow_up_completions)
+        or (follow_up_completions and not entry.get("optimizer_completion"))
+    ):
+        raise EvalCaseError(
+            f"{source} optimizer_follow_up_completions needs a first completion and at most two fixtures."
+        )
     raw_intermediate = entry.get("intermediate_answer_contains", [])
     after_optimizer_turns = entry.get("after_optimizer_turns", [])
     if (
@@ -290,7 +307,12 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         or (after_optimizer_turns and not entry.get("optimizer_completion"))
     ):
         raise EvalCaseError(f"{source} after_optimizer_turns requires an optimizer completion and question strings.")
-    total_turns = len(raw_turns) + bool(entry.get("optimizer_completion")) + len(after_optimizer_turns)
+    total_turns = (
+        len(raw_turns)
+        + bool(entry.get("optimizer_completion"))
+        + len(follow_up_completions)
+        + len(after_optimizer_turns)
+    )
     if (
         not isinstance(raw_intermediate, list)
         or len(raw_intermediate) > total_turns - 1
@@ -340,6 +362,8 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         "",
         "yaml-generator",
         "optimizer-start-source",
+        "optimizer-initiative",
+        "optimizer-inputs-preserved",
         "current-time-context",
         "optimizer-download",
         "qualified-staffing",
@@ -356,17 +380,23 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     if not isinstance(optimizer_error, str):
         raise EvalCaseError(f"{source} `optimizer_error` must be a string.")
     optimizer_completion = entry.get("optimizer_completion", "")
-    if not isinstance(optimizer_completion, str) or optimizer_completion not in {
+    completion_names = {
         "",
         "request-audit",
         "request-audit-pending",
         "request-audit-all-strong",
+        "request-audit-conflict",
         "request-audit-groups",
         "policy-audit-misses",
         "policy-audit-clean",
         "policy-audit-stale",
         "request-audit-stale-summary",
-    }:
+    }
+    if (
+        not isinstance(optimizer_completion, str)
+        or optimizer_completion not in completion_names
+        or any(name not in completion_names or not name for name in follow_up_completions)
+    ):
         raise EvalCaseError(f"{source} has an unknown optimizer_completion fixture.")
     optimizer_completion_only = entry.get("optimizer_completion_only", False)
     if not isinstance(optimizer_completion_only, bool) or (optimizer_completion_only and not optimizer_completion):
@@ -412,7 +442,15 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     if not entry["expect_proposal"] and (
         assertions
         or expected_diff
-        or semantic_check not in {"", "optimizer-start-source", "current-time-context", "optimizer-download"}
+        or semantic_check
+        not in {
+            "",
+            "optimizer-start-source",
+            "optimizer-initiative",
+            "optimizer-inputs-preserved",
+            "current-time-context",
+            "optimizer-download",
+        }
     ):
         raise EvalCaseError(f"{source} expects no proposal, so its schedule criteria can never run.")
     return EvalCase(
@@ -429,6 +467,7 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         attachments=tuple(raw_attachments),
         optimizer_error=optimizer_error,
         optimizer_completion=optimizer_completion,
+        optimizer_follow_up_completions=tuple(follow_up_completions),
         optimizer_completion_only=optimizer_completion_only,
         answer_json=answer_json,
         category=category,
@@ -443,6 +482,7 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         download_count=download_count,
         optimizer_download_file=optimizer_download_file,
         staffing_contract=staffing_contract,
+        provider_timeout_after_text=timeout_text,
         changes=tuple(entry.get("changes", ())),
         answer_contains=tuple(
             tuple(value) if isinstance(value, list) else value for value in entry.get("answer_contains", ())
@@ -555,9 +595,9 @@ def _turn_actions(raw: object, turn_count: int, source: str) -> tuple[TurnAction
             isinstance(after_turn, bool)
             or not isinstance(after_turn, int)
             or not 1 <= after_turn < turn_count
-            or action not in {"approve", "reject", "update"}
+            or action != "update"
             or not isinstance(patch, dict)
-            or (action == "update") != bool(patch)
+            or not patch
         ):
             raise EvalCaseError(f"{source} has an invalid turn action.")
         actions.append(TurnAction(after_turn, action, tuple(patch.items())))
@@ -681,6 +721,10 @@ def grade(case: EvalCase, outcome: RunOutcome, computed: dict[str, Any] | None =
         checks.extend(_check_yaml_generator(outcome.activity))
     if case.semantic_check == "optimizer-start-source":
         checks.extend(_check_optimizer_start_source(case, outcome))
+    if case.semantic_check == "optimizer-initiative":
+        checks.extend(_check_optimizer_initiative(case, outcome))
+    if case.semantic_check == "optimizer-inputs-preserved":
+        checks.extend(_check_optimizer_inputs_preserved(case, outcome))
     if case.semantic_check == "current-time-context":
         checks.extend(_check_vm_clock_queries(outcome.activity))
     if case.semantic_check == "optimizer-download":
@@ -747,6 +791,36 @@ def _check_import_schedule(case: EvalCase, outcome: RunOutcome) -> CheckResult:
 
     attachment = load_attachment_fixtures((case.import_attachment,))[0]
     return CheckResult("complete uploaded schedule preserved", outcome.proposed == _load_yaml(attachment.data))
+
+
+def _check_optimizer_inputs_preserved(case: EvalCase, outcome: RunOutcome) -> list[CheckResult]:
+    """Verify each submitted source in a retry sequence independently of the answer."""
+    inputs = [event for event in outcome.activity if event.get("kind") == "optimizer_input"]
+    return [
+        CheckResult("optimizer inputs captured", bool(inputs)),
+        *[
+            check
+            for event in inputs
+            for check in _check_optimizer_start_source(case, replace(outcome, activity=[event]))
+        ],
+    ]
+
+
+def _check_optimizer_initiative(case: EvalCase, outcome: RunOutcome) -> list[CheckResult]:
+    """Accept an unsolicited optimization offer or a successful start with the correct source."""
+    if any(event.get("kind") == "tool" and event.get("name") == "optimizer" for event in outcome.activity):
+        required = ToolUsageExpectation(required_calls=(("optimizer", {"action": "start"}),))
+        return [*_check_optimizer_start_source(case, outcome), *_check_tool_usage(outcome.activity, required)]
+    # The offer must propose running optimization, not only mention the solver or its result.
+    invitation = (
+        r"\b(?:I can(?!['’]t|\s*not\b)|we can(?!['’]t|\s*not\b)|would you (?:like|want)|do you want|"
+        r"want me to|shall I|should I|can I|if you(?: would|['’]d)? like|if you want)"
+        r"[^.!?\n]{0,300}?(?:\b(?:re-?)?optimi[sz]e\b|\bsolve\b"
+        r"|\b(?:run|start|launch|rerun|re-run|try|submit)\b[^.!?\n]{0,60}?\b(?:optimi[sz]\w*|solver)\b"
+        r"|\boptimi[sz]ation (?:run|pass|job)\b)"
+    )
+    offered = re.search(invitation, outcome.answer, re.IGNORECASE) is not None
+    return [CheckResult("offers to run optimization", offered)]
 
 
 def _check_optimizer_start_source(case: EvalCase, outcome: RunOutcome) -> list[CheckResult]:
@@ -985,12 +1059,30 @@ def tool_limit_failures(activity: Sequence[dict[str, Any]], expected: ToolUsageE
 
 
 def _answer_json_matches(actual: Any, expected: Any) -> bool:
-    """Check required mapping fields, preserving exact scalar and list semantics."""
+    """Check required fields and numeric values without coercing other scalar types."""
     if isinstance(expected, dict):
         return isinstance(actual, dict) and all(
             key in actual and _answer_json_matches(actual[key], value) for key, value in expected.items()
         )
-    return _key(actual) == _key(expected)
+    if (
+        isinstance(expected, (int, float))
+        and not isinstance(expected, bool)
+        and (not isinstance(expected, float) or math.isfinite(expected))
+    ):
+        return isinstance(actual, (int, float)) and not isinstance(actual, bool) and actual == expected
+    # `_key` keeps list contents exact, except that an integral float equals its integer.
+    return _key(_integral_numbers(actual)) == _key(_integral_numbers(expected))
+
+
+def _integral_numbers(value: Any) -> Any:
+    """Represent each integral float as an integer, so `2.0` and `2` serialize alike."""
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, list):
+        return [_integral_numbers(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _integral_numbers(item) for key, item in value.items()}
+    return value
 
 
 def _check_tool_usage(

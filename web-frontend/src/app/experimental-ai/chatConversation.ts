@@ -33,7 +33,10 @@ export interface StoredChatConversation {
   retentionSeconds: number;
   messages: ChatMessage[];
   syncedSchedule: string;
-  proposalDiff: string | null;
+  syncedRevision?: string;
+  syncedBrowserSchedule?: string;
+  // Run identity survives replacement replay and a later browser Undo.
+  appliedScheduleRuns?: Record<string, string | null>;
   sessionEventId?: number;
   activeOptimization?: ActiveOptimization | null;
   backendVersion?: string;
@@ -42,13 +45,23 @@ export interface StoredChatConversation {
   trimmedHistoryCount?: number;
   pendingRequest?: {
     messageId: string; question: string; questionId: string; assistantId: string; activeAssistantId?: string; createdAt: number; uploading?: boolean;
+    pendingFiles?: string[];
   } | null;
+}
+
+function isOptionalStringArray(value: unknown): boolean {
+  return value === undefined || (Array.isArray(value) && value.every(item => typeof item === 'string'));
 }
 
 function isActivityEntry(value: unknown): value is ActivityEntry {
   if (typeof value !== 'object' || value === null || !('kind' in value)) return false;
-  if (value.kind === 'response' || value.kind === 'reasoning') {
-    return 'text' in value && typeof value.text === 'string';
+  if (value.kind === 'response' || value.kind === 'reasoning' || value.kind === 'schedule-applied') {
+    return 'text' in value && typeof value.text === 'string'
+      && (!('notice' in value) || typeof value.notice === 'string')
+      && (!('runId' in value) || typeof value.runId === 'string');
+  }
+  if (value.kind === 'schedule-check') {
+    return 'text' in value && typeof value.text === 'string' && 'ok' in value && typeof value.ok === 'boolean';
   }
   if (value.kind === 'schedule-change') {
     return 'before' in value && typeof value.before === 'string'
@@ -67,6 +80,7 @@ function isChatMessage(value: unknown): value is ChatMessage {
   return typeof message.id === 'string'
     && (message.role === 'system' || message.role === 'user' || message.role === 'assistant' || message.role === 'optimizer')
     && typeof message.content === 'string'
+    && (message.failureReason === undefined || typeof message.failureReason === 'string')
     && (message.source === undefined || message.source === 'app' || message.source === 'status' || message.source === 'optimizer')
     && (message.historyIndex === undefined || Number.isSafeInteger(message.historyIndex))
     && (message.title === undefined || typeof message.title === 'string')
@@ -81,6 +95,7 @@ function isChatMessage(value: unknown): value is ChatMessage {
       && message.retry !== null
       && typeof message.retry.question === 'string'
       && typeof message.retry.requiresAttachments === 'boolean'
+      && isOptionalStringArray(message.retry.missingFiles)
     ))
     && (message.requestId === undefined || typeof message.requestId === 'string')
     && (message.request === undefined || (typeof message.request === 'object' && message.request !== null
@@ -88,7 +103,8 @@ function isChatMessage(value: unknown): value is ChatMessage {
       && typeof message.request.questionId === 'string' && typeof message.request.assistantId === 'string'
       && (message.request.activeAssistantId === undefined || typeof message.request.activeAssistantId === 'string')
       && typeof message.request.active === 'boolean'
-      && (message.request.uploading === undefined || typeof message.request.uploading === 'boolean')))
+      && (message.request.uploading === undefined || typeof message.request.uploading === 'boolean')
+      && isOptionalStringArray(message.request.pendingFiles)))
     && (message.downloadId === undefined || typeof message.downloadId === 'string')
     && (message.optimizerJob === undefined || (message.optimizerJob !== null
       && typeof message.optimizerJob.jobId === 'string'
@@ -135,7 +151,11 @@ export function readStoredConversation(): StoredChatConversation | null {
         ))
       ))
       || typeof value.syncedSchedule !== 'string'
-      || (value.proposalDiff !== null && typeof value.proposalDiff !== 'string')
+      || (value.syncedRevision !== undefined && typeof value.syncedRevision !== 'string')
+      || (value.syncedBrowserSchedule !== undefined && typeof value.syncedBrowserSchedule !== 'string')
+      || (value.appliedScheduleRuns !== undefined && (value.appliedScheduleRuns === null
+        || typeof value.appliedScheduleRuns !== 'object' || Array.isArray(value.appliedScheduleRuns)
+        || !Object.values(value.appliedScheduleRuns).every(notice => notice === null || typeof notice === 'string')))
       || (value.backgroundAssistantId !== undefined && value.backgroundAssistantId !== null
         && typeof value.backgroundAssistantId !== 'string')
     ) return null;
@@ -144,10 +164,12 @@ export function readStoredConversation(): StoredChatConversation | null {
       if (typeof pending.messageId !== 'string' || !pending.messageId || typeof pending.question !== 'string'
         || typeof pending.questionId !== 'string' || typeof pending.assistantId !== 'string'
         || (pending.activeAssistantId !== undefined && typeof pending.activeAssistantId !== 'string')
-        || !Number.isFinite(pending.createdAt) || (pending.uploading !== undefined && typeof pending.uploading !== 'boolean')) return null;
+        || !Number.isFinite(pending.createdAt) || (pending.uploading !== undefined && typeof pending.uploading !== 'boolean')
+        || !isOptionalStringArray(pending.pendingFiles)) return null;
       value.messages = value.messages.map(message => message.id === pending.questionId
         ? { ...message, request: { id: pending.messageId, question: pending.question, questionId: pending.questionId,
-          assistantId: pending.assistantId, activeAssistantId: pending.activeAssistantId, active: true, uploading: pending.uploading } } : message);
+          assistantId: pending.assistantId, activeAssistantId: pending.activeAssistantId, active: true, uploading: pending.uploading,
+          pendingFiles: pending.pendingFiles } } : message);
     }
     return {
       ...value,

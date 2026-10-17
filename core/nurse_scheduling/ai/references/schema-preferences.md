@@ -159,7 +159,7 @@ Rules:
 - OFF is not allowed in this preference type.
 - Only people selected by `qualifiedPeople` may cover the requirement's shift types on its dates.
 - A requested shift type, staffing count, qualified people selector, and date selector map directly to `shiftType`, `requiredNumPeople`, `qualifiedPeople`, and `date`. Confirm those selectors and any existing requirement in one focused search. Do not inspect unrelated shift requests or expand group members to infer eligibility.
-- Without `preferredNumPeople`, `requiredNumPeople` is an exact hard staffing count. With `preferredNumPeople`, it becomes the hard minimum and the preferred value is the upper target.
+- Without `preferredNumPeople`, staffing must equal `requiredNumPeople`. With it, staffing must stay between `requiredNumPeople` and `preferredNumPeople`, inclusive. Both bounds are hard constraints. Request weights cannot override them.
 - A preference with `preferredNumPeople` requires a finite `weight`. Infinity weights are rejected. Use a negative weight to encourage reaching the preferred count, and use one preference rather than separate required and preferred entries.
 - Without `preferredNumPeople`, `weight` has no effect because the staffing count is an exact constraint.
 - Use `date: [ALL]` for every date. Do not express this as a `shift count` preference, which counts one person's shifts instead of the people on a shift.

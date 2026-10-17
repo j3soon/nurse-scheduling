@@ -51,6 +51,67 @@ const metadata = {
 
 describe('chat export', () => {
   it.each([
+    'Not a JSON file list',
+    '[{"filename":"input.csv","bytes":"20"}]',
+    '[null]',
+    '[{"filename":"input.csv","bytes":-1}]',
+  ])('keeps unrecognized upload metadata as collapsed context (%s)', payload => {
+    const message: ChatExportMessage = {
+      role: 'user', source: 'app', title: 'Files Uploaded', content: `[App event] Upload: ${payload}`,
+    };
+    const document = new DOMParser().parseFromString(buildHtmlChatExport([message], metadata), 'text/html');
+    expect(document.querySelector('article .attachments')).toBeNull();
+    expect(document.querySelector('article pre')?.textContent).toBe(message.content);
+  });
+
+  it('shows each upload beside its message before the following question', () => {
+    const uploaded = (filename: string): ChatExportMessage => ({
+      role: 'user', source: 'app', title: 'Files Uploaded',
+      content: '[App event] The user uploaded files. They stay in the workspace until the user removes them: '
+        + JSON.stringify([{ filename, bytes: 20, path: `/workspace/attachments/${filename}` }]),
+    });
+    const messages: ChatExportMessage[] = [
+      uploaded('roster.csv'), { role: 'user', content: 'Read the roster.' },
+      { role: 'assistant', content: 'First answer.' }, uploaded('requests.tsv'),
+      { role: 'user', content: 'Read the requests.' },
+    ];
+    const html = buildHtmlChatExport(messages, metadata);
+    const document = new DOMParser().parseFromString(html, 'text/html');
+    const uploads = [...document.querySelectorAll('article.app .attachments')];
+    expect(uploads.map(upload => upload.textContent)).toEqual(['roster.csv (0.02 KB)', 'requests.tsv (0.02 KB)']);
+    const markdown = buildMarkdownChatExport(messages, metadata);
+    expect(markdown.indexOf('- roster.csv (0.02 KB)')).toBeLessThan(markdown.indexOf('Read the roster.'));
+    expect(markdown.indexOf('- requests.tsv (0.02 KB)')).toBeGreaterThan(markdown.indexOf('First answer.'));
+    expect(markdown.indexOf('- requests.tsv (0.02 KB)')).toBeLessThan(markdown.indexOf('Read the requests.'));
+  });
+
+  it.each([
+    { content: 'The AI response failed.', activity: undefined },
+    { content: '', activity: [{ kind: 'response' as const, text: 'The AI response failed.' }] },
+  ])('does not repeat a failure reason already shown as the response', ({ content, activity }) => {
+    const failureReason = 'The AI response failed.';
+    const message: ChatExportMessage = { role: 'assistant', content, activity, status: 'failed', failureReason };
+    const html = buildHtmlChatExport([message], metadata);
+    const document = new DOMParser().parseFromString(html, 'text/html');
+    expect(document.querySelector('.content')?.textContent).toBe(failureReason);
+    expect(document.querySelector('.failure')?.textContent).toBe('This response failed before completion.');
+    expect(html.split(failureReason)).toHaveLength(2);
+  });
+
+  it.each(['', 'Partial answer.'])('exports the specific failure beside response text %j', content => {
+    const failureReason = 'Provider HTTP 525. Error ID: example. <script>unsafe</script>';
+    const message: ChatExportMessage = { role: 'assistant', content, status: 'failed', failureReason };
+    const html = buildHtmlChatExport([message], metadata);
+    const markdown = buildMarkdownChatExport([message], metadata);
+    const document = new DOMParser().parseFromString(html, 'text/html');
+    expect(document.querySelector('.failure')?.textContent).toBe(failureReason);
+    expect(document.querySelector('script')).toBeNull();
+    expect(markdown).toContain(`Error: ${failureReason}`);
+    expect(html).not.toContain('not saved to AI history');
+    if (content) expect(document.querySelector('.content')?.textContent).toBe(content);
+  });
+
+  it.each([
     [59_400, '59s'],
     [59_600, '1m 0s'],
     [119_400, '1m 59s'],
@@ -123,21 +184,25 @@ describe('chat export', () => {
     expect(html).toContain('uploaded files: [&lt;b&gt;]');
   });
 
-  it('exports a pending proposal after the transcript', () => {
-    const pending = { ...metadata, pendingProposalDiff: '- description: "" -> "<April>"' };
+  it('exports schedule checks and applied changes', () => {
+    const changed: ChatExportMessage[] = [{
+      id: 'answer', role: 'assistant', content: 'Done.', activity: [
+        { kind: 'schedule-check', ok: false, text: 'schedule.yaml introduces <problems>.' },
+        { kind: 'schedule-applied', text: '- description: "" -> "April"', notice: 'Undo restores <previous work>.' },
+      ],
+    }];
 
-    const markdown = buildMarkdownChatExport(messages, pending);
-    const html = buildHtmlChatExport(messages, pending);
+    const markdown = buildMarkdownChatExport(changed, metadata);
+    const html = buildHtmlChatExport(changed, metadata);
 
-    expect(markdown.endsWith(
-      '## Pending proposal\n\nThis change is waiting for approval in the app. The current schedule has not changed.\n\n'
-      + '```text\n- description: "" -> "<April>"\n```\n',
-    )).toBe(true);
-    expect(html).toContain('<section class="proposal" aria-label="Pending proposal">');
-    expect(html).toContain('<pre>- description: &quot;&quot; -&gt; &quot;&lt;April&gt;&quot;</pre>');
-    expect(html.indexOf('aria-label="Chat transcript"')).toBeLessThan(html.indexOf('aria-label="Pending proposal"'));
-    expect(buildMarkdownChatExport(messages, metadata)).not.toContain('Pending proposal');
-    expect(buildHtmlChatExport(messages, metadata)).not.toContain('class="proposal"');
+    expect(markdown).toContain('Schedule check failed');
+    expect(markdown).toContain('schedule.yaml introduces <problems>.');
+    expect(markdown).toContain('Applied to your schedule');
+    expect(html).toContain('<summary>Schedule check failed</summary>');
+    expect(html).toContain('schedule.yaml introduces &lt;problems&gt;.');
+    expect(html).toContain('<summary>Applied to your schedule</summary>');
+    expect(markdown).toContain('Undo restores <previous work>.');
+    expect(html).toContain('Undo restores &lt;previous work&gt;.');
   });
 
   it('mentions an optimization that is still running without its score', () => {

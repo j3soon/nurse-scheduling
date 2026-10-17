@@ -34,6 +34,8 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   the handoff summary as a lead to investigate.
 - Run affected tests and lint checks before finishing.
 - Avoid trailing spaces. End files with a newline.
+- Several docs pages are symbolic links. Edit the link target, because `sed -i`
+  and similar in-place rewrites replace a link with a regular file.
 - Store screenshots and other disposable review output in the Git-ignored
   repository-root `artifacts/`.
 - Keep local service configuration in the ignored `docker/.env`. Its tracked
@@ -90,6 +92,10 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 - Commit validated implementation work as part of the task unless the user asks
   to leave it uncommitted. Inspection and planning requests do not authorize
   implementation changes.
+- For a series of independent improvements, commit each completed improvement
+  after its affected checks pass and any required evaluation evidence is saved.
+  Create that self-contained commit before starting the next improvement,
+  unless the user asks to leave changes uncommitted.
 - Inspect staged and unstaged changes before committing. Stage or unstage entries
   as needed to keep the commit within the task's scope. Preserve unrelated work.
 - Keep each commit self-contained. Include one complete change with its necessary
@@ -98,6 +104,10 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 - Prefer reviewable feature slices over minimal implementation-step commits.
   Separate changes only when each can be understood, validated, and reverted
   independently.
+- Keep AGENTS.md and skill clarifications with the related implementation or
+  skill change. Do not create a separate commit solely to restate an existing
+  workflow rule. Use a standalone guidance commit only when it introduces an
+  independently useful policy with no related change in the active series.
 - Fold minor whitespace, wording, marker, or metadata corrections into the
   related commit. Do not create standalone cleanup commits for them. Authorization
   to commit an active unpublished series includes these minor local rewrites.

@@ -133,11 +133,11 @@ class AiSettings:
     request_log_enabled: bool = True
     """Whether incoming question previews are logged, which records chat text."""
     max_sessions: int = 1000
-    max_session_bytes: int = 256 * 1024 * 1024
+    max_session_bytes: int = 1024 * 1024 * 1024
     """Text and file budget across live sessions, enforced when content is retained.
 
     A completed turn is trimmed rather than refused, so retained text settles at this
-    budget plus the newest message and any pending proposal of each live session. Size
+    budget plus the newest message of each live session. Size
     the process above that floor, not at this value.
     """
     max_history_messages: int = 1000
@@ -145,16 +145,17 @@ class AiSettings:
     max_message_chars: int = 8000
     max_schedule_bytes: int = 1_000_000
     max_concurrent_requests: int = 4
-    max_attachment_files: int = 8
-    max_attachment_bytes: int = 5_000_000
+    max_attachment_files: int = 32
+    max_attachment_bytes: int = 25_000_000
+    max_attachment_total_bytes: int = 200_000_000
     max_download_bytes: int = 50_000_000
     sandbox_backend: SandboxBackendName = "none"
     e2b_api_key: str = ""
     e2b_template: str = "nurse-scheduling-ai-sandbox"
     sandbox_command_timeout_seconds: float = 60.0
-    sandbox_turn_timeout_seconds: float = 3600.0
-    agent_max_tool_rounds: int = 200
-    agent_max_tool_calls: int = 400
+    sandbox_turn_timeout_seconds: float = 21600.0
+    agent_max_tool_rounds: int = 2000
+    agent_max_tool_calls: int = 6000
     sandbox_cleanup_timeout_seconds: float = 10.0
     sandbox_max_attempts: int = 3
     sandbox_retry_backoff_seconds: float = 0.5
@@ -214,22 +215,23 @@ class AiSettings:
             history_postgres_url=os.getenv("AI_HISTORY_POSTGRES_URL", "").strip(),
             request_log_enabled=_read_bool("AI_REQUEST_LOG_ENABLED", True),
             max_sessions=_read_positive_int("AI_MAX_SESSIONS", 1000),
-            max_session_bytes=_read_positive_int("AI_MAX_SESSION_BYTES", 256 * 1024 * 1024),
+            max_session_bytes=_read_positive_int("AI_MAX_SESSION_BYTES", 1024 * 1024 * 1024),
             max_history_messages=_read_positive_int("AI_MAX_HISTORY_MESSAGES", 1000),
             max_history_chars=_read_positive_int("AI_MAX_HISTORY_CHARS", DEFAULT_MAX_HISTORY_CHARS),
             max_message_chars=_read_positive_int("AI_MAX_MESSAGE_CHARS", 8000),
             max_schedule_bytes=_read_positive_int("AI_MAX_SCHEDULE_BYTES", 1_000_000),
             max_concurrent_requests=_read_positive_int("AI_MAX_CONCURRENT_REQUESTS", 4),
-            max_attachment_files=_read_positive_int("AI_MAX_ATTACHMENT_FILES", 8),
-            max_attachment_bytes=_read_positive_int("AI_MAX_ATTACHMENT_BYTES", 5_000_000),
+            max_attachment_files=_read_positive_int("AI_MAX_ATTACHMENT_FILES", 32),
+            max_attachment_bytes=_read_positive_int("AI_MAX_ATTACHMENT_BYTES", 25_000_000),
+            max_attachment_total_bytes=_read_positive_int("AI_MAX_ATTACHMENT_TOTAL_BYTES", 200_000_000),
             max_download_bytes=_read_positive_int("AI_MAX_DOWNLOAD_BYTES", 50_000_000),
             sandbox_backend=sandbox_backend,
             e2b_api_key=e2b_api_key,
             e2b_template=e2b_template,
             sandbox_command_timeout_seconds=_read_positive_float("AI_SANDBOX_COMMAND_TIMEOUT_SECONDS", 60.0),
-            sandbox_turn_timeout_seconds=_read_positive_float("AI_SANDBOX_TURN_TIMEOUT_SECONDS", 3600.0),
-            agent_max_tool_rounds=_read_positive_int("AI_AGENT_MAX_TOOL_ROUNDS", 200),
-            agent_max_tool_calls=_read_positive_int("AI_AGENT_MAX_TOOL_CALLS", 400),
+            sandbox_turn_timeout_seconds=_read_positive_float("AI_SANDBOX_TURN_TIMEOUT_SECONDS", 21600.0),
+            agent_max_tool_rounds=_read_positive_int("AI_AGENT_MAX_TOOL_ROUNDS", 2000),
+            agent_max_tool_calls=_read_positive_int("AI_AGENT_MAX_TOOL_CALLS", 6000),
             sandbox_cleanup_timeout_seconds=_read_positive_float("AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS", 10.0),
             sandbox_max_attempts=_read_positive_int("AI_SANDBOX_MAX_ATTEMPTS", 3),
             sandbox_retry_backoff_seconds=_read_non_negative_float("AI_SANDBOX_RETRY_BACKOFF_SECONDS", 0.5),

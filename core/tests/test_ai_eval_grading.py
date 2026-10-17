@@ -58,6 +58,7 @@ FIXTURE_SCHEDULES = {
     "request-audit-groups": _load_yaml((CASES_PATH.parent / "fixtures" / "request-audit-groups.yaml").read_bytes()),
     "weight-units": _load_yaml((CASES_PATH.parent / "fixtures" / "weight-units.yaml").read_bytes()),
     "request-audit": _load_yaml((CASES_PATH.parent / "fixtures" / "request-audit.yaml").read_bytes()),
+    "request-audit-conflict": _load_yaml((CASES_PATH.parent / "fixtures" / "request-audit-conflict.yaml").read_bytes()),
     "cross-year-unit": _load_yaml(CROSS_YEAR_UNIT_PATH.read_bytes()),
     "new-schedule": _load_yaml(NEW_SCHEDULE_PATH.read_bytes()),
     "small-clinic": _load_yaml(SMALL_CLINIC_PATH.read_bytes()),
@@ -76,6 +77,115 @@ SCHEDULE = {
         {"type": "shift request", "person": ["P1"], "date": ["2026-03-02"], "shiftType": ["N"], "weight": 1},
     ],
 }
+
+
+@pytest.fixture(autouse=True)
+def legacy_text_encoding(monkeypatch: pytest.MonkeyPatch):
+    """Expose implicit fixture decoding with a legacy Windows default on every platform."""
+    read_text = Path.read_text
+
+    def read_with_legacy_default(path, encoding=None, errors=None, **kwargs):
+        return read_text(path, encoding="cp1252" if encoding is None else encoding, errors=errors, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_with_legacy_default)
+
+
+@pytest.mark.parametrize(
+    ("expected", "actual", "passed"),
+    [
+        (20020000000, 20020000000.0, True),
+        (20020000000.0, 20020000000, True),
+        ({"sum": 20020000000}, {"sum": 20020000000.0}, True),
+        (20020000000, 20020000001.0, False),
+        (1, 1.5, False),
+        (1, "1", False),
+        ("01", 1, False),
+        (1, True, False),
+        (True, 1, False),
+        (0, False, False),
+        (False, 0, False),
+        (9007199254740993, 9007199254740992.0, False),
+        (["01", "02"], [1, 2], False),
+        ([2, 3], [2.0, 3.0], True),
+        ({"counts": [2, 3]}, {"counts": [2.0, 3.0]}, True),
+        ([{"entries": 2}], [{"entries": 2.0}], True),
+        ([1.5], [1.5], True),
+        ([2, 3], [2.0, 2.0, 3.0], False),
+        ([2], [2.5], False),
+        ([1], [True], False),
+        ([9007199254740993], [9007199254740992.0], False),
+    ],
+)
+def test_answer_json_numeric_fields_compare_values_without_coercing_other_types(expected, actual, passed):
+    case = EvalCase(
+        id="numeric-answer",
+        fixture="new-schedule",
+        question="Return JSON.",
+        expect_proposal=False,
+        answer_json={"value": expected},
+    )
+    result = grade(case, RunOutcome(answer=json.dumps({"value": actual})))
+    assert result.passed is passed
+
+
+@pytest.mark.parametrize(
+    "successful, correct_values, range_command, passed",
+    [(True, True, True, True), (False, True, True, False), (True, False, True, False), (True, True, False, False)],
+)
+def test_xlsx_range_case_requires_successful_range_use_and_saved_caches(
+    successful, correct_values, range_command, passed
+):
+    case = load_cases(CASES_PATH / "basics/00-tools/tool-xlsx-a1-range.json")[0]
+    command = case.tool_usage.required_calls[0][1]["command"]
+    if not range_command:
+        command = "python /reference/tools/inspect_xlsx.py /workspace/attachments/01-capacity-checks.xlsx --sheet 'Staffing checks'"
+    answer = {"C3": 11 if correct_values else 12, "C4": 10, "C5": None, "formulaCount": 3}
+    outcome = RunOutcome(
+        initial=FIXTURE_SCHEDULES[case.fixture],
+        answer=json.dumps(answer),
+        activity=[{"kind": "tool", "name": "bash", "ok": successful, "arguments": json.dumps({"command": command})}],
+    )
+    assert grade(case, outcome).passed is passed
+
+
+@pytest.mark.parametrize("defect", [None, "wrong-weight", "missing-rule", "repaired-invalid-write"])
+def test_workbook_import_requires_correct_weights_and_a_valid_first_proposal(defect):
+    case = next(c for c in load_cases(CASES_PATH) if c.id == "workbook-import-first-valid-proposal")
+    proposed = copy.deepcopy(FIXTURE_SCHEDULES["new-schedule"])
+    proposed["dates"]["range"] = {"startDate": "2025-11-01", "endDate": "2025-11-03"}
+    proposed["people"]["items"] = [
+        {"id": "Ada", "history": ["OFF"]},
+        {"id": "Bela", "history": ["E", "E"]},
+    ]
+    proposed["shiftTypes"]["items"] = [{"id": shift} for shift in ("D", "E")]
+    proposed["preferences"] = [
+        {"type": "at most one shift per day"},
+        *[
+            {"type": "shift request", "person": [person], "date": [date], "shiftType": [shift], "weight": weight}
+            for person, date, shift, weight in (
+                ("Ada", "01", "OFF", 11000000000),
+                ("Ada", "03", "D", 11000000000),
+                ("Bela", "01", "OFF", 11000000),
+                ("Bela", "02", "E", 11000000000),
+            )
+        ],
+    ]
+    if defect == "wrong-weight":
+        proposed["preferences"][3]["weight"] = 11000000000
+    if defect == "missing-rule":
+        proposed = None
+    activity = []
+    if defect in {"missing-rule", "repaired-invalid-write"}:
+        activity.append(
+            {
+                "kind": "tool",
+                "name": "write",
+                "ok": False,
+                "result": "Trusted schedule check after this command:\nMissing required preferences: {'at most one shift per day'}",
+            }
+        )
+    outcome = RunOutcome(initial=FIXTURE_SCHEDULES[case.fixture], proposed=proposed, activity=activity)
+    assert grade(case, outcome).passed is (defect is None)
 
 
 def qualified_staffing_proposal(general_count=1, qualified=("S1", "S2")):
@@ -129,6 +239,8 @@ def test_staffing_explanation_checks_arithmetic_separately_from_proposal(general
         ("senior-included-in-day-total", 2, False),
         ("senior-additional-day-slot", 2, True),
         ("senior-additional-day-slot", 1, False),
+        ("staffing-explicit-day-total-override", 2, True),
+        ("staffing-explicit-day-total-override", 1, False),
     ],
 )
 def test_staffing_grader_distinguishes_inclusive_and_additive_counts(case_id, general_count, passed):
@@ -136,6 +248,35 @@ def test_staffing_grader_distinguishes_inclusive_and_additive_counts(case_id, ge
     proposed = qualified_staffing_proposal(general_count)
     result = grade(case, RunOutcome(initial=FIXTURE_SCHEDULES[case.fixture], proposed=proposed))
     assert result.passed == passed
+
+
+@pytest.mark.parametrize(
+    "premature_proposal,general_count,first_tool,passed",
+    [
+        (False, 1, None, True),
+        (True, 1, None, False),
+        (False, 2, None, False),
+        (False, 1, "write", False),
+        (False, 1, "edit", False),
+        (False, 1, "optimizer", False),
+    ],
+)
+def test_conflicting_staffing_case_requires_clarification_and_the_chosen_total(
+    premature_proposal, general_count, first_tool, passed
+):
+    case = next(c for c in load_cases(CASES_PATH) if c.id == "staffing-conflicting-day-total")
+    activity = [{"kind": "user", "turn": 1}]
+    if first_tool:
+        activity.append({"kind": "tool", "name": first_tool, "ok": True})
+    activity.extend([{"kind": "user", "turn": 2}, {"kind": "tool", "name": "write", "ok": True}])
+    outcome = RunOutcome(
+        initial=FIXTURE_SCHEDULES[case.fixture],
+        proposed=qualified_staffing_proposal(general_count),
+        intermediate_answers=["Should I keep 2 or 3 total day slots?"],
+        proposal_turns=[premature_proposal, True],
+        activity=activity,
+    )
+    assert grade(case, outcome).passed == passed
 
 
 def test_staffing_grader_rejects_unqualified_senior_slots():
@@ -191,6 +332,12 @@ def _write(tmp_path: Path, *entries: dict) -> Path:
 def test_invalid_clock_context_is_rejected(tmp_path, context):
     with pytest.raises(EvalCaseError, match="clock context"):
         load_cases(_write(tmp_path, _case(expect_proposal=False, **context)))
+
+
+@pytest.mark.parametrize("partial_text", [None, 8, ["ALPHA|BR"]])
+def test_invalid_provider_timeout_text_is_rejected(tmp_path, partial_text):
+    with pytest.raises(EvalCaseError, match="provider_timeout_after_text must be a string"):
+        load_cases(_write(tmp_path, _case(expect_proposal=False, provider_timeout_after_text=partial_text)))
 
 
 def test_misspelled_assertion_key_cannot_silently_drop_schedule_checks(tmp_path):
@@ -390,29 +537,6 @@ def test_turn_tool_limits_do_not_penalize_edits_after_clarification(tmp_path: Pa
 def test_invalid_turn_tool_limits_are_rejected(tmp_path: Path, raw):
     with pytest.raises(EvalCaseError, match="turn_tool_usage|max_total"):
         load_cases(_write(tmp_path, _case(expect_proposal=False, turn_tool_usage=raw)))
-
-
-@pytest.mark.parametrize(
-    ("answer", "passes"),
-    [
-        ("No, the proposal is pending. You must approve it.", True),
-        ("NOT YET. Your approval is required.", True),
-        ("It has not changed. Please approve the proposal first.", True),
-        ("No, the saved schedule is updated only after your approval.", True),
-        ("Now updated. Please approve it.", False),
-        ("Yes, the saved schedule changed. Approval is pending.", False),
-        ("No other fields changed. The saved schedule has now changed. Please approve it.", False),
-        ("No, it has not changed.", False),
-    ],
-)
-def test_proposal_answer_contract_accepts_denials_and_rejects_false_adoption(answer, passes):
-    case = next(case for case in load_cases(CASES_PATH) if case.id == "proposal-is-not-saved-yet")
-    proposed = copy.deepcopy(FIXTURE_SCHEDULES[case.fixture])
-    proposed["description"] = "April clinic roster"
-    outcome = RunOutcome(
-        answer=f"April clinic roster. {answer}", proposed=proposed, initial=FIXTURE_SCHEDULES[case.fixture]
-    )
-    assert grade(case, outcome).passed == passes
 
 
 @pytest.mark.parametrize("field_name", ["answer_matches", "answer_not_matches"])
@@ -1021,11 +1145,10 @@ def test_a_multi_turn_case_can_designate_an_earlier_proposal(tmp_path: Path):
     assert result.passed
 
 
-def test_loads_multiple_proposal_turns_and_lifecycle_actions(tmp_path: Path):
+def test_loads_multiple_proposal_turns(tmp_path: Path):
     entry = _case(
         user_turns=["Change it.", "Revise it.", "Done?"],
         proposal_turns=[1, 2],
-        turn_actions=[{"after_turn": 2, "action": "approve"}],
         **{"assert": [{"path": "description", "equals": "changed"}]},
         changes=["description"],
     )
@@ -1034,7 +1157,6 @@ def test_loads_multiple_proposal_turns_and_lifecycle_actions(tmp_path: Path):
 
     assert case.proposal_turns == (1, 2)
     assert case.proposal_turn == 2
-    assert case.turn_actions[0].action == "approve"
 
 
 def test_loads_external_schedule_update_action(tmp_path: Path):
@@ -1070,7 +1192,9 @@ def test_invalid_proposal_turn_is_rejected(tmp_path: Path, proposal_turn: object
         {"proposal_turns": [2, 1]},
         {"proposal_turns": [1, 1]},
         {"turn_actions": "approve"},
-        {"turn_actions": [{"after_turn": 2, "action": "approve"}]},
+        {"turn_actions": [{"after_turn": 2, "action": "update", "schedule_patch": {"description": "External"}}]},
+        # The app applies each change, so a case cannot approve or reject one.
+        {"turn_actions": [{"after_turn": 1, "action": "approve"}]},
         {"turn_actions": [{"after_turn": 1, "action": "update"}]},
     ],
 )
@@ -1249,6 +1373,7 @@ def test_every_case_sits_in_a_category_directory():
         "basics/12-optimizer-results",
         "basics/13-weight-notation",
         "basics/14-attachment-inspection",
+        "basics/15-provider-recovery",
     }
     assert all(
         not case.expect_proposal for case in cases if case.category.endswith(("00-summary", "01-reading", "06-refusal"))
@@ -1449,3 +1574,276 @@ def test_import_grader_checks_every_uploaded_rule(drop_rule):
         proposed["preferences"].pop()
     result = grade(case, RunOutcome(initial=FIXTURE_SCHEDULES[case.fixture], proposed=proposed))
     assert result.passed is not drop_rule
+
+
+@pytest.mark.parametrize("case_id", ["request-inspection-after-edit", "request-inspection-after-creation"])
+@pytest.mark.parametrize("mutation", [None, "failed-command", "wrong-count", "wrong-request"])
+def test_context_refresh_cases_require_successful_inspection_and_exact_counts(case_id, mutation):
+    from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
+
+    from .ai_test_helper import base_schedule_payload, schedule_yaml
+
+    case = next(case for case in load_cases(CASES_PATH) if case.id == case_id)
+    original = FIXTURE_SCHEDULES[case.fixture]
+    proposed = base_schedule_payload() if case_id.endswith("creation") else copy.deepcopy(original)
+    if case_id.endswith("creation"):
+        proposed.pop("appVersion")
+    if case_id.endswith("edit"):
+        proposed["preferences"].extend(copy.deepcopy(list(case.expected_diff[0].added)))
+    assert validate_frontend_schedule_yaml(schedule_yaml(proposed), 1_000_000).valid
+    from nurse_scheduling.ai.attachment_tools.inspect_shift_requests import inspect_requests
+    from nurse_scheduling.ai.result_context import build_result_context
+
+    source = schedule_yaml(proposed)
+    counts = inspect_requests(build_result_context(source), source.encode())
+    assert case.answer_json == {
+        "requestEntries": counts["request_entries"],
+        "personDateTargets": counts["person_date_targets"],
+    }
+    if mutation == "wrong-request":
+        proposed["preferences"][-1]["weight"] = 99
+    answer = dict(case.answer_json)
+    if mutation == "wrong-count":
+        answer["requestEntries"] += 1
+    command = case.tool_usage.required_calls[0][1]["command"]
+    result = grade(
+        case,
+        RunOutcome(
+            initial=original,
+            proposed=proposed,
+            answer=json.dumps(answer),
+            activity=[
+                {
+                    "kind": "tool",
+                    "name": "bash",
+                    "arguments": json.dumps({"command": command}),
+                    "ok": mutation != "failed-command",
+                }
+            ],
+        ),
+    )
+    assert result.passed == (mutation is None)
+
+
+@pytest.mark.parametrize(
+    "answer,passed",
+    [
+        (
+            "Which transitions should we forbid? What consecutive work limit do you use? Do you want fair or balanced workloads?",
+            True,
+        ),
+        ("The staffing arithmetic looks fine. We can add consecutive limits and fairness later.", False),
+        ("Which rest transitions should we forbid? What consecutive work limit?", False),
+    ],
+)
+def test_new_schedule_intake_requires_rest_and_fairness_questions(answer, passed):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "new-schedule-policy-intake")
+    activity = [
+        {
+            "kind": "tool",
+            "name": "read",
+            "ok": True,
+            "arguments": json.dumps({"path": "/reference/user-guide/build-a-real-schedule.md"}),
+        }
+    ]
+    assert grade(case, RunOutcome(answer=answer, activity=activity)).passed is passed
+
+
+@pytest.mark.parametrize("sequence", [["unknown"], ["policy-audit-clean"] * 3, "policy-audit-clean"])
+def test_optimizer_follow_up_sequence_rejects_invalid_fixtures_or_unbounded_rounds(tmp_path, sequence):
+    raw = {
+        "id": "retry",
+        "fixture": "policy-audit",
+        "question": "Finish",
+        "expect_proposal": False,
+        "optimizer_completion": "policy-audit-misses",
+        "optimizer_follow_up_completions": sequence,
+    }
+    path = tmp_path / "retry.json"
+    path.write_text(json.dumps(raw))
+    with pytest.raises(EvalCaseError):
+        load_cases(path)
+
+
+@pytest.mark.parametrize("mutation", [None, "missed-result", "no-retry"])
+def test_autonomous_retry_grader_checks_running_status_actions_and_final_quality(mutation):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "autonomous-policy-review-retry")
+    answer = dict(case.answer_json)
+    if mutation == "missed-result":
+        answer["successionViolations"] = 1
+        answer["reviewedPolicySatisfied"] = False
+    activity = [
+        {"kind": "user", "turn": 1},
+        {"kind": "tool", "name": "optimizer", "ok": True, "arguments": '{"action":"start"}'},
+        {"kind": "optimizer", "turn": 2},
+    ]
+    if mutation != "no-retry":
+        activity.append({"kind": "tool", "name": "optimizer", "ok": True, "arguments": '{"action":"start"}'})
+    activity.append({"kind": "optimizer", "turn": 3})
+    outcome = RunOutcome(
+        answer=json.dumps(answer),
+        activity=activity,
+        intermediate_answers=[
+            "Running in the background.",
+            "Running in the background.",
+        ],
+    )
+    assert grade(case, outcome).passed is (mutation is None)
+
+
+@pytest.mark.parametrize("decision", ["after-edit", "accepted", "declined"])
+@pytest.mark.parametrize("mutation", [None, "no-offer", "no-optimization", "early-start", "wrong-edit"])
+def test_optimization_loop_cases_check_offer_scope_and_submitted_edit(decision, mutation):
+    case = load_cases(CASES_PATH / f"basics/12-optimizer-results/optimization-loop-offer-{decision}.json")[0]
+    source = SMALL_CLINIC_PATH.read_text(encoding="utf-8").replace("weight: -1", "weight: -100", 1)
+    proposal = _load_yaml(source.encode())
+    if mutation == "wrong-edit":
+        proposal["preferences"][1]["weight"] = -10
+    offer = "I can optimize this proposal. Would you like that?"
+    if mutation == "no-offer":
+        offer = "The optimizer exists. The edit remains pending."
+    if mutation == "no-optimization":
+        offer = "I can explain the pending edit. Would you like that?"
+    start = {"kind": "tool", "name": "optimizer", "ok": True, "arguments": '{"action":"start"}'}
+    activity = [{"kind": "user", "turn": 1}]
+    if mutation == "early-start":
+        activity.append(start)
+    if decision != "after-edit":
+        activity.append({"kind": "user", "turn": 2})
+    if decision == "accepted":
+        activity.extend([start, {"kind": "optimizer_input", "schedule_yaml": source}])
+    outcome = RunOutcome(
+        answer=offer
+        if decision == "after-edit"
+        else "Running in the background."
+        if decision == "accepted"
+        else "The edit remains pending.",
+        initial=FIXTURE_SCHEDULES["small-clinic"],
+        proposed=proposal,
+        activity=activity,
+        intermediate_answers=[] if decision == "after-edit" else [offer],
+        proposal_turns=[True] if decision == "after-edit" else [True, False],
+    )
+    assert grade(case, outcome).passed is (mutation is None)
+
+
+@pytest.mark.parametrize(
+    "answer, start, passed",
+    [
+        ("Would you like me to optimize this proposal?", "", True),
+        ("I can run the optimizer and inspect the result.", "", True),
+        ("The optimizer can inspect results.", "", False),
+        ("I can't optimize this.", "", False),
+        ("I cannot optimize this.", "", False),
+        ("I can explain the edit. Optimization is available.", "", False),
+        ("I can not run the optimizer here.", "", False),
+        ("I can explain why the solver left Mira on nights.", "", False),
+        ("I can summarize the optimization result.", "", False),
+        ("Shall I start a new optimization run?", "", True),
+        ("Would you like an optimization pass on this draft?", "", True),
+        ("If you'd like, I can re-optimize the roster.", "", True),
+        ("Select Approve to save the edit.", "", False),
+        ("Running in the background.", "correct", True),
+        ("Running in the background.", "stale-source", False),
+        ("I can optimize this proposal.", "failed", False),
+    ],
+)
+def test_outcome_initiative_accepts_offers_or_verified_starts(answer, start, passed):
+    case = load_cases(CASES_PATH / "basics/12-optimizer-results/optimization-loop-outcome-after-edit.json")[0]
+    original = SMALL_CLINIC_PATH.read_text(encoding="utf-8")
+    updated = original.replace("weight: -1", "weight: -100", 1)
+    activity = []
+    if start:
+        activity.append(
+            {"kind": "tool", "name": "optimizer", "ok": start != "failed", "arguments": '{"action":"start"}'}
+        )
+        if start != "failed":
+            activity.append(
+                {"kind": "optimizer_input", "schedule_yaml": original if start == "stale-source" else updated}
+            )
+    outcome = RunOutcome(
+        answer=answer,
+        initial=FIXTURE_SCHEDULES["small-clinic"],
+        proposed=_load_yaml(updated.encode()),
+        activity=activity,
+    )
+    assert grade(case, outcome).passed is passed
+
+
+@pytest.mark.parametrize("mutation", [None, "changed-retry-source", "no-retry", "no-inputs"])
+def test_authorized_loop_checks_repeat_submission_and_preserved_sources(mutation):
+    case = load_cases(CASES_PATH / "basics/12-optimizer-results/optimization-loop-authorized-retry.json")[0]
+    source = (CASES_PATH.parent / f"fixtures/{case.fixture}.yaml").read_text(encoding="utf-8")
+    activity = []
+    for turn in (1, 2, 3):
+        activity.append({"kind": "user" if turn == 1 else "optimizer", "turn": turn})
+        if turn == 3 or (turn == 2 and mutation == "no-retry"):
+            continue
+        activity.append({"kind": "tool", "name": "optimizer", "ok": True, "arguments": '{"action":"start"}'})
+        if mutation != "no-inputs":
+            submitted = source
+            if turn == 2 and mutation == "changed-retry-source":
+                submitted = source.replace("11000000000", "11000000")
+            activity.append({"kind": "optimizer_input", "schedule_yaml": submitted})
+    outcome = RunOutcome(
+        initial=FIXTURE_SCHEDULES[case.fixture],
+        answer="The result meets the agreed goals.",
+        intermediate_answers=["Running in the background.", "Running in the background."],
+        activity=activity,
+    )
+    assert grade(case, outcome).passed is (mutation is None)
+
+
+@pytest.mark.parametrize("conflict", [False, True])
+@pytest.mark.parametrize("mutation", [None, "wrong-cause", "missing-explanation", "rerun"])
+def test_result_explanation_cases_check_cause_and_read_only_scope(conflict, mutation):
+    name = "result-miss-with-verified-conflict" if conflict else "result-miss-without-proven-conflict"
+    case = load_cases(CASES_PATH / f"basics/12-optimizer-results/{name}.json")[0]
+    answer = dict(case.answer_json)
+    answer["explanation"] = "The source proves the requests conflict." if conflict else "The cause is not established."
+    if mutation == "wrong-cause":
+        answer["reasonCategory"] = "not-established" if conflict else "verified-conflict"
+    if mutation == "missing-explanation":
+        answer.pop("explanation")
+    activity = [
+        {"kind": "user", "turn": 1},
+        {"kind": "tool", "name": "optimizer", "ok": True, "arguments": '{"action":"start"}'},
+        {"kind": "optimizer", "turn": 2},
+    ]
+    if mutation == "rerun":
+        activity.append({"kind": "tool", "name": "optimizer", "ok": True, "arguments": '{"action":"start"}'})
+    outcome = RunOutcome(answer=json.dumps(answer), activity=activity)
+    assert grade(case, outcome).passed is (mutation is None)
+
+
+@pytest.mark.parametrize(
+    "answer, passed",
+    [
+        ("One lower-priority request remains unmet. The solver traded it for stronger requests.", False),
+        ("One lower-priority request is unmet because it was sacrificed for the higher requests.", False),
+        ("One request is unmet. The optimizer kept the strong requests over it.", False),
+        (
+            "One request remains unmet, so it appears to be genuinely in conflict with the rest of the constraints.",
+            False,
+        ),
+        ("One request is unmet. It might be in conflict with the rest of the constraints.", True),
+        ("One request remains unmet. The solver traded it off against the 11B requests.", False),
+        ("One request remains unmet, so I left the tradeoff as-is rather than changing anything.", False),
+        ("One request remains unmet, so it looks like a genuine trade-off with the higher-weight goals.", False),
+        ("One request remains unmet, reflecting the trade the optimizer made to secure top-tier requests.", False),
+        ("One request is unmet. This does not establish a genuine trade-off with stronger requests.", True),
+        ("One request is unmet. It lost out to the higher-priority requests.", False),
+        ("One request is unmet. The solver spent that slot on the higher tier.", False),
+        ("One request is unmet. I cannot tell whether it lost out to stronger requests.", True),
+        ("One request is unmet. This does not prove it was traded for stronger requests.", True),
+        ("One request is unmet. It might have been traded for stronger requests.", True),
+        ("One request is unmet. A feasible timed-out result need not be optimal.", True),
+    ],
+)
+def test_summary_cause_oracle_distinguishes_affirmative_claims_from_uncertainty(answer, passed):
+    case = load_cases(CASES_PATH / "basics/12-optimizer-results/result-summary-without-proven-tradeoff.json")[0]
+    activity = [
+        {"kind": "tool", "name": "optimizer", "ok": True, "arguments": '{"action":"start"}'},
+        {"kind": "optimizer", "turn": 2},
+    ]
+    assert grade(case, RunOutcome(answer=answer, activity=activity)).passed is passed

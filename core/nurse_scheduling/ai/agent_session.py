@@ -25,7 +25,7 @@ import logging
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import aclosing
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, TypeVar
 
 from fastapi import HTTPException
@@ -33,10 +33,8 @@ from ruamel.yaml.error import YAMLError
 
 from ..loader import _load_yaml
 from .agent import Agent
-from .candidate import PendingProposal
 from .config import AiSettings
 from .context import (
-    SCHEDULE_CHANGED_DISCARDED_EVENT,
     SCHEDULE_CHANGED_EVENT,
     build_provider_messages,
     context_usage,
@@ -64,11 +62,8 @@ from .session_events import (
 from .transcript import (
     AgentMessage,
     AppEventEntry,
-    ProposalDecision,
-    ProposalDecisionEntry,
     UserMessage,
 )
-from .validation import new_schedule_issues, validate_frontend_schedule_yaml
 from .workspace import (
     SandboxAttachment,
     SandboxCandidateError,
@@ -97,7 +92,7 @@ _Result = TypeVar("_Result")
 
 
 def schedule_revision(schedule_yaml: str) -> str:
-    """Identify one exact schedule snapshot, so a stale proposal cannot be applied."""
+    """Identify one exact schedule snapshot, so the browser applies a run's schedule only over its base."""
     return hashlib.sha256(schedule_yaml.encode("utf-8")).hexdigest()
 
 
@@ -111,10 +106,10 @@ def _schedule_data(schedule_yaml: str) -> object:
 
 @dataclass(frozen=True)
 class RunCompletion:
-    """Whether a completed run and its optional proposal were retained."""
+    """Whether a completed run and its optional schedule change were retained."""
 
     run_saved: bool
-    proposal_saved: bool
+    schedule_applied: bool
     history_trimmed_count: int = 0
     context_used_chars: int = 0
 
@@ -162,7 +157,7 @@ class SessionPersistence(Protocol):
         self,
         session_id: str,
         entries: Sequence[AgentMessage],
-        proposal: tuple[str, str] | None = None,
+        schedule_yaml: str | None = None,
         *,
         snapshot: RunSnapshot,
     ) -> RunCompletion: ...
@@ -206,6 +201,8 @@ class RunRecorder(Protocol):
         error_code: str | None,
         usage: TokenUsage | None,
         committed: bool,
+        *,
+        schedule_change: dict[str, Any] | None = None,
     ) -> bool: ...
 
 
@@ -253,7 +250,6 @@ class AgentSession:
     version: int = 0
     snapshot: RunSnapshot | None = None
     agent: Agent = field(default_factory=Agent)
-    pending_proposal: PendingProposal | None = None
     # Retained source files keyed by upload ID, in upload order, and generated ZIPs keyed by run ID.
     uploads: dict[str, SandboxAttachment] = field(default_factory=dict)
     downloads: dict[str, bytes] = field(default_factory=dict)
@@ -302,7 +298,7 @@ class AgentSession:
         return projected_history(self.transcript)
 
     def recovery_state(self) -> dict[str, Any]:
-        """Return the schedule, proposal, and retention counts that a restored session continues.
+        """Return the schedule and retention counts that a restored session continues.
 
         The conversation itself is rebuilt from saved entries.
         """
@@ -316,7 +312,6 @@ class AgentSession:
                     {"filename": upload.filename, "bytes": len(upload.data)} for upload in self.uploads.values()
                 ],
             },
-            "pending_proposal": None if self.pending_proposal is None else asdict(self.pending_proposal),
             "dropped_history_messages": self.dropped_history_messages,
             "dropped_entries": self.dropped_entries,
         }
@@ -338,7 +333,6 @@ class AgentSession:
 
         Uploads, downloads, and optimizer results are not saved.
         """
-        proposal = state["pending_proposal"]
         return cls(
             id=session_id,
             owner_token=owner_token,
@@ -352,7 +346,6 @@ class AgentSession:
             dropped_history_messages=state["dropped_history_messages"],
             dropped_entries=state["dropped_entries"],
             next_entry_seq=next_entry_seq,
-            pending_proposal=None if proposal is None else PendingProposal(**proposal),
             event_stream=event_stream,
             entry_log=entry_log,
         )
@@ -365,7 +358,7 @@ class AgentSession:
             self.next_entry_seq += 1
 
     def _add_entry(self, entry: AgentMessage, run_id: str | None = None) -> None:
-        """Add an app event or proposal decision to the conversation and save it."""
+        """Add an app event to the conversation and save it."""
         self.transcript.append(entry)
         self._append_entries(run_id, [entry])
 
@@ -517,7 +510,6 @@ class AgentSession:
             list(self.transcript),
             self.schedule_yaml,
             self.version,
-            self.pending_proposal,
             previously_dropped=self.dropped_history_messages,
             run_id=run_id,
             uploads=tuple(self.uploads.values()),
@@ -529,17 +521,21 @@ class AgentSession:
         self,
         snapshot: RunSnapshot,
         entries: Sequence[AgentMessage],
-        proposal: tuple[str, str] | None,
+        schedule_yaml: str | None,
     ) -> RunCompletion:
-        """Commit only the current reservation, releasing it even when its version is stale."""
+        """Commit only the current reservation, releasing it even when its version is stale.
+
+        A committed run's validated schedule becomes the current schedule.
+        """
         if not self.abort_run(snapshot):
             return RunCompletion(False, False)
         if self.version != snapshot.version:
             return RunCompletion(False, False)
         self.transcript.extend(entries)
-        if proposal is not None:
-            self.pending_proposal = PendingProposal(proposal[0], proposal[1], snapshot.run_id)
-        return RunCompletion(True, proposal is not None)
+        if schedule_yaml is not None:
+            self.schedule_yaml = schedule_yaml
+            self.revision = schedule_revision(schedule_yaml)
+        return RunCompletion(True, schedule_yaml is not None)
 
     def abort_run(self, snapshot: RunSnapshot) -> bool:
         """Only the owner of a reservation may release it."""
@@ -572,17 +568,15 @@ class AgentSession:
         return self.agent.queued_steering if self.active else ()
 
     def update_schedule(self, schedule_yaml: str) -> None:
-        """Replace the session schedule, invalidate proposals and in-flight results, and record the change."""
+        """Replace the session schedule, invalidate in-flight results, and record the change."""
         if self.schedule_yaml == schedule_yaml:
             return
         data_changed = _schedule_data(self.schedule_yaml) != _schedule_data(schedule_yaml)
-        had_proposal = self.pending_proposal is not None
         self.version += 1
         self.schedule_yaml = schedule_yaml
         self.revision = schedule_revision(schedule_yaml)
-        self.pending_proposal = None
-        if data_changed or had_proposal:
-            self._add_entry(AppEventEntry(SCHEDULE_CHANGED_DISCARDED_EVENT if had_proposal else SCHEDULE_CHANGED_EVENT))
+        if data_changed:
+            self._add_entry(AppEventEntry(SCHEDULE_CHANGED_EVENT))
 
     def require_idle(self, action: str) -> None:
         """Refuse a file change while a run may still read the session files."""
@@ -603,53 +597,6 @@ class AgentSession:
         self._add_entry(AppEventEntry(removal_event(upload, index)))
         return upload
 
-    def require_proposal(self, base_sha256: str) -> PendingProposal:
-        """Reject a missing or stale proposal before it can be applied."""
-        if self.pending_proposal is None:
-            raise HTTPException(status_code=404, detail="No proposal is waiting for approval.")
-        if self.revision != base_sha256:
-            self.version += 1
-            self.pending_proposal = None
-            raise HTTPException(
-                status_code=409,
-                detail="The schedule changed after this proposal was created, so it was discarded.",
-            )
-        return self.pending_proposal
-
-    def approve_proposal(self, base_sha256: str, max_schedule_bytes: int) -> str | None:
-        """Revalidate, then adopt or discard the proposal in one synchronous operation.
-
-        Returns the adopted schedule, or None when trusted validation refused the proposal.
-        """
-        proposal = self.require_proposal(base_sha256)
-        approved = proposal.schedule_yaml
-        # Revalidate before adopting, so a refused proposal never becomes the
-        # session schedule that later runs are hydrated from.
-        validation = validate_frontend_schedule_yaml(approved, max_schedule_bytes)
-        if not validation.valid:
-            # A user can approve while their schedule is still incomplete, so only
-            # a problem this proposal introduces blocks it.
-            replaced_validation = validate_frontend_schedule_yaml(self.schedule_yaml, max_schedule_bytes)
-            if new_schedule_issues(replaced_validation, validation):
-                logger.error("Approved proposal failed revalidation session_id=%s", self.id)
-                self.discard_proposal("invalid")
-                return None
-        self.pending_proposal = None
-        self.version += 1
-        self.schedule_yaml = approved
-        self.revision = schedule_revision(approved)
-        self._add_entry(ProposalDecisionEntry("approved"), proposal.run_id)
-        return approved
-
-    def discard_proposal(self, decision: ProposalDecision = "rejected") -> None:
-        """Record a proposal decision once under the proposing run and invalidate results based on it."""
-        proposal = self.pending_proposal
-        if proposal is None:
-            return
-        self.pending_proposal = None
-        self.version += 1
-        self._add_entry(ProposalDecisionEntry(decision), proposal.run_id)
-
     def _prepare_run(
         self,
         snapshot: RunSnapshot,
@@ -657,7 +604,7 @@ class AgentSession:
         artifact: OptimizerArtifact | None,
         settings: AiSettings,
         events: RunEvents,
-        background: bool,
+        question_kind: str,
     ) -> tuple[list[ChatMessage], int, int]:
         """Project the reserved transcript and report the model input and its context usage."""
         history = project_history(snapshot.transcript, settings.max_history_chars)
@@ -667,7 +614,6 @@ class AgentSession:
             snapshot.schedule_yaml,
             question,
             snapshot.uploads,
-            pending_proposal=snapshot.pending_proposal is not None,
             optimizer_result_available=artifact is not None,
             max_download_bytes=settings.max_download_bytes,
             frontend_timezone=snapshot.frontend_timezone,
@@ -676,9 +622,7 @@ class AgentSession:
             {
                 "type": "model_input",
                 "schedule_yaml": snapshot.schedule_yaml,
-                **model_input(
-                    messages, len(history.messages), dropped_history, "optimizer" if background else "question"
-                ),
+                **model_input(messages, len(history.messages), dropped_history, question_kind),
             }
         )
         events.emit({"type": "context_usage", **context_usage(history.used_chars, settings)})
@@ -709,8 +653,6 @@ class AgentSession:
                 execute_optimizer=lambda current_yaml, arguments: execute_optimizer_tool(
                     runtime.session_optimizer, self.id, current_yaml, arguments, self.client_address
                 ),
-                pending_proposal_yaml=snapshot.pending_proposal.schedule_yaml if snapshot.pending_proposal else "",
-                pending_proposal_diff=snapshot.pending_proposal.diff if snapshot.pending_proposal else "",
                 attachments=snapshot.uploads,
                 optimizer_result=artifact.content if artifact is not None else None,
                 optimizer_context=artifact.schedule_context if artifact is not None else None,
@@ -745,7 +687,7 @@ class AgentSession:
         completion = store.finish(
             self.id,
             retained_entries(entries),
-            (output.proposal.text, output.proposal.diff) if output.proposal is not None else None,
+            output.proposal.text if output.proposal is not None else None,
             snapshot=snapshot,
         )
         return completion
@@ -753,6 +695,7 @@ class AgentSession:
     def _publish_completion(
         self,
         run: AgentRun,
+        schedule_change: dict[str, Any] | None,
         completion: RunCompletion,
         output: RunOutput,
         events: RunEvents,
@@ -767,8 +710,8 @@ class AgentSession:
             return
         if completion.history_trimmed_count and completion.history_trimmed_count != dropped_history:
             events.emit({"type": "history_trimmed", "dropped": completion.history_trimmed_count})
-        if completion.proposal_saved and output.proposal is not None:
-            events.emit({"type": "proposal", "diff": output.proposal.diff})
+        if schedule_change is not None:
+            events.emit(schedule_change)
         if output.download is not None:
             # A ZIP that does not fit the session memory budget leaves the answer intact.
             if runtime.store.save_download(self.id, run.id, output.download.content):
@@ -808,8 +751,8 @@ class AgentSession:
             entries = output.interrupted_entries([entries[0], *self.agent.state.messages], stop_reason)
             history_unavailable = runtime.recorder.enabled and not history_started
             if not run.shutdown and not history_unavailable and outcome.status in {"cancelled", "failed"}:
-                # Keep the prompt so a follow-up can refer to it. Workspace changes and any
-                # proposal were discarded with the sandbox, which context.py accounts for.
+                # Keep the prompt so a follow-up can refer to it. Workspace changes were
+                # discarded with the sandbox, which context.py accounts for.
                 committed = runtime.store.finish(self.id, retained_entries(entries), snapshot=snapshot).run_saved
             else:
                 runtime.store.abort(self.id, snapshot)
@@ -825,17 +768,41 @@ class AgentSession:
             events.emit(outcome.terminal)
         try:
             history_saved = None
+            schedule_change = None
+            if outcome.completion is not None and outcome.completion.schedule_applied and output.proposal is not None:
+                schedule_change = {
+                    "type": "schedule_applied",
+                    "run_id": run.id,
+                    "schedule_yaml": output.proposal.text,
+                    "base_sha256": schedule_revision(snapshot.schedule_yaml),
+                    "sha256": schedule_revision(output.proposal.text),
+                    "diff": output.proposal.diff,
+                }
             if history_started:
                 history_saved = await _complete(
                     runtime.recorder.finish_run(
-                        self.id, run.id, outcome.status, outcome.error_code, output.usage, committed
+                        self.id,
+                        run.id,
+                        outcome.status,
+                        outcome.error_code,
+                        output.usage,
+                        committed,
+                        schedule_change=schedule_change,
                     )
                 )
                 if not history_saved:
                     events.emit({"type": "warning", "message": RECOVERY_SAVE_WARNING})
             if outcome.completion is not None:
                 self._publish_completion(
-                    run, outcome.completion, output, events, runtime, dropped_history, history_saved, background
+                    run,
+                    schedule_change,
+                    outcome.completion,
+                    output,
+                    events,
+                    runtime,
+                    dropped_history,
+                    history_saved,
+                    background,
                 )
         finally:
             events.finish()
@@ -905,7 +872,12 @@ class AgentSession:
             if not background:
                 artifact = await runtime.session_optimizer.latest_result_artifact(session_id)
             messages, dropped_history, context_chars = self._prepare_run(
-                snapshot, question, artifact, settings, events, background
+                snapshot,
+                question,
+                artifact,
+                settings,
+                events,
+                "optimizer" if background else "question",
             )
             await self._execute_run(snapshot, messages, artifact, runtime, background, output, events, context_chars)
             run_entries = [run_entries[0], *self.agent.state.messages]

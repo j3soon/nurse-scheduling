@@ -64,18 +64,18 @@ describe('chat operation ownership', () => {
     expect(lifecycle.getSnapshot().background?.phase).toBe('stopping');
   });
 
-  it('revokes output, proposals and cursors together when a stream loses ownership', () => {
+  it('revokes output, applied schedules and cursors together when a stream loses ownership', () => {
     let owns = true;
-    const handlers = { onDelta: vi.fn(), onProposal: vi.fn(), onEventId: vi.fn(), onDone: vi.fn() };
+    const handlers = { onDelta: vi.fn(), onScheduleApplied: vi.fn(), onEventId: vi.fn(), onDone: vi.fn() };
     const callbacks = scopedCallbacks(handlers, () => owns);
     callbacks.onDelta('accepted');
     owns = false;
     callbacks.onDelta('late');
-    callbacks.onProposal?.('late proposal');
+    callbacks.onScheduleApplied?.('late schedule');
     callbacks.onEventId?.(8);
     callbacks.onDone?.('old');
     expect(handlers.onDelta).toHaveBeenCalledExactlyOnceWith('accepted');
-    expect(handlers.onProposal).not.toHaveBeenCalled();
+    expect(handlers.onScheduleApplied).not.toHaveBeenCalled();
     expect(handlers.onEventId).not.toHaveBeenCalled();
     expect(handlers.onDone).not.toHaveBeenCalled();
   });

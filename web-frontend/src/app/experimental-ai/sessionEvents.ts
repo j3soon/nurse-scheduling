@@ -22,6 +22,7 @@
 import type {
   ContextUsage,
   ModelInput,
+  ScheduleApplied,
   OptimizationActivity,
   OptimizationProgressActivity,
   SessionReset,
@@ -40,7 +41,7 @@ export type SessionEvent = (
   | { type: 'tool'; activity: ToolActivity }
   | { type: 'steering'; messageId: string; message: string }
   | { type: 'schedule_change'; scheduleYaml: string }
-  | { type: 'proposal'; diff: string }
+  | { type: 'schedule_applied'; applied: ScheduleApplied }
   | { type: 'download'; downloadId: string }
   | { type: 'warning'; message: string }
   | { type: 'model_input'; input: ModelInput }

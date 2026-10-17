@@ -42,6 +42,7 @@ export interface ChatExportMessage {
   createdAt?: number;
   activity?: ActivityEntry[];
   status?: 'pending' | 'failed' | 'stopped';
+  failureReason?: string;
   responseStartedAt?: number;
   responseCompletedAt?: number;
 }
@@ -51,8 +52,6 @@ export interface ChatExportMetadata {
   exportedAt: Date;
   frontendVersion: string;
   backendVersion?: string;
-  // A proposal waiting for approval is not part of the transcript, so exports add it separately.
-  pendingProposalDiff?: string;
   // A background optimization still running at export time. Its score changes, so exports omit it.
   runningOptimization?: { jobId: string; state: string; solver?: string; timeoutSeconds?: number };
   // Files kept in the chat session at export time. The export lists them without their contents.
@@ -61,11 +60,27 @@ export interface ChatExportMetadata {
 }
 
 type ChatExportSessionState = Pick<
-  ChatExportMetadata, 'backendVersion' | 'pendingProposalDiff' | 'runningOptimization' | 'uploadedFiles'
+  ChatExportMetadata, 'backendVersion' | 'runningOptimization' | 'uploadedFiles'
 >;
 
 function uploadedFileLines(files: NonNullable<ChatExportMetadata['uploadedFiles']>): string[] {
   return files.map(file => `${file.filename} (${(file.bytes / 1000).toLocaleString('en-US')} KB)`);
+}
+
+export function messageUploadedFileLines(message: ChatExportMessage): string[] {
+  if (message.source !== 'app' || message.title !== 'Files Uploaded') return [];
+  const separator = message.content.indexOf(': ');
+  if (separator < 0) return [];
+  try {
+    const files: unknown = JSON.parse(message.content.slice(separator + 2));
+    if (!Array.isArray(files) || !files.every(file => file !== null && typeof file === 'object'
+      && typeof file.filename === 'string' && typeof file.bytes === 'number' && Number.isFinite(file.bytes) && file.bytes >= 0)) {
+      return [];
+    }
+    return uploadedFileLines(files);
+  } catch {
+    return [];
+  }
 }
 
 const RUNNING_OPTIMIZATION_NOTE = 'An optimization was still running when this chat was exported. Its result is not included.';
@@ -78,8 +93,6 @@ function runningOptimizationDetails(running: NonNullable<ChatExportMetadata['run
     ...(running.timeoutSeconds !== undefined ? [`Solver timeout: ${running.timeoutSeconds}s`] : []),
   ];
 }
-
-const PENDING_PROPOSAL_NOTE = 'This change is waiting for approval in the app. The current schedule has not changed.';
 
 export type ChatExportFormat = 'html' | 'markdown';
 
@@ -128,13 +141,15 @@ function activityLabel(entry: ActivityEntry): string {
   if (entry.kind === 'response') return 'Response';
   if (entry.kind === 'reasoning') return 'Reasoning';
   if (entry.kind === 'schedule-change') return 'Schedule change';
+  if (entry.kind === 'schedule-check' || entry.kind === 'schedule-applied') return activitySummary(entry);
   if (entry.state === 'running') return `${entry.name} (running)`;
   if (entry.state === 'interrupted') return `${entry.name} (interrupted)`;
   return entry.ok ? entry.name : `${entry.name} (failed)`;
 }
 
 function activityText(entry: ActivityEntry): string {
-  if (entry.kind === 'reasoning' || entry.kind === 'response') return entry.text;
+  if (entry.kind === 'schedule-applied' && entry.notice) return `${entry.notice}\n\n${entry.text}`;
+  if (entry.kind !== 'tool' && entry.kind !== 'schedule-change') return entry.text;
   if (entry.kind === 'schedule-change') return `Before:\n${entry.before}\n\nAfter:\n${entry.after}`;
   return [
     entry.arguments ? `Arguments:\n${entry.arguments}` : '',
@@ -151,8 +166,8 @@ function renderScheduleChangeHtml(entry: Extract<ActivityEntry, { kind: 'schedul
 
 function renderActivityDetailsHtml(entry: Exclude<ActivityEntry, { kind: 'response' }>): string {
   let body: string;
-  if (entry.kind === 'reasoning') {
-    body = `<pre class="activity-output">${escapeHtml(entry.text)}</pre>`;
+  if (entry.kind === 'reasoning' || entry.kind === 'schedule-check' || entry.kind === 'schedule-applied') {
+    body = `<pre class="activity-output">${escapeHtml(activityText(entry))}</pre>`;
   } else if (entry.kind === 'schedule-change') {
     body = renderScheduleChangeHtml(entry);
   } else {
@@ -194,7 +209,10 @@ function fencedText(text: string): string[] {
 function messageDetails(message: ChatExportMessage): string[] {
   const details: string[] = [];
   if (message.createdAt !== undefined) details.push(`Sent: ${new Date(message.createdAt).toISOString()}`);
-  if (message.status === 'failed') details.push('Status: failed');
+  if (message.status === 'failed') {
+    details.push('Status: failed');
+    if (message.failureReason) details.push(`Error: ${message.failureReason.replaceAll('\n', '\n  ')}`);
+  }
   if (message.status === 'pending') details.push('Status: pending');
   if (message.status === 'stopped') details.push('Status: stopped');
   if (message.responseCompletedAt !== undefined) {
@@ -238,11 +256,18 @@ function renderAssistantTimelineHtml(message: ChatExportMessage): string {
   return `<div class="assistant-activity" aria-label="Assistant activity">${activity}</div>`;
 }
 
+// A background failure can already show its reason as the response text.
+function htmlFailureText(message: ChatExportMessage): string {
+  const reason = message.failureReason;
+  const shown = htmlAssistantTimeline(message).some(entry => entry.kind === 'response' && entry.text === reason);
+  return reason && !shown ? reason : 'This response failed before completion.';
+}
+
 function renderHtmlMessageDetails(message: ChatExportMessage, timeZone?: 'UTC'): string {
   const status = message.status === 'pending' && !message.content
     ? '<p class="message-status" role="status">Thinking</p>'
     : message.status === 'failed'
-      ? '<p class="failure">This turn failed and was not saved to AI history.</p>'
+      ? `<p class="failure">${escapeHtml(htmlFailureText(message))}</p>`
       : message.status === 'stopped'
         ? '<p class="message-status">Stopped before completion.</p>'
         : '';
@@ -279,6 +304,8 @@ export function buildMarkdownChatExport(
   ];
   messages.forEach(message => {
     lines.push('', `## ${messageLabel(message)}`);
+    const uploads = messageUploadedFileLines(message);
+    if (uploads.length) lines.push('', ...uploads.map(file => `- ${file}`));
     if (message.role === 'optimizer') {
       const { summary, details } = parseOptimizerMessage(message.content);
       lines.push('', summary || '[No message text]');
@@ -308,9 +335,6 @@ export function buildMarkdownChatExport(
       ...runningOptimizationDetails(metadata.runningOptimization).map(detail => `- ${detail}`),
     );
   }
-  if (metadata.pendingProposalDiff !== undefined) {
-    lines.push('', '## Pending proposal', '', PENDING_PROPOSAL_NOTE, '', ...fencedText(metadata.pendingProposalDiff));
-  }
   return `${lines.join('\n')}\n`;
 }
 
@@ -319,6 +343,7 @@ export function buildHtmlChatExport(
   metadata: ChatExportMetadata,
 ): string {
   const renderedMessages = messages.map(message => {
+    const uploads = messageUploadedFileLines(message);
     const timeline = message.role === 'assistant'
       ? renderAssistantTimelineHtml(message)
       : message.role === 'system' || message.source !== undefined
@@ -329,6 +354,7 @@ export function buildHtmlChatExport(
     return `
       <article class="message ${message.role}${message.source ? ` ${message.source}` : ''}">
         <div class="label">${escapeHtml(messageLabel(message))}</div>
+        ${uploads.length ? `<ul class="attachments">${uploads.map(file => `<li>${escapeHtml(file)}</li>`).join('')}</ul>` : ''}
         ${timeline}
         ${renderHtmlMessageDetails(message, metadata.timeZone)}
       </article>`;
@@ -427,11 +453,6 @@ export function buildHtmlChatExport(
       <h2>Optimization running</h2>
       <p>${RUNNING_OPTIMIZATION_NOTE}</p>
       <ul>${runningOptimizationDetails(metadata.runningOptimization).map(detail => `<li>${escapeHtml(detail)}</li>`).join('')}</ul>
-    </section>`}${metadata.pendingProposalDiff === undefined ? '' : `
-    <section class="proposal" aria-label="Pending proposal">
-      <h2>Pending proposal</h2>
-      <p>${PENDING_PROPOSAL_NOTE}</p>
-      <pre>${escapeHtml(metadata.pendingProposalDiff)}</pre>
     </section>`}
   </main>
 </body>

@@ -3,7 +3,7 @@
   "fixture": "new-schedule",
   "user_turns": [
     "Set the schedule description to March roster.",
-    "Revise that pending description to March training roster.",
+    "Revise that description to March training roster.",
     "One more revision: make it March ICU training roster."
   ],
   "intermediate_answer_contains": [
@@ -17,5 +17,5 @@
   ],
   "changes": ["description"],
   "tags": ["difficult", "tuning", "proposal-lifecycle", "proposal-revision"],
-  "note": "Each revision replaces the unapproved proposal. The final proposal contains only the latest description."
+  "note": "Each revision replaces the applied description. The final schedule contains only the latest description."
 }
