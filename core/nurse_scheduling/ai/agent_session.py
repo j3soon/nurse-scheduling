@@ -756,10 +756,11 @@ class AgentSession:
             events.emit(schedule_change)
         if output.download is not None:
             # A ZIP that does not fit the session memory budget leaves the answer intact.
-            if runtime.store.save_download(self.id, run.id, output.download.content) and await runtime.recorder.save(
-                self.id
-            ):
+            if runtime.store.save_download(self.id, run.id, output.download.content):
+                saved = await runtime.recorder.save(self.id)
                 events.emit({"type": "download", "download_id": run.id})
+                if not saved:
+                    events.emit({"type": "warning", "message": RECOVERY_SAVE_WARNING})
             else:
                 events.emit({"type": "warning", "message": DOWNLOAD_RETENTION_WARNING})
         done: RunDoneEvent = {"type": "done"}

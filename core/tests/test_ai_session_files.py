@@ -30,6 +30,7 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
+from nurse_scheduling.ai.agent_session import DOWNLOAD_RETENTION_WARNING, RECOVERY_SAVE_WARNING
 from nurse_scheduling.ai.downloads import WORKSPACE_DOWNLOAD
 from nurse_scheduling.ai.history import ChatHistory, _migrate_legacy_transcripts
 from nurse_scheduling.ai.optimizer import OptimizerArtifact, OptimizerJobPayload, SessionOptimization
@@ -129,6 +130,44 @@ def test_generated_download_survives_restart_and_removal(postgres_history):
     postgres_history.prune()
     with postgres_history._connect() as connection:
         assert connection.execute("SELECT count(*) FROM chat_files").fetchone() == (0,)
+
+
+def test_generated_download_is_announced_when_its_recovery_save_fails(postgres_history, monkeypatch):
+    content = archive_bytes()
+
+    def generate(_command, _timeout, sandbox):
+        sandbox.files[WORKSPACE_DOWNLOAD] = content
+        return CommandResult("created", "", 0)
+
+    provider = basic.ScriptedToolProvider(
+        [ToolCallRequest((ToolCall("zip", "bash", json.dumps({"command": "create ZIP"})),))], [TextDelta("Ready")]
+    )
+    factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=generate))
+    app = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test"), provider=provider, sandbox_factory=factory
+    )
+    save = ChatHistory.save_session
+
+    def fail_download_save(self, *args, downloads=None, **kwargs):
+        if any(data is not None for data in (downloads or {}).values()):
+            unavailable()
+        return save(self, *args, downloads=downloads, **kwargs)
+
+    with basic.AuthenticatedTestClient(app) as client:
+        session = basic.create_session(client)
+        with monkeypatch.context() as patch:
+            patch.setattr(ChatHistory, "save_session", fail_download_save)
+            response = client.post(f"/sessions/{session}/messages", json={"message": "Create files"})
+            events = basic.parse_sse(response.text)
+            download_id = next(data["download_id"] for kind, data in events if kind == "download")
+            assert any(kind == "warning" and data["message"] == RECOVERY_SAVE_WARNING for kind, data in events)
+            assert DOWNLOAD_RETENTION_WARNING not in response.text
+            assert events[-1][0] == "done"
+            assert not app.state.recovery.evictable(session)
+            assert client.get(f"/sessions/{session}/downloads/{download_id}").content == content
+        assert client.portal.call(app.state.recovery.save, session)
+        assert app.state.session_store.get(session).downloads[download_id] is None
+        assert client.get(f"/sessions/{session}/downloads/{download_id}").content == content
 
 
 def test_optimizer_files_survive_restart_without_cached_workbooks(postgres_history):
