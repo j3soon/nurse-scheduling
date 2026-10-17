@@ -1,0 +1,19 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "id": "provider-text-timeout-continuation",
+  "fixture": "new-schedule",
+  "question": "Reply with ALPHA, BRAVO, CHARLIE separated by |, in that order. Whitespace is allowed. Do not add other words.",
+  "expect_proposal": false,
+  "provider_timeout_after_text": "ALPHA|",
+  "answer_matches": [
+    "^\\s*ALPHA\\s*\\|\\s*BRAVO\\s*\\|\\s*CHARLIE\\s*$"
+  ],
+  "tool_usage": {
+    "max_total": 0
+  },
+  "tags": [
+    "provider-recovery"
+  ],
+  "note": "The provider fixture emits the first identifier and separator, then times out. The production retry policy must retain that prefix and get only the missing identifiers from the live provider. Whitespace does not affect identifier order or duplication."
+}

@@ -367,12 +367,7 @@ class OpenAiCompatibleProvider:
                         ChatMessage(role="assistant", content="".join(answer)),
                         ChatMessage(
                             role="user",
-                            content=(
-                                f"[App event] The response was interrupted after {text_chars} text characters. "
-                                "Continue from the end of the partial answer without repeating it. "
-                                "No tool calls from the interrupted response were executed. "
-                                "Issue any needed tool calls again with complete arguments."
-                            ),
+                            content=f"[App event] The response was interrupted after {text_chars} text characters.",
                         ),
                     ]
                 delay = self._settings.provider_retry_backoff_seconds * (2 ** (attempt - 1))

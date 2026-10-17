@@ -334,6 +334,12 @@ def test_invalid_clock_context_is_rejected(tmp_path, context):
         load_cases(_write(tmp_path, _case(expect_proposal=False, **context)))
 
 
+@pytest.mark.parametrize("partial_text", [None, 8, ["ALPHA|BR"]])
+def test_invalid_provider_timeout_text_is_rejected(tmp_path, partial_text):
+    with pytest.raises(EvalCaseError, match="provider_timeout_after_text must be a string"):
+        load_cases(_write(tmp_path, _case(expect_proposal=False, provider_timeout_after_text=partial_text)))
+
+
 def test_misspelled_assertion_key_cannot_silently_drop_schedule_checks(tmp_path):
     with pytest.raises(EvalCaseError, match="must use `assert`"):
         load_cases(_write(tmp_path, _case(assertions=[{"path": "description", "kind": "equals", "value": "Ward"}])))
@@ -1367,6 +1373,7 @@ def test_every_case_sits_in_a_category_directory():
         "basics/12-optimizer-results",
         "basics/13-weight-notation",
         "basics/14-attachment-inspection",
+        "basics/15-provider-recovery",
     }
     assert all(
         not case.expect_proposal for case in cases if case.category.endswith(("00-summary", "01-reading", "06-refusal"))

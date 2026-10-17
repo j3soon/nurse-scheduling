@@ -92,6 +92,10 @@ answer wording is correct.
 Use `optimizer_error` to simulate an optimizer API outage, and `tool_usage.required_errors` to require an observed
 tool failure. This exercises the agent's response to a tool error without treating a controlled outage as a provider
 or sandbox infrastructure failure.
+Use `provider_timeout_after_text` to inject one partial assistant answer followed by a stream timeout.
+The production retry policy sends the retained answer and interruption status to the live provider.
+Only that recovery request is live. The initial text and timeout are synthetic, so their timing does not measure
+a real provider outage. The ordinary response control runs without this field.
 Use `tool_usage.max_validation_errors` to bound failed trusted schedule checks. A valid final proposal does not erase
 an invalid intermediate mutation. Unrelated tool errors are not schedule-validation repairs.
 

@@ -110,6 +110,7 @@ from .grading import (
 )
 from .optimizer_fixtures import RESULT_SOURCES, completion_result
 from .prompt_ladder import case_digest, load_prompt_steps, prompt_at_step
+from .provider_fixtures import TimeoutOnceProvider
 from .report_extension import prepare_extension, read_completed_reports
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -340,6 +341,8 @@ async def run_case(
     """Answer one case the way the service would, then grade what it produced."""
     text = fixture_text(case.fixture)
     initial_text = text
+    if case.provider_timeout_after_text:
+        provider = TimeoutOnceProvider(settings, provider, case.provider_timeout_after_text)
     counting = _CountingProvider(provider)
 
     history: list[AgentMessage] = []
@@ -687,6 +690,11 @@ def _trajectory(
     return {
         "fixture": case.fixture,
         "question": case.question,
+        **(
+            {"provider_timeout_after_text": case.provider_timeout_after_text}
+            if case.provider_timeout_after_text
+            else {}
+        ),
         "user_turns": list(case.user_turns),
         "proposal_turns": list(case.proposal_turns),
         "turn_actions": [

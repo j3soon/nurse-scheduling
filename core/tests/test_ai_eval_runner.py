@@ -29,6 +29,7 @@ from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 
+import httpx
 import pytest
 from ruamel.yaml import YAML
 
@@ -1145,6 +1146,33 @@ def test_optimization_offer_decisions_keep_the_first_turn_edit(decision):
     submitted = [event["schedule_yaml"] for event in run.trajectory["events"] if event["kind"] == "optimizer_input"]
     expected = fixture_text(case.fixture).replace("weight: -1", "weight: -100", 1)
     assert submitted == ([expected] if decision == "accepted" else [])
+
+
+@pytest.mark.parametrize("repeats_prefix", [False, True])
+def test_provider_timeout_case_checks_the_retried_request_and_complete_answer(monkeypatch, repeats_prefix):
+    from .test_ai_provider import _delta_chunk, _sse_body, _transport_provider
+
+    case = CASE_BY_ID["provider-text-timeout-continuation"]
+    requests = []
+    continuation = "\n\nALPHA|BRAVO|CHARLIE" if repeats_prefix else "\n\nBRAVO|CHARLIE"
+
+    def handle(request):
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": []})
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, text=_sse_body(_delta_chunk({"content": continuation})))
+
+    provider = _transport_provider(monkeypatch, handle)
+    run = asyncio.run(run_case(provider, replace(settings(), provider_retry_backoff_seconds=0), case, _factory()))
+
+    assert run.passed is (not repeats_prefix), run.failures
+    assert run.answer == case.provider_timeout_after_text + continuation
+    assert run.provider_attempts_per_turn == [2]
+    assert len(requests) == 1
+    assert requests[0]["messages"][-2:] == [
+        {"role": "assistant", "content": case.provider_timeout_after_text},
+        {"role": "user", "content": "[App event] The response was interrupted after 6 text characters."},
+    ]
 
 
 def test_an_unknown_case_id_stops_the_run():

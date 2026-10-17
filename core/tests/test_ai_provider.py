@@ -346,7 +346,10 @@ def test_continues_partial_answer_with_backoff(monkeypatch: pytest.MonkeyPatch) 
     for request, partial in zip(requests[1:], ["First. ", "First. Second. "], strict=True):
         assert request["messages"][:-2] == requests[0]["messages"]
         assert request["messages"][-2] == {"role": "assistant", "content": partial}
-        assert "Continue from the end" in request["messages"][-1]["content"]
+        assert request["messages"][-1] == {
+            "role": "user",
+            "content": f"[App event] The response was interrupted after {len(partial)} text characters.",
+        }
         assert "Private reasoning" not in json.dumps(request)
         assert request["tools"] == TOOLS
 

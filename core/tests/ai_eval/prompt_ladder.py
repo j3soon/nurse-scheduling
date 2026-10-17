@@ -120,6 +120,7 @@ def case_digest(case: EvalCase) -> str:
         "after_optimizer_turns",
         "optimizer_download_file",
         "staffing_contract",
+        "provider_timeout_after_text",
     ):
         if not fields[optional]:
             fields.pop(optional)
@@ -134,6 +135,12 @@ def case_digest(case: EvalCase) -> str:
 
         fields["import_oracle_sha256"] = oracle_sha256(_check_import_schedule)
     helper_names = set()
+    if case.provider_timeout_after_text:
+        from .provider_fixtures import TimeoutOnceProvider
+
+        fields["provider_timeout_fixture_sha256"] = hashlib.sha256(
+            inspect.getsource(TimeoutOnceProvider).encode()
+        ).hexdigest()
     if case.optimizer_completion:
         from nurse_scheduling.ai.result_context import _project_context
 

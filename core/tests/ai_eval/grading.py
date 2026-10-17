@@ -140,6 +140,7 @@ class EvalCase:
     download_count: int | None = None
     optimizer_download_file: str = ""
     staffing_contract: dict[str, Any] = field(default_factory=dict)
+    provider_timeout_after_text: str = ""
 
     def __post_init__(self) -> None:
         """Keep direct test construction compatible with single-turn cases."""
@@ -250,6 +251,7 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         "download_count",
         "optimizer_download_file",
         "staffing_contract",
+        "provider_timeout_after_text",
         "changes",
         "answer_contains",
         "answer_matches",
@@ -260,6 +262,9 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     unknown = entry.keys() - allowed
     if unknown:
         raise EvalCaseError(f"{source} has unknown case fields: {', '.join(sorted(unknown))}.")
+    timeout_text = entry.get("provider_timeout_after_text", "")
+    if not isinstance(timeout_text, str):
+        raise EvalCaseError(f"{source} provider_timeout_after_text must be a string.")
     for required in ("id", "fixture", "expect_proposal"):
         if required not in entry:
             raise EvalCaseError(f"{source} is missing `{required}`.")
@@ -477,6 +482,7 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         download_count=download_count,
         optimizer_download_file=optimizer_download_file,
         staffing_contract=staffing_contract,
+        provider_timeout_after_text=timeout_text,
         changes=tuple(entry.get("changes", ())),
         answer_contains=tuple(
             tuple(value) if isinstance(value, list) else value for value in entry.get("answer_contains", ())
