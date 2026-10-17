@@ -160,11 +160,22 @@ def test_optimizer_files_survive_restart_without_cached_workbooks(postgres_histo
         failed = replace(
             job,
             id="failed-job",
-            payload=OptimizerJobPayload(id="remote-failed", state="failed", terminal=True),
+            payload=OptimizerJobPayload(
+                id="remote-failed",
+                state="failed",
+                terminal=True,
+                links={"events": "/optimize/remote-failed/events?token=1.signed"},
+            ),
             schedule_yaml=backend.submitted_yaml,
         )
         assert client.portal.call(restarted.state.recovery.save_optimizer_result, failed, None)
         assert client.portal.call(restarted.state.session_optimizer.latest_result_artifact, session) is None
+        with postgres_history._connect() as connection:
+            (status,) = connection.execute(
+                "SELECT data FROM chat_files WHERE kind = 'optimizer-status' AND source_id = 'failed-job'"
+            ).fetchone()
+        # Exports include this file, so it must not carry signed optimizer stream tokens.
+        assert "links" not in json.loads(status) and b"token" not in status
     with postgres_history._connect() as connection:
         connection.execute("UPDATE chat_sessions SET expires_at = now() - interval '1 second'")
     postgres_history.prune()

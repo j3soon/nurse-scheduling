@@ -359,6 +359,9 @@ skipped does not validate persistence.
   under test. Define structured answer fields and counting units explicitly. Do not
   let an undefined priority label or field name decide the grader's meaning. Keep original traces when correcting a grader, apply the correction
   to both variants, and rerun affected comparisons before claiming an improvement.
+- Drop link and token fields before saving or exporting a response from another
+  service. Optimizer job links carry stream tokens signed with this service's
+  credential.
 - Expose Pi's default `read`, `bash`, `edit`, and `write` model tools over
   the disposable sandbox. Always offer the server-side `optimizer` lifecycle
   tool. Keep optimizer execution and credentials outside
