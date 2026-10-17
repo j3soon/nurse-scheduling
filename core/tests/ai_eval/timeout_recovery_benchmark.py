@@ -294,7 +294,10 @@ async def benchmark(settings, baseline_ref, output_dir, repeat=3, jobs=4):
         ]
     )
     for arm in factories:
-        runtime = [json.loads((output_dir / f"{arm}-{rep}-runtime.json").read_text()) for rep in range(1, repeat + 1)]
+        runtime = [
+            json.loads((output_dir / f"{arm}-{rep}-runtime.json").read_text(encoding="utf-8"))
+            for rep in range(1, repeat + 1)
+        ]
         creations = [item["creations"] for item in runtime]
         hydrations = [sum(sandbox.get("hydration_count", 0) for sandbox in item["sandboxes"]) for item in runtime]
         verified = [
