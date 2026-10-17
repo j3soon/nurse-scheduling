@@ -38,6 +38,7 @@ export type AssistantEvent =
   | { type: 'delta'; text: string }
   | { type: 'reasoning'; text: string }
   | { type: 'truncated' }
+  | { type: 'provider_retry'; retryId: string | null; message: string }
   | { type: 'done' | 'stopped' }
   | { type: 'error' | 'stale'; message: string }
   | { type: 'tool_start'; activity: ToolStartActivity }
@@ -87,6 +88,8 @@ function finishToolActivity(entries: ActivityEntry[], result: ToolActivity): Act
 export function applyAssistantEvent<T extends ChatExportMessage>(message: T, event: AssistantEvent, occurredAt = Date.now()): T {
   const activity = message.activity ?? [];
   switch (event.type) {
+    case 'provider_retry':
+      return { ...message, providerRetry: event.retryId ? { id: event.retryId, message: event.message } : undefined, activity: [...activity, { kind: 'notice', text: event.message }] };
     case 'delta':
       return {
         ...message,
@@ -175,7 +178,7 @@ export function toAssistantEvent(
   browserSchedule: { readonly current: string },
 ): AssistantEvent | null {
   switch (event.type) {
-    case 'delta': case 'reasoning': case 'truncated': case 'tool_start': case 'tool':
+    case 'provider_retry': case 'delta': case 'reasoning': case 'truncated': case 'tool_start': case 'tool':
       return event;
     case 'schedule_change': {
       const before = workingSchedule.current ?? browserSchedule.current;

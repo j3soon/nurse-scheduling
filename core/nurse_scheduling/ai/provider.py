@@ -24,7 +24,7 @@ import base64
 import json
 import logging
 import re
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, TypedDict
@@ -214,14 +214,71 @@ def tool_result_image_message(call_id: str, image: ToolResultImage) -> ChatMessa
 class ProviderError(RuntimeError):
     """A provider or protocol failure reported to the AI service."""
 
-    def __init__(self, message: str, *, user_message: str | None = None) -> None:
+    def __init__(self, message: str, *, user_message: str | None = None, retryable: bool = False) -> None:
         super().__init__(message)
         self.user_message = user_message
+        self.retryable = retryable
 
     @classmethod
-    def for_user(cls, message: str) -> "ProviderError":
+    def for_user(cls, message: str, *, retryable: bool = False) -> "ProviderError":
         """Mark a known explanation safe for the chat, without exposing SDK errors."""
-        return cls(message, user_message=message)
+        return cls(message, user_message=message, retryable=retryable)
+
+
+def _continuation_messages(messages: Sequence[ChatMessage], answer: Sequence[str]) -> list[ChatMessage]:
+    text = "".join(answer)
+    return [
+        *messages,
+        ChatMessage(role="assistant", content=text),
+        ChatMessage(
+            role="user", content=f"[App event] The response was interrupted after {len(text)} text characters."
+        ),
+    ]
+
+
+class ResumableProvider:
+    """Keep one model request open for manual retry without replaying completed tools."""
+
+    def __init__(
+        self, provider: ToolCapableChatProvider, wait_for_retry: Callable[[ProviderError], Awaitable[None]]
+    ) -> None:
+        self._provider = provider
+        self._wait_for_retry = wait_for_retry
+
+    async def stream_events(
+        self, messages: Sequence[ChatMessage], tools: Sequence[dict[str, Any]] | None = None
+    ) -> AsyncIterator[ChatStreamEvent]:
+        answer: list[str] = []
+        text_chars = reasoning_chars = 0
+        request = messages
+        while True:
+            completed = []
+            try:
+                async with aclosing(self._provider.stream_events(request, tools)) as events:
+                    async for event in events:
+                        if isinstance(event, (ToolCallRequest, ResponseEnd)):
+                            completed.append(event)
+                        else:
+                            if isinstance(event, TextDelta):
+                                answer.append(event.text)
+                                text_chars += len(event.text)
+                            elif isinstance(event, ReasoningDelta):
+                                reasoning_chars += len(event.text)
+                            if text_chars > MAX_RESPONSE_TEXT_CHARS or reasoning_chars > MAX_RESPONSE_REASONING_CHARS:
+                                raise ProviderResponseLimitError.for_user(
+                                    "The AI provider exceeded the response limit across retries."
+                                )
+                            yield event
+            except ProviderError as error:
+                if not error.retryable:
+                    raise
+                await self._wait_for_retry(error)
+                if answer:
+                    request = _continuation_messages(messages, answer)
+                continue
+            for event in completed:
+                yield event
+            return
 
 
 class ProviderResponseLimitError(ProviderError):
@@ -358,18 +415,11 @@ class OpenAiCompatibleProvider:
                         if stream_started
                         else "The AI provider timed out before starting the response."
                     )
-                    raise ProviderError.for_user(message) from exc
+                    raise ProviderError.for_user(message, retryable=True) from exc
                 if answer:
                     # A fresh completion cannot resume transport state. Keep visible
                     # text as context, but never replay reasoning or partial tool JSON.
-                    payload["messages"] = [
-                        *messages,
-                        ChatMessage(role="assistant", content="".join(answer)),
-                        ChatMessage(
-                            role="user",
-                            content=f"[App event] The response was interrupted after {text_chars} text characters.",
-                        ),
-                    ]
+                    payload["messages"] = _continuation_messages(messages, answer)
                 delay = self._settings.provider_retry_backoff_seconds * (2 ** (attempt - 1))
                 logger.warning(
                     "AI provider timed out stream_started=%s attempt=%s max_attempts=%s retry_in_seconds=%.3f",
@@ -381,7 +431,7 @@ class OpenAiCompatibleProvider:
                 if delay > 0:
                     await asyncio.sleep(delay)
             except httpx.HTTPError as exc:
-                raise ProviderError.for_user("The AI provider is unavailable.") from exc
+                raise ProviderError.for_user("The AI provider is unavailable.", retryable=True) from exc
 
     async def _stream_attempt(
         self,
@@ -422,7 +472,8 @@ class OpenAiCompatibleProvider:
                         content_type,
                     )
                 raise ProviderError.for_user(
-                    f"The AI provider returned HTTP {response.status_code}. Error ID: {error_id}."
+                    f"The AI provider returned HTTP {response.status_code}. Error ID: {error_id}.",
+                    retryable=response.status_code in {408, 429} or response.status_code >= 500,
                 )
 
             partial_calls: dict[int, _PartialToolCall] = {}
@@ -480,7 +531,7 @@ class OpenAiCompatibleProvider:
             # Pi checks completion before releasing tools. Accept [DONE] for endpoints
             # that omit finish_reason, but never infer completion from HTTP EOF alone.
             if finish_reason is None and not done_received:
-                raise ProviderError.for_user("The AI provider stream ended before completion.")
+                raise ProviderError.for_user("The AI provider stream ended before completion.", retryable=True)
             if finish_reason is not None and finish_reason not in SUPPORTED_FINISH_REASONS:
                 raise ProviderError.for_user(
                     f"The AI provider returned an unsuccessful finish reason: {finish_reason}."

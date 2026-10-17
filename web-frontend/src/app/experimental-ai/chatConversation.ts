@@ -55,7 +55,7 @@ function isOptionalStringArray(value: unknown): boolean {
 
 function isActivityEntry(value: unknown): value is ActivityEntry {
   if (typeof value !== 'object' || value === null || !('kind' in value)) return false;
-  if (value.kind === 'response' || value.kind === 'reasoning' || value.kind === 'schedule-applied') {
+  if (value.kind === 'notice' || value.kind === 'response' || value.kind === 'reasoning' || value.kind === 'schedule-applied') {
     return 'text' in value && typeof value.text === 'string'
       && (!('notice' in value) || typeof value.notice === 'string')
       && (!('runId' in value) || typeof value.runId === 'string');
@@ -80,6 +80,7 @@ function isChatMessage(value: unknown): value is ChatMessage {
   return typeof message.id === 'string'
     && (message.role === 'system' || message.role === 'user' || message.role === 'assistant' || message.role === 'optimizer')
     && typeof message.content === 'string'
+    && (message.providerRetry === undefined || (typeof message.providerRetry === 'object' && message.providerRetry !== null && typeof message.providerRetry.id === 'string' && typeof message.providerRetry.message === 'string'))
     && (message.failureReason === undefined || typeof message.failureReason === 'string')
     && (message.source === undefined || message.source === 'app' || message.source === 'status' || message.source === 'optimizer')
     && (message.historyIndex === undefined || Number.isSafeInteger(message.historyIndex))

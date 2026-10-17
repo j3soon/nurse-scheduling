@@ -44,6 +44,7 @@ export type SessionEvent = (
   | { type: 'schedule_applied'; applied: ScheduleApplied }
   | { type: 'download'; downloadId: string }
   | { type: 'warning'; message: string }
+  | { type: 'provider_retry'; retryId: string | null; message: string }
   | { type: 'model_input'; input: ModelInput }
   | { type: 'optimization'; activity: OptimizationActivity }
   | { type: 'optimization_progress'; activity: OptimizationProgressActivity }

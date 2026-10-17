@@ -771,6 +771,23 @@ def create_app(
         refresh_owner_cookie(response, owner)
         return response
 
+    @app.post(
+        "/sessions/{session_id}/runs/{run_id}/retry/{retry_id}",
+        status_code=status.HTTP_202_ACCEPTED,
+        dependencies=[Depends(require_auth), Depends(restore_session)],
+    )
+    async def retry_provider(
+        session_id: str,
+        run_id: str,
+        retry_id: str,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> Response:
+        store.require_owned(session_id, owner)
+        runs.retry_provider(session_id, run_id, retry_id)
+        response = Response(status_code=status.HTTP_202_ACCEPTED)
+        refresh_owner_cookie(response, owner)
+        return response
+
     @app.post("/sessions/{session_id}/messages", dependencies=[Depends(require_auth), Depends(restore_session)])
     async def send_message(
         session_id: str,

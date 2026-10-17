@@ -35,6 +35,7 @@ export function formatResponseDuration(startedAt: number, completedAt: number): 
 }
 
 export function activitySummary(entry: Exclude<ActivityEntry, { kind: 'response' }>): string {
+  if (entry.kind === 'notice') return 'App notice';
   if (entry.kind === 'reasoning') return `Reasoning · ${formatCharacterCount(entry.text.length)} characters`;
   if (entry.kind === 'schedule-change') return 'schedule edit';
   if (entry.kind === 'schedule-check') return entry.ok ? 'Schedule check passed' : 'Schedule check failed';

@@ -68,7 +68,7 @@ export interface ScheduleAppliedEntry {
 }
 
 export type ActivityEntry =
-  | ResponseEntry | ReasoningEntry | ToolEntry | ScheduleChangeEntry | ScheduleCheckEntry | ScheduleAppliedEntry;
+  | { kind: 'notice'; text: string } | ResponseEntry | ReasoningEntry | ToolEntry | ScheduleChangeEntry | ScheduleCheckEntry | ScheduleAppliedEntry;
 
 // Long output is revealed a chunk at a time, so an expanded row never floods the page.
 const CHUNK_CHARS = 2000;
@@ -133,7 +133,7 @@ export function AssistantActivity({ entries }: { entries: ActivityEntry[] }) {
   return (
     <div aria-label="Assistant activity">
       {entries.map((entry, index) => (
-        <div key={index} className={entry.kind === 'schedule-check' ? 'ml-auto max-w-[95%]' : entry.kind === 'schedule-applied' ? 'mx-auto max-w-[95%]' : undefined}>
+        <div key={index} className={entry.kind === 'schedule-check' ? 'ml-auto max-w-[95%]' : entry.kind === 'schedule-applied' || entry.kind === 'notice' ? 'mx-auto max-w-[95%]' : undefined}>
           {entry.kind === 'schedule-applied' && entry.notice && (
             <p role="status" className="my-2 rounded border border-amber-200 bg-amber-50 p-2 text-sm text-amber-900">
               {entry.notice}
@@ -142,7 +142,9 @@ export function AssistantActivity({ entries }: { entries: ActivityEntry[] }) {
           {index > 0 && (entry.kind === 'response' || entries[index - 1].kind === 'response') && (
             <hr className="my-3 border-gray-200" />
           )}
-          {entry.kind === 'response' ? (
+          {entry.kind === 'notice' ? (
+            <p role="status" className="my-2 text-sm text-amber-800">{entry.text}</p>
+          ) : entry.kind === 'response' ? (
             <AssistantMarkdown content={entry.text} />
           ) : (
             <details open={entry.kind === 'schedule-check' && !entry.ok ? true : undefined} className={`text-xs ${activityColor(entry)}`}>

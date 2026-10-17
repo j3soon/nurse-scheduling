@@ -283,7 +283,7 @@ export default function ExperimentalAiPage() {
     sessionExpiresAt, sessionRetentionSeconds, conversationUnavailable, sessionNotice, trimmedHistoryCount,
     isStreaming, isStopping, isReconnecting, activeOptimization, queuedMessages, steeringAssistantId,
     setSessionRetentionSeconds, restoreConversation,
-    captureSession, newConversation, submitMessage, retryMessage, stop, removeUploadedFile,
+    captureSession, newConversation, submitMessage, retryMessage, retryProvider, stop, removeUploadedFile,
     removeGeneratedFiles, sessionEndpoint,
   } = useAiChat({
     scheduleYaml, aiEndpoint, authRequired, authToken, isClientReady, serverStatus,
@@ -1157,6 +1157,7 @@ export default function ExperimentalAiPage() {
         removingDownloadId={removingDownloadId}
         downloadingOptimizationId={downloadingOptimizationId}
         retryMessage={retryMessage}
+        retryProvider={retryProvider}
         prepareAttachmentRetry={prepareAttachmentRetry}
         downloadGeneratedFiles={downloadGeneratedFiles}
         removeGeneratedFiles={removeGeneratedFiles}

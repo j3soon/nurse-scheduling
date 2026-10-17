@@ -104,6 +104,14 @@ was answering. Use <kbd>Ctrl</kbd>+<kbd>Z</kbd> to restore them.
 
 ## Reconnect or retry
 
+If the model provider has a temporary failure, the run waits and offers
+**Retry provider request**. This retries the current model request and keeps completed
+tool results and files. It does not rerun completed commands or optimizer submissions.
+Partial text remains visible and is supplied as context for the continuation.
+The continuation can differ from what the interrupted request would have generated.
+**Stop**, the run deadline, or a service restart ends this wait. A service restart
+cannot restore the live sandbox. Other failures still end the run.
+
 The assistant continues working if the browser loses its connection or the phone
 sleeps. The chat reconnects automatically and recovers the complete saved answer.
 Reloading the same tab also resumes an unfinished request. **Stop** requests

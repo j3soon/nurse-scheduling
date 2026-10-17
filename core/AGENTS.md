@@ -135,6 +135,9 @@ skipped does not validate persistence.
 - Keep saved chat exports on the shared frontend formatter. Read a consistent
   PostgreSQL snapshot and use stored timestamps in UTC. Verify downloaded browser
   bytes against the command output with a rich saved-event fixture.
+- Keep manual provider retries inside the owning run and its original deadline.
+  Retain completed tool results and the live sandbox. Retry only the incomplete
+  model request, never commands or optimizer submissions.
 - Keep accepted AI runs independent of the browser stream. Reconnect with the
   same `message_id` to replay output, without repeating provider or tool calls.
   Keep complete replay snapshots separate from the bounded event buffer. Persist

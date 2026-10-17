@@ -42,6 +42,12 @@ def tool(summary, *outputs):
 
 
 class ExtractHtmlTracesTests(unittest.TestCase):
+    def test_app_notice_is_not_a_tool_or_model_response(self):
+        exported = message("assistant", '<div class="activity-entry"><details class="activity-details"><summary>App notice</summary><div class="activity-body"><pre class="activity-output">Provider timed out. Retry is available.</pre></div></details></div>')
+        result = extract_export(exported)
+        self.assertEqual(result["messages"][0]["activity"], [{"index": 0, "kind": "notice", "outputs": ["Provider timed out. Retry is available."]}])
+        self.assertEqual(result["inventory"]["tool_calls"], 0)
+
     def test_collapsed_app_and_status_text_is_content_not_system_policy(self):
         source = message(
             "system", '<details class="system-prompt"><pre>Policy</pre></details>'

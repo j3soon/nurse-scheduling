@@ -55,6 +55,12 @@ class RunErrorEvent(RunFields):
     message: str
 
 
+class ProviderRetryEvent(RunFields):
+    type: Literal["provider_retry"]
+    retry_id: str | None
+    message: str
+
+
 class ToolFields(RunFields):
     tool_call_id: str
     name: str
@@ -179,6 +185,7 @@ AgentSessionRunEvent = (
     | ToolStartEvent
     | ToolEndEvent
     | SteeringEvent
+    | ProviderRetryEvent
     | ScheduleChangeEvent
     | ScheduleAppliedEvent
     | DownloadEvent

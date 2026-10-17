@@ -43,6 +43,7 @@ const mockStreamSessionEvents = vi.hoisted(() => vi.fn());
 const mockStopSession = vi.hoisted(() => vi.fn());
 const mockGenerateYaml = vi.hoisted(() => vi.fn(() => 'description: current schedule\n'));
 const mockQueueMessage = vi.hoisted(() => vi.fn());
+const mockRetryProviderRequest = vi.hoisted(() => vi.fn());
 const mockUpdateSessionSchedule = vi.hoisted(() => vi.fn());
 const mockLoadFromYaml = vi.hoisted(() => vi.fn());
 const mockUseTabSwitchWarning = vi.hoisted(() => vi.fn());
@@ -83,6 +84,7 @@ vi.mock('./aiClient', async importOriginal => {
     endpoint === '/ai' || mockNormalizeAiEndpoint(endpoint) === 'https://api.nursescheduling.org/ai'
   ),
   queueMessage: mockQueueMessage,
+  retryProviderRequest: mockRetryProviderRequest,
   scheduleRevision: awaitClient.scheduleRevision,
   sendMessage: mockSendMessage,
   streamSessionEvents: mockStreamSessionEvents,
@@ -152,6 +154,7 @@ describe('ExperimentalAiPage', () => {
     vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined);
     mockCreateSession.mockReset().mockResolvedValue('session-id');
     mockGetUploads.mockReset().mockResolvedValue([]);
+    mockRetryProviderRequest.mockReset().mockResolvedValue(undefined);
     mockRemoveUpload.mockReset().mockResolvedValue(undefined);
     mockDownloadGeneratedZip.mockReset().mockResolvedValue(new Blob(['zip']));
     mockRemoveGeneratedZip.mockReset().mockResolvedValue(undefined);
@@ -1539,6 +1542,33 @@ describe('ExperimentalAiPage', () => {
     expect(screen.queryByText('Applied to your schedule')).not.toBeInTheDocument();
     expect(mockLoadFromYaml).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+  });
+
+  it('retries a provider request inside the same active run and keeps completed output', async () => {
+    const user = userEvent.setup();
+    let callbacks: SessionStreamOptions | undefined;
+    let finish: (() => void) | undefined;
+    mockRunEvents.mockImplementation(async (_id: string, _question: string, stream: SessionStreamOptions) => {
+      callbacks = stream;
+      stream.onEvent({ type: 'tool', activity: { name: 'bash', arguments: '{}', result: 'Completed once', ok: true } });
+      stream.onEvent({ type: 'provider_retry', retryId: 'attempt-1', message: 'The provider timed out.' });
+      await new Promise<void>(resolve => { finish = resolve; });
+    });
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Build a schedule.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await user.click(await screen.findByRole('button', { name: 'Retry provider request' }));
+    expect(mockRetryProviderRequest).toHaveBeenCalledWith('session-id', 'user-run-1', 'attempt-1', null, '/ai');
+    expect(mockSendMessage).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled();
+    act(() => {
+      callbacks?.onEvent({ type: 'provider_retry', retryId: null, message: 'Retrying the current provider request.' });
+      callbacks?.onEvent({ type: 'delta', text: 'Recovered output.' });
+    });
+    expect(screen.queryByRole('button', { name: 'Retry provider request' })).not.toBeInTheDocument();
+    expect(screen.getByText('Recovered output.')).toBeInTheDocument();
+    expect(screen.getByText('Completed once')).toBeInTheDocument();
+    await act(async () => finish?.());
   });
 
   it('delivers queued steering during optimizer review without sending it again', async () => {

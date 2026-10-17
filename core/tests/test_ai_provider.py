@@ -40,6 +40,7 @@ from nurse_scheduling.ai.provider import (
     ProviderResponseLimitError,
     ReasoningDelta,
     ResponseEnd,
+    ResumableProvider,
     TextDelta,
     TokenUsage,
     ToolCall,
@@ -221,6 +222,55 @@ def _events(provider: OpenAiCompatibleProvider, tools: list[dict] | None = None)
 
 
 TOOLS = [{"type": "function", "function": {"name": "schedule_patch", "parameters": {"type": "object"}}}]
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 408, 429, 503, 525])
+def test_only_transient_http_errors_allow_manual_retry(monkeypatch, status):
+    provider = _transport_provider(monkeypatch, lambda _request: httpx.Response(status))
+    with pytest.raises(ProviderError) as caught:
+        _events(provider)
+    assert caught.value.retryable == (status in {408, 429} or status >= 500)
+
+
+@pytest.mark.parametrize("field", ["content", "reasoning_content"])
+def test_manual_retries_keep_response_limits_and_discard_partial_tools(monkeypatch, field):
+    limit = "MAX_RESPONSE_TEXT_CHARS" if field == "content" else "MAX_RESPONSE_REASONING_CHARS"
+    monkeypatch.setattr(provider_module, limit, 5)
+    streams = []
+    waits = []
+
+    def handle(_request):
+        stream = _InterruptedStream(
+            _delta_chunk(
+                {
+                    field: "1234",
+                    "tool_calls": [
+                        {"index": 0, "id": "partial", "function": {"name": "schedule_patch", "arguments": "{}"}}
+                    ],
+                }
+            )
+        )
+        streams.append(stream)
+        return httpx.Response(200, stream=stream)
+
+    async def wait(error):
+        assert error.retryable
+        assert streams[-1].closed
+        waits.append(error)
+
+    provider = ResumableProvider(_transport_provider(monkeypatch, handle, provider_max_attempts=1), wait)
+    events = []
+
+    async def consume():
+        async for event in provider.stream_events([ChatMessage(role="user", content="Edit")], TOOLS):
+            events.append(event)
+
+    with pytest.raises(ProviderResponseLimitError):
+        asyncio.run(consume())
+    assert len(waits) == 1
+    assert len(streams) == 2
+    assert all(stream.closed for stream in streams)
+    assert not any(isinstance(event, (ToolCallRequest, ResponseEnd)) for event in events)
 
 
 def test_retries_pre_stream_timeouts_with_exponential_backoff(monkeypatch: pytest.MonkeyPatch) -> None:

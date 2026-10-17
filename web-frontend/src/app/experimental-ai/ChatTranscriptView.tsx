@@ -55,6 +55,7 @@ interface ChatTranscriptViewProps {
   conversationUnavailable: boolean;
   removingDownloadId: string | null;
   downloadingOptimizationId: string | null;
+  retryProvider?: (runId: string, retryId: string) => Promise<void>;
   retryMessage: (id: string, question: string) => void;
   prepareAttachmentRetry: (question: string) => void;
   downloadGeneratedFiles: (id: string) => Promise<void>;
@@ -76,6 +77,7 @@ export function ChatTranscriptView({
   removingDownloadId,
   downloadingOptimizationId,
   retryMessage,
+  retryProvider,
   prepareAttachmentRetry,
   downloadGeneratedFiles,
   removeGeneratedFiles,
@@ -128,7 +130,7 @@ export function ChatTranscriptView({
               {message.activity && (
                 <AssistantActivity
                   entries={message.activity.filter(entry => (
-                    entry.kind === 'response' || entry.kind === 'schedule-applied' || entry.kind === 'schedule-check'
+                    entry.kind === 'notice' || entry.kind === 'response' || entry.kind === 'schedule-applied' || entry.kind === 'schedule-check'
                       || (entry.kind === 'reasoning' ? showReasoning : showTools)
                   ))}
                 />
@@ -202,6 +204,15 @@ export function ChatTranscriptView({
                 entry.kind === 'response' && entry.text === message.failureReason
               )) && (
                 <p className="mt-2 whitespace-pre-wrap text-sm text-red-700">{message.failureReason}</p>
+              )}
+              {message.providerRetry && message.status === 'pending' && isStreaming && message.runId && retryProvider && (
+                <div className="mx-auto mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                  <p>The run is waiting. Completed tools and files are kept until Stop, the run deadline, or a service restart.</p>
+                  <button type="button" onClick={() => void retryProvider(message.runId!, message.providerRetry!.id)}
+                    className="mt-2 rounded border border-amber-400 px-3 py-1.5 font-medium">
+                    Retry provider request
+                  </button>
+                </div>
               )}
               {message.role === 'assistant' && message.status === 'failed' && message.retry && (
                 <div className="mt-3 border-t border-red-200 pt-3 text-sm text-red-700">

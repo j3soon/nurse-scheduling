@@ -43,6 +43,7 @@ export interface ChatExportMessage {
   activity?: ActivityEntry[];
   status?: 'pending' | 'failed' | 'stopped';
   failureReason?: string;
+  providerRetry?: { id: string; message: string };
   responseStartedAt?: number;
   responseCompletedAt?: number;
 }
@@ -140,6 +141,7 @@ function renderMarkdownHtml(value: string): string {
 function activityLabel(entry: ActivityEntry): string {
   if (entry.kind === 'response') return 'Response';
   if (entry.kind === 'reasoning') return 'Reasoning';
+  if (entry.kind === 'notice') return 'App notice';
   if (entry.kind === 'schedule-change') return 'Schedule change';
   if (entry.kind === 'schedule-check' || entry.kind === 'schedule-applied') return activitySummary(entry);
   if (entry.state === 'running') return `${entry.name} (running)`;
@@ -166,7 +168,7 @@ function renderScheduleChangeHtml(entry: Extract<ActivityEntry, { kind: 'schedul
 
 function renderActivityDetailsHtml(entry: Exclude<ActivityEntry, { kind: 'response' }>): string {
   let body: string;
-  if (entry.kind === 'reasoning' || entry.kind === 'schedule-check' || entry.kind === 'schedule-applied') {
+  if (entry.kind === 'notice' || entry.kind === 'reasoning' || entry.kind === 'schedule-check' || entry.kind === 'schedule-applied') {
     body = `<pre class="activity-output">${escapeHtml(activityText(entry))}</pre>`;
   } else if (entry.kind === 'schedule-change') {
     body = renderScheduleChangeHtml(entry);

@@ -3021,6 +3021,70 @@ def test_background_review_delivers_steering_after_tool_before_next_model_reques
         assert sum(entry == UserMessage("Check night coverage first.") for entry in session.transcript) == 1
 
 
+@pytest.mark.parametrize("outcome", ["retry", "stop", "deadline"])
+def test_provider_retry_preserves_completed_tools_and_run_identity(outcome):
+    error = ProviderError.for_user("The AI provider timed out.")
+    error.retryable = True
+    provider = ScriptedToolProvider(rename_call(), [TextDelta("Partial answer. "), error], [TextDelta("Recovered.")])
+    factory = rename_factory()
+    app = create_test_app(
+        settings=make_settings(
+            max_schedule_bytes=SCHEDULE_BYTE_LIMIT, sandbox_turn_timeout_seconds=0.5 if outcome == "deadline" else 10
+        ),
+        provider=provider,
+        sandbox_factory=factory,
+    )
+    with AuthenticatedTestClient(app) as client:
+        session_id = create_session(client, schedule_yaml())
+        accepted = client.post(
+            f"/sessions/{session_id}/messages",
+            json={"message": "Rename P1", "message_id": "retry-test"},
+            headers={"Accept": "application/json"},
+        )
+        assert accepted.status_code == 202
+        run_id = accepted.json()["run_id"]
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            events = app.state.session_event_stream.events_after(session_id)
+            waiting = next((event for event in events if event.type == "provider_retry"), None)
+            if waiting is not None or any(event.type == "error" for event in events):
+                break
+            time.sleep(0.001)
+        assert waiting is not None
+        assert waiting.data["run_id"] == run_id
+        assert waiting.data["message"] == "The AI provider timed out."
+        retry_url = f"/sessions/{session_id}/runs/{run_id}/retry/{waiting.data['retry_id']}"
+        if outcome == "retry":
+            other = AuthenticatedTestClient(app)
+            assert other.post(retry_url).status_code == 404
+            assert client.post(retry_url + "-stale").status_code == 409
+            assert client.post(retry_url).status_code == 202
+        elif outcome == "stop":
+            assert client.post(f"/sessions/{session_id}/stop").status_code == 202
+        deadline = time.monotonic() + 2
+        while app.state.runs.busy(session_id) and time.monotonic() < deadline:
+            time.sleep(0.001)
+        assert not app.state.runs.busy(session_id)
+        events = app.state.session_event_stream.events_after(session_id)
+        assert events[-1].type == {"retry": "done", "stop": "stopped", "deadline": "error"}[outcome]
+        assert sum(event.type == "run_start" for event in events) == 1
+        assert sum(event.type == "tool" for event in events) == 1
+        assert client.post(retry_url).status_code == 409
+        session = app.state.session_store._sessions[session_id]
+        if outcome == "retry":
+            assert len(provider.calls) == 3
+            assert any(message.get("role") == "tool" for message in provider.calls[2])
+            assert provider.calls[2][-2]["content"] == "Partial answer. "
+            assert "interrupted" in provider.calls[2][-1]["content"]
+            assert "description: Head" in session.schedule_yaml
+            assert sum(event.type == "schedule_applied" for event in events) == 1
+        else:
+            assert len(provider.calls) == 2
+            assert session.schedule_yaml == schedule_yaml()
+        assert len(factory.created) == 1
+        assert factory.created[0].closed
+
+
 def test_background_command_timeout_preserves_tool_result_and_reports_the_actual_cause():
     def timeout(_command, _timeout, backend):
         backend.closed = True
@@ -3058,7 +3122,7 @@ def test_provider_http_failure_shows_status_and_reference_without_response_body(
     from nurse_scheduling.ai.provider import OpenAiCompatibleProvider
 
     real_client = httpx.AsyncClient
-    transport = httpx.MockTransport(lambda _request: httpx.Response(503, text="private provider body secret-token"))
+    transport = httpx.MockTransport(lambda _request: httpx.Response(400, text="private provider body secret-token"))
     monkeypatch.setattr(
         provider_module.httpx, "AsyncClient", lambda **kwargs: real_client(**{**kwargs, "transport": transport})
     )
@@ -3069,7 +3133,7 @@ def test_provider_http_failure_shows_status_and_reference_without_response_body(
         session = create_session(client)
         response = client.post(f"/sessions/{session}/messages", json={"message": "Review the schedule"})
         message = parse_sse(response.text)[-1][1]["message"]
-        assert "HTTP 503" in message
+        assert "HTTP 400" in message
         assert re.search(r"Error ID: [0-9a-f-]{36}", message)
         assert "private provider body" not in response.text
         assert "secret-token" not in response.text
