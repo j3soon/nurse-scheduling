@@ -252,6 +252,7 @@ class AgentSession:
     agent: Agent = field(default_factory=Agent)
     # Retained source files keyed by upload ID, in upload order, and generated ZIPs keyed by run ID.
     uploads: dict[str, SandboxAttachment] = field(default_factory=dict)
+    pending_upload_removals: set[str] = field(default_factory=set)
     downloads: dict[str, bytes] = field(default_factory=dict)
     # Last owner access, which orders eviction. A restored session keeps its stored expiry.
     last_used: float = field(default_factory=time.monotonic)
@@ -306,6 +307,16 @@ class AgentSession:
             "schedule_yaml": self.schedule_yaml,
             "frontend_version": self.frontend_version,
             "frontend_timezone": self.frontend_timezone,
+            "uploads": [
+                {
+                    "id": upload.id,
+                    "filename": upload.filename,
+                    "media_type": upload.media_type,
+                    "size_bytes": len(upload.data),
+                    "request_sha256": upload.request_sha256,
+                }
+                for upload in self.uploads.values()
+            ],
             "export_metadata": {
                 **self.export_metadata,
                 "uploaded_files": [
@@ -326,12 +337,13 @@ class AgentSession:
         *,
         entries: Sequence[AgentMessage],
         next_entry_seq: int,
+        uploads: Sequence[SandboxAttachment] = (),
         event_stream: SessionEventStream | None,
         entry_log: Callable[[str, EntryRow], None] | None,
     ) -> "AgentSession":
         """Rebuild a session from `recovery_state` and its saved conversation entries.
 
-        Uploads, downloads, and optimizer results are not saved.
+        Downloads and optimizer results are not saved.
         """
         return cls(
             id=session_id,
@@ -343,6 +355,7 @@ class AgentSession:
             frontend_timezone=state.get("frontend_timezone", "UTC"),
             export_metadata=state.get("export_metadata", {}),
             transcript=retained_entries(entries),
+            uploads={upload.id: upload for upload in uploads},
             dropped_history_messages=state["dropped_history_messages"],
             dropped_entries=state["dropped_entries"],
             next_entry_seq=next_entry_seq,
@@ -594,6 +607,7 @@ class AgentSession:
             raise HTTPException(status_code=404, detail="The uploaded file is no longer available.")
         index = list(self.uploads).index(upload_id) + 1
         upload = self.uploads.pop(upload_id)
+        self.pending_upload_removals.add(upload_id)
         self._add_entry(AppEventEntry(removal_event(upload, index)))
         return upload
 

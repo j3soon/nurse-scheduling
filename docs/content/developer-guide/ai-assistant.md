@@ -184,9 +184,9 @@ run and rejects conflicting finish reasons or further output after completion.
 The backend stores the YAML snapshot and retained conversation turns. Each
 provider request includes a schedule summary, recent history, and the current
 question. The complete YAML stays in the sandbox until the model reads relevant
-content through a tool. Uploaded files remain in process memory for later turns
-until removed or the session expires. A server restart can remove them without
-prior notice. Conversation context keeps filenames and attachment markers,
+content through a tool. With PostgreSQL, uploaded source files survive restarts
+and idle session eviction until removed or the session expires. Without PostgreSQL,
+they remain in process memory only. Conversation context keeps filenames and attachment markers,
 while recovery entries can retain inspected document content and tool output.
 The prompt gives the agent workspace paths for schedules and attachments.
 
@@ -349,6 +349,12 @@ database. Follow the [backup and restore runbook](backend-deployment.md#ai-chat-
 frontend. The migration runs in one transaction under the existing advisory lock.
 Verify restoration of a saved session and retry its accepted message ID before
 allowing traffic.
+
+Migration `006_chat_uploads.sql` adds upload storage without changing existing
+sessions. Files lost before this upgrade cannot be recovered. Database backups
+now include original uploads. Rolling back to code before this migration loses
+attachment references when that code next saves a session. Keep a backup of the
+upgraded database before a rollback.
 
 Reverting code alone cannot restore the old table layout. To roll back, stop the
 new AI instances, restore the backup into an isolated database, and deploy the old
@@ -633,6 +639,7 @@ It saves the following data:
 | `chat_session_entries` | Conversation entries in session order, keyed by `(session_id, seq)`: run messages and app events such as uploads and schedule changes. Run messages name their run. Each row has a `type` and a JSON `payload` holding the fields of the matching `transcript.py` type. |
 | `chat_session_events` | Replayable session events except optimizer progress. Adjacent text fragments of one run share a row covering `event_id` through `last_event_id`. |
 | `chat_run_stops` | Named Stop requests, including messages that have not arrived yet. |
+| `chat_uploads` | Original upload bytes as `bytea`, keyed by session and upload ID. Ordered metadata and retry fingerprints stay in the session state. |
 
 Sessions are saved when they are created. Each run saves the session state with
 its prompt when it starts. As in Pi, each later message is saved when it ends, so
@@ -645,8 +652,11 @@ as well. A per-session lock commits these writes in capture order, so an older
 state never replaces a newer one. Each
 state write also saves every entry that is not saved yet, so the trimmed-entry
 count never skips an unsaved entry. Tool results can contain schedule and
-attachment text, so entries and events can contain staff information. Raw
-attachment files, images, and generated downloads are not stored. Database
+attachment text, so entries and events can contain staff information. Original
+uploads are stored with their session state and upload entries in one transaction.
+Removal deletes the stored bytes with the updated state. An upload save failure
+returns HTTP `503`. A retry with the same upload ID keeps the original file.
+Generated downloads and tool result images are not stored. Database
 access is for operators.
 
 Published events are written after delivery, combining adjacent text fragments
@@ -657,7 +667,7 @@ newest stored run, which the browser may show with output that storage lacks.
 
 A session expires after `AI_SESSION_TTL_SECONDS` of inactivity, 30 days by
 default. Activity renews the expiry, so an active session can retain older
-content. Startup and hourly maintenance delete expired sessions with their runs,
+content. Startup and hourly maintenance delete expired sessions with their uploads, runs,
 entries, events, and Stop requests. Backups need their own retention policy.
 
 An unavailable configured database prevents startup. A failed save of a new
@@ -676,8 +686,8 @@ Failed and interrupted runs can retain safe conversation context. Stale runs
 stay in the audit record only. Runs left running are reconciled with their saved terminal event. If no terminal
 event was saved, they end with an error that names the restart. Their saved
 question and output remain visible. A restart does not rerun model
-calls or mutating tools. Uploads, generated downloads, and finished optimizer
-results are not restored.
+calls or mutating tools. Uploads are restored. Generated downloads and finished
+optimizer results are not restored.
 
 With PostgreSQL, a full store unloads the least recently used idle session
 instead of returning HTTP `429`. A session stays loaded while a run, optimizer

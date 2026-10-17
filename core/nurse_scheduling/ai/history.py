@@ -37,6 +37,7 @@ from ..sentry import report_outage_recovery
 from ..server.retry import RepeatedFailure
 from .provider import TokenUsage
 from .transcript import AgentMessage, AssistantMessage, UserMessage, entry_from_record, entry_record
+from .workspace import SandboxAttachment
 
 logger = logging.getLogger("nurse_scheduling.ai.history")
 RunStatus = Literal["completed", "failed", "cancelled", "stale"]
@@ -104,7 +105,7 @@ class ChatHistory:
         self.prune()
 
     def prune(self) -> None:
-        """Delete expired sessions with their runs, entries, events, and Stop requests."""
+        """Delete expired sessions with their uploads, runs, entries, events, and Stop requests."""
         with self._connect() as connection:
             connection.execute("DELETE FROM chat_sessions WHERE expires_at < now()")
 
@@ -115,6 +116,7 @@ class ChatHistory:
         state: SessionState,
         entries: Sequence[EntryRow],
         credential_id: str | None = None,
+        uploads: Sequence[SandboxAttachment] = (),
     ) -> None:
         """Save the state with the entries it counts, so a restore never skips an unsaved entry."""
         owner, expires_at, data = state
@@ -125,6 +127,16 @@ class ChatHistory:
             (session_id, _owner_hash(owner), expires_at, _jsonb(data), credential_id),
         )
         _insert_entries(connection, session_id, entries)
+        for upload in uploads:
+            connection.execute(
+                "INSERT INTO chat_uploads (session_id, id, data) VALUES (%s, %s, %s) "
+                "ON CONFLICT (session_id, id) DO UPDATE SET data = EXCLUDED.data",
+                (session_id, upload.id, upload.data),
+            )
+        connection.execute(
+            "DELETE FROM chat_uploads WHERE session_id = %s AND NOT (id = ANY(%s::uuid[]))",
+            (session_id, [upload["id"] for upload in data.get("uploads", [])]),
+        )
 
     def save_session(
         self,
@@ -133,10 +145,11 @@ class ChatHistory:
         credential_id: str | None = None,
         *,
         entries: Sequence[EntryRow] = (),
+        uploads: Sequence[SandboxAttachment] = (),
     ) -> None:
         """Keep session ownership, expiry, schedule, and new conversation entries."""
         with self._connect() as connection:
-            self._save_state(connection, session_id, state, entries, credential_id)
+            self._save_state(connection, session_id, state, entries, credential_id, uploads)
 
     def append_entries(self, session_id: str, entries: Sequence[EntryRow]) -> None:
         """Save entries as they end, as Pi saves each message on `message_end`."""
@@ -157,13 +170,14 @@ class ChatHistory:
         message_id: str | None = None,
         credential_id: str | None = None,
         entries: Sequence[EntryRow] = (),
+        uploads: Sequence[SandboxAttachment] = (),
     ) -> None:
         """Atomically save the session state, a uniquely identified run, and its prompt entry.
 
         The prompt is written before model work, so it survives a process that dies mid-run.
         """
         with self._connect() as connection:
-            self._save_state(connection, session_id, state, entries)
+            self._save_state(connection, session_id, state, entries, uploads=uploads)
             inserted = connection.execute(
                 "INSERT INTO chat_runs (id, session_id, model, attachment_count, kind, message_id, auth_credential_id) "
                 "VALUES (%s, %s, %s, %s, %s, %s, "
@@ -186,13 +200,14 @@ class ChatHistory:
         state: SessionState,
         entries: Sequence[EntryRow] = (),
         schedule_change: dict[str, Any] | None = None,
+        uploads: Sequence[SandboxAttachment] = (),
     ) -> None:
         """Commit the run outcome with the resulting session state, keeping the first terminal result.
 
         `committed` records whether the run's messages joined the session conversation.
         """
         with self._connect() as connection:
-            self._save_state(connection, session_id, state, entries)
+            self._save_state(connection, session_id, state, entries, uploads=uploads)
             connection.execute(
                 "UPDATE chat_runs SET status = %s, error_code = %s, usage = %s, committed = %s, "
                 "schedule_change = %s, finished_at = now() "
@@ -294,6 +309,15 @@ class ChatHistory:
             ).fetchone()
             if row is None:
                 return None
+            uploads = []
+            for metadata in row[0].get("uploads", []):
+                blob = connection.execute(
+                    "SELECT data FROM chat_uploads WHERE session_id = %s AND id = %s",
+                    (session_id, metadata["id"]),
+                ).fetchone()
+                if blob is None:
+                    raise psycopg.DataError("Saved chat upload is missing")
+                uploads.append(SandboxAttachment(data=blob[0], **metadata))
             entries = connection.execute(
                 "SELECT e.type, e.payload, r.status FROM chat_session_entries e LEFT JOIN chat_runs r ON r.id = e.run_id "
                 "WHERE e.session_id = %s AND e.type <> 'tool_result' "
@@ -318,6 +342,7 @@ class ChatHistory:
             ).fetchall()
         return {
             "state": row[0],
+            "uploads": uploads,
             "expires_at": float(row[1]),
             "entries": [
                 replace(entry, stop_reason="aborted" if status == "cancelled" else "error")

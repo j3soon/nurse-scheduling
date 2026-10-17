@@ -134,7 +134,7 @@ class SessionStore:
         """Unload the least recently used idle session at the session limit.
 
         Sessions live for the whole recovery period, so without eviction a month of chats
-        would hold every slot. The unloaded session loses only its uploads, downloads, and
+        would hold every slot. The unloaded session loses only its downloads and
         finished optimizer results, as after a restart.
         """
         if self._evictable is None or len(self._sessions) < self._settings.max_sessions:
@@ -269,6 +269,7 @@ class SessionStore:
         *,
         entries: Sequence[AgentMessage],
         next_entry_seq: int,
+        uploads: Sequence[SandboxAttachment] = (),
     ) -> AgentSession:
         """Load a saved session and its rebuilt conversation with the stored expiry.
 
@@ -289,6 +290,7 @@ class SessionStore:
             state,
             entries=entries,
             next_entry_seq=next_entry_seq,
+            uploads=uploads,
             event_stream=self._event_stream,
             entry_log=self._on_entry,
         )
@@ -454,7 +456,11 @@ class SessionStore:
         """Remove an unused source file between runs and reclaim its bytes."""
         session = self._get_owned(session_id, owner_token)
         session.require_idle("removing files")
+        if upload_id not in session.uploads and upload_id in session.pending_upload_removals:
+            return
         session.remove_upload(upload_id)
+        if not self._settings.history_postgres_url:
+            session.pending_upload_removals.clear()
         self._cap_history(session)
         self._recount(session)
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds

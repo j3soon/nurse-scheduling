@@ -173,9 +173,14 @@ class SessionRecovery:
         assert self.history is not None
         entries = list(self._pending_entries.get(session_id, ()))
         state = self._store.recovery_state(session_id)
-        saved = await self.history.write(operation, *args, state=state, entries=entries, **kwargs)
+        session = self._store.get(session_id)
+        assert session is not None
+        uploads = tuple(session.uploads.values())
+        removed = set(session.pending_upload_removals)
+        saved = await self.history.write(operation, *args, state=state, entries=entries, uploads=uploads, **kwargs)
         if saved:
             self._entries_saved(session_id, len(entries))
+            session.pending_upload_removals.difference_update(removed)
         return saved
 
     def _entries_saved(self, session_id: str, count: int) -> None:
@@ -350,6 +355,7 @@ class SessionRecovery:
                 record["expires_at"],
                 entries=record["entries"],
                 next_entry_seq=record["next_entry_seq"],
+                uploads=record.get("uploads", ()),
             )
             self._event_stream.restore(session_id, record["last_event_id"])
             release = self.pin(session_id)

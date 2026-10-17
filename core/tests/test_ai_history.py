@@ -41,8 +41,9 @@ from nurse_scheduling.ai import recovery as recovery_module
 from nurse_scheduling.ai.agent_session import BACKGROUND_RECOVERY_ERROR, RECOVERY_SAVE_WARNING
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.history import ChatHistory, _insert_entries
-from nurse_scheduling.ai.provider import ProviderError, ReasoningDelta, TextDelta, TokenUsage
+from nurse_scheduling.ai.provider import ProviderError, ReasoningDelta, TextDelta, TokenUsage, ToolCallRequest
 from nurse_scheduling.ai.recovery import SessionRecovery, _event_rows
+from nurse_scheduling.ai.sandbox.fake import FakeSandboxFactory
 from nurse_scheduling.ai.session_event_stream import SessionEvent, SessionEventStream, fold_recovery
 from nurse_scheduling.ai.sessions import SessionStore
 from nurse_scheduling.ai.transcript import (
@@ -54,6 +55,7 @@ from nurse_scheduling.ai.transcript import (
     UserMessage,
     entry_from_record,
 )
+from nurse_scheduling.ai.workspace import SandboxAttachment
 
 from . import test_ai_basic as basic
 
@@ -100,7 +102,7 @@ def recorded_history(monkeypatch):
             {"run_id": run_id, "session_id": session_id, "state": state, "prompt": prompt, **fields}
         )
 
-    def finish(_self, *outcome, session_id=None, state=None, entries=(), schedule_change=None):
+    def finish(_self, *outcome, session_id=None, state=None, entries=(), schedule_change=None, uploads=()):
         records["entries"].extend(entries)
         records["finishes"].append((*outcome, state))
         records["schedule_changes"].append(schedule_change)
@@ -472,7 +474,7 @@ def test_recovery_state_writes_commit_in_capture_order(recorded_history, monkeyp
     release = threading.Event()
     committed = []
 
-    def save(_self, _session_id, *, state, credential_id=None, entries=()):
+    def save(_self, _session_id, *, state, credential_id=None, entries=(), uploads=()):
         if state[2]["schedule_yaml"] == older:
             blocked.set()
             release.wait(5)
@@ -773,6 +775,115 @@ def session_state(owner: str, expires_in: float = 60, **changes) -> tuple[str, f
     return owner, time.time() + expires_in, {**EMPTY_STATE, **changes}
 
 
+def test_postgres_uploads_survive_restart_and_removal(postgres_history):
+    settings = basic.make_settings(history_postgres_url="test", max_attachment_total_bytes=20)
+    app = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
+    upload_id = str(uuid4())
+    payload = {"files": ("notes.txt", b"handover\x00", "text/plain")}
+    with basic.AuthenticatedTestClient(app) as client:
+        session = basic.create_session(client)
+        response = client.post(f"/sessions/{session}/uploads?upload_id={upload_id}", files=payload)
+        assert response.status_code == 201
+        first = response.json()[0]
+        duplicate = client.post(f"/sessions/{session}/uploads", files=payload).json()[0]
+        assert duplicate["filename"] == "notes (1).txt"
+        cookies = dict(client.cookies)
+
+    read = ToolCallRequest((ToolCall("read", "read", json.dumps({"path": "/workspace/schedule.yaml"})),))
+    provider = basic.ScriptedToolProvider([read], [TextDelta("Read")])
+    factory = FakeSandboxFactory()
+    restarted = basic.create_test_app(settings=settings, provider=provider, sandbox_factory=factory)
+    with basic.AuthenticatedTestClient(restarted) as client:
+        assert client.get(f"/sessions/{session}/uploads").status_code == 404
+        client.cookies.update(cookies)
+        assert client.get(f"/sessions/{session}/uploads").json() == [first, duplicate]
+        retry = client.post(f"/sessions/{session}/uploads?upload_id={upload_id}", files=payload)
+        assert retry.status_code == 201 and retry.json() == [first]
+        conflict = client.post(
+            f"/sessions/{session}/uploads?upload_id={upload_id}",
+            files={"files": ("notes.txt", b"changed", "text/plain")},
+        )
+        assert conflict.status_code == 409
+        assert (
+            client.post(
+                f"/sessions/{session}/uploads", files={"files": ("large.txt", b"123", "text/plain")}
+            ).status_code
+            == 413
+        )
+        assert client.post(f"/sessions/{session}/messages", json={"message": "Read the files"}).status_code == 200
+        for metadata in (first, duplicate):
+            filename = metadata["filename"].replace(" (1)", "_1_")
+            path = f"/workspace/attachments/{metadata['id']}-{filename}"
+            assert factory.created[0].files[path] == b"handover\x00"
+        assert client.delete(f"/sessions/{session}/uploads/{upload_id}").status_code == 204
+    again = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
+    with basic.AuthenticatedTestClient(again) as client:
+        client.cookies.update(cookies)
+        assert client.get(f"/sessions/{session}/uploads").json() == [duplicate]
+    with postgres_history._connect() as connection:
+        assert connection.execute("SELECT id::text, data FROM chat_uploads").fetchall() == [
+            (duplicate["id"], b"handover\x00")
+        ]
+        connection.execute("UPDATE chat_sessions SET expires_at = now() - interval '1 second'")
+    postgres_history.prune()
+    with postgres_history._connect() as connection:
+        assert connection.execute("SELECT count(*) FROM chat_uploads").fetchone() == (0,)
+
+
+def test_postgres_failed_upload_is_not_acknowledged_and_can_retry(postgres_history, monkeypatch):
+    app = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test"), provider=basic.FakeProvider()
+    )
+    with basic.AuthenticatedTestClient(app) as client:
+        session = basic.create_session(client)
+        upload_id = str(uuid4())
+        payload = {"files": ("notes.txt", b"handover", "text/plain")}
+        save = ChatHistory.save_session
+        monkeypatch.setattr(ChatHistory, "save_session", unavailable)
+        assert client.post(f"/sessions/{session}/uploads?upload_id={upload_id}", files=payload).status_code == 503
+        with postgres_history._connect() as connection:
+            assert connection.execute("SELECT count(*) FROM chat_uploads").fetchone() == (0,)
+            assert not connection.execute("SELECT state FROM chat_sessions").fetchone()[0]["uploads"]
+        monkeypatch.setattr(ChatHistory, "save_session", save)
+        assert client.post(f"/sessions/{session}/uploads?upload_id={upload_id}", files=payload).status_code == 201
+        assert len(client.get(f"/sessions/{session}/uploads").json()) == 1
+        monkeypatch.setattr(ChatHistory, "save_session", unavailable)
+        assert client.delete(f"/sessions/{session}/uploads/{upload_id}").status_code == 503
+        monkeypatch.setattr(ChatHistory, "save_session", save)
+        assert client.delete(f"/sessions/{session}/uploads/{upload_id}").status_code == 204
+        assert client.delete(f"/sessions/{session}/uploads/{upload_id}").status_code == 404
+        # A removed ID can be used for a new upload, with new bytes.
+        assert (
+            client.post(
+                f"/sessions/{session}/uploads?upload_id={upload_id}",
+                files={"files": ("new.txt", b"new bytes", "text/plain")},
+            ).status_code
+            == 201
+        )
+    with postgres_history._connect() as connection:
+        assert connection.execute("SELECT data FROM chat_uploads").fetchall() == [(b"new bytes",)]
+
+
+def test_postgres_upload_write_is_atomic(postgres_history, monkeypatch):
+    store = SessionStore(basic.make_settings())
+    session = store.create(str(uuid4()), basic.schedule_yaml())
+    uploads = store.retain_uploads(session.id, session.owner_token, [SandboxAttachment("notes", "text/plain", b"hi")])
+    # Fail after the session row and file bytes have been written. Neither may commit.
+    with monkeypatch.context() as patch:
+        original = ChatHistory._save_state
+
+        def fail_after_write(*args, **kwargs):
+            original(*args, **kwargs)
+            raise psycopg.OperationalError("interrupted transaction")
+
+        patch.setattr(ChatHistory, "_save_state", staticmethod(fail_after_write))
+        with pytest.raises(psycopg.OperationalError):
+            postgres_history.save_session(session.id, store.recovery_state(session.id), uploads=uploads)
+    with postgres_history._connect() as connection:
+        assert connection.execute("SELECT count(*) FROM chat_sessions").fetchone() == (0,)
+        assert connection.execute("SELECT count(*) FROM chat_uploads").fetchone() == (0,)
+
+
 def test_postgres_duplicates_and_reconnection(postgres_history):
     history = postgres_history
     run, session, owner = str(uuid4()), str(uuid4()), str(uuid4())
@@ -818,7 +929,7 @@ def test_postgres_duplicates_and_reconnection(postgres_history):
             *map(record, entries),
             record(app_event[2]),
         ]
-        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (5,)
+        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (6,)
     # Tool results never join later context, so the conversation is rebuilt without them.
     assert restarted.load_session(session, owner)["entries"] == [
         UserMessage("What's next?"),
@@ -1039,7 +1150,7 @@ def test_postgres_upgrade_preserves_deployed_sessions_and_message_receipts(unini
     assert [(row[3], row[4].get("text")) for row in events] == [("delta", "Saved answer"), ("optimization", None)]
     assert events[0][4]["run_id"] == run_id
     with history._connect() as connection:
-        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (5,)
+        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (6,)
         assert connection.execute("SELECT auth_credential_id FROM chat_sessions").fetchone() == ("team-a",)
         assert connection.execute("SELECT model FROM chat_runs").fetchone() == ("saved-model",)
 

@@ -2277,6 +2277,7 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
             message_id: str | None,
             credential_id: str | None,
             entries: object,
+            uploads: object,
         ) -> None:
             history_starts.append((run_id, session_id, credential_id, prompt, model, attachment_count))
 

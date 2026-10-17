@@ -626,10 +626,11 @@ def create_app(
         release = recovery.pin(session_id)
         try:
             uploads = await _parse_upload_request(request, settings)
+            retained = store.retain_uploads(session_id, owner, uploads, upload_id=str(upload_id) if upload_id else None)
+            if not await recovery.save(session_id):
+                raise HTTPException(status_code=503, detail="Uploaded files could not be saved. Retry the upload.")
         finally:
             release()
-        retained = store.retain_uploads(session_id, owner, uploads, upload_id=str(upload_id) if upload_id else None)
-        await recovery.save(session_id)
         refresh_owner_cookie(response, owner)
         return [_upload_metadata(item) for item in retained]
 
@@ -653,7 +654,8 @@ def create_app(
     ) -> Response:
         """Remove one retained source file from the session."""
         store.remove_upload(session_id, owner, upload_id)
-        await recovery.save(session_id)
+        if not await recovery.save(session_id):
+            raise HTTPException(status_code=503, detail="The file removal could not be saved.")
         response = Response(status_code=status.HTTP_204_NO_CONTENT)
         refresh_owner_cookie(response, owner)
         return response

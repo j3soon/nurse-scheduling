@@ -122,10 +122,10 @@ excluded from the model's conversation context.
 Recovery lasts until the session expires, normally after 30 days of inactivity.
 Hosted deployments use PostgreSQL to
 recover messages after a backend restart. A restart interrupts active responses,
-but the saved question and partial output remain available. Uploaded files and
-result downloads are held in memory. They can disappear without prior notice
-after a server restart or when a busy server unloads an idle chat. Keep your
-original files.
+but the saved question, partial output, and uploaded source files remain available.
+Result downloads are held in memory and can disappear after a restart or when a
+busy server unloads an idle chat. Without PostgreSQL, chats and files remain in
+memory only. Keep your original files.
 
 ## See what the assistant did
 
