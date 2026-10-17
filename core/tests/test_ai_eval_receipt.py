@@ -42,17 +42,25 @@ def _report(tmp_path, step_number, witness_before=0, cost=None):
     step = steps[step_number - 1]
     cases = [CASE_BY_ID[case_id] for case_id in step.cases]
     prefix = step_number if step.comparison_mode == "adjacent" else len(steps)
-    (tmp_path / "after").mkdir()
-    (tmp_path / "after" / "metadata.json").write_text(
-        json.dumps(
-            {
-                "provider_model": "test-model",
-                "prompt_sha256": _sha256(prompt_at_step(prefix)),
-                "cases_sha256": {case.id: case_digest(case) for case in cases},
-                "fixtures_sha256": {case.fixture: _sha256(fixture_text(case.fixture)) for case in cases},
-            }
+    prompts = {
+        "before": prompt_at_step(step_number - 1)
+        if step.comparison_mode == "adjacent"
+        else prompt_at_step(prefix, omit=step_number),
+        "after": prompt_at_step(prefix),
+    }
+    for arm, prompt in prompts.items():
+        (tmp_path / arm).mkdir()
+        (tmp_path / arm / "metadata.json").write_text(
+            json.dumps(
+                {
+                    "provider_model": "test-model",
+                    "prompt_sha256": _sha256(prompt),
+                    "cases_sha256": {case.id: case_digest(case) for case in cases},
+                    "fixtures_sha256": {case.fixture: _sha256(fixture_text(case.fixture)) for case in cases},
+                }
+            ),
+            encoding="utf-8",
         )
-    )
 
     def counts(passed):
         return {"runs": 3, "passed": passed, "infrastructure_errors": 0}
@@ -72,7 +80,8 @@ def _report(tmp_path, step_number, witness_before=0, cost=None):
                 "cost_metric": "total-tokens" if cost else None,
                 "cost_ratio": 0.75 if cost else None,
             }
-        )
+        ),
+        encoding="utf-8",
     )
     return step
 
@@ -100,24 +109,37 @@ def test_receipt_records_a_cost_gain_for_a_passing_tie(tmp_path):
     assert (record["cost_metric"], record["cost_ratio"], record["cost_target"]) == ("total-tokens", 0.25, 0.75)
 
 
-def test_receipt_rejects_a_report_with_changed_inputs(tmp_path):
+@pytest.mark.parametrize("arm", ["before", "after"])
+@pytest.mark.parametrize("field", ["cases_sha256", "fixtures_sha256", "prompt_sha256"])
+def test_receipt_rejects_a_report_with_changed_inputs(tmp_path, arm, field):
     step = _report(tmp_path, 1)
-    metadata_path = tmp_path / "after" / "metadata.json"
-    metadata = json.loads(metadata_path.read_text())
-    metadata_path.write_text(json.dumps({**metadata, "cases_sha256": dict.fromkeys(metadata["cases_sha256"], "old")}))
-    with pytest.raises(ValueError, match="changed after the comparison"):
+    metadata_path = tmp_path / arm / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata[field] = "old" if field == "prompt_sha256" else dict.fromkeys(metadata[field], "old")
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    message = "did not measure the current" if field == "prompt_sha256" else "changed after the comparison"
+    with pytest.raises(ValueError, match=f"{arm}.*{message}"):
         build_receipt(tmp_path, step.cases[0])
-    metadata_path.write_text(json.dumps({**metadata, "prompt_sha256": "old"}))
-    with pytest.raises(ValueError, match="did not measure the current"):
+
+
+def test_receipt_checks_the_omitted_section_in_an_ablation_baseline(tmp_path):
+    number = next(number for number, step in enumerate(load_prompt_steps(), 1) if step.comparison_mode == "ablation")
+    step = _report(tmp_path, number)
+    assert build_receipt(tmp_path, step.cases[0])[0] == step.id
+    metadata_path = tmp_path / "before" / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["prompt_sha256"] = _sha256(prompt_at_step(number - 1))
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    with pytest.raises(ValueError, match="before.*current ablation prompt"):
         build_receipt(tmp_path, step.cases[0])
 
 
 def test_hash_refresh_records_the_current_section(tmp_path):
     ledger = tmp_path / "system-steps.json"
-    entries = json.loads(STEPS_PATH.read_text())
+    entries = json.loads(STEPS_PATH.read_text(encoding="utf-8"))
     original = entries[0]["sha256"]
     entries[0]["sha256"] = "stale"
-    ledger.write_text(json.dumps(entries, indent=2) + "\n")
+    ledger.write_text(json.dumps(entries, indent=2) + "\n", encoding="utf-8")
     refresh_hash(entries[0]["id"], ledger)
-    assert json.loads(ledger.read_text())[0]["sha256"] == original
-    assert ledger.read_text() == STEPS_PATH.read_text()
+    assert json.loads(ledger.read_text(encoding="utf-8"))[0]["sha256"] == original
+    assert ledger.read_text(encoding="utf-8") == STEPS_PATH.read_text(encoding="utf-8")

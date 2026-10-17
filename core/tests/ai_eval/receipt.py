@@ -75,13 +75,24 @@ def build_receipt(report: Path, witness: str, note: str | None = None) -> tuple[
     The witness gets the counts, model, and any cost gain. The report's other cases become controls.
     """
     comparison = json.loads((report / "comparison.json").read_text(encoding="utf-8"))
-    measured = json.loads((report / "after" / "metadata.json").read_text(encoding="utf-8"))
+    measured = {
+        arm: json.loads((report / arm / "metadata.json").read_text(encoding="utf-8")) for arm in ("before", "after")
+    }
     steps = load_prompt_steps()
     number = {step.id: number for number, step in enumerate(steps, 1)}[comparison["step"]]
     step = steps[number - 1]
     prefix = number if step.comparison_mode == "adjacent" else len(steps)
-    if _sha256(prompt_at_step(prefix)) != measured["prompt_sha256"]:
-        raise ValueError(f"The report did not measure the current {step.comparison_mode} prompt for {step.id}")
+    prompts = {
+        "before": prompt_at_step(number - 1)
+        if step.comparison_mode == "adjacent"
+        else prompt_at_step(prefix, omit=number),
+        "after": prompt_at_step(prefix),
+    }
+    for arm, prompt in prompts.items():
+        if _sha256(prompt) != measured[arm]["prompt_sha256"]:
+            raise ValueError(
+                f"The {arm} report did not measure the current {step.comparison_mode} prompt for {step.id}"
+            )
     if witness not in comparison["cases"]:
         raise ValueError(f"The report has no runs of {witness}")
     cases = {case.id: case for case in load_cases(CASES)}
@@ -90,9 +101,10 @@ def build_receipt(report: Path, witness: str, note: str | None = None) -> tuple[
     for case_id, counts in comparison["cases"].items():
         case = cases[case_id]
         fixtures[case.fixture] = _sha256(fixture_text(case.fixture))
-        measured_inputs = (measured["cases_sha256"][case_id], measured["fixtures_sha256"][case.fixture])
-        if measured_inputs != (case_digest(case), fixtures[case.fixture]):
-            raise ValueError(f"The testcase or fixture of {case_id} changed after the comparison")
+        for arm, metadata in measured.items():
+            measured_inputs = (metadata["cases_sha256"][case_id], metadata["fixtures_sha256"][case.fixture])
+            if measured_inputs != (case_digest(case), fixtures[case.fixture]):
+                raise ValueError(f"The {arm} testcase or fixture of {case_id} changed after the comparison")
         if counts["before"]["infrastructure_errors"] or counts["after"]["infrastructure_errors"]:
             raise ValueError(f"Infrastructure errors make {case_id} inconclusive. Rerun it")
         observations.append(
@@ -104,7 +116,7 @@ def build_receipt(report: Path, witness: str, note: str | None = None) -> tuple[
             }
         )
     record = next(observation for observation in observations if observation["case"] == witness)
-    record |= {"model": measured["provider_model"], "infrastructure_errors": 0}
+    record |= {"model": measured["after"]["provider_model"], "infrastructure_errors": 0}
     counts = comparison["cases"][witness]
     # A cost gain counts only when every attempt in both arms passes.
     if comparison["cost_metric"] and counts["before"]["passed"] == counts["after"]["passed"] == counts["after"]["runs"]:
