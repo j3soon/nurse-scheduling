@@ -202,6 +202,7 @@ class ChatArchiveResponse(StreamingResponse):
             headers={
                 "Content-Disposition": f'attachment; filename="{filename}"',
                 "Content-Length": str(size),
+                "Cache-Control": "no-store",
             },
         )
 

@@ -30,7 +30,7 @@ import {
   getCapabilities,
   getBackendVersion,
   getSessionStatus,
-  getSavedChatSnapshot,
+  getChatExportUrl,
   getUploads,
   isOfficialAiEndpoint,
   queueMessage,
@@ -976,13 +976,20 @@ describe('AI client', () => {
     );
   });
 
-  it('fetches the saved export snapshot with scoped credentials', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ schema_version: 1 })));
+  it.each([null, `1234567890.${'a'.repeat(64)}`])('requests a native chat download link (%s)', async token => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ download_token: token })));
     vi.stubGlobal('fetch', fetchMock);
-    await expect(getSavedChatSnapshot('session/id', 'ai-token', 'https://ai.example.test')).resolves.toEqual({ schema_version: 1 });
-    expect(fetchMock).toHaveBeenCalledExactlyOnceWith('https://ai.example.test/sessions/session%2Fid/export', {
-      credentials: 'include', headers: { Authorization: 'Bearer ai-token' },
+    const path = 'https://ai.example.test/sessions/session%2Fid/export';
+    await expect(getChatExportUrl('session/id', 'ai-token', 'https://ai.example.test'))
+      .resolves.toEqual(token === null ? path : `${path}?token=${token}`);
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith(path, {
+      method: 'POST', credentials: 'include', headers: { Authorization: 'Bearer ai-token' },
     });
+  });
+
+  it.each([{}, { download_token: 'bearer-secret' }, null])('rejects an invalid export link (%j)', async value => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(value))));
+    await expect(getChatExportUrl('session', 'token')).rejects.toThrow('invalid chat download link');
   });
 
   it('queues a steering message without cancelling the active stream', async () => {

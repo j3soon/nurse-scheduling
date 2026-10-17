@@ -824,15 +824,12 @@ FastAPI.
 
 ## Export saved chats
 
-The HTML and Markdown controls use saved PostgreSQL history when available.
-The operator command produces the same bytes from the same saved snapshot.
+The single **Export Chat** control downloads a ZIP from the AI service.
+The browser and operator command use the same Python archive writer.
 See [Export saved AI chats](reproduce/core.md#export-saved-ai-chats) for the
-one-command Docker and native database workflow. Builds without PostgreSQL keep
-the browser transcript export.
+one-command Docker and native database workflow. Export requires PostgreSQL history.
 
-The Python formatter also renders saved snapshots through
-`python -m nurse_scheduling.ai.export_snapshot SESSION_ID --format html`
-or `--format markdown`. Its HTML and Markdown match 52 TypeScript reference
+The Python formatter's HTML and Markdown match 52 TypeScript reference
 documents across 26 cases, including the complete saved-event fixture.
 The frozen reference hashes remain in the core export tests.
 
@@ -849,6 +846,14 @@ file contents. It reads file bytes in chunks of at most 1 MiB. HTTP delivery
 uses a temporary disk file and closes it after completion or disconnect. Export
 needs temporary disk space for the ZIP. The command writes atomically so a
 failed export preserves an existing destination.
+
+The browser first sends an authenticated `POST /sessions/{session_id}/export`.
+It receives a five-minute download token bound to that session and owner cookie.
+The subsequent native `GET` streams the ZIP without a browser Blob. The token
+uses the existing signing primitive with a separate export scope and never
+contains the bearer credential. The request-limit middleware and route both
+check it. A bearer-authenticated `GET` remains available for API clients.
+Both responses use `Cache-Control: no-store`.
 
 ## HTTP API
 
@@ -867,6 +872,8 @@ controls. `/capabilities.app_version` identifies the AI service. The parent
 | `GET /capabilities` | Public attachment limits, session lifetime, and authentication requirement. |
 | `POST /sessions` | Store a YAML snapshot and create a browser-owned session. |
 | `GET /sessions/{id}` | Check the remaining session lifetime without renewing it. |
+| `POST /sessions/{id}/export` | Authorize a native ZIP download with a short-lived session and owner token. |
+| `GET /sessions/{id}/export` | Stream the complete chat ZIP with a bearer credential or the scoped download token. |
 | `POST /sessions/{id}/uploads?upload_id={uuid}` | Retain one multipart file under a stable retry ID and return its metadata. Omitting the ID also accepts an unkeyed file batch. |
 | `GET /sessions/{id}/uploads` | List retained file metadata. |
 | `DELETE /sessions/{id}/uploads/{upload_id}` | Remove one retained file. |

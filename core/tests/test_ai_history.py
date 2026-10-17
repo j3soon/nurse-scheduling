@@ -21,6 +21,7 @@
 
 import asyncio
 import hashlib
+import io
 import json
 import os
 import subprocess
@@ -30,15 +31,18 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
 from uuid import uuid4
+from zipfile import ZipFile
 
 import httpx
 import psycopg
 import pytest
 from psycopg import sql
 
+from nurse_scheduling.ai import app as app_module
 from nurse_scheduling.ai import history as history_module
 from nurse_scheduling.ai import recovery as recovery_module
 from nurse_scheduling.ai.agent_session import BACKGROUND_RECOVERY_ERROR, RECOVERY_SAVE_WARNING
+from nurse_scheduling.ai.chat_export import build_saved_chat_export
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.history import ChatHistory, _insert_entries
 from nurse_scheduling.ai.provider import ProviderError, ReasoningDelta, TextDelta, TokenUsage, ToolCallRequest
@@ -337,7 +341,7 @@ def test_recovery_read_failure_during_message_lookup_returns_503(recorded_histor
 
 
 def test_saved_export_read_failure_returns_503_and_allows_retry(recorded_history, monkeypatch):
-    monkeypatch.setattr(ChatHistory, "export_snapshot", unavailable)
+    monkeypatch.setattr(app_module, "create_chat_archive", unavailable)
     provider = basic.FakeProvider()
     app = basic.create_test_app(settings=basic.make_settings(history_postgres_url="test"), provider=provider)
     with basic.AuthenticatedTestClient(app) as client:
@@ -346,11 +350,10 @@ def test_saved_export_read_failure_returns_503_and_allows_retry(recorded_history
         assert response.status_code == 503
         assert "secret-database-url" not in response.text
         assert not app.state.recovery._pins
-        snapshot = json.loads(
-            Path(__file__).with_name("ai_fixtures").joinpath("chat-export.json").read_text(encoding="utf-8")
-        )
-        monkeypatch.setattr(ChatHistory, "export_snapshot", lambda *_args: snapshot)
-        assert client.get(f"/sessions/{session_id}/export").json() == snapshot
+        body = b"ZIP bytes from the server"
+        monkeypatch.setattr(app_module, "create_chat_archive", lambda *_args, **_kwargs: io.BytesIO(body))
+        retried = client.get(f"/sessions/{session_id}/export")
+        assert retried.content == body and retried.headers["content-type"] == "application/zip"
     assert provider.calls == []
 
 
@@ -2062,33 +2065,28 @@ def test_postgres_export_snapshot_matches_the_complete_chat_fixture_and_cli(post
     assert postgres_history.export_snapshot(session_id) == fixture
     assert postgres_history.export_snapshot(str(uuid4())) is None
     repo = Path(__file__).resolve().parents[2]
-    saved = tmp_path / "snapshot.json"
-    saved.write_text(json.dumps(fixture), encoding="utf-8")
-    for extension in ("html", "md"):
-        expected = tmp_path / f"expected.{extension}"
-        actual = tmp_path / f"actual.{extension}"
-        subprocess.run(
-            ["bun", str(repo / "web-frontend/scripts/export-ai-chat.ts"), str(expected), "--snapshot", str(saved)],
-            check=True,
-            capture_output=True,
-        )
-        result = subprocess.run(
-            [str(repo / "scripts/export_ai_chat.sh"), session_id, str(actual)],
-            env={**os.environ, "AI_HISTORY_POSTGRES_URL": database_url},
-            check=False,
-            capture_output=True,
-        )
-        assert result.returncode == 0, result.stderr.decode()
-        assert actual.read_bytes() == expected.read_bytes()
-    actual.write_text("keep this file", encoding="utf-8")
+    actual = tmp_path / "actual.zip"
+    result = subprocess.run(
+        [str(repo / "scripts/export_ai_chat.sh"), session_id, str(actual)],
+        env={**os.environ, "AI_HISTORY_POSTGRES_URL": database_url},
+        check=False,
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr.decode()
+    with ZipFile(actual) as archive:
+        assert archive.read("chat.html").decode() == build_saved_chat_export(fixture, "html")
+        assert archive.read("chat.md").decode() == build_saved_chat_export(fixture, "markdown")
+    actual.write_bytes(b"keep this file")
     failed = subprocess.run(
         [str(repo / "scripts/export_ai_chat.sh"), str(uuid4()), str(actual)],
         env={**os.environ, "AI_HISTORY_POSTGRES_URL": database_url},
         capture_output=True,
         check=False,
+        timeout=30,
     )
     assert failed.returncode != 0
-    assert actual.read_text(encoding="utf-8") == "keep this file"
+    assert actual.read_bytes() == b"keep this file"
 
 
 def test_postgres_saved_export_is_owned_and_survives_restart(postgres_history):
@@ -2107,7 +2105,7 @@ def test_postgres_saved_export_is_owned_and_survives_restart(postgres_history):
         assert client.post(f"/sessions/{session_id}/messages", json={"message": "Hello"}).status_code == 200
         exported = client.get(f"/sessions/{session_id}/export")
         assert exported.status_code == 200
-        snapshot = exported.json()
+        snapshot = json.loads(ZipFile(io.BytesIO(exported.content)).read("chat.json"))
         assert snapshot["frontend_version"] == "v0.4.3"
         assert snapshot["metadata"]["endpoint"] == "https://ai.example.test/ai"
         assert any(event["type"] == "model_input" for event in snapshot["events"])
@@ -2116,4 +2114,5 @@ def test_postgres_saved_export_is_owned_and_survives_restart(postgres_history):
     with basic.AuthenticatedTestClient(restarted) as client:
         assert client.get(f"/sessions/{session_id}/export").status_code == 404
         client.cookies.update(cookies)
-        assert client.get(f"/sessions/{session_id}/export").json() == snapshot
+        restored = client.get(f"/sessions/{session_id}/export")
+        assert restored.content == exported.content

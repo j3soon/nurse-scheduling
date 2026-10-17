@@ -35,6 +35,7 @@ const mockUploadFile = vi.hoisted(() => vi.fn());
 const mockDownloadOptimization = vi.hoisted(() => vi.fn());
 const mockCancelOptimization = vi.hoisted(() => vi.fn());
 const mockGetBackendVersion = vi.hoisted(() => vi.fn());
+const mockGetChatExportUrl = vi.hoisted(() => vi.fn());
 const mockGetCapabilities = vi.hoisted(() => vi.fn());
 const mockGetSessionStatus = vi.hoisted(() => vi.fn());
 const mockRunEvents = vi.hoisted(() => vi.fn());
@@ -75,6 +76,7 @@ vi.mock('./aiClient', async importOriginal => {
   removeUpload: mockRemoveUpload,
   getAiBaseUrl: () => '/ai',
   getCapabilities: mockGetCapabilities,
+  getChatExportUrl: mockGetChatExportUrl,
   getBackendVersion: mockGetBackendVersion,
   getSessionStatus: mockGetSessionStatus,
   normalizeAiEndpoint: mockNormalizeAiEndpoint,
@@ -150,6 +152,7 @@ describe('ExperimentalAiPage', () => {
     pendingForegroundRunId = null;
     vi.restoreAllMocks();
     vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined);
+    mockGetChatExportUrl.mockReset().mockResolvedValue('/ai/sessions/session-id/export?token=temporary');
     mockCreateSession.mockReset().mockResolvedValue('session-id');
     mockGetUploads.mockReset().mockResolvedValue([]);
     mockRemoveUpload.mockReset().mockResolvedValue(undefined);
@@ -393,21 +396,32 @@ describe('ExperimentalAiPage', () => {
     expect(versions).not.toHaveTextContent('versions do not match');
   });
 
-  it('keeps chat export downloads available and releases replaced files on cleanup', async () => {
+  it('downloads the server archive directly without building a browser Blob', async () => {
+    mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, saved_chat_export: true });
     const user = userEvent.setup();
-    vi.spyOn(URL, 'createObjectURL').mockReturnValueOnce('blob:html-export').mockReturnValueOnce('blob:markdown-export');
-    const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
-    const download = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
-    const view = render(<ExperimentalAiPage />);
+    const blob = vi.spyOn(URL, 'createObjectURL');
+    const clicked: { href: string; download: string }[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function(this: HTMLAnchorElement) {
+      clicked.push({ href: this.href, download: this.download });
+    });
+    render(<ExperimentalAiPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
-    await user.click(screen.getByRole('button', { name: 'HTML', exact: true }));
-    expect(download).toHaveBeenCalledOnce();
-    expect(revoke).not.toHaveBeenCalled();
-    await user.click(screen.getByRole('button', { name: 'Markdown', exact: true }));
-    expect(revoke).toHaveBeenCalledExactlyOnceWith('blob:html-export');
-    view.unmount();
-    expect(revoke.mock.calls).toEqual([['blob:html-export'], ['blob:markdown-export']]);
+    await user.click(screen.getByRole('button', { name: 'Export Chat', exact: true }));
+    expect(mockGetChatExportUrl).toHaveBeenCalledWith('session-id', null, '/ai');
+    expect(clicked).toEqual([{ href: expect.stringContaining('/ai/sessions/session-id/export?token=temporary'), download: 'schedule-ai-chat-session-id.zip' }]);
+    expect(blob).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'HTML', exact: true })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Markdown', exact: true })).not.toBeInTheDocument();
+  });
+
+  it('disables chat export when the server has no saved history', async () => {
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    expect(screen.getByRole('button', { name: 'Export Chat', exact: true })).toBeDisabled();
+    expect(mockGetChatExportUrl).not.toHaveBeenCalled();
   });
 
   it('explains when the server does not report context usage', async () => {

@@ -22,7 +22,7 @@
 import type { ActivityEntry } from './AssistantActivity';
 import type { ToolActivity, ToolStartActivity } from './aiClient';
 import type { SessionEvent } from './sessionEvents';
-import type { ChatExportMessage } from './chatExport';
+import type { ChatMessageContent } from './chatTranscript';
 
 export function messageId(): string {
   if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -84,7 +84,7 @@ function finishToolActivity(entries: ActivityEntry[], result: ToolActivity): Act
   return [...entries.slice(0, runningIndex), ...completed, ...entries.slice(runningIndex + 1)];
 }
 
-export function applyAssistantEvent<T extends ChatExportMessage>(message: T, event: AssistantEvent, occurredAt = Date.now()): T {
+export function applyAssistantEvent<T extends ChatMessageContent>(message: T, event: AssistantEvent, occurredAt = Date.now()): T {
   const activity = message.activity ?? [];
   switch (event.type) {
     case 'delta':
@@ -134,15 +134,15 @@ export function interruptRunningTools(entries: ActivityEntry[]): ActivityEntry[]
   ));
 }
 
-export function resumeResponse<T extends ChatExportMessage>(message: T): T {
+export function resumeResponse<T extends ChatMessageContent>(message: T): T {
   return { ...message, status: 'pending', failureReason: undefined, responseCompletedAt: undefined };
 }
 
-export function completeResponse<T extends ChatExportMessage>(message: T, completedAt = Date.now()): T {
+export function completeResponse<T extends ChatMessageContent>(message: T, completedAt = Date.now()): T {
   return { ...message, status: undefined, failureReason: undefined, responseCompletedAt: completedAt };
 }
 
-export function failResponse<T extends ChatExportMessage>(message: T, fallbackText = '', completedAt = Date.now()): T {
+export function failResponse<T extends ChatMessageContent>(message: T, fallbackText = '', completedAt = Date.now()): T {
   return {
     ...message,
     content: message.content || fallbackText,
@@ -153,12 +153,12 @@ export function failResponse<T extends ChatExportMessage>(message: T, fallbackTe
   };
 }
 
-export function staleResponse<T extends ChatExportMessage>(message: T, text: string, completedAt = Date.now()): T {
+export function staleResponse<T extends ChatMessageContent>(message: T, text: string, completedAt = Date.now()): T {
   return { ...failResponse(message, '', completedAt), content: text, activity: [{ kind: 'response', text }] };
 }
 
 // A stopped response keeps its partial output instead of gaining synthetic answer text.
-export function stopResponse<T extends ChatExportMessage>(message: T, completedAt = Date.now()): T {
+export function stopResponse<T extends ChatMessageContent>(message: T, completedAt = Date.now()): T {
   return {
     ...message,
     status: 'stopped',

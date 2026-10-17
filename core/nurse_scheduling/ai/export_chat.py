@@ -29,11 +29,13 @@ from uuid import UUID
 
 import psycopg
 
+from ..sentry import flush_sentry, init_sentry
+from ..version import get_app_version
 from .chat_archive import create_chat_archive, write_chat_archive
 from .history import ChatHistory
 
 
-def main() -> None:
+def _main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("session_id", type=UUID)
     parser.add_argument("output", help="Destination .zip path, or - for binary stdout")
@@ -64,6 +66,14 @@ def main() -> None:
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
+
+
+def main() -> None:
+    init_sentry(get_app_version(), app="ai-chat-export")
+    try:
+        _main()
+    finally:
+        flush_sentry()
 
 
 if __name__ == "__main__":

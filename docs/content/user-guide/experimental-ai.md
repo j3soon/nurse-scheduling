@@ -203,10 +203,12 @@ Raw HTML is ignored. Remote images written in an answer are not loaded.
 Uploaded file names and sizes appear beside their upload event in the chat and
 exports. The file panel shows the files currently retained by the session.
 
-Use **HTML** under **Export chat** for a styled, standalone transcript, or
-**Markdown** for a plain-text transcript. Export runs in the browser. The export
-also lists the uploaded files by name and size, and notes an optimization that is still running without
-its changing score.
+Use **Export Chat** to download one ZIP from the server. Extract it and open
+`chat.html` for a styled transcript or `chat.md` for Markdown. Both link to files
+under `attachments/`, including removed uploads, generated ZIPs, and optimizer
+files. The ZIP also contains the current `schedule.yaml`, structured `chat.json`,
+and `manifest.json` with file origins and hashes. Work still in progress is marked
+as unfinished. Export is unavailable on servers without saved chat history.
 
 When the assistant creates files for download, it puts them in one ZIP archive.
 Use **Download files (ZIP)** below its answer. The archive and its uncompressed

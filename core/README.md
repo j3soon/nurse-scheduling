@@ -660,20 +660,24 @@ browser checks. Model, tool, and context changes need selected live cases.
 From the repository root, export one PostgreSQL-backed chat session:
 
 ```sh
-./scripts/export_ai_chat.sh SESSION_UUID artifacts/chat.html
-./scripts/export_ai_chat.sh SESSION_UUID artifacts/chat.md
+./scripts/export_ai_chat.sh SESSION_UUID artifacts/chat.zip
 ```
 
 The command reads PostgreSQL through the Docker Compose `ai` service. It uses
 `docker/.env` by default. Set `AI_ENV_FILE` to use another Compose environment
-file. Set `AI_HISTORY_POSTGRES_URL` to read a native database instead. Bun and
-the locked frontend dependencies must be installed on the host. Native database
-access also requires the core Python dependencies.
+file. Set `AI_HISTORY_POSTGRES_URL` to read a native database instead. Native
+database access requires the core Python dependencies. Docker exports do not
+require Python or frontend dependencies on the host.
 
-The browser and command use the same formatter and saved chat snapshot. They
-produce identical UTF-8 bytes for the same snapshot. Saved exports use the last
-stored event time as their export timestamp and display message times in UTC.
-They reconstruct all saved chat runs, including failed and stopped runs,
-even when the browser has trimmed its replay buffer. Files and workbooks remain
-separate downloads. Sessions remain exportable until PostgreSQL retention deletes
-them. Older sessions use the metadata available in their saved records.
+The browser's **Export Chat** control and this command use the same Python ZIP
+writer. Each ZIP contains `chat.html`, `chat.md`, `chat.json`, `schedule.yaml`,
+`manifest.json`, and `attachments/`. It includes removed uploads, generated ZIPs,
+and optimizer files. The manifest records file origins, removal times, sizes,
+and hashes. HTML and Markdown link to the bundled files and display times in UTC.
+
+Exports use one consistent database snapshot, including saved failed, stopped,
+and unfinished runs. File reads are bounded to 1 MiB chunks and the ZIP is built
+on disk. A failed command preserves its destination. The browser downloads
+directly through a short-lived link rather than buffering the ZIP in JavaScript.
+PostgreSQL history is required. All files expire with their session. Files lost
+before the archive migrations cannot be recovered.

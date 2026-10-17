@@ -22,6 +22,7 @@
 import asyncio
 import json
 import logging
+import re
 import sys
 from collections.abc import AsyncIterator
 from contextlib import aclosing, asynccontextmanager
@@ -29,21 +30,25 @@ from dataclasses import replace
 from typing import Annotated, Literal, cast
 from uuid import UUID, uuid4
 
+import anyio
+import psycopg
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import AfterValidator, BaseModel, Field, ValidationError
+from starlette._utils import get_route_path
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.formparsers import MultiPartException
 
 from ..sentry import SentryClientAddressMiddleware, init_sentry
-from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry
+from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry, create_stream_token
 from ..server.request_limits import MULTIPART_OVERHEAD_BYTES
 from ..service_logging import configure_service_logging
 from ..version import get_app_version
 from .agent_session import AgentSession, SessionRuntime
+from .chat_archive import ChatArchiveResponse, create_chat_archive
 from .config import AiSettings, validate_ai_auth_credentials
 from .context import validate_frontend_timezone
 from .history import ChatHistory, stop_maintenance
@@ -337,6 +342,24 @@ def create_app(
     auth_registry = create_auth_registry(settings.auth_token, settings.auth_tokens)
     require_auth = create_auth_dependency(auth_registry)
 
+    def export_scope(session_id: str, owner: str) -> str:
+        # Namespace the signing primitive so stream tokens cannot authorize an export.
+        return f"ai-chat-export:{session_id}:{owner}"
+
+    def require_session_auth(request: Request) -> None:
+        # The body-limit middleware runs before router path parameters exist.
+        path = get_route_path(request.scope).rstrip("/")
+        match = re.fullmatch(r"/sessions/([^/]+)/export", path)
+        if auth_registry.enabled and request.method == "GET" and match is not None:
+            credential = auth_registry.authenticate_stream(
+                export_scope(match[1], request.cookies.get(OWNER_COOKIE, "")),
+                request.query_params.get("token"),
+            )
+            if credential is not None:
+                request.state.auth_credential_id = credential.id
+                return
+        require_auth(request)
+
     async def restore_session(request: Request, owner: str | None = Cookie(default=None, alias=OWNER_COOKIE)) -> None:
         """Load a saved session that is not in memory after a restart or eviction."""
         session_id = request.path_params.get("session_id")
@@ -457,7 +480,7 @@ def create_app(
         docs_url="/docs" if generated_docs_are_public else None,
         redoc_url="/redoc" if generated_docs_are_public else None,
     )
-    app.add_middleware(AiRequestLimitsMiddleware, settings=settings, require_auth=require_auth)
+    app.add_middleware(AiRequestLimitsMiddleware, settings=settings, require_auth=require_session_auth)
     app.add_middleware(
         CORSMiddleware,
         allow_origin_regex=ORIGIN_REGEX,
@@ -548,12 +571,36 @@ def create_app(
         )
         return CreateSessionResponse(id=session.id)
 
-    @app.get("/sessions/{session_id}/export", dependencies=[Depends(require_auth), Depends(restore_session)])
+    @app.post("/sessions/{session_id}/export", dependencies=[Depends(require_auth), Depends(restore_session)])
+    async def prepare_export(
+        session_id: str,
+        request: Request,
+        response: Response,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> dict[str, str | None]:
+        """Authorize a native download without putting a bearer credential in its URL."""
+        store.require_owned(session_id, owner)
+        if recovery.history is None:
+            raise HTTPException(status_code=409, detail="Chat export is unavailable on this server.")
+        credential = auth_registry.get(request.state.auth_credential_id)
+        token = (
+            None
+            if credential is None
+            else create_stream_token(
+                credential.token,
+                export_scope(session_id, owner),
+                ttl_seconds=300,
+            )
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return {"download_token": token}
+
+    @app.get("/sessions/{session_id}/export", dependencies=[Depends(require_session_auth), Depends(restore_session)])
     async def export_session(
         session_id: str,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
-    ) -> dict:
-        """Return one saved snapshot for the browser and administrator export formatter."""
+    ) -> Response:
+        """Stream the same complete ZIP that the administrator command writes."""
         store.require_owned(session_id, owner)
         if recovery.history is None:
             raise HTTPException(status_code=409, detail="Saved chat export requires PostgreSQL history.")
@@ -563,16 +610,22 @@ def create_app(
                 if not await recovery.save(session_id):
                     raise HTTPException(status_code=503, detail="The chat snapshot could not be saved.")
                 await recovery.flush(session_id)
-                snapshot = await recovery.history.read("export_snapshot", session_id)
+            with anyio.CancelScope(shield=True):
+                archive = await anyio.to_thread.run_sync(
+                    lambda: create_chat_archive(recovery.history, session_id, owner=owner)
+                )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail="Chat session not found.") from exc
+        except (psycopg.Error, OSError) as exc:
+            logger.error("AI chat archive creation failed")
+            raise HTTPException(status_code=503, detail="The chat archive could not be created. Try again.") from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from None
         except TimeoutError as exc:
             raise HTTPException(status_code=503, detail="The chat snapshot is still being saved. Try again.") from exc
         finally:
             release()
-        if snapshot is None:
-            raise HTTPException(status_code=503, detail="The saved chat snapshot is unavailable.")
-        return snapshot
+        return ChatArchiveResponse(archive, f"schedule-ai-chat-{session_id}.zip")
 
     @app.get("/sessions/{session_id}/events", dependencies=[Depends(require_auth), Depends(restore_session)])
     async def stream_session_events(

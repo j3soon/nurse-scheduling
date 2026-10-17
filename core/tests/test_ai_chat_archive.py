@@ -20,6 +20,7 @@
 # This test is mostly AI generated.
 
 import asyncio
+import base64
 import hashlib
 import io
 import json
@@ -27,6 +28,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 from zipfile import ZipFile
@@ -38,6 +40,7 @@ from nurse_scheduling.ai import chat_archive
 from nurse_scheduling.ai.chat_archive import FILE_CHUNK_BYTES, ChatArchiveResponse, create_chat_archive
 from nurse_scheduling.ai.sessions import SessionStore
 from nurse_scheduling.ai.workspace import SandboxAttachment
+from nurse_scheduling.server.auth import create_stream_token
 
 from . import test_ai_basic as basic
 from .test_ai_history import postgres_history, uninitialized_postgres_history
@@ -211,3 +214,79 @@ def test_zip_cli_matches_the_shared_writer_and_preserves_output_on_error(postgre
     assert result.returncode == 1
     assert destination.read_bytes() == before
     assert not list(tmp_path.glob(".chat-export-*"))
+
+
+def test_native_download_link_is_bound_to_session_owner_and_expiry(postgres_history):
+    app = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test"), provider=basic.FakeProvider()
+    )
+    with basic.AuthenticatedTestClient(app) as client:
+        session = basic.create_session(client)
+        owner = client.cookies[basic.OWNER_COOKIE]
+        prepared = client.post(f"/sessions/{session}/export")
+        assert prepared.status_code == 200 and prepared.headers["cache-control"] == "no-store"
+        token = prepared.json()["download_token"]
+        assert token and basic.AI_AUTH_TOKEN not in token and owner not in token
+        url = f"/sessions/{session}/export?token={token}"
+        downloaded = client.get(url, headers={"Authorization": ""})
+        assert downloaded.status_code == 200
+        assert downloaded.headers["content-type"] == "application/zip"
+        assert downloaded.headers["cache-control"] == "no-store"
+        with create_chat_archive(postgres_history, session, owner=owner) as expected:
+            assert downloaded.content == expected.read()
+        other_session = basic.create_session(client)
+        assert (
+            client.get(f"/sessions/{other_session}/export?token={token}", headers={"Authorization": ""}).status_code
+            == 401
+        )
+        other = basic.AuthenticatedTestClient(app)
+        assert other.get(url, headers={"Authorization": ""}).status_code == 401
+        assert other.post(f"/sessions/{session}/export").status_code == 404
+        other.close()
+        expired = create_stream_token(
+            basic.AI_AUTH_TOKEN,
+            f"ai-chat-export:{session}:{owner}",
+            ttl_seconds=300,
+            now=datetime.now(UTC) - timedelta(seconds=600),
+        )
+        assert (
+            client.get(f"/sessions/{session}/export?token={expired}", headers={"Authorization": ""}).status_code == 401
+        )
+        assert client.get(f"/sessions/{session}/export?token=invalid", headers={"Authorization": ""}).status_code == 401
+        assert client.get(f"/sessions/{session}/export", headers={"Authorization": ""}).status_code == 401
+        assert client.post(url, headers={"Authorization": ""}).status_code == 401
+        assert (
+            client.post(
+                f"/sessions/{session}/messages?token={token}",
+                headers={"Authorization": ""},
+                json={"message": "This token must not authorize chat messages."},
+            ).status_code
+            == 401
+        )
+        stream_token = create_stream_token(basic.AI_AUTH_TOKEN, session, ttl_seconds=300)
+        assert (
+            client.get(f"/sessions/{session}/export?token={stream_token}", headers={"Authorization": ""}).status_code
+            == 401
+        )
+
+
+def test_native_export_without_shared_auth_still_requires_owner(postgres_history):
+    app = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test", auth_token=None), provider=basic.FakeProvider()
+    )
+    with basic.AuthenticatedTestClient(app) as client:
+        session = basic.create_session(client)
+        assert client.post(f"/sessions/{session}/export").json() == {"download_token": None}
+        assert client.get(f"/sessions/{session}/export").status_code == 200
+
+
+def test_browser_archive_fixture_uses_the_current_python_documents():
+    reference = json.loads((Path(__file__).parent / "ai_fixtures/chat-export-archive.json").read_text(encoding="utf-8"))
+    with ZipFile(io.BytesIO(base64.b64decode(reference["zip_base64"]))) as archive:
+        snapshot = json.loads(archive.read("chat.json"))
+        manifest = json.loads(archive.read("manifest.json"))
+        html, markdown = chat_archive._documents(snapshot, manifest["files"])
+        assert archive.read("chat.html").decode() == html == reference["html"]
+        assert archive.read("chat.md").decode() == markdown
+        for file in manifest["files"]:
+            assert hashlib.sha256(archive.read(file["path"])).hexdigest() == file["sha256"]

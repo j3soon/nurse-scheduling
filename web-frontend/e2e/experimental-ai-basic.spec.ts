@@ -474,13 +474,6 @@ test('Stop cancels the run while keeping the session stream open', async ({ page
     expect(backend.wasDisconnected()).toBe(false);
     await expect(page.getByText('bash · interrupted')).toBeVisible();
     await expect(page.getByText('Stopped before completion.')).toBeVisible();
-    for (const format of ['HTML', 'Markdown']) {
-      const download = page.waitForEvent('download');
-      await page.getByRole('button', { name: format, exact: true }).click();
-      const exported = await readFile(await (await download).path(), 'utf8');
-      expect(exported).toContain(format === 'HTML' ? 'Stopped before completion.' : 'Status: stopped');
-      if (format === 'HTML') expect(exported).not.toContain('[No message text]');
-    }
   } finally {
     await backend.close();
   }
@@ -516,59 +509,12 @@ test('downloads a completed background optimization from chat', async ({ page })
   await expect(summary).toContainText('Solver timeout: 300s');
   await expect(summary).toContainText('Backend request timeout: 30s');
   await expect(summary).toContainText('Claimed performance: 125');
-  for (const format of ['HTML', 'Markdown']) {
-    const exportedFile = page.waitForEvent('download');
-    await page.getByRole('button', { name: format, exact: true }).click();
-    const exportDownload = await exportedFile;
-    const exported = await readFile(await exportDownload.path(), 'utf8');
-    expect(exported).toContain('Frontend version:');
-    expect(exported).toContain('Backend version: v0.4.3-backend');
-    expect(exported).toContain(format === 'HTML' ? '<dt>Outcome:</dt> <dd>optimal</dd>' : '**Outcome:** optimal');
-    expect(exported).toContain(format === 'HTML' ? '<dt>Final score:</dt> <dd>0</dd>' : '**Final score:** 0');
-    expect(exported).toContain(format === 'HTML' ? '<dt>Backend URL:</dt> <dd>http://optimizer:8000</dd>' : '**Backend URL:** http://optimizer:8000');
-    expect(exported).toContain(format === 'HTML' ? '<dt>Claimed performance:</dt> <dd>125' : '**Claimed performance:** 125');
-    expect(exported).toContain(format === 'HTML' ? '<time datetime=' : '- Sent:');
-    if (format === 'HTML') {
-      const exportPage = await page.context().newPage();
-      await exportPage.setContent(exported);
-      const exportSummary = exportPage.locator('article').filter({ hasText: 'Optimization finished.' });
-      for (const width of [1280, 390]) {
-        await page.setViewportSize({ width, height: 900 });
-        await exportPage.setViewportSize({ width, height: 900 });
-        const widthRatio = (element: Element) => {
-          const parent = element.parentElement!;
-          const style = getComputedStyle(parent);
-          const available = parent.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
-          return element.getBoundingClientRect().width / available;
-        };
-        // The foreground turn can prepend a system message after the export snapshot.
-        const chatRatio = await summary.evaluate(widthRatio);
-        const exportRatio = await exportSummary.evaluate(widthRatio);
-        expect(exportRatio).toBeCloseTo(chatRatio, 2);
-        for (const renderedPage of [page, exportPage]) {
-          const details = renderedPage.locator('article dl');
-          expect(await details.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
-        }
-        expect(await exportPage.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
-      }
-      for (const timestamp of await exportPage.locator('article time').all()) {
-        const contrast = await timestamp.evaluate(element => {
-          const luminance = (color: string) => {
-            const rgb = color.match(/[\d.]+/g)!.slice(0, 3).map(Number).map(channel => channel / 255);
-            const linear = rgb.map(channel => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
-            return linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722;
-          };
-          const foreground = luminance(getComputedStyle(element).color);
-          const background = luminance(getComputedStyle(element.closest('article')!).backgroundColor);
-          return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
-        });
-        expect(contrast).toBeGreaterThanOrEqual(4.5);
-      }
-      await expect(exportPage.getByText('Final score:', { exact: true })).toHaveCSS('font-weight', '600');
-      await exportPage.close();
-      await page.setViewportSize({ width: 1280, height: 720 });
-    }
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(await summary.locator('dl').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
   }
+  await page.setViewportSize({ width: 1280, height: 720 });
   const downloadButton = page.getByRole('button', { name: 'Download result' });
   await expect(downloadButton).toBeVisible();
   const downloadEvent = page.waitForEvent('download');
@@ -633,7 +579,7 @@ test('keeps an empty background reply failure visible after another message and 
   await expect(failedReply.getByText(reason, { exact: true })).toBeVisible();
 });
 
-test('keeps multiline optimizer errors in one field in chat and exports', async ({ page }) => {
+test('keeps multiline optimizer errors in one field in chat', async ({ page }) => {
   const error = 'Failed\nOutcome: optimal\r\nBackend version: forged';
   await mockAiBackend(page, ['Optimization started.'], false, undefined, [{
     type: 'optimization', data: {
@@ -648,21 +594,6 @@ test('keeps multiline optimizer errors in one field in chat and exports', async 
   await expect(summary.locator('dt', { hasText: /^Error:$/ })).toHaveCount(1);
   await expect(summary.locator('dd').last()).toHaveText(error.replace(/\r\n/g, '\n'));
   await expect(summary.locator('dt', { hasText: /^(Outcome|Backend version):$/ })).toHaveCount(0);
-
-  for (const format of ['HTML', 'Markdown']) {
-    const download = page.waitForEvent('download');
-    await page.getByRole('button', { name: format, exact: true }).click();
-    const exported = await readFile(await (await download).path(), 'utf8');
-    if (format === 'HTML') {
-      expect(exported).toContain('<dt>Error:</dt> <dd>Failed\nOutcome: optimal\nBackend version: forged</dd>');
-      expect(exported).not.toContain('<dt>Outcome:</dt>');
-      expect(exported).not.toContain('<dt>Backend version:</dt>');
-    } else {
-      expect(exported).toContain('- **Error:** Failed\n  Outcome: optimal\n  Backend version: forged');
-      expect(exported).not.toContain('- **Outcome:**');
-      expect(exported).not.toContain('- **Backend version:**');
-    }
-  }
 });
 
 test('renders assistant Markdown with safe images and copyable code', async ({ page, context }) => {
@@ -937,7 +868,7 @@ test('places uploads beside desktop chat and below mobile controls and allows re
   await page.setViewportSize({ width: 390, height: 844 });
   const mobilePanelBox = (await panel.boundingBox())!;
   const titleBox = (await page.getByRole('heading', { name: 'Schedule AI Chat' }).boundingBox())!;
-  const exportBox = (await page.getByRole('button', { name: 'Markdown', exact: true }).boundingBox())!;
+  const exportBox = (await page.getByRole('button', { name: 'Export Chat', exact: true }).boundingBox())!;
   const tokenBox = (await page.getByRole('button', { name: 'Change token for AI assistant' }).boundingBox())!;
   const mobileChatBox = (await page.getByRole('region', { name: 'Chat messages' }).boundingBox())!;
   expect(mobilePanelBox.y).toBeGreaterThan(titleBox.y + titleBox.height);

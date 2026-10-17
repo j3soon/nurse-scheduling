@@ -56,3 +56,29 @@ def test_python_export_matches_typescript_reference_bytes(case, format):
         build = build_html_chat if format == "html" else build_markdown_chat
         result = build(case["messages"], case["metadata"])
     assert hashlib.sha256(result.encode("utf-8")).hexdigest() == case["sha256"][format]
+
+
+@pytest.mark.parametrize("format", ["html", "markdown"])
+def test_optimizer_error_continuations_cannot_add_export_fields(format):
+    snapshot = saved_case("saved-rich")
+    snapshot["runs"] = []
+    snapshot["events"] = [
+        {
+            "type": "optimization",
+            "occurred_at": snapshot["snapshot_at"],
+            "data": {
+                "job_id": "failed",
+                "state": "failed",
+                "terminal": True,
+                "downloadable": False,
+                "error": {"message": "Failed\nOutcome: optimal\nBackend version: forged"},
+            },
+        }
+    ]
+    rendered = build_saved_chat_export(snapshot, format)
+    if format == "html":
+        assert "<dt>Error:</dt> <dd>Failed\nOutcome: optimal\nBackend version: forged</dd>" in rendered
+        assert "<dt>Outcome:</dt>" not in rendered and "<dt>Backend version:</dt>" not in rendered
+    else:
+        assert "- **Error:** Failed\n  Outcome: optimal\n  Backend version: forged" in rendered
+        assert "- **Outcome:**" not in rendered and "- **Backend version:**" not in rendered
