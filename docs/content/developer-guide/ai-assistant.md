@@ -836,6 +836,20 @@ or `--format markdown`. Its HTML and Markdown match 52 TypeScript reference
 documents across 26 cases, including the complete saved-event fixture.
 The frozen reference hashes remain in the core export tests.
 
+The Python ZIP writer is available through
+`python -m nurse_scheduling.ai.export_chat SESSION_ID OUTPUT.zip` with
+`AI_HISTORY_POSTGRES_URL` set. It includes `chat.html`, `chat.md`, `chat.json`,
+`schedule.yaml`, `manifest.json`, and every archived file under `attachments/`.
+Both documents link to those files. The manifest records their origin, creation
+and removal times, byte counts, and SHA-256 hashes. The JSON keeps the saved
+events, run status, and current session state, including unfinished work.
+
+The writer uses one PostgreSQL repeatable-read snapshot for text, metadata, and
+file contents. It reads file bytes in chunks of at most 1 MiB. HTTP delivery
+uses a temporary disk file and closes it after completion or disconnect. Export
+needs temporary disk space for the ZIP. The command writes atomically so a
+failed export preserves an existing destination.
+
 ## HTTP API
 
 Session creation and both foreground and queued messages include

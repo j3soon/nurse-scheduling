@@ -23,7 +23,7 @@ import asyncio
 import hashlib
 import logging
 from collections.abc import Sequence
-from contextlib import suppress
+from contextlib import nullcontext, suppress
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, Literal
@@ -466,10 +466,12 @@ class ChatHistory:
             ).fetchone()
         return None if row is None else row[0]
 
-    def export_snapshot(self, session_id: str) -> dict[str, Any] | None:
+    def export_snapshot(self, session_id: str, *, snapshot_connection=None) -> dict[str, Any] | None:
         """Read complete saved events and metadata in one consistent, read-only transaction."""
-        with self._connect() as connection:
-            connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        own_connection = snapshot_connection is None
+        with self._connect() if own_connection else nullcontext(snapshot_connection) as connection:
+            if own_connection:
+                connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
             session = connection.execute(
                 "SELECT state, extract(epoch FROM created_at) FROM chat_sessions WHERE id = %s", (session_id,)
             ).fetchone()
