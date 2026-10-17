@@ -1,0 +1,78 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "fixture": "new-schedule",
+  "expect_proposal": true,
+  "changes": [
+    "description",
+    "dates",
+    "people",
+    "shiftTypes",
+    "preferences",
+    "export"
+  ],
+  "tool_usage": {
+    "forbidden": [
+      "optimizer"
+    ],
+    "max_validation_errors": 0
+  },
+  "tags": [
+    "new-schedule",
+    "qualified-rest"
+  ],
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "added": [
+        {
+          "type": "at most one shift per day"
+        },
+        {
+          "type": "shift type successions",
+          "person": [
+            "ALL"
+          ],
+          "date": [
+            "ALL"
+          ],
+          "pattern": [
+            "Night",
+            "Day"
+          ],
+          "weight": "-.inf"
+        }
+      ],
+      "allow_added_description": true
+    }
+  ],
+  "id": "new-schedule-qualified-rest-exception",
+  "question": "Create a rest-policy draft for November 1-3, 2026 with people P1 and P2 and shift types D, D+, N and N+. D+ and N+ are the senior variants of day and night. Use the shift groups Day and Night in the rest rule. Forbid only an ordinary N followed by an ordinary D the next day for every nurse. Senior variants are exempt, so N+ followed by D+ must remain allowed. Day and Night must contain only the ordinary shifts. This is only a rest-policy draft. Do not add staffing counts, eligibility restrictions, work-streak limits, fairness or primary-shift rules. Keep the required one-shift-per-day rule. Do not optimize.",
+  "assert": [
+    {
+      "path": "shiftTypes.items",
+      "count": 4
+    },
+    {
+      "path": "people.items",
+      "count": 2
+    },
+    {
+      "path": "shiftTypes.groups[?id=Day].members",
+      "count": 1
+    },
+    {
+      "path": "shiftTypes.groups[?id=Day].members",
+      "contains": "D"
+    },
+    {
+      "path": "shiftTypes.groups[?id=Night].members",
+      "count": 1
+    },
+    {
+      "path": "shiftTypes.groups[?id=Night].members",
+      "contains": "N"
+    }
+  ],
+  "note": "This testcase is mostly AI generated. Check actual first-proposal group coverage and the ordered hard succession rule. An explicit senior exception must remain allowed. Do not broaden the ordinary rest groups to include qualified variants."
+}

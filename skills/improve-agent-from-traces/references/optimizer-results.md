@@ -27,6 +27,12 @@ preferences with requests that cannot both hold. Verify those facts against the
 source rules. Preserve multiple results when the error follows a retry, and
 review explanations as well as structured answer fields.
 
+For rest-policy coverage, check constructed group members and the actual ordered
+succession rule before optimization. A valid rule can still omit qualified shift
+variants. Test an explicit exception as well, so a general coverage instruction
+does not override a different user policy. Use the production compiler to verify
+selector resolution rather than reproducing it in a new validator.
+
 See the [evaluation guide](../../../core/tests/ai_eval/README.md) for fixed-result
 tests and the on-demand real-optimizer check.
 

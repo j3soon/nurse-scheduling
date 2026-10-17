@@ -388,6 +388,55 @@ def test_qualified_explanation_grades_counts_instead_of_a_night_suffix(night, pa
         assert not grade(case, RunOutcome(answer=invalid, activity=activity)).passed
 
 
+@pytest.mark.parametrize("shared", [True, False], ids=["shared-policy", "senior-exception"])
+@pytest.mark.parametrize("defect", [None, "group-coverage", "reversed", "person-scope", "soft-weight"])
+def test_qualified_rest_cases_check_groups_and_the_actual_rule(shared, defect):
+    from io import StringIO
+
+    from ruamel.yaml import YAML
+
+    from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
+    from nurse_scheduling.frontend_validation import load_frontend_data
+
+    case_id = "new-schedule-qualified-rest-coverage" if shared else "new-schedule-qualified-rest-exception"
+    case = next(c for c in load_cases(CASES_PATH) if c.id == case_id)
+    proposed = copy.deepcopy(FIXTURE_SCHEDULES[case.fixture])
+    proposed["dates"]["range"] = {"startDate": "2026-11-01", "endDate": "2026-11-03"}
+    proposed["people"]["items"] = [{"id": person, "description": ""} for person in ("P1", "P2")]
+    proposed["shiftTypes"]["items"] = [{"id": shift, "description": ""} for shift in ("D", "D+", "N", "N+")]
+    proposed["shiftTypes"]["groups"] = [
+        {"id": "Day", "description": "", "members": ["D", "D+"] if shared else ["D"]},
+        {"id": "Night", "description": "", "members": ["N", "N+"] if shared else ["N"]},
+    ]
+    rule = {
+        "type": "shift type successions",
+        "person": ["ALL"],
+        "date": ["ALL"],
+        "pattern": ["Night", "Day"],
+        "weight": float("-inf"),
+    }
+    proposed["preferences"] = [{"type": "at most one shift per day"}, rule]
+    if defect == "group-coverage":
+        proposed["shiftTypes"]["groups"][0]["members"] = ["D"] if shared else ["D", "D+"]
+    elif defect == "reversed":
+        rule["pattern"].reverse()
+    elif defect == "person-scope":
+        rule["person"] = ["P1"]
+    elif defect == "soft-weight":
+        rule["weight"] = -1
+    source = StringIO()
+    YAML(typ="safe").dump(proposed, source)
+    assert validate_frontend_schedule_yaml(source.getvalue(), max_bytes=50_000).valid
+    if defect is None:
+        compiled = load_frontend_data(source.getvalue().encode()).compiled_schedule.preferences[1]
+        assert compiled.people == (0, 1)
+        assert compiled.pattern[0].shift_types == ((2, 3) if shared else (2,))
+        assert compiled.pattern[1].shift_types == ((0, 1) if shared else (0,))
+    assert grade(case, RunOutcome(initial=FIXTURE_SCHEDULES[case.fixture], proposed=proposed)).passed is (
+        defect is None
+    )
+
+
 @pytest.mark.parametrize("members,passes", [(["D"], True), (["D", "E"], False)])
 def test_day_group_creation_grades_the_actual_members(members, passes):
     from io import StringIO
