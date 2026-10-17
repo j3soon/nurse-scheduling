@@ -43,7 +43,9 @@ def tool(summary, *outputs):
 
 class ExtractHtmlTracesTests(unittest.TestCase):
     def test_collapsed_app_and_status_text_is_content_not_system_policy(self):
-        source = message("system", '<details class="system-prompt"><pre>Policy</pre></details>')
+        source = message(
+            "system", '<details class="system-prompt"><pre>Policy</pre></details>'
+        )
         for origin in ("app", "status", "optimizer"):
             source += message(
                 f"user {origin}",
@@ -51,7 +53,9 @@ class ExtractHtmlTracesTests(unittest.TestCase):
             )
         messages = extract_export(source)["messages"]
         self.assertEqual(messages[0]["system_prompts"], ["Policy"])
-        for entry, origin in zip(messages[1:], ("app", "status", "optimizer"), strict=True):
+        for entry, origin in zip(
+            messages[1:], ("app", "status", "optimizer"), strict=True
+        ):
             self.assertEqual(entry["content"], [f"{origin} context"])
             self.assertEqual(entry["system_prompts"], [])
 
@@ -120,6 +124,47 @@ class ExtractHtmlTracesTests(unittest.TestCase):
         self.assertEqual(report["inventory"]["tool_calls"], 1)
         self.assertEqual(report["inventory"]["failed_tool_calls"], 0)
         self.assertEqual(report["messages"][0]["activity"][0]["outputs"], [old_chat])
+
+    def test_schedule_checks_and_applied_changes_keep_exported_details(self):
+        entries = [
+            ("Schedule check failed", "schedule.yaml introduces <problems>.\n"),
+            ("Schedule check passed", "  Schedule is valid.\n"),
+            (
+                "Applied to your schedule",
+                'Undo restores <previous work>.\n\n- description: "" -> "April"',
+            ),
+        ]
+        source = message(
+            "assistant",
+            "".join(
+                '<div class="activity-entry"><details class="activity-details">'
+                f"<summary>{summary}</summary>"
+                '<div class="activity-body"><pre class="activity-output">'
+                f"{html.escape(output)}</pre></div></details></div>"
+                for summary, output in entries
+            ),
+        )
+        report = extract_export(source)
+        self.assertEqual(
+            report["messages"][0]["activity"],
+            [
+                {
+                    "index": 0,
+                    "kind": "schedule-check",
+                    "ok": False,
+                    "outputs": [entries[0][1]],
+                },
+                {
+                    "index": 1,
+                    "kind": "schedule-check",
+                    "ok": True,
+                    "outputs": [entries[1][1]],
+                },
+                {"index": 2, "kind": "schedule-applied", "outputs": [entries[2][1]]},
+            ],
+        )
+        self.assertEqual(report["inventory"]["tool_calls"], 0)
+        self.assertEqual(report["inventory"]["failed_tool_calls"], 0)
 
     def test_preformatted_arguments_and_results_keep_whitespace(self):
         arguments = '  {"command": "echo a & b"}\n'

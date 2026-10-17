@@ -44,7 +44,9 @@ and response entries are not tool calls. Reasoning is omitted by default. Use
 their exported order. Arguments and results are optional and have no separate
 labels in this HTML format, so do not infer a missing output from its position.
 The extractor preserves message roles, app sources, timing, system prompts,
-uploaded-file metadata and pending proposals. It does not infer token usage.
+uploaded-file metadata, schedule checks, applied changes and pending proposals.
+When the exporter adds an activity kind, update the extractor and test its exported HTML shape.
+It does not infer token usage.
 Collapsed app, status and optimizer messages remain message content. Their HTML
 presentation class does not make them system instructions.
 Run its checks from the repository root:

@@ -149,6 +149,19 @@ def extract_export(html, *, include_reasoning=False):
                     activity.append(
                         {"index": index, "kind": "reasoning", "outputs": outputs}
                     )
+            elif summary in ("Schedule check passed", "Schedule check failed"):
+                activity.append(
+                    {
+                        "index": index,
+                        "kind": "schedule-check",
+                        "ok": summary == "Schedule check passed",
+                        "outputs": outputs,
+                    }
+                )
+            elif summary == "Applied to your schedule":
+                activity.append(
+                    {"index": index, "kind": "schedule-applied", "outputs": outputs}
+                )
             elif list(details.find("schedule-diff")):
                 activity.append(
                     {
@@ -193,7 +206,8 @@ def extract_export(html, *, include_reasoning=False):
                 "role": role,
                 "sources": classes[role_index + 1 :],
                 "label": texts(node, "label"),
-                "content": texts(node, "content") + ([] if role == "system" else collapsed_text),
+                "content": texts(node, "content")
+                + ([] if role == "system" else collapsed_text),
                 "system_prompts": collapsed_text if role == "system" else [],
                 "activity": activity,
                 "failures": texts(node, "failure"),
