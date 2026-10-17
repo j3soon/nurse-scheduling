@@ -67,6 +67,18 @@ class JobCapacityError(ServerApplicationError):
     code = "job_capacity_exceeded"
 
 
+class ClientJobCapacityError(JobCapacityError):
+    """One client address already holds its share of the pending capacity."""
+
+    code = "client_job_capacity_exceeded"
+
+
+class EventStreamCapacityError(ServerApplicationError):
+    """One client address already holds its share of open job event streams."""
+
+    code = "event_stream_capacity_exceeded"
+
+
 class StoreWriteConflictError(Exception):
     """Internal signal that an atomic store write precondition no longer holds.
 

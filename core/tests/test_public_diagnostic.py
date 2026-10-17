@@ -720,6 +720,7 @@ def test_info_helpers_handle_transport_and_payload_edge_cases(tmp_path, capsys, 
 def test_job_submission_and_reads_report_error_responses(tmp_path, monkeypatch):
     responses = [
         httpx.Response(429),
+        httpx.Response(429, json={"error": {"code": "client_job_capacity_exceeded", "message": "Too many"}}),
         httpx.Response(500, text="server error"),
         httpx.Response(202, json=[]),
     ]
@@ -731,12 +732,18 @@ def test_job_submission_and_reads_report_error_responses(tmp_path, monkeypatch):
     assert diagnostic._create_job(1) is None
     assert diagnostic._create_job(2) is None
     assert diagnostic._create_job(3) is None
-
-    monkeypatch.setattr(Path, "read_bytes", Mock(side_effect=OSError("scenario unavailable")))
     assert diagnostic._create_job(4) is None
 
+    monkeypatch.setattr(Path, "read_bytes", Mock(side_effect=OSError("scenario unavailable")))
+    assert diagnostic._create_job(5) is None
+
     codes = {finding.code for finding in diagnostic.findings}
-    assert {"job_capacity_reached", "job_submission_error", "invalid_job_response"} <= codes
+    assert {
+        "job_capacity_reached",
+        "client_job_capacity_reached",
+        "job_submission_error",
+        "invalid_job_response",
+    } <= codes
 
     read_responses = [
         httpx.Response(500, text="server error"),

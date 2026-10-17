@@ -212,7 +212,7 @@ printf '%s\n' \
 printf '%s\n' \
   '#!/usr/bin/env bash' \
   'printf "mock python: %s\n" "$*"' \
-  'if [[ ${MOCK_SOLVER_PREFLIGHT_FAIL:-} == 1 ]]; then exit 2; fi' \
+  'if [[ ${MOCK_SOLVER_PREFLIGHT_FAIL:-} == 1 && ${SKIP_UNAVAILABLE_SOLVERS:-} != true ]]; then exit 2; fi' \
   > "$fixture_root/bin/python"
 printf '%s\n' \
   '#!/usr/bin/env bash' \
@@ -256,6 +256,10 @@ if [[ $status -ne 2 ]]; then
 fi
 assert_line "$output" 'mock python: - pulp/highs'
 assert_no_line "$output" 'mock pytest: -q --tb=short --disable-warnings --maxfail=1 tests/test_serve.py'
+output="$(MOCK_SOLVER_PREFLIGHT_FAIL=1 PATH="$fixture_root/bin:$PATH" \
+  "$fixture_root/scripts/test_core_affected.sh" --skip-unavailable-solvers core/tests/test_serve.py)"
+assert_line "$output" 'mock python: - pulp/highs'
+assert_line "$output" 'mock pytest: -q --tb=short --disable-warnings --maxfail=1 --skip-unavailable-solvers tests/test_serve.py'
 output="$(MOCK_SOLVER_PREFLIGHT_FAIL=1 PATH="$fixture_root/bin:$PATH" \
   "$fixture_root/scripts/test_core_affected.sh" \
   core/tests/test_serve.py::test_optimization_runner_reports_invalid_input)"

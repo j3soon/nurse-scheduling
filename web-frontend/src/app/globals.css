@@ -58,3 +58,12 @@ body > main {
 .footer-link:hover {
   color: dodgerblue;
 }
+
+/* Keep phone form controls readable without Safari zooming the page on focus. */
+@media (max-width: 639px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="file"]):not([type="range"]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}

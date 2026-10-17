@@ -43,6 +43,7 @@ def processes():
         try:
             fields = path.read_text().rsplit(")", 1)[1].split()
         except (FileNotFoundError, ProcessLookupError):
+            # A process can exit between listing /proc and reading its stat file.
             continue
         found[int(path.parent.name)] = (fields[0], int(fields[1]), int(fields[2]), fields[19])
     return found

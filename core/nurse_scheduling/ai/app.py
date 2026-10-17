@@ -59,6 +59,7 @@ from .optimizer import (
 from .optimizer_http import HttpOptimizerBackend
 from .provider import OpenAiCompatibleProvider, ToolCapableChatProvider
 from .recovery import SessionRecovery
+from .request_limits import AiRequestLimitsMiddleware
 from .sandbox import SandboxFactory, managed_sandbox_factory
 from .sandbox.factory import create_sandbox_factory
 from .session_event_stream import SessionEventStream, SessionResetData
@@ -71,11 +72,9 @@ __all__ = ("SessionStore", "schedule_revision")
 API_VERSION = "0.2.0"
 OWNER_COOKIE = "nurse_scheduling_ai_owner"
 FrontendTimezone = Annotated[str, Field(min_length=1, max_length=100), AfterValidator(validate_frontend_timezone)]
-ORIGIN_REGEX = (
-    r"^(http://(localhost|127\.0\.0\.1|host\.docker\.internal|10(?:\.[0-9]{1,3}){3}|"
-    r"192\.168(?:\.[0-9]{1,3}){2}|172\.(1[6-9]|2[0-9]|3[01])(?:\.[0-9]{1,3}){2}):[0-9]+|"
-    r"https://([a-zA-Z0-9-]+\.)?nursescheduling\.org)$"
-)
+# HTTPS deployments send the owner cookie with `SameSite=None`, so every allowed origin can act
+# with it. Plain-HTTP origins are limited to loopback, as on the optimizer API.
+ORIGIN_REGEX = r"^(http://(localhost|127\.0\.0\.1):[0-9]+|https://([a-zA-Z0-9-]+\.)?nursescheduling\.org)$"
 logger = logging.getLogger("nurse_scheduling.ai")
 request_logger = logging.getLogger("nurse_scheduling.ai.requests")
 
@@ -456,6 +455,7 @@ def create_app(
         docs_url="/docs" if generated_docs_are_public else None,
         redoc_url="/redoc" if generated_docs_are_public else None,
     )
+    app.add_middleware(AiRequestLimitsMiddleware, settings=settings, require_auth=require_auth)
     app.add_middleware(
         CORSMiddleware,
         allow_origin_regex=ORIGIN_REGEX,
@@ -528,6 +528,7 @@ def create_app(
         session = store.create(owner, request.schedule_yaml)
         session.observe_frontend_version(request.frontend_version, app.state.app_version)
         session.frontend_timezone = request.frontend_timezone
+        session.client_address = http_request.client.host if http_request.client else None
         session.export_metadata["endpoint"] = request.ai_endpoint or str(http_request.base_url).rstrip("/")
         # The client never learns this ID unless the save succeeds, so release its slot otherwise.
         saved = False
@@ -782,6 +783,8 @@ def create_app(
         session.observe_frontend_version(body.frontend_version, app.state.app_version)
         if body.frontend_timezone is not None:
             session.frontend_timezone = body.frontend_timezone
+        if request.client is not None:
+            session.client_address = request.client.host
         cursor = event_stream.cursor(session_id)
         receipt = await session.accept_message(
             question,

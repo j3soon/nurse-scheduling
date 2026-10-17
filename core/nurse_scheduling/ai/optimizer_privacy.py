@@ -163,6 +163,8 @@ def restore_people_ids(content: bytes, original_id_by_anonymized_id: dict[str, s
                     original_id = original_id_by_anonymized_id.get(cell.value)
                     if original_id is not None:
                         cell.value = original_id
+                        # Assignment infers formulas and error cells, so restore IDs as literal text.
+                        cell.data_type = "s"
             output = BytesIO()
             workbook.save(output)
             return output.getvalue()

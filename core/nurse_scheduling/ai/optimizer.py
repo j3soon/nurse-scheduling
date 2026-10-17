@@ -91,11 +91,13 @@ class OptimizerJobPayload(BaseModel):
 class OptimizerBackend(Protocol):
     """Transport boundary used by session-scoped optimization jobs."""
 
-    async def submit(self, schedule_yaml: str, timeout_seconds: int | None) -> OptimizerJobPayload: ...
+    async def submit(
+        self, schedule_yaml: str, timeout_seconds: int | None, client_address: str | None = None
+    ) -> OptimizerJobPayload: ...
 
     async def get(self, job_id: str) -> OptimizerJobPayload: ...
 
-    def progress_events(self, job_id: str) -> AsyncIterator[dict[str, Any]]: ...
+    def progress_events(self, job_id: str, client_address: str | None = None) -> AsyncIterator[dict[str, Any]]: ...
 
     async def finish_now(self, job_id: str) -> OptimizerJobPayload: ...
 
@@ -122,6 +124,8 @@ class SessionOptimization:
     schedule_yaml: str
     backend: dict[str, Any] = field(default_factory=dict)
     request: dict[str, Any] = field(default_factory=dict)
+    client_address: str | None = None
+    """Browser address that the optimizer bounds this job's submission and event streams by."""
     artifact: "OptimizerArtifact | None" = None
     retired: asyncio.Event = field(default_factory=asyncio.Event)
     deleted: bool = False
@@ -243,7 +247,14 @@ class SessionOptimizer:
                 job.retired.set()
         self._discard_session(session_id)
 
-    async def start(self, session_id: str, schedule_yaml: str, timeout_seconds: int | None) -> SessionOptimization:
+    async def start(
+        self,
+        session_id: str,
+        schedule_yaml: str,
+        timeout_seconds: int | None,
+        client_address: str | None = None,
+    ) -> SessionOptimization:
+        """Submit one optimizer job for a session, attributed to the browser address that asked for it."""
         if self._closed:
             raise OptimizerError("The optimizer service is shutting down.")
         owner = self._sessions.get(session_id)
@@ -267,7 +278,9 @@ class SessionOptimizer:
         reservation = object()
         owner.reservation = reservation
         owner.runs += 1
-        submission = asyncio.create_task(self._submit(session_id, owner, reservation, schedule_yaml, timeout_seconds))
+        submission = asyncio.create_task(
+            self._submit(session_id, owner, reservation, schedule_yaml, timeout_seconds, client_address)
+        )
         self._submissions.add(submission)
 
         def submitted(task: asyncio.Task) -> None:
@@ -292,6 +305,7 @@ class SessionOptimizer:
         reservation: object,
         schedule_yaml: str,
         timeout_seconds: int | None,
+        client_address: str | None,
     ) -> SessionOptimization:
         def owns_submission() -> bool:
             return not self._closed and self._sessions.get(session_id) is owner and owner.reservation is reservation
@@ -304,6 +318,7 @@ class SessionOptimizer:
             payload = await self._backend.submit(
                 prepared.submission_yaml,
                 self._default_timeout_seconds if timeout_seconds is None else timeout_seconds,
+                client_address=client_address,
             )
         except ValueError as exc:
             self._release_reservation(session_id, owner, reservation)
@@ -334,6 +349,7 @@ class SessionOptimizer:
                     "timeout_seconds", self._default_timeout_seconds if timeout_seconds is None else timeout_seconds
                 ),
             },
+            client_address=client_address,
         )
         if retired:
             job.retired.set()
@@ -482,7 +498,7 @@ class SessionOptimizer:
 
     async def _relay_progress(self, job: SessionOptimization) -> None:
         try:
-            async for progress in self._backend.progress_events(job.remote_id):
+            async for progress in self._backend.progress_events(job.remote_id, job.client_address):
                 if self._jobs.get(job.id) is not job:
                     return
                 if self._on_update is not None:

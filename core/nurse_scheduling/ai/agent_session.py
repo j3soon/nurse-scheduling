@@ -256,6 +256,8 @@ class AgentSession:
     latest_message: AcceptedMessage | None = None
     frontend_version: str | None = None
     frontend_timezone: str = "UTC"
+    # Latest browser address, forwarded to the optimizer's per-address job limit. Never saved.
+    client_address: str | None = None
     reported_version_mismatch: bool = False
     export_metadata: dict[str, Any] = field(default_factory=dict)
     accepted_messages: dict[str, AcceptedMessage] = field(default_factory=dict)
@@ -647,7 +649,7 @@ class AgentSession:
                 WorkspaceLimits.from_settings(runtime.settings),
                 take_steering=None if background else lambda close: runtime.store.take_steering(self.id, close),
                 execute_optimizer=lambda current_yaml, arguments: execute_optimizer_tool(
-                    runtime.session_optimizer, self.id, current_yaml, arguments
+                    runtime.session_optimizer, self.id, current_yaml, arguments, self.client_address
                 ),
                 attachments=snapshot.uploads,
                 optimizer_result=artifact.content if artifact is not None else None,

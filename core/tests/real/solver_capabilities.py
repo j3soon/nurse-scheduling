@@ -29,6 +29,7 @@ import subprocess
 import sys
 import time
 import traceback
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,6 +43,7 @@ from fastapi.testclient import TestClient
 from nurse_scheduling.scheduler import normalize_solver_selector
 from nurse_scheduling.server.app import create_app
 from nurse_scheduling.server.config import ServerSettings
+from nurse_scheduling.server.jobs.models import JobEvent
 from nurse_scheduling.server.solver_capabilities import (
     SOLVER_CAPABILITIES,
     get_solver_capabilities,
@@ -58,6 +60,7 @@ RESULT_MARKER = "SOLVER_CAPABILITY_RESULT="
 DEFAULT_TIMEOUT_SECONDS = 10
 DEFAULT_TIMEOUT_GRACE_SECONDS = 90
 DEFAULT_CONTROL_TIMEOUT_SECONDS = 60
+EVENT_POLL_SECONDS = 0.05
 DEFAULT_CANCEL_DELAY_SECONDS = 2.0
 DEFAULT_FINISH_WAIT_SECONDS = 10.0
 DEFAULT_CONTROL_GRACE_SECONDS = 15.0
@@ -149,6 +152,20 @@ def _looks_unavailable(job: dict[str, Any]) -> bool:
     return error.get("code") == "optimization_failed" and any(text in message for text in UNAVAILABLE_TEXT)
 
 
+def _poll_events(store: MemoryJobStore, job_id: str, after_id: str | None) -> Iterator[JobEvent | None]:
+    """Yield new job events, or `None` after each empty check, until the job is terminal."""
+    while True:
+        events, terminal = store.read_events(job_id, after_id)
+        for event in events:
+            after_id = event.id
+            yield event
+        if terminal:
+            return
+        if not events:
+            time.sleep(EVENT_POLL_SECONDS)
+            yield None
+
+
 def _wait_for_solving(
     store: MemoryJobStore,
     client: TestClient,
@@ -158,7 +175,7 @@ def _wait_for_solving(
     """Wait for the solving phase, returning its time, event cursor, and latest job."""
     deadline = time.monotonic() + timeout_seconds
     last_event_id = None
-    for event in store.stream_events(job_id, after_id=None, keepalive_seconds=0.05):
+    for event in _poll_events(store, job_id, after_id=None):
         if time.monotonic() >= deadline:
             break
         if event is None:
@@ -180,7 +197,7 @@ def _wait_before_control(
 ) -> tuple[bool, dict[str, Any]]:
     """Wait briefly after solving starts and optionally stop at the first incumbent."""
     deadline = time.monotonic() + delay_seconds
-    for event in store.stream_events(job_id, after_id=after_id, keepalive_seconds=0.05):
+    for event in _poll_events(store, job_id, after_id=after_id):
         job = client.get(f"/optimize/{job_id}").json()
         if job["terminal"]:
             return False, job
@@ -437,7 +454,7 @@ def _run_intermediate_scores_round(
 
     deadline = time.monotonic() + config.timeout_seconds + config.timeout_grace_seconds
     score_seen = False
-    for event in store.stream_events(created["id"], after_id=event_id, keepalive_seconds=0.05):
+    for event in _poll_events(store, created["id"], after_id=event_id):
         if event is not None and event.type == "job.progressed":
             source = str(event.data.get("source", ""))
             if not source.endswith(":final-result"):

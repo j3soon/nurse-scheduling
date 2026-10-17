@@ -221,6 +221,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   }, []);
   const sessionIdRef = useRef<string | null>(null);
   const sessionEndpointRef = useRef<string | null>(null);
+  const [sessionEndpoint, setSessionEndpoint] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const eventRouterRef = useRef(new SessionEventRouter());
   const sessionEvents = useSessionEventStream();
@@ -241,6 +242,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     sessionEvents.reset();
     sessionIdRef.current = null;
     sessionEndpointRef.current = null;
+    setSessionEndpoint(null);
     syncedScheduleRef.current = null;
     syncedRevisionRef.current = null;
     sandboxScheduleRef.current = null;
@@ -256,9 +258,11 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     onReset();
   }, [lifecycle, sessionEvents, onReset]);
 
-  scheduleYamlRef.current = scheduleYaml;
-  uploadedFilesRef.current = uploadedFiles;
-  sessionRetentionSecondsRef.current = sessionRetentionSeconds;
+  useEffect(() => {
+    scheduleYamlRef.current = scheduleYaml;
+    uploadedFilesRef.current = uploadedFiles;
+    sessionRetentionSecondsRef.current = sessionRetentionSeconds;
+  }, [scheduleYaml, uploadedFiles, sessionRetentionSeconds]);
 
   useEffect(() => {
     if (!isClientReady) return;
@@ -366,6 +370,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
 
   useEffect(() => {
     if (!activeSessionId || !retainsUploads || conversationUnavailable) {
+      // Clear files when the external session no longer retains uploads.
       setUploadedFiles([]);
       return;
     }
@@ -664,6 +669,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
         controller.signal.throwIfAborted();
         sessionIdRef.current = sessionId;
         sessionEndpointRef.current = sessionEndpoint;
+        setSessionEndpoint(sessionEndpoint);
         startSessionEventStream(sessionId, sessionEndpoint);
         checkedSessionRef.current = sessionId;
         setActiveSessionId(sessionId);
@@ -903,12 +909,24 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     if (!isStreaming && queuedMessages.length > 0) sendQueuedMessage();
   }, [isStreaming, queuedMessages.length]);
 
+  const failInterruptedUpload = (pending: NonNullable<ChatMessage['request']>) => {
+    setMessages(previous => previous.map(message => ({
+      ...message,
+      ...(message.request?.id === pending.id ? { request: { ...message.request, active: false } } : {}),
+      ...(message.id === pending.assistantId ? {
+        status: 'failed' as const, responseCompletedAt: Date.now(), request: { ...pending, active: false },
+        retry: { question: pending.question, requiresAttachments: true, missingFiles: pending.pendingFiles },
+      } : {}),
+    })));
+  };
+
   useEffect(() => {
     if (!isClientReady || serverStatus !== 'online' || activeSessionId === null || isStreaming || conversationUnavailable
       || (authRequired && authToken === null)) return;
     const pending = messages.find(message => message.request?.active)?.request;
     if (!pending || resumedRequestRef.current === pending.id) return;
     resumedRequestRef.current = pending.id;
+    // Resume or fail the externally stored request after its session becomes ready.
     if (pending.uploading) failInterruptedUpload(pending);
     else void sendRequest(pending.question, [], false, Date.now(), { ...pending, recover: true });
   });
@@ -950,17 +968,6 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     const original = messages.slice(0, failedIndex).reverse().find(message => message.role === 'user' && message.source === undefined);
     if (!original) return;
     void sendRequest(question, [], false, original.createdAt, { id: messageId(), questionId: original.id, assistantId: failedId });
-  };
-
-  const failInterruptedUpload = (pending: NonNullable<ChatMessage['request']>) => {
-    setMessages(previous => previous.map(message => ({
-      ...message,
-      ...(message.request?.id === pending.id ? { request: { ...message.request, active: false } } : {}),
-      ...(message.id === pending.assistantId ? {
-        status: 'failed' as const, responseCompletedAt: Date.now(), request: { ...pending, active: false },
-        retry: { question: pending.question, requiresAttachments: true, missingFiles: pending.pendingFiles },
-      } : {}),
-    })));
   };
 
   const stop = () => {
@@ -1025,6 +1032,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
         if (syncedScheduleRef.current === storedConversation.syncedSchedule) syncedRevisionRef.current = revision;
       });
       sessionEndpointRef.current = storedConversation.endpoint;
+      setSessionEndpoint(storedConversation.endpoint);
       if (storedConversation.expiresAt <= Date.now()) {
         window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
         setConversationUnavailable(true);
@@ -1070,6 +1078,6 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     setSessionRetentionSeconds, restoreConversation, captureSession,
     newConversation, submitMessage, retryMessage, stop, removeUploadedFile,
     removeGeneratedFiles,
-    sessionEndpoint: sessionEndpointRef.current ?? aiEndpoint,
+    sessionEndpoint: sessionEndpoint ?? aiEndpoint,
   };
 }

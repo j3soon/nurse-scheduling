@@ -40,7 +40,11 @@ def optimizer_start_message(job_id: str, source_sha256: str) -> str:
 
 
 async def execute_optimizer_tool(
-    optimizer: SessionOptimizer, session_id: str, schedule_yaml: str, arguments: str
+    optimizer: SessionOptimizer,
+    session_id: str,
+    schedule_yaml: str,
+    arguments: str,
+    client_address: str | None = None,
 ) -> AgentToolOutcome:
     """Parse model arguments, call a job operation, and format the existing reply."""
     try:
@@ -55,7 +59,7 @@ async def execute_optimizer_tool(
             timeout = raw.get("timeout_seconds")
             if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, int) or timeout <= 0):
                 return AgentToolOutcome("timeout_seconds must be a positive integer.", False)
-            job = await optimizer.start(session_id, schedule_yaml, timeout)
+            job = await optimizer.start(session_id, schedule_yaml, timeout, client_address)
             return AgentToolOutcome(optimizer_start_message(job.id, job.source_sha256), True)
         if action == "status":
             return AgentToolOutcome(_job_summary(optimizer.status(session_id)), True)

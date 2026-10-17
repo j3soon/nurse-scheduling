@@ -70,6 +70,7 @@ from nurse_scheduling.ai.workspace import (
     WorkspaceLimits,
     WorkspaceMetrics,
     _measured_sandbox_run,
+    _read_candidate,
     _ScheduleCandidateTracker,
     attachment_path,
     hydrate_sandbox,
@@ -80,6 +81,25 @@ from .ai_test_helper import SCHEDULE_BYTE_LIMIT, base_schedule_payload, schedule
 from .test_ai_provider import _delta_chunk, _sse_body
 
 MESSAGES: list[ChatMessage] = [{"role": "user", "content": "Give P1 a description."}]
+
+
+def test_schedule_reads_apply_the_limit_before_receiving_the_file():
+    class BoundedBackend(FakeSandboxBackend):
+        async def read_file(self, path, *, max_bytes=None):
+            assert max_bytes == 4, "The schedule read must be bounded before buffering"
+            return await super().read_file(path, max_bytes=max_bytes)
+
+    async def exercise():
+        backend = BoundedBackend("bounded", initial_files={WORKSPACE_SCHEDULE: b"12345"})
+        with pytest.raises(SandboxCandidateError, match="schedule limit"):
+            await _read_candidate(backend, 4)
+        tracker = _ScheduleCandidateTracker(backend, "1234", 4)
+        outcome, candidate = await tracker.review_if_changed()
+        assert not outcome.ok
+        assert "schedule limit" in outcome.text
+        assert candidate is None
+
+    asyncio.run(exercise())
 
 
 class ScriptedProvider:

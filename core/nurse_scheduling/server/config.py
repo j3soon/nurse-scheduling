@@ -170,6 +170,10 @@ class ServerSettings:
     """Namespace and schema version prepended to every Redis key."""
     max_pending_jobs: int = 32
     """Maximum number of queued, running, or cancelling jobs."""
+    max_pending_jobs_per_client: int = 3
+    """Maximum active jobs one client address may hold through unauthenticated requests."""
+    max_event_streams_per_client: int = 32
+    """Maximum job event streams one client address may hold open in one API process without a bearer key."""
     max_retained_jobs: int = DEFAULT_MAX_RETAINED_JOBS
     """Maximum total jobs retained, including terminal history."""
     job_retention_seconds: int = DEFAULT_JOB_RETENTION_SECONDS
@@ -237,6 +241,8 @@ class ServerSettings:
             raise ValueError("JOB_BACKEND must be either 'memory' or 'redis'")
         for name in (
             "max_pending_jobs",
+            "max_pending_jobs_per_client",
+            "max_event_streams_per_client",
             "max_retained_jobs",
             "job_retention_seconds",
             "max_events_per_job",
@@ -318,6 +324,8 @@ class ServerSettings:
             redis_url=os.getenv("JOB_REDIS_URL", "redis://localhost:6379/0"),
             redis_key_prefix=os.getenv("JOB_REDIS_KEY_PREFIX", "nurse_scheduling:jobs:v0"),
             max_pending_jobs=_positive_int("JOB_MAX_PENDING", 32),
+            max_pending_jobs_per_client=_positive_int("JOB_MAX_PENDING_PER_CLIENT", 3),
+            max_event_streams_per_client=_positive_int("JOB_MAX_EVENT_STREAMS_PER_CLIENT", 32),
             max_retained_jobs=_positive_int("JOB_MAX_RETAINED", DEFAULT_MAX_RETAINED_JOBS),
             job_retention_seconds=_positive_int("JOB_RETENTION_SECONDS", DEFAULT_JOB_RETENTION_SECONDS),
             max_events_per_job=_positive_int("JOB_MAX_EVENTS_PER_JOB", DEFAULT_MAX_EVENTS_PER_JOB),

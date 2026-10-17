@@ -16,7 +16,9 @@ Run commands from `core/`:
   pytest suites. AI code, guidance, tests, shared AI fixtures, and deleted AI
   files run all `test_ai_*.py` files. Other source, helper, dependency, and deleted-file changes run the
   normal local suite, excluding optional PuLP CBC, cuOpt, and mixed progress
-  suites.
+  suites. The script stops when a selected test needs a missing PuLP HiGHS or
+  SCIP runtime. In a dev image that omits them, add `--skip-unavailable-solvers`
+  to skip only the tests marked `requires_solver` for the missing runtime.
 - `pytest tests/real/schedule_ortools_cp_sat.py tests/real/schedule_pulp_cbc.py tests/real/schedule_pulp_cuopt.py`: run the slower bounded real-world checks.
 - `pytest tests/real/schedule_score_ground_truth.py`: replay the fixed real-world assignment and verify its exact objective score.
 - `python -m nurse_scheduling.cli tests/testcases/real/large-ward-with-87-people-2025-11.yaml --solver ortools/cp-sat --timeout 10 --show-model-build-stats`: print compact real-case model-build statistics.
@@ -179,9 +181,13 @@ skipped does not validate persistence.
 - Bound uploads before provider calls and place them under fixed sandbox paths.
   Retain uploaded source files only until the user removes them or the session expires.
   Count retained files and generated downloads against the session memory budget.
+- Bound sandbox file and command output bytes while receiving them. Truncating
+  tool output after buffering does not bound the AI service's memory use.
 - Test file workflows across message boundaries and session expiry. Check the
   bytes delivered by the download API and the files loaded into the next VM.
   A printed workspace path does not prove delivery or retention.
+- Check workbook text types after all download processing, including person ID
+  restoration. User text that resembles a formula or an Excel error must stay text.
 - Put fixed model instructions in a manifest-tracked prompt segment under
   `ai/prompts/`, so they get a hash, linked cases, and a benefit witness.
   `build_provider_messages` appends only request-specific values, such as a
@@ -426,7 +432,18 @@ skipped does not validate persistence.
   unescalated rather than drop it or change the response. Keep the salt private.
   The deployment ID is public and cannot serve as a salt by itself.
 
+## Server Concurrency
+- Synchronous routes and `run_in_threadpool` calls share one bounded thread
+  pool per worker. Write a long-lived response, such as an SSE stream, as an
+  async generator. Let it wait on the event loop and offload only short store
+  reads. A synchronous generator holds a pool thread for its whole wait, so a
+  few idle clients can stall every synchronous route.
+  `test_idle_event_streams_do_not_hold_worker_threads` guards the job event
+  stream.
+
 ## Input Limits
+- Match middleware routes relative to the ASGI `root_path`. Test authentication
+  and body limits at the application root and under a mounted URL prefix.
 - Bound submitted scheduling data by its alias expansion and nesting depth as
   well as its byte size. `loader.measure_yaml_expansion` measures both from the
   parse events without building the structure, and both the API and `load_data`

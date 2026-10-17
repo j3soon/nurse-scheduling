@@ -60,6 +60,7 @@ describe('instrumentation-client', () => {
 
     expect(sentryMocks.feedbackIntegration).toHaveBeenCalledWith(
       expect.objectContaining({
+        autoInject: false,
         colorScheme: 'light',
         enableScreenshot: true,
         triggerLabel: 'Feedback',

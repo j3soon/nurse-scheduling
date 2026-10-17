@@ -46,7 +46,15 @@ from e2b.sandbox.commands.command_handle import CommandExitException
 from e2b.sandbox.filesystem.filesystem import WriteEntry
 
 from ..config import AiSettings
-from .base import CommandResult, SandboxError, SandboxFileNotFoundError, SandboxFileSizeError, SandboxLifecycleMetrics
+from .base import (
+    DEFAULT_MAX_FILE_BYTES,
+    MAX_COMMAND_OUTPUT_BYTES,
+    CommandResult,
+    SandboxError,
+    SandboxFileNotFoundError,
+    SandboxFileSizeError,
+    SandboxLifecycleMetrics,
+)
 from .e2b_cleanup import E2BSandboxCleanupManager
 from .e2b_commands import isolated_command, stop_command_group
 
@@ -66,6 +74,20 @@ NON_RETRYABLE_E2B_ERRORS = (
     NotFoundException,
     TemplateException,
 )
+
+
+def _command_output_limiter() -> Callable[[str], None]:
+    output_bytes = 0
+
+    def bound_output(chunk: str) -> None:
+        # The SDK retains chunks before invoking callbacks. Stop its stream on
+        # the first excess chunk, including output from cleanup commands.
+        nonlocal output_bytes
+        output_bytes += len(chunk.encode("utf-8"))
+        if output_bytes > MAX_COMMAND_OUTPUT_BYTES:
+            raise SandboxError(f"Sandbox command output exceeds the {MAX_COMMAND_OUTPUT_BYTES}-byte limit.")
+
+    return bound_output
 
 
 def _is_retryable_e2b_error(error: BaseException) -> bool:
@@ -408,23 +430,20 @@ class E2BSandboxBackend:
                 raise SandboxError(f"E2B could not write {len(entries)} sandbox files") from exc
 
     async def read_file(self, path: str, *, max_bytes: int | None = None) -> bytes:
+        max_bytes = DEFAULT_MAX_FILE_BYTES if max_bytes is None else max_bytes
+        if max_bytes <= 0:
+            raise ValueError("max_bytes must be positive")
         async with self._active_operation(read_only=True):
             try:
-                if max_bytes is None:
-                    content = await self._request_with_retry(
-                        "read_file",
-                        lambda: self._sandbox.files.read(path, format="bytes", user=E2B_USER),
-                    )
-                else:
-                    content = bytearray()
-                    stream_reader = await self._request_with_retry(
-                        "read_file", lambda: self._sandbox.files.read(path, format="stream", user=E2B_USER)
-                    )
-                    async with stream_reader as stream:
-                        async for chunk in stream:
-                            if len(content) + len(chunk) > max_bytes:
-                                raise SandboxFileSizeError("The generated file exceeds the download size limit.")
-                            content.extend(chunk)
+                content = bytearray()
+                stream_reader = await self._request_with_retry(
+                    "read_file", lambda: self._sandbox.files.read(path, format="stream", user=E2B_USER)
+                )
+                async with stream_reader as stream:
+                    async for chunk in stream:
+                        if len(content) + len(chunk) > max_bytes:
+                            raise SandboxFileSizeError(f"The sandbox file exceeds the {max_bytes}-byte read limit.")
+                        content.extend(chunk)
             except FileNotFoundException as exc:
                 raise SandboxFileNotFoundError(f"Sandbox file not found: {path}") from exc
             except SandboxError:
@@ -437,6 +456,8 @@ class E2BSandboxBackend:
         timeout = timeout_seconds if timeout_seconds is not None else self._command_timeout_seconds
         if timeout <= 0:
             raise ValueError("timeout_seconds must be positive")
+
+        bound_output = _command_output_limiter()
 
         async with self._active_operation():
             self._commands += 1
@@ -451,6 +472,8 @@ class E2BSandboxBackend:
                     cwd=E2B_WORKSPACE,
                     timeout=0,
                     request_timeout=self._control_request_timeout_seconds,
+                    on_stdout=bound_output,
+                    on_stderr=bound_output,
                 )
                 waiting = asyncio.create_task(handle.wait())
                 # wait() keeps ownership of the task without shield's detached-exception
@@ -498,6 +521,8 @@ class E2BSandboxBackend:
                 # A lost start/stream acknowledgement leaves command execution uncertain.
                 async with self._lifecycle_lock:
                     await self._destroy_locked()
+                if isinstance(exc, SandboxError):
+                    raise
                 raise SandboxError("E2B could not run the sandbox command.") from exc
             finally:
                 if waiting is not None:
@@ -529,6 +554,7 @@ class E2BSandboxBackend:
 
     async def _stop_command_group(self, pid: int) -> bool:
         """Bound cleanup independently of execution and never replay the user command."""
+        bound_output = _command_output_limiter()
         try:
             async with asyncio.timeout(self._control_request_timeout_seconds):
                 result = await self._sandbox.commands.run(
@@ -537,6 +563,8 @@ class E2BSandboxBackend:
                     cwd=E2B_WORKSPACE,
                     timeout=self._control_request_timeout_seconds,
                     request_timeout=self._control_request_timeout_seconds,
+                    on_stdout=bound_output,
+                    on_stderr=bound_output,
                 )
             return result.exit_code == 0
         except Exception:

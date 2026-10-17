@@ -49,6 +49,10 @@ COPY web-frontend/package.json web-frontend/bun.lock /tmp/web-frontend/
 WORKDIR /tmp/web-frontend
 RUN bun install --frozen-lockfile
 RUN bunx playwright install --with-deps chromium
+# Chromium on the Ubuntu CI runner renders system-ui and sans-serif text with
+# DejaVu Sans. Install it so local E2E text wrapping matches CI.
+RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
 
 # Ref: https://github.com/j3soon/dockerfile-fragments/blob/main/codex/Dockerfile
 # Install Codex CLI

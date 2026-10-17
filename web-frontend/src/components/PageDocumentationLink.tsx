@@ -30,7 +30,7 @@ export default function PageDocumentationLink({ href, label }: PageDocumentation
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="text-gray-500 transition-colors hover:text-gray-700"
+      className="shrink-0 text-gray-500 transition-colors hover:text-gray-700"
       aria-label={`${label} documentation`}
       title={`Open ${label} documentation in a new tab`}
     >

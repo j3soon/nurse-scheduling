@@ -54,7 +54,8 @@ test('people drag reorder can be undone and redone through the shared item-group
   await expect(rows.nth(0)).toContainText('1. P1');
   await expect(rows.nth(1)).toContainText('2. P2');
 
-  await rows.nth(1).dragTo(rows.nth(0));
+  // Drop above the midpoint to select insertion before the first row.
+  await rows.nth(1).dragTo(rows.nth(0), { targetPosition: { x: 10, y: 4 } });
   await expect(rows.nth(0)).toContainText('1. P2');
   await expect(rows.nth(1)).toContainText('2. P1');
 

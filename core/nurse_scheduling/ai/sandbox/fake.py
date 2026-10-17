@@ -24,6 +24,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 
 from .base import (
+    DEFAULT_MAX_FILE_BYTES,
     CommandResult,
     SandboxError,
     SandboxFileNotFoundError,
@@ -74,12 +75,15 @@ class FakeSandboxBackend:
 
     async def read_file(self, path: str, *, max_bytes: int | None = None) -> bytes:
         self._ensure_open()
+        max_bytes = DEFAULT_MAX_FILE_BYTES if max_bytes is None else max_bytes
+        if max_bytes <= 0:
+            raise ValueError("max_bytes must be positive")
         try:
             content = self.files[path]
         except KeyError as exc:
             raise SandboxFileNotFoundError(f"Sandbox file not found: {path}") from exc
-        if max_bytes is not None and len(content) > max_bytes:
-            raise SandboxFileSizeError("The generated file exceeds the download size limit.")
+        if len(content) > max_bytes:
+            raise SandboxFileSizeError(f"The sandbox file exceeds the {max_bytes}-byte read limit.")
         return content
 
     async def run(self, command: str, *, timeout_seconds: float | None = None) -> CommandResult:

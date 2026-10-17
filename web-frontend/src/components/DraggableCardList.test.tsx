@@ -359,4 +359,22 @@ describe('DraggableCardList', () => {
     expect(firstTarget.className).not.toMatch(/border-(t|b)-2/);
     expect(secondTarget.className).toMatch(/border-(t|b)-2/);
   });
+
+  it('moves cards with buttons while retaining their content and disabling list boundaries', () => {
+    const items: Card[] = [{ title: 'Alpha' }, { title: 'Beta' }];
+    const onReorder = vi.fn();
+    render(<DraggableCardList title="Rules" items={items} emptyMessage="Empty"
+      renderContent={item => <span>{item.title}</span>} onEdit={vi.fn()} onDelete={vi.fn()} onReorder={onReorder} />);
+    expect(screen.getByRole('button', { name: 'Move Rules item 1 up' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Move Rules item 2 down' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Move Rules item 2 up' }));
+    expect(onReorder).toHaveBeenCalledWith([items[1], items[0]]);
+  });
+
+  it('omits move buttons for a single card', () => {
+    render(<DraggableCardList title="Rules" items={[{ title: 'Alpha' }]} emptyMessage="Empty"
+      renderContent={item => <span>{item.title}</span>} onEdit={vi.fn()} onDelete={vi.fn()} onReorder={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: /Move Rules item/ })).not.toBeInTheDocument();
+  });
+
 });

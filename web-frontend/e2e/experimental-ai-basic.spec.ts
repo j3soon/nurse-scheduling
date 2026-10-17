@@ -938,9 +938,8 @@ test('places uploads beside desktop chat and below mobile controls and allows re
     path: '../artifacts/uploads-layout/mobile.png', fullPage: true,
     style: '[aria-label="Message composer"] { visibility: hidden !important; }',
   });
-  await panel.getByText('Uploaded files (1)', { exact: true }).click();
   await expect(panel.getByRole('button', { name: 'Remove ward.csv' })).toBeHidden();
-  await panel.getByText('Uploaded files (1)', { exact: true }).click();
+  await panel.getByRole('button', { name: 'Uploaded files (1)', exact: true }).click();
   await panel.getByRole('button', { name: 'Remove ward.csv' }).click();
   await expect(panel.getByText('No uploaded files.')).toBeVisible();
 });
@@ -1077,3 +1076,84 @@ for (const { interruption, steered } of (['network pause', 'reload', 'tab switch
     }
   });
 }
+
+test('keeps phone chat readable and the growing composer clear of the last reply', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 740 });
+  await mockAiBackend(page, ['Final reply for phone layout.']);
+  await page.goto('/experimental-ai');
+  const input = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+  await expect(input).toBeEnabled();
+  const composer = page.getByRole('form', { name: 'Message composer' });
+  expect((await composer.boundingBox())!.width).toBeGreaterThanOrEqual(328);
+  await expect(page.getByText('All AI chats are logged', { exact: false })).toBeVisible();
+  // The mocked backend version differs from the build, so the collapsed panel opens to show the warning.
+  await expect(page.getByText('Frontend and backend versions do not match', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: 'Chat details and settings', exact: true }).click();
+  await expect(page.getByRole('group', { name: 'AI versions' })).not.toBeVisible();
+  await input.fill('Question');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  const reply = page.getByText('Final reply for phone layout.', { exact: true });
+  await expect(reply).toBeVisible();
+  await input.fill(Array.from({ length: 8 }, (_, i) => `Draft line ${i + 1}`).join('\n'));
+  await page.evaluate(() => window.scrollTo({ top: document.documentElement.scrollHeight }));
+  await expect.poll(async () => {
+    const replyBox = (await reply.boundingBox())!;
+    const composerBox = (await composer.boundingBox())!;
+    return replyBox.y + replyBox.height <= composerBox.y;
+  }).toBe(true);
+  for (const width of [390, 844, 1440]) {
+    await page.setViewportSize({ width, height: width === 844 ? 390 : 900 });
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  }
+  await expect(page.getByRole('group', { name: 'AI versions' })).toBeVisible();
+});
+
+test.describe('phone chat keyboard', () => {
+  test.use({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } });
+
+  test('inserts a newline with Enter and sends with the button', async ({ page }) => {
+    const requests = await mockAiBackend(page, ['Phone reply.']);
+    await page.goto('/experimental-ai');
+    const input = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+    await expect(input).toBeEnabled();
+    // Phone keyboards provide dictation, so the page omits its own microphone.
+    await expect(page.getByRole('button', { name: 'Start dictation' })).toBeHidden();
+    await input.fill('First line');
+    await input.press('End');
+    await input.press('Enter');
+    await input.pressSequentially('Second line');
+    await expect(input).toHaveValue('First line\nSecond line');
+    expect(requests.messageBodies).toHaveLength(0);
+    await page.getByRole('button', { name: 'Send', exact: true }).tap();
+    await expect(page.getByText('Phone reply.', { exact: true })).toBeVisible();
+    await page.getByText('Chat history context:', { exact: false }).tap();
+    await expect(page.getByText('characters in retained chat history.', { exact: false })).toBeVisible();
+  });
+});
+
+test('keeps the composer above a reduced visual viewport and ignores pinch zoom', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(() => {
+    const viewport = Object.assign(new EventTarget(), { height: innerHeight, offsetTop: 0, scale: 1 });
+    Object.defineProperty(window, 'visualViewport', { value: viewport, configurable: true });
+  });
+  await mockAiBackend(page);
+  await page.goto('/experimental-ai');
+  const input = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+  await expect(input).toBeEnabled();
+  await input.focus();
+  const composer = page.getByRole('form', { name: 'Message composer' });
+  await page.evaluate(() => {
+    Object.assign(visualViewport!, { height: 444, offsetTop: 20 });
+    visualViewport!.dispatchEvent(new Event('resize'));
+  });
+  await expect.poll(async () => {
+    const box = (await composer.boundingBox())!;
+    return Math.round(box.y + box.height);
+  }).toBe(464);
+  await page.evaluate(() => {
+    Object.assign(visualViewport!, { scale: 2 });
+    visualViewport!.dispatchEvent(new Event('resize'));
+  });
+  await expect(composer).toHaveCSS('bottom', '0px');
+});

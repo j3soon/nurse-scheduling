@@ -32,9 +32,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+import anyio
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from nurse_scheduling.loader import MAX_NESTING_DEPTH
 from nurse_scheduling.scheduler import SUPPORTED_SOLVER_CHOICES, ScheduleResult
@@ -48,6 +50,7 @@ from nurse_scheduling.server.config import (
     ClaimedPerformance,
     ServerSettings,
 )
+from nurse_scheduling.server.errors import JobNotFoundError
 from nurse_scheduling.server.jobs.controller import JobController
 from nurse_scheduling.server.jobs.models import (
     Job,
@@ -613,6 +616,177 @@ def test_synchronous_store_reads_do_not_block_the_asgi_event_loop():
     assert job_response.status_code == 200
 
 
+def _create_queued_job(controller: JobController) -> Job:
+    return controller.create_job(
+        input_name="input.yaml",
+        client_id="client",
+        solver="ortools/cp-sat",
+        prettify=False,
+        timeout_seconds=60,
+        input_bytes=b"apiVersion: alpha\n",
+    )
+
+
+def test_idle_event_streams_do_not_hold_worker_threads():
+    # Synchronous routes share one thread pool. If each idle stream held a pool
+    # thread until its keepalive, a few streams on a queued job would stall them.
+    app = create_app(
+        settings=_settings(sse_keepalive_seconds=3),
+        store=MemoryJobStore(),
+        runner=SuccessfulRunner(),
+        start_background=False,
+    )
+    controller = app.state.job_controller
+    created = _create_queued_job(controller)
+    stream_count = 2
+
+    async def exercise_requests():
+        anyio.to_thread.current_default_thread_limiter().total_tokens = stream_count
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            streams = [asyncio.create_task(client.get(f"/optimize/{created.id}/events")) for _ in range(stream_count)]
+            try:
+                await asyncio.sleep(0.2)
+                started_at = time.monotonic()
+                options = await client.get("/optimize/options")
+                options_elapsed = time.monotonic() - started_at
+            finally:
+                controller.cancel_job(created.id)
+            return options, options_elapsed, await asyncio.gather(*streams)
+
+    options, options_elapsed, streams = asyncio.run(exercise_requests())
+
+    assert options.status_code == 200
+    assert options_elapsed < 0.5
+    for stream in streams:
+        assert stream.status_code == 200
+        assert '"state": "cancelled"' in stream.text
+
+
+def test_event_stream_sends_keepalives_at_the_configured_interval(monkeypatch):
+    # The stream checks the store more often than the keepalive interval, and idle checks send no frame.
+    monkeypatch.setattr("nurse_scheduling.server.api.optimize.EVENT_POLL_SECONDS", 0.01)
+    app = create_app(
+        settings=_settings(sse_keepalive_seconds=0.2),
+        store=MemoryJobStore(),
+        runner=SuccessfulRunner(),
+        start_background=False,
+    )
+    controller = app.state.job_controller
+    created = _create_queued_job(controller)
+
+    async def stream_until_cancelled():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            stream = asyncio.create_task(client.get(f"/optimize/{created.id}/events"))
+            try:
+                await asyncio.sleep(0.5)
+            finally:
+                controller.cancel_job(created.id)
+            return await stream
+
+    response = asyncio.run(stream_until_cancelled())
+
+    assert 1 <= response.text.count(": keepalive") <= 3
+    assert response.text.rstrip().endswith('"cancellable": false, "early_completion_available": false}}')
+
+
+def test_event_stream_fails_instead_of_retrying_when_its_job_disappears():
+    class DisappearingJobStore(MemoryJobStore):
+        reads = 0
+
+        def read_events(self, job_id, after_id):
+            self.reads += 1
+            if self.reads > 1:
+                raise JobNotFoundError(job_id)
+            return super().read_events(job_id, after_id)
+
+    store = DisappearingJobStore()
+    app = create_app(settings=_settings(), store=store, runner=SuccessfulRunner(), start_background=False)
+    created = _create_queued_job(app.state.job_controller)
+
+    # The 200 response has already started, so the error aborts the connection.
+    with pytest.raises(RuntimeError, match="response already started") as error:
+        TestClient(app).get(f"/optimize/{created.id}/events")
+    assert isinstance(error.value.__cause__, JobNotFoundError)
+    assert store.reads == 2
+
+
+async def _open_event_stream(app, job_id: str, address: str, *, headers=(), query: bytes = b""):
+    """Start an event stream through raw ASGI calls, so the test decides when the client disconnects.
+
+    Return the response status, its headers, and a coroutine function that disconnects the client
+    and waits for the response to finish.
+    """
+    disconnected = asyncio.Event()
+    started = asyncio.get_running_loop().create_future()
+    request_sent = False
+
+    async def receive():
+        nonlocal request_sent
+        if not request_sent:
+            request_sent = True
+            return {"type": "http.request", "body": b"", "more_body": False}
+        await disconnected.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        if message["type"] == "http.response.start" and not started.done():
+            started.set_result(message)
+
+    path = f"/optimize/{job_id}/events"
+    scope = {
+        "type": "http",
+        # Uvicorn reports ASGI 2.3, so Starlette watches for the disconnect message.
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": query,
+        "root_path": "",
+        "headers": [(b"host", b"testserver"), *headers],
+        "client": (address, 40000),
+        "server": ("testserver", 80),
+    }
+    call = asyncio.create_task(app(scope, receive, send))
+    start = await asyncio.wait_for(started, timeout=2)
+
+    async def disconnect():
+        disconnected.set()
+        await asyncio.wait_for(call, timeout=2)
+
+    return start["status"], dict(start["headers"]), disconnect
+
+
+def test_open_event_streams_are_capped_per_client_address_until_they_disconnect():
+    app = create_app(
+        settings=_settings(max_event_streams_per_client=2),
+        store=MemoryJobStore(),
+        runner=SuccessfulRunner(),
+        start_background=False,
+    )
+    created = _create_queued_job(app.state.job_controller)
+
+    async def exercise_streams():
+        opened = [await _open_event_stream(app, created.id, "198.51.100.7") for _ in range(3)]
+        other_address = await _open_event_stream(app, created.id, "198.51.100.8")
+        await opened[0][2]()
+        reopened = await _open_event_stream(app, created.id, "198.51.100.7")
+        for _status, _headers, disconnect in [*opened[1:], other_address, reopened]:
+            await disconnect()
+        return opened, other_address, reopened
+
+    opened, other_address, reopened = asyncio.run(exercise_streams())
+
+    assert [status for status, _headers, _disconnect in opened] == [200, 200, 429]
+    assert opened[2][1][b"retry-after"] == b"1"
+    assert other_address[0] == 200
+    # The disconnected stream released its slot.
+    assert reopened[0] == 200
+
+
 def test_job_creation_offloads_the_synchronous_store_write():
     class ThreadRecordingStore(MemoryJobStore):
         create_thread_id = None
@@ -652,6 +826,7 @@ def test_job_creation_offloads_the_synchronous_store_write():
         ({"sse_keepalive_seconds": 0}, "sse_keepalive_seconds must be positive"),
         ({"timeout_grace_seconds": 0}, "timeout_grace_seconds must be positive"),
         ({"max_events_per_job": 0}, "max_events_per_job must be positive"),
+        ({"max_event_streams_per_client": 0}, "max_event_streams_per_client must be positive"),
         (
             {"default_timeout_seconds": 61, "max_timeout_seconds": 60},
             "default_timeout_seconds must not exceed max_timeout_seconds",
@@ -864,7 +1039,12 @@ def test_app_startup_fails_when_mathopt_probe_is_not_optimal(monkeypatch):
 
 @pytest.mark.parametrize(
     "solver",
-    ["ortools/cp-sat", "ortools/mpsolver/cbc", "ortools/mathopt/highs", "pulp/highs"],
+    [
+        "ortools/cp-sat",
+        "ortools/mpsolver/cbc",
+        "ortools/mathopt/highs",
+        pytest.param("pulp/highs", marks=pytest.mark.requires_solver("pulp/highs")),
+    ],
 )
 def test_installed_solver_runtimes_are_available(solver):
     assert solver_is_available(solver)
@@ -2234,6 +2414,33 @@ def test_queue_capacity_is_reported_as_429():
         assert rejected.json()["error"]["code"] == "job_capacity_exceeded"
 
 
+def test_anonymous_jobs_share_a_budget_per_forwarded_address():
+    # Compose runs Uvicorn with proxy headers, so NGINX's forwarded address names the client.
+    app = create_app(
+        settings=_settings(max_pending_jobs_per_client=2),
+        store=MemoryJobStore(),
+        runner=SuccessfulRunner(),
+        start_background=False,
+    )
+    with TestClient(ProxyHeadersMiddleware(app, trusted_hosts="*")) as client:
+        first_address = {"X-Forwarded-For": "203.0.113.1"}
+        assert [_create(client, first_address).status_code for _ in range(2)] == [202, 202]
+        rejected = _create(client, first_address)
+
+        assert rejected.status_code == 429
+        assert rejected.headers["retry-after"] == "1"
+        assert rejected.json()["error"]["code"] == "client_job_capacity_exceeded"
+        assert _create(client, {"X-Forwarded-For": "203.0.113.2"}).status_code == 202
+
+
+def test_authenticated_jobs_are_not_limited_per_address():
+    settings = _settings(auth_token=AUTH_TOKEN, max_pending_jobs_per_client=1)
+    with _client(start_background=False, settings=settings) as client:
+        headers = {"Authorization": f"Bearer {AUTH_TOKEN}"}
+
+        assert [_create(client, headers).status_code for _ in range(3)] == [202, 202, 202]
+
+
 def test_input_and_timeout_validation():
     settings = _settings(max_yaml_bytes=10, default_timeout_seconds=30, max_timeout_seconds=60)
     with _client(start_background=False, settings=settings) as client:
@@ -2418,6 +2625,33 @@ def test_event_stream_accepts_either_the_shared_token_or_a_stream_token():
 
         assert _stream_status(client, MISSING_JOB_ID, f"?token={stream_token}") == 404
         assert _stream_status(client, MISSING_JOB_ID, headers=_auth_header()) == 404
+
+
+def test_stream_token_holders_share_the_address_cap_and_bearer_keys_are_exempt():
+    # A stream token travels in a URL and can leak, while a bearer key belongs to a trusted
+    # service such as the AI service relaying progress for many browsers.
+    app = create_app(
+        settings=_settings(auth_token=AUTH_TOKEN, max_event_streams_per_client=1),
+        store=MemoryJobStore(),
+        runner=SuccessfulRunner(),
+        start_background=False,
+    )
+    created = _create_queued_job(app.state.job_controller)
+    token_query = f"token={create_stream_token(AUTH_TOKEN, created.id, ttl_seconds=60)}".encode()
+    bearer = [(b"authorization", f"Bearer {AUTH_TOKEN}".encode())]
+
+    async def exercise_streams():
+        streams = [
+            await _open_event_stream(app, created.id, "198.51.100.7", headers=bearer),
+            await _open_event_stream(app, created.id, "198.51.100.7", headers=bearer),
+            await _open_event_stream(app, created.id, "198.51.100.7", query=token_query),
+            await _open_event_stream(app, created.id, "198.51.100.7", query=token_query),
+        ]
+        for _status, _headers, disconnect in streams:
+            await disconnect()
+        return [status for status, _headers, _disconnect in streams]
+
+    assert asyncio.run(exercise_streams()) == [200, 200, 200, 429]
 
 
 def test_identified_token_mints_a_resolvable_stream_token_without_a_credential_hint():

@@ -292,6 +292,28 @@ def test_filling_the_queue_is_reported(captured):
     assert _signals(captured) == [("job_capacity_exceeded", "warning")]
 
 
+def test_exceeding_the_per_address_job_limit_is_reported(captured):
+    client = _client(max_pending_jobs_per_client=1)
+
+    accepted = client.post("/optimize", data={"yaml_content": "apiVersion: alpha"})
+    refused = client.post("/optimize", data={"yaml_content": "apiVersion: alpha"})
+
+    assert (accepted.status_code, refused.status_code) == (202, 429)
+    assert _signals(captured) == [("client_job_capacity_exceeded", "warning")]
+
+
+def test_exceeding_the_per_address_event_stream_limit_is_reported(captured):
+    client = _client(max_event_streams_per_client=1)
+    job_id = client.post("/optimize", data={"yaml_content": "apiVersion: alpha"}).json()["id"]
+    # Hold the address's only slot, as an open stream would.
+    assert client.app.state.event_stream_limiter.acquire("203.0.113.7")
+
+    refused = client.get(f"/optimize/{job_id}/events")
+
+    assert refused.status_code == 429
+    assert _signals(captured) == [("event_stream_capacity_exceeded", "warning")]
+
+
 def test_timeout_beyond_the_advertised_maximum_is_reported(captured):
     client = _client()
 

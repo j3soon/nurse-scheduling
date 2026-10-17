@@ -1398,19 +1398,31 @@ def test_second_turn_keeps_only_system_message_at_beginning() -> None:
     assert all(message["role"] != "system" for message in provider.calls[1][1:])
 
 
-def test_private_container_origin_can_call_ai_backend_directly() -> None:
+@pytest.mark.parametrize(
+    ("origin", "allowed"),
+    [
+        ("https://nursescheduling.org", True),
+        ("https://staging.nursescheduling.org", True),
+        ("http://localhost:3000", True),
+        ("http://192.168.0.117:3005", False),
+        ("http://10.0.0.5:3000", False),
+        ("http://172.20.0.3:3000", False),
+        ("http://host.docker.internal:3000", False),
+        ("http://nursescheduling.org", False),
+        ("https://nursescheduling.org.example.com", False),
+    ],
+)
+def test_ai_backend_allows_credentialed_requests_only_from_trusted_origins(origin: str, allowed: bool) -> None:
+    # The secure owner cookie is SameSite=None, so any allowed origin could act with it.
     client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
 
     response = client.options(
         "/capabilities",
-        headers={
-            "Origin": "http://192.168.0.117:3005",
-            "Access-Control-Request-Method": "GET",
-        },
+        headers={"Origin": origin, "Access-Control-Request-Method": "GET"},
     )
 
-    assert response.status_code == 200
-    assert response.headers["access-control-allow-origin"] == "http://192.168.0.117:3005"
+    assert (response.status_code == 200) is allowed
+    assert (response.headers.get("access-control-allow-origin") == origin) is allowed
 
 
 def test_session_uuid_alone_does_not_bypass_browser_ownership() -> None:
@@ -2135,11 +2147,15 @@ class BackgroundTestOptimizer:
     def __init__(self) -> None:
         self.release = threading.Event()
         self.submitted_yaml = ""
+        self.submitted_client_address: str | None = None
         self.closed = False
         self.deleted: list[str] = []
 
-    async def submit(self, schedule_yaml: str, _timeout_seconds: int | None) -> OptimizerJobPayload:
+    async def submit(
+        self, schedule_yaml: str, _timeout_seconds: int | None, client_address: str | None = None
+    ) -> OptimizerJobPayload:
         self.submitted_yaml = schedule_yaml
+        self.submitted_client_address = client_address
         return OptimizerJobPayload(id="remote-background", state="running")
 
     async def get(self, job_id: str) -> OptimizerJobPayload:
@@ -2152,7 +2168,9 @@ class BackgroundTestOptimizer:
             result={"outcome": "feasible", "score": 23},
         )
 
-    async def progress_events(self, _job_id: str) -> AsyncIterator[dict[str, object]]:
+    async def progress_events(
+        self, _job_id: str, _client_address: str | None = None
+    ) -> AsyncIterator[dict[str, object]]:
         yield {"currentBestScore": 23, "elapsedSeconds": 2}
         while not self.release.is_set():
             await asyncio.sleep(0.001)
@@ -2323,6 +2341,8 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         submitted = parse_schedule(optimizer.submitted_yaml)
         assert [person["id"] for person in submitted["people"]["items"]] == ["P1", "P2"]
         assert "description" not in submitted
+        # The optimizer limits active jobs per address, so it must see the browser's, not this service's.
+        assert optimizer.submitted_client_address == "testclient"
 
         optimizer.release.set()
         deadline = time.monotonic() + 2
@@ -3101,7 +3121,7 @@ def test_chunked_upload_body_is_bounded_before_the_whole_file_is_spooled():
                 headers={"Content-Type": "multipart/form-data; boundary=test-boundary"},
             )
             assert response.status_code == 413
-            assert response.json()["detail"] == "Attachment request is too large."
+            assert response.json()["detail"] == "AI request body is too large."
             assert len(consumed) < 10
             assert (await client.get(f"/sessions/{session_id}/uploads")).json() == accepted.json()
 

@@ -18,8 +18,8 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import json
-import math
-from collections.abc import Iterator, Mapping, Sequence
+import secrets
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, overload
@@ -36,6 +36,7 @@ from ..errors import (
     JobNotFoundError,
     StoreWriteConflictError,
 )
+from ..job_store import require_client_capacity
 from ..jobs.models import (
     Job,
     JobEvent,
@@ -50,10 +51,9 @@ from ..jobs.models import (
     WorkerLease,
 )
 from ..retry import retry_with_backoff
+from ..suspicion import address_digest
 from ..usage_metrics import RedisUsageMetrics, schedule_basics_for
 
-SOCKET_TIMEOUT_MARGIN_SECONDS = 5.0
-"""Additional socket time allowed beyond one blocking event-stream read."""
 REDIS_OPERATION_TIMEOUT_SECONDS = 2.0
 """Short timeout for ordinary Redis operations and deployment probes."""
 REDIS_RETRY_ATTEMPTS = 2
@@ -64,21 +64,16 @@ REDIS_RETRY_BACKOFF_CAP_SECONDS = 0.2
 """Maximum delay between Redis connection retries."""
 
 
-def _connection_retry(*, retry_on_timeout: bool) -> Retry:
-    """Build a bounded retry policy for one Redis client.
+def _connection_retry() -> Retry:
+    """Build a bounded retry policy for the Redis client.
 
     `redis.Redis.from_url` otherwise leaves connections with zero retries, so a
-    single slow or dropped connection surfaces as a failed operation. Callers
-    that treat a read timeout as control flow must exclude it, since retrying
-    would stall them for another full timeout.
+    single slow or dropped connection surfaces as a failed operation.
     """
-    supported_errors: tuple[type[Exception], ...] = (redis.exceptions.ConnectionError,)
-    if retry_on_timeout:
-        supported_errors += (redis.exceptions.TimeoutError,)
     return Retry(
         ExponentialBackoff(base=REDIS_RETRY_BACKOFF_BASE_SECONDS, cap=REDIS_RETRY_BACKOFF_CAP_SECONDS),
         retries=REDIS_RETRY_ATTEMPTS,
-        supported_errors=supported_errors,
+        supported_errors=(redis.exceptions.ConnectionError, redis.exceptions.TimeoutError),
     )
 
 
@@ -121,6 +116,16 @@ def _decode(value: bytes | str | None) -> str | None:
     return value.decode("utf-8") if isinstance(value, bytes) else value
 
 
+def _decode_event(raw_id: bytes, fields: Mapping[bytes, bytes]) -> JobEvent:
+    """Convert one Redis stream entry to a job event."""
+    return JobEvent(
+        id=_decode(raw_id),
+        type=_decode(fields.get(b"type")) or "job.event",
+        data=json.loads(_decode(fields.get(b"data")) or "{}"),
+        occurred_at=datetime.fromisoformat(_decode(fields.get(b"occurred_at")) or ""),
+    )
+
+
 class RedisJobStore:
     """Store jobs, queue state, events, input, and artifacts in Redis."""
 
@@ -129,7 +134,6 @@ class RedisJobStore:
         *,
         url: str,
         key_prefix: str,
-        event_stream_keepalive_seconds: float = 10.0,
         max_events_per_job: int = 1_000,
         usage_metrics_key_prefix: str | None = None,
         usage_metrics_retention_days: int = 30,
@@ -146,32 +150,19 @@ class RedisJobStore:
             raise ValueError("JOB_REDIS_KEY_PREFIX must not be empty")
         if usage_metrics_key_prefix is not None and usage_metrics_key_prefix.rstrip(":") == self._prefix:
             raise ValueError("USAGE_METRICS_KEY_PREFIX must differ from JOB_REDIS_KEY_PREFIX")
-        if not math.isfinite(event_stream_keepalive_seconds) or event_stream_keepalive_seconds <= 0:
-            raise ValueError("event_stream_keepalive_seconds must be positive")
         if max_events_per_job <= 0:
             raise ValueError("max_events_per_job must be positive")
         self._max_events_per_job = max_events_per_job
         """Maximum entries retained in each replayable event stream."""
-        # Bound ordinary Redis waits without inheriting the longer timeout
-        # required by blocking event-stream reads.
+        # Event streams poll without blocking, so one short timeout bounds every Redis wait.
         self._redis = redis.Redis.from_url(
             url,
             decode_responses=False,
             socket_connect_timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
             socket_timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
-            retry=_connection_retry(retry_on_timeout=True),
+            retry=_connection_retry(),
         )
-        """Binary-safe Redis client for bounded ordinary operations."""
-        # `stream_events` reads a blocking-read timeout as its keepalive tick, so
-        # this client must not retry one.
-        self._stream_redis = redis.Redis.from_url(
-            url,
-            decode_responses=False,
-            socket_connect_timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
-            socket_timeout=event_stream_keepalive_seconds + SOCKET_TIMEOUT_MARGIN_SECONDS,
-            retry=_connection_retry(retry_on_timeout=False),
-        )
-        """Redis client whose read timeout exceeds one blocking event-stream read."""
+        """Binary-safe Redis client for all bounded store operations."""
         self._redis.ping()
         self._usage_metrics = (
             RedisUsageMetrics(
@@ -187,6 +178,10 @@ class RedisJobStore:
         """Persistent UUID identifying this Redis database and key namespace."""
         self._store_id = self._resolve_store_id()
         """Persistent identity captured during startup."""
+        self._client_key_salt = self._resolve_metadata(
+            self._key("metadata:client_key_salt"), secrets.token_hex(32), "client key salt"
+        )
+        """Private salt shared through Redis, so every API process derives the same client keys."""
         self._jobs_key = self._key("jobs")
         """Sorted-set key (`ZADD`) of retained job IDs scored by creation time."""
         self._pending_key = self._key("pending")
@@ -205,24 +200,31 @@ class RedisJobStore:
         """Return the persistent identity of this Redis database and namespace."""
         return self._store_id
 
+    def client_key(self, address: str) -> str:
+        """Return a salted digest of an address that every process sharing this store derives."""
+        return address_digest(self._client_key_salt, address)
+
     def _resolve_store_id(self) -> str:
         """Atomically create or read the persistent Redis store identity."""
+        return self._resolve_metadata(self._store_id_key, str(uuid4()), "identity")
+
+    def _resolve_metadata(self, key: str, candidate: str, description: str) -> str:
+        """Atomically create or read one persistent store value."""
         return retry_with_backoff(
-            self._resolve_store_id_once,
+            lambda: self._resolve_metadata_once(key, candidate, description),
             retry_on=redis.RedisError,
         )
 
-    def _resolve_store_id_once(self) -> str:
-        """Create or read the store identity in one retryable attempt."""
-        value = _decode(self._redis.get(self._store_id_key))
+    def _resolve_metadata_once(self, key: str, candidate: str, description: str) -> str:
+        """Create or read one store value in one retryable attempt."""
+        value = _decode(self._redis.get(key))
         if isinstance(value, str) and value.strip():
             return value
-        candidate = str(uuid4())
-        self._redis.set(self._store_id_key, candidate, nx=True)
-        value = _decode(self._redis.get(self._store_id_key))
+        self._redis.set(key, candidate, nx=True)
+        value = _decode(self._redis.get(key))
         if isinstance(value, str) and value.strip():
             return value
-        raise redis.RedisError("Redis job store identity could not be initialized")
+        raise redis.RedisError(f"Redis job store {description} could not be initialized")
 
     def create(
         self,
@@ -237,7 +239,7 @@ class RedisJobStore:
 
         Raises:
             StoreWriteConflictError: If the job ID already exists.
-            JobCapacityError: If pending or retained capacity is exhausted.
+            JobCapacityError: If pending, per-client, or retained capacity is exhausted.
             redis.RedisError: If a Redis operation fails.
         """
         # Parsed once outside the loop, because a watched transaction may retry and the
@@ -255,6 +257,21 @@ class RedisJobStore:
                     if pending_count >= limits.max_pending:
                         transaction.unwatch()
                         raise JobCapacityError("Too many jobs are queued or running")
+                    if limits.max_pending_per_client is not None and job.request.client_key is not None:
+                        # A watched pending set fences membership changes, and a job never changes its key.
+                        pending_ids = [
+                            self._job_key(_decode(raw_id)) for raw_id in transaction.smembers(self._pending_key)
+                        ]
+                        raw_pending = transaction.mget(pending_ids) if pending_ids else []
+                        try:
+                            require_client_capacity(
+                                job,
+                                (self._deserialize_job(raw) for raw in raw_pending if raw is not None),
+                                limits,
+                            )
+                        except JobCapacityError:
+                            transaction.unwatch()
+                            raise
 
                     prune_ids: list[str] = []
                     retained_count = transaction.zcard(self._jobs_key)
@@ -644,49 +661,20 @@ class RedisJobStore:
             except redis.WatchError:
                 continue
 
-    def stream_events(
-        self,
-        job_id: str,
-        after_id: str | None,
-        keepalive_seconds: float,
-    ) -> Iterator[JobEvent | None]:
-        """Yield events after the requested ID until the job becomes terminal.
+    def read_events(self, job_id: str, after_id: str | None) -> tuple[list[JobEvent], bool]:
+        """Return stored events after the cursor and whether the job is terminal, without waiting.
 
-        Iteration blocks up to the keepalive interval when no newer event exists.
-        Yield `None` when the keepalive interval passes without a new event.
+        A terminal transition appends its events in the same transaction, so reading the state
+        before the events makes a terminal result include every event of the job.
 
         Raises:
-            JobNotFoundError: If the job does not exist or is deleted while streaming.
+            JobNotFoundError: If the job does not exist.
             redis.RedisError: If a Redis operation fails.
         """
-        self.get(job_id)
-        last_id = _normalize_stream_id(after_id)
-        block_ms = max(1, int(keepalive_seconds * 1000))
-        while True:
-            terminal = self.get(job_id).state.terminal
-            try:
-                streams = self._stream_redis.xread(
-                    {self._events_key(job_id): last_id},
-                    block=None if terminal else block_ms,
-                )
-            except redis.exceptions.TimeoutError:
-                streams = []
-            if not streams:
-                if terminal:
-                    return
-                yield None
-                continue
-            for _stream, entries in streams:
-                for raw_id, fields in entries:
-                    last_id = _decode(raw_id)
-                    yield JobEvent(
-                        id=last_id,
-                        type=_decode(fields.get(b"type")) or "job.event",
-                        data=json.loads(_decode(fields.get(b"data")) or "{}"),
-                        occurred_at=datetime.fromisoformat(_decode(fields.get(b"occurred_at")) or ""),
-                    )
-            if terminal or self.get(job_id).state.terminal:
-                return
+        terminal = self.get(job_id).state.terminal
+        streams = self._redis.xread({self._events_key(job_id): _normalize_stream_id(after_id)})
+        events = [_decode_event(raw_id, fields) for _stream, entries in streams for raw_id, fields in entries]
+        return events, terminal
 
     def find_finished_before(self, cutoff: datetime) -> list[Job]:
         """Return jobs finished before the retention cutoff.
@@ -840,6 +828,7 @@ class RedisJobStore:
                 "solver": job.request.solver,
                 "prettify": job.request.prettify,
                 "timeout_seconds": job.request.timeout_seconds,
+                "client_key": job.request.client_key,
             },
             "created_at": job.created_at.isoformat(),
             "revision": job.revision,
@@ -881,6 +870,7 @@ class RedisJobStore:
                 solver=request["solver"],
                 prettify=request.get("prettify"),
                 timeout_seconds=request["timeout_seconds"],
+                client_key=request.get("client_key"),
             ),
             created_at=datetime.fromisoformat(data["created_at"]),
             revision=data["revision"],

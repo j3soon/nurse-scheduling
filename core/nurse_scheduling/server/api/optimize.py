@@ -17,8 +17,12 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import asyncio
+import time
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime, timezone
+from functools import partial
 from io import BytesIO
 from uuid import UUID, uuid4
 
@@ -31,6 +35,7 @@ from ...loader import SchedulingDataTooComplexError, measure_yaml_expansion
 from ...sentry import report_suspicious_request
 from ..auth import create_stream_token
 from ..config import ServerSettings
+from ..errors import EventStreamCapacityError
 from ..jobs.controller import JobController
 from ..jobs.models import JobState
 from ..solver_capabilities import solver_supports_finish_now
@@ -45,6 +50,8 @@ CLIENT_ID_COOKIE_NAME = "nurse_scheduling_client_id"
 """Cookie used to correlate jobs from the same browser for diagnostics."""
 CLIENT_ID_COOKIE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 """Seven-day correlation lifetime; the cookie does not control job liveness."""
+EVENT_POLL_SECONDS = 1.0
+"""Maximum delay between a stored job event and its delivery to an open event stream."""
 
 
 def _controller(request: Request) -> JobController:
@@ -125,6 +132,49 @@ def _client_id(request: Request, response: Response) -> str:
     return client_id
 
 
+def _limited_client_address(request: Request) -> str | None:
+    """Return the address whose active jobs are bounded, or `None` for a trusted caller.
+
+    A bearer key belongs to an operator or service the deployment trusts, such as the
+    diagnostic, so only anonymous requests share a per-address budget. Behind the Compose
+    proxy, Uvicorn resolves the address from the forwarded header that NGINX sets.
+    """
+    if request.state.auth_credential_id is not None or request.client is None:
+        return None
+    return request.client.host
+
+
+def _limited_stream_address(request: Request) -> str | None:
+    """Return the address whose open event streams are bounded, or `None` for a bearer-key caller.
+
+    A bearer key belongs to a trusted service, such as the AI service relaying progress. A stream
+    token travels in a URL, where logs and shared links can leak it, so its holder counts like an
+    anonymous caller.
+    """
+    if request.client is None:
+        return None
+    if request.state.auth_credential_id is not None and not request.state.auth_by_stream_token:
+        return None
+    return request.client.host
+
+
+class _ReleasingStreamingResponse(StreamingResponse):
+    """Stream a response and run an optional release callback however the response ends."""
+
+    def __init__(self, *args, release: Callable[[], None] | None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._release = release
+
+    async def __call__(self, scope, receive, send) -> None:
+        # Release here rather than in the body generator, which never runs its cleanup
+        # when the client disconnects before the first frame.
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            if self._release is not None:
+                self._release()
+
+
 def _report_foreign_job_access(request: Request, job) -> None:
     """Report a browser reaching a job that a different browser created.
 
@@ -190,6 +240,7 @@ async def create_job(
         timeout_seconds=timeout_seconds,
         input_bytes=content,
         auth_credential_id=request.state.auth_credential_id,
+        client_address=_limited_client_address(request),
     )
     # This project's own data is plain and always parses, so neither shape comes from it.
     # The job is queued by now, so reporting must not be able to fail the response for it.
@@ -227,44 +278,69 @@ def stream_events(request: Request, job_id: str, last_event_id: str | None = Hea
     """Replay and stream job events after the client's last event ID.
 
     Disconnecting closes only this response stream; the durable job continues.
+
+    Raises:
+        EventStreamCapacityError: If the client address already holds its share of open streams.
     """
     controller = _controller(request)
     job = controller.get_job(job_id)
     _report_foreign_job_access(request, job)
+    keepalive_seconds = _settings(request).sse_keepalive_seconds
+    poll_seconds = min(EVENT_POLL_SECONDS, keepalive_seconds)
 
-    def generate():
-        """Yield SSE frames, blocking up to the configured keepalive interval."""
-        for event in controller.stream_events(
-            job_id,
-            after_id=last_event_id,
-            keepalive_seconds=_settings(request).sse_keepalive_seconds,
-        ):
-            if event is None:
-                yield ": keepalive\n\n"
-                continue
-            if event.type == "job.state_changed":
-                job = controller.get_job(job_id)
-                event_state = JobState(str(event.data["state"]))
-                supports_finish_now = solver_supports_finish_now(job.request.solver)
-                cancel_requested = bool(event.data.get("cancel_requested", False))
-                early_completion_requested = bool(event.data.get("early_completion_requested", False))
-                event = replace(
-                    event,
-                    data={
-                        **event.data,
-                        "terminal": event_state.terminal,
-                        "controls": {
-                            "cancellable": not event_state.terminal and not cancel_requested,
-                            "early_completion_available": event_state == JobState.RUNNING
-                            and supports_finish_now
-                            and not early_completion_requested,
+    async def generate():
+        """Yield SSE frames until the job is terminal.
+
+        Synchronous routes share a bounded thread pool. An idle stream therefore waits on the
+        event loop and uses a pool thread only for each short store read.
+        """
+        after_id = last_event_id
+        last_frame_at = time.monotonic()
+        while True:
+            events, terminal = await run_in_threadpool(controller.read_events, job_id, after_id=after_id)
+            for event in events:
+                after_id = event.id or after_id
+                if event.type == "job.state_changed":
+                    job = await run_in_threadpool(controller.get_job, job_id)
+                    event_state = JobState(str(event.data["state"]))
+                    supports_finish_now = solver_supports_finish_now(job.request.solver)
+                    cancel_requested = bool(event.data.get("cancel_requested", False))
+                    early_completion_requested = bool(event.data.get("early_completion_requested", False))
+                    event = replace(
+                        event,
+                        data={
+                            **event.data,
+                            "terminal": event_state.terminal,
+                            "controls": {
+                                "cancellable": not event_state.terminal and not cancel_requested,
+                                "early_completion_available": event_state == JobState.RUNNING
+                                and supports_finish_now
+                                and not early_completion_requested,
+                            },
                         },
-                    },
-                )
-            yield format_sse_event(event)
+                    )
+                yield format_sse_event(event)
+                last_frame_at = time.monotonic()
+            if terminal:
+                return
+            idle_seconds = time.monotonic() - last_frame_at
+            if idle_seconds >= keepalive_seconds:
+                yield ": keepalive\n\n"
+                last_frame_at = time.monotonic()
+                idle_seconds = 0
+            await asyncio.sleep(min(poll_seconds, keepalive_seconds - idle_seconds))
 
-    return StreamingResponse(
+    # Each open stream reads the store once per poll, so bound how many one address holds.
+    address = _limited_stream_address(request)
+    release = None
+    if address is not None:
+        limiter = request.app.state.event_stream_limiter
+        if not limiter.acquire(address):
+            raise EventStreamCapacityError("Too many event streams from this address are open")
+        release = partial(limiter.release, address)
+    return _ReleasingStreamingResponse(
         generate(),
+        release=release,
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

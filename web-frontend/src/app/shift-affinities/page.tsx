@@ -25,7 +25,7 @@ import Link from 'next/link';
 import { FiAlertCircle } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { ShiftAffinityPreference, SHIFT_AFFINITY } from '@/types/scheduling';
-import { CheckboxList } from '@/components/CheckboxList';
+import { CHECKBOX_LIST_SCROLL_CLASS_NAME, CheckboxList } from '@/components/CheckboxList';
 import { DraggableCardList } from '@/components/DraggableCardList';
 import ToggleButton from '@/components/ToggleButton';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
@@ -239,11 +239,11 @@ export default function ShiftAffinitiesPage() {
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           <h1 className="text-3xl font-bold text-gray-800">Shift Affinities</h1>
           <PageDocumentationLink href={DOCUMENTATION_URLS.shiftAffinities} label="Shift Affinities" />
         </div>
-        <div className="flex gap-4">
+        <div className="flex flex-wrap gap-3 sm:gap-4">
           <ToggleButton
             label="Add Shift Affinity"
             isToggled={isFormVisible}
@@ -286,7 +286,7 @@ export default function ShiftAffinitiesPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Dates *
                 </label>
-                <div className="max-h-32 overflow-y-auto">
+                <div className={CHECKBOX_LIST_SCROLL_CLASS_NAME}>
                   {dateData.items.length === 0 && dateData.groups.length === 0 ? (
                     <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
                       No dates available. Please set up dates in the{' '}

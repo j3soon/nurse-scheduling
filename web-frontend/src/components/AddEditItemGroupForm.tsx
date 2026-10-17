@@ -76,6 +76,11 @@ export function AddEditItemGroupForm<T extends Item, G extends Group>({
 }: AddEditItemGroupFormProps<T, G>) {
   const [sourceId, setSourceId] = useState('');
   const [operation, setOperation] = useState<SelectionOperation>('replace');
+  // The form opens only after a click, so reading the screen width here cannot mismatch server markup.
+  // Phones start with the panel collapsed because it is taller than the fields being edited.
+  const [applyFromOpen, setApplyFromOpen] = useState(() => (
+    typeof window === 'undefined' || !window.matchMedia?.('(max-width: 639px)').matches
+  ));
   const isItem = draft.isItem;
   const title = `${mode === Mode.ADDING ? 'Add New' : 'Edit'} ${isItem ? itemLabel : "Group"}`;
   const placeholder = `Enter ${isItem ? itemLabel.toLowerCase() : "group"} ID`;
@@ -100,7 +105,7 @@ export function AddEditItemGroupForm<T extends Item, G extends Group>({
   const visibleAppliedCount = appliedIds.filter(id => availableIds.has(id)).length;
   const sourceLabel = isItem ? itemLabel.toLowerCase() : 'group';
   const applyFrom = sources.length > 0 && (
-    <details open data-membership-apply className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+    <details open={applyFromOpen} onToggle={event => setApplyFromOpen(event.currentTarget.open)} data-membership-apply className="rounded-lg border border-gray-200 bg-gray-50 p-3">
       <summary className="cursor-pointer text-sm font-medium text-blue-700">
         Apply selection from another {sourceLabel}
       </summary>

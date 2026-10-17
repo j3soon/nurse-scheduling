@@ -17,11 +17,29 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
 from typing import Protocol
 
+from .errors import ClientJobCapacityError
 from .jobs.models import Job, JobEvent, ServerActivity, StoredArtifact, StoreLimits, WorkerLease
+
+
+def require_client_capacity(job: Job, pending_jobs: Iterable[Job], limits: StoreLimits) -> None:
+    """Refuse a job whose client key already holds its share of the pending capacity.
+
+    Every job runs on the same workers in submission order, so one address that fills the
+    queue delays everyone behind it. Stores call this inside their atomic create.
+
+    Raises:
+        ClientJobCapacityError: If the client's active jobs reach the per-client limit.
+    """
+    client_key = job.request.client_key
+    if limits.max_pending_per_client is None or client_key is None:
+        return
+    active = sum(candidate.request.client_key == client_key for candidate in pending_jobs)
+    if active >= limits.max_pending_per_client:
+        raise ClientJobCapacityError("Too many jobs from this address are queued or running")
 
 
 class JobStore(Protocol):
@@ -30,6 +48,10 @@ class JobStore(Protocol):
     @property
     def store_id(self) -> str:
         """Return the opaque identity shared by clients of this logical store."""
+        ...
+
+    def client_key(self, address: str) -> str:
+        """Return a salted digest that identifies one address to every client of this store."""
         ...
 
     def create(
@@ -43,7 +65,7 @@ class JobStore(Protocol):
 
         Raises:
             StoreWriteConflictError: If the job ID already exists.
-            JobCapacityError: If pending or retained capacity is exhausted.
+            JobCapacityError: If pending, per-client, or retained capacity is exhausted.
         """
         ...
 
@@ -132,18 +154,13 @@ class JobStore(Protocol):
         """
         ...
 
-    def stream_events(
-        self,
-        job_id: str,
-        after_id: str | None,
-        keepalive_seconds: float,
-    ) -> Iterator[JobEvent | None]:
-        """Yield new job events, using `None` as a keepalive signal.
+    def read_events(self, job_id: str, after_id: str | None) -> tuple[list[JobEvent], bool]:
+        """Return stored events after a cursor and whether the job is terminal, without waiting.
 
-        Iteration blocks up to the keepalive interval when no newer event exists.
+        A terminal result includes every event of the job, so the reader can stop.
 
         Raises:
-            JobNotFoundError: If the job does not exist or is deleted while streaming.
+            JobNotFoundError: If the job does not exist.
         """
         ...
 

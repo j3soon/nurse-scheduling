@@ -41,6 +41,9 @@
 
 ### Wording and terminology
 
+- When porting documentation from another branch, preserve its wording. Change
+  it only where current behavior or links require a correction.
+
 - Use concise, precise, human language. Every sentence should convey a concrete
   action, definition, or explanation that a first-time reader can understand.
   Rewrite or remove vague statements and redundant caveats.
@@ -132,6 +135,12 @@
 - Git on Windows can check out symlinks as plain text. Enable symlink support
   or use Linux or WSL when building the documentation.
 
+- Describe the current recovery schema separately from historical migrations.
+  Keep conversation order, event cursors, and execution status distinct.
+- For backup and restore instructions, use the same environment file, Compose
+  variant, and project for every step. Verify the dump before replacement and
+  keep restore failures from restarting writers.
+
 ## Validation
 
 - For walkthroughs that claim a GUI can reproduce a bundled schedule, start
@@ -150,8 +159,11 @@
   figures and formulas.
 - Wait for `div.mermaid` before capturing a Mermaid diagram. Zensical puts the
   SVG in a closed shadow root, so an SVG locator cannot detect it.
-- Run `zensical build --clean --strict` and `git diff --check` before
-  finishing.
+- Run `zensical build --clean --strict` from the repository root and
+  `git diff --check` before finishing. Dev images do not include the docs
+  dependencies. Install them outside the repository with
+  `python -m pip install --target /tmp/docs-deps -r docs/requirements.txt`,
+  then run `PYTHONPATH=/tmp/docs-deps python -m zensical build --clean --strict`.
 - When changing the link checker, run
   `python -m unittest discover -s scripts -p test_check_docs_links.py`.
 - Run `python scripts/check_docs_links.py` after the build. It checks pages,

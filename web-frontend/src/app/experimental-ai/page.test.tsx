@@ -93,6 +93,8 @@ vi.mock('./aiClient', async importOriginal => {
 });
 });
 
+// The Node build of Sentry has no feedback widget.
+vi.mock('@sentry/nextjs', async importOriginal => ({ ...await importOriginal<object>(), getFeedback: () => undefined }));
 vi.mock('@/utils/yamlGenerator', () => ({
   generateYamlFromState: mockGenerateYaml,
 }));

@@ -61,6 +61,8 @@ class JobRequest:
     """Optional schedule-prettification preference."""
     timeout_seconds: int
     """Maximum duration supplied to the scheduling engine."""
+    client_key: str | None = None
+    """Salted digest of an unauthenticated submitter's address, which bounds its active jobs."""
 
 
 @dataclass(frozen=True)
@@ -155,6 +157,8 @@ class StoreLimits:
     """Maximum queued, running, or cancelling jobs accepted by the store."""
     max_retained: int
     """Maximum total jobs retained, including terminal history."""
+    max_pending_per_client: int | None = None
+    """Maximum queued, running, or cancelling jobs sharing one client key, or `None` for no limit."""
 
 
 @dataclass(frozen=True)

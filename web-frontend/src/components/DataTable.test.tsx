@@ -265,4 +265,25 @@ describe('DataTable', () => {
 
     expect(screen.getByTestId('data-table-shift-types-groups')).toBeInTheDocument();
   });
+
+  it('moves rows with buttons without crossing a protected row or triggering row editing', () => {
+    const data: Row[] = [{ id: 'auto', name: 'Automatic' }, { id: 'a', name: 'Alpha' }, { id: 'b', name: 'Beta' }];
+    const onReorder = vi.fn();
+    const onRowClick = vi.fn();
+    render(<DataTable title="Rows" columns={columns} data={data} onReorder={onReorder}
+      onRowClick={onRowClick} getRowClassName={row => row.id === 'auto' ? 'non-draggable' : ''} />);
+    expect(screen.queryByRole('button', { name: 'Move Rows row 1 down' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Move Rows row 2 up' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Move Rows row 3 down' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Move Rows row 2 down' }));
+    expect(onReorder).toHaveBeenCalledWith([data[0], data[2], data[1]]);
+    expect(onRowClick).not.toHaveBeenCalled();
+  });
+
+  it('applies a column class to its header and body cells', () => {
+    render(<DataTable title="Rows" columns={[...columns, { header: 'Extra', accessor: 'id', className: 'hidden sm:table-cell' }]} data={[{ id: 'a', name: 'Alpha' }]} />);
+    expect(screen.getByRole('columnheader', { name: 'Extra' })).toHaveClass('hidden', 'sm:table-cell');
+    expect(screen.getAllByRole('cell').at(-1)).toHaveClass('hidden', 'sm:table-cell');
+  });
+
 });

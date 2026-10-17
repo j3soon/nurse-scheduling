@@ -154,7 +154,9 @@ class FakeOptimizerBackend:
         self.result_entered = asyncio.Event()
         self.deleted_event = asyncio.Event()
 
-    async def submit(self, schedule_yaml: str, timeout_seconds: int | None) -> OptimizerJobPayload:
+    async def submit(
+        self, schedule_yaml: str, timeout_seconds: int | None, client_address: str | None = None
+    ) -> OptimizerJobPayload:
         self.submit_entered.set()
         if self.submit_gate is not None:
             await self.submit_gate.wait()
@@ -187,7 +189,7 @@ class FakeOptimizerBackend:
             links={"schedule": f"/optimize/{job_id}/xlsx"},
         )
 
-    async def progress_events(self, job_id: str) -> AsyncIterator[dict[str, object]]:
+    async def progress_events(self, job_id: str, client_address: str | None = None) -> AsyncIterator[dict[str, object]]:
         if False:
             yield {"job_id": job_id}
 
@@ -321,6 +323,31 @@ def test_submission_without_provenance_does_not_probe_info(backend_info: dict[st
         assert payload.id == "remote-1"
         assert payload.backend == {"url": "http://api:8000", "request_timeout_seconds": 5}
         await backend.close()
+
+    asyncio.run(scenario())
+
+
+def test_http_backend_forwards_the_browser_address_only_when_known() -> None:
+    async def scenario() -> None:
+        forwarded: list[str | None] = []
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            forwarded.append(request.headers.get("X-Forwarded-For"))
+            if request.url.path.endswith("/events"):
+                return httpx.Response(
+                    200, text='id: 1\nevent: job.state_changed\ndata: {"state": "completed", "terminal": true}\n\n'
+                )
+            return httpx.Response(202, json={"id": f"remote-{len(forwarded)}", "state": "queued"})
+
+        backend = HttpOptimizerBackend("http://api:8000", "", 5, 1_000_000, transport=httpx.MockTransport(handle))
+        await backend.submit(TEST_SCHEDULE, 30, client_address="203.0.113.1")
+        await backend.submit(TEST_SCHEDULE, 30)
+        # The optimizer bounds open event streams per address as well as submitted jobs.
+        assert [point async for point in backend.progress_events("remote-1", "203.0.113.1")] == []
+        assert [point async for point in backend.progress_events("remote-2")] == []
+        await backend.close()
+
+        assert forwarded == ["203.0.113.1", None, "203.0.113.1", None]
 
     asyncio.run(scenario())
 
@@ -498,7 +525,9 @@ def test_a_rejected_submission_reports_the_reason_to_the_model() -> None:
 def test_start_returns_immediately_and_completion_wakes_the_agent() -> None:
     async def scenario() -> None:
         class ProvenanceBackend(FakeOptimizerBackend):
-            async def submit(self, schedule_yaml: str, timeout_seconds: int | None) -> OptimizerJobPayload:
+            async def submit(
+                self, schedule_yaml: str, timeout_seconds: int | None, client_address: str | None = None
+            ) -> OptimizerJobPayload:
                 payload = await super().submit(schedule_yaml, timeout_seconds)
                 payload.backend = {"url": "http://optimizer:8000", "app_version": "v0.4.3"}
                 payload.request = {"solver": "ortools/cp-sat", "timeout_seconds": timeout_seconds}
@@ -573,12 +602,18 @@ def test_start_returns_immediately_and_completion_wakes_the_agent() -> None:
 
 def test_progress_reaches_browser_updates_without_entering_the_agent_prompt() -> None:
     class ProgressBackend(FakeOptimizerBackend):
-        async def progress_events(self, job_id: str) -> AsyncIterator[dict[str, object]]:
+        progress_addresses: list[str | None]
+
+        async def progress_events(
+            self, job_id: str, client_address: str | None = None
+        ) -> AsyncIterator[dict[str, object]]:
+            self.progress_addresses.append(client_address)
             yield {"currentBestScore": 23, "elapsedSeconds": 2, "source": "solver"}
             await self.release.wait()
 
     async def scenario() -> None:
         backend = ProgressBackend()
+        backend.progress_addresses = []
         updates: list[dict[str, object]] = []
         prompts: list[str] = []
         progress_seen = asyncio.Event()
@@ -596,9 +631,10 @@ def test_progress_reaches_browser_updates_without_entering_the_agent_prompt() ->
         optimizer = SessionOptimizer(
             backend, poll_interval_seconds=0.001, on_completion=on_completion, on_update=on_update
         )
-        await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}')
+        await execute_optimizer_tool(optimizer, "session-1", TEST_SCHEDULE, '{"action":"start"}', "203.0.113.1")
         await asyncio.wait_for(progress_seen.wait(), timeout=1)
         assert updates[1]["progress"] == {"currentBestScore": 23, "elapsedSeconds": 2, "source": "solver"}
+        assert backend.progress_addresses == ["203.0.113.1"]
         assert not prompts
 
         backend.release.set()
@@ -609,13 +645,14 @@ def test_progress_reaches_browser_updates_without_entering_the_agent_prompt() ->
     asyncio.run(scenario())
 
 
-def test_session_optimizer_restores_named_people_in_download_and_attached_result() -> None:
+@pytest.mark.parametrize("person_id", ["Alice", "=1+1", "#REF!"])
+def test_session_optimizer_restores_named_people_in_download_and_attached_result(person_id: str) -> None:
     async def scenario() -> None:
         payload = base_schedule_payload()
-        payload["people"]["items"][0]["id"] = "Alice"
+        payload["people"]["items"][0]["id"] = person_id
         payload["people"]["items"][1]["id"] = "Bob"
-        payload["people"]["groups"][0]["members"] = ["Alice", "Bob"]
-        payload["preferences"][1]["person"] = ["Alice"]
+        payload["people"]["groups"][0]["members"] = [person_id, "Bob"]
+        payload["preferences"][1]["person"] = [person_id]
         original_yaml = schedule_yaml(payload)
         backend = FakeOptimizerBackend(optimizer_workbook_bytes(("P1", "P2")))
         completed = asyncio.Event()
@@ -629,7 +666,7 @@ def test_session_optimizer_restores_named_people_in_download_and_attached_result
         optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
         started = await execute_optimizer_tool(optimizer, "session-1", original_yaml, '{"action":"start"}')
         assert started.ok
-        assert "Alice" not in backend.submissions[0][0]
+        assert person_id not in backend.submissions[0][0]
         assert "description" not in backend.submissions[0][0]
 
         backend.release.set()
@@ -638,6 +675,14 @@ def test_session_optimizer_restores_named_people_in_download_and_attached_result
         artifact = await optimizer.result_artifact("session-1", job_id)
         assert artifact.content != backend.result_bytes
         assert attached_result == artifact
+        workbook = load_workbook(BytesIO(artifact.content), read_only=True)
+        try:
+            assert workbook.active["A3"].value == person_id
+            assert workbook.active["A3"].data_type == "s"
+            assert workbook.active["A4"].value == "Bob"
+            assert workbook.active["A4"].data_type == "s"
+        finally:
+            workbook.close()
         await optimizer.close()
 
     asyncio.run(scenario())
@@ -964,7 +1009,9 @@ def test_finish_now_waits_for_workbook_before_terminal_update() -> None:
 
 def test_immediately_completed_submission_waits_for_workbook_before_terminal_update() -> None:
     class ImmediateBackend(FakeOptimizerBackend):
-        async def submit(self, schedule_yaml: str, timeout_seconds: int | None) -> OptimizerJobPayload:
+        async def submit(
+            self, schedule_yaml: str, timeout_seconds: int | None, client_address: str | None = None
+        ) -> OptimizerJobPayload:
             self.submissions.append((schedule_yaml, timeout_seconds))
             return OptimizerJobPayload(id="remote-1", state="completed", terminal=True)
 

@@ -50,6 +50,12 @@ preserving repository conventions and unrelated user changes. Run a focused
 check when useful to verify the fix, then rerun the bundled script from the
 beginning. Repeat until the full script passes.
 
+If Playwright reports only that `config.webServer` could not start, inspect
+`web-frontend/playwright.config.ts` and run its build step directly with the same
+environment. Save stdout and stderr under the repository-root `artifacts/`
+directory. The compact `--quiet` output can hide build and TypeScript errors.
+Fix the reported cause before repeating the full script.
+
 Do not weaken, skip, or alter checks merely to make CI pass. If a required
 dependency or Playwright browser is missing, install it using the repository's
 documented setup commands, then rerun the script. Report a blocker only when

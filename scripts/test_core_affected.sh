@@ -6,7 +6,28 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CORE_DIR="$ROOT_DIR/core"
 source "$SCRIPT_DIR/affected_test_common.sh"
-affected_parse_args "$ROOT_DIR" "$@"
+
+# Dev images omit the optional PuLP solver runtimes. This option skips their tests
+# instead of stopping, so the remaining suite can still run there.
+skip_unavailable_solvers=false
+parse_args=()
+while (($# > 0)); do
+  case "$1" in
+    --skip-unavailable-solvers)
+      skip_unavailable_solvers=true
+      shift
+      ;;
+    --)
+      parse_args+=("$@")
+      break
+      ;;
+    *)
+      parse_args+=("$1")
+      shift
+      ;;
+  esac
+done
+affected_parse_args "$ROOT_DIR" "${parse_args[@]}"
 
 test_paths=()
 run_full_suite="$affected_full"
@@ -105,17 +126,19 @@ else
 fi
 
 if ((${#required_solvers[@]} > 0)); then
-  python - "${required_solvers[@]}" <<'PY'
+  SKIP_UNAVAILABLE_SOLVERS="$skip_unavailable_solvers" python - "${required_solvers[@]}" <<'PY'
 import os
 import sys
 
 from nurse_scheduling.server.solver_options import solver_is_available
 
 unavailable = [solver for solver in dict.fromkeys(sys.argv[1:]) if not solver_is_available(solver)]
-if unavailable:
+if unavailable and os.environ["SKIP_UNAVAILABLE_SOLVERS"] == "true":
+    print(f"Skipping tests that need unavailable solver runtimes: {', '.join(unavailable)}", file=sys.stderr)
+elif unavailable:
     print(f"Required optional solver runtimes unavailable: {', '.join(unavailable)}", file=sys.stderr)
     if os.path.exists("/.dockerenv"):
-        print("This dev image omits them. Pass explicit test paths that do not need them.", file=sys.stderr)
+        print("This dev image omits them. Pass --skip-unavailable-solvers to skip their tests.", file=sys.stderr)
     else:
         print("From core/, run: uv pip install -r requirements-optional.txt", file=sys.stderr)
     raise SystemExit(2)
@@ -123,6 +146,9 @@ PY
 fi
 
 pytest_args=(-q --tb=short --disable-warnings --maxfail=1)
+if [[ "$skip_unavailable_solvers" == true ]]; then
+  pytest_args+=(--skip-unavailable-solvers)
+fi
 if [[ "$run_full_suite" == true ]]; then
   echo "Broad core changes detected; running the compact normal suite."
   exec pytest "${pytest_args[@]}" \

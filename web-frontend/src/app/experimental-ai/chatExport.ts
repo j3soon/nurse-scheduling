@@ -386,6 +386,12 @@ export function buildHtmlChatExport(
     .system { align-self: stretch; width: auto; max-width: none; border: 1px dashed #d1d5db; background: #f9fafb; color: #374151; }
     .user.app, .user.status, .user.optimizer { border: 1px solid #bfdbfe; background: #eff6ff; color: #1e3a8a; font: 12px/1.625 ui-monospace, monospace; }
     .user.optimizer { align-self: flex-start; border-color: #a7f3d0; background: #ecfdf5; color: #022c22; }
+    @media (max-width: 639px) {
+      main { padding: 16px; }
+      .chat { padding: 8px; }
+      .message { width: 95%; max-width: 95%; padding: 12px; }
+      .system { width: auto; max-width: none; }
+    }
     .label { margin-bottom: 4px; font-size: 12px; font-weight: 600; letter-spacing: .025em; text-transform: uppercase; opacity: .7; }
     .content { overflow-wrap: anywhere; line-height: 1.5rem; }
     .user .content, .optimizer .content { white-space: pre-wrap; }
