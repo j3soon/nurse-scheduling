@@ -27,12 +27,14 @@ from uuid import UUID
 
 import psycopg
 
+from .chat_export import build_saved_chat_export
 from .history import ChatHistory
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("session_id", type=UUID)
+    parser.add_argument("--format", choices=("json", "html", "markdown"), default="json")
     args = parser.parse_args()
     database_url = os.environ.get("AI_HISTORY_POSTGRES_URL", "").strip()
     if not database_url:
@@ -43,8 +45,11 @@ def main() -> None:
         parser.exit(1, "Could not read the saved chat snapshot. Check PostgreSQL access.\n")
     if snapshot is None:
         parser.exit(1, "Saved chat session not found.\n")
-    json.dump(snapshot, sys.stdout, ensure_ascii=False)
-    sys.stdout.write("\n")
+    if args.format == "json":
+        json.dump(snapshot, sys.stdout, ensure_ascii=False)
+        sys.stdout.write("\n")
+    else:
+        sys.stdout.write(build_saved_chat_export(snapshot, args.format))
 
 
 if __name__ == "__main__":

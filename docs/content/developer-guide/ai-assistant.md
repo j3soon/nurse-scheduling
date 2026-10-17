@@ -821,6 +821,12 @@ See [Export saved AI chats](reproduce/core.md#export-saved-ai-chats) for the
 one-command Docker and native database workflow. Builds without PostgreSQL keep
 the browser transcript export.
 
+The Python formatter also renders saved snapshots through
+`python -m nurse_scheduling.ai.export_snapshot SESSION_ID --format html`
+or `--format markdown`. Its HTML and Markdown match 52 TypeScript reference
+documents across 26 cases, including the complete saved-event fixture.
+The frozen reference hashes remain in the core export tests.
+
 ## HTTP API
 
 Session creation and both foreground and queued messages include

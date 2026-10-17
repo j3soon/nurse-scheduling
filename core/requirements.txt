@@ -9,6 +9,7 @@ openpyxl # For XLSX input and output support
 defusedxml # For parsing untrusted XLSX XML safely
 Pillow # For Pi-compatible image reads
 jinja2 # For prettifying output
+markdown-it-py[linkify]==4.2.0 # For safe GFM chat export rendering
 # PuLP is pure Python with a bundled CBC binary, so it stays in the minimal set.
 pulp==3.3.2
 # For web backend
