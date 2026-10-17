@@ -1,0 +1,30 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "id": "schedule-yaml-roundtrip-scalars",
+  "fixture": "small-clinic",
+  "question": "Use Python to read the current schedule YAML and write it back to /workspace/schedule.yaml without changing any parsed values. Preserve every date selector, person, history, shift, rule and weight exactly. This is only a serialization round trip. Do not optimize.",
+  "expect_proposal": true,
+  "tool_usage": {
+    "required": [
+      "bash"
+    ],
+    "forbidden": [
+      "optimizer"
+    ],
+    "max_validation_errors": 0
+  },
+  "tags": [
+    "schedule-serialization"
+  ],
+  "note": "This testcase is mostly AI generated. The source is valid YAML 1.2. A YAML 1.1 reader can change OFF history to a boolean and its writer can emit strings as numbers. A formatting-only proposal is expected. The description assertion and restriction to description changes together require every parsed value to remain identical. No validation repair is allowed.",
+  "changes": [
+    "description"
+  ],
+  "assert": [
+    {
+      "path": "description",
+      "equals": "Small pediatric clinic"
+    }
+  ]
+}

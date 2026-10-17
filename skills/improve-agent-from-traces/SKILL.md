@@ -143,6 +143,9 @@ to reconcile state manually. Compare implementations with the same prompt and
 help text to isolate the code change from wording changes.
 When a boundary input skips existing logic, check whether that logic belongs
 outside the loop or behind a different condition before adding a duplicate branch.
+Group related failures by their shared cause before choosing a fix. Prefer a
+general data-boundary repair over prompt exceptions for particular dates, IDs
+or workbook layouts. Test representative variations and a contrasting case.
 
 Use a focused prompt instruction for a decision or interpretation the model
 needs to learn. Extend an existing segment only for the same intent. Each prompt

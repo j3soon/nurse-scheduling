@@ -1103,6 +1103,27 @@ def test_a_failed_required_tool_does_not_count_as_successful_use(tmp_path: Path)
     assert result.failures()[0].description == "uses successful read tool"
 
 
+@pytest.mark.parametrize("mutation", [None, "description", "boolean-history", "numeric-day", "weight"])
+def test_yaml_roundtrip_case_allows_formatting_but_preserves_all_data(mutation):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "schedule-yaml-roundtrip-scalars")
+    initial = FIXTURE_SCHEDULES[case.fixture]
+    proposed = copy.deepcopy(initial)
+    if mutation == "description":
+        proposed["description"] = "Changed"
+    elif mutation == "boolean-history":
+        proposed["people"]["items"][1]["history"][0] = False
+    elif mutation == "numeric-day":
+        proposed["dates"]["groups"][0]["members"][0] = 5
+    elif mutation == "weight":
+        proposed["preferences"][1]["weight"] = 100
+    outcome = RunOutcome(
+        initial=initial,
+        proposed=proposed,
+        activity=[{"kind": "tool", "name": "bash", "ok": True}],
+    )
+    assert grade(case, outcome).passed is (mutation is None)
+
+
 def test_validation_error_limit_distinguishes_repair_from_other_tool_errors(tmp_path: Path):
     case = load_cases(_write(tmp_path, _case(expect_proposal=False, tool_usage={"max_validation_errors": 0})))[0]
     prefix = "Trusted schedule check after this command:"

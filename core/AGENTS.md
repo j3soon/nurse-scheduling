@@ -203,6 +203,11 @@ skipped does not validate persistence.
 - Keep bundled attachment helpers general and optional. Preserve meaningful
   source data such as spreadsheet formulas and cached values, report truncation,
   and let the agent write a focused sandbox parser when a helper is insufficient.
+- Fix repeated representation failures at the data boundary before adding prompt
+  exceptions. Use the app's YAML 1.2 semantics for both reading and writing
+  schedule data. Prefer the installed library over custom scalar converters.
+  Keep schema validation in the trusted server instead of asking the model to
+  maintain a second validator.
 - When adding a bundled reference, include it in sandbox hydration, production
   Docker copy paths, and evaluation reference hashes.
 - Prefer extending an existing helper when an operation shares its parser,

@@ -1174,5 +1174,34 @@
         "note": "Three paired trials per case with four case jobs. The initial answer prefix and timeout are synthetic. Recovery uses the production retry policy and a live provider. Without this section, all three recovery answers repeat the first identifier. With it, all three continue without repetition. The uninterrupted control is 2/3 before and 3/3 after, with one empty baseline answer. No infrastructure errors or timing benefit are claimed. Earlier diagnostics used an overly strict whitespace contract and remain separate."
       }
     ]
+  },
+  {
+    "id": "schedule-yaml-format",
+    "file": "steps/schedule-yaml-format.md",
+    "cases": [
+      "schedule-yaml-roundtrip-scalars",
+      "import-complete-uploaded-yaml"
+    ],
+    "hypothesis": "Preserves scalar types during Python schedule I/O by using the app's YAML version instead of ad hoc conversion.",
+    "sha256": "9ab39c4fd34c8535762ab42c445ea76c32b79664d783dbf298b290444ae2c511",
+    "evidence": [
+      {
+        "case": "schedule-yaml-roundtrip-scalars",
+        "input_sha256": "f6751bf157ad34395145fc1ea269960ac59893687508167ceab2446eb8fef3b7",
+        "before": "0/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "import-complete-uploaded-yaml",
+            "input_sha256": "e2f73781faf567e06a2a3a4d5c1b9f4cd81ca49a5b73a6d3909342cfdee1f500",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Adjacent final-step comparison with the previous full prompt. Both arms use the corrected formatting-only proposal contract and preserve every parsed value. The baseline uses YAML 1.1 and corrupts scalar types. The candidate uses the installed YAML 1.2 library. Real provider and E2B commands, four concurrent case jobs, no optimizer jobs. A discarded writer prototype and the earlier incorrect proposal expectation remain separate. No performance gain is claimed."
+      }
+    ]
   }
 ]
