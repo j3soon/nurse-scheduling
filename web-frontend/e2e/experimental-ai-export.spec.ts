@@ -106,7 +106,7 @@ test('saved HTML and Markdown browser downloads byte-match the backend CLI', asy
     const content = browserBytes.toString('utf8');
     expect(content).toContain('Command exited with code 7');
     expect(content).toContain('Keep the original names.');
-    expect(content).toContain('Pending proposal');
+    expect(content).toContain('Applied to your schedule');
     expect(content).not.toContain('Saved history is ready to export.');
   }
 });

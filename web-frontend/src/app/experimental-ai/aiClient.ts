@@ -34,6 +34,21 @@ export interface ToolActivity {
   arguments: string;
   result: string;
   ok: boolean;
+  // The trusted schedule check that `result` ends with, when the tool changed the working copy.
+  scheduleCheck?: ScheduleCheck;
+}
+
+export interface ScheduleCheck {
+  ok: boolean;
+  text: string;
+}
+
+// A run's validated schedule, which the backend adopted. The browser applies it only over its base revision.
+export interface ScheduleApplied {
+  scheduleYaml: string;
+  baseSha256: string;
+  sha256: string;
+  diff: string;
 }
 
 export type ToolStartActivity = Pick<ToolActivity, 'toolCallId' | 'name' | 'arguments'>;
@@ -76,7 +91,6 @@ export interface SessionReset {
   activeRunId: string | null;
   terminalRunIds: string[];
   incomplete: boolean;
-  proposalDiff: string | null;
 }
 
 export interface AiCapabilities {
@@ -166,7 +180,9 @@ interface SsePayload {
   events?: unknown;
   incomplete?: unknown;
   active_run_id?: unknown;
-  proposal_diff?: unknown;
+  schedule_check?: unknown;
+  base_sha256?: unknown;
+  sha256?: unknown;
 }
 
 // Older backends omit the ID, so callers fall back to matching by tool name.
@@ -430,14 +446,8 @@ function consumeEvent(block: string, callbacks: SessionStreamOptions): void {
           ? [event.data.run_id] : []),
       activeRunId: typeof payload.active_run_id === 'string' ? payload.active_run_id : null,
       incomplete: payload.incomplete === true,
-      proposalDiff: typeof payload.proposal_diff === 'string' && payload.proposal_diff ? payload.proposal_diff : null,
     };
-    events = [
-      { type: 'session_reset', reset },
-      ...recoveredEvents,
-      // Proposal ownership may have changed since the retained run produced it.
-      { type: 'proposal', diff: reset.proposalDiff ?? '' },
-    ];
+    events = [{ type: 'session_reset', reset }, ...recoveredEvents];
   } else {
     events = decodeEvent(eventType, payload);
   }
@@ -486,6 +496,9 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
         arguments: typeof payload.arguments === 'string' ? payload.arguments : '',
         result: typeof payload.result === 'string' ? payload.result : '',
         ok: payload.ok !== false,
+        ...(isRecord(payload.schedule_check) && typeof payload.schedule_check.ok === 'boolean'
+          && typeof payload.schedule_check.text === 'string'
+          ? { scheduleCheck: { ok: payload.schedule_check.ok, text: payload.schedule_check.text } } : {}),
       },
     });
   } else if (
@@ -501,8 +514,14 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
     emit({ type: 'schedule_change', scheduleYaml: payload.schedule_yaml });
   } else if (eventType === 'download' && typeof payload.download_id === 'string') {
     emit({ type: 'download', downloadId: payload.download_id });
-  } else if (eventType === 'proposal' && typeof payload.diff === 'string') {
-    emit({ type: 'proposal', diff: payload.diff });
+  } else if (eventType === 'schedule_applied') {
+    if (typeof payload.schedule_yaml !== 'string' || typeof payload.base_sha256 !== 'string'
+      || typeof payload.sha256 !== 'string' || typeof payload.diff !== 'string') {
+      throw new Error('The AI backend returned an invalid schedule change.');
+    }
+    emit({ type: 'schedule_applied', applied: {
+      scheduleYaml: payload.schedule_yaml, baseSha256: payload.base_sha256, sha256: payload.sha256, diff: payload.diff,
+    } });
   } else if (
     eventType === 'optimization'
     && typeof payload.job_id === 'string'
@@ -947,42 +966,4 @@ export async function updateSessionSchedule(
     body: JSON.stringify({ schedule_yaml: scheduleYaml }),
   });
   if (!response.ok) throw await responseError(response);
-}
-
-export async function approveProposal(
-  sessionId: string,
-  scheduleYaml: string,
-  authToken: string | null,
-  endpoint = getAiBaseUrl(),
-): Promise<{ scheduleYaml: string; historySaved: boolean }> {
-  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/proposal/approve`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ base_sha256: await scheduleRevision(scheduleYaml) }),
-  });
-  if (!response.ok) throw await responseError(response);
-
-  const body = await response.json() as { schedule_yaml?: unknown; history_saved?: unknown };
-  if (typeof body.schedule_yaml !== 'string' || !body.schedule_yaml || typeof body.history_saved !== 'boolean') {
-    throw new Error('The AI backend returned an invalid proposal.');
-  }
-  return { scheduleYaml: body.schedule_yaml, historySaved: body.history_saved };
-}
-
-/** Reject the pending proposal and return whether recovery storage saved the rejection. */
-export async function rejectProposal(
-  sessionId: string,
-  authToken: string | null,
-  endpoint = getAiBaseUrl(),
-): Promise<boolean> {
-  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/proposal/reject`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: authorizedHeaders(authToken),
-  });
-  if (!response.ok) throw await responseError(response);
-  const body = await response.json() as { history_saved?: unknown };
-  if (typeof body.history_saved !== 'boolean') throw new Error('The AI backend returned an invalid rejection.');
-  return body.history_saved;
 }

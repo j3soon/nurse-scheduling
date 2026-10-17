@@ -54,8 +54,6 @@ from .system_prompt import compose_system_prompt
 
 logger = logging.getLogger("nurse_scheduling.ai.sandbox_agent")
 WORKSPACE_SCHEDULE = f"/workspace/{SCHEDULE_FILENAME}"
-WORKSPACE_PENDING_PROPOSAL = "/workspace/pending-proposal.yaml"
-WORKSPACE_PENDING_DIFF = "/workspace/pending-proposal.diff"
 WORKSPACE_ATTACHMENTS = "/workspace/attachments"
 REFERENCE_SCHEMAS = {group: f"/reference/{path.name}" for group, path in SCHEMA_REFERENCE_FILES.items()}
 REFERENCE_SCHEMAS["taiwan-holidays"] = f"/reference/{TAIWAN_HOLIDAYS_SOURCE.name}"
@@ -74,7 +72,6 @@ REFERENCE_ATTACHMENT_TOOLS = {
 }
 WORKSPACE_SOURCE_CONTEXT = "/workspace/schedule-context.json"
 WORKSPACE_RESULT_CONTEXT = "/workspace/optimizer-results/schedule-context.json"
-WORKSPACE_PENDING_RESULT_CONTEXT = "/workspace/optimizer-results/pending-schedule-context.json"
 
 
 def inspection_helper_catalog() -> str:
@@ -193,8 +190,6 @@ async def _measured_sandbox_run(
     cleanup_timeout_seconds: float,
     metrics: WorkspaceMetrics,
     schedule_yaml: str,
-    pending_proposal_yaml: str,
-    pending_proposal_diff: str,
     attachments: Sequence[SandboxAttachment],
     optimizer_result: bytes | None,
     optimizer_context: bytes | None,
@@ -207,8 +202,6 @@ async def _measured_sandbox_run(
         metrics,
         stack,
         schedule_yaml,
-        pending_proposal_yaml,
-        pending_proposal_diff,
         attachments,
         optimizer_result,
         optimizer_context,
@@ -233,8 +226,6 @@ class _LazySandboxRun:
         metrics: WorkspaceMetrics,
         stack: AsyncExitStack,
         schedule_yaml: str,
-        pending_proposal_yaml: str,
-        pending_proposal_diff: str,
         attachments: Sequence[SandboxAttachment],
         optimizer_result: bytes | None,
         optimizer_context: bytes | None,
@@ -244,8 +235,6 @@ class _LazySandboxRun:
         self._metrics = metrics
         self._stack = stack
         self._schedule_yaml = schedule_yaml
-        self._pending_proposal_yaml = pending_proposal_yaml
-        self._pending_proposal_diff = pending_proposal_diff
         self._attachments = tuple(attachments)
         self._optimizer_result = optimizer_result
         self._optimizer_context = optimizer_context
@@ -283,8 +272,6 @@ class _LazySandboxRun:
                 await hydrate_sandbox(
                     self._sandbox,
                     self._schedule_yaml,
-                    self._pending_proposal_yaml,
-                    self._pending_proposal_diff,
                     self._attachments,
                     self._optimizer_result,
                     self._optimizer_context,
@@ -360,8 +347,6 @@ class _LazySandboxRun:
 async def hydrate_sandbox(
     sandbox: SandboxBackend,
     schedule_yaml: str,
-    pending_proposal_yaml: str = "",
-    pending_proposal_diff: str = "",
     attachments: Sequence[SandboxAttachment] = (),
     optimizer_result: bytes | None = None,
     optimizer_context: bytes | None = None,
@@ -377,9 +362,6 @@ async def hydrate_sandbox(
     except Exception:
         # A draft may not compile. Its YAML remains available for direct inspection.
         logger.debug("Current schedule inspection context unavailable", exc_info=True)
-    if pending_proposal_yaml:
-        files[WORKSPACE_PENDING_PROPOSAL] = pending_proposal_yaml
-        files[WORKSPACE_PENDING_DIFF] = pending_proposal_diff
     for group, path in REFERENCE_SCHEMAS.items():
         reference = load_taiwan_holidays_reference() if group == "taiwan-holidays" else load_schedule_reference(group)
         if reference is None:  # pragma: no cover - constants are defined together
@@ -401,10 +383,6 @@ async def hydrate_sandbox(
                 build_result_context(schedule_yaml, workbook=optimizer_result), ensure_ascii=False, allow_nan=False
             )
         )
-        if pending_proposal_yaml:
-            files[WORKSPACE_PENDING_RESULT_CONTEXT] = json.dumps(
-                build_result_context(pending_proposal_yaml), ensure_ascii=False, allow_nan=False
-            )
     # One request, because hydration now precedes the first tool result rather than the turn.
     await sandbox.write_files(files)
     logger.info(
@@ -496,7 +474,7 @@ class _ScheduleCandidateTracker:
 
         review = review_schedule_candidate(self._base_text, candidate, self._max_bytes)
         logger.info(
-            "sandbox intermediate candidate validated sandbox_id=%s valid=%s proposal=%s",
+            "sandbox intermediate candidate validated sandbox_id=%s valid=%s changed=%s",
             self._sandbox.sandbox_id,
             review.outcome.ok,
             review.proposal is not None,

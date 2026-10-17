@@ -535,7 +535,7 @@ cleaned while the AI service is offline.
 | `AI_COOKIE_SECURE` | `0` in the launcher | Use `0` for local HTTP and `1` for public HTTPS. Secure deployments use `SameSite=None` so approved cross-site frontends can retain session ownership. |
 | `AI_SESSION_TTL_SECONDS` | `2592000` | Idle session lifetime. Session activity renews it. |
 | `AI_MAX_SESSIONS` | `1000` | Maximum process-local sessions. With PostgreSQL, a new or restored session unloads the least recently used idle session instead of getting HTTP 429. That session loses its uploads, downloads, and optimizer results, as after a restart. A session stays loaded while a response, optimizer run, or recovery write is unfinished, and after a failed save until a later save succeeds. |
-| `AI_MAX_SESSION_BYTES` | `1073741824` | Retained-byte budget across live sessions, including chat text, uploads, and generated downloads. It leaves room for several sessions at the `AI_MAX_ATTACHMENT_TOTAL_BYTES` limit. New sessions, uploads, schedule updates, and queued steering that would exceed it get HTTP 429. A completed turn instead drops its session's oldest complete exchanges and warns the browser. Size the process above this budget plus the newest turn and any pending proposal of each session. |
+| `AI_MAX_SESSION_BYTES` | `1073741824` | Retained-byte budget across live sessions, including chat text, uploads, and generated downloads. It leaves room for several sessions at the `AI_MAX_ATTACHMENT_TOTAL_BYTES` limit. New sessions, uploads, schedule updates, and queued steering that would exceed it get HTTP 429. A completed turn instead drops its session's oldest complete exchanges and warns the browser. Size the process above this budget plus the newest turn of each session. |
 | `AI_MAX_HISTORY_MESSAGES` | `1000` | Conversation messages retained per session. The effective minimum is two, so a completed question and answer survive when this is set to one. |
 | `AI_MAX_HISTORY_CHARS` | `200000` | Prompt budget for retained history. The newest messages that fit are sent, so a long session cannot outgrow the model context window. |
 | `AI_MAX_MESSAGE_CHARS` | `8000` | Maximum question length. |
@@ -646,7 +646,7 @@ Run deterministic affected checks before live evaluations:
 ./scripts/test_frontend_affected.sh --base origin/dev
 ./scripts/test_frontend_e2e_affected.sh \
   web-frontend/e2e/experimental-ai-basic.spec.ts \
-  web-frontend/e2e/experimental-ai-proposal.spec.ts
+  web-frontend/e2e/experimental-ai-schedule-changes.spec.ts
 ```
 
 Use the PostgreSQL wrapper when persistence changes. Check that database cases

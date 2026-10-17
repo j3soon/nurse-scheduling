@@ -42,7 +42,6 @@ import {
   OptimizationActivity,
   type ContextUsage,
   ToolActivity,
-  approveProposal,
   createSession,
   removeGeneratedZip,
   getUploads,
@@ -51,13 +50,13 @@ import {
   type UploadedFile,
   getSessionStatus,
   queueMessage,
-  rejectProposal,
+  scheduleRevision,
   sendMessage,
   stopSession,
   updateSessionSchedule,
   uploadFile,
 } from './aiClient';
-import type { SessionReset, ToolStartActivity, OptimizationProgressActivity } from './aiClient';
+import type { ScheduleApplied, SessionReset, ToolStartActivity, OptimizationProgressActivity } from './aiClient';
 import type { SessionEvent } from './sessionEvents';
 import { useSessionEventStream } from './useSessionEventStream';
 import { SessionEventRouter } from './sessionEventRouter';
@@ -87,7 +86,7 @@ interface StreamCallbacks {
   onTool?: (activity: ToolActivity) => void;
   onSteering?: (messageId: string, message: string) => void;
   onScheduleChange?: (scheduleYaml: string) => void;
-  onProposal?: (diff: string) => void;
+  onScheduleApplied?: (applied: ScheduleApplied) => void;
   onOptimization?: (activity: OptimizationActivity) => void;
   onOptimizationProgress?: (activity: OptimizationProgressActivity) => void;
   onDone?: (runId?: string) => void;
@@ -111,7 +110,7 @@ function dispatchPageEvent(event: SessionEvent, callbacks: StreamCallbacks): voi
     case 'tool': callbacks.onTool?.(event.activity); break;
     case 'steering': callbacks.onSteering?.(event.messageId, event.message); break;
     case 'schedule_change': callbacks.onScheduleChange?.(event.scheduleYaml); break;
-    case 'proposal': callbacks.onProposal?.(event.diff); break;
+    case 'schedule_applied': callbacks.onScheduleApplied?.(event.applied); break;
     case 'download': callbacks.onDownload?.(event.downloadId); break;
     case 'warning': callbacks.onWarning?.(event.message); break;
     case 'model_input': callbacks.onModelInput?.(event.input); break;
@@ -130,7 +129,9 @@ function assistantEventCallbacks(
   apply: (event: AssistantEvent) => void,
   workingSchedule: { current: string | null },
   browserSchedule: { readonly current: string },
-): Required<Pick<StreamCallbacks, 'onDelta' | 'onReasoning' | 'onTruncated' | 'onToolStart' | 'onTool' | 'onScheduleChange'>> {
+  applySchedule: (applied: ScheduleApplied) => void,
+): Required<Pick<StreamCallbacks,
+  'onDelta' | 'onReasoning' | 'onTruncated' | 'onToolStart' | 'onTool' | 'onScheduleChange' | 'onScheduleApplied'>> {
   return {
     onDelta: text => apply({ type: 'delta', text }),
     onReasoning: text => apply({ type: 'reasoning', text }),
@@ -142,11 +143,12 @@ function assistantEventCallbacks(
       workingSchedule.current = after;
       apply({ type: 'schedule_change', before, after });
     },
+    onScheduleApplied: applied => {
+      apply({ type: 'schedule_applied', diff: applied.diff });
+      applySchedule(applied);
+    },
   };
 }
-
-const UNSAVED_APPROVAL_WARNING = 'This approval could not be saved for recovery after a service restart.';
-const UNSAVED_REJECTION_WARNING = 'This rejection could not be saved for recovery after a service restart.';
 
 interface QueuedChatMessage {
   createdAt: number;
@@ -203,15 +205,20 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   const [activeOptimization, setActiveOptimization] = useState<ActiveOptimization | null>(null);
   const [queuedMessages, setQueuedMessages] = useState<QueuedChatMessage[]>([]);
   const [steeringAssistantId, setSteeringAssistantId] = useState<string | null>(null);
-  const [proposalDiff, setProposalDiff] = useState<string | null>(null);
-  const proposalVersionRef = useRef(0);
-  const receiveProposal = useCallback((diff: string | null) => {
-    proposalVersionRef.current += 1;
-    setProposalDiff(diff);
-  }, []);
-  const [proposalNotice, setProposalNotice] = useState<string | null>(null);
-  const [isApplyingProposal, setIsApplyingProposal] = useState(false);
+  // The schedule text the backend holds, and its revision, as last sent or applied by this browser.
   const syncedScheduleRef = useRef<string | null>(null);
+  const syncedRevisionRef = useRef<string | null>(null);
+  const onApplyScheduleRef = useRef(onApplySchedule);
+  onApplyScheduleRef.current = onApplySchedule;
+  // The backend adopts a run's schedule. This browser applies it only over the schedule that run
+  // started from, so a replayed or superseded change does not replace newer work.
+  const applyRunSchedule = useCallback((applied: ScheduleApplied) => {
+    if (applied.baseSha256 !== syncedRevisionRef.current) return;
+    // One import is one history entry, so undo reverts the whole change.
+    onApplyScheduleRef.current(applied.scheduleYaml);
+    syncedScheduleRef.current = applied.scheduleYaml;
+    syncedRevisionRef.current = applied.sha256;
+  }, []);
   const sessionIdRef = useRef<string | null>(null);
   const sessionEndpointRef = useRef<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -235,6 +242,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     sessionIdRef.current = null;
     sessionEndpointRef.current = null;
     syncedScheduleRef.current = null;
+    syncedRevisionRef.current = null;
     sandboxScheduleRef.current = null;
     checkedSessionRef.current = null;
     queuedMessagesRef.current = [];
@@ -245,9 +253,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     setSessionExpiresAt(null);
     setQueuedMessages([]);
     setActiveOptimization(null);
-    setProposalDiff(null);
     onReset();
-    setIsApplyingProposal(false);
   }, [lifecycle, sessionEvents, onReset]);
 
   scheduleYamlRef.current = scheduleYaml;
@@ -276,7 +282,6 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
           retentionSeconds: sessionRetentionSeconds,
           messages,
           syncedSchedule: syncedScheduleRef.current ?? scheduleYaml,
-          proposalDiff,
           sessionEventId: lastSessionEventIdRef.current,
           activeOptimization,
           backendVersion,
@@ -315,7 +320,6 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     lifecycle,
     lastSessionEventIdRef,
     messages,
-    proposalDiff,
     scheduleYaml,
     sessionExpiresAt,
     sessionRetentionSeconds,
@@ -467,7 +471,6 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
             return [{ ...message, runId, content: '', activity: [], status: 'pending' as const, failureReason: undefined, responseCompletedAt: undefined }];
           });
         });
-        receiveProposal(reset.proposalDiff);
         setActiveOptimization(null);
         lifecycle.finish(lifecycle.current('background'));
         const foreground = eventRouterRef.current.foreground;
@@ -501,8 +504,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       ...assistantEventCallbacks(event => {
         resumeBackgroundMessage();
         updateBackgroundMessage(message => applyAssistantEvent(message, event));
-      }, sandboxScheduleRef, scheduleYamlRef),
-      onProposal: receiveProposal,
+      }, sandboxScheduleRef, scheduleYamlRef, applyRunSchedule),
       onOptimization: activity => {
         setActiveOptimization(current => applyOptimizationEvent(current, { type: 'optimization', activity }));
         if (activity.terminal) setMessages(previous => appendOptimizationResult(previous, activity, Date.now()));
@@ -560,7 +562,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
         if (isAuthenticationError(streamError)) reportRequestError(streamError, 'The AI session could not reconnect.');
       },
     });
-  }, [receiveProposal, authToken, lifecycle, reportRequestError, updateContextUsage, sessionEvents, setError]);
+  }, [applyRunSchedule, authToken, lifecycle, reportRequestError, updateContextUsage, sessionEvents, setError]);
 
   useEffect(() => {
     if (!isClientReady || activeSessionId === null || conversationUnavailable) return;
@@ -647,14 +649,13 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     };
     resetResponse();
     setError(null);
-    // A pending proposal stays approvable across messages until it is approved, rejected, or replaced.
-    setProposalNotice(null);
     const operation = lifecycle.begin('foreground', activeAssistantId);
     sandboxScheduleRef.current = scheduleYaml;
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
     try {
+      const revision = resume?.recover ? null : await scheduleRevision(scheduleYaml);
       let sessionId = sessionIdRef.current;
       const sessionEndpoint = sessionEndpointRef.current ?? aiEndpoint;
       if (sessionId === null) {
@@ -669,15 +670,16 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
         setConversationUnavailable(false);
         setSessionNotice(null);
       } else if (!resume?.recover && syncedScheduleRef.current !== scheduleYaml) {
-        // The schedule can change elsewhere in the app between questions. The backend then
-        // discards a proposal made for the previous schedule.
+        // The schedule can change elsewhere in the app between questions, including an undo
+        // of an applied change. The backend records the change for the next run.
         await updateSessionSchedule(sessionId, scheduleYaml, authToken, sessionEndpoint);
-        if (!lifecycle.owns(operation)) return;
-        setProposalDiff(null);
       }
       if (!lifecycle.owns(operation)) return;
       controller.signal.throwIfAborted();
-      if (!resume?.recover) syncedScheduleRef.current = scheduleYaml;
+      if (!resume?.recover) {
+        syncedScheduleRef.current = scheduleYaml;
+        syncedRevisionRef.current = revision;
+      }
       renewSessionExpiration();
       let runFinished = false;
       let finishRun!: () => void;
@@ -724,7 +726,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
           setMessages(previous => previous.map(message => (
             message.id === assistantId ? applyAssistantEvent(message, event) : message
           )));
-        }, sandboxScheduleRef, scheduleYamlRef),
+        }, sandboxScheduleRef, scheduleYamlRef, applyRunSchedule),
         onSteering: (queuedId, queuedMessage) => {
           const runId = eventRouterRef.current.foreground?.runId;
           const createdAt = queuedMessagesRef.current.find(message => message.id === queuedId)?.createdAt ?? Date.now();
@@ -783,7 +785,6 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
           const assistantId = activeAssistantId;
           setMessages(previous => applyModelInput(previous, input, { questionId: userMessage.id, assistantId }));
         },
-        onProposal: receiveProposal,
         onContextUsage: updateContextUsage,
         onHistoryTrimmed: setTrimmedHistoryCount,
       }, () => lifecycle.owns(operation) && !controller.signal.aborted);
@@ -1002,62 +1003,6 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     }
   };
 
-  const applyProposal = async () => {
-    const sessionId = sessionIdRef.current;
-    if (sessionId === null || proposalDiff === null || lifecycle.busy || isReconnecting || isApplyingProposal) return;
-    const ownsConversation = lifecycle.capture();
-    const baseSchedule = scheduleYaml;
-    const proposalVersion = proposalVersionRef.current;
-    setIsApplyingProposal(true);
-    setError(null);
-    try {
-      const { scheduleYaml: approvedYaml, historySaved } = await approveProposal(
-        sessionId,
-        scheduleYaml,
-        authToken,
-        sessionEndpointRef.current ?? aiEndpoint,
-      );
-      if (!ownsConversation()) return;
-      if (scheduleYamlRef.current !== baseSchedule) {
-        setProposalDiff(null);
-        setProposalNotice('The schedule changed while approval was pending. The proposal was not applied.');
-        return;
-      }
-      // One import call is one history entry, so undo reverts the whole proposal.
-      onApplySchedule(approvedYaml);
-      syncedScheduleRef.current = approvedYaml;
-      renewSessionExpiration();
-      if (proposalVersionRef.current === proposalVersion) setProposalDiff(null);
-      setProposalNotice('The proposed schedule was applied. Undo reverts it in one step.');
-      if (!historySaved) setError(UNSAVED_APPROVAL_WARNING);
-    } catch (approveError) {
-      if (ownsConversation()) reportRequestError(approveError, 'The proposal could not be applied.');
-    } finally {
-      if (ownsConversation()) setIsApplyingProposal(false);
-    }
-  };
-
-  const discardProposal = async () => {
-    const sessionId = sessionIdRef.current;
-    if (sessionId === null || lifecycle.busy || isReconnecting || isApplyingProposal) return;
-    const ownsConversation = lifecycle.capture();
-    const pendingProposal = proposalDiff;
-    const proposalVersion = proposalVersionRef.current;
-    setProposalDiff(null);
-    setProposalNotice(null);
-    try {
-      const historySaved = await rejectProposal(sessionId, authToken, sessionEndpointRef.current ?? aiEndpoint);
-      if (!ownsConversation()) return;
-      renewSessionExpiration();
-      if (!historySaved) setError(UNSAVED_REJECTION_WARNING);
-    } catch (rejectError) {
-      if (ownsConversation()) {
-        if (proposalVersionRef.current === proposalVersion) setProposalDiff(pendingProposal);
-        reportRequestError(rejectError, 'The proposal could not be rejected.');
-      }
-    }
-  };
-
   const restoreConversation = useCallback((storedConversation: StoredChatConversation) => {
       // Replayed events reconcile onto the unfinished background message by ID, so
       // restore it before the stream opens. Its tools stopped with the old page.
@@ -1069,7 +1014,6 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
           ? { ...message, status: 'failed' as const, activity: interruptRunningTools(message.activity ?? []) }
           : message
       )));
-      setProposalDiff(storedConversation.proposalDiff);
       setSessionRetentionSeconds(storedConversation.retentionSeconds);
       lastSessionEventIdRef.current = storedConversation.sessionEventId ?? 0;
       setContextUsage(storedConversation.contextUsage ?? null);
@@ -1077,6 +1021,9 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
         ? { ...storedConversation.activeOptimization, points: storedConversation.activeOptimization.points ?? [] }
         : null);
       syncedScheduleRef.current = storedConversation.syncedSchedule;
+      void scheduleRevision(storedConversation.syncedSchedule).then(revision => {
+        if (syncedScheduleRef.current === storedConversation.syncedSchedule) syncedRevisionRef.current = revision;
+      });
       sessionEndpointRef.current = storedConversation.endpoint;
       if (storedConversation.expiresAt <= Date.now()) {
         window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
@@ -1105,7 +1052,6 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     setMessages([]);
     setContextUsage(null);
     setTrimmedHistoryCount(0);
-    setProposalNotice(null);
     setConversationUnavailable(false);
     setSessionNotice(null);
     setError(null);
@@ -1120,10 +1066,10 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     messages, uploadedFiles, removingUploadId, removingDownloadId, contextUsage,
     activeSessionId, sessionExpiresAt, sessionRetentionSeconds, conversationUnavailable,
     sessionNotice, trimmedHistoryCount, isStreaming, isStopping, isReconnecting,
-    activeOptimization, queuedMessages, steeringAssistantId, proposalDiff, proposalNotice, isApplyingProposal,
+    activeOptimization, queuedMessages, steeringAssistantId,
     setSessionRetentionSeconds, restoreConversation, captureSession,
     newConversation, submitMessage, retryMessage, stop, removeUploadedFile,
-    removeGeneratedFiles, applyProposal, discardProposal,
+    removeGeneratedFiles,
     sessionEndpoint: sessionEndpointRef.current ?? aiEndpoint,
   };
 }

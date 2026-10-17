@@ -109,25 +109,6 @@ def _question_log_preview(question: str) -> str:
     return preview
 
 
-class ProposalResponse(BaseModel):
-    """The approved schedule the browser should apply."""
-
-    schedule_yaml: str
-    history_saved: bool
-
-
-class ProposalRejectionResponse(BaseModel):
-    """Whether recovery storage saved the rejection, which already took effect."""
-
-    history_saved: bool
-
-
-class ApproveProposalRequest(BaseModel):
-    """The revision the browser holds when it approves a proposal."""
-
-    base_sha256: str = Field(min_length=64, max_length=64)
-
-
 class UpdateScheduleRequest(BaseModel):
     """A newer schedule snapshot for an existing session."""
 
@@ -227,11 +208,7 @@ async def _session_sse(
             data = event.data
             reset = cast(SessionResetData, data) if event.type == "session_reset" else None
             if reset is not None:
-                data = {
-                    **data,
-                    "proposal_diff": session.pending_proposal.diff if session.pending_proposal else "",
-                    "active_run_id": session.snapshot.run_id if session.snapshot else None,
-                }
+                data = {**data, "active_run_id": session.snapshot.run_id if session.snapshot else None}
             yield f"id: {event.id}\nevent: {event.type}\ndata: {json.dumps(data)}\n\n"
             if until_run is not None and (
                 (data.get("run_id") == until_run.id and event.type in TERMINAL_EVENTS)
@@ -395,28 +372,16 @@ def create_app(
             settings.optimizer_max_result_bytes,
         )
 
-    def start_follow_up(
-        session_id: str,
-        prompt: str,
-        *,
-        trigger: Literal["optimizer", "proposal"],
-        artifact: OptimizerArtifact | None = None,
-    ) -> AgentRun | None:
+    async def optimizer_completed(session_id: str, prompt: str, artifact: OptimizerArtifact | None) -> None:
         session = store.get(session_id)
         if session is None:
-            return None
+            return
         run = runs.start(
             session_id,
-            lambda run: session.run(run, prompt, runtime=runtime, background=True, trigger=trigger, artifact=artifact),
+            lambda run: session.run(run, prompt, runtime=runtime, background=True, artifact=artifact),
             background=True,
         )
         run.task.add_done_callback(recovery.pin(session_id))
-        return run
-
-    async def optimizer_completed(session_id: str, prompt: str, artifact: OptimizerArtifact | None) -> None:
-        run = start_follow_up(session_id, prompt, trigger="optimizer", artifact=artifact)
-        if run is None:
-            return
         try:
             await run.wait()
         finally:
@@ -869,54 +834,5 @@ def create_app(
         response = Response(status_code=status.HTTP_204_NO_CONTENT)
         refresh_owner_cookie(response, owner)
         return response
-
-    @app.post(
-        "/sessions/{session_id}/proposal/approve",
-        response_model=ProposalResponse,
-        dependencies=[Depends(require_auth), Depends(restore_session)],
-    )
-    async def approve_proposal(
-        session_id: str,
-        request: ApproveProposalRequest,
-        response: Response,
-        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
-    ) -> ProposalResponse:
-        """Return the proposed schedule once the browser proves it holds the base revision."""
-        try:
-            approved = store.approve_proposal(session_id, owner, request.base_sha256)
-        except HTTPException as exc:
-            if exc.status_code == 409:
-                # A stale revision discards the proposal before refusing approval.
-                await recovery.save(session_id)
-            raise
-        # The decision already took effect, so a failed save is reported rather than refused.
-        history_saved = await recovery.save(session_id)
-        if approved is None:
-            raise HTTPException(status_code=409, detail="The proposed schedule is no longer valid.")
-        start_follow_up(
-            session_id, "The user selected Approve. The proposal is now the current schedule.", trigger="proposal"
-        )
-        refresh_owner_cookie(response, owner)
-        return ProposalResponse(schedule_yaml=approved, history_saved=history_saved)
-
-    @app.post(
-        "/sessions/{session_id}/proposal/reject",
-        response_model=ProposalRejectionResponse,
-        dependencies=[Depends(require_auth), Depends(restore_session)],
-    )
-    async def reject_proposal(
-        session_id: str,
-        response: Response,
-        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
-    ) -> ProposalRejectionResponse:
-        """Drop the pending proposal at the user's request."""
-        had_proposal = store.discard_proposal(session_id, owner)
-        history_saved = await recovery.save(session_id)
-        if had_proposal:
-            start_follow_up(
-                session_id, "The user selected Reject. The current schedule is unchanged.", trigger="proposal"
-            )
-        refresh_owner_cookie(response, owner)
-        return ProposalRejectionResponse(history_saved=history_saved)
 
     return app

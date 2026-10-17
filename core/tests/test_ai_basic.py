@@ -51,19 +51,13 @@ from nurse_scheduling.ai.agent_session import (
 from nurse_scheduling.ai.app import (
     OWNER_COOKIE,
     SERVICE_NAME,
-    SessionStore,
     configure_request_logging,
     request_logger,
 )
 from nurse_scheduling.ai.app import create_app as create_ai_app
-from nurse_scheduling.ai.candidate import PendingProposal
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.context import (
     ABORTED_RESPONSE_HISTORY,
-    PROPOSAL_APPROVED_HISTORY,
-    PROPOSAL_INVALID_HISTORY,
-    PROPOSAL_REJECTED_HISTORY,
-    SCHEDULE_CHANGED_DISCARDED_EVENT,
     SCHEDULE_CHANGED_EVENT,
     STATUS_PREFIX,
     build_provider_messages,
@@ -90,14 +84,11 @@ from nurse_scheduling.ai.transcript import (
     AgentMessage,
     AppEventEntry,
     AssistantMessage,
-    ProposalDecisionEntry,
     ToolCall,
     UserMessage,
 )
 from nurse_scheduling.ai.workspace import (
     SANDBOX_SYSTEM_PROMPT,
-    WORKSPACE_PENDING_DIFF,
-    WORKSPACE_PENDING_PROPOSAL,
     WORKSPACE_SCHEDULE,
     SandboxAttachment,
     SandboxCommandTimeoutError,
@@ -402,8 +393,6 @@ def test_ai_authentication_discovery_and_healthchecks_stay_public() -> None:
         ("get", "/sessions/missing/optimizations/opt-missing/xlsx", None),
         ("post", "/sessions/missing/messages/queue", {"message_id": "queued-1", "message": "Hello"}),
         ("put", "/sessions/missing/schedule", {"schedule_yaml": "description: changed"}),
-        ("post", "/sessions/missing/proposal/approve", {"base_sha256": "0" * 64}),
-        ("post", "/sessions/missing/proposal/reject", None),
     ],
 )
 def test_ai_session_routes_require_authentication(method: str, path: str, json_body: dict | None) -> None:
@@ -630,20 +619,18 @@ def parse_sse(response_text: str, *, include_model_input: bool = False) -> list[
     return [event for event in events if event[0] != "model_input"]
 
 
-def test_compatibility_reader_recovers_current_session_proposal_after_a_replay_gap():
+def test_compatibility_reader_recovers_after_a_replay_gap():
     app = create_test_app(settings=make_settings(), provider=FakeProvider())
     app.state.session_event_stream._max_events = 1
     client = AuthenticatedTestClient(app)
     session_id = create_session(client)
     session = app.state.session_store._sessions[session_id]
-    session.pending_proposal = PendingProposal(schedule_yaml(), "Pending schedule changes", None)
 
     response = client.post(f"/sessions/{session_id}/messages", json={"message": "Explain"})
 
     assert response.status_code == 200
     resets = [data for kind, data in parse_sse(response.text) if kind == "session_reset"]
     assert resets
-    assert all(data["proposal_diff"] == "Pending schedule changes" for data in resets)
     assert resets[-1]["active_run_id"] is None
     assert any(item["type"] == "done" for item in resets[-1]["events"])
     assert not session.active
@@ -1325,18 +1312,12 @@ def test_every_app_event_and_status_line_has_a_chat_title() -> None:
         upload_event([attachment]): "Files Uploaded",
         removal_event(attachment, 1): "File Removed",
         SCHEDULE_CHANGED_EVENT: "Schedule Changed",
-        SCHEDULE_CHANGED_DISCARDED_EVENT: "Schedule Changed, Proposal Discarded",
-        PROPOSAL_APPROVED_HISTORY: "Proposal Approved",
-        PROPOSAL_REJECTED_HISTORY: "Proposal Rejected",
-        PROPOSAL_INVALID_HISTORY: "Proposal Invalid",
     }
-    status = build_provider_messages(
-        project_history([]), "description: test", "Q", (attachment,), pending_proposal=True
-    )[-1]["content"]
+    status = build_provider_messages(project_history([]), "description: test", "Q", (attachment,))[-1]["content"]
 
     assert {message_title("app", content) for content in events} == set(events.values())
     assert all(message_title("app", content) == title for content, title in events.items())
-    assert message_title("status", status) == "Pending Proposal, Unlisted Uploads"
+    assert message_title("status", status) == "Unlisted Uploads"
     assert message_title("question", "[App event] typed by a user") is None
 
 
@@ -1986,7 +1967,7 @@ def test_context_projects_typed_entries_without_replaying_aborted_output() -> No
     history = [
         UserMessage("Rename P1."),
         AssistantMessage("I renamed P1 to", "aborted"),
-        ProposalDecisionEntry("rejected"),
+        AppEventEntry(SCHEDULE_CHANGED_EVENT),
     ]
 
     messages = build_provider_messages(project_history(history), "description: schedule\n", "Rename P2 instead.")
@@ -1994,7 +1975,7 @@ def test_context_projects_typed_entries_without_replaying_aborted_output() -> No
     assert messages[1:-1] == [
         ChatMessage(role="user", content="Rename P1."),
         ChatMessage(role="assistant", content=ABORTED_RESPONSE_HISTORY),
-        ChatMessage(role="user", content=PROPOSAL_REJECTED_HISTORY),
+        ChatMessage(role="user", content=SCHEDULE_CHANGED_EVENT),
     ]
 
 
@@ -2519,36 +2500,19 @@ def rename_factory() -> FakeSandboxFactory:
     return FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=rename))
 
 
-def proposing_client(**settings: object) -> tuple[TestClient, str, str]:
-    """Run one proposing turn and return the client, session, and base revision."""
-    provider = ScriptedToolProvider(rename_call(), [TextDelta("Renamed P1.")])
-    client = AuthenticatedTestClient(
-        create_test_app(
-            settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT, **settings),
-            provider=provider,
-            sandbox_factory=rename_factory(),
-        )
-    )
-    schedule = schedule_yaml()
-    session_id = create_session(client, schedule)
-    response = client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P1."})
-    assert response.status_code == 200
-    return client, session_id, hashlib.sha256(schedule.encode("utf-8")).hexdigest()
-
-
-def proposal_decision_context() -> tuple[
+def applied_schedule_context() -> tuple[
     TestClient,
     str,
     str,
     ScriptedToolProvider,
     FakeSandboxFactory,
 ]:
-    """Create a proposal and expose the provider and sandboxes for a follow-up turn."""
+    """Apply a schedule change and expose the provider and sandboxes for a follow-up turn."""
     provider = ScriptedToolProvider(
         rename_call(),
         [TextDelta("Renamed P1.")],
         [ToolCallRequest((ToolCall("call_1", READ_TOOL, json.dumps({"path": "schedule.yaml"})),))],
-        [TextDelta("Decision acknowledged.")],
+        [TextDelta("Follow-up answered.")],
     )
     factory = rename_factory()
     client = AuthenticatedTestClient(
@@ -2565,7 +2529,7 @@ def proposal_decision_context() -> tuple[
     return client, session_id, hashlib.sha256(schedule.encode("utf-8")).hexdigest(), provider, factory
 
 
-def test_a_tool_run_streams_tool_use_and_a_proposal() -> None:
+def test_a_tool_run_streams_its_schedule_check_and_applies_the_schedule() -> None:
     provider = ScriptedToolProvider(rename_call(), [TextDelta("Renamed P1.")])
     client = AuthenticatedTestClient(
         create_test_app(
@@ -2586,14 +2550,19 @@ def test_a_tool_run_streams_tool_use_and_a_proposal() -> None:
     assert tool["ok"] is True
     assert "Head" in tool["arguments"]
     assert "passed trusted server-side validation" in tool["result"]
+    assert tool["schedule_check"]["ok"] is True
+    assert tool["schedule_check"]["text"] in tool["result"]
     schedule_change = next(data for name, data in events if name == "schedule_change")
     assert "description: Head" in schedule_change["schedule_yaml"]
-    proposal = next(data for name, data in events if name == "proposal")
-    assert "people.items[0].description" in proposal["diff"]
-    assert not any(name == "proposal" and "schedule" in data for name, data in events)
+    applied = next(data for name, data in events if name == "schedule_applied")
+    assert applied["schedule_yaml"] == schedule_change["schedule_yaml"]
+    assert applied["base_sha256"] == hashlib.sha256(schedule_yaml().encode()).hexdigest()
+    assert applied["sha256"] == hashlib.sha256(applied["schedule_yaml"].encode()).hexdigest()
+    assert "people.items[0].description" in applied["diff"]
+    assert [name for name, _ in events].index("schedule_applied") < [name for name, _ in events].index("done")
 
 
-def test_sandbox_cleanup_failure_does_not_commit_provisional_turn_or_proposal() -> None:
+def test_sandbox_cleanup_failure_does_not_commit_provisional_turn_or_schedule() -> None:
     provider = ScriptedToolProvider(
         rename_call(),
         [TextDelta("Provisional answer.")],
@@ -2614,13 +2583,12 @@ def test_sandbox_cleanup_failure_does_not_commit_provisional_turn_or_proposal() 
         return FakeSandboxBackend(sandbox_id, command_handler=rename, close_error=close_error)
 
     factory = FakeSandboxFactory(backend_factory)
-    client = AuthenticatedTestClient(
-        create_test_app(
-            settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT),
-            provider=provider,
-            sandbox_factory=factory,
-        )
+    app = create_test_app(
+        settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT),
+        provider=provider,
+        sandbox_factory=factory,
     )
+    client = AuthenticatedTestClient(app)
     schedule = schedule_yaml()
     session_id = create_session(client, schedule)
 
@@ -2637,9 +2605,7 @@ def test_sandbox_cleanup_failure_does_not_commit_provisional_turn_or_proposal() 
         "error",
     ]
     assert events[-1][1]["message"] == "The temporary AI sandbox failed. Please try again."
-    revision = hashlib.sha256(schedule.encode("utf-8")).hexdigest()
-    approval = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
-    assert approval.status_code == 404
+    assert app.state.session_store.get(session_id).schedule_yaml == schedule
 
     recovered = client.post(f"/sessions/{session_id}/messages", json={"message": "Retry"})
 
@@ -2725,7 +2691,7 @@ def test_final_validation_failure_discards_edits_and_retains_safe_context(invali
     assert len(factory.created) == 1
 
 
-def test_one_message_routes_through_a_fresh_backend_and_trusted_proposal() -> None:
+def test_one_message_routes_through_a_fresh_backend_and_applies_the_trusted_schedule() -> None:
     command = json.dumps(
         {
             "command": (
@@ -2740,7 +2706,7 @@ def test_one_message_routes_through_a_fresh_backend_and_trusted_proposal() -> No
     )
     provider = ScriptedToolProvider(
         [ToolCallRequest((ToolCall("call_0", BASH_TOOL, command),))],
-        [TextDelta("I propose the description.")],
+        [TextDelta("I set the description.")],
     )
 
     def edit(_command: str, _timeout: float | None, backend: FakeSandboxBackend) -> CommandResult:
@@ -2759,192 +2725,21 @@ def test_one_message_routes_through_a_fresh_backend_and_trusted_proposal() -> No
     events = parse_sse(response.text)
     assert next(data for name, data in events if name == "tool")["name"] == BASH_TOOL
     assert "description: Head" in next(data for name, data in events if name == "schedule_change")["schedule_yaml"]
-    assert next(data for name, data in events if name == "proposal")["diff"] == '- description: "" -> "Head"'
+    assert next(data for name, data in events if name == "schedule_applied")["diff"] == '- description: "" -> "Head"'
     assert factory.created[0].closed
     assert "`/workspace/schedule.yaml`" in provider.calls[0][0]["content"]
     assert "E2B" not in provider.calls[0][0]["content"]
-    revision = hashlib.sha256(schedule.encode()).hexdigest()
-    approved = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
-    assert approved.status_code == 200
-    assert "description: Head" in approved.json()["schedule_yaml"]
 
 
-def test_approval_returns_the_proposed_schedule_once() -> None:
-    client, session_id, revision = proposing_client()
+def test_the_applied_schedule_starts_the_next_run() -> None:
+    client, session_id, _revision, provider, factory = applied_schedule_context()
 
-    approved = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
-    repeated = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
-
-    assert approved.status_code == 200
-    assert "description: Head" in approved.json()["schedule_yaml"]
-    assert repeated.status_code == 404
-
-
-def test_approval_is_recorded_for_the_next_fresh_turn() -> None:
-    client, session_id, revision, provider, factory = proposal_decision_context()
-
-    approved = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
     follow_up = client.post(f"/sessions/{session_id}/messages", json={"message": "Continue"})
 
-    assert approved.status_code == 200
     assert follow_up.status_code == 200
-    assert {"role": "user", "content": PROPOSAL_APPROVED_HISTORY} in provider.calls[2]
     assert b"description: Head" in factory.created[1].files[WORKSPACE_SCHEDULE]
-
-
-def test_pending_proposal_is_available_to_the_next_fresh_turn() -> None:
-    client, session_id, _, provider, factory = proposal_decision_context()
-
-    follow_up = client.post(f"/sessions/{session_id}/messages", json={"message": "What is pending?"})
-
-    assert follow_up.status_code == 200
-    # The status message carries the pending proposal, so the system message stays identical for caching.
-    assert provider.calls[2][-1]["content"].startswith(STATUS_PREFIX)
-    assert "A validated proposal is pending" in provider.calls[2][-1]["content"]
-    assert provider.calls[2][-2] == {"role": "user", "content": "What is pending?"}
-    assert provider.calls[2][0] == provider.calls[0][0]
-    assert b"description: Head" in factory.created[1].files[WORKSPACE_PENDING_PROPOSAL]
-    assert b"people.items[0].description" in factory.created[1].files[WORKSPACE_PENDING_DIFF]
-    assert factory.created[1].files[WORKSPACE_SCHEDULE] == schedule_yaml().encode()
-
-
-def test_approval_is_refused_when_the_browser_holds_another_revision() -> None:
-    client, session_id, _ = proposing_client()
-
-    stale = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": "0" * 64})
-    retried = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": "0" * 64})
-
-    assert stale.status_code == 409
-    assert "changed after this proposal" in stale.json()["detail"]
-    assert retried.status_code == 404
-
-
-def test_rejection_drops_the_proposal() -> None:
-    client, session_id, revision, provider, factory = proposal_decision_context()
-
-    rejected = client.post(f"/sessions/{session_id}/proposal/reject")
-    repeated = client.post(f"/sessions/{session_id}/proposal/reject")
-    approved = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
-    follow_up = client.post(f"/sessions/{session_id}/messages", json={"message": "Continue"})
-
-    assert rejected.status_code == 200
-    assert rejected.json() == {"history_saved": True}
-    assert repeated.status_code == 200
-    assert approved.status_code == 404
-    assert follow_up.status_code == 200
-    assert provider.calls[2].count({"role": "user", "content": PROPOSAL_REJECTED_HISTORY}) == 1
-    assert factory.created[1].files[WORKSPACE_SCHEDULE] == schedule_yaml().encode()
-
-
-def test_a_proposal_that_fails_revalidation_never_becomes_the_session_schedule() -> None:
-    provider = FakeProvider([["Acknowledged."]])
-    factory = FakeSandboxFactory()
-    app = create_test_app(
-        settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT),
-        provider=provider,
-        sandbox_factory=factory,
-    )
-    client = AuthenticatedTestClient(app)
-    store = app.state.session_store
-    schedule = schedule_yaml()
-    session_id = create_session(client, schedule)
-    revision = hashlib.sha256(schedule.encode("utf-8")).hexdigest()
-    owner = client.cookies[OWNER_COOKIE]
-    broken_payload = base_schedule_payload()
-    broken_payload["preferences"][1]["person"] = ["P9"]
-    base_revision = store.begin(session_id, owner)
-    assert store.finish(
-        session_id,
-        exchange("Break it", "Broken proposal"),
-        (schedule_yaml(broken_payload), "broken diff"),
-        snapshot=base_revision,
-    ).proposal_saved
-
-    approved = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
-    retried = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
-    follow_up = client.post(f"/sessions/{session_id}/messages", json={"message": "Continue"})
-
-    assert approved.status_code == 409
-    assert "no longer valid" in approved.json()["detail"]
-    assert retried.status_code == 404
-    assert follow_up.status_code == 200
-    assert factory.created == []
-    assert {"role": "user", "content": PROPOSAL_INVALID_HISTORY} in provider.calls[0]
-
-
-def test_a_newer_schedule_replaces_the_snapshot_and_the_proposal() -> None:
-    client, session_id, revision = proposing_client()
-    payload = base_schedule_payload()
-    payload["description"] = "Ward A"
-
-    updated = client.put(f"/sessions/{session_id}/schedule", json={"schedule_yaml": schedule_yaml(payload)})
-    approved = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
-
-    assert updated.status_code == 204
-    assert approved.status_code == 404
-
-
-def test_session_approval_refuses_invalid_yaml_and_releases_proposal_text() -> None:
-    store = SessionStore(make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT))
-    saved_entries = []
-    store.on_entry(lambda _session_id, entry: saved_entries.append(entry))
-    original = schedule_yaml()
-    session = store.create("owner", original)
-    broken = base_schedule_payload()
-    broken["preferences"][1]["person"] = ["P9"]
-    snapshot = store.begin(session.id, "owner", run_id="proposing-run")
-    store.finish(session.id, exchange("Edit", "Proposal"), (schedule_yaml(broken), "diff"), snapshot=snapshot)
-    retained = store.retained_bytes
-
-    approved = store.approve_proposal(session.id, "owner", session.revision)
-
-    assert approved is None
-    assert session.schedule_yaml == original
-    assert session.pending_proposal is None
-    assert session.transcript[-1] == ProposalDecisionEntry("invalid")
-    # The decision is saved under the run that proposed it.
-    assert saved_entries[-1][1:] == ("proposing-run", ProposalDecisionEntry("invalid"))
-    assert store.retained_bytes < retained
-
-
-def test_approval_waits_for_active_turn_and_uses_its_final_proposal() -> None:
-    app = create_test_app(settings=make_settings(), provider=FakeProvider())
-    store = app.state.session_store
-    original = schedule_yaml()
-    first_proposal = original.replace("description: ''", "description: First", 1)
-    stale_proposal = original.replace("description: ''", "description: Stale", 1)
-    session = store.create("browser-owner", original)
-    original_revision = store.begin(session.id, "browser-owner")
-    assert store.finish(
-        session.id,
-        exchange("First edit", "First proposal"),
-        (first_proposal, "first diff"),
-        snapshot=original_revision,
-    ).proposal_saved
-    active_turn_revision = store.begin(session.id, "browser-owner")
-
-    with pytest.raises(HTTPException, match="Wait for the active response") as exc_info:
-        store.approve_proposal(session.id, "browser-owner", session.revision)
-    assert exc_info.value.status_code == 409
-    completion = store.finish(
-        session.id,
-        exchange("Stale edit", "Stale proposal"),
-        (stale_proposal, "stale diff"),
-        snapshot=active_turn_revision,
-    )
-
-    assert completion.run_saved
-    assert store.approve_proposal(session.id, "browser-owner", session.revision) == stale_proposal
-    assert session.transcript == [
-        UserMessage("First edit"),
-        AssistantMessage("First proposal"),
-        UserMessage("Stale edit"),
-        AssistantMessage("Stale proposal"),
-        ProposalDecisionEntry("approved"),
-    ]
-    with pytest.raises(HTTPException) as exc_info:
-        store.approve_proposal(session.id, "browser-owner", session.revision)
-    assert exc_info.value.status_code == 404
+    # The model made the change itself, so the next request needs no app event about it.
+    assert not any(str(message["content"]).startswith("[App event]") for message in provider.calls[2])
 
 
 def test_session_store_queues_steering_once_and_retains_it_with_the_turn() -> None:
@@ -3016,44 +2811,10 @@ def test_session_store_bounds_retained_chat_text_across_sessions() -> None:
     assert store.retained_bytes == 550 + len(SCHEDULE_CHANGED_EVENT)
 
 
-def test_proposal_history_event_counts_the_exchange_removed_by_the_cap() -> None:
-    app = create_test_app(settings=make_settings(max_history_messages=2), provider=FakeProvider())
-    store = app.state.session_store
-    session = store.create("browser-owner", "description: test")
-    snapshot = store.begin(session.id, "browser-owner")
-    store.finish(session.id, exchange("question", "answer"), ("proposal", "diff"), snapshot=snapshot)
-
-    store.discard_proposal(session.id, "browser-owner")
-
-    # The newest exchange stays whole with its decision, even above the cap.
-    assert store._sessions[session.id].transcript == [
-        *exchange("question", "answer"),
-        ProposalDecisionEntry("rejected"),
-    ]
-    assert store.begin(session.id, "browser-owner").previously_dropped == 0
-
-
-def test_budget_trimming_drops_a_decision_with_the_exchange_it_decided() -> None:
-    settings = make_settings(max_session_bytes=10_000, max_schedule_bytes=1000, max_history_messages=20)
-    app = create_test_app(settings=settings, provider=FakeProvider())
-    store = app.state.session_store
-    session = store.create("browser-owner", "a" * 10)
-    snapshot = store.begin(session.id, "browser-owner")
-    store.finish(session.id, exchange("q" * 100, "A" * 5_000), ("proposal", "diff"), snapshot=snapshot)
-    store.discard_proposal(session.id, "browser-owner")
-
-    snapshot = store.begin(session.id, "browser-owner")
-    store.finish(session.id, exchange("next", "B" * 6_000), snapshot=snapshot)
-
-    assert session.transcript == exchange("next", "B" * 6_000)
-    assert session.dropped_history_messages == 3
-
-
 def test_prompt_budget_projection_starts_at_a_prompt() -> None:
     history = [
         UserMessage("q" * 400),
-        AssistantMessage("Proposed a change."),
-        ProposalDecisionEntry("approved"),
+        AssistantMessage("Changed the schedule."),
         UserMessage("Next question."),
         AssistantMessage("Next answer."),
     ]
@@ -3066,7 +2827,7 @@ def test_prompt_budget_projection_starts_at_a_prompt() -> None:
         ChatMessage(role="assistant", content="Next answer."),
     ]
     assert context.used_chars == sum(len(json.dumps(message, ensure_ascii=False)) for message in messages[1:-1])
-    assert context.dropped_messages == 3
+    assert context.dropped_messages == 2
 
 
 @pytest.mark.parametrize("message_cap", [1, 3], ids=["below-exchange-size", "odd-overflow"])
@@ -3118,47 +2879,6 @@ def test_completed_turns_do_not_accumulate_past_the_budget() -> None:
         assert store._sessions[session.id].transcript == exchange("q" * 100, "A" * 5_000)
 
 
-def test_discarding_a_stale_proposal_returns_its_share_of_the_budget() -> None:
-    settings = make_settings(max_session_bytes=1000, max_schedule_bytes=1000)
-    app = create_test_app(settings=settings, provider=FakeProvider())
-    store = app.state.session_store
-    session = store.create("browser-owner", "a" * 100)
-    snapshot = store.begin(session.id, "browser-owner")
-    store.finish(
-        session.id,
-        exchange("question", "answer"),
-        ("p" * 400, "d" * 100),
-        snapshot=snapshot,
-    )
-    retained_with_proposal = store.retained_bytes
-
-    # A browser holding a different revision cannot approve, which discards the proposal.
-    with pytest.raises(HTTPException) as exc_info:
-        store.approve_proposal(session.id, "browser-owner", "a" * 64)
-
-    assert exc_info.value.status_code == 409
-    assert store.retained_bytes == retained_with_proposal - 500
-    assert store._sessions[session.id].pending_proposal is None
-
-
-def test_replacing_a_schedule_credits_the_proposal_it_drops() -> None:
-    settings = make_settings(max_session_bytes=1000, max_schedule_bytes=1000)
-    app = create_test_app(settings=settings, provider=FakeProvider())
-    store = app.state.session_store
-    session = store.create("browser-owner", "a" * 100)
-    snapshot = store.begin(session.id, "browser-owner")
-    store.finish(session.id, exchange("q", "a"), ("p" * 600, "d" * 100), snapshot=snapshot)
-
-    # The larger schedule alone exceeds the budget, but it also drops the proposal.
-    store.update_schedule(session.id, "browser-owner", "b" * 300)
-
-    assert store._sessions[session.id].schedule_yaml == "b" * 300
-    assert store._sessions[session.id].pending_proposal is None
-    # The new schedule, the two one-character run messages, and the edit event are all that remain.
-    assert store.retained_bytes == 302 + len(SCHEDULE_CHANGED_DISCARDED_EVENT)
-    assert store._sessions[session.id].transcript[-1] == AppEventEntry(SCHEDULE_CHANGED_DISCARDED_EVENT)
-
-
 def test_session_store_rejects_steering_after_the_final_boundary() -> None:
     app = create_test_app(settings=make_settings(), provider=FakeProvider())
     store = app.state.session_store
@@ -3173,14 +2893,15 @@ def test_session_store_rejects_steering_after_the_final_boundary() -> None:
 
 
 def test_sessions_are_private_to_their_browser() -> None:
-    _, session_id, revision = proposing_client()
+    session_id = create_session(
+        AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
+    )
     other = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
 
-    assert other.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision}).status_code == 404
     assert other.put(f"/sessions/{session_id}/schedule", json={"schedule_yaml": "a: 1"}).status_code == 404
 
 
-def test_approval_allows_a_schedule_the_user_had_not_finished() -> None:
+def test_a_run_applies_a_change_to_a_schedule_the_user_had_not_finished() -> None:
     payload = base_schedule_payload()
     payload["preferences"] = []
     provider = ScriptedToolProvider(rename_call(), [TextDelta("Renamed P1.")])
@@ -3193,15 +2914,10 @@ def test_approval_allows_a_schedule_the_user_had_not_finished() -> None:
     )
     schedule = schedule_yaml(payload)
     session_id = create_session(client, schedule)
-    client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P1."})
+    response = client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P1."})
 
-    approved = client.post(
-        f"/sessions/{session_id}/proposal/approve",
-        json={"base_sha256": hashlib.sha256(schedule.encode("utf-8")).hexdigest()},
-    )
-
-    assert approved.status_code == 200
-    assert "description: Head" in approved.json()["schedule_yaml"]
+    applied = next(data for name, data in parse_sse(response.text) if name == "schedule_applied")
+    assert "description: Head" in applied["schedule_yaml"]
 
 
 def test_the_prompt_points_to_the_schedule_without_disclosing_its_facts() -> None:
@@ -3269,7 +2985,7 @@ def test_background_command_timeout_preserves_tool_result_and_reports_the_actual
         tool = next(event for event in events if event.type == "tool")
         assert not tool.data["ok"]
         assert "Command timed out" in tool.data["result"]
-        assert not any(event.type in {"proposal", "done"} for event in events)
+        assert not any(event.type in {"schedule_applied", "done"} for event in events)
         assert len(provider.calls) == 2
 
 
@@ -3293,7 +3009,7 @@ def test_provider_http_failure_shows_status_and_reference_without_response_body(
         assert re.search(r"Error ID: [0-9a-f-]{36}", message)
         assert "private provider body" not in response.text
         assert "secret-token" not in response.text
-        assert not any(name in {"proposal", "done"} for name, _ in parse_sse(response.text))
+        assert not any(name in {"schedule_applied", "done"} for name, _ in parse_sse(response.text))
 
 
 @pytest.mark.parametrize("failure", ["provider-public", "provider-private", "validation"])
@@ -3336,31 +3052,7 @@ def test_background_review_reports_safe_reasons_and_keeps_private_errors_hidden(
         else:
             assert message == PROVIDER_ERROR
         assert "secret-token" not in message
-        assert not any(event.type in {"proposal", "done"} for event in events)
-
-
-@pytest.mark.parametrize("decision", ["approve", "reject"])
-def test_proposal_decisions_wait_for_active_turn_without_changing_it(decision):
-    client, session_id, revision, _provider, _factory = proposal_decision_context()
-    store = client.app.state.session_store
-    session = store.get(session_id)
-    proposal = session.pending_proposal
-    version = session.version
-    snapshot = store.begin(session_id, session.owner_token)
-    response = client.post(
-        f"/sessions/{session_id}/proposal/{decision}",
-        json={"base_sha256": revision} if decision == "approve" else None,
-    )
-    assert response.status_code == 409
-    assert session.version == version
-    assert session.pending_proposal == proposal
-    assert session.active
-    store.abort(session_id, snapshot)
-    accepted = client.post(
-        f"/sessions/{session_id}/proposal/{decision}",
-        json={"base_sha256": revision} if decision == "approve" else None,
-    )
-    assert accepted.status_code == 200
+        assert not any(event.type in {"schedule_applied", "done"} for event in events)
 
 
 def test_session_attachment_total_counts_existing_files_and_releases_removed_bytes():

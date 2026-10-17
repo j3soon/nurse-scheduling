@@ -7,8 +7,8 @@ use its Redis data.
 
 File attachments are enabled by default. The frontend accepts arbitrary file
 types and copies them into the disposable sandbox without executing them. The
-assistant reads and edits the schedule in that sandbox and can propose a new
-schedule, which the browser applies only after the user approves it.
+assistant reads and edits the schedule in that sandbox. When a run finishes with
+a valid changed schedule, the backend adopts it and the browser applies it.
 Each run owns a workspace. It creates an E2B Cloud sandbox on the first
 workspace tool call. This version excludes retrieval and repository access.
 
@@ -26,7 +26,7 @@ their concurrency policy.
 | Component | Responsibility |
 | --- | --- |
 | `app.py` | HTTP routes, authentication, and application startup and shutdown. |
-| `agent_session.py` | Conversation changes, steering, proposal decisions, and the shared run path. |
+| `agent_session.py` | Conversation changes, steering, applied schedules, and the shared run path. |
 | `sessions.py`, `lifecycle.py` | `SessionStore` access and budgets, plus `SessionRuns` ownership through cleanup and persistence. |
 | `agent.py`, `agent_loop.py`, `agent_types.py` | Observable execution state, the model loop, and executable tool contracts. |
 | `workspace.py`, `workspace_tools.py` | Lazy sandbox allocation and hydration, tool binding, and trusted schedule review. |
@@ -41,7 +41,7 @@ their concurrency policy.
 
 ```mermaid
 flowchart TB
-    Browser["<b>Browser</b><br/>Questions and approvals"]
+    Browser["<b>Browser</b><br/>Questions and applied schedules"]
     Routes["<b>app.py</b><br/>Authorize HTTP requests"]
     Runs["<b>SessionRuns</b><br/>Own accepted runs"]
     Store["<b>SessionStore</b><br/>Access, expiry, and budgets"]
@@ -100,7 +100,7 @@ finishes, including when recovery storage reports a failure.
 
 The page owns credentials, composer files, speech, scrolling, and browser
 download URLs. `useAiChat` owns chat state, saved conversation restoration,
-message submission, steering, session expiry, and proposal actions.
+message submission, steering, session expiry, and applied schedules.
 `ChatTranscriptView` renders that state through explicit props and callbacks.
 
 <figure markdown="1" id="ai-frontend">
@@ -159,11 +159,9 @@ replay have separate limits.
 
 The browser receives an HTTP-only owner cookie and an unguessable session UUID.
 Active sessions expire after 30 days of inactivity by default. Sending or
-queueing a message, synchronizing a changed schedule, or deciding a proposal
-renews that window. The browser can retain the conversation within its current
+queueing a message or synchronizing a changed schedule renews that window. The browser can retain the conversation within its current
 tab and verify the session without extending its lifetime.
-The session records typed questions, assistant responses, app events, and proposal
-decisions. Tool results and reasoning belong to the current run and are released
+The session records typed questions, assistant responses, and app events. Tool results and reasoning belong to the current run and are released
 when it ends. Stop and failed runs retain their questions with an interruption
 note. Later model context excludes claims from their discarded workspace.
 Recovery stores typed entries, including their origin and interruption state.
@@ -248,12 +246,6 @@ model entries before tool execution.
 Consecutive text fragments can share a storage row. The browser reattaches with
 the same client message ID and replaces partial output with the snapshot.
 It does not start another model run.
-Proposal approval and rejection enqueue an assistant turn through `SessionRuns`,
-with a `proposal` trigger on the session stream. The decision is recorded before
-execution. The new turn reads the applied or unchanged schedule and the latest
-retained optimizer result. Repeating rejection after the proposal is cleared
-does not enqueue another turn.
-
 Foreground chat and optimization can proceed at the same time. Assistant turns
 remain serialized per session. The Stop control cancels either a foreground or
 background assistant turn and waits for the server outcome. It names the client
@@ -269,8 +261,8 @@ schedule to `/workspace/schedule.yaml` and searchable schema documentation to
 prefixed with their upload IDs. The backend then runs every command for that
 user message in the same sandbox,
 reads the candidate, and destroys the sandbox. A later run creates a new
-sandbox when it calls a workspace tool. Only conversation history, the current schedule revision, and a
-pending validated proposal remain in application state.
+sandbox when it calls a workspace tool. Only conversation history and the current schedule
+remain in application state.
 
 When a turn fails, its provisional activity remains visible but is not added to
 model conversation history. Optional PostgreSQL logging retains failed turns
@@ -334,14 +326,14 @@ When a Bash command changes the schedule, the backend reads the working copy
 and validates it outside the sandbox before emitting `schedule_change`. The
 event contains that validated working copy. The browser compares it with the
 previous working copy and renders the changed lines in red and green. These
-intermediate previews do not create or apply a proposal. The final validated
-candidate still follows the separate proposal and approval lifecycle.
+intermediate previews do not change the session schedule. The final validated
+candidate becomes the session schedule when the run commits.
 
 ## Recovery database upgrade
 
 Deploy the matching client and server together for the session stream contract.
 Migration `004_unified_session_recovery.sql` preserves the existing recovery
-sessions, owners, expiry, schedules, proposals, accepted message IDs, named Stop
+sessions, owners, expiry, schedules, accepted message IDs, named Stop
 requests, and saved output. It converts independent foreground and background
 cursors into publication order. Restored streams replace old browser cursors.
 Typed snapshots preserve entry origin. Older text histories retain the information
@@ -406,7 +398,7 @@ diagnostic batch remain separate from the clean comparison.
 
 After an accepted edit to `/workspace/schedule.yaml`, the server refreshes
 `/workspace/schedule-context.json` when the schedule can compile. Request
-inspectors can then read new proposals and later edits in the same turn. Reverting
+inspectors can then read new candidates and later edits in the same turn. Reverting
 to the original YAML refreshes its context too. Invalid edits leave the previous
 context unchanged, so inspectors still reject a source mismatch. Permitted
 incomplete drafts remain available for direct YAML inspection. Saved optimizer
@@ -489,8 +481,8 @@ renderers and middle truncation are not used by these tools.
 The prompt encourages an optimization and inspection loop for usable rosters.
 For scheduling edits alone, the agent offers the loop. Acceptance authorizes
 continued work within the agreed requirements, without permission at each
-iteration. Pending proposals can be tested before application. Selecting
-**Approve** remains necessary to apply their changes.
+iteration. The optimizer can test the working copy before the run finishes. The
+run then applies the validated schedule.
 
 The agent confirms missing rest and fairness policy before constructing a roster.
 After a successful
@@ -511,61 +503,54 @@ passed 2/3, and the detailed automatic-policy-retry smoke offered another solve
 instead of starting it. Provider and E2B calls were live. Completion fixtures
 used checked assignments and exported workbooks, without HTTP optimizer jobs.
 
-## Proposal lifecycle
+## Schedule change lifecycle
 
-A finished run that changed the schedule leaves one pending proposal. The
-browser receives its structural diff, never its YAML. `POST
-/sessions/{id}/proposal/approve` requires the SHA-256 of the schedule the
-browser holds, so a proposal built on an older schedule is discarded instead of
-applied. The approved schedule is revalidated before it is returned, becomes the
-session schedule, and the browser applies it through the normal YAML import path
-as one undo step. `POST /sessions/{id}/proposal/reject` drops it, and `PUT
-/sessions/{id}/schedule` replaces the snapshot when the schedule changed
-elsewhere in the app, which also drops any pending proposal.
+A finished run that changed the schedule commits its validated schedule as the
+session schedule. The backend then emits `schedule_applied` with the YAML, the
+structural diff, and the SHA-256 of the run's starting schedule (`base_sha256`)
+and of the new schedule (`sha256`). The browser applies the YAML through the
+normal YAML import path as one undo step only when `base_sha256` matches the
+schedule it last sent or applied. A replayed or superseded event therefore
+cannot replace newer work. The transcript shows **Applied to your schedule** with
+the diff in either case. `PUT /sessions/{id}/schedule` replaces the snapshot when
+the schedule changed elsewhere in the app, including an undo, and records an app
+event for the next run.
 
-<figure markdown="1" id="ai-proposals">
+Each tool call that changes the working copy carries the trusted check text that
+the model received in `schedule_check`. The transcript shows it as **Schedule
+check passed** or **Schedule check failed**, so the browser shows every
+validation result that the model saw.
 
-**Figure 6. Trusted proposal review and browser approval.**
+<figure markdown="1" id="ai-schedule-changes">
+
+**Figure 6. Trusted schedule review and browser application.**
 
 ```mermaid
 flowchart TB
     Candidate["<b>Sandbox candidate</b><br/>Untrusted schedule file"]
     Validation["<b>Trusted backend review</b><br/>Validate and compute a structural diff"]
-    Pending["<b>Pending proposal</b><br/>Retain only after the owning run commits"]
-    Browser["<b>Browser</b><br/>Show the diff and request approval"]
-    Base{"Browser schedule hash<br/>matches proposal base?"}
-    Approved["<b>Approved schedule</b><br/>Revalidate and update the session"]
+    Session["<b>Session schedule</b><br/>Adopt only after the owning run commits"]
+    Base{"Browser schedule hash<br/>matches the run's base?"}
     Import["<b>Frontend import</b><br/>Apply as one undo operation"]
-    Discard["<b>Discard proposal</b><br/>Keep the current schedule"]
+    Keep["<b>Browser schedule</b><br/>Keep newer work and show the diff"]
     Candidate -->|Read after model execution| Validation
-    Validation -->|Valid changed schedule and current RunSnapshot| Pending
-    Pending -->|Diff without candidate YAML| Browser
-    Browser -->|Approve with current schedule hash| Base
-    Base -->|Yes| Approved
-    Approved -->|Return validated YAML| Import
-    Base -->|No| Discard
-    Browser -->|Reject| Discard
+    Validation -->|Valid changed schedule and current RunSnapshot| Session
+    Session -->|schedule_applied with YAML, diff, and hashes| Base
+    Base -->|Yes| Import
+    Base -->|No| Keep
 ```
 
 </figure>
 
-With PostgreSQL, each of these requests saves the session state for recovery.
-The server applies an approval or rejection before it saves it, so a failed
-save returns `history_saved: false` and the browser shows a warning. The next
-message saves the change again before it starts. A schedule update that is not
-saved returns HTTP 503, and the browser sends it again with the next message.
-
-Approval and rejection add a backend-only user-action note to model history.
-The rejection note says that every schedule change from the proposed turn was
-discarded and that the next turn starts from a fresh copy of the current
-schedule. It never includes the discarded YAML.
+Earlier versions asked the user to approve each change. Saved sessions can still
+contain those decisions. They restore as the app events that the model received.
 
 A run that fails, is cancelled, or is abandoned retains its user message and
-an interrupted assistant entry. It discards its candidate proposal and
-workspace changes. Its provisional activity may remain visible in the browser.
+an interrupted assistant entry. It discards its candidate and workspace
+changes. Its provisional activity may remain visible in the browser.
 Later model context replaces the interrupted assistant entry with
 `ABORTED_RESPONSE_HISTORY` and excludes discarded workspace claims. A successful
-run that only answers a question never creates a proposal.
+run that only answers a question never changes the schedule.
 
 If the final candidate fails trusted validation, the UI reports that every
 schedule change from the turn was discarded and that the current schedule
@@ -619,7 +604,7 @@ transactionally. Recovery is the only database history.
 
 Sessions store the hash of the browser owner cookie, the administrative
 credential ID when authentication is enabled, creation time, expiry, schedule,
-proposal, and conversation context. Foreground and background turns store the
+and conversation context. Foreground and background turns store the
 accepted question, model, credential ID, attachment count, token usage, error
 code, start and finish times, and execution status. Entries store answer text,
 reasoning, tool activity, and other replayable UI content. Binary uploads and
@@ -667,7 +652,7 @@ Recovery storage separates durable content from live SSE fragments:
 
 An entry keeps its identity when adjacent answer or reasoning fragments extend
 its text. Adjacent context-usage updates retain the latest value. Tool calls,
-proposals, terminal events, and writes from another channel start separate
+applied schedules, terminal events, and writes from another channel start separate
 entries. A session row lock serializes entry writes across foreground and
 background streams. Repeated cursors do not append the same text twice.
 Terminal output, execution status, and final conversation context commit in
@@ -711,7 +696,7 @@ The survey covers both the coding agent and its separate durable package:
 
 | Pi principle | Project choice and reason |
 | --- | --- |
-| Keep content entries separate from live deltas. | Store combined content blocks and rebuild complete replay snapshots. Retain UI event kinds so tool activity, proposals, and steering keep their existing frontend behavior. |
+| Keep content entries separate from live deltas. | Store combined content blocks and rebuild complete replay snapshots. Retain UI event kinds so tool activity, applied schedules, and steering keep their existing frontend behavior. |
 | Give entries identity and order. | Use PostgreSQL identity sequences and timestamps. Keep per-channel SSE cursors for the browser protocol. |
 | Store task and submission state explicitly. | Keep accepted questions and unique client request IDs in turns. Store foreground and background execution status directly. The existing Stop records handle requests that arrive before acceptance. |
 | Save completed messages. | Queue typed session entries when model responses end and save live publications through an asynchronous replay writer. Final outcome writes include the resulting state and pending entries. A failed recovery write produces a warning and remains eligible for retry. |
@@ -859,14 +844,14 @@ request therefore keeps earlier content unchanged and puts changing state last:
 
 The backend stores app events as separate `user` messages in history when they
 happen. Each event starts with `[App event]`. Events record uploads, removals,
-proposal approvals and rejections, and schedule changes made in the app. An
+and schedule changes made in the app. An
 upload event lists the original name, sandbox path, media type, and size of
 each file. A schedule change is recorded only when the parsed schedule data
 changes. Filenames stay out of the system prompt because they are untrusted
 input.
 
-The status message starts with `[Current status]`. It reports a pending
-proposal, the optimizer result path, and retained files whose upload event the
+The status message starts with `[Current status]`. It reports the current time,
+the optimizer result path, and retained files whose upload event the
 request does not contain. That happens when history was trimmed or when a
 failed turn followed the upload.
 
@@ -880,7 +865,7 @@ added since the last assistant reply, in order. Each entry has a `kind` of
 `app`, `question`, `optimizer`, or `status`. An `app` entry also has its
 absolute history `index`, so a client shows it once when a failed turn is
 retried. App events and status messages also have a short `title`, such as
-`Proposal Rejected` or `Pending Proposal`. The chat shows it after the role
+`Files Uploaded` or `Optimizer Result`. The chat shows it after the role
 label and keeps the exact text collapsed. A foreground turn sends this event first in the message stream. A
 background turn publishes it on the session event stream after `turn_start`.
 
@@ -920,8 +905,8 @@ curl -H "Authorization: Bearer ${AI_AUTH_TOKEN}" \
   disabled. It does not pass the E2B key, model provider key, database
   credentials, host paths, or the stored schedule into the sandbox.
 - Treat shell commands and every sandbox file as untrusted. A sandbox can only
-  return a candidate schedule. Trusted validation, proposal storage, revision
-  checks, user approval, and updates to the current schedule remain outside it.
+  return a candidate schedule. Trusted validation, revision checks, and updates
+  to the current schedule remain outside it.
 - Use `AI_COOKIE_SECURE=0` only for local HTTP. Set it to `1` when the public
   browser route uses HTTPS, even if NGINX uses internal HTTP to the container.
   Secure deployments set the owner cookie to `SameSite=None`; the CORS origin

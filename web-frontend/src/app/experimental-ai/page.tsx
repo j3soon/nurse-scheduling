@@ -264,14 +264,14 @@ export default function ExperimentalAiPage() {
     messages, uploadedFiles, removingUploadId, removingDownloadId, contextUsage, activeSessionId,
     sessionExpiresAt, sessionRetentionSeconds, conversationUnavailable, sessionNotice, trimmedHistoryCount,
     isStreaming, isStopping, isReconnecting, activeOptimization, queuedMessages, steeringAssistantId,
-    proposalDiff, proposalNotice, isApplyingProposal, setSessionRetentionSeconds, restoreConversation,
+    setSessionRetentionSeconds, restoreConversation,
     captureSession, newConversation, submitMessage, retryMessage, stop, removeUploadedFile,
-    removeGeneratedFiles, applyProposal, discardProposal, sessionEndpoint,
+    removeGeneratedFiles, sessionEndpoint,
   } = useAiChat({
     scheduleYaml, aiEndpoint, authRequired, authToken, isClientReady, serverStatus,
     retainsUploads: fileCapability.retained ?? false, backendVersion, setError, reportRequestError,
     onReset: resetChatUi,
-    onApplySchedule: approvedYaml => loadFromYaml(yaml.load(approvedYaml)),
+    onApplySchedule: appliedYaml => loadFromYaml(yaml.load(appliedYaml)),
     onSendStart: kind => {
       if (kind !== 'queue') {
         followPageBottomRef.current = true;
@@ -676,7 +676,6 @@ export default function ExperimentalAiPage() {
       } else {
         chatExportUrlRef.current = downloadChatExport(format, messages, sessionEndpoint, new Date(), {
           backendVersion,
-          pendingProposalDiff: proposalDiff ?? undefined,
           runningOptimization: activeOptimization !== null && !activeOptimization.terminal
             ? {
               jobId: activeOptimization.jobId,
@@ -829,10 +828,11 @@ export default function ExperimentalAiPage() {
           </span>
         </div>
         <p className="text-sm text-gray-600">
-          Ask questions about the schedule currently open in this browser, or request a change. You can attach files for the assistant to inspect in its temporary workspace. Proposed changes are applied only after you approve them.
+          Ask questions about the schedule currently open in this browser, or request a change. You can attach files for the assistant to inspect in its temporary workspace.
         </p>
         <p className="mt-2 max-w-3xl rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-          This beta is API-key gated by default.{' '}
+          When a response finishes, the assistant&apos;s valid schedule changes replace the schedule in this browser.
+          Press Ctrl+Z to undo them. This beta is API-key gated by default.{' '}
           <a
             className="font-medium underline"
             href={GITHUB_AI_BETA_ACCESS_URL}
@@ -1084,45 +1084,6 @@ export default function ExperimentalAiPage() {
         sessionExpiresAt={sessionExpiresAt}
         sessionRetentionSeconds={sessionRetentionSeconds}
       />
-
-      {proposalDiff !== null && (
-        <section
-          aria-label="Proposed schedule change"
-          className="mb-4 rounded-xl border border-blue-200 bg-blue-50 p-4"
-        >
-          <h2 className="text-sm font-semibold text-blue-900">Proposed schedule change</h2>
-          <pre className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-white p-3 text-xs text-gray-800">
-            {proposalDiff}
-          </pre>
-          <p className="mt-2 text-xs text-blue-900">
-            Approving replaces the current schedule in one step, which you can undo.
-          </p>
-          {!isStreaming && !isReconnecting && <div className="mt-3 flex gap-2">
-            <button
-              type="button"
-              onClick={applyProposal}
-              disabled={isApplyingProposal}
-              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
-            >
-              {isApplyingProposal ? 'Applying...' : 'Approve'}
-            </button>
-            <button
-              type="button"
-              onClick={discardProposal}
-              disabled={isApplyingProposal}
-              className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed"
-            >
-              Reject
-            </button>
-          </div>}
-        </section>
-      )}
-
-      {proposalNotice !== null && (
-        <div role="status" className="mb-3 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
-          {proposalNotice}
-        </div>
-      )}
 
       {error && (
         <div role="alert" className="mb-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">

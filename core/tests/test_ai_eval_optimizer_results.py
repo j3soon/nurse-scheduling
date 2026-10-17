@@ -362,7 +362,7 @@ def test_completion_context_matches_the_submitted_proposal():
 
 
 @pytest.mark.parametrize("review_changes_workspace", [False, True])
-def test_pending_result_review_must_not_create_another_proposal(review_changes_workspace):
+def test_result_review_must_not_create_another_proposal(review_changes_workspace):
     from nurse_scheduling.loader import _load_yaml
 
     from .ai_eval.optimizer_fixtures import RESULT_SOURCES

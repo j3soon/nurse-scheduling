@@ -30,16 +30,16 @@ uses camelCase field names. Its schema and scheduling semantics form the
 interface between the editor and deterministic optimization.
 
 `NurseSchedulingData` validates the backend schedule format. The frontend
-supports a narrower set of values that its editor can represent. AI proposal
-validation checks that frontend set before the browser imports an approved
+supports a narrower set of values that its editor can represent. AI schedule
+validation checks that frontend set before the browser imports an applied
 schedule. Keeping YAML readable does not remove the need for typed validation.
 
-## AI execution and approval
+## AI execution and schedule changes
 
 The assistant uses a temporary workspace to inspect files and edit a working
 schedule. The application keeps credentials and optimizer job ownership outside
-that workspace. The backend validates its candidate and presents a proposal
-before changing the browser schedule.
+that workspace. The backend validates its candidate before the browser applies
+it as one undoable change.
 
 Conversation entries are independent of provider wire messages. The context
 boundary derives each request and substitutes interruption notes for discarded

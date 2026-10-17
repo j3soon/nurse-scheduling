@@ -42,8 +42,8 @@
     "evidence": [
       {
         "case": "guide-start-from-empty-schedule",
-        "input_sha256": "deb5714a70bac131535a564baafc35b508611987d34321991773dc00c945c8c0",
-        "before": "1/3",
+        "input_sha256": "89f05c88da62ddc29d4daf09248783b39bb2dae2d59b02f859e4223dabdcbf47",
+        "before": "0/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
@@ -55,7 +55,7 @@
             "after": "3/3"
           }
         ],
-        "note": "Full-prompt ablation with the final testcase inputs. Without the clause, the agent omits the setup pages and controls. Reading both the setup and chat guides supplies the manual path, Attach files, and user approval. The earlier one-page clause passed this witness only 2/3. A separate earlier guide-add-person exploration failed 0/3 in both arms and remains outside this receipt."
+        "note": "Full-prompt ablation with the guide for automatically applied schedules. Without the clause, the agent omits setup controls such as Add Person. With it, every attempt gives the manual path, Attach files, and the automatic apply that Ctrl+Z undoes. An earlier batch, before the workbook section of the user guide named Attach files, passed 2/3 with the clause because one attempt omitted that control name."
       }
     ],
     "comparison_mode": "ablation"
@@ -306,64 +306,6 @@
     ]
   },
   {
-    "id": "pending-proposal",
-    "file": "steps/pending-proposal.md",
-    "cases": [
-      "revise-pending-preserve-person"
-    ],
-    "hypothesis": "Produces a cumulative revision preserving prior proposed edits.",
-    "sha256": "fe9aae482be29db50f552293fdedf3c855345e4a0667da4ebfb750a5ad2c97fc",
-    "evidence": [
-      {
-        "case": "revise-pending-preserve-person",
-        "input_sha256": "ff108f6e6ad8ac68770e0775ca35e20ad505e588fe64505c2820a23b52a6ef65",
-        "before": "0/5",
-        "after": "5/5",
-        "model": "unsloth/Qwen3.8-27B-NVFP4",
-        "infrastructure_errors": 0,
-        "note": "Covers cumulative revision, not cancellation."
-      }
-    ]
-  },
-  {
-    "id": "proposal-approval-boundary",
-    "file": "steps/proposal-approval-boundary.md",
-    "cases": [
-      "proposal-is-not-saved-yet",
-      "chat-approve-does-not-apply",
-      "approved-description-is-current"
-    ],
-    "hypothesis": "Describes current-turn changes as awaiting approval and sends the user to the Approve button instead of claiming to approve them.",
-    "sha256": "9a8abcdb84a3e8735d5f66260ab211c4ebc90ab9b5b0ad9ac74c807b8d0eeaef",
-    "evidence": [
-      {
-        "case": "proposal-is-not-saved-yet",
-        "input_sha256": "bb8378ee766bce666f56d3ff846cf7c3169978844825fc6e693a0b0768438ae4",
-        "before": "1/3",
-        "after": "3/3",
-        "model": "unsloth/Qwen3.8-27B-NVFP4",
-        "infrastructure_errors": 0,
-        "controls": [
-          {
-            "case": "approved-description-is-current",
-            "input_sha256": "3b3c57d25f5949be87f886397cff1e63f9e23e949101ef213daad1541a06ebe0",
-            "before": "3/3",
-            "after": "3/3"
-          }
-        ]
-      },
-      {
-        "case": "chat-approve-does-not-apply",
-        "input_sha256": "6bc7763b1b403e90f69cdf3992131dcee949ebcaa7d9471af265e1fe3bb2d84d",
-        "before": "0/3",
-        "after": "3/3",
-        "model": "unsloth/Qwen3.8-27B-NVFP4",
-        "infrastructure_errors": 0,
-        "note": "Without the clause, the agent treats a typed approve as approval and edits the schedule again."
-      }
-    ]
-  },
-  {
     "id": "ambiguous-people-group",
     "file": "steps/ambiguous-people-group.md",
     "cases": [
@@ -371,31 +313,31 @@
       "heldout-exact-people-group",
       "heldout-clarify-similar-groups"
     ],
-    "hypothesis": "Clarifies informal group descriptions before edits or proposals, while using explicitly identified IDs directly.",
-    "sha256": "ce60492b560eab3bd227ad627fc5c2ae717e06d73d057c53cce99b4dcd3be5ee",
+    "hypothesis": "Clarifies informal group descriptions before schedule edits, while using explicitly identified IDs directly.",
+    "sha256": "155b17e1b77c4a785e83f1a8326c7d4105974a22ee8cbf41b74dc4114c4089e9",
     "evidence": [
       {
         "case": "clarify-similar-people-groups",
-        "input_sha256": "e2fe95cd72f6cfca4704ee9d5ad7fbb4d4e72fc0731bc33eda5f043cf3b8a4c3",
+        "input_sha256": "c88d670f9ffb0985f58e0866145885f7cb92add2e02a59fb09f79343400a0420",
         "before": "0/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
         "controls": [
           {
-            "case": "heldout-exact-people-group",
-            "input_sha256": "e932bab75824a169fe767c17b1235576855916d337862023c9028debabdd7a45",
-            "before": "3/3",
+            "case": "heldout-clarify-similar-groups",
+            "input_sha256": "11fa4ea563b53fe09c34c774c939d1d8a69afa771863d4740d865c48d26b4e0e",
+            "before": "0/3",
             "after": "3/3"
           },
           {
-            "case": "heldout-clarify-similar-groups",
-            "input_sha256": "354a7692093a859f5d47e003123a0012ce82589177a58192a47194d6bb132836",
-            "before": "2/3",
+            "case": "heldout-exact-people-group",
+            "input_sha256": "c8696edba2cbfbc3087f196258c34253dd6a97046c08af0e1446cc20c3bc1d0b",
+            "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Full-prompt ablation. Clarifies before preparing a proposal, with informal-description and explicit-ID controls on two fixtures."
+        "note": "Full-prompt ablation with the wording for automatically applied schedules. With the clause, every first turn lists both full group IDs and asks without editing. Without it, the agent edits a guessed group in the first turn. Informal-description and explicit-ID controls use two fixtures."
       }
     ],
     "comparison_mode": "ablation"
@@ -685,44 +627,44 @@
       "import-description-only"
     ],
     "hypothesis": "Imports a complete uploaded YAML without reading or rewriting its whole contents, while preserving partial-update scope.",
-    "sha256": "c2f7cb61b725beafe2d2168efa13fdbea892f6969d00881b54e9cf2a574dbb7f",
+    "sha256": "90fec23eaf7b4114258b21390fb2542ae968efda30763840fd372bac557901e5",
     "evidence": [
       {
         "case": "import-complete-uploaded-yaml",
-        "input_sha256": "e1c4d4066745c23b0bab9b223dce54d9d3a08894be1d3b1e6d7d387929e5f02d",
+        "input_sha256": "a0a4732decdcdda527a941446fc0727a801fb8635e8e93c791241d70e459075e",
         "before": "3/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
         "cost_metric": "total-tokens",
-        "cost_ratio": 0.32908843500013746,
+        "cost_ratio": 0.3032040252146754,
         "cost_target": 0.75,
         "token_metrics": {
           "pairs": 3,
           "missing_pairs": 0,
           "before": {
-            "mean": 48502.666666666664,
-            "std": 10120.963804565914
+            "mean": 40875.666666666664,
+            "std": 565.3638946141974
           },
           "after": {
-            "mean": 15961.666666666666,
-            "std": 2770.104751328609
+            "mean": 12393.666666666666,
+            "std": 7630.9958284180275
           },
           "delta": {
-            "mean": -32541.0,
-            "std": 12828.73481680871
+            "mean": -28482.0,
+            "std": 7815.701567997591
           },
-          "relative_delta": -0.6709115649998625
+          "relative_delta": -0.6967959747853246
         },
         "controls": [
           {
             "case": "import-description-only",
-            "input_sha256": "265558320e965429ec819254b612b8da649516258df6dfd83e888abd14003bad",
+            "input_sha256": "527c0a6266ae0a1773cf450bbbb4d847cdb297579b16250b2252ad3dd88e1c62",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Full-prompt ablation. The complete uploaded schedule stays intact. Mean total tokens fall 67%, with fewer full-file reads. Partial updates preserve the current schedule."
+        "note": "Full-prompt ablation with the wording for automatically applied schedules. The complete uploaded schedule stays intact. Mean total tokens fall 70%, and no attempt reads the whole file. Partial updates preserve the current schedule. One partial-update attempt with the clause ran extra verification commands, which raised that control's mean tokens."
       }
     ],
     "comparison_mode": "ablation"
@@ -889,12 +831,12 @@
       "temporary-output-lifetime",
       "download-generated-zip"
     ],
-    "hypothesis": "Knows that only the proposal and download ZIP outlive each VM, and that earlier downloads stay available although the next VM lacks them.",
-    "sha256": "1ce9c7dd80b3b716869250b2884b22b55dc24c2f4531ea7c6eed90414919c36d",
+    "hypothesis": "Knows that only the applied schedule and download ZIP outlive each VM, and that earlier downloads stay available although the next VM lacks them.",
+    "sha256": "307e3e5a7f07ade39c6b2176de4d195fafa5d6f9f46d11a4f71c7ae85b632e43",
     "evidence": [
       {
         "case": "keep-generated-file-for-next-message",
-        "input_sha256": "c5ef07c988d3317978f4e52c6869431d78523f46d9e57354785aab20b788243b",
+        "input_sha256": "3f77367dfbe94c8230ddacb0250197d73939f91f1ae8e6a2e391fbe0b81e50af",
         "before": "0/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
@@ -902,29 +844,27 @@
         "controls": [
           {
             "case": "temporary-output-lifetime",
-            "input_sha256": "a17f7ebfce0ae9f6eae1752b55d20fdabaf4654bc19b65da2b4333fb440743d2",
-            "before": "2/3",
+            "input_sha256": "25f72a3c6a910fc8bfcc7ba27694a9c36cdfc3cd8e50db7bdec791b8f004fe17",
+            "before": "3/3",
             "after": "3/3"
           },
           {
             "case": "download-generated-zip",
-            "input_sha256": "2d666c34936e630b0dd5cf0322cfa88695d42baa04c1ac9d2890e36101991117",
+            "input_sha256": "8b9665577d9fd615510d7e07ad2907102f7e0d2fcbbb948de8ca94f4c072e666",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Adjacent full-prompt prefixes. Without the section, every attempt promised to keep an ordinary workspace file for the next message. With it, every attempt said the file is lost. The lifetime check and download delivery stay correct.",
-        "fingerprint_note": "Expanded JSON comparator dependency coverage. Grading, model inputs and historical measurements are unchanged. Grading helpers are fingerprinted transitively, and list numbers compare by value. Model inputs, measurements, and grades of saved outputs are unchanged."
+        "note": "Adjacent full-prompt prefixes with the wording for automatically applied schedules. Without the section, every attempt promised to keep an ordinary workspace file for the next message. With it, every attempt said the file is lost. The lifetime check and download delivery stay correct."
       },
       {
         "case": "earlier-download-availability",
-        "input_sha256": "7c065fe00cee97044fcb314af2759081df58da7036101fcd9917a8b86d5ab348",
-        "before": "0/3",
+        "input_sha256": "adc1a07226281dcde8ffd00faaa9186b793cac8ab320346db58d43291849f633",
+        "before": "1/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
-        "note": "Adjacent full-prompt prefixes. Without the section, every attempt treated the earlier download as lost after finding no ZIP in the new VM. An earlier wording that only said the ZIP is kept also failed 0/3. Stating that the button stays available while the next VM lacks the ZIP passes 3/3.",
-        "fingerprint_note": "Expanded JSON comparator dependency coverage. Grading, model inputs and historical measurements are unchanged. Grading helpers are fingerprinted transitively, and list numbers compare by value. Model inputs, measurements, and grades of saved outputs are unchanged."
+        "note": "Adjacent full-prompt prefixes with the wording for automatically applied schedules. Without the section, two attempts treated the earlier download as lost after finding no ZIP in the new VM. With it, every attempt reported the earlier download as available and the ZIP as absent from the new VM."
       }
     ]
   },

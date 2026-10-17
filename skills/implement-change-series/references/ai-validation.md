@@ -66,7 +66,7 @@ or visible state. Deterministic API and client tests do not prove browser behavi
 The runner builds the current checkout and starts an isolated server:
 
 ```sh
-(cd web-frontend && bun run test:e2e:affected -- e2e/experimental-ai-basic.spec.ts e2e/experimental-ai-proposal.spec.ts)
+(cd web-frontend && bun run test:e2e:affected -- e2e/experimental-ai-basic.spec.ts e2e/experimental-ai-schedule-changes.spec.ts)
 ```
 
 Select specs explicitly for app changes, since browser coverage cannot be inferred

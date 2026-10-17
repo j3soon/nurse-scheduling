@@ -19,21 +19,18 @@
       "backup"
     ],
     "Attach files",
-    "Approve",
     [
-      "proposal",
-      "propose"
+      "apply",
+      "applies",
+      "applied"
     ]
   ],
   "answer_matches": [
     "Dates.*?People.*?Shift Types.*?Shift Type Requirements.*?Optimize and Export"
   ],
-  "answer_not_matches": [
-    "\\bI(?:'ll| will| can)? approve\\b"
-  ],
   "tags": [
     "app-ui",
     "navigation"
   ],
-  "note": "This testcase is mostly AI generated. A new user asks for the full setup path. The manual steps follow the Quick Start page order, and the chat path must say that the assistant proposes edits that the user applies with Approve, and that existing data can be shared with Attach files."
+  "note": "This testcase is mostly AI generated. A new user asks for the full setup path. The manual steps follow the Quick Start page order, and the chat path must say that the assistant applies its edits to the schedule, and that existing data can be shared with Attach files."
 }

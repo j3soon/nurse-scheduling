@@ -42,7 +42,8 @@ export type AssistantEvent =
   | { type: 'error' | 'stale'; message: string }
   | { type: 'tool_start'; activity: ToolStartActivity }
   | { type: 'tool'; activity: ToolActivity }
-  | { type: 'schedule_change'; before: string; after: string };
+  | { type: 'schedule_change'; before: string; after: string }
+  | { type: 'schedule_applied'; diff: string };
 
 export function startsVisibleOutput(event: AssistantEvent): boolean {
   return event.type === 'tool_start' || event.type === 'tool' || event.type === 'schedule_change'
@@ -68,14 +69,19 @@ function appendReasoningActivity(entries: ActivityEntry[], text: string): Activi
 
 // Concurrent calls finish in any order, so a result completes the start that shares its ID.
 function finishToolActivity(entries: ActivityEntry[], result: ToolActivity): ActivityEntry[] {
+  const { scheduleCheck, ...tool } = result;
   const runningIndex = entries.findIndex(entry => (
     entry.kind === 'tool'
     && entry.state === 'running'
-    && (result.toolCallId === undefined ? entry.name === result.name : entry.toolCallId === result.toolCallId)
+    && (tool.toolCallId === undefined ? entry.name === tool.name : entry.toolCallId === tool.toolCallId)
   ));
-  const completed = { kind: 'tool' as const, ...result };
-  if (runningIndex < 0) return [...entries, completed];
-  return entries.map((entry, index) => (index === runningIndex ? completed : entry));
+  // The check follows its tool, so the chat shows the same result the model received.
+  const completed: ActivityEntry[] = [
+    { kind: 'tool', ...tool },
+    ...(scheduleCheck ? [{ kind: 'schedule-check' as const, ...scheduleCheck }] : []),
+  ];
+  if (runningIndex < 0) return [...entries, ...completed];
+  return [...entries.slice(0, runningIndex), ...completed, ...entries.slice(runningIndex + 1)];
 }
 
 export function applyAssistantEvent<T extends ChatExportMessage>(message: T, event: AssistantEvent, occurredAt = Date.now()): T {
@@ -111,6 +117,8 @@ export function applyAssistantEvent<T extends ChatExportMessage>(message: T, eve
         ...message,
         activity: [...activity, { kind: 'schedule-change', before: event.before, after: event.after }],
       };
+    case 'schedule_applied':
+      return { ...message, activity: [...activity, { kind: 'schedule-applied', text: event.diff }] };
   }
 }
 
@@ -170,6 +178,8 @@ export function toAssistantEvent(
       workingSchedule.current = event.scheduleYaml;
       return { type: 'schedule_change', before, after: event.scheduleYaml };
     }
+    case 'schedule_applied':
+      return { type: 'schedule_applied', diff: event.applied.diff };
     default: return null;
   }
 }

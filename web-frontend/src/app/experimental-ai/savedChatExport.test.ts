@@ -86,7 +86,8 @@ describe('saved chat export', () => {
 
   it.each(['html', 'markdown'] as const)('exports the complete example as %s', format => {
     const output = buildSavedChatExport(snapshot, format);
-    for (const content of ['staff.csv', 'ward.png', 'Command exited with code 7', 'score 17', 'Pending proposal',
+    for (const content of ['staff.csv', 'ward.png', 'Command exited with code 7', 'score 17', 'Schedule check passed',
+      'Applied to your schedule',
       'Optimization running', 'Keep the original names.', 'Download the generated files', 'The current schedule changed.']) {
       expect(output).toContain(content);
     }

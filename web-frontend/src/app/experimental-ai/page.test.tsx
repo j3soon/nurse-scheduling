@@ -21,6 +21,7 @@
 
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { createHash } from 'node:crypto';
 import ExperimentalAiPage from './page';
 import type { SessionEvent, SessionEventHandler, SessionStreamOptions } from './sessionEvents';
 
@@ -41,8 +42,6 @@ const mockSendMessage = vi.hoisted(() => vi.fn());
 const mockStreamSessionEvents = vi.hoisted(() => vi.fn());
 const mockStopSession = vi.hoisted(() => vi.fn());
 const mockGenerateYaml = vi.hoisted(() => vi.fn(() => 'description: current schedule\n'));
-const mockApproveProposal = vi.hoisted(() => vi.fn());
-const mockRejectProposal = vi.hoisted(() => vi.fn());
 const mockQueueMessage = vi.hoisted(() => vi.fn());
 const mockUpdateSessionSchedule = vi.hoisted(() => vi.fn());
 const mockLoadFromYaml = vi.hoisted(() => vi.fn());
@@ -84,11 +83,10 @@ vi.mock('./aiClient', async importOriginal => {
     endpoint === '/ai' || mockNormalizeAiEndpoint(endpoint) === 'https://api.nursescheduling.org/ai'
   ),
   queueMessage: mockQueueMessage,
+  scheduleRevision: awaitClient.scheduleRevision,
   sendMessage: mockSendMessage,
   streamSessionEvents: mockStreamSessionEvents,
   stopSession: mockStopSession,
-  approveProposal: mockApproveProposal,
-  rejectProposal: mockRejectProposal,
   updateSessionSchedule: mockUpdateSessionSchedule,
   uploadFile: mockUploadFile,
   uploadFiles: mockUploadFiles,
@@ -200,10 +198,6 @@ describe('ExperimentalAiPage', () => {
       if (pendingForegroundRunId) runEvents(stream, pendingForegroundRunId)?.onEvent({ type: 'stopped' });
     });
     mockGenerateYaml.mockClear().mockReturnValue('description: current schedule\n');
-    mockApproveProposal.mockReset().mockResolvedValue({
-      scheduleYaml: 'description: proposed schedule\n', historySaved: true,
-    });
-    mockRejectProposal.mockReset().mockResolvedValue(true);
     mockQueueMessage.mockReset().mockResolvedValue(undefined);
     mockUpdateSessionSchedule.mockReset().mockResolvedValue(undefined);
     mockLoadFromYaml.mockReset();
@@ -221,7 +215,7 @@ describe('ExperimentalAiPage', () => {
     }));
     window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
       sessionId: 'session-id', endpoint: '/ai', expiresAt: Date.now() + 300000,
-      retentionSeconds: 10, messages: [], syncedSchedule: 'description: current schedule\n', proposalDiff: null,
+      retentionSeconds: 10, messages: [], syncedSchedule: 'description: current schedule\n',
     }));
     render(<ExperimentalAiPage />);
     await waitFor(() => expect(readers).toHaveLength(1));
@@ -534,7 +528,6 @@ describe('ExperimentalAiPage', () => {
       retentionSeconds: 172800,
       messages: [{ id: 'user-1', role: 'user', content: 'Old question' }],
       syncedSchedule: 'description: old schedule\n',
-      proposalDiff: null,
     }));
 
     render(<ExperimentalAiPage />);
@@ -556,7 +549,7 @@ describe('ExperimentalAiPage', () => {
       window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
         sessionId: 'long-session', endpoint: '/ai', expiresAt: now + 2592000 * 1000,
         retentionSeconds: 2592000, messages: [{ id: 'user-1', role: 'user', content: 'Keep this chat' }],
-        syncedSchedule: 'description: old schedule\n', proposalDiff: null,
+        syncedSchedule: 'description: old schedule\n',
       }));
       render(<ExperimentalAiPage />);
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });
@@ -585,7 +578,7 @@ describe('ExperimentalAiPage', () => {
         { id: 'question', role: 'user', content: pendingRequest.question },
         { id: 'answer', role: 'assistant', content: 'Partial', status: 'pending', activity: [{ kind: 'response', text: 'Partial' }] },
       ],
-      syncedSchedule: 'description: original schedule\n', proposalDiff: null, sessionEventId: 4, pendingRequest,
+      syncedSchedule: 'description: original schedule\n', sessionEventId: 4, pendingRequest,
     }));
     mockRunEvents.mockImplementation(async (_sessionId: string, _message: string, callbacks: SessionStreamOptions) => {
       callbacks.onEvent({ type: 'delta', text: ' and finished.' });
@@ -647,7 +640,7 @@ describe('ExperimentalAiPage', () => {
     mockRunEvents.mockImplementation(async (_session: string, _question: string, target: SessionStreamOptions) => {
       if (replacement) {
         target.onEvent({ type: 'session_reset', reset: {
-          runIds: ['user-run-1'], activeRunId: 'user-run-1', terminalRunIds: [], incomplete: false, proposalDiff: null,
+          runIds: ['user-run-1'], activeRunId: 'user-run-1', terminalRunIds: [], incomplete: false,
         } });
         target.onEvent({ type: 'delta', text: 'Original answer.' });
         for (let index = 1; index <= steeringCount; index++) {
@@ -695,7 +688,7 @@ describe('ExperimentalAiPage', () => {
         { id: 'question', role: 'user', content: pendingRequest.question },
         { id: 'answer', role: 'assistant', content: '', status: 'pending' },
       ],
-      syncedSchedule: 'description: original schedule\n', proposalDiff: null, pendingRequest,
+      syncedSchedule: 'description: original schedule\n', pendingRequest,
     }));
     render(<ExperimentalAiPage />);
 
@@ -771,7 +764,6 @@ describe('ExperimentalAiPage', () => {
       retentionSeconds: 3600,
       messages: [{ id: 'user-1', role: 'user', content: 'Old question' }],
       syncedSchedule: 'description: old schedule\n',
-      proposalDiff: null,
     }));
 
     render(<ExperimentalAiPage />);
@@ -791,7 +783,6 @@ describe('ExperimentalAiPage', () => {
       retentionSeconds: 172800,
       messages: [{ id: 'user-1', role: 'user', content: 'Preserve this transcript' }],
       syncedSchedule: 'description: old schedule\n',
-      proposalDiff: null,
     }));
 
     render(<ExperimentalAiPage />);
@@ -821,7 +812,6 @@ describe('ExperimentalAiPage', () => {
       retentionSeconds: 172800,
       messages: [{ id: 'user-1', role: 'user', content: 'Stored question' }],
       syncedSchedule: 'description: old schedule\n',
-      proposalDiff: null,
     }));
     const user = userEvent.setup();
 
@@ -877,7 +867,7 @@ describe('ExperimentalAiPage', () => {
           // The second run repeats the event, as after a failed run. The page shows it once.
           { kind: 'app', index: 0, content: '[App event] The user uploaded files: ward.csv', title: 'Files Uploaded' },
           { kind: 'question', content: message },
-          { kind: 'status', content: `[Current status]\nTurn ${turn}`, title: 'Pending Proposal' },
+          { kind: 'status', content: `[Current status]\nTurn ${turn}`, title: 'Current Time' },
         ],
       } });
       callbacks.onEvent({ type: 'delta', text: `Answer to ${message}` });
@@ -896,7 +886,7 @@ describe('ExperimentalAiPage', () => {
     const cards = Array.from(screen.getByLabelText('Chat messages').querySelectorAll('article'));
     // History never keeps a status message, so only the latest request's status is shown.
     expect(cards.map(card => card.querySelector('p')?.textContent)).toEqual([
-      'System', 'User · App - Files Uploaded', 'User', 'Assistant', 'User', 'User · Status - Pending Proposal', 'Assistant',
+      'System', 'User · App - Files Uploaded', 'User', 'Assistant', 'User', 'User · Status - Current Time', 'Assistant',
     ]);
     // The label names the topic, so the exact text of app and status messages starts collapsed.
     for (const [card, text] of [[cards[1], '[App event] The user uploaded files: ward.csv'], [cards[5], 'Turn 2']] as const) {
@@ -1179,7 +1169,6 @@ describe('ExperimentalAiPage', () => {
       retentionSeconds: 172800,
       messages: [{ id: 'optimizer-turn', role: 'assistant', content: 'Completed answer.', status: 'pending' }],
       syncedSchedule: 'description: current schedule\n',
-      proposalDiff: null,
       sessionEventId: 4,
     }));
 
@@ -1240,7 +1229,6 @@ describe('ExperimentalAiPage', () => {
       retentionSeconds: 172800,
       messages: [{ id: 'answer-1', role: 'assistant', content: 'Earlier answer.' }],
       syncedSchedule: 'description: current schedule\n',
-      proposalDiff: null,
       sessionEventId: 9,
       trimmedHistoryCount: 3,
     }));
@@ -1264,7 +1252,6 @@ describe('ExperimentalAiPage', () => {
       retentionSeconds: 172800,
       messages: [{ id: 'answer-1', role: 'assistant', content: 'Earlier answer.' }],
       syncedSchedule: 'description: current schedule\n',
-      proposalDiff: null,
       sessionEventId: 9,
       trimmedHistoryCount: 3,
     }));
@@ -1331,7 +1318,6 @@ describe('ExperimentalAiPage', () => {
       retentionSeconds: 172800,
       messages: [{ id: 'optimizer-turn', role: 'assistant', content: 'Partial ', status: 'pending' }],
       syncedSchedule: 'description: current schedule\n',
-      proposalDiff: null,
       sessionEventId: 4,
       backgroundAssistantId: 'optimizer-turn',
     }));
@@ -1436,7 +1422,7 @@ describe('ExperimentalAiPage', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Partial');
     const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
-    const reset = { runIds: ['user-run-1'], activeRunId: 'user-run-1', terminalRunIds: [], incomplete: false, proposalDiff: null };
+    const reset = { runIds: ['user-run-1'], activeRunId: 'user-run-1', terminalRunIds: [], incomplete: false };
     act(() => {
       stream.onEvent({ type: 'session_reset', reset });
       callbacks?.onEvent({ type: 'delta', text: 'Partial answer recovered.' });
@@ -1467,7 +1453,7 @@ describe('ExperimentalAiPage', () => {
     const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
     await act(async () => {
       stream.onEvent({ type: 'optimization', activity: { jobId: 'result', state: 'completed', terminal: true, downloadable: false } });
-      stream.onEvent({ type: 'session_reset', reset: { runIds: ['user-run-1'], activeRunId: active ? 'user-run-1' : null, terminalRunIds: active ? [] : ['user-run-1'], incomplete: false, proposalDiff: null } });
+      stream.onEvent({ type: 'session_reset', reset: { runIds: ['user-run-1'], activeRunId: active ? 'user-run-1' : null, terminalRunIds: active ? [] : ['user-run-1'], incomplete: false } });
       stream.onEvent({ type: 'run_start', runId: 'user-run-1', trigger: 'user' });
       stream.onEvent({ type: 'delta', runId: 'user-run-1', text: 'Alice works Monday.' });
       stream.onEvent({ type: 'steering', runId: 'user-run-1', messageId: 'queued', message: 'Compare Tuesday.' });
@@ -1526,7 +1512,7 @@ describe('ExperimentalAiPage', () => {
     expect(mockRunEvents.mock.calls[1][1]).toBe('Explain the result');
   });
 
-  it('ignores output and proposals from the previous conversation stream', async () => {
+  it('ignores output and schedule changes from the previous conversation stream', async () => {
     const user = userEvent.setup();
     let background: SessionStreamOptions | undefined;
     mockStreamSessionEvents.mockImplementation(async (_id, callbacks) => {
@@ -1542,11 +1528,14 @@ describe('ExperimentalAiPage', () => {
     act(() => {
       background?.onEvent({ type: 'run_start', runId: 'old', trigger: 'optimizer' });
       background?.onEvent({ type: 'delta', text: 'Leaked old answer' });
-      background?.onEvent({ type: 'proposal', diff: 'Old proposal' });
+      background?.onEvent({ type: 'schedule_applied', applied: {
+        scheduleYaml: 'description: old\n', baseSha256: 'old', sha256: 'new', diff: 'Old change',
+      } });
       background?.onEventId?.(900);
     });
     expect(screen.queryByText('Leaked old answer')).not.toBeInTheDocument();
-    expect(screen.queryByText('Old proposal')).not.toBeInTheDocument();
+    expect(screen.queryByText('Applied to your schedule')).not.toBeInTheDocument();
+    expect(mockLoadFromYaml).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
   });
 
@@ -2733,210 +2722,68 @@ describe('ExperimentalAiPage', () => {
     expect(screen.queryByRole('button', { name: 'Prepare retry' })).not.toBeInTheDocument();
   });
 
-  describe('proposals', () => {
-    const proposingStream = (
+  describe('applied schedule changes', () => {
+    const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
+    const check = 'Trusted schedule check after this command:\nThe candidate passed trusted server-side validation.';
+    const changingStream = (baseSha256: string) => async (
       _sessionId: string,
       _message: string,
       callbacks: SessionStreamOptions,
     ) => {
-      callbacks.onEvent({ type: 'reasoning', text: 'Looking at P1. ' });
-      callbacks.onEvent({ type: 'tool_start', activity: {
-        name: 'bash',
-        arguments: JSON.stringify({ command: "sed -i 's/old/new/' schedule.yaml" }),
-      } });
       callbacks.onEvent({ type: 'tool', activity: {
-        name: 'bash',
-        arguments: JSON.stringify({ command: "sed -i 's/old/new/' schedule.yaml" }),
-        result: 'exit_code: 0',
-        ok: true,
+        name: 'bash', arguments: '{"command":"edit"}', result: `exit_code: 0\n\n${check}`, ok: true,
+        scheduleCheck: { ok: true, text: check },
       } });
-      callbacks.onEvent({ type: 'schedule_change', scheduleYaml: 'description: Head' });
-      callbacks.onEvent({ type: 'delta', text: 'I propose renaming P1.' });
-      callbacks.onEvent({ type: 'proposal', diff: '- people.items[0].description: "" -> "Head"' });
+      callbacks.onEvent({ type: 'schedule_change', scheduleYaml: 'description: Head\n' });
+      callbacks.onEvent({ type: 'delta', text: 'I set the description.' });
+      callbacks.onEvent({ type: 'schedule_applied', applied: {
+        scheduleYaml: 'description: Head\n', baseSha256, sha256: sha256('description: Head\n'),
+        diff: '- description: "current schedule" -> "Head"',
+      } });
     };
 
     const ask = async (user: ReturnType<typeof userEvent.setup>) => {
-      await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Rename P1.');
+      await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Set the description.');
       await user.click(screen.getByRole('button', { name: 'Send' }));
     };
 
-    beforeEach(() => {
-      mockRunEvents.mockReset().mockImplementation(proposingStream);
-    });
-
-    it('shows the proposed change and what the assistant did', async () => {
-      const user = userEvent.setup();
-      render(<ExperimentalAiPage />);
-
-      await ask(user);
-
-      expect(await screen.findByRole('region', { name: 'Proposed schedule change' })).toBeInTheDocument();
-      expect(screen.getByText('- people.items[0].description: "" -> "Head"')).toBeInTheDocument();
-      expect(screen.getByText('bash')).toBeInTheDocument();
-      expect(screen.getByText('schedule edit')).toBeInTheDocument();
-      expect(screen.getByText(/^Reasoning ·/)).toBeInTheDocument();
-      const activity = screen.getByLabelText('Assistant activity');
-      const response = screen.getByText('I propose renaming P1.');
-      expect(activity.compareDocumentPosition(response) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    });
-
-    it.each(['foreground', 'background'])('hides decisions while a %s response is running', async kind => {
-      let finish: (() => void) | undefined;
-      let background: SessionStreamOptions | undefined;
-      mockStreamSessionEvents.mockImplementation(async (_id, callbacks) => {
-        background = callbacks;
-        await new Promise<void>(() => {});
-      });
-      if (kind === 'foreground') {
-        mockRunEvents.mockImplementation(async (...args) => {
-          await proposingStream(...args);
-          await new Promise<void>(resolve => { finish = resolve; });
-        });
-      }
+    it('applies the schedule a run finished with as one history entry and shows its check', async () => {
+      mockRunEvents.mockImplementationOnce(changingStream(sha256('description: current schedule\n')));
       const user = userEvent.setup();
       render(<ExperimentalAiPage />);
       await ask(user);
-      await screen.findByRole('region', { name: 'Proposed schedule change' });
-      if (kind === 'background') {
-        await waitFor(() => expect(screen.getByRole('button', { name: 'Approve' })).toBeVisible());
-        await act(async () => background?.onEvent({ type: 'run_start', runId: 'review', trigger: 'optimizer' }));
-      }
-      expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument();
-      expect(mockApproveProposal).not.toHaveBeenCalled();
-      if (kind === 'foreground') await act(async () => finish?.());
-      else await act(async () => background?.onEvent({ type: 'done', runId: 'review' }));
-      expect(await screen.findByRole('button', { name: 'Approve' })).toBeVisible();
-      expect(screen.getByRole('button', { name: 'Reject' })).toBeVisible();
-    });
-
-    it('applies an approved proposal as one history entry', async () => {
-      const user = userEvent.setup();
-      render(<ExperimentalAiPage />);
-      await ask(user);
-
-      await user.click(await screen.findByRole('button', { name: 'Approve' }));
 
       await waitFor(() => expect(mockLoadFromYaml).toHaveBeenCalledTimes(1));
-      expect(mockApproveProposal).toHaveBeenCalledWith('session-id', 'description: current schedule\n', null, '/ai');
-      expect(mockLoadFromYaml).toHaveBeenCalledWith({ description: 'proposed schedule' });
-      expect(screen.queryByRole('region', { name: 'Proposed schedule change' })).not.toBeInTheDocument();
-      expect(screen.getByText('The proposed schedule was applied. Undo reverts it in one step.')).toBeInTheDocument();
+      expect(mockLoadFromYaml).toHaveBeenCalledWith({ description: 'Head' });
+      expect(screen.getByText('Schedule check passed')).toBeInTheDocument();
+      expect(screen.getByText('Applied to your schedule')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
     });
 
-    it('reports a proposal that no longer matches the current schedule', async () => {
-      mockApproveProposal.mockRejectedValue(new Error('The schedule changed after this proposal was created.'));
+    it('does not apply a change made for another schedule', async () => {
+      mockRunEvents.mockImplementationOnce(changingStream(sha256('description: older schedule\n')));
       const user = userEvent.setup();
       render(<ExperimentalAiPage />);
       await ask(user);
 
-      await user.click(await screen.findByRole('button', { name: 'Approve' }));
-
-      expect(await screen.findByText('The schedule changed after this proposal was created.')).toBeInTheDocument();
+      // The change still appears, because the backend applied it to the session.
+      expect(await screen.findByText('Applied to your schedule')).toBeInTheDocument();
       expect(mockLoadFromYaml).not.toHaveBeenCalled();
     });
 
-    it('does not apply an approval response to a new conversation', async () => {
-      let approve: ((value: { scheduleYaml: string; historySaved: boolean }) => void) | undefined;
-      mockApproveProposal.mockImplementation(() => new Promise(resolve => { approve = resolve; }));
-      vi.spyOn(window, 'confirm').mockReturnValue(true);
-      const user = userEvent.setup();
-      render(<ExperimentalAiPage />);
-      await ask(user);
-      await user.click(screen.getByRole('button', { name: 'Approve' }));
-      await user.click(screen.getByRole('button', { name: 'Start new chat' }));
-      await act(async () => approve?.({ scheduleYaml: 'description: obsolete approval\n', historySaved: true }));
-      expect(mockLoadFromYaml).not.toHaveBeenCalled();
-      expect(screen.queryByText('The proposed schedule was applied. Undo reverts it in one step.')).not.toBeInTheDocument();
-    });
-
-    it('keeps a new follow-up proposal received before approval acknowledgement', async () => {
-      let approve: ((value: { scheduleYaml: string; historySaved: boolean }) => void) | undefined;
-      let background: SessionStreamOptions | undefined;
-      mockApproveProposal.mockImplementation(() => new Promise(resolve => { approve = resolve; }));
-      mockStreamSessionEvents.mockImplementation(async (_id, callbacks) => {
-        background = callbacks;
-        await new Promise<void>(() => {});
+    it('shows a failed schedule check that the model received', async () => {
+      mockRunEvents.mockImplementationOnce(async (_sessionId: string, _message: string, callbacks: SessionStreamOptions) => {
+        callbacks.onEvent({ type: 'tool', activity: {
+          name: 'bash', arguments: '{"command":"break"}', result: 'Broken.', ok: false,
+          scheduleCheck: { ok: false, text: 'schedule.yaml introduces problems and cannot be applied.' },
+        } });
       });
       const user = userEvent.setup();
       render(<ExperimentalAiPage />);
       await ask(user);
-      await user.click(await screen.findByRole('button', { name: 'Approve' }));
-      await act(async () => {
-        background?.onEvent({ type: 'run_start', runId: 'decision-review', trigger: 'proposal' });
-        background?.onEvent({ type: 'proposal', diff: 'A new review proposal' });
-        background?.onEvent({ type: 'done', runId: 'decision-review' });
-        approve?.({ scheduleYaml: 'description: proposed schedule\n', historySaved: true });
-      });
-      expect(await screen.findByText('A new review proposal')).toBeVisible();
-      expect(mockLoadFromYaml).toHaveBeenCalledTimes(1);
-    });
 
-    it('keeps a proposal after a refused rejection', async () => {
-      mockRejectProposal.mockRejectedValue(new MockAiHttpError(
-        'Wait for the active response before rejecting a proposal.', 409,
-      ));
-      const user = userEvent.setup();
-      render(<ExperimentalAiPage />);
-      await ask(user);
-
-      await user.click(await screen.findByRole('button', { name: 'Reject' }));
-
-      expect(await screen.findByRole('alert')).toHaveTextContent(
-        'Wait for the active response before rejecting a proposal.',
-      );
-      expect(screen.getByRole('region', { name: 'Proposed schedule change' })).toBeVisible();
-      expect(screen.getByRole('button', { name: 'Reject' })).toBeEnabled();
-      expect(mockLoadFromYaml).not.toHaveBeenCalled();
-    });
-
-    it('drops a rejected proposal', async () => {
-      const user = userEvent.setup();
-      render(<ExperimentalAiPage />);
-      await ask(user);
-
-      await user.click(await screen.findByRole('button', { name: 'Reject' }));
-
-      await waitFor(() => expect(mockRejectProposal).toHaveBeenCalledWith('session-id', null, '/ai'));
-      expect(screen.queryByRole('region', { name: 'Proposed schedule change' })).not.toBeInTheDocument();
-      expect(mockLoadFromYaml).not.toHaveBeenCalled();
-    });
-
-    it.each(['Approve', 'Reject'])('warns when recovery storage cannot save a decision (%s)', async decision => {
-      mockApproveProposal.mockResolvedValue({ scheduleYaml: 'description: proposed schedule\n', historySaved: false });
-      mockRejectProposal.mockResolvedValue(false);
-      vi.spyOn(window, 'confirm').mockReturnValue(true);
-      const user = userEvent.setup();
-      render(<ExperimentalAiPage />);
-      await ask(user);
-
-      await user.click(await screen.findByRole('button', { name: decision }));
-
-      expect(await screen.findByRole('alert')).toHaveTextContent(
-        `This ${decision === 'Approve' ? 'approval' : 'rejection'} could not be saved for recovery after a service restart.`,
-      );
-    });
-
-    it('keeps a pending proposal approvable across messages until the schedule changes', async () => {
-      const user = userEvent.setup();
-      render(<ExperimentalAiPage />);
-      const reply = (text: string) => async (_sessionId: string, _message: string, callbacks: SessionStreamOptions) => {
-        callbacks.onEvent({ type: 'delta', text });
-      };
-      await ask(user);
-      expect(await screen.findByRole('region', { name: 'Proposed schedule change' })).toBeInTheDocument();
-
-      mockRunEvents.mockImplementationOnce(reply('It is still waiting for your approval.'));
-      await ask(user);
-      await screen.findByText('It is still waiting for your approval.');
-      expect(screen.getByRole('region', { name: 'Proposed schedule change' })).toBeInTheDocument();
-
-      // Replacing the session schedule makes the backend discard the proposal.
-      mockGenerateYaml.mockReturnValue('description: edited elsewhere\n');
-      mockRunEvents.mockImplementationOnce(reply('The schedule changed.'));
-      await ask(user);
-      await screen.findByText('The schedule changed.');
-      expect(screen.queryByRole('region', { name: 'Proposed schedule change' })).not.toBeInTheDocument();
+      await user.click(await screen.findByText('Schedule check failed'));
+      expect(screen.getByText('schedule.yaml introduces problems and cannot be applied.')).toBeVisible();
     });
 
     it('sends a changed schedule to an existing session before the next question', async () => {
@@ -2970,7 +2817,7 @@ describe('ExperimentalAiPage', () => {
     }
     const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
     act(() => {
-      stream.onEvent({ type: 'session_reset', reset: { runIds: ['user-run-1', 'user-run-2'], activeRunId: null, terminalRunIds: ['user-run-1', 'user-run-2'], incomplete: false, proposalDiff: null } });
+      stream.onEvent({ type: 'session_reset', reset: { runIds: ['user-run-1', 'user-run-2'], activeRunId: null, terminalRunIds: ['user-run-1', 'user-run-2'], incomplete: false } });
       for (const [runId, question] of [['user-run-1', 'Q1'], ['user-run-2', 'Q2']]) {
         stream.onEvent({ type: 'run_start', runId, trigger: 'user' });
         stream.onEvent({ type: 'delta', runId, text: `Answer to ${question}` });
@@ -2996,7 +2843,7 @@ describe('ExperimentalAiPage', () => {
     }
     const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
     act(() => {
-      stream.onEvent({ type: 'session_reset', reset: { runIds: ['user-run-1', 'user-run-2'], activeRunId: null, terminalRunIds: ['user-run-1', 'user-run-2'], incomplete: false, proposalDiff: null } });
+      stream.onEvent({ type: 'session_reset', reset: { runIds: ['user-run-1', 'user-run-2'], activeRunId: null, terminalRunIds: ['user-run-1', 'user-run-2'], incomplete: false } });
       for (const [runId, question] of [['user-run-1', 'Q1'], ['user-run-2', 'Q2']]) {
         stream.onEvent({ type: 'run_context', runId });
         stream.onEvent({ type: 'run_start', runId, trigger: 'user' });

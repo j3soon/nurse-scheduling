@@ -48,7 +48,6 @@ from nurse_scheduling.ai.agent_types import (
 )
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.context import (
-    SCHEDULE_CHANGED_DISCARDED_EVENT,
     SCHEDULE_CHANGED_EVENT,
     build_provider_messages,
     cap_transcript,
@@ -83,7 +82,6 @@ from nurse_scheduling.ai.transcript import (
     AgentMessage,
     AppEventEntry,
     AssistantMessage,
-    ProposalDecisionEntry,
     UserMessage,
 )
 from nurse_scheduling.ai.workspace import (
@@ -352,7 +350,6 @@ async def run_case(
     tools: list[str] = []
     events: list[dict[str, Any]] = []
     proposal_event: AgentProposal | None = None
-    pending_proposal: AgentProposal | None = None
     turn_actions = {action.after_turn: action for action in case.turn_actions}
     sandbox_metrics = WorkspaceMetrics()
     tool_batch_metrics: list[AgentToolBatchMetrics] = []
@@ -469,7 +466,6 @@ async def run_case(
                 attachments,
                 system_prompt=system_prompt,
                 max_download_bytes=settings.max_download_bytes,
-                pending_proposal=pending_proposal is not None,
                 optimizer_result_available=optimizer_result is not None,
                 frontend_timezone=case.frontend_timezone or "UTC",
                 now=request_clock() if request_clock else None,
@@ -489,8 +485,6 @@ async def run_case(
                 WorkspaceLimits.from_settings(settings),
                 sandbox_metrics,
                 tool_batch_metrics.append,
-                pending_proposal_yaml=pending_proposal.text if pending_proposal else "",
-                pending_proposal_diff=pending_proposal.diff if pending_proposal else "",
                 execute_optimizer=execute_optimizer,
                 attachments=attachments,
                 optimizer_result=optimizer_result,
@@ -568,7 +562,8 @@ async def run_case(
             answers.append(answer_text)
             proposal_turns.append(turn_proposal is not None)
             if turn_proposal is not None:
-                pending_proposal = turn_proposal
+                # The app applies a run's validated schedule, so the next turn starts from it.
+                text = turn_proposal.text
             if turn_index < len(turns) - 1:
                 intermediate_proposals.append(turn_proposal is not None)
             if turn_index + 1 == case.proposal_turn:
@@ -584,7 +579,7 @@ async def run_case(
                 break
             action = turn_actions.get(turn_index + 1)
             if action is not None:
-                text, pending_proposal = _apply_turn_action(action, text, pending_proposal, history, events)
+                text = _apply_turn_action(action, text, history, events)
     except (ProviderError, SandboxError) as error:
         behavior_failure = isinstance(
             error, (SandboxCommandTimeoutError, SandboxDownloadValidationError, ProviderResponseLimitError)
@@ -668,30 +663,17 @@ def _record_text(events: list[dict[str, Any]], kind: str, text: str) -> None:
 def _apply_turn_action(
     action: Any,
     text: str,
-    pending: AgentProposal | None,
     history: list[AgentMessage],
     events: list[dict[str, Any]],
-) -> tuple[str, AgentProposal | None]:
-    """Apply one trusted proposal lifecycle action between user turns."""
-    if action.action in {"approve", "reject"} and pending is None:
-        events.append({"kind": "turn_action", "turn": action.after_turn, "action": action.action, "ok": False})
-        return text, None
-    if action.action == "approve":
-        text = pending.text
-        history.append(ProposalDecisionEntry("approved"))
-    elif action.action == "reject":
-        history.append(ProposalDecisionEntry("rejected"))
-    else:
-        schedule = _load_yaml(text.encode("utf-8"))
-        schedule.update(dict(action.schedule_patch))
-        stream = StringIO()
-        YAML().dump(schedule, stream)
-        text = stream.getvalue()
-        history.append(
-            AppEventEntry(SCHEDULE_CHANGED_DISCARDED_EVENT if pending is not None else SCHEDULE_CHANGED_EVENT)
-        )
+) -> str:
+    """Apply one trusted external schedule update between user turns."""
+    schedule = _load_yaml(text.encode("utf-8"))
+    schedule.update(dict(action.schedule_patch))
+    stream = StringIO()
+    YAML().dump(schedule, stream)
+    history.append(AppEventEntry(SCHEDULE_CHANGED_EVENT))
     events.append({"kind": "turn_action", "turn": action.after_turn, "action": action.action, "ok": True})
-    return text, None
+    return stream.getvalue()
 
 
 def _trajectory(

@@ -42,7 +42,6 @@ from .transcript import (
     AgentMessage,
     AppEventEntry,
     AssistantMessage,
-    ProposalDecisionEntry,
     ToolCall,
     ToolResultMessage,
     UserMessage,
@@ -78,43 +77,18 @@ CURRENT_TIME_STATUS = "Current date and time: "
 SCHEDULE_CHANGED_EVENT = (
     f"{APP_EVENT_PREFIX} The schedule changed in the app. /workspace/schedule.yaml contains the current version."
 )
-SCHEDULE_CHANGED_DISCARDED_EVENT = (
-    f"{SCHEDULE_CHANGED_EVENT} The pending proposal was discarded because it was made for the previous schedule."
-)
-PROPOSAL_APPROVED_HISTORY = (
-    f"{APP_EVENT_PREFIX} The user approved the previous schedule proposal. Its changes are now part of the current "
-    "schedule."
-)
-PROPOSAL_REJECTED_HISTORY = (
-    f"{APP_EVENT_PREFIX} The user rejected the previous schedule proposal. All schedule changes made during that agent "
-    "turn were discarded. This turn starts with a fresh workspace containing the current schedule."
-)
-PROPOSAL_INVALID_HISTORY = (
-    f"{APP_EVENT_PREFIX} The previous schedule proposal failed trusted validation when the user approved it, so it was "
-    "discarded. All schedule changes made during that agent turn were dropped. This turn starts with a fresh "
-    "workspace containing the current schedule."
-)
 UPLOAD_EVENT_PREFIX = f"{APP_EVENT_PREFIX} The user uploaded files."
 REMOVAL_EVENT_PREFIX = f"{APP_EVENT_PREFIX} The user removed a file from the workspace:"
-PENDING_PROPOSAL_STATUS = (
-    "A validated proposal is pending. Its exact candidate and diff are available in the trusted workspace files that "
-    "the instructions describe."
-)
 OPTIMIZER_RESULT_STATUS = "Optimization result:"
 UNLISTED_UPLOADS_STATUS = "Uploaded files not listed in this conversation:"
 # Short titles let the chat label each app-written message without parsing its text.
 _APP_EVENT_TITLES = (
     (UPLOAD_EVENT_PREFIX, "Files Uploaded"),
     (REMOVAL_EVENT_PREFIX, "File Removed"),
-    (SCHEDULE_CHANGED_DISCARDED_EVENT, "Schedule Changed, Proposal Discarded"),
     (SCHEDULE_CHANGED_EVENT, "Schedule Changed"),
-    (PROPOSAL_APPROVED_HISTORY, "Proposal Approved"),
-    (PROPOSAL_REJECTED_HISTORY, "Proposal Rejected"),
-    (PROPOSAL_INVALID_HISTORY, "Proposal Invalid"),
 )
 _STATUS_TITLES = (
     (CURRENT_TIME_STATUS, "Current Time"),
-    (PENDING_PROPOSAL_STATUS, "Pending Proposal"),
     (OPTIMIZER_RESULT_STATUS, "Optimizer Result"),
     (UNLISTED_UPLOADS_STATUS, "Unlisted Uploads"),
 )
@@ -153,7 +127,6 @@ def status_message(
     history: Sequence[ChatMessage],
     attachments: Sequence[SandboxAttachment],
     *,
-    pending_proposal: bool,
     optimizer_result_available: bool,
     frontend_timezone: str | None = None,
     now: datetime | None = None,
@@ -162,8 +135,6 @@ def status_message(
     lines = []
     if frontend_timezone is not None:
         lines.append(current_time_status(frontend_timezone, now))
-    if pending_proposal:
-        lines.append(PENDING_PROPOSAL_STATUS)
     if optimizer_result_available:
         lines.append(
             f"{OPTIMIZER_RESULT_STATUS} {WORKSPACE_OPTIMIZER_RESULT}. "
@@ -235,7 +206,6 @@ def build_provider_messages(
     attachments: Sequence[SandboxAttachment] = (),
     *,
     system_prompt: str = SANDBOX_SYSTEM_PROMPT,
-    pending_proposal: bool = False,
     optimizer_result_available: bool = False,
     max_history_chars: int = DEFAULT_MAX_HISTORY_CHARS,
     max_download_bytes: int = 50_000_000,
@@ -258,7 +228,6 @@ def build_provider_messages(
     status = status_message(
         retained,
         attachments,
-        pending_proposal=pending_proposal,
         optimizer_result_available=optimizer_result_available,
         frontend_timezone=frontend_timezone,
         now=now,
@@ -298,9 +267,6 @@ def model_input(
         if index > last_reply
     ]
     added.append({"kind": question_kind, "content": messages[1 + history_count]["content"]})
-    if question_kind == "app":
-        # The proposal-triggered prompt is retained after this history snapshot.
-        added[-1]["index"] = history_offset + history_count
     added.extend({"kind": "status", "content": message["content"]} for message in messages[2 + history_count :])
     for entry in added:
         if title := message_title(str(entry["kind"]), str(entry["content"])):
@@ -393,13 +359,7 @@ def _projected_messages(transcript: Sequence[AgentMessage]) -> list[tuple[bool, 
             answering = True
             answer.append(entry.text)
             interrupted = interrupted or entry.stop_reason in ("aborted", "error")
-        elif isinstance(entry, UserMessage):
-            close_answer()
-            projected.append((starts_exchange(entry), ChatMessage(role="user", content=entry.text)))
-        elif isinstance(entry, ProposalDecisionEntry):
-            close_answer()
-            projected.append((False, ChatMessage(role="user", content=PROPOSAL_DECISION_HISTORY[entry.decision])))
-        elif isinstance(entry, AppEventEntry):
+        elif isinstance(entry, UserMessage | AppEventEntry):
             close_answer()
             projected.append((starts_exchange(entry), ChatMessage(role="user", content=entry.text)))
     close_answer()
@@ -436,8 +396,8 @@ def project_history(transcript: Sequence[AgentMessage], max_chars: int = DEFAULT
         if remaining < 0:
             break
         kept.append((prompt, message, size))
-    # Start at a prompt or app event. An answer or proposal decision whose prompt did
-    # not fit refers to an exchange the model can no longer see.
+    # Start at a prompt or app event. An answer whose prompt did not fit refers to
+    # an exchange the model can no longer see.
     while kept and not kept[-1][0]:
         kept.pop()
     return HistoryContext(
@@ -447,17 +407,11 @@ def project_history(transcript: Sequence[AgentMessage], max_chars: int = DEFAULT
     )
 
 
-PROPOSAL_DECISION_HISTORY = {
-    "approved": PROPOSAL_APPROVED_HISTORY,
-    "rejected": PROPOSAL_REJECTED_HISTORY,
-    "invalid": PROPOSAL_INVALID_HISTORY,
-}
 ABORTED_RESPONSE_HISTORY = "[This response was interrupted before completion. Its workspace changes were discarded.]"
 
 
 def entries_from_legacy_history(messages: Sequence[ChatMessage]) -> list[AgentMessage]:
     """Restore the existing persisted text view until typed persistence is introduced."""
-    decisions = {text: decision for decision, text in PROPOSAL_DECISION_HISTORY.items()}
     entries = []
     for message in messages:
         text = message.get("content") or ""
@@ -465,8 +419,6 @@ def entries_from_legacy_history(messages: Sequence[ChatMessage]) -> list[AgentMe
             raise TypeError("Persisted chat history must contain text messages.")
         if message["role"] == "assistant":
             entries.append(AssistantMessage(text))
-        elif text in decisions:
-            entries.append(ProposalDecisionEntry(decisions[text]))
         elif text.startswith(APP_EVENT_PREFIX):
             entries.append(AppEventEntry(text))
         else:

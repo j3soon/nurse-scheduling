@@ -60,9 +60,6 @@ from nurse_scheduling.ai.schema import load_schedule_example, load_taiwan_holida
 from nurse_scheduling.ai.workspace import (
     REFERENCE_SCHEMAS,
     REFERENCE_USER_GUIDE,
-    WORKSPACE_PENDING_DIFF,
-    WORKSPACE_PENDING_PROPOSAL,
-    WORKSPACE_PENDING_RESULT_CONTEXT,
     WORKSPACE_RESULT_CONTEXT,
     WORKSPACE_SCHEDULE,
     WORKSPACE_SOURCE_CONTEXT,
@@ -130,8 +127,6 @@ def _collect(
     provider,
     factory,
     *,
-    pending_proposal_yaml: str = "",
-    pending_proposal_diff: str = "",
     attachments: Sequence[SandboxAttachment] = (),
     optimizer_result: bytes | None = None,
     **limit_overrides,
@@ -145,8 +140,6 @@ def _collect(
                 schedule_yaml(),
                 MESSAGES,
                 _limits(**limit_overrides),
-                pending_proposal_yaml=pending_proposal_yaml,
-                pending_proposal_diff=pending_proposal_diff,
                 attachments=attachments,
                 optimizer_result=optimizer_result,
             )
@@ -482,9 +475,7 @@ def test_parallel_reads_retry_failed_hydration_before_using_the_sandbox(failure_
     factory = FakeSandboxFactory(Backend)
 
     async def read() -> list:
-        async with _measured_sandbox_run(
-            factory, 1, WorkspaceMetrics(), schedule_yaml(), "", "", (), None, None
-        ) as sandbox:
+        async with _measured_sandbox_run(factory, 1, WorkspaceMetrics(), schedule_yaml(), (), None, None) as sandbox:
             async with sandbox.activity_batch():
                 results = await asyncio.gather(
                     sandbox.read_file(WORKSPACE_SCHEDULE),
@@ -520,25 +511,6 @@ def test_failed_bash_result_reaches_the_model_and_allows_the_next_tool_call():
         for message in provider.requests[1][0]
     )
     assert backend.commands == [("failed", None), ("retry", None)]
-
-
-def test_pending_proposal_is_hydrated_as_trusted_read_only_context():
-    factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id))
-
-    _collect(
-        ScriptedProvider(
-            [ToolCallRequest((ToolCall("call-1", READ_TOOL, json.dumps({"path": WORKSPACE_PENDING_PROPOSAL})),))],
-            [TextDelta("The pending description is Ready.")],
-        ),
-        factory,
-        pending_proposal_yaml="apiVersion: alpha\ndescription: Ready\n",
-        pending_proposal_diff='- description: "" -> "Ready"',
-    )
-
-    backend = factory.created[0]
-    assert backend.files[WORKSPACE_PENDING_PROPOSAL] == b"apiVersion: alpha\ndescription: Ready\n"
-    assert backend.files[WORKSPACE_PENDING_DIFF] == b'- description: "" -> "Ready"'
-    assert backend.write_files_calls == 1
 
 
 def test_hydration_uploads_every_reference_in_one_request():
@@ -610,21 +582,6 @@ def test_hydration_keeps_optimizer_result_outside_user_attachments():
     assert context["schema_version"] == 1
     assert context["people"] == ["P1", "P2"]
     assert b"inspect_optimizer_result.py" in backend.files["/reference/tools/README.md"]
-
-
-def test_result_contexts_keep_pending_and_current_sources_distinct():
-    factory = FakeSandboxFactory()
-    provider = ScriptedProvider(
-        [ToolCallRequest((ToolCall("call-1", READ_TOOL, json.dumps({"path": WORKSPACE_RESULT_CONTEXT})),))],
-        [TextDelta("Inspected.")],
-    )
-    pending = schedule_yaml().replace("description: ''", "description: Pending", 1)
-    _collect(provider, factory, optimizer_result=b"workbook", pending_proposal_yaml=pending)
-    files = factory.created[0].files
-    current_context = json.loads(files[WORKSPACE_RESULT_CONTEXT])
-    pending_context = json.loads(files[WORKSPACE_PENDING_RESULT_CONTEXT])
-    assert pending_context["source_sha256"] != current_context["source_sha256"]
-    assert pending_context["people"] == current_context["people"]
 
 
 def test_reference_sources_are_read_from_disk_once_per_process():
@@ -827,6 +784,12 @@ def test_intermediate_trusted_validation_lets_the_model_repair_a_bad_edit():
 
     tools = [event for event in events if isinstance(event, AgentToolUse)]
     assert not tools[0].ok
+    # The browser receives the same check as the model, and only a valid copy as a preview.
+    assert tools[0].details["schedule_check"]["ok"] is False
+    assert tools[0].result.endswith("\n\n" + tools[0].details["schedule_check"]["text"])
+    assert tools[0].details["schedule_yaml"] is None
+    assert tools[1].details["schedule_check"]["ok"] is True
+    assert "description: Head" in tools[1].details["schedule_yaml"]
     assert "working copy retains this command's changes" in tools[0].result
     assert "Repair the reported problems before finishing" in tools[0].result
     assert "introduces problems" in tools[0].result
@@ -1044,7 +1007,6 @@ def test_accepted_schedule_edits_refresh_request_inspection_context(new_schedule
         backend = FakeSandboxBackend("context-refresh")
         archived = b'{"source_sha256":"optimizer-submission"}'
         await hydrate_sandbox(backend, base, optimizer_result=b"workbook", optimizer_context=archived)
-        backend.files[WORKSPACE_PENDING_RESULT_CONTEXT] = archived
         tracker = _ScheduleCandidateTracker(backend, base, SCHEDULE_BYTE_LIMIT)
         payload = base_schedule_payload()
         payload["preferences"].append(
@@ -1057,7 +1019,6 @@ def test_accepted_schedule_edits_refresh_request_inspection_context(new_schedule
         counts = inspect_requests(context, backend.files[WORKSPACE_SCHEDULE])
         assert (counts["request_entries"], counts["person_date_targets"]) == (2, 2)
         assert backend.files[WORKSPACE_RESULT_CONTEXT] == archived
-        assert backend.files[WORKSPACE_PENDING_RESULT_CONTEXT] == archived
         if not new_schedule:
             await backend.write_file(WORKSPACE_SCHEDULE, base)
             outcome, candidate = await tracker.review_if_changed()

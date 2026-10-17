@@ -522,29 +522,6 @@ def test_invalid_turn_tool_limits_are_rejected(tmp_path: Path, raw):
         load_cases(_write(tmp_path, _case(expect_proposal=False, turn_tool_usage=raw)))
 
 
-@pytest.mark.parametrize(
-    ("answer", "passes"),
-    [
-        ("No, the proposal is pending. You must approve it.", True),
-        ("NOT YET. Your approval is required.", True),
-        ("It has not changed. Please approve the proposal first.", True),
-        ("No, the saved schedule is updated only after your approval.", True),
-        ("Now updated. Please approve it.", False),
-        ("Yes, the saved schedule changed. Approval is pending.", False),
-        ("No other fields changed. The saved schedule has now changed. Please approve it.", False),
-        ("No, it has not changed.", False),
-    ],
-)
-def test_proposal_answer_contract_accepts_denials_and_rejects_false_adoption(answer, passes):
-    case = next(case for case in load_cases(CASES_PATH) if case.id == "proposal-is-not-saved-yet")
-    proposed = copy.deepcopy(FIXTURE_SCHEDULES[case.fixture])
-    proposed["description"] = "April clinic roster"
-    outcome = RunOutcome(
-        answer=f"April clinic roster. {answer}", proposed=proposed, initial=FIXTURE_SCHEDULES[case.fixture]
-    )
-    assert grade(case, outcome).passed == passes
-
-
 @pytest.mark.parametrize("field_name", ["answer_matches", "answer_not_matches"])
 @pytest.mark.parametrize("raw", ["not a list", [""], [123], ["["]])
 def test_invalid_answer_patterns_are_rejected(tmp_path: Path, field_name, raw):
@@ -1151,11 +1128,10 @@ def test_a_multi_turn_case_can_designate_an_earlier_proposal(tmp_path: Path):
     assert result.passed
 
 
-def test_loads_multiple_proposal_turns_and_lifecycle_actions(tmp_path: Path):
+def test_loads_multiple_proposal_turns(tmp_path: Path):
     entry = _case(
         user_turns=["Change it.", "Revise it.", "Done?"],
         proposal_turns=[1, 2],
-        turn_actions=[{"after_turn": 2, "action": "approve"}],
         **{"assert": [{"path": "description", "equals": "changed"}]},
         changes=["description"],
     )
@@ -1164,7 +1140,6 @@ def test_loads_multiple_proposal_turns_and_lifecycle_actions(tmp_path: Path):
 
     assert case.proposal_turns == (1, 2)
     assert case.proposal_turn == 2
-    assert case.turn_actions[0].action == "approve"
 
 
 def test_loads_external_schedule_update_action(tmp_path: Path):
@@ -1200,7 +1175,9 @@ def test_invalid_proposal_turn_is_rejected(tmp_path: Path, proposal_turn: object
         {"proposal_turns": [2, 1]},
         {"proposal_turns": [1, 1]},
         {"turn_actions": "approve"},
-        {"turn_actions": [{"after_turn": 2, "action": "approve"}]},
+        {"turn_actions": [{"after_turn": 2, "action": "update", "schedule_patch": {"description": "External"}}]},
+        # The app applies each change, so a case cannot approve or reject one.
+        {"turn_actions": [{"after_turn": 1, "action": "approve"}]},
         {"turn_actions": [{"after_turn": 1, "action": "update"}]},
     ],
 )

@@ -68,7 +68,7 @@ from nurse_scheduling.ai.workspace import (
 from nurse_scheduling.loader import _load_yaml
 
 from .ai_eval.comparison import comparison_metrics_markdown, comparison_statistics
-from .ai_eval.grading import EvalCase, ExpectedDiff, RunOutcome, ToolUsageExpectation, TurnAction, grade, load_cases
+from .ai_eval.grading import EvalCase, ExpectedDiff, RunOutcome, ToolUsageExpectation, grade, load_cases
 from .ai_eval.prompt_ladder import (
     STEPS_PATH,
     case_digest,
@@ -917,7 +917,6 @@ def test_cases_are_selected_by_id_and_by_category():
         "dates-range-shrink",
         "direct-combined-exact-edits",
         "download-generated-zip",
-        "external-update-invalidates-pending",
         "explain-ai-attachments",
         "guide-add-person",
         "guide-load-yaml",
@@ -936,12 +935,10 @@ def test_cases_are_selected_by_id_and_by_category():
         "pref-modify-one-near-duplicate",
         "pref-requirement-modify-existing",
         "pronoun-selects-second-request",
-        "question-then-approve-pending",
         "reject-contradicting-follow-up",
         "reject-conflicting-shift-request",
         "reject-shift-type-rename-collision",
         "reject-unknown-person",
-        "reject-then-narrower-edit",
         "revise-unapproved-proposal-twice",
         "shift-type-remove-cascade",
         "shift-type-rename-cascade",
@@ -1090,34 +1087,37 @@ def test_a_multi_user_turn_case_can_grade_an_earlier_proposal():
     assert run.passed
 
 
-def test_approval_adopts_the_proposal_and_adds_trusted_history():
+def test_the_next_turn_starts_from_the_applied_schedule():
     case = EvalCase(
-        id="approval",
+        id="applied",
         fixture="new-schedule",
         question="Set the description.",
         expect_proposal=True,
         proposal_turn=1,
         user_turns=("Set the description.", "Is it current?"),
-        turn_actions=(TurnAction(1, "approve"),),
         expected_diff=(ExpectedDiff(path="description", before="", after="Ready", compares_value=True),),
         changes=("description",),
         answer_contains=("current",),
     )
     provider = ScriptedProvider(
         [ToolCallRequest((ToolCall("call_0", BASH_TOOL, '{"command":"edit description"}'),))],
-        [TextDelta("I propose Ready.")],
+        [TextDelta("I set Ready.")],
+        [ToolCallRequest((ToolCall("call_1", BASH_TOOL, '{"command":"cat schedule.yaml"}'),))],
         [TextDelta("It is current.")],
     )
 
-    def edit(_command: str, _timeout: float | None, backend: FakeSandboxBackend) -> CommandResult:
-        current = backend.files[WORKSPACE_SCHEDULE].decode()
-        backend.files[WORKSPACE_SCHEDULE] = current.replace("description: ''", "description: Ready", 1).encode()
+    def edit(command: str, _timeout: float | None, backend: FakeSandboxBackend) -> CommandResult:
+        if command == "edit description":
+            current = backend.files[WORKSPACE_SCHEDULE].decode()
+            backend.files[WORKSPACE_SCHEDULE] = current.replace("description: ''", "description: Ready", 1).encode()
         return CommandResult("updated\n", "", 0)
 
-    run = asyncio.run(run_case(provider, settings(), case, _factory(edit)))
+    factory = _factory(edit)
+    run = asyncio.run(run_case(provider, settings(), case, factory))
 
     assert run.passed
-    assert any("approved the previous schedule proposal" in message["content"] for message in provider.messages[2])
+    # The second turn reads the schedule without editing it, so its VM starts from the applied change.
+    assert b"description: Ready" in factory.created[1].files[WORKSPACE_SCHEDULE]
 
 
 def test_an_unknown_case_id_stops_the_run():

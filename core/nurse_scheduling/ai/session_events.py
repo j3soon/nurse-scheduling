@@ -29,7 +29,7 @@ class RunFields(TypedDict):
 
 class RunStartEvent(RunFields):
     type: Literal["run_start"]
-    trigger: Literal["user", "optimizer", "proposal"]
+    trigger: Literal["user", "optimizer"]
 
 
 class TextEvent(RunFields):
@@ -65,10 +65,17 @@ class ToolStartEvent(ToolFields):
     type: Literal["tool_start"]
 
 
+class ScheduleCheck(TypedDict):
+    ok: bool
+    text: str
+
+
 class ToolEndEvent(ToolFields):
     type: Literal["tool"]
     result: str
     ok: bool
+    # The trusted schedule check included in `result`, when the tool changed the working copy.
+    schedule_check: NotRequired[ScheduleCheck]
 
 
 class SteeringEvent(RunFields):
@@ -82,8 +89,12 @@ class ScheduleChangeEvent(RunFields):
     schedule_yaml: str
 
 
-class ProposalEvent(RunFields):
-    type: Literal["proposal"]
+class ScheduleAppliedEvent(RunFields):
+    type: Literal["schedule_applied"]
+    schedule_yaml: str
+    # Revisions of the run's starting schedule and of this schedule, so a browser applies it only once.
+    base_sha256: str
+    sha256: str
     diff: str
 
 
@@ -169,7 +180,7 @@ AgentSessionRunEvent = (
     | ToolEndEvent
     | SteeringEvent
     | ScheduleChangeEvent
-    | ProposalEvent
+    | ScheduleAppliedEvent
     | DownloadEvent
     | WarningEvent
     | ModelInputEvent

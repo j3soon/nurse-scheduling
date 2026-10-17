@@ -33,7 +33,6 @@ export interface StoredChatConversation {
   retentionSeconds: number;
   messages: ChatMessage[];
   syncedSchedule: string;
-  proposalDiff: string | null;
   sessionEventId?: number;
   activeOptimization?: ActiveOptimization | null;
   backendVersion?: string;
@@ -52,8 +51,11 @@ function isOptionalStringArray(value: unknown): boolean {
 
 function isActivityEntry(value: unknown): value is ActivityEntry {
   if (typeof value !== 'object' || value === null || !('kind' in value)) return false;
-  if (value.kind === 'response' || value.kind === 'reasoning') {
+  if (value.kind === 'response' || value.kind === 'reasoning' || value.kind === 'schedule-applied') {
     return 'text' in value && typeof value.text === 'string';
+  }
+  if (value.kind === 'schedule-check') {
+    return 'text' in value && typeof value.text === 'string' && 'ok' in value && typeof value.ok === 'boolean';
   }
   if (value.kind === 'schedule-change') {
     return 'before' in value && typeof value.before === 'string'
@@ -143,7 +145,6 @@ export function readStoredConversation(): StoredChatConversation | null {
         ))
       ))
       || typeof value.syncedSchedule !== 'string'
-      || (value.proposalDiff !== null && typeof value.proposalDiff !== 'string')
       || (value.backgroundAssistantId !== undefined && value.backgroundAssistantId !== null
         && typeof value.backgroundAssistantId !== 'string')
     ) return null;

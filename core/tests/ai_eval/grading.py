@@ -94,7 +94,7 @@ class ToolUsageExpectation:
 
 @dataclass(frozen=True)
 class TurnAction:
-    """A trusted frontend action applied after one assistant turn."""
+    """A trusted external schedule update applied after one assistant turn."""
 
     after_turn: int
     action: str
@@ -589,9 +589,9 @@ def _turn_actions(raw: object, turn_count: int, source: str) -> tuple[TurnAction
             isinstance(after_turn, bool)
             or not isinstance(after_turn, int)
             or not 1 <= after_turn < turn_count
-            or action not in {"approve", "reject", "update"}
+            or action != "update"
             or not isinstance(patch, dict)
-            or (action == "update") != bool(patch)
+            or not patch
         ):
             raise EvalCaseError(f"{source} has an invalid turn action.")
         actions.append(TurnAction(after_turn, action, tuple(patch.items())))

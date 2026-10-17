@@ -96,7 +96,7 @@ skipped does not validate persistence.
 ## Experimental AI
 - Prioritize maintainability, readability, and simplicity. Avoid over-engineering.
   Use Pi agent v1.0.0 as a reference for AI chat architecture and design philosophy.
-- `AgentSession` owns conversation changes, steering, proposal decisions, and
+- `AgentSession` owns conversation changes, steering, applied schedules, and
   the shared foreground and optimizer-review execution path. `SessionStore`
   owns access, expiry, and retained-byte budgets. `SessionRecovery` owns ordered
   recovery writes and eviction pins. `SessionEventStream` owns bounded replay.
@@ -185,7 +185,7 @@ skipped does not validate persistence.
 - Put fixed model instructions in a manifest-tracked prompt segment under
   `ai/prompts/`, so they get a hash, linked cases, and a benefit witness.
   `build_provider_messages` appends only request-specific values, such as a
-  configured limit or the pending-proposal state.
+  configured limit or the current time.
 - Keep model-facing prompts and intermediate messages concise. Avoid repeated
   warnings about malicious uploads or prescribed workbook-inspection commands.
   Rely on sandbox and server controls for security, and give generated artifacts

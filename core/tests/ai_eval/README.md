@@ -37,7 +37,8 @@ token comparisons remain unavailable rather than inventing cache misses.
 Store one JSON object per case under `cases/<dataset>/<category>/<id>.json`. Existing synthetic coverage lives under
 `cases/basics/`, mirroring the normal YAML testcase layout under `tests/testcases/basics/`. Reserve sibling dataset
 directories such as `cases/real/` for cases derived from real user scenarios. Every case names a fixture, one question or a
-`user_turns` sequence, and whether one turn should propose a schedule change. Proposal cases default to the final
+`user_turns` sequence, and whether one turn should change the schedule. Like the app, the runner applies each
+turn's validated change before the next turn. Proposal cases, which grade that change, default to the final
 turn. Set the one-based `proposal_turn` when a later turn should discuss an earlier proposal without reproposing it.
 Every other turn is explicitly graded as producing no proposal.
 
@@ -46,8 +47,8 @@ with the first turn, matching the frontend request lifecycle. Attachment cases s
 that prove the sandbox inspected the file rather than relying on its declared media type.
 
 Use ordered `proposal_turns` when revisions should produce more than one proposal. The last listed proposal is graded
-by `expected_diff`. Use `turn_actions` to apply a trusted frontend `approve`, `reject`, or external `update` after a
-turn. An update supplies a shallow top-level `schedule_patch` and invalidates any pending proposal.
+by `expected_diff` against the fixture. Use `turn_actions` to apply a trusted external `update` after a turn. An
+update supplies a shallow top-level `schedule_patch` and adds a schedule-change app event.
 
 Use `expected_diff` for a deterministic mutation to a list-valued path. Each entry gives the complete semantic
 multiset delta, so an unlisted addition or removal at that path fails:
@@ -179,8 +180,8 @@ one a stable ID, hypothesis, and targeted case set. The production and evaluatio
 Leading SPDX license blocks and AI provenance comments are excluded from model-facing text.
 Run `python3 scripts/print_ai_system_prompt.py` from the repository root to print the assembled prompt to stdout.
 The script uses the production assembler and needs only Python's standard library. The app appends request-specific
-context, such as the schedule pointer and download size limit, when building a request. Changing state, such as a
-pending proposal, goes into a final status message. Case attachments enter history as an upload event before the first
+context, such as the schedule pointer and download size limit, when building a request. Changing state, such as the
+current time, goes into a final status message. Case attachments enter history as an upload event before the first
 question, as production uploads do.
 Section hashes make the evaluation fail fast if prompt text changes without updating the manifest.
 Keep section filenames stable and change their order in the manifest. Linked cases are candidates for evidence, not

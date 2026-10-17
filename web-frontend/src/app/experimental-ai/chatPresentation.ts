@@ -37,6 +37,8 @@ export function formatResponseDuration(startedAt: number, completedAt: number): 
 export function activitySummary(entry: Exclude<ActivityEntry, { kind: 'response' }>): string {
   if (entry.kind === 'reasoning') return `Reasoning · ${formatCharacterCount(entry.text.length)} characters`;
   if (entry.kind === 'schedule-change') return 'schedule edit';
+  if (entry.kind === 'schedule-check') return entry.ok ? 'Schedule check passed' : 'Schedule check failed';
+  if (entry.kind === 'schedule-applied') return 'Applied to your schedule';
   if (entry.state === 'running') return `${entry.name} · running`;
   if (entry.state === 'interrupted') return `${entry.name} · interrupted`;
   return entry.ok ? entry.name : `${entry.name} · failed`;

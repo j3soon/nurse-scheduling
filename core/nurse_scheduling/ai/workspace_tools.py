@@ -102,7 +102,8 @@ class WorkspaceTools:
                 return AgentToolOutcome("The current working schedule is unavailable or invalid.", False)
             review = review_schedule_candidate(self.schedule_yaml, current_schedule, self.limits.max_schedule_bytes)
             if not review.outcome.ok:
-                return AgentToolOutcome(f"Trusted schedule check before optimizer:\n{review.outcome.text}", False)
+                check = f"Trusted schedule check before optimizer:\n{review.outcome.text}"
+                return AgentToolOutcome(check, False, details={"schedule_check": {"ok": False, "text": check}})
             outcome = await self.execute_optimizer(current_schedule, arguments)
             if outcome.ok:
                 return replace(outcome, end_turn_message=OPTIMIZER_RUNNING_MESSAGE)
@@ -121,7 +122,11 @@ class WorkspaceTools:
             outcome,
             text=f"{outcome.text}\n\n{validation.text}",
             ok=outcome.ok and validation.ok,
-            details={"schedule_yaml": schedule_change} if schedule_change is not None else None,
+            # The browser shows the check the model received and previews a valid working copy.
+            details={
+                "schedule_check": {"ok": validation.ok, "text": validation.text},
+                "schedule_yaml": schedule_change,
+            },
         )
 
 
@@ -134,8 +139,6 @@ async def run_workspace(
     metrics: WorkspaceMetrics | None = None,
     observe_tool_batch: Callable[[AgentToolBatchMetrics], None] | None = None,
     take_steering: Callable[[bool], Sequence[tuple[str, str]]] | None = None,
-    pending_proposal_yaml: str = "",
-    pending_proposal_diff: str = "",
     execute_optimizer: Callable[[str, str], Awaitable[AgentToolOutcome]] | None = None,
     attachments: Sequence[SandboxAttachment] = (),
     optimizer_result: bytes | None = None,
@@ -153,8 +156,6 @@ async def run_workspace(
                 limits.cleanup_timeout_seconds,
                 metrics,
                 schedule_yaml,
-                pending_proposal_yaml,
-                pending_proposal_diff,
                 attachments,
                 optimizer_result,
                 optimizer_context,
@@ -174,7 +175,7 @@ async def run_workspace(
                 async with aclosing(events):
                     async for event in events:
                         yield event
-                        if isinstance(event, AgentToolUse) and event.details is not None:
+                        if isinstance(event, AgentToolUse) and event.details and event.details.get("schedule_yaml"):
                             yield AgentScheduleChange(event.details["schedule_yaml"])
 
                 if toolset.command_timeout is not None:
@@ -184,7 +185,7 @@ async def run_workspace(
                 candidate = await _read_candidate(sandbox, limits.max_schedule_bytes)
                 review = review_schedule_candidate(schedule_yaml, candidate, limits.max_schedule_bytes)
                 logger.info(
-                    "sandbox candidate validated sandbox_id=%s valid=%s proposal=%s",
+                    "sandbox candidate validated sandbox_id=%s valid=%s changed=%s",
                     sandbox.sandbox_id,
                     review.outcome.ok,
                     review.proposal is not None,

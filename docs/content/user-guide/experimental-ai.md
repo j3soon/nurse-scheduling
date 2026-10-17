@@ -12,28 +12,30 @@ to request access.
 This page answers questions about the schedule currently open in the browser.
 A question can include files of any type when **Attach files** is available.
 The assistant can inspect common text, image, PDF, and spreadsheet formats in
-its temporary workspace. The assistant can propose changes to the schedule,
-which apply only after you approve them. The assistant can also run the
+its temporary workspace. The assistant can change the schedule. A valid change
+replaces the schedule in this browser when the response finishes, and
+<kbd>Ctrl</kbd>+<kbd>Z</kbd> undoes it. The assistant can also run the
 optimizer and review its result.
 
 ## Build from ward requirements
 
 Use [Build a Real Schedule](build-a-real-schedule.md) for the app workflow and
 the 87-person example. If file attachment is available and the source contains
-no sensitive data, ask the assistant to inspect the workbook. Have it list the
+no sensitive data, add the workbook with **Attach files** and ask the assistant
+to inspect it. Have it list the
 people, dates, staffing levels, requests, history, and any unclear
-notation before proposing a schedule change. A `1`, a color, or a short shift
+notation before changing the schedule. A `1`, a color, or a short shift
 code can mean different things in different wards. Confirm those meanings and
 group memberships with the person preparing the schedule.
 
 Work in stages. First establish staffing, qualifications, required assignments,
 and rest rules. Then add nurse requests, monthly shift-team preferences, and
-fairness targets. After each proposed change, review the diff before approving
-it. Run the optimizer, inspect coverage and the distribution of days off, and
+fairness targets. After each change, review its differences in the chat and undo
+any change you do not want. Run the optimizer, inspect coverage and the distribution of days off, and
 ask for empirical adjustments. Values such as 11 `OFF` days or a particular
 weight are examples to tune, not defaults for every ward.
 
-The assistant can inspect an attached workbook and propose schedule changes,
+The assistant can inspect an attached workbook and change the schedule,
 but it cannot click through the app or run its upload controls for you. Use the
 [People](people.md) and [Shift Requests](shift-requests.md) pages for bulk
 imports. Follow the [data and limitations](#data-and-limitations) guidance
@@ -57,9 +59,8 @@ you can continue chatting while it solves.
   can inspect relevant spreadsheet sections to answer questions about the result,
   including in later chat turns while the result remains available.
 - The assistant wakes automatically and replies in a new turn.
-- The assistant may propose a YAML change and run the optimizer again. The
-  changed YAML still requires your approval before it replaces the schedule in
-  the browser.
+- The assistant may change the YAML and run the optimizer again. The changed
+  YAML replaces the schedule in the browser when that response finishes.
 
 The optimizer runs for up to 300 seconds (five minutes) by default. Ask the
 assistant for a different timeout when needed. A deployment may set another
@@ -81,21 +82,23 @@ When you build a new roster, the assistant asks about missing rest and fairness
 rules together before creating it. You can decline forbidden transitions, work
 streak limits or balancing. It uses answers you already gave.
 
-## Review a proposed change
+## Review an applied change
 
-Ask for a change, such as renaming a person or adding a shift request, and the
-assistant proposes one instead of changing the schedule itself.
+Ask for a change, such as renaming a person or adding a shift request. The
+assistant edits a temporary copy of the schedule, and the app checks each edit.
 
 1. Ask for the change in the usual way.
-2. Read **Proposed schedule change**, which lists every difference between your
-   current schedule and the proposal.
-3. Wait for the assistant to finish. Then select **Approve** to apply the
-   proposal, or **Reject** to discard it. These buttons stay hidden while the
-   assistant is answering.
-4. An approved proposal replaces the schedule in one step, so
-   <kbd>Ctrl</kbd>+<kbd>Z</kbd> reverts the whole change.
-5. The assistant continues automatically after either decision. It uses the
-   applied schedule after approval and keeps the current schedule after rejection.
+2. Each step that changes the temporary schedule shows **Schedule check passed**
+   or **Schedule check failed**. It contains the check result that the assistant
+   received. After a failed check, the assistant repairs the problem.
+3. When the response finishes, the last valid schedule replaces the schedule in
+   this browser. **Applied to your schedule** lists every difference.
+4. The change is one step in the edit history, so <kbd>Ctrl</kbd>+<kbd>Z</kbd>
+   reverts the whole change. The assistant learns about the undo when you send
+   your next question.
+
+A change replaces edits that you made elsewhere in the app while the assistant
+was answering. Use <kbd>Ctrl</kbd>+<kbd>Z</kbd> to restore them.
 
 ## Reconnect or retry
 
@@ -145,19 +148,15 @@ until you select one.
   sandbox when it needs schema guidance.
 - **schedule edit** shows the changed lines after a Bash command changes the
   temporary schedule. Red lines were removed and green lines were added. This
-  is a preview only. The current schedule still changes only after you approve
-  the final proposal.
+  is a preview. The schedule changes when the response finishes.
 - A row marked `failed` means that step changed nothing. This is the usual
-reason an answer arrives without a proposal.
+reason an answer arrives without a schedule change.
 - The `optimizer` tool shows whether the assistant started, checked, or asked
   the current optimization to finish.
 
 Long output is revealed a portion at a time with **Show more**. Clear
 **Show reasoning** or **Show tool activity** near the top of the page to hide
 either kind. The choice is remembered on this browser.
-
-Approval is refused when the schedule changed after the proposal was made. Ask
-again so the assistant works from what you now have.
 
 If a turn fails, read the error beside its response. Chat exports retain that
 error with any partial answer. A provider error can include an HTTP status and
@@ -203,8 +202,7 @@ exports. The file panel shows the files currently retained by the session.
 
 Use **HTML** under **Export chat** for a styled, standalone transcript, or
 **Markdown** for a plain-text transcript. Export runs in the browser. The export
-also lists the uploaded files by name and size, includes a proposal that is
-waiting for approval, and notes an optimization that is still running without
+also lists the uploaded files by name and size, and notes an optimization that is still running without
 its changing score.
 
 When the assistant creates files for download, it puts them in one ZIP archive.

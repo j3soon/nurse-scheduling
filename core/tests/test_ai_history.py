@@ -48,18 +48,17 @@ from nurse_scheduling.ai.sessions import SessionStore
 from nurse_scheduling.ai.transcript import (
     AppEventEntry,
     AssistantMessage,
-    ProposalDecisionEntry,
     ToolCall,
     ToolResultImage,
     ToolResultMessage,
     UserMessage,
+    entry_from_record,
 )
 
 from . import test_ai_basic as basic
 
 EMPTY_STATE = {
     "schedule_yaml": basic.schedule_yaml(),
-    "pending_proposal": None,
     "dropped_history_messages": 0,
     "dropped_entries": 0,
 }
@@ -267,47 +266,6 @@ def test_history_keeps_the_full_run_while_the_session_keeps_only_later_context(r
     assert "passed trusted server-side validation" in tool_result.text
     assert answer == AssistantMessage("Renamed P1.")
     assert retained == [UserMessage("Rename P1."), AssistantMessage("Checking. ", "tool_use"), answer]
-
-
-@pytest.mark.parametrize("decision", ["approved", "rejected"])
-def test_proposal_decisions_join_the_run_that_proposed_them(recorded_history, decision):
-    provider = basic.ScriptedToolProvider(
-        basic.rename_call(), [TextDelta("Proposed.")], [TextDelta("Decision followed up.")]
-    )
-    app = basic.create_test_app(
-        settings=basic.make_settings(history_postgres_url="test"),
-        provider=provider,
-        sandbox_factory=basic.rename_factory(),
-    )
-    client = basic.AuthenticatedTestClient(app)
-    with client:
-        session_id = basic.create_session(client, basic.schedule_yaml())
-        client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P1."})
-        revision = app.state.session_store.get(session_id).revision
-        if decision == "approved":
-            response = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
-        else:
-            response = client.post(f"/sessions/{session_id}/proposal/reject")
-        assert response.json()["history_saved"] is True
-
-        async def drain():
-            while app.state.runs.busy(session_id):
-                await asyncio.sleep(0)
-
-        client.portal.call(drain)
-        # Without a pending proposal no decision is recorded, but the state is saved.
-        saves = len(recorded_history["saves"])
-        assert client.post(f"/sessions/{session_id}/proposal/reject").json()["history_saved"] is True
-        assert len(recorded_history["saves"]) == saves + 1
-
-    start, follow_up = recorded_history["starts"]
-    assert follow_up["kind"] == "background"
-    decisions = [
-        (run_id, entry)
-        for _seq, run_id, entry in recorded_history["entries"]
-        if isinstance(entry, ProposalDecisionEntry)
-    ]
-    assert decisions == [(start["run_id"], ProposalDecisionEntry(decision))]
 
 
 def test_database_unavailable_prevents_startup(recorded_history, monkeypatch):
@@ -526,18 +484,6 @@ def test_recovery_state_writes_commit_in_capture_order(recorded_history, monkeyp
     assert committed[-2:] == [older, newer]
 
 
-@pytest.mark.parametrize("decision", ["approve", "reject"])
-def test_proposal_decision_reports_a_failed_recovery_save(recorded_history, monkeypatch, decision):
-    client, session_id, revision = basic.proposing_client(history_postgres_url="test")
-    monkeypatch.setattr(ChatHistory, "save_session", unavailable)
-    body = {"base_sha256": revision} if decision == "approve" else None
-    with client:
-        response = client.post(f"/sessions/{session_id}/proposal/{decision}", json=body)
-    assert response.status_code == 200
-    assert response.json()["history_saved"] is False
-    assert client.app.state.session_store._sessions[session_id].pending_proposal is None
-
-
 def test_schedule_update_that_cannot_be_saved_can_be_retried(recorded_history, monkeypatch):
     app = basic.create_test_app(
         settings=basic.make_settings(history_postgres_url="test"), provider=basic.FakeProvider()
@@ -734,7 +680,6 @@ def record(entry) -> tuple[str, dict]:
         UserMessage: "user",
         AssistantMessage: "assistant",
         ToolResultMessage: "tool_result",
-        ProposalDecisionEntry: "proposal_decision",
         AppEventEntry: "app_event",
     }[type(entry)]
     # JSON stores tuples as arrays.
@@ -831,8 +776,8 @@ def test_postgres_duplicates_and_reconnection(postgres_history):
     state = session_state(owner)
     history.finish_run(run, "completed", None, TokenUsage(1, 2, 3), True, session_id=session, state=state)
     history.finish_run(run, "cancelled", None, None, False, session_id=session, state=state)
-    decision = (5, run, ProposalDecisionEntry("approved"))
-    history.save_session(session, state, entries=[decision])
+    app_event = (5, run, AppEventEntry("[App event] The schedule changed in the app."))
+    history.save_session(session, state, entries=[app_event])
     restarted = ChatHistory("test")
     restarted.initialize()
     with restarted._connect() as connection:
@@ -855,7 +800,7 @@ def test_postgres_duplicates_and_reconnection(postgres_history):
         assert session_entries(connection) == [
             record(UserMessage("What's next?")),
             *map(record, entries),
-            record(ProposalDecisionEntry("approved")),
+            record(app_event[2]),
         ]
         assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (4,)
     # Tool results never join later context, so the conversation is rebuilt without them.
@@ -864,7 +809,7 @@ def test_postgres_duplicates_and_reconnection(postgres_history):
         entries[0],
         UserMessage("Only nights."),
         AssistantMessage("Answer"),
-        ProposalDecisionEntry("approved"),
+        app_event[2],
     ]
 
 
@@ -994,7 +939,9 @@ def test_postgres_upgrade_preserves_deployed_sessions_and_message_receipts(unini
     history = uninitialized_postgres_history
     session, owner, run_id = str(uuid4()), str(uuid4()), str(uuid4())
     migrations = Path(history_module.__file__).with_name("migrations")
-    entries = [UserMessage("Original question"), AssistantMessage("Saved answer"), ProposalDecisionEntry("approved")]
+    entries = [UserMessage("Original question"), AssistantMessage("Saved answer")]
+    # Earlier versions stored the user's approval, which restores as the app event the model received.
+    approval = entry_from_record("proposal_decision", {"decision": "approved"})
     old_state = {
         "schedule_yaml": "description: original",
         "proposal_yaml": "description: proposal",
@@ -1004,11 +951,14 @@ def test_postgres_upgrade_preserves_deployed_sessions_and_message_receipts(unini
     if typed:
         from nurse_scheduling.ai.transcript import entry_record
 
-        old_state["transcript"] = [{"type": kind, "payload": payload} for kind, payload in map(entry_record, entries)]
+        old_state["transcript"] = [
+            *({"type": kind, "payload": payload} for kind, payload in map(entry_record, entries)),
+            {"type": "proposal_decision", "payload": {"decision": "approved"}},
+        ]
     else:
         from nurse_scheduling.ai.context import projected_history
 
-        old_state["history"] = projected_history(entries)
+        old_state["history"] = [*projected_history(entries), {"role": "user", "content": approval.text}]
     with history._connect() as connection:
         connection.execute("CREATE TABLE ai_history_migrations (version text PRIMARY KEY)")
         for name in ("001_chat_history.sql", "002_arbitrary_attachments.sql", "003_chat_recovery.sql"):
@@ -1040,7 +990,7 @@ def test_postgres_upgrade_preserves_deployed_sessions_and_message_receipts(unini
     history.initialize()
     history.initialize()
     restored = history.load_session(session, owner)
-    assert restored["entries"] == entries
+    assert restored["entries"] == [*entries, approval]
     assert restored["state"] == {
         "schedule_yaml": "description: original",
         "pending_proposal": {"schedule_yaml": "description: proposal", "diff": "Saved diff", "run_id": None},
@@ -1057,29 +1007,6 @@ def test_postgres_upgrade_preserves_deployed_sessions_and_message_receipts(unini
         assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (4,)
         assert connection.execute("SELECT auth_credential_id FROM chat_sessions").fetchone() == ("team-a",)
         assert connection.execute("SELECT model FROM chat_runs").fetchone() == ("saved-model",)
-
-
-def test_postgres_discarded_stale_proposal_stays_discarded_after_restart(postgres_history):
-    client, session_id, _revision = basic.proposing_client(history_postgres_url="test")
-    with client:
-        assert client.app.state.session_store._sessions[session_id].pending_proposal is not None
-        original_schedule = client.app.state.session_store._sessions[session_id].schedule_yaml
-        refused = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": "0" * 64})
-        assert refused.status_code == 409
-        assert client.app.state.session_store._sessions[session_id].pending_proposal is None
-        owner = client.cookies[basic.OWNER_COOKIE]
-    restarted = basic.create_test_app(
-        settings=basic.make_settings(history_postgres_url="test", max_schedule_bytes=basic.SCHEDULE_BYTE_LIMIT),
-        provider=basic.FakeProvider(),
-    )
-    with basic.AuthenticatedTestClient(restarted, cookies={basic.OWNER_COOKIE: owner}) as restored:
-        assert restored.get(f"/sessions/{session_id}").status_code == 200
-        session = restarted.state.session_store._sessions[session_id]
-        assert session.pending_proposal is None
-        assert session.schedule_yaml == original_schedule
-        assert (
-            restored.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": "0" * 64}).status_code == 404
-        )
 
 
 def test_postgres_recovery_enforces_owner_and_session_expiry(postgres_history):
@@ -1752,7 +1679,6 @@ def test_postgres_export_snapshot_matches_the_complete_chat_fixture_and_cli(post
         "export-owner",
         frontend_version=fixture["frontend_version"],
         export_metadata=fixture["metadata"],
-        pending_proposal={"diff": fixture["pending_proposal_diff"]},
     )
     postgres_history.save_session(session_id, state)
     for sequence, run in enumerate(fixture["runs"]):

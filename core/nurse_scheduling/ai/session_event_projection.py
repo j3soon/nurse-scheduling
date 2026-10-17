@@ -36,7 +36,7 @@ from .agent_types import (
 )
 from .context import interrupted_entries
 from .provider import TokenUsage
-from .session_events import AgentSessionEvent, AgentSessionRunEvent, AgentSessionTerminalEvent, TextEvent
+from .session_events import AgentSessionEvent, AgentSessionRunEvent, AgentSessionTerminalEvent, TextEvent, ToolEndEvent
 from .transcript import AgentMessage
 from .workspace import AgentDownload, AgentScheduleChange
 
@@ -82,7 +82,7 @@ class RunOutput:
                 "arguments": event.arguments,
             }
         elif isinstance(event, AgentToolUse):
-            return {
+            tool_event: ToolEndEvent = {
                 "type": "tool",
                 "tool_call_id": event.tool_call_id,
                 "name": event.name,
@@ -90,6 +90,9 @@ class RunOutput:
                 "result": event.result,
                 "ok": event.ok,
             }
+            if event.details and "schedule_check" in event.details:
+                tool_event["schedule_check"] = event.details["schedule_check"]
+            return tool_event
         elif isinstance(event, AgentSteering):
             return {"type": "steering", "message_id": event.message_id, "message": event.text}
         elif isinstance(event, AgentScheduleChange):

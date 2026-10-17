@@ -52,7 +52,21 @@ export interface ScheduleChangeEntry {
   after: string;
 }
 
-export type ActivityEntry = ResponseEntry | ReasoningEntry | ToolEntry | ScheduleChangeEntry;
+// The trusted check the model received after a tool changed the working copy.
+export interface ScheduleCheckEntry {
+  kind: 'schedule-check';
+  ok: boolean;
+  text: string;
+}
+
+// The validated schedule the app applied when the response finished, with its differences.
+export interface ScheduleAppliedEntry {
+  kind: 'schedule-applied';
+  text: string;
+}
+
+export type ActivityEntry =
+  | ResponseEntry | ReasoningEntry | ToolEntry | ScheduleChangeEntry | ScheduleCheckEntry | ScheduleAppliedEntry;
 
 // Long output is revealed a chunk at a time, so an expanded row never floods the page.
 const CHUNK_CHARS = 2000;
@@ -106,6 +120,11 @@ function ScheduleChangePreview({ entry }: { entry: ScheduleChangeEntry }) {
   );
 }
 
+function activityColor(entry: ActivityEntry): string {
+  if (entry.kind === 'schedule-applied' || (entry.kind === 'schedule-check' && entry.ok)) return 'text-green-700';
+  return entry.kind === 'schedule-check' ? 'text-red-700' : 'text-gray-500';
+}
+
 export function AssistantActivity({ entries }: { entries: ActivityEntry[] }) {
   if (entries.length === 0) return null;
 
@@ -119,14 +138,14 @@ export function AssistantActivity({ entries }: { entries: ActivityEntry[] }) {
           {entry.kind === 'response' ? (
             <AssistantMarkdown content={entry.text} />
           ) : (
-            <details className="text-xs text-gray-500">
+            <details className={`text-xs ${activityColor(entry)}`}>
               <summary className="cursor-pointer select-none py-0.5 hover:text-gray-700">{activitySummary(entry)}</summary>
               <div className="mt-1 rounded bg-gray-50 p-2">
-                {entry.kind === 'reasoning'
-                  ? <ChunkedText text={entry.text} label="reasoning" />
-                  : entry.kind === 'tool'
-                    ? <ToolBody entry={entry} />
-                    : <ScheduleChangePreview entry={entry} />}
+                {entry.kind === 'tool'
+                  ? <ToolBody entry={entry} />
+                  : entry.kind === 'schedule-change'
+                    ? <ScheduleChangePreview entry={entry} />
+                    : <ChunkedText text={entry.text} label={entry.kind === 'reasoning' ? 'reasoning' : 'details'} />}
               </div>
             </details>
           )}

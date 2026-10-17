@@ -80,7 +80,7 @@ class AgentSteering:
 
 @dataclass(frozen=True)
 class AgentProposal:
-    """The schedule the run ended with, waiting for the user to approve it."""
+    """The validated schedule the run ended with, which becomes the current schedule."""
 
     text: str
     diff: str

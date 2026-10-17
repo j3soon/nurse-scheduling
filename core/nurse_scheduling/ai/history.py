@@ -134,7 +134,7 @@ class ChatHistory:
         *,
         entries: Sequence[EntryRow] = (),
     ) -> None:
-        """Keep session ownership, expiry, schedule, proposal, and new conversation entries."""
+        """Keep session ownership, expiry, schedule, and new conversation entries."""
         with self._connect() as connection:
             self._save_state(connection, session_id, state, entries, credential_id)
 
@@ -373,7 +373,6 @@ class ChatHistory:
             "snapshot_at": milliseconds(max([created_at, *(row[2] for row in events)])),
             "frontend_version": state.get("frontend_version") or "unknown",
             "metadata": state.get("export_metadata", {}),
-            "pending_proposal_diff": (state.get("pending_proposal") or {}).get("diff"),
             "runs": [
                 {
                     "id": str(run_id),

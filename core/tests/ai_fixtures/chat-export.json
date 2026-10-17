@@ -19,7 +19,6 @@
       }
     ]
   },
-  "pending_proposal_diff": "- description: Original -> Updated",
   "runs": [
     {
       "id": "00000000-0000-4000-8000-000000000001",
@@ -194,10 +193,14 @@
       "data": {
         "name": "edit",
         "arguments": "{\"path\": \"schedule.yaml\", \"edits\": [{\"oldText\": \"Original\", \"newText\": \"Updated\"}]}",
-        "result": "Successfully replaced 1 block(s) in schedule.yaml.",
+        "result": "Successfully replaced 1 block(s) in schedule.yaml.\n\nTrusted schedule check after this command:\nThe candidate passed trusted server-side validation and differs from the base schedule.",
         "ok": true,
         "tool_call_id": "1-edit-9",
-        "run_id": "00000000-0000-4000-8000-000000000001"
+        "run_id": "00000000-0000-4000-8000-000000000001",
+        "schedule_check": {
+          "ok": true,
+          "text": "Trusted schedule check after this command:\nThe candidate passed trusted server-side validation and differs from the base schedule."
+        }
       },
       "occurred_at": 1789693202000
     },
@@ -317,8 +320,11 @@
       "occurred_at": 1789693204200
     },
     {
-      "type": "proposal",
+      "type": "schedule_applied",
       "data": {
+        "schedule_yaml": "description: Updated\n",
+        "base_sha256": "fedf0bd8e4ebaafbda06127d4f04eb40046f340af719cdeb8ac0caca3cd51cae",
+        "sha256": "8666dcce7962f15ebe555140282ccf4e70b04bb8be53b303c6fced9d853a2a7e",
         "diff": "- description: Original -> Updated",
         "run_id": "00000000-0000-4000-8000-000000000001"
       },

@@ -52,8 +52,6 @@ export interface ChatExportMetadata {
   exportedAt: Date;
   frontendVersion: string;
   backendVersion?: string;
-  // A proposal waiting for approval is not part of the transcript, so exports add it separately.
-  pendingProposalDiff?: string;
   // A background optimization still running at export time. Its score changes, so exports omit it.
   runningOptimization?: { jobId: string; state: string; solver?: string; timeoutSeconds?: number };
   // Files kept in the chat session at export time. The export lists them without their contents.
@@ -62,7 +60,7 @@ export interface ChatExportMetadata {
 }
 
 type ChatExportSessionState = Pick<
-  ChatExportMetadata, 'backendVersion' | 'pendingProposalDiff' | 'runningOptimization' | 'uploadedFiles'
+  ChatExportMetadata, 'backendVersion' | 'runningOptimization' | 'uploadedFiles'
 >;
 
 function uploadedFileLines(files: NonNullable<ChatExportMetadata['uploadedFiles']>): string[] {
@@ -95,8 +93,6 @@ function runningOptimizationDetails(running: NonNullable<ChatExportMetadata['run
     ...(running.timeoutSeconds !== undefined ? [`Solver timeout: ${running.timeoutSeconds}s`] : []),
   ];
 }
-
-const PENDING_PROPOSAL_NOTE = 'This change is waiting for approval in the app. The current schedule has not changed.';
 
 export type ChatExportFormat = 'html' | 'markdown';
 
@@ -145,13 +141,14 @@ function activityLabel(entry: ActivityEntry): string {
   if (entry.kind === 'response') return 'Response';
   if (entry.kind === 'reasoning') return 'Reasoning';
   if (entry.kind === 'schedule-change') return 'Schedule change';
+  if (entry.kind === 'schedule-check' || entry.kind === 'schedule-applied') return activitySummary(entry);
   if (entry.state === 'running') return `${entry.name} (running)`;
   if (entry.state === 'interrupted') return `${entry.name} (interrupted)`;
   return entry.ok ? entry.name : `${entry.name} (failed)`;
 }
 
 function activityText(entry: ActivityEntry): string {
-  if (entry.kind === 'reasoning' || entry.kind === 'response') return entry.text;
+  if (entry.kind !== 'tool' && entry.kind !== 'schedule-change') return entry.text;
   if (entry.kind === 'schedule-change') return `Before:\n${entry.before}\n\nAfter:\n${entry.after}`;
   return [
     entry.arguments ? `Arguments:\n${entry.arguments}` : '',
@@ -168,7 +165,7 @@ function renderScheduleChangeHtml(entry: Extract<ActivityEntry, { kind: 'schedul
 
 function renderActivityDetailsHtml(entry: Exclude<ActivityEntry, { kind: 'response' }>): string {
   let body: string;
-  if (entry.kind === 'reasoning') {
+  if (entry.kind === 'reasoning' || entry.kind === 'schedule-check' || entry.kind === 'schedule-applied') {
     body = `<pre class="activity-output">${escapeHtml(entry.text)}</pre>`;
   } else if (entry.kind === 'schedule-change') {
     body = renderScheduleChangeHtml(entry);
@@ -337,9 +334,6 @@ export function buildMarkdownChatExport(
       ...runningOptimizationDetails(metadata.runningOptimization).map(detail => `- ${detail}`),
     );
   }
-  if (metadata.pendingProposalDiff !== undefined) {
-    lines.push('', '## Pending proposal', '', PENDING_PROPOSAL_NOTE, '', ...fencedText(metadata.pendingProposalDiff));
-  }
   return `${lines.join('\n')}\n`;
 }
 
@@ -452,11 +446,6 @@ export function buildHtmlChatExport(
       <h2>Optimization running</h2>
       <p>${RUNNING_OPTIMIZATION_NOTE}</p>
       <ul>${runningOptimizationDetails(metadata.runningOptimization).map(detail => `<li>${escapeHtml(detail)}</li>`).join('')}</ul>
-    </section>`}${metadata.pendingProposalDiff === undefined ? '' : `
-    <section class="proposal" aria-label="Pending proposal">
-      <h2>Pending proposal</h2>
-      <p>${PENDING_PROPOSAL_NOTE}</p>
-      <pre>${escapeHtml(metadata.pendingProposalDiff)}</pre>
     </section>`}
   </main>
 </body>

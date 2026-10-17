@@ -137,7 +137,7 @@ class AiSettings:
     """Text and file budget across live sessions, enforced when content is retained.
 
     A completed turn is trimmed rather than refused, so retained text settles at this
-    budget plus the newest message and any pending proposal of each live session. Size
+    budget plus the newest message of each live session. Size
     the process above that floor, not at this value.
     """
     max_history_messages: int = 1000

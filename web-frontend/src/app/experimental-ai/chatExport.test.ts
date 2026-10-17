@@ -184,21 +184,23 @@ describe('chat export', () => {
     expect(html).toContain('uploaded files: [&lt;b&gt;]');
   });
 
-  it('exports a pending proposal after the transcript', () => {
-    const pending = { ...metadata, pendingProposalDiff: '- description: "" -> "<April>"' };
+  it('exports schedule checks and applied changes', () => {
+    const changed: ChatExportMessage[] = [{
+      id: 'answer', role: 'assistant', content: 'Done.', activity: [
+        { kind: 'schedule-check', ok: false, text: 'schedule.yaml introduces <problems>.' },
+        { kind: 'schedule-applied', text: '- description: "" -> "April"' },
+      ],
+    }];
 
-    const markdown = buildMarkdownChatExport(messages, pending);
-    const html = buildHtmlChatExport(messages, pending);
+    const markdown = buildMarkdownChatExport(changed, metadata);
+    const html = buildHtmlChatExport(changed, metadata);
 
-    expect(markdown.endsWith(
-      '## Pending proposal\n\nThis change is waiting for approval in the app. The current schedule has not changed.\n\n'
-      + '```text\n- description: "" -> "<April>"\n```\n',
-    )).toBe(true);
-    expect(html).toContain('<section class="proposal" aria-label="Pending proposal">');
-    expect(html).toContain('<pre>- description: &quot;&quot; -&gt; &quot;&lt;April&gt;&quot;</pre>');
-    expect(html.indexOf('aria-label="Chat transcript"')).toBeLessThan(html.indexOf('aria-label="Pending proposal"'));
-    expect(buildMarkdownChatExport(messages, metadata)).not.toContain('Pending proposal');
-    expect(buildHtmlChatExport(messages, metadata)).not.toContain('class="proposal"');
+    expect(markdown).toContain('Schedule check failed');
+    expect(markdown).toContain('schedule.yaml introduces <problems>.');
+    expect(markdown).toContain('Applied to your schedule');
+    expect(html).toContain('<summary>Schedule check failed</summary>');
+    expect(html).toContain('schedule.yaml introduces &lt;problems&gt;.');
+    expect(html).toContain('<summary>Applied to your schedule</summary>');
   });
 
   it('mentions an optimization that is still running without its score', () => {
