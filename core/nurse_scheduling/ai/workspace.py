@@ -378,9 +378,8 @@ async def hydrate_sandbox(
     files: dict[str, str | bytes] = {WORKSPACE_SCHEDULE: schedule_yaml}
     files[REFERENCE_SCHEDULE_EXAMPLE] = load_schedule_example()
     try:
-        files[WORKSPACE_SOURCE_CONTEXT] = json.dumps(
-            build_result_context(schedule_yaml), ensure_ascii=False, allow_nan=False
-        )
+        # Compiling a large schedule on the event loop would stall every session's stream.
+        files[WORKSPACE_SOURCE_CONTEXT] = await asyncio.to_thread(_inspection_context_json, schedule_yaml)
     except Exception:
         # A draft may not compile. Its YAML remains available for direct inspection.
         logger.debug("Current schedule inspection context unavailable", exc_info=True)
@@ -402,9 +401,7 @@ async def hydrate_sandbox(
         files[WORKSPACE_RESULT_CONTEXT] = (
             optimizer_context
             if optimizer_context is not None
-            else json.dumps(
-                build_result_context(schedule_yaml, workbook=optimizer_result), ensure_ascii=False, allow_nan=False
-            )
+            else await asyncio.to_thread(_inspection_context_json, schedule_yaml, optimizer_result)
         )
     # Batch trusted references before loading attachments.
     await sandbox.write_files(files)
@@ -463,8 +460,8 @@ async def _read_candidate(sandbox: SandboxBackend, max_schedule_bytes: int) -> s
         raise SandboxCandidateError("The sandbox candidate is not valid UTF-8.") from exc
 
 
-def _source_context_json(schedule_yaml: str) -> str:
-    return json.dumps(build_result_context(schedule_yaml), ensure_ascii=False, allow_nan=False)
+def _inspection_context_json(schedule_yaml: str, workbook: bytes | None = None) -> str:
+    return json.dumps(build_result_context(schedule_yaml, workbook=workbook), ensure_ascii=False, allow_nan=False)
 
 
 class _ScheduleCandidateTracker:
@@ -515,7 +512,8 @@ class _ScheduleCandidateTracker:
                 None,
             )
 
-        review = review_schedule_candidate(self._base_text, candidate, self._max_bytes)
+        # Validating or compiling a large schedule would otherwise block every session's stream.
+        review = await asyncio.to_thread(review_schedule_candidate, self._base_text, candidate, self._max_bytes)
         logger.info(
             "sandbox intermediate candidate validated sandbox_id=%s valid=%s changed=%s",
             self._sandbox.sandbox_id,
@@ -524,8 +522,7 @@ class _ScheduleCandidateTracker:
         )
         if review.outcome.ok:
             try:
-                # Compiling a large schedule would otherwise block every session's stream.
-                context = await asyncio.to_thread(_source_context_json, candidate)
+                context = await asyncio.to_thread(_inspection_context_json, candidate)
             except Exception:
                 # Accepted incomplete drafts can still require direct YAML inspection.
                 logger.debug("Updated schedule inspection context unavailable", exc_info=True)

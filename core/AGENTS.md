@@ -227,6 +227,9 @@ skipped does not validate persistence.
 - Parse schedules through `loader._load_yaml`, including comparisons of draft
   schedules. It bounds nesting and alias expansion before constructing data.
   Direct `YAML.load` calls bypass those bounds.
+- Parse, validate, and compile schedules in worker threads, not on the event
+  loop. One large schedule can take most of a second, which stalls every
+  session's stream.
 - The assistant is reachable only from the web frontend, so its schedule tools
   target the frontend subset alone. Validate through
   `ai/validation.py`, and do not expose the full backend schedule format, which

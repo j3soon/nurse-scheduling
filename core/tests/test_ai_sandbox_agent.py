@@ -40,6 +40,7 @@ from nurse_scheduling.ai.agent_types import (
     AgentToolUse,
 )
 from nurse_scheduling.ai.attachment_tools.inspect_shift_requests import inspect_requests
+from nurse_scheduling.ai.candidate import review_schedule_candidate
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL, WORKSPACE_OPTIMIZER_RESULT
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
@@ -54,6 +55,7 @@ from nurse_scheduling.ai.provider import (
     ToolCall,
     ToolCallRequest,
 )
+from nurse_scheduling.ai.result_context import build_result_context
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
 from nurse_scheduling.ai.schema import load_schedule_example, load_taiwan_holidays_reference, load_user_guide_references
@@ -1105,7 +1107,7 @@ def test_inspection_context_builds_off_the_event_loop_and_tolerates_a_failed_wri
         tracker = _ScheduleCandidateTracker(backend, base, SCHEDULE_BYTE_LIMIT)
         build_threads = []
 
-        def build(source):
+        def build(source, workbook=None):
             build_threads.append(threading.current_thread())
             return {"source": source}
 
@@ -1126,6 +1128,57 @@ def test_inspection_context_builds_off_the_event_loop_and_tolerates_a_failed_wri
     asyncio.run(check())
 
 
+def test_run_validates_and_compiles_schedules_off_the_event_loop(monkeypatch):
+    calls: list[tuple[str, bool]] = []
+
+    def recorded(name, function):
+        def run(*args, **kwargs):
+            calls.append((name, threading.current_thread() is threading.main_thread()))
+            return function(*args, **kwargs)
+
+        return run
+
+    monkeypatch.setattr(
+        "nurse_scheduling.ai.workspace.review_schedule_candidate", recorded("edit check", review_schedule_candidate)
+    )
+    monkeypatch.setattr(
+        "nurse_scheduling.ai.workspace_tools.review_schedule_candidate",
+        recorded("optimizer or final check", review_schedule_candidate),
+    )
+    monkeypatch.setattr(
+        "nurse_scheduling.ai.workspace.build_result_context", recorded("inspection context", build_result_context)
+    )
+    optimizer_call = ToolCallRequest(
+        (ToolCall("call-2", OPTIMIZER_TOOL, json.dumps({"action": "start", "timeout_seconds": 30})),)
+    )
+    provider = ScriptedProvider(_run_call(), [optimizer_call])
+    factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=_rename_handler))
+
+    async def execute_optimizer(_current_schedule: str, _arguments: str):
+        return AgentToolOutcome("Started in the background.", True)
+
+    async def collect() -> list:
+        return [
+            event
+            async for event in run_workspace(
+                provider, factory, schedule_yaml(), MESSAGES, _limits(), execute_optimizer=execute_optimizer
+            )
+        ]
+
+    events = asyncio.run(collect())
+
+    assert any(isinstance(event, AgentProposal) for event in events)
+    # Hydration and the accepted edit compile contexts. The optimizer start and final review check the copy.
+    assert sorted(name for name, _ in calls) == [
+        "edit check",
+        "inspection context",
+        "inspection context",
+        "optimizer or final check",
+        "optimizer or final check",
+    ]
+    assert not any(on_event_loop for _, on_event_loop in calls)
+
+
 def test_unchanged_schedule_does_not_rebuild_inspection_context(monkeypatch):
     async def check():
         base = schedule_yaml()
@@ -1133,7 +1186,7 @@ def test_unchanged_schedule_does_not_rebuild_inspection_context(monkeypatch):
         await hydrate_sandbox(backend, base)
         tracker = _ScheduleCandidateTracker(backend, base, SCHEDULE_BYTE_LIMIT)
 
-        def unexpected_build(_source):
+        def unexpected_build(_source, workbook=None):
             pytest.fail("Unchanged YAML must not rebuild its compiled context")
 
         monkeypatch.setattr("nurse_scheduling.ai.workspace.build_result_context", unexpected_build)
