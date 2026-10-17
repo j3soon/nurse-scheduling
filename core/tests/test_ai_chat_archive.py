@@ -34,6 +34,7 @@ from uuid import uuid4
 from zipfile import ZipFile
 
 import pytest
+from psycopg.conninfo import make_conninfo
 from starlette.requests import ClientDisconnect
 
 from nurse_scheduling.ai import chat_archive
@@ -191,6 +192,8 @@ def test_zip_cli_matches_the_shared_writer_and_preserves_output_on_error(postgre
     session, _payload = seed_files(postgres_history)
     with postgres_history._connect() as connection:
         database_url = connection.info.dsn
+        if connection.info.password:
+            database_url = make_conninfo(database_url, password=connection.info.password)
     destination = tmp_path / "chat.zip"
     environment = {**os.environ, "AI_HISTORY_POSTGRES_URL": database_url}
     result = subprocess.run(

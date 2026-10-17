@@ -44,6 +44,10 @@ the [PostgreSQL wrapper guide](../skills/run-ci/references/postgresql.md) for to
 requirements. Confirm that database cases ran. A passing suite with those cases
 skipped does not validate persistence.
 
+`ConnectionInfo.dsn` omits passwords. Preserve `ConnectionInfo.password` when
+passing database URLs to subprocesses. Check password authentication separately
+from the trust-based local harness.
+
 ## Dependencies
 - `requirements.txt` is the minimal runtime set. Deployment images install only
   it, so a small file keeps those builds fast. Add a package there only when

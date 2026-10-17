@@ -37,6 +37,7 @@ import httpx
 import psycopg
 import pytest
 from psycopg import sql
+from psycopg.conninfo import make_conninfo
 
 from nurse_scheduling.ai import app as app_module
 from nurse_scheduling.ai import history as history_module
@@ -2073,6 +2074,8 @@ def test_postgres_export_snapshot_matches_the_complete_chat_fixture_and_cli(post
                 (event["occurred_at"] / 1000, session_id, i),
             )
         database_url = connection.info.dsn
+        if connection.info.password:
+            database_url = make_conninfo(database_url, password=connection.info.password)
     assert postgres_history.export_snapshot(session_id) == fixture
     assert postgres_history.export_snapshot(str(uuid4())) is None
     repo = Path(__file__).resolve().parents[2]
