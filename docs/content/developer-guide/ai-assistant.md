@@ -818,7 +818,7 @@ controls. `/capabilities.app_version` identifies the AI service. The parent
 | `GET /capabilities` | Public attachment limits, session lifetime, and authentication requirement. |
 | `POST /sessions` | Store a YAML snapshot and create a browser-owned session. |
 | `GET /sessions/{id}` | Check the remaining session lifetime without renewing it. |
-| `POST /sessions/{id}/uploads` | Retain multipart files for later messages and return their IDs. |
+| `POST /sessions/{id}/uploads?upload_id={uuid}` | Retain one multipart file under a stable retry ID and return its metadata. Omitting the ID also accepts an unkeyed file batch. |
 | `GET /sessions/{id}/uploads` | List retained file metadata. |
 | `DELETE /sessions/{id}/uploads/{upload_id}` | Remove one retained file. |
 | `POST /sessions/{id}/messages` | Stream one answer to a JSON `message`. |
@@ -829,10 +829,12 @@ source files per session. MB uses 1,000,000 bytes.
 and `max_bytes_per_session`.
 The browser checks existing uploads and selected files against these limits.
 It uploads one file per request, sequentially, before submitting the question.
-A connection failure or server error is retried up to three times. Upload
-requests are not idempotent, so before each retry the browser lists the chat's
-uploads. A new upload with the file's size counts as the stored file, so a lost
-response does not create a duplicate. If an upload still fails, earlier
+A connection failure or server error is retried up to three times. Each file
+uses one UUID in the `upload_id` query parameter across every attempt. A retry
+returns the original metadata without adding another file or charging storage
+again. The server rejects reuse with a different filename, media type, or content.
+Upload IDs and file bytes remain process-local and disappear together on expiry,
+removal, or restart. If an upload still fails, earlier
 successful uploads remain in Session files. The question is not submitted, and
 the retry asks only for the files that did not upload. Remove unused uploads to
 free session capacity.

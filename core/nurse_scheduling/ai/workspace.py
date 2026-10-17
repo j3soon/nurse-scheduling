@@ -137,6 +137,8 @@ class SandboxAttachment:
     media_type: str
     data: bytes
     id: str = ""
+    # Includes the source filename and media type, before retention renames duplicate filenames.
+    request_sha256: str | None = None
 
 
 @dataclass(frozen=True)

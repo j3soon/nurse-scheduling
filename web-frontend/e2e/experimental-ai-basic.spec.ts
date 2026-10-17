@@ -47,6 +47,7 @@ function frontendOrigin(): string {
 
 async function startCancelableAiBackend(retainUploads = false) {
   let hasUpload = false;
+  let uploadId = '';
   let disconnected = false;
   let stopped = false;
   let eventResponse: ServerResponse | undefined;
@@ -99,10 +100,14 @@ async function startCancelableAiBackend(retainUploads = false) {
       });
       return;
     }
-    if (request.url === '/ai/sessions/cancel-session/uploads') {
-      if (request.method === 'POST') hasUpload = retainUploads;
+    const uploadUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
+    if (uploadUrl.pathname === '/ai/sessions/cancel-session/uploads') {
+      if (request.method === 'POST') {
+        hasUpload = retainUploads;
+        uploadId = uploadUrl.searchParams.get('upload_id')!;
+      }
       response.writeHead(request.method === 'POST' ? 201 : 200, { ...headers, 'Content-Type': 'application/json' }).end(JSON.stringify(
-        hasUpload ? [{ id: 'file-1', filename: 'ward.csv', media_type: 'text/csv', bytes: 26 }] : [],
+        hasUpload ? [{ id: uploadId, filename: 'ward.csv', media_type: 'text/csv', bytes: 26 }] : [],
       ));
       return;
     }
@@ -247,7 +252,7 @@ async function mockAiBackend(
       return;
     }
 
-    if (request.url().endsWith('/sessions/browser-session/uploads') && request.method() === 'POST') {
+    if (new URL(request.url()).pathname.endsWith('/sessions/browser-session/uploads') && request.method() === 'POST') {
       const uploadBody = request.postDataBuffer()?.toString('latin1') ?? '';
       captured.uploadBody += uploadBody;
       captured.uploadContentType = request.headers()['content-type'] ?? '';
@@ -258,8 +263,8 @@ async function mockAiBackend(
         status: 201,
         contentType: 'application/json',
         headers: corsHeaders,
-        body: JSON.stringify(filenames.map((filename, index) => ({
-          id: `file-${index + 1}`, filename, media_type: 'application/octet-stream', bytes: 1,
+        body: JSON.stringify(filenames.map(filename => ({
+          id: new URL(request.url()).searchParams.get('upload_id'), filename, media_type: 'application/octet-stream', bytes: 1,
         }))),
       });
       return;
@@ -880,18 +885,23 @@ test('shows retained uploads while the assistant response is still running', asy
 test('places uploads beside desktop chat and below mobile controls and allows removal', async ({ page }) => {
   const captured = await mockAiBackend(page, ['Workbook inspected.'], false, 'browser-ai-auth-token');
   let retained = false;
+  let uploadId = '';
   await page.route('**/ai/capabilities', route => route.fulfill({
     contentType: 'application/json',
     body: JSON.stringify({ auth: { required: true, scheme: 'bearer' }, file_attachments: { enabled: true, retained: true, max_files: 8, max_bytes_per_file: 5000000, max_bytes_per_session: 200_000_000 } }),
   }));
-  await page.route('**/ai/sessions/*/uploads', route => {
-    if (route.request().method() === 'POST') retained = true;
+  await page.route(/\/ai\/sessions\/[^/]+\/uploads(?:\?.*)?$/, route => {
+    if (route.request().method() === 'POST') {
+      retained = true;
+      uploadId = new URL(route.request().url()).searchParams.get('upload_id')!;
+    }
     return route.fulfill({
-      contentType: 'application/json', body: JSON.stringify(retained ? [{ id: 'file-1', filename: 'ward.csv', media_type: 'text/csv', bytes: 26 }] : []),
+      contentType: 'application/json', body: JSON.stringify(retained ? [{ id: uploadId, filename: 'ward.csv', media_type: 'text/csv', bytes: 26 }] : []),
     });
   });
-  await page.route('**/ai/sessions/*/uploads/file-1', route => {
+  await page.route('**/ai/sessions/*/uploads/*', route => {
     expect(route.request().method()).toBe('DELETE');
+    expect(route.request().url()).toContain(`/uploads/${uploadId}`);
     retained = false;
     return route.fulfill({ status: 204 });
   });

@@ -2489,11 +2489,8 @@ describe('ExperimentalAiPage', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByRole('button', { name: 'Remove existing.txt' });
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument());
-    // A retry must not treat uploads that the chat already had as copies of this file.
-    const knownUploadIds: string[][] = [];
     mockUploadFile.mockImplementation(async (_sessionId: string, file: File, _signal: AbortSignal, _authToken: string | null,
-      _endpoint: string, known: ReadonlySet<string>) => {
-      knownUploadIds.push([...known]);
+      _endpoint: string) => {
       return [{ id: file.name, filename: file.name, media_type: 'text/plain', bytes: file.size }];
     });
     const files = ['one.txt', 'two.txt', 'three.txt'].map(name => new File(['abc'], name));
@@ -2502,7 +2499,6 @@ describe('ExperimentalAiPage', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(mockSendMessage).toHaveBeenCalledTimes(2));
     expect(mockUploadFile.mock.calls.map(call => (call[1] as File).name)).toEqual(['one.txt', 'two.txt', 'three.txt']);
-    expect(knownUploadIds).toEqual([['existing'], ['existing', 'one.txt'], ['existing', 'one.txt', 'two.txt']]);
   });
 
   it('keeps successful uploads visible when a later upload fails', async () => {

@@ -19,6 +19,8 @@
 
 # This file is mostly AI generated.
 
+import hashlib
+import json
 import math
 import time
 from collections.abc import Callable, Sequence
@@ -45,6 +47,13 @@ SESSION_RETENTION_LIMIT_MESSAGE = "The AI service has reached its session text a
 def _text_bytes(value: str) -> int:
     """Return the UTF-8 byte count of retained text, excluding inline image data."""
     return len(value.encode("utf-8"))
+
+
+def _upload_revision(upload: SandboxAttachment) -> str:
+    """Identify the complete source file, including its original metadata."""
+    digest = hashlib.sha256(json.dumps([upload.filename, upload.media_type]).encode())
+    digest.update(upload.data)
+    return digest.hexdigest()
 
 
 def _receipt_bytes(receipt: AcceptedMessage) -> int:
@@ -393,10 +402,26 @@ class SessionStore:
         self._recount(session)
 
     def retain_uploads(
-        self, session_id: str, owner_token: str | None, uploads: Sequence[SandboxAttachment]
+        self,
+        session_id: str,
+        owner_token: str | None,
+        uploads: Sequence[SandboxAttachment],
+        *,
+        upload_id: str | None = None,
     ) -> tuple[SandboxAttachment, ...]:
         """Retain new uploads between runs without replacing a file a message may reference."""
         session = self._get_owned(session_id, owner_token)
+        request_sha256 = None
+        if upload_id is not None:
+            if len(uploads) != 1:
+                raise HTTPException(status_code=422, detail="An upload ID must identify exactly one file.")
+            request_sha256 = _upload_revision(uploads[0])
+            if previous := session.uploads.get(upload_id):
+                if previous.request_sha256 != request_sha256:
+                    raise HTTPException(status_code=409, detail="The upload ID was already used for a different file.")
+                # A known retry changes no files, so it remains safe while a run reads them.
+                session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
+                return (previous,)
         session.require_idle("uploading files")
         if len(session.uploads) + len(uploads) > self._settings.max_attachment_files:
             raise HTTPException(status_code=413, detail="Too many retained files. Remove unused uploads first.")
@@ -410,7 +435,9 @@ class SessionStore:
         for upload in uploads:
             filename = _unique_filename(upload.filename, filenames)
             filenames.add(filename)
-            retained.append(replace(upload, filename=filename, id=str(uuid4())))
+            retained.append(
+                replace(upload, filename=filename, id=upload_id or str(uuid4()), request_sha256=request_sha256)
+            )
         event = upload_event(retained, len(session.uploads) + 1)
         self._require_capacity(sum(len(upload.data) for upload in retained) + _text_bytes(event))
         session.add_uploads(retained, event)

@@ -870,10 +870,12 @@ export async function uploadFiles(
   authToken: string | null,
   endpoint = getAiBaseUrl(),
   signal?: AbortSignal,
+  uploadId?: string,
 ): Promise<UploadedFile[]> {
   const form = new FormData();
   files.forEach(file => form.append('files', file, file.name));
-  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/uploads`, {
+  const suffix = uploadId ? `?upload_id=${encodeURIComponent(uploadId)}` : '';
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/uploads${suffix}`, {
     method: 'POST', credentials: 'include', headers: authorizedHeaders(authToken), body: form, signal,
   });
   if (!response.ok) throw await responseError(response);
@@ -884,8 +886,8 @@ const UPLOAD_ATTEMPTS = 4;
 
 /**
  * Upload one file, and retry connection failures and server errors before the caller asks the
- * user to retry. Upload requests are not idempotent, so each retry first lists the chat's uploads.
- * An upload outside `knownUploadIds` with the file's size is a copy that a lost response hid.
+ * user to retry. Every attempt uses the same upload ID, so the server returns the retained
+ * file when an earlier attempt succeeded but its response was lost.
  */
 export async function uploadFile(
   sessionId: string,
@@ -893,16 +895,15 @@ export async function uploadFile(
   signal: AbortSignal,
   authToken: string | null,
   endpoint = getAiBaseUrl(),
-  knownUploadIds: ReadonlySet<string> = new Set(),
 ): Promise<UploadedFile[]> {
+  const uploadId = crypto.randomUUID();
   for (let attempt = 1; ; attempt++) {
     try {
-      if (attempt > 1) {
-        const stored = (await getUploads(sessionId, authToken, endpoint, signal))
-          .find(upload => !knownUploadIds.has(upload.id) && upload.bytes === file.size);
-        if (stored) return [stored];
+      const uploaded = await uploadFiles(sessionId, [file], authToken, endpoint, signal, uploadId);
+      if (uploaded.length !== 1 || uploaded[0].id !== uploadId) {
+        throw new Error('The AI backend returned a different upload ID.');
       }
-      return await uploadFiles(sessionId, [file], authToken, endpoint, signal);
+      return uploaded;
     } catch (error) {
       // fetch rejects with a TypeError when the connection fails.
       const retryable = error instanceof TypeError || (error instanceof AiHttpError && error.status >= 500);

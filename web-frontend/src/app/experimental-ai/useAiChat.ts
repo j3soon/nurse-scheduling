@@ -249,7 +249,6 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   const conversationStorageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const persistConversationRef = useRef<(() => void) | null>(null);
   const checkedSessionRef = useRef<string | null>(null);
-  const uploadedFilesRef = useRef(uploadedFiles);
   const resetRuntime = useCallback(() => {
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
@@ -276,9 +275,8 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
 
   useEffect(() => {
     scheduleYamlRef.current = scheduleYaml;
-    uploadedFilesRef.current = uploadedFiles;
     sessionRetentionSecondsRef.current = sessionRetentionSeconds;
-  }, [scheduleYaml, uploadedFiles, sessionRetentionSeconds]);
+  }, [scheduleYaml, sessionRetentionSeconds]);
 
   useEffect(() => {
     if (!isClientReady) return;
@@ -823,12 +821,10 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       controller.signal.addEventListener('abort', aborted, { once: true });
       try {
         if (attachmentsForMessage.length > 0) {
-          const knownUploadIds = new Set(uploadedFilesRef.current.map(file => file.id));
           for (const [index, file] of attachmentsForMessage.entries()) {
             if (currentRequest.stopped) break;
-            const uploaded = await uploadFile(sessionId, file, controller.signal, authToken, sessionEndpoint, knownUploadIds);
+            const uploaded = await uploadFile(sessionId, file, controller.signal, authToken, sessionEndpoint);
             if (!lifecycle.owns(operation)) return;
-            uploaded.forEach(upload => knownUploadIds.add(upload.id));
             setUploadedFiles(previous => [...previous, ...uploaded]);
             const pendingFiles = attachmentsForMessage.slice(index + 1).map(pending => pending.name);
             request.pendingFiles = pendingFiles;

@@ -618,6 +618,7 @@ def create_app(
         request: Request,
         response: Response,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+        upload_id: UUID | None = None,
     ) -> list[dict[str, str | int]]:
         """Retain source files for later messages and return their metadata."""
         store.require_owned(session_id, owner)
@@ -627,7 +628,7 @@ def create_app(
             uploads = await _parse_upload_request(request, settings)
         finally:
             release()
-        retained = store.retain_uploads(session_id, owner, uploads)
+        retained = store.retain_uploads(session_id, owner, uploads, upload_id=str(upload_id) if upload_id else None)
         await recovery.save(session_id)
         refresh_owner_cookie(response, owner)
         return [_upload_metadata(item) for item in retained]

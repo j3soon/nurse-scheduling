@@ -3092,6 +3092,88 @@ def test_session_attachment_total_counts_existing_files_and_releases_removed_byt
     ).is_success
 
 
+def test_upload_request_id_retries_preserve_the_original_file_at_the_session_limit():
+    app = create_test_app(
+        settings=make_settings(max_attachment_files=2, max_attachment_total_bytes=6), provider=FakeProvider()
+    )
+    client = AuthenticatedTestClient(app)
+    session_id = create_session(client)
+    route = f"/sessions/{session_id}/uploads"
+    payload = {"files": ("ward.txt", b"abc", "text/plain")}
+    assert client.post(route, files=payload).status_code == 201
+    upload_id = str(uuid4())
+    first = client.post(route, params={"upload_id": upload_id}, files=payload)
+    assert first.status_code == 201
+    assert first.json()[0]["id"] == upload_id
+    assert first.json()[0]["filename"] == "ward (1).txt"
+    retained_bytes = app.state.session_store._retained_bytes
+    second = client.post(route, params={"upload_id": upload_id}, files=payload)
+    assert second.status_code == 201
+    assert second.json() == first.json()
+    assert app.state.session_store._retained_bytes == retained_bytes
+    assert len(app.state.session_store.get(session_id).uploads) == 2
+    assert len(app.state.session_store.get(session_id).transcript) == 2
+    snapshot = app.state.session_store.begin(session_id, client.cookies[OWNER_COOKIE])
+    try:
+        replay = client.post(route, params={"upload_id": upload_id}, files=payload)
+        assert replay.status_code == 201
+        assert replay.json() == first.json()
+        assert app.state.session_store.get(session_id).active
+    finally:
+        app.state.session_store.abort(session_id, snapshot)
+
+
+def test_concurrent_upload_retries_retain_one_file():
+    async def exercise():
+        app = create_test_app(
+            settings=make_settings(max_attachment_files=1, max_attachment_total_bytes=3), provider=FakeProvider()
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver", headers=AI_AUTH_HEADERS
+        ) as client:
+            session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
+            upload_id = str(uuid4())
+            route = f"/sessions/{session_id}/uploads?upload_id={upload_id}"
+            responses = await asyncio.gather(
+                *[client.post(route, files={"files": ("ward.txt", b"abc", "text/plain")}) for _ in range(2)]
+            )
+            assert [response.status_code for response in responses] == [201, 201]
+            assert responses[0].json() == responses[1].json()
+            assert len(app.state.session_store.get(session_id).uploads) == 1
+            assert len(app.state.session_store.get(session_id).transcript) == 1
+
+    asyncio.run(exercise())
+
+
+def test_upload_id_requires_one_file_and_a_valid_uuid():
+    client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
+    session_id = create_session(client)
+    route = f"/sessions/{session_id}/uploads"
+    files = [("files", (name, b"abc", "text/plain")) for name in ("one.txt", "two.txt")]
+    assert client.post(route, params={"upload_id": str(uuid4())}, files=files).status_code == 422
+    assert client.post(route, params={"upload_id": "invalid"}, files=files[:1]).status_code == 422
+    assert client.get(route).json() == []
+
+
+@pytest.mark.parametrize(
+    "filename,content,media_type",
+    [
+        ("other.txt", b"abc", "text/plain"),
+        ("ward.txt", b"def", "text/plain"),
+        ("ward.txt", b"abc", "text/csv"),
+    ],
+)
+def test_upload_request_id_rejects_different_file_identity(filename, content, media_type):
+    client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
+    session_id = create_session(client)
+    route = f"/sessions/{session_id}/uploads?upload_id={uuid4()}"
+    original = client.post(route, files={"files": ("ward.txt", b"abc", "text/plain")})
+    assert original.status_code == 201
+    conflict = client.post(route, files={"files": (filename, content, media_type)})
+    assert conflict.status_code == 409
+    assert client.get(f"/sessions/{session_id}/uploads").json() == original.json()
+
+
 def test_chunked_upload_body_is_bounded_before_the_whole_file_is_spooled():
     async def exercise():
         app = create_test_app(

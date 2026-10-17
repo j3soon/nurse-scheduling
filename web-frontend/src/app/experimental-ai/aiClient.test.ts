@@ -544,31 +544,46 @@ describe('AI client', () => {
       .rejects.toThrow('Too many retained files.');
   });
 
-  it('retries an upload and reuses a copy that a lost response stored', async () => {
+  it('retries the same upload ID without substituting a same-size retained file', async () => {
     vi.useFakeTimers();
     try {
       const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+      const uploadId = '00000000-0000-4000-8000-000000000001';
+      vi.spyOn(crypto, 'randomUUID').mockReturnValue(uploadId);
       const fetchMock = vi.fn()
         .mockRejectedValueOnce(new TypeError('Failed to fetch'))
-        .mockResolvedValueOnce(json([]))
         .mockResolvedValueOnce(json({ detail: 'The AI service is shutting down.' }, 503))
         .mockResolvedValueOnce(json([
-          { id: 'earlier', filename: 'ward.png', media_type: 'image/png', bytes: 3 },
-          { id: 'stored', filename: 'ward (1).png', media_type: 'image/png', bytes: 3 },
-        ]));
+          { id: uploadId, filename: 'ward (1).png', media_type: 'image/png', bytes: 3 },
+        ]))
+        // Listing uploads would expose an unrelated same-size file. No attempt should use it.
+        .mockImplementation(async (_url: string, request: RequestInit) => json(request.method === 'GET'
+          ? [{ id: 'earlier', filename: 'old.txt', media_type: 'text/plain', bytes: 3 }] : []));
       vi.stubGlobal('fetch', fetchMock);
 
       const uploaded = uploadFile(
-        'session-id', new File(['png'], 'ward.png'), new AbortController().signal, null, undefined, new Set(['earlier']),
+        'session-id', new File(['png'], 'ward.png'), new AbortController().signal, null,
       );
       await vi.runAllTimersAsync();
 
-      await expect(uploaded).resolves.toEqual([{ id: 'stored', filename: 'ward (1).png', media_type: 'image/png', bytes: 3 }]);
+      await expect(uploaded).resolves.toEqual([{ id: uploadId, filename: 'ward (1).png', media_type: 'image/png', bytes: 3 }]);
       expect(fetchMock.mock.calls.map(([, request]) => (request as RequestInit).method ?? 'GET'))
-        .toEqual(['POST', 'GET', 'POST', 'GET']);
+        .toEqual(['POST', 'POST', 'POST']);
+      expect(new Set(fetchMock.mock.calls.map(([url]) => String(url)))).toEqual(new Set([
+        `https://api.nursescheduling.org/ai/sessions/session-id/uploads?upload_id=${uploadId}`,
+      ]));
     } finally {
+      vi.restoreAllMocks();
       vi.useRealTimers();
     }
+  });
+
+  it('rejects a response for a different upload ID', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify([
+      { id: 'another-upload', filename: 'one.txt', media_type: 'text/plain', bytes: 3 },
+    ]))));
+    await expect(uploadFile('session-id', new File(['abc'], 'one.txt'), new AbortController().signal, null))
+      .rejects.toThrow('different upload ID');
   });
 
   it('stops retrying an upload after a client error or the last attempt', async () => {
