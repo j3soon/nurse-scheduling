@@ -20,6 +20,7 @@
 # This file is mostly AI generated.
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -56,6 +57,8 @@ from .system_prompt import compose_system_prompt
 logger = logging.getLogger("nurse_scheduling.ai.sandbox_agent")
 WORKSPACE_SCHEDULE = f"/workspace/{SCHEDULE_FILENAME}"
 WORKSPACE_ATTACHMENTS = "/workspace/attachments"
+WORKSPACE_ANALYSIS = "/workspace/analysis.md"
+MAX_ANALYSIS_BYTES = 64 * 1024
 REFERENCE_SCHEMAS = {group: f"/reference/{path.name}" for group, path in SCHEMA_REFERENCE_FILES.items()}
 REFERENCE_SCHEMAS["taiwan-holidays"] = f"/reference/{TAIWAN_HOLIDAYS_SOURCE.name}"
 REFERENCE_USER_GUIDE = "/reference/user-guide"
@@ -89,6 +92,14 @@ def inspection_helper_catalog() -> str:
 
 
 SANDBOX_SYSTEM_PROMPT = compose_system_prompt()
+
+
+@dataclass(frozen=True)
+class AgentAnalysis:
+    """Bounded untrusted notes tied to the inputs that were analyzed."""
+
+    source_sha256: str
+    content: bytes
 
 
 @dataclass(frozen=True)
@@ -139,6 +150,15 @@ class SandboxAttachment:
     id: str = ""
     # Includes the source filename and media type, before retention renames duplicate filenames.
     request_sha256: str | None = None
+
+
+def analysis_source_sha256(schedule_yaml: str, attachments: Sequence[SandboxAttachment]) -> str:
+    """Identify the exact schedule and upload paths and bytes for reusable analysis."""
+    sources = [
+        (attachment_path(item, index), item.media_type, hashlib.sha256(item.data).hexdigest())
+        for index, item in enumerate(attachments, start=1)
+    ]
+    return hashlib.sha256(json.dumps([schedule_yaml, sources], ensure_ascii=False).encode()).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -196,6 +216,7 @@ async def _measured_sandbox_run(
     attachments: Sequence[SandboxAttachment],
     optimizer_result: bytes | None,
     optimizer_context: bytes | None,
+    analysis: AgentAnalysis | None = None,
 ) -> AsyncIterator[SandboxBackend]:
     """Create, hydrate, and measure a sandbox only when a tool needs it."""
     stack = AsyncExitStack()
@@ -208,6 +229,7 @@ async def _measured_sandbox_run(
         attachments,
         optimizer_result,
         optimizer_context,
+        analysis,
     )
     try:
         async with stack:
@@ -232,6 +254,7 @@ class _LazySandboxRun:
         attachments: Sequence[SandboxAttachment],
         optimizer_result: bytes | None,
         optimizer_context: bytes | None,
+        analysis: AgentAnalysis | None = None,
     ) -> None:
         self._factory = factory
         self._cleanup_timeout_seconds = cleanup_timeout_seconds
@@ -241,6 +264,7 @@ class _LazySandboxRun:
         self._attachments = tuple(attachments)
         self._optimizer_result = optimizer_result
         self._optimizer_context = optimizer_context
+        self._analysis = analysis
         self._sandbox: SandboxBackend | None = None
         self._hydrated = False
         self._start_lock = asyncio.Lock()
@@ -278,6 +302,7 @@ class _LazySandboxRun:
                     self._attachments,
                     self._optimizer_result,
                     self._optimizer_context,
+                    self._analysis,
                 )
                 self._hydrated = True
             return self._sandbox
@@ -353,10 +378,18 @@ async def hydrate_sandbox(
     attachments: Sequence[SandboxAttachment] = (),
     optimizer_result: bytes | None = None,
     optimizer_context: bytes | None = None,
+    analysis: AgentAnalysis | None = None,
 ) -> None:
     """Copy trusted application state and searchable references into one turn."""
     started = time.perf_counter()
     files: dict[str, str | bytes] = {WORKSPACE_SCHEDULE: schedule_yaml}
+    if (
+        analysis is not None
+        and analysis.content
+        and len(analysis.content) <= MAX_ANALYSIS_BYTES
+        and analysis.source_sha256 == analysis_source_sha256(schedule_yaml, attachments)
+    ):
+        files[WORKSPACE_ANALYSIS] = analysis.content
     files[REFERENCE_SCHEDULE_EXAMPLE] = load_schedule_example()
     try:
         files[WORKSPACE_SOURCE_CONTEXT] = json.dumps(

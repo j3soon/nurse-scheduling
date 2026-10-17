@@ -1174,3 +1174,49 @@ def test_required_rule_restoration_matches_preview_workspace_context_and_optimiz
         == hashlib.sha256(proposal.encode()).hexdigest()
     )
     assert proposal.count("type: at most one shift per day") == 1
+
+
+@pytest.mark.parametrize("change", [None, "schedule", "bytes", "path", "removed"])
+def test_analysis_hydration_requires_the_same_source_inputs(change):
+    from dataclasses import replace
+
+    from nurse_scheduling.ai.workspace import WORKSPACE_ANALYSIS, AgentAnalysis, analysis_source_sha256
+
+    source = schedule_yaml()
+    uploads = (SandboxAttachment("source.csv", "text/csv", b"P1,D", id="source"),)
+    notes = AgentAnalysis(analysis_source_sha256(source, uploads), b"P1 requests D. User confirmation pending.")
+    if change == "schedule":
+        source += "\n"
+    elif change == "bytes":
+        uploads = (replace(uploads[0], data=b"P1,N"),)
+    elif change == "path":
+        uploads = (replace(uploads[0], filename="renamed.csv"),)
+    elif change == "removed":
+        uploads = ()
+    backend = FakeSandboxBackend("new-workspace")
+    asyncio.run(hydrate_sandbox(backend, source, uploads, analysis=notes))
+    assert (WORKSPACE_ANALYSIS in backend.files) is (change is None)
+    if change is None:
+        assert backend.files[WORKSPACE_ANALYSIS] == notes.content
+
+
+@pytest.mark.parametrize(
+    "content",
+    [b"Mapping: black cells mean 11m.", b"x" * (65536 + 1), b"\xff"],
+    ids=["valid-notes", "oversized-notes", "invalid-utf8"],
+)
+def test_analysis_capture_is_bounded_and_does_not_execute_or_change_the_schedule(content):
+    from nurse_scheduling.ai.workspace import WORKSPACE_ANALYSIS, AgentAnalysis
+
+    def save_notes(_command, _timeout, backend):
+        backend.files[WORKSPACE_ANALYSIS] = content
+        return CommandResult("Saved notes", "", 0)
+
+    factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=save_notes))
+    events = _collect(ScriptedProvider(_run_call(), [TextDelta("Please confirm the mapping.")]), factory)
+    notes = [event for event in events if isinstance(event, AgentAnalysis)]
+    assert bool(notes) is (content.startswith(b"Mapping"))
+    if notes:
+        assert notes[0].content == content
+    assert not any(isinstance(event, AgentProposal) for event in events)
+    assert factory.created[0].files[WORKSPACE_SCHEDULE] == schedule_yaml().encode()

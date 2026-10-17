@@ -39,7 +39,10 @@ from .provider import ChatMessage, ToolCapableChatProvider
 from .sandbox import SandboxError, SandboxFactory, SandboxFileNotFoundError, SandboxFileSizeError
 from .sandbox_tools import SandboxPiTools
 from .workspace import (
+    MAX_ANALYSIS_BYTES,
+    WORKSPACE_ANALYSIS,
     WORKSPACE_SCHEDULE,
+    AgentAnalysis,
     AgentDownload,
     AgentScheduleChange,
     SandboxAttachment,
@@ -54,6 +57,7 @@ from .workspace import (
     _measured_sandbox_run,
     _read_candidate,
     _ScheduleCandidateTracker,
+    analysis_source_sha256,
 )
 
 logger = logging.getLogger("nurse_scheduling.ai.sandbox_agent")
@@ -150,7 +154,8 @@ async def run_workspace(
     optimizer_context: bytes | None = None,
     agent: Agent | None = None,
     request_clock: Callable[[], datetime] | None = None,
-) -> AsyncIterator[AgentEvent | AgentScheduleChange | AgentDownload]:
+    analysis: AgentAnalysis | None = None,
+) -> AsyncIterator[AgentEvent | AgentScheduleChange | AgentDownload | AgentAnalysis]:
     """Hydrate, run, read, validate, and destroy one fresh sandbox run."""
     agent = agent or Agent()
     metrics = metrics or WorkspaceMetrics()
@@ -164,6 +169,7 @@ async def run_workspace(
                 attachments,
                 optimizer_result,
                 optimizer_context,
+                analysis,
             ) as sandbox:
                 toolset = WorkspaceTools(sandbox, schedule_yaml, limits, execute_optimizer)
                 events = agent.prompt(
@@ -213,6 +219,16 @@ async def run_workspace(
                     except ValueError as exc:
                         raise SandboxDownloadValidationError(str(exc)) from exc
                     yield AgentDownload(download)
+                try:
+                    notes = await sandbox.read_file(WORKSPACE_ANALYSIS, max_bytes=MAX_ANALYSIS_BYTES)
+                    notes.decode("utf-8")
+                    if len(notes) > MAX_ANALYSIS_BYTES:
+                        notes = b""
+                except (SandboxError, UnicodeDecodeError):
+                    # Notes are an optional cache. Never fail an otherwise valid run for it.
+                    notes = b""
+                if notes or analysis is not None:
+                    yield AgentAnalysis(analysis_source_sha256(schedule_yaml, attachments), notes)
                 if review.proposal is not None:
                     yield AgentProposal(review.proposal.text, review.proposal.diff.render())
     except TimeoutError as exc:

@@ -1244,5 +1244,41 @@
         "note": "Historical adjacent comparison held evidence-strength fixed before its removal. Three repetitions and four jobs. Natural onboarding and both policy controls pass 3/3 in both arms. Fact-only generated tokens decrease 39.2% in that historical context. These measurements do not establish a cost gain for the current prompt. Arithmetic and solver-result grounding remain separate risks."
       }
     ]
+  },
+  {
+    "id": "reusable-analysis",
+    "file": "steps/reusable-analysis.md",
+    "cases": [
+      "workbook-retained-analysis",
+      "workbook-retained-analysis-correction",
+      "reread-retained-upload"
+    ],
+    "hypothesis": "Preserves and uses source-bound workbook analysis across fresh workspaces, while respecting corrected mappings and retrieving previously unread facts.",
+    "sha256": "6442e556ee7923bfbb97bdf2f25cfc70694fc60fc6fce64f8761336efb0feff9",
+    "evidence": [
+      {
+        "case": "workbook-retained-analysis",
+        "input_sha256": "643a54ca34645b8cbb68afc1ad090954247ee3c38175f368650a5662bbd79341",
+        "before": "0/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "reread-retained-upload",
+            "input_sha256": "587a59f04e4c10d6a6153f70da0969f02489728c0c05008f368ce374afaa4aea",
+            "before": "3/3",
+            "after": "3/3"
+          },
+          {
+            "case": "workbook-retained-analysis-correction",
+            "input_sha256": "8e6e10c2937f9eaa5c21c0f94b4a42e83835b1d5cfd515bb70b684f6f416192e",
+            "before": "0/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Adjacent prefixes, three repetitions, four concurrent jobs with live provider and E2B. Both retained-analysis mappings improved from 0/3 to 3/3. The unread-data control passed 3/3 on both sides after its unstable ZIP timestamps were fixed and both arms rerun. Unchanged witness attempts and the new control were combined with verified per-case fingerprints. Notes are source-bound live-session memory, not policy or approval. File and shell reads of saved content are accepted. Earlier ambiguous questions, derived-value mistakes, a tool-specific false negative and interrupted attempts remain local diagnostics. No constructor-reliability or latency claim."
+      }
+    ]
   }
 ]

@@ -62,10 +62,7 @@ def _xlsx() -> bytes:
     hidden = workbook.create_sheet("Night assignment")
     hidden.append(["Field", "Value"])
     hidden.append(["handover code", "NIGHT OWL 7429"])
-    output = BytesIO()
-    workbook.save(output)
-    workbook.close()
-    return output.getvalue()
+    return _stable_workbook(workbook)
 
 
 def _history_workbook(reverse: bool = False) -> bytes:

@@ -3316,3 +3316,27 @@ def test_chunked_upload_body_is_bounded_before_the_whole_file_is_spooled():
             assert (await client.get(f"/sessions/{session_id}/uploads")).json() == accepted.json()
 
     asyncio.run(exercise())
+
+
+def test_analysis_notes_survive_two_messages_in_separate_workspaces():
+    from nurse_scheduling.ai.workspace import WORKSPACE_ANALYSIS
+
+    notes = "Confirmed source mapping: black cells mean 11m."
+    save = ToolCallRequest((ToolCall("save", "write", json.dumps({"path": WORKSPACE_ANALYSIS, "content": notes})),))
+    read = ToolCallRequest((ToolCall("reuse", READ_TOOL, json.dumps({"path": WORKSPACE_ANALYSIS})),))
+    provider = ScriptedToolProvider([save], [TextDelta("Please confirm.")], [read], [TextDelta("Used the mapping.")])
+    factory = FakeSandboxFactory()
+    app = create_test_app(settings=make_settings(), provider=provider, sandbox_factory=factory)
+    with AuthenticatedTestClient(app) as client:
+        sid = create_session(client)
+        first = client.post(f"/sessions/{sid}/messages", json={"message": "Inspect the source."})
+        assert first.status_code == 200
+        session = app.state.session_store._sessions[sid]
+        assert session.analysis.content == notes.encode()
+        second = client.post(f"/sessions/{sid}/messages", json={"message": "Confirmed. Continue."})
+        assert second.status_code == 200
+        assert "Used the mapping." in second.text
+        assert len(factory.created) == 2
+        assert factory.created[0].closed and factory.created[1].closed
+        assert factory.created[1].files[WORKSPACE_ANALYSIS] == notes.encode()
+        assert notes in second.text

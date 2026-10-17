@@ -27,7 +27,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from .transcript import AgentMessage
-from .workspace import SandboxAttachment
+from .workspace import AgentAnalysis, SandboxAttachment
 
 # Each run publishes exactly one of these, after its cleanup, whichever transport carries it.
 TERMINAL_EVENTS = frozenset({"done", "stopped", "stale", "error"})
@@ -45,6 +45,7 @@ class RunSnapshot:
     # Uploads cannot change while a run is active, so this stays valid for the whole run.
     uploads: tuple[SandboxAttachment, ...] = ()
     frontend_timezone: str = "UTC"
+    analysis: AgentAnalysis | None = None
 
 
 @dataclass(eq=False)

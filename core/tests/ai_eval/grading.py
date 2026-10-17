@@ -367,6 +367,7 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         "current-time-context",
         "optimizer-download",
         "qualified-staffing",
+        "retained-analysis",
     }:
         raise EvalCaseError(f"{source} has an unknown semantic_check.")
     proposal_turn, proposal_turns = _proposal_turns(
@@ -450,6 +451,7 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
             "optimizer-inputs-preserved",
             "current-time-context",
             "optimizer-download",
+            "retained-analysis",
         }
     ):
         raise EvalCaseError(f"{source} expects no proposal, so its schedule criteria can never run.")
@@ -717,6 +719,8 @@ def grade(case: EvalCase, outcome: RunOutcome, computed: dict[str, Any] | None =
         checks.append(_check_nothing_else_changed(outcome, case.changes))
         if case.semantic_check == "qualified-staffing":
             checks.append(_check_staffing_contract(case, outcome))
+    if case.semantic_check == "retained-analysis":
+        checks.append(_check_retained_analysis(outcome.activity))
     if case.semantic_check == "yaml-generator":
         checks.extend(_check_yaml_generator(outcome.activity))
     if case.semantic_check == "optimizer-start-source":
@@ -1039,6 +1043,28 @@ def _check_vm_clock_queries(activity: Sequence[dict[str, Any]]) -> list[CheckRes
         if python_clock or shell_clock:
             queries.append(command)
     return [CheckResult("does not query the VM clock", not queries, repr(queries) if queries else "")]
+
+
+def _check_retained_analysis(activity: Sequence[dict[str, Any]]) -> CheckResult:
+    """Accept either a file read or a shell read that returns saved note contents."""
+    turn = 0
+    saved_turn = 0
+    prefix = ""
+    for event in activity:
+        if event.get("kind") in {"user", "optimizer"}:
+            turn = event.get("turn", turn)
+        elif event.get("kind") == "analysis":
+            prefix, saved_turn = event.get("prefix", ""), turn
+        elif (
+            event.get("kind") == "tool"
+            and event.get("ok") is True
+            and event.get("name") in {"read", "bash"}
+            and turn > saved_turn
+            and prefix
+            and prefix in event.get("result", "")
+        ):
+            return CheckResult("receives retained analysis contents on a later turn", True)
+    return CheckResult("receives retained analysis contents on a later turn", False)
 
 
 def semantic_trajectory_failures(case: EvalCase, activity: Sequence[dict[str, Any]]) -> tuple[CheckResult, ...]:

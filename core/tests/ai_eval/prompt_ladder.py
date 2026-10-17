@@ -204,6 +204,10 @@ def case_digest(case: EvalCase) -> str:
         from .grading import _check_vm_clock_queries
 
         fields["clock_query_oracle_sha256"] = oracle_sha256(_check_vm_clock_queries)
+    if case.semantic_check == "retained-analysis":
+        from .grading import _check_retained_analysis
+
+        fields["retained_analysis_oracle_sha256"] = oracle_sha256(_check_retained_analysis)
     if case.semantic_check == "qualified-staffing":
         from nurse_scheduling.preference_types import staffing_expression
 

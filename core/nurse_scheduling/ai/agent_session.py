@@ -66,6 +66,7 @@ from .transcript import (
     UserMessage,
 )
 from .workspace import (
+    AgentAnalysis,
     SandboxAttachment,
     SandboxCandidateError,
     SandboxCommandTimeoutError,
@@ -254,6 +255,7 @@ class AgentSession:
     # Retained source files keyed by upload ID, in upload order, and generated ZIPs keyed by run ID.
     uploads: dict[str, SandboxAttachment] = field(default_factory=dict)
     downloads: dict[str, bytes] = field(default_factory=dict)
+    analysis: AgentAnalysis | None = None
     # Last owner access, which orders eviction. A restored session keeps its stored expiry.
     last_used: float = field(default_factory=time.monotonic)
     latest_message: AcceptedMessage | None = None
@@ -332,7 +334,7 @@ class AgentSession:
     ) -> "AgentSession":
         """Rebuild a session from `recovery_state` and its saved conversation entries.
 
-        Uploads, downloads, and optimizer results are not saved.
+        Uploads, downloads, optimizer results and analysis notes are not saved.
         """
         return cls(
             id=session_id,
@@ -515,6 +517,7 @@ class AgentSession:
             run_id=run_id,
             uploads=tuple(self.uploads.values()),
             frontend_timezone=self.frontend_timezone,
+            analysis=self.analysis,
         )
         return self.snapshot
 
@@ -533,7 +536,9 @@ class AgentSession:
         if self.version != snapshot.version:
             return RunCompletion(False, False)
         self.transcript.extend(entries)
+        self.analysis = snapshot.analysis if snapshot.analysis and snapshot.analysis.content else None
         if schedule_yaml is not None:
+            self.analysis = None
             self.schedule_yaml = schedule_yaml
             self.revision = schedule_revision(schedule_yaml)
         return RunCompletion(True, schedule_yaml is not None)
@@ -574,6 +579,7 @@ class AgentSession:
             return
         data_changed = _schedule_data(self.schedule_yaml) != _schedule_data(schedule_yaml)
         self.version += 1
+        self.analysis = None
         self.schedule_yaml = schedule_yaml
         self.revision = schedule_revision(schedule_yaml)
         if data_changed:
@@ -586,6 +592,7 @@ class AgentSession:
 
     def add_uploads(self, uploads: Sequence[SandboxAttachment], event: str) -> None:
         """Retain uploads with their IDs assigned and record their `upload_event` once in history."""
+        self.analysis = None
         self.uploads.update((upload.id, upload) for upload in uploads)
         self._add_entry(AppEventEntry(event))
 
@@ -595,6 +602,7 @@ class AgentSession:
             raise HTTPException(status_code=404, detail="The uploaded file is no longer available.")
         index = list(self.uploads).index(upload_id) + 1
         upload = self.uploads.pop(upload_id)
+        self.analysis = None
         self._add_entry(AppEventEntry(removal_event(upload, index)))
         return upload
 
@@ -670,6 +678,7 @@ class AgentSession:
                     runtime.session_optimizer, self.id, current_yaml, arguments, self.client_address
                 ),
                 attachments=snapshot.uploads,
+                analysis=snapshot.analysis,
                 optimizer_result=artifact.content if artifact is not None else None,
                 optimizer_context=artifact.schedule_context if artifact is not None else None,
                 agent=self.agent,
@@ -700,6 +709,8 @@ class AgentSession:
         # begins. Stop must not turn a committed answer into a stopped response
         # while its history write is still pending.
         run.finishing = True
+        if output.analysis is not None:
+            snapshot.analysis = output.analysis
         completion = store.finish(
             self.id,
             retained_entries(entries),

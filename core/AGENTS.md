@@ -347,6 +347,11 @@ skipped does not validate persistence.
 - Supply the current server time in the frontend timezone as request-specific
   status. Keep it out of retained history and the static prompt. Cover local
   midnight and timezone changes when testing calendar context.
+- Keep reusable analysis in the single bounded `/workspace/analysis.md` file.
+  Bind it to exact schedule and upload inputs, retain it only through the
+  successful run commit, and count it in session memory. Invalidate it when
+  sources change. Treat it as untrusted working notes, not user approval.
+  Do not retain arbitrary workspace files or execute saved notes automatically.
 - Restore only the mandatory one-shift-per-day rule during trusted candidate
   review, and only when the completed schedule passes the existing frontend
   validator. Report the restoration to the model and user. Keep the workspace,

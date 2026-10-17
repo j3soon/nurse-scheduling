@@ -2165,3 +2165,35 @@ def test_summary_cause_oracle_distinguishes_affirmative_claims_from_uncertainty(
         {"kind": "optimizer", "turn": 2},
     ]
     assert grade(case, RunOutcome(answer=answer, activity=activity)).passed is passed
+
+
+@pytest.mark.parametrize("corrected", [False, True])
+@pytest.mark.parametrize("method", ["read", "bash"])
+@pytest.mark.parametrize("defect", [None, "missing-read", "failed-read", "wrong-weight", "existence-only"])
+def test_retained_analysis_cases_require_real_reuse_and_current_mapping(corrected, method, defect):
+    case_id = "workbook-retained-analysis-correction" if corrected else "workbook-retained-analysis"
+    case = next(c for c in load_cases(CASES_PATH) if c.id == case_id)
+    prefix = "Source mapping: Ada history OFF, Bela history E,E."
+    activity = [
+        {"kind": "user", "turn": 1},
+        {"kind": "tool", "name": "bash", "ok": True},
+        {"kind": "analysis", "prefix": prefix},
+        {"kind": "user", "turn": 2},
+    ]
+    if defect != "missing-read":
+        activity.append(
+            {
+                "kind": "tool",
+                "name": method,
+                "ok": defect != "failed-read",
+                "result": "file exists" if defect == "existence-only" else prefix,
+            }
+        )
+    weight = 22000000 if corrected else 11000000
+    if defect == "wrong-weight":
+        weight = 11000000 if corrected else 22000000
+    answer = json.dumps({"adaHistory": ["OFF"], "belaHistory": ["E", "E"], "belaOffWeight": weight})
+    outcome = RunOutcome(
+        answer=answer, activity=activity, intermediate_answers=["Inspection complete. Awaiting confirmation."]
+    )
+    assert grade(case, outcome).passed is (defect is None)

@@ -87,6 +87,7 @@ from nurse_scheduling.ai.transcript import (
 from nurse_scheduling.ai.workspace import (
     REFERENCE_ATTACHMENT_TOOLS,
     SANDBOX_SYSTEM_PROMPT,
+    AgentAnalysis,
     AgentDownload,
     SandboxCommandTimeoutError,
     SandboxDownloadValidationError,
@@ -353,6 +354,7 @@ async def run_case(
     tools: list[str] = []
     events: list[dict[str, Any]] = []
     proposal_event: AgentProposal | None = None
+    analysis: AgentAnalysis | None = None
     turn_actions = {action.after_turn: action for action in case.turn_actions}
     sandbox_metrics = WorkspaceMetrics()
     tool_batch_metrics: list[AgentToolBatchMetrics] = []
@@ -490,6 +492,7 @@ async def run_case(
                 tool_batch_metrics.append,
                 execute_optimizer=execute_optimizer,
                 attachments=attachments,
+                analysis=analysis,
                 optimizer_result=optimizer_result,
                 optimizer_context=optimizer_context,
                 agent=agent,
@@ -547,6 +550,16 @@ async def run_case(
                                     break
                         if stopped_on_limit:
                             break
+                    elif isinstance(event, AgentAnalysis):
+                        analysis = event
+                        events.append(
+                            {
+                                "kind": "analysis",
+                                "bytes": len(event.content),
+                                "source_sha256": event.source_sha256,
+                                "prefix": event.content[:256].decode("utf-8", errors="ignore"),
+                            }
+                        )
                     elif isinstance(event, AgentDownload):
                         from io import BytesIO
                         from zipfile import ZipFile

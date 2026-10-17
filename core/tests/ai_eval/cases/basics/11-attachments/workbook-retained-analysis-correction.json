@@ -1,0 +1,48 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "id": "workbook-retained-analysis-correction",
+  "fixture": "new-schedule",
+  "attachments": [
+    "workbook-intake-xlsx"
+  ],
+  "expect_proposal": false,
+  "tags": [
+    "workbook-intake",
+    "retained-analysis"
+  ],
+  "user_turns": [
+    "Inspect the attached workbook and prepare the complete import analysis for later use. HN means head nurse, N means nurse, yellow marks a senior nurse and blue marks a freeday. These are descriptive labels. History off means OFF and 2E means E,E before November 1, 2025. A red 1 requests OFF at finite +11b, a black 1 requests OFF at finite +11m, and red D/E letters request that exact shift at finite +11b. Blank cells make no request. I will confirm this mapping before we build anything. Do not change the schedule yet. Do not list individual source facts in your reply. Reply only: Inspection complete. Awaiting confirmation.",
+    "Confirmed except black 1 should mean a finite +22m OFF request instead of +11m. Use the saved analysis without reopening the original workbook. Summarize the histories of Ada and Bela and the weight to use for Bela's November 1 OFF request. Do not build or edit yet. Reply only as JSON with adaHistory and belaHistory as arrays of shift IDs in chronological order, and belaOffWeight as a numeric finite weight."
+  ],
+  "answer_json": {
+    "adaHistory": [
+      "OFF"
+    ],
+    "belaHistory": [
+      "E",
+      "E"
+    ],
+    "belaOffWeight": 22000000
+  },
+  "turn_tool_usage": [
+    {
+      "required": [
+        "bash"
+      ]
+    },
+    null
+  ],
+  "tool_usage": {
+    "forbidden": [
+      "optimizer"
+    ]
+  },
+  "note": "This testcase is mostly AI generated. Check that a successful file or shell read returns retained source analysis in a fresh workspace and exact source facts. New user corrections override the cached mapping. The first reply omits individual source facts so retaining detailed analysis is useful rather than an unnecessary read of facts already in chat.",
+  "intermediate_answer_contains": [
+    [
+      "Inspection complete. Awaiting confirmation."
+    ]
+  ],
+  "semantic_check": "retained-analysis"
+}

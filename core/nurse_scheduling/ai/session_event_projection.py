@@ -38,7 +38,7 @@ from .context import interrupted_entries
 from .provider import TokenUsage
 from .session_events import AgentSessionEvent, AgentSessionRunEvent, AgentSessionTerminalEvent, TextEvent, ToolEndEvent
 from .transcript import AgentMessage
-from .workspace import AgentDownload, AgentScheduleChange
+from .workspace import AgentAnalysis, AgentDownload, AgentScheduleChange
 
 
 @dataclass
@@ -50,6 +50,7 @@ class RunOutput:
     pending_reasoning: list[str] = field(default_factory=list)
     proposal: AgentProposal | None = None
     download: AgentDownload | None = None
+    analysis: AgentAnalysis | None = None
     usage: TokenUsage | None = None
     # The latest provider call holds the whole request, so it shows how full the context window is.
     last_call: TokenUsage | None = None
@@ -60,7 +61,9 @@ class RunOutput:
         """End the run with Pi's interrupted assistant message, holding any partial response."""
         return interrupted_entries(entries, stop_reason)
 
-    def consume(self, event: AgentEvent | AgentScheduleChange | AgentDownload) -> AgentSessionRunEvent | None:
+    def consume(
+        self, event: AgentEvent | AgentScheduleChange | AgentDownload | AgentAnalysis
+    ) -> AgentSessionRunEvent | None:
         if isinstance(event, AgentText):
             self.pending_text.append(event.text)
             return {"type": "delta", "text": event.text}
@@ -97,6 +100,8 @@ class RunOutput:
             return {"type": "steering", "message_id": event.message_id, "message": event.text}
         elif isinstance(event, AgentScheduleChange):
             return {"type": "schedule_change", "schedule_yaml": event.schedule_yaml}
+        elif isinstance(event, AgentAnalysis):
+            self.analysis = event
         elif isinstance(event, AgentDownload):
             self.download = event
         elif isinstance(event, AgentProposal):

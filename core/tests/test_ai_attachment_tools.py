@@ -36,7 +36,7 @@ from .ai_eval.attachment_fixtures import load_attachment_fixtures
 
 
 def test_evaluation_workbooks_preserve_stale_caches_colors_and_reproducible_bytes(tmp_path: Path):
-    names = ("formula-xlsx", "colored-xlsx")
+    names = ("formula-xlsx", "colored-xlsx", "multi-sheet-xlsx")
     attachments = load_attachment_fixtures(names)
     assert [attachment.data for attachment in attachments] == [
         attachment.data for attachment in load_attachment_fixtures(names)

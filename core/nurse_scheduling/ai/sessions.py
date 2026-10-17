@@ -67,6 +67,8 @@ def _session_bytes(session: "AgentSession") -> int:
     total += sum(_receipt_bytes(receipt) for receipt in session.accepted_messages.values())
     total += sum(_text_bytes(text) for text in session.queued_steering)
     total += sum(len(upload.data) for upload in session.uploads.values())
+    if session.analysis is not None:
+        total += len(session.analysis.content) + len(session.analysis.source_sha256)
     return total + sum(map(len, session.downloads.values()))
 
 
@@ -178,6 +180,12 @@ class SessionStore:
         Raises:
             HTTPException: With status 429 when the budget is exhausted.
         """
+        for session in self._sessions.values():
+            if self._retained_bytes + additional_bytes <= self._settings.max_session_bytes:
+                break
+            if session.analysis is not None and not session.active:
+                session.analysis = None
+                self._recount(session)
         if self._retained_bytes + additional_bytes > self._settings.max_session_bytes:
             raise HTTPException(status_code=429, detail=SESSION_RETENTION_LIMIT_MESSAGE)
 
@@ -350,6 +358,9 @@ class SessionStore:
         completion = session.finish_run(snapshot, entries, schedule_yaml)
         if completion.run_saved:
             self._cap_history(session)
+            projected_bytes = self._retained_bytes - self._session_bytes[session.id] + _session_bytes(session)
+            if projected_bytes > self._settings.max_session_bytes:
+                session.analysis = None
         self._recount(session)
         if not completion.run_saved:
             return completion
