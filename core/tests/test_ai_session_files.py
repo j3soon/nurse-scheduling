@@ -234,6 +234,7 @@ def test_failed_optimizer_file_write_is_retained_and_retried(postgres_history, m
             request={"solver": "test"},
         )
         artifact = OptimizerArtifact(b"workbook", "optimized-schedule.xlsx", "application/xlsx", b"{}")
+        app.state.session_optimizer._jobs[job.id] = job
         with monkeypatch.context() as patch:
             patch.setattr(ChatHistory, "save_session", unavailable)
             assert client.portal.call(app.state.recovery.save_optimizer_result, job, artifact) is not None
@@ -247,6 +248,52 @@ def test_failed_optimizer_file_write_is_retained_and_retried(postgres_history, m
         assert app.state.session_store.retained_bytes == before - pending_bytes
         loaded = client.portal.call(app.state.recovery.load_optimizer_result, session, job.id)
         assert loaded.content == b"workbook" and loaded.schedule_context == b"{}"
+        assert not job.artifact_saved
+        latest = client.portal.call(app.state.session_optimizer.latest_result_artifact, session)
+        assert latest == loaded
+
+
+@pytest.mark.parametrize("operation", ["latest_optimizer", "load_file"])
+def test_optional_optimizer_read_failure_still_finishes_the_chat(postgres_history, monkeypatch, operation):
+    app = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test"), provider=basic.FakeProvider()
+    )
+    with basic.AuthenticatedTestClient(app) as client:
+        session = basic.create_session(client)
+        live = app.state.session_store.get(session)
+        postgres_history.save_session(
+            session,
+            app.state.session_store.recovery_state(session),
+            files=[
+                {
+                    "kind": kind,
+                    "source_id": "job",
+                    "filename": kind,
+                    "media_type": "application/octet-stream",
+                    "data": data,
+                }
+                for kind, data in [("optimizer-status", b"{}"), ("optimizer-workbook", b"workbook")]
+            ],
+        )
+        monkeypatch.setattr(ChatHistory, operation, unavailable)
+        response = client.post(
+            f"/sessions/{session}/messages",
+            headers={"Accept": "application/json"},
+            json={"message": "Continue the chat"},
+        )
+
+        async def finish():
+            async with asyncio.timeout(5):
+                while app.state.runs.busy(session):
+                    await asyncio.sleep(0.001)
+
+        client.portal.call(finish)
+        events = app.state.session_event_stream.events_after(session)
+        assert response.status_code == 202
+        assert [event.type for event in events if event.type in {"done", "error", "stopped"}] == ["done"]
+        assert not live.active
+        if operation == "load_file":
+            assert client.get(f"/sessions/{session}/optimizations/job/xlsx").status_code == 503
 
 
 def test_upgrade_keeps_existing_upload_bytes_and_metadata(uninitialized_postgres_history):

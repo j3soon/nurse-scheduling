@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 from uuid import uuid4
 
+from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from .optimizer_privacy import OptimizerResultError, prepare_optimizer_schedule, restore_people_ids
@@ -232,16 +233,22 @@ class SessionOptimizer:
 
     async def latest_result_artifact(self, session_id: str) -> OptimizerArtifact | None:
         """Return the newest finished workbook for a follow-up sandbox turn."""
-        for job in reversed(self._jobs.values()):
-            # A run that is still going has no result yet, so an older workbook
-            # remains current. A finished run without one makes every earlier
-            # workbook stale, and mounting it would misreport the latest result.
-            if job.session_id != session_id or not _is_terminal(job.payload):
-                continue
-            if job.artifact_saved and self._load_artifact is not None:
-                return await self._load_artifact(session_id, job.id)
-            return job.artifact
-        return None if self._load_artifact is None else await self._load_artifact(session_id, None)
+        try:
+            for job in reversed(self._jobs.values()):
+                # A run that is still going has no result yet, so an older workbook
+                # remains current. A finished run without one makes every earlier
+                # workbook stale, and mounting it would misreport the latest result.
+                if job.session_id != session_id or not _is_terminal(job.payload):
+                    continue
+                # A later recovery write can persist a result whose initial save failed.
+                if self._load_artifact is not None:
+                    return await self._load_artifact(session_id, job.id)
+                return job.artifact
+            return None if self._load_artifact is None else await self._load_artifact(session_id, None)
+        except HTTPException:
+            # Workbook inspection is optional. Explicit downloads still report storage errors.
+            logger.warning("Optimizer workbook could not be loaded for chat session_id=%s", session_id)
+            return None
 
     def has_unfinished_run(self, session_id: str) -> bool:
         """Report whether retiring the session would cancel one of its runs."""
