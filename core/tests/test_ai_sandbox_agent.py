@@ -1020,7 +1020,7 @@ def test_uncompilable_draft_keeps_yaml_without_a_source_context(has_result):
 def test_accepted_schedule_edits_refresh_request_inspection_context(new_schedule):
     async def check():
         base = (
-            (Path(__file__).parent / "ai_eval/fixtures/new-schedule.yaml").read_text()
+            (Path(__file__).parent / "ai_eval/fixtures/new-schedule.yaml").read_text(encoding="utf-8")
             if new_schedule
             else schedule_yaml()
         )
@@ -1118,7 +1118,7 @@ def test_unchanged_schedule_does_not_rebuild_inspection_context(monkeypatch):
 
 def test_accepted_incomplete_draft_keeps_yaml_without_inspection_context():
     async def check():
-        base = (Path(__file__).parent / "ai_eval/fixtures/new-schedule.yaml").read_text()
+        base = (Path(__file__).parent / "ai_eval/fixtures/new-schedule.yaml").read_text(encoding="utf-8")
         backend = FakeSandboxBackend("incomplete-context")
         await hydrate_sandbox(backend, base)
         tracker = _ScheduleCandidateTracker(backend, base, SCHEDULE_BYTE_LIMIT)

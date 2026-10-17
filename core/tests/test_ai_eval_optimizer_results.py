@@ -42,7 +42,7 @@ from .test_ai_eval_runner import CASE_BY_ID, FIXTURE_DIGESTS, ScriptedProvider, 
 
 
 def test_controlled_completion_exports_the_verified_assignment():
-    source = FIXTURE.read_text()
+    source = FIXTURE.read_text(encoding="utf-8")
     assert validate_frontend_schedule_yaml(source, 1_000_000).valid
     workbook, metadata = completion_result("request-audit", source)
     assert metadata["source_sha256"] == hashlib.sha256(source.encode()).hexdigest()
@@ -110,7 +110,7 @@ def test_real_optimizer_solves_without_replaying_a_fixed_assignment(tmp_path):
     assert all(row["unmet"] == 0 for row in metadata["request_audit"]["summary"])
     assert metadata["request_audit"]["policy"]["staffing"][0]["preferred_shortfall"] == 0
     assert metadata["request_audit"]["policy"]["successions"][0]["unmet"] == 0
-    assert (tmp_path / "submitted.yaml").read_text() == source
+    assert (tmp_path / "submitted.yaml").read_text(encoding="utf-8") == source
     assert load_workbook(tmp_path / "result.xlsx").active.cell(8, 5).value == "OPTIMAL"
 
 
@@ -120,7 +120,7 @@ def test_request_explanation_fixtures_distinguish_a_miss_from_a_proven_conflict(
     from .ai_eval.real_optimizer import solve
 
     name = "request-audit-conflict" if conflict else "request-audit-all-strong"
-    source = RESULT_SOURCES[name].read_text()
+    source = RESULT_SOURCES[name].read_text(encoding="utf-8")
     assert validate_frontend_schedule_yaml(source, 1_000_000).valid
     _, incumbent = completion_result(name, source)
     weak = next(row for row in incumbent["request_audit"]["summary"] if row["weight"] == 11_000_000)
@@ -256,7 +256,7 @@ def test_edit_then_optimize_grades_the_submitted_snapshot(edit_before_start):
     from nurse_scheduling.loader import _load_yaml
 
     case = CASE_BY_ID["optimizer-edit-before-start"]
-    initial = FIXTURE.read_text()
+    initial = FIXTURE.read_text(encoding="utf-8")
     updated = initial.replace("weight: 11000000}", "weight: 11000000000}")
     result = grade(
         case,
@@ -284,7 +284,7 @@ def test_optimizer_only_input_must_preserve_original_policy(alter_source):
     from nurse_scheduling.loader import _load_yaml
 
     case = CASE_BY_ID["optimizer-start-preserves-ward"]
-    source = FIXTURE.read_text()
+    source = FIXTURE.read_text(encoding="utf-8")
     submitted = source.replace("weight: 11000000000}", "weight: 11}") if alter_source else source
     result = grade(
         case,
@@ -307,8 +307,8 @@ def test_optimizer_only_input_must_preserve_original_policy(alter_source):
 def test_pending_completion_uses_the_modified_input_snapshot():
     from .ai_eval.optimizer_fixtures import RESULT_SOURCES
 
-    approved = FIXTURE.read_text()
-    pending = RESULT_SOURCES["request-audit-pending"].read_text()
+    approved = FIXTURE.read_text(encoding="utf-8")
+    pending = RESULT_SOURCES["request-audit-pending"].read_text(encoding="utf-8")
     _, approved_result = completion_result("request-audit", approved)
     _, pending_result = completion_result("request-audit-pending", pending)
     assert approved_result["source_sha256"] != pending_result["source_sha256"]
@@ -326,7 +326,7 @@ def test_multi_turn_completion_prewarms_the_expected_snapshot():
     from .ai_eval.runner import run_all
 
     case = CASE_BY_ID["optimizer-result-from-pending-proposal"]
-    pending = RESULT_SOURCES[case.optimizer_completion].read_text()
+    pending = RESULT_SOURCES[case.optimizer_completion].read_text(encoding="utf-8")
     provider = ScriptedProvider(
         [ToolCallRequest((ToolCall("write", "write", json.dumps({"path": WORKSPACE_SCHEDULE, "content": pending})),))],
         [ToolCallRequest((ToolCall("start", "optimizer", '{"action":"start","timeout_seconds":60}'),))],
@@ -340,7 +340,7 @@ def test_completion_context_matches_the_submitted_proposal():
     from .ai_eval.optimizer_fixtures import RESULT_SOURCES
 
     case = CASE_BY_ID["optimizer-result-from-pending-proposal"]
-    submitted = RESULT_SOURCES[case.optimizer_completion].read_text()
+    submitted = RESULT_SOURCES[case.optimizer_completion].read_text(encoding="utf-8")
     provider = ScriptedProvider(
         [
             ToolCallRequest(
@@ -368,7 +368,7 @@ def test_result_review_must_not_create_another_proposal(review_changes_workspace
     from .ai_eval.optimizer_fixtures import RESULT_SOURCES
 
     case = CASE_BY_ID["optimizer-result-from-pending-proposal"]
-    pending = RESULT_SOURCES[case.optimizer_completion].read_text()
+    pending = RESULT_SOURCES[case.optimizer_completion].read_text(encoding="utf-8")
     result = grade(
         case,
         RunOutcome(
@@ -400,7 +400,10 @@ def test_current_request_fingerprint_ignores_unrelated_result_cli_changes(tmp_pa
     before = case_digest(current), case_digest(completed)
     key = "/reference/tools/inspect_optimizer_result.py"
     changed = tmp_path / "inspect_optimizer_result.py"
-    changed.write_text(workspace.REFERENCE_ATTACHMENT_TOOLS[key].read_text() + "\n# Changed result CLI\n")
+    changed.write_text(
+        workspace.REFERENCE_ATTACHMENT_TOOLS[key].read_text(encoding="utf-8") + "\n# Changed result CLI\n",
+        encoding="utf-8",
+    )
     monkeypatch.setitem(workspace.REFERENCE_ATTACHMENT_TOOLS, key, changed)
     assert case_digest(current) == before[0]
     assert case_digest(completed) != before[1]
