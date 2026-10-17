@@ -1130,3 +1130,47 @@ def test_accepted_incomplete_draft_keeps_yaml_without_inspection_context():
         assert WORKSPACE_SOURCE_CONTEXT not in backend.files
 
     asyncio.run(check())
+
+
+def test_required_rule_restoration_matches_preview_workspace_context_and_optimizer():
+    import hashlib
+
+    payload = base_schedule_payload()
+    payload["description"] = "Rebuilt"
+    payload["preferences"] = payload["preferences"][1:]
+
+    def rebuild(_command, _timeout, backend):
+        backend.files[WORKSPACE_SCHEDULE] = schedule_yaml(payload).encode()
+        return CommandResult("Built schedule", "", 0)
+
+    factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=rebuild))
+    optimizer_call = ToolCallRequest((ToolCall("optimize", OPTIMIZER_TOOL, '{"action":"start"}'),))
+    provider = ScriptedProvider(_run_call(), [optimizer_call], [TextDelta("Done")])
+    submitted = []
+
+    async def execute_optimizer(current_schedule, _arguments):
+        submitted.append(current_schedule)
+        return AgentToolOutcome("Started", True)
+
+    async def exercise():
+        return [
+            event
+            async for event in run_workspace(
+                provider, factory, schedule_yaml(), MESSAGES, _limits(), execute_optimizer=execute_optimizer
+            )
+        ]
+
+    events = asyncio.run(exercise())
+    tool = next(event for event in events if isinstance(event, AgentToolUse))
+    preview = next(event for event in events if isinstance(event, AgentScheduleChange)).schedule_yaml
+    proposal = next(event for event in events if isinstance(event, AgentProposal)).text
+    backend = factory.created[0]
+    assert tool.ok
+    assert "restored the required" in tool.result
+    assert tool.details["schedule_check"]["text"] in tool.result
+    assert proposal == preview == backend.files[WORKSPACE_SCHEDULE].decode() == submitted[0]
+    assert (
+        json.loads(backend.files[WORKSPACE_SOURCE_CONTEXT])["source_sha256"]
+        == hashlib.sha256(proposal.encode()).hexdigest()
+    )
+    assert proposal.count("type: at most one shift per day") == 1

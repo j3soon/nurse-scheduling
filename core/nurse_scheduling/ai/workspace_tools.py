@@ -106,6 +106,9 @@ class WorkspaceTools:
             if not review.outcome.ok:
                 check = f"Trusted schedule check before optimizer:\n{review.outcome.text}"
                 return AgentToolOutcome(check, False, details={"schedule_check": {"ok": False, "text": check}})
+            if review.proposal is not None and review.proposal.text != current_schedule:
+                current_schedule = review.proposal.text
+                await self.sandbox.write_file(WORKSPACE_SCHEDULE, current_schedule)
             outcome = await self.execute_optimizer(current_schedule, arguments)
             if outcome.ok:
                 return replace(outcome, end_turn_message=OPTIMIZER_RUNNING_MESSAGE)

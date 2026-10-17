@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .agent_types import AgentToolOutcome
-from .candidate import SCHEDULE_FILENAME, review_schedule_candidate
+from .candidate import REQUIRED_RULE_NOTICE, SCHEDULE_FILENAME, review_schedule_candidate
 from .config import AiSettings
 from .optimizer import WORKSPACE_OPTIMIZER_RESULT
 from .result_context import build_result_context
@@ -491,6 +491,11 @@ class _ScheduleCandidateTracker:
             review.outcome.ok,
             review.proposal is not None,
         )
+        restored = review.proposal is not None and review.proposal.text != candidate
+        if restored:
+            candidate = review.proposal.text
+            await self._sandbox.write_file(WORKSPACE_SCHEDULE, candidate)
+            self._last_content = candidate.encode("utf-8")
         if review.outcome.ok:
             try:
                 # Compiling a large schedule would otherwise block every session's stream.
@@ -511,7 +516,8 @@ class _ScheduleCandidateTracker:
         if review.proposal is not None:
             return (
                 AgentToolOutcome(
-                    f"{prefix}\nThe candidate passed trusted server-side validation and differs from the base schedule.",
+                    f"{prefix}\nThe candidate passed trusted server-side validation and differs from the base schedule."
+                    + (f"\n{REQUIRED_RULE_NOTICE}" if restored else ""),
                     True,
                 ),
                 candidate,

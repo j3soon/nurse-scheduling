@@ -347,6 +347,11 @@ skipped does not validate persistence.
 - Supply the current server time in the frontend timezone as request-specific
   status. Keep it out of retained history and the static prompt. Cover local
   midnight and timezone changes when testing calendar context.
+- Restore only the mandatory one-shift-per-day rule during trusted candidate
+  review, and only when the completed schedule passes the existing frontend
+  validator. Report the restoration to the model and user. Keep the workspace,
+  inspection context, preview and optimizer input on the same validated text.
+  Do not auto-repair optional staffing, rest, eligibility or preference rules.
 - Show known provider reasons and trusted validation details in both foreground
   and background chat errors. Keep raw provider bodies and private SDK errors
   in server logs. Test that failed validation still discards the turn's edits.

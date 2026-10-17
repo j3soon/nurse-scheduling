@@ -58,3 +58,66 @@ def test_candidate_with_new_validation_problem_is_rejected():
     assert "cannot be applied" in review.outcome.text
     assert "introduces problems" in review.outcome.text
     assert review.proposal is None
+
+
+def test_rebuilt_candidate_restores_only_the_required_rule():
+    from nurse_scheduling.loader import _load_yaml
+
+    from .ai_test_helper import base_schedule_payload
+
+    payload = base_schedule_payload()
+    payload["description"] = "Rebuilt schedule"
+    payload["people"]["items"][0]["history"] = ["OFF"]
+    payload["preferences"] = payload["preferences"][1:]
+    candidate = schedule_yaml(payload)
+
+    review = review_schedule_candidate(schedule_yaml(), candidate, SCHEDULE_BYTE_LIMIT)
+
+    assert review.outcome.ok
+    assert review.proposal is not None
+    restored = _load_yaml(review.proposal.text.encode())
+    required = restored["preferences"].pop(0)
+    assert required == {"type": "at most one shift per day"}
+    assert restored == payload
+    assert "restored the required" in review.outcome.text
+
+
+def test_required_rule_restoration_does_not_hide_other_errors():
+    from .ai_test_helper import base_schedule_payload
+
+    payload = base_schedule_payload()
+    payload["preferences"] = payload["preferences"][1:]
+    payload["preferences"][0]["person"] = ["unknown-person"]
+
+    review = review_schedule_candidate(schedule_yaml(), schedule_yaml(payload), SCHEDULE_BYTE_LIMIT)
+
+    assert not review.outcome.ok
+    assert review.proposal is None
+
+
+def test_existing_required_rule_is_not_replaced_or_duplicated():
+    from .ai_test_helper import base_schedule_payload
+
+    payload = base_schedule_payload()
+    payload["description"] = "Updated"
+    payload["preferences"][0]["description"] = "Original required rule"
+    candidate = schedule_yaml(payload)
+
+    review = review_schedule_candidate(schedule_yaml(), candidate, SCHEDULE_BYTE_LIMIT)
+
+    assert review.outcome.ok
+    assert review.proposal.text == candidate
+    assert "restored" not in review.outcome.text
+
+
+def test_required_rule_restoration_respects_the_output_size_limit():
+    from .ai_test_helper import base_schedule_payload
+
+    payload = base_schedule_payload()
+    payload["preferences"] = payload["preferences"][1:]
+    candidate = schedule_yaml(payload)
+
+    review = review_schedule_candidate(schedule_yaml(), candidate, len(candidate.encode()))
+
+    assert not review.outcome.ok
+    assert review.proposal is None
