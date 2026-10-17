@@ -549,6 +549,57 @@ def test_invalid_answer_patterns_are_rejected(tmp_path: Path, field_name, raw):
 @pytest.mark.parametrize(
     "answer, passed",
     [
+        (
+            "Which transitions should we forbid? What fairness balance do you want? Maximum consecutive working days?",
+            True,
+        ),
+        (
+            "Forbidden transitions: which shift changes should be banned?\nConsecutive workdays: what limit?\nFairness: balance total working days, shift types, or neither?",
+            True,
+        ),
+        ("I will forbid transitions and balance fairness. Consecutive days will be limited.", False),
+    ],
+)
+def test_intake_questions_allow_topic_before_question_words(answer, passed):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "new-schedule-policy-intake")
+    read = {
+        "kind": "tool",
+        "name": "read",
+        "arguments": json.dumps({"path": "/reference/user-guide/build-a-real-schedule.md"}),
+        "ok": True,
+    }
+    assert grade(case, RunOutcome(answer=answer, activity=[read])).passed is passed
+
+
+@pytest.mark.parametrize(
+    "answer, passed",
+    [
+        ("Which transitions should we forbid? What consecutive-day limit and fairness rules do you want?", False),
+        ("We can group the nurses by seniority. D needs two people, E two, and N one.", False),
+        (
+            "Would you like optional Day, Evening and Night people groups for nurses with a primary shift? We can apply their shift preferences together.",
+            True,
+        ),
+        (
+            "I can create optional groups for D day, E evening and N night shift eligibility. Are any nurses limited to one of these shifts?",
+            True,
+        ),
+    ],
+)
+def test_primary_shift_group_case_requires_an_optional_shift_group_offer(answer, passed):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "new-schedule-primary-shift-groups")
+    read = {
+        "kind": "tool",
+        "name": "read",
+        "arguments": json.dumps({"path": "/reference/user-guide/build-a-real-schedule.md"}),
+        "ok": True,
+    }
+    assert grade(case, RunOutcome(answer=answer, activity=[read])).passed is passed
+
+
+@pytest.mark.parametrize(
+    "answer, passed",
+    [
         ("Should I renew Taiwan holiday date groups?", False),
         ("Import Taiwan public holidays and make-up working days?", False),
         (

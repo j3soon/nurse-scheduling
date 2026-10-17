@@ -13,8 +13,8 @@
     ]
   ],
   "answer_matches": [
-    "(?:do you|should|would you|which|what|please|tell me|confirm)[^\\n]{0,220}(?:forbid|transition|succession|rest)",
-    "(?:do you|should|would you|which|what|please|tell me|confirm)[^\\n]{0,220}(?:fair|balanc)"
+    "(?im)(?:do you|should|would you|which|what|please|tell me|confirm)[^\\n]{0,220}(?:forbid|transition|succession|rest)|^[^\\n]*(?:forbid|transition|succession|rest)[^\\n]*\\?",
+    "(?im)(?:do you|should|would you|which|what|please|tell me|confirm)[^\\n]{0,220}(?:fair|balanc)|^[^\\n]*(?:fair|balanc)[^\\n]*\\?"
   ],
   "tool_usage": {
     "required_calls": [
