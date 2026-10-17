@@ -38,6 +38,11 @@
 - Keep tightly coupled schema and behavior on one page unless each topic has a
   clear independent purpose.
 - Keep `docs/PRIVACY.md` as a symlink to the root `PRIVACY.md`.
+- Describe AI runs as server-owned operations that continue without a connected
+  browser. Reconnect, schedule replacement, notices, and Undo do not control a
+  run. Send supplies browser state for a user-requested turn, and Stop requests
+  cancellation. Optimizer completion is a server-owned trigger. Approval or
+  rejection in the browser must not gate server execution.
 
 ### Wording and terminology
 

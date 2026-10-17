@@ -967,6 +967,7 @@ export function useSchedulingDataInternal() {
       saveStateToStorage(newHistoryState);
       return newHistoryState;
     });
+    return newState;
   };
 
   // Memoized because the generated fallback would otherwise be a new object on

@@ -33,6 +33,10 @@ export interface StoredChatConversation {
   retentionSeconds: number;
   messages: ChatMessage[];
   syncedSchedule: string;
+  syncedRevision?: string;
+  syncedBrowserSchedule?: string;
+  // Run identity survives replacement replay and a later browser Undo.
+  appliedScheduleRuns?: Record<string, string | null>;
   sessionEventId?: number;
   activeOptimization?: ActiveOptimization | null;
   backendVersion?: string;
@@ -52,7 +56,9 @@ function isOptionalStringArray(value: unknown): boolean {
 function isActivityEntry(value: unknown): value is ActivityEntry {
   if (typeof value !== 'object' || value === null || !('kind' in value)) return false;
   if (value.kind === 'response' || value.kind === 'reasoning' || value.kind === 'schedule-applied') {
-    return 'text' in value && typeof value.text === 'string';
+    return 'text' in value && typeof value.text === 'string'
+      && (!('notice' in value) || typeof value.notice === 'string')
+      && (!('runId' in value) || typeof value.runId === 'string');
   }
   if (value.kind === 'schedule-check') {
     return 'text' in value && typeof value.text === 'string' && 'ok' in value && typeof value.ok === 'boolean';
@@ -145,6 +151,11 @@ export function readStoredConversation(): StoredChatConversation | null {
         ))
       ))
       || typeof value.syncedSchedule !== 'string'
+      || (value.syncedRevision !== undefined && typeof value.syncedRevision !== 'string')
+      || (value.syncedBrowserSchedule !== undefined && typeof value.syncedBrowserSchedule !== 'string')
+      || (value.appliedScheduleRuns !== undefined && (value.appliedScheduleRuns === null
+        || typeof value.appliedScheduleRuns !== 'object' || Array.isArray(value.appliedScheduleRuns)
+        || !Object.values(value.appliedScheduleRuns).every(notice => notice === null || typeof notice === 'string')))
       || (value.backgroundAssistantId !== undefined && value.backgroundAssistantId !== null
         && typeof value.backgroundAssistantId !== 'string')
     ) return null;

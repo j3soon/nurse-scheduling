@@ -647,7 +647,7 @@ describe('AI client', () => {
       'event: schedule_change\ndata: {"schedule_yaml":"people:\\n  - id: Head\\n"}\n\n',
       'event: delta\ndata: {"text":"Renamed P1."}\n\n',
       'event: truncated\ndata: {}\n\n',
-      'event: schedule_applied\ndata: {"schedule_yaml":"people: []\\n","base_sha256":"a","sha256":"b","diff":"- people.items[0].id"}\n\n',
+      'event: schedule_applied\ndata: {"run_id":"change-run","schedule_yaml":"people: []\\n","base_sha256":"a","sha256":"b","diff":"- people.items[0].id"}\n\n',
       'event: done\ndata: {"run_id":"1"}\n\n',
     ])));
     const events: SessionEvent[] = [];
@@ -671,7 +671,8 @@ describe('AI client', () => {
       { type: 'schedule_change', scheduleYaml: 'people:\n  - id: Head\n' },
       { type: 'delta', text: 'Renamed P1.' },
       { type: 'truncated' },
-      { type: 'schedule_applied', applied: { scheduleYaml: 'people: []\n', baseSha256: 'a', sha256: 'b', diff: '- people.items[0].id' } },
+      { type: 'run_context', runId: 'change-run' },
+      { type: 'schedule_applied', runId: 'change-run', applied: { runId: 'change-run', scheduleYaml: 'people: []\n', baseSha256: 'a', sha256: 'b', diff: '- people.items[0].id' } },
       { type: 'run_context', runId: '1' },
       { type: 'done', runId: '1' },
     ]);

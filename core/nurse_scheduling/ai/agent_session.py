@@ -201,6 +201,8 @@ class RunRecorder(Protocol):
         error_code: str | None,
         usage: TokenUsage | None,
         committed: bool,
+        *,
+        schedule_change: dict[str, Any] | None = None,
     ) -> bool: ...
 
 
@@ -693,7 +695,7 @@ class AgentSession:
     def _publish_completion(
         self,
         run: AgentRun,
-        snapshot: RunSnapshot,
+        schedule_change: dict[str, Any] | None,
         completion: RunCompletion,
         output: RunOutput,
         events: RunEvents,
@@ -708,16 +710,8 @@ class AgentSession:
             return
         if completion.history_trimmed_count and completion.history_trimmed_count != dropped_history:
             events.emit({"type": "history_trimmed", "dropped": completion.history_trimmed_count})
-        if completion.schedule_applied and output.proposal is not None:
-            events.emit(
-                {
-                    "type": "schedule_applied",
-                    "schedule_yaml": output.proposal.text,
-                    "base_sha256": schedule_revision(snapshot.schedule_yaml),
-                    "sha256": schedule_revision(output.proposal.text),
-                    "diff": output.proposal.diff,
-                }
-            )
+        if schedule_change is not None:
+            events.emit(schedule_change)
         if output.download is not None:
             # A ZIP that does not fit the session memory budget leaves the answer intact.
             if runtime.store.save_download(self.id, run.id, output.download.content):
@@ -774,10 +768,26 @@ class AgentSession:
             events.emit(outcome.terminal)
         try:
             history_saved = None
+            schedule_change = None
+            if outcome.completion is not None and outcome.completion.schedule_applied and output.proposal is not None:
+                schedule_change = {
+                    "type": "schedule_applied",
+                    "run_id": run.id,
+                    "schedule_yaml": output.proposal.text,
+                    "base_sha256": schedule_revision(snapshot.schedule_yaml),
+                    "sha256": schedule_revision(output.proposal.text),
+                    "diff": output.proposal.diff,
+                }
             if history_started:
                 history_saved = await _complete(
                     runtime.recorder.finish_run(
-                        self.id, run.id, outcome.status, outcome.error_code, output.usage, committed
+                        self.id,
+                        run.id,
+                        outcome.status,
+                        outcome.error_code,
+                        output.usage,
+                        committed,
+                        schedule_change=schedule_change,
                     )
                 )
                 if not history_saved:
@@ -785,7 +795,7 @@ class AgentSession:
             if outcome.completion is not None:
                 self._publish_completion(
                     run,
-                    snapshot,
+                    schedule_change,
                     outcome.completion,
                     output,
                     events,

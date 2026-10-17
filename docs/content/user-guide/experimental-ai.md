@@ -74,9 +74,9 @@ anonymization as **Optimize and Export**: it replaces person IDs and removes
 description fields. It restores person IDs in the downloaded workbook. Dates,
 shifts, groups, and rules can still reveal sensitive information.
 
-Each run records the exact YAML revision it used. If the browser schedule
-changes before the result returns, the assistant can distinguish that older
-result from the current accepted schedule.
+Each run uses a server-side schedule snapshot. Editing or undoing the browser
+schedule does not interrupt the assistant. Send passes the current browser
+schedule to the assistant for your next question.
 
 When you build a new roster, the assistant asks about missing rest and fairness
 rules together before creating it. You can decline forbidden transitions, work
@@ -93,6 +93,8 @@ assistant edits a temporary copy of the schedule, and the app checks each edit.
    received. After a failed check, the assistant repairs the problem.
 3. When the response finishes, the last valid schedule replaces the schedule in
    this browser. **Applied to your schedule** lists every difference.
+   If you changed the browser schedule during the response, a notice explains
+   that the assistant replaced those changes.
 4. The change is one step in the edit history, so <kbd>Ctrl</kbd>+<kbd>Z</kbd>
    reverts the whole change. The assistant learns about the undo when you send
    your next question.

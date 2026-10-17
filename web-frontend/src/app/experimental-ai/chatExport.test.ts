@@ -188,7 +188,7 @@ describe('chat export', () => {
     const changed: ChatExportMessage[] = [{
       id: 'answer', role: 'assistant', content: 'Done.', activity: [
         { kind: 'schedule-check', ok: false, text: 'schedule.yaml introduces <problems>.' },
-        { kind: 'schedule-applied', text: '- description: "" -> "April"' },
+        { kind: 'schedule-applied', text: '- description: "" -> "April"', notice: 'Undo restores <previous work>.' },
       ],
     }];
 
@@ -201,6 +201,8 @@ describe('chat export', () => {
     expect(html).toContain('<summary>Schedule check failed</summary>');
     expect(html).toContain('schedule.yaml introduces &lt;problems&gt;.');
     expect(html).toContain('<summary>Applied to your schedule</summary>');
+    expect(markdown).toContain('Undo restores <previous work>.');
+    expect(html).toContain('Undo restores &lt;previous work&gt;.');
   });
 
   it('mentions an optimization that is still running without its score', () => {

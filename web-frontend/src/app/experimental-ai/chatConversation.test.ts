@@ -55,6 +55,9 @@ describe('stored conversation compatibility', () => {
       { messages: [{ id: 'answer', role: 'assistant', content: '', retry: {
         question: 'Question', requiresAttachments: true, missingFiles: 'two.txt' } }] },
       { sessionEventId: -1 },
+      { appliedScheduleRuns: { run: 123 } },
+      { appliedScheduleRuns: [] },
+      { syncedBrowserSchedule: 123 },
     ]) {
       sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify({ ...conversation(), ...change }));
       expect(readStoredConversation()).toBeNull();

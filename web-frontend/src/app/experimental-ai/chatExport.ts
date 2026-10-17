@@ -148,6 +148,7 @@ function activityLabel(entry: ActivityEntry): string {
 }
 
 function activityText(entry: ActivityEntry): string {
+  if (entry.kind === 'schedule-applied' && entry.notice) return `${entry.notice}\n\n${entry.text}`;
   if (entry.kind !== 'tool' && entry.kind !== 'schedule-change') return entry.text;
   if (entry.kind === 'schedule-change') return `Before:\n${entry.before}\n\nAfter:\n${entry.after}`;
   return [
@@ -166,7 +167,7 @@ function renderScheduleChangeHtml(entry: Extract<ActivityEntry, { kind: 'schedul
 function renderActivityDetailsHtml(entry: Exclude<ActivityEntry, { kind: 'response' }>): string {
   let body: string;
   if (entry.kind === 'reasoning' || entry.kind === 'schedule-check' || entry.kind === 'schedule-applied') {
-    body = `<pre class="activity-output">${escapeHtml(entry.text)}</pre>`;
+    body = `<pre class="activity-output">${escapeHtml(activityText(entry))}</pre>`;
   } else if (entry.kind === 'schedule-change') {
     body = renderScheduleChangeHtml(entry);
   } else {

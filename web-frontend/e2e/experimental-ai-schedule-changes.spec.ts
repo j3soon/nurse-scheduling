@@ -45,7 +45,7 @@ const CHECK = 'Trusted schedule check after this command:\nThe candidate passed 
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 
 async function mockChangingBackend(page: Page, holdAnswer = false) {
-  const state = { sessionSchedule: '', refreshed: [] as string[], finishAnswer: () => {} };
+  const state = { sessionSchedule: '', refreshed: [] as string[], finishAnswer: () => {}, messages: 0, stops: 0 };
   const baseURL = test.info().project.use.baseURL;
   if (!baseURL) throw new Error('Playwright baseURL is required for the AI backend mock.');
   const allowedOrigin = new URL(baseURL).origin;
@@ -89,10 +89,20 @@ async function mockChangingBackend(page: Page, holdAnswer = false) {
       });
       return;
     }
-    if (request.url().endsWith('/events')) {
+    if (new URL(request.url()).pathname.endsWith('/events')) {
       const cursor = Number(request.headers()['last-event-id'] ?? 0);
       if (journal.length <= cursor) await new Promise<void>(resolve => { wakeReader = resolve; });
       await route.fulfill({ status: 200, contentType: 'text/event-stream', headers: corsHeaders, body: journal.slice(cursor).join('') });
+      return;
+    }
+    if (request.method() === 'GET' && request.url().endsWith('/browser-session')) {
+      await route.fulfill({ status: 200, contentType: 'application/json', headers: corsHeaders,
+        body: JSON.stringify({ expires_in_seconds: 3600 }) });
+      return;
+    }
+    if (request.url().endsWith('/stop')) {
+      state.stops++;
+      await route.fulfill({ status: 202, headers: corsHeaders });
       return;
     }
     if (request.url().endsWith('/schedule')) {
@@ -101,6 +111,7 @@ async function mockChangingBackend(page: Page, holdAnswer = false) {
       await route.fulfill({ status: 204, headers: corsHeaders });
       return;
     }
+    state.messages++;
     const runId = `answer-${journal.length}`;
     const publish = (type: string, data: Record<string, unknown>) => {
       journal.push(`id: ${journal.length + 1}\nevent: ${type}\ndata: ${JSON.stringify({ ...data, run_id: runId })}\n\n`);
@@ -182,6 +193,46 @@ test('sends the applied schedule to the session before the next question', async
   // The browser regenerates the applied schedule in its own format before the next question.
   await expect.poll(() => state.refreshed.length).toBe(1);
   expect(state.refreshed[0]).toContain('Proposed Nurse');
+});
+
+test('overwrites browser Undo with a notice and preserves a later Undo across replay and reload', async ({ page }) => {
+  const state = await mockChangingBackend(page, true);
+  await page.goto('/people');
+  await page.getByRole('button', { name: 'Add Person', exact: true }).click();
+  await page.getByPlaceholder('Enter person ID').fill('Before response');
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
+  await expect(page.getByText('1. Before response')).toBeVisible();
+
+  await page.goto('/experimental-ai');
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Add a nurse.');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('schedule edit')).toBeVisible();
+  await page.keyboard.press('Control+z');
+  state.finishAnswer();
+  await expect(page.getByText(/replaced changes made during this response/)).toBeVisible();
+  await page.screenshot({ path: '../artifacts/fix-branch-review/overwrite-notice.png', fullPage: true });
+
+  await page.keyboard.press('Control+z');
+  await expect.poll(() => page.evaluate(() => {
+    const saved = JSON.parse(sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
+    return { receipt: saved.appliedScheduleRuns?.['answer-0'], pending: saved.pendingRequest };
+  })).toEqual({ receipt: expect.any(String), pending: null });
+  // Request older output again to verify that run identity, rather than its cursor or YAML hash,
+  // prevents a completed result from replacing the schedule restored by Undo.
+  await page.evaluate(() => {
+    const key = 'nurse-scheduling-ai-conversation';
+    const saved = JSON.parse(sessionStorage.getItem(key)!);
+    saved.sessionEventId = 0;
+    sessionStorage.setItem(key, JSON.stringify(saved));
+  });
+  await page.reload();
+  await expect(page.getByText('Applied to your schedule')).toBeVisible();
+  await page.goto('/people');
+  await expect(page.getByText('1. Proposed Nurse')).toBeHidden();
+  await expect(page.getByText('1. Before response')).toBeHidden();
+  expect(state.messages).toBe(1);
+  expect(state.stops).toBe(0);
+  expect(state.refreshed).toEqual([]);
 });
 
 test('keeps reasoning and tool detail out of the way until asked for', async ({ page }) => {

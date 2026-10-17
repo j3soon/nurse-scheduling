@@ -1531,7 +1531,7 @@ describe('ExperimentalAiPage', () => {
       background?.onEvent({ type: 'run_start', runId: 'old', trigger: 'optimizer' });
       background?.onEvent({ type: 'delta', text: 'Leaked old answer' });
       background?.onEvent({ type: 'schedule_applied', applied: {
-        scheduleYaml: 'description: old\n', baseSha256: 'old', sha256: 'new', diff: 'Old change',
+        runId: 'old', scheduleYaml: 'description: old\n', baseSha256: 'old', sha256: 'new', diff: 'Old change',
       } });
       background?.onEventId?.(900);
     });
@@ -2739,7 +2739,7 @@ describe('ExperimentalAiPage', () => {
       callbacks.onEvent({ type: 'schedule_change', scheduleYaml: 'description: Head\n' });
       callbacks.onEvent({ type: 'delta', text: 'I set the description.' });
       callbacks.onEvent({ type: 'schedule_applied', applied: {
-        scheduleYaml: 'description: Head\n', baseSha256, sha256: sha256('description: Head\n'),
+        runId: 'change-run', scheduleYaml: 'description: Head\n', baseSha256, sha256: sha256('description: Head\n'),
         diff: '- description: "current schedule" -> "Head"',
       } });
     };
@@ -2757,20 +2757,52 @@ describe('ExperimentalAiPage', () => {
 
       await waitFor(() => expect(mockLoadFromYaml).toHaveBeenCalledTimes(1));
       expect(mockLoadFromYaml).toHaveBeenCalledWith({ description: 'Head' });
+      expect(screen.queryByText(/replaced changes made during this response/)).not.toBeInTheDocument();
       expect(screen.getByText('Schedule check passed')).toBeInTheDocument();
       expect(screen.getByText('Applied to your schedule')).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
     });
 
-    it('does not apply a change made for another schedule', async () => {
+    it('replaces another schedule and shows a notice without controlling the agent', async () => {
       mockRunEvents.mockImplementationOnce(changingStream(sha256('description: older schedule\n')));
       const user = userEvent.setup();
       render(<ExperimentalAiPage />);
       await ask(user);
 
-      // The change still appears, because the backend applied it to the session.
       expect(await screen.findByText('Applied to your schedule')).toBeInTheDocument();
-      expect(mockLoadFromYaml).not.toHaveBeenCalled();
+      expect(mockLoadFromYaml).toHaveBeenCalledWith({ description: 'Head' });
+      expect(screen.getByText(/replaced changes made during this response/)).toBeVisible();
+      expect(mockUpdateSessionSchedule).not.toHaveBeenCalled();
+      expect(mockStopSession).not.toHaveBeenCalled();
+      expect(mockSendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('notices an edit made while the response runs and applies each run only once', async () => {
+      let callbacks!: SessionStreamOptions;
+      let finish!: () => void;
+      mockRunEvents.mockImplementationOnce((_id, _question, stream) => {
+        callbacks = stream;
+        return new Promise<void>(resolve => { finish = resolve; });
+      });
+      const user = userEvent.setup();
+      const view = render(<ExperimentalAiPage />);
+      await ask(user);
+      await waitFor(() => expect(callbacks).toBeDefined());
+      mockGenerateYaml.mockReturnValue('description: edited during response\n');
+      view.rerender(<ExperimentalAiPage />);
+      await act(async () => {
+        await changingStream(sha256('description: current schedule\n'))('', '', callbacks);
+        finish();
+      });
+      expect(mockLoadFromYaml).toHaveBeenCalledTimes(1);
+      expect(screen.getByText(/replaced changes made during this response/)).toBeVisible();
+      // Undo is a browser action. A replacement replay must not overwrite it again.
+      mockGenerateYaml.mockReturnValue('description: restored with Undo\n');
+      view.rerender(<ExperimentalAiPage />);
+      await act(async () => changingStream(sha256('description: current schedule\n'))('', '', callbacks));
+      expect(mockLoadFromYaml).toHaveBeenCalledTimes(1);
+      expect(mockUpdateSessionSchedule).not.toHaveBeenCalled();
+      expect(mockStopSession).not.toHaveBeenCalled();
     });
 
     it('shows a failed schedule check that the model received', async () => {
@@ -2786,6 +2818,24 @@ describe('ExperimentalAiPage', () => {
 
       await user.click(await screen.findByText('Schedule check failed'));
       expect(screen.getByText('schedule.yaml introduces problems and cannot be applied.')).toBeVisible();
+    });
+
+    it('restores application receipts so replay preserves Undo after a reload', async () => {
+      window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+        sessionId: 'session-id', endpoint: '/ai', expiresAt: Date.now() + 300000,
+        retentionSeconds: 300, messages: [], syncedSchedule: 'description: Head\n',
+        syncedRevision: sha256('description: Head\n'), syncedBrowserSchedule: 'description: Head\n',
+        appliedScheduleRuns: { 'change-run': null },
+      }));
+      mockGenerateYaml.mockReturnValue('description: restored with Undo\n');
+      render(<ExperimentalAiPage />);
+      await waitFor(() => expect(mockStreamSessionEvents).toHaveBeenCalled());
+      const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
+      await act(async () => changingStream(sha256('description: current schedule\n'))('', '', stream));
+      expect(mockLoadFromYaml).not.toHaveBeenCalled();
+      expect(mockSendMessage).not.toHaveBeenCalled();
+      expect(mockStopSession).not.toHaveBeenCalled();
+      expect(mockUpdateSessionSchedule).not.toHaveBeenCalled();
     });
 
     it('sends a changed schedule to an existing session before the next question', async () => {

@@ -512,13 +512,21 @@ used checked assignments and exported workbooks, without HTTP optimizer jobs.
 A finished run that changed the schedule commits its validated schedule as the
 session schedule. The backend then emits `schedule_applied` with the YAML, the
 structural diff, and the SHA-256 of the run's starting schedule (`base_sha256`)
-and of the new schedule (`sha256`). The browser applies the YAML through the
-normal YAML import path as one undo step only when `base_sha256` matches the
-schedule it last sent or applied. A replayed or superseded event therefore
-cannot replace newer work. The transcript shows **Applied to your schedule** with
-the diff in either case. `PUT /sessions/{id}/schedule` replaces the snapshot when
-the schedule changed elsewhere in the app, including an undo, and records an app
-event for the next run.
+and of the new schedule (`sha256`). The browser applies each run's result once
+through the normal YAML import path as one undo step. If the browser schedule
+changed during the response, it still replaces that schedule and shows a notice.
+Undo restores the exact schedule held before replacement. A saved receipt keyed
+by `run_id` prevents replay from applying the same result again after Undo or a
+reload. The browser keeps its normalized YAML alongside the backend revision so
+import formatting does not cause a conflict notice.
+
+AI runs belong to the server and continue without a browser connection. Browser
+edits, Undo, notices, and reconnects do not start, stop, or gate a run. Send
+synchronizes the current browser YAML through `PUT /sessions/{id}/schedule`
+before its next user-requested run, and records an app event for the agent.
+Stop explicitly requests cancellation. Optimizer completion can start a server
+review without a client connection. This separation replaces the earlier
+approval and rejection flow, which tied server progress to browser decisions.
 
 Each tool call that changes the working copy carries the trusted check text that
 the model received in `schedule_check`. The transcript shows it as **Schedule
@@ -534,14 +542,16 @@ flowchart TB
     Candidate["<b>Sandbox candidate</b><br/>Untrusted schedule file"]
     Validation["<b>Trusted backend review</b><br/>Validate and compute a structural diff"]
     Session["<b>Session schedule</b><br/>Adopt only after the owning run commits"]
-    Base{"Browser schedule hash<br/>matches the run's base?"}
+    Replay{"Run already applied<br/>by this browser?"}
     Import["<b>Frontend import</b><br/>Apply as one undo operation"]
-    Keep["<b>Browser schedule</b><br/>Keep newer work and show the diff"]
+    Notice["<b>Conflict notice</b><br/>If browser work changed, explain how to Undo"]
+    Keep["<b>Replay receipt</b><br/>Preserve the browser's current schedule"]
     Candidate -->|Read after model execution| Validation
     Validation -->|Valid changed schedule and current RunSnapshot| Session
-    Session -->|schedule_applied with YAML, diff, and hashes| Base
-    Base -->|Yes| Import
-    Base -->|No| Keep
+    Session -->|schedule_applied with run ID, YAML, diff, and hashes| Replay
+    Replay -->|No| Import
+    Import --> Notice
+    Replay -->|Yes| Keep
 ```
 
 </figure>
@@ -619,7 +629,7 @@ It saves the following data:
 | Table | Stored data |
 | --- | --- |
 | `chat_sessions` | Owner cookie hash, credential ID, creation time, expiry, and a `state` with the schedule and the number of conversation entries that retention trimmed. |
-| `chat_runs` | Run order, kind, client `message_id`, credential ID, model, status, error code, whether the run's messages joined the conversation (`committed`), attachment count, usage, and start and finish times. |
+| `chat_runs` | Run order, kind, client `message_id`, credential ID, model, status, error code, whether the run's messages joined the conversation (`committed`), the optional `schedule_change` application payload, attachment count, usage, and start and finish times. |
 | `chat_session_entries` | Conversation entries in session order, keyed by `(session_id, seq)`: run messages and app events such as uploads and schedule changes. Run messages name their run. Each row has a `type` and a JSON `payload` holding the fields of the matching `transcript.py` type. |
 | `chat_session_events` | Replayable session events except optimizer progress. Adjacent text fragments of one run share a row covering `event_id` through `last_event_id`. |
 | `chat_run_stops` | Named Stop requests, including messages that have not arrived yet. |
@@ -628,7 +638,9 @@ Sessions are saved when they are created. Each run saves the session state with
 its prompt when it starts. As in Pi, each later message is saved when it ends, so
 a crash keeps the finished tool calls and results of an interrupted run. App
 events are saved as entries when they happen. The run's status and resulting
-state commit in one transaction when it ends. Schedule updates save the state
+state commit in one transaction when it ends. Migration `005_run_schedule_change.sql`
+adds the application payload to that transaction. Recovery republishes it before
+the missing terminal event if a crash lost stream publication. Schedule updates save the state
 as well. A per-session lock commits these writes in capture order, so an older
 state never replaces a newer one. Each
 state write also saves every entry that is not saved yet, so the trimmed-entry

@@ -157,7 +157,10 @@ class SessionRecovery:
                 if self._store.get(session_id) is None:
                     return True
                 for outcome in tuple(self._unsaved_outcomes.get(session_id, ())):
-                    if not await self._write_with_entries(session_id, "finish_run", *outcome, session_id=session_id):
+                    arguments, schedule_change = outcome[:-1], outcome[-1]
+                    if not await self._write_with_entries(
+                        session_id, "finish_run", *arguments, session_id=session_id, schedule_change=schedule_change
+                    ):
                         return self._record(session_id, False)
                     self._unsaved_outcomes[session_id].remove(outcome)
                 self._unsaved_outcomes.pop(session_id, None)
@@ -249,15 +252,19 @@ class SessionRecovery:
         error_code: str | None,
         usage: TokenUsage | None,
         committed: bool,
+        *,
+        schedule_change: dict[str, Any] | None = None,
     ) -> bool:
         """Save the outcome with the resulting state. A failed write is retried by the next save."""
         if self.history is None:
             return True
         outcome = (run_id, status, error_code, usage, committed)
-        if await self._write_state(session_id, "finish_run", *outcome, session_id=session_id):
+        if await self._write_state(
+            session_id, "finish_run", *outcome, session_id=session_id, schedule_change=schedule_change
+        ):
             return True
         if self._store.get(session_id) is not None:
-            self._unsaved_outcomes.setdefault(session_id, []).append(outcome)
+            self._unsaved_outcomes.setdefault(session_id, []).append((*outcome, schedule_change))
         return False
 
     async def stop_message(self, session_id: str, message_id: str) -> None:
@@ -350,11 +357,20 @@ class SessionRecovery:
                 for run in unfinished_runs:
                     if run["terminal_type"] is not None:
                         continue
-                    await self._end_unfinished_run(session, run["id"], run["kind"], run["status"])
+                    await self._end_unfinished_run(
+                        session, run["id"], run["kind"], run["status"], run.get("schedule_change")
+                    )
             finally:
                 release()
 
-    async def _end_unfinished_run(self, session: AgentSession, run_id: str, kind: str, status: str) -> None:
+    async def _end_unfinished_run(
+        self,
+        session: AgentSession,
+        run_id: str,
+        kind: str,
+        status: str,
+        schedule_change: dict[str, Any] | None = None,
+    ) -> None:
         """Publish the terminal event a stored run lacks. A running run was interrupted by the restart."""
         terminal: AgentSessionTerminalEvent
         if status == "running":
@@ -363,6 +379,8 @@ class SessionRecovery:
             terminal = {"type": "error", "message": message}
             await self.finish_run(session.id, run_id, "failed", "service_restart", None, False)
         elif status == "completed":
+            if schedule_change is not None:
+                session.publish(schedule_change)
             terminal = {"type": "done"}
         elif status == "cancelled":
             terminal = {"type": "stopped"}

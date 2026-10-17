@@ -43,7 +43,7 @@ export type AssistantEvent =
   | { type: 'tool_start'; activity: ToolStartActivity }
   | { type: 'tool'; activity: ToolActivity }
   | { type: 'schedule_change'; before: string; after: string }
-  | { type: 'schedule_applied'; diff: string };
+  | { type: 'schedule_applied'; diff: string; runId?: string; notice?: string };
 
 export function startsVisibleOutput(event: AssistantEvent): boolean {
   return event.type === 'tool_start' || event.type === 'tool' || event.type === 'schedule_change'
@@ -117,8 +117,12 @@ export function applyAssistantEvent<T extends ChatExportMessage>(message: T, eve
         ...message,
         activity: [...activity, { kind: 'schedule-change', before: event.before, after: event.after }],
       };
-    case 'schedule_applied':
-      return { ...message, activity: [...activity, { kind: 'schedule-applied', text: event.diff }] };
+    case 'schedule_applied': {
+      const entry: ActivityEntry = { kind: 'schedule-applied', text: event.diff,
+        ...(event.runId ? { runId: event.runId } : {}), ...(event.notice ? { notice: event.notice } : {}) };
+      const retained = event.runId ? activity.filter(item => item.kind !== 'schedule-applied' || item.runId !== event.runId) : activity;
+      return { ...message, activity: [...retained, entry] };
+    }
   }
 }
 
@@ -179,7 +183,7 @@ export function toAssistantEvent(
       return { type: 'schedule_change', before, after: event.scheduleYaml };
     }
     case 'schedule_applied':
-      return { type: 'schedule_applied', diff: event.applied.diff };
+      return { type: 'schedule_applied', runId: event.applied.runId, diff: event.applied.diff };
     default: return null;
   }
 }

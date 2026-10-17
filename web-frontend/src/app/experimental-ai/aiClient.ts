@@ -45,6 +45,7 @@ export interface ScheduleCheck {
 
 // A run's validated schedule, which the backend adopted. The browser applies it only over its base revision.
 export interface ScheduleApplied {
+  runId: string;
   scheduleYaml: string;
   baseSha256: string;
   sha256: string;
@@ -515,12 +516,12 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
   } else if (eventType === 'download' && typeof payload.download_id === 'string') {
     emit({ type: 'download', downloadId: payload.download_id });
   } else if (eventType === 'schedule_applied') {
-    if (typeof payload.schedule_yaml !== 'string' || typeof payload.base_sha256 !== 'string'
+    if (!runId || typeof payload.schedule_yaml !== 'string' || typeof payload.base_sha256 !== 'string'
       || typeof payload.sha256 !== 'string' || typeof payload.diff !== 'string') {
       throw new Error('The AI backend returned an invalid schedule change.');
     }
     emit({ type: 'schedule_applied', applied: {
-      scheduleYaml: payload.schedule_yaml, baseSha256: payload.base_sha256, sha256: payload.sha256, diff: payload.diff,
+      runId, scheduleYaml: payload.schedule_yaml, baseSha256: payload.base_sha256, sha256: payload.sha256, diff: payload.diff,
     } });
   } else if (
     eventType === 'optimization'

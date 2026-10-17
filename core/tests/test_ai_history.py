@@ -92,7 +92,7 @@ def test_recovery_default_session_lifetime():
 
 @pytest.fixture
 def recorded_history(monkeypatch):
-    records = {"starts": [], "finishes": [], "saves": [], "entries": []}
+    records = {"starts": [], "finishes": [], "saves": [], "entries": [], "schedule_changes": []}
 
     def start(_self, run_id, session_id, *, state, prompt, prompt_seq, entries=(), **fields):
         records["entries"].extend([*entries, (prompt_seq, run_id, UserMessage(prompt))])
@@ -100,9 +100,10 @@ def recorded_history(monkeypatch):
             {"run_id": run_id, "session_id": session_id, "state": state, "prompt": prompt, **fields}
         )
 
-    def finish(_self, *outcome, session_id=None, state=None, entries=()):
+    def finish(_self, *outcome, session_id=None, state=None, entries=(), schedule_change=None):
         records["entries"].extend(entries)
         records["finishes"].append((*outcome, state))
+        records["schedule_changes"].append(schedule_change)
 
     def save(_self, *_args, entries=(), **kwargs):
         records["entries"].extend(entries)
@@ -178,6 +179,21 @@ def test_database_unavailable_releases_session_before_provider_call(recorded_his
         response = client.post(f"/sessions/{session_id}/messages", json={"message": "Question"})
         assert basic.parse_sse(response.text)[-1][0] == "done"
         assert session.transcript.count(UserMessage("Question")) == 1
+
+
+def test_schedule_application_payload_is_saved_with_the_completed_run(recorded_history):
+    provider = basic.ScriptedToolProvider(basic.rename_call(), [TextDelta("Changed description")])
+    app = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test", max_schedule_bytes=basic.SCHEDULE_BYTE_LIMIT),
+        provider=provider,
+        sandbox_factory=basic.rename_factory(),
+    )
+    with basic.AuthenticatedTestClient(app) as client:
+        session_id = basic.create_session(client, basic.schedule_yaml())
+        response = client.post(f"/sessions/{session_id}/messages", json={"message": "Change description"})
+    application = next(data for kind, data in basic.parse_sse(response.text) if kind == "schedule_applied")
+    assert recorded_history["schedule_changes"] == [{"type": "schedule_applied", **application}]
+    assert recorded_history["finishes"][0][-1][2]["schedule_yaml"] == application["schedule_yaml"]
 
 
 def test_final_write_failure_preserves_successful_conversation(recorded_history, monkeypatch, caplog):
@@ -802,7 +818,7 @@ def test_postgres_duplicates_and_reconnection(postgres_history):
             *map(record, entries),
             record(app_event[2]),
         ]
-        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (4,)
+        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (5,)
     # Tool results never join later context, so the conversation is rebuilt without them.
     assert restarted.load_session(session, owner)["entries"] == [
         UserMessage("What's next?"),
@@ -858,15 +874,34 @@ def test_postgres_finish_commits_status_state_and_entries_together(postgres_hist
     history.save_session(session, session_state(owner))
     history.start_run(run, session, session_state(owner), "Question", 0, model="model", attachment_count=0)
     answered = session_state(owner, schedule_yaml="description: answered")
+    change = {"type": "schedule_applied", "run_id": run, "schedule_yaml": answered[2]["schedule_yaml"]}
     with pytest.raises(TypeError):
         history.finish_run(
-            run, "completed", None, None, True, session_id=session, state=answered, entries=[(1, run, object())]
+            run,
+            "completed",
+            None,
+            None,
+            True,
+            session_id=session,
+            state=answered,
+            entries=[(1, run, object())],
+            schedule_change=change,
         )
     assert history.load_session(session, owner)["state"] == EMPTY_STATE
     with history._connect() as connection:
-        assert connection.execute("SELECT status FROM chat_runs").fetchone() == ("running",)
+        assert connection.execute("SELECT status, schedule_change FROM chat_runs").fetchone() == ("running", None)
     entries = [(1, run, AssistantMessage("Answer"))]
-    history.finish_run(run, "completed", None, None, True, session_id=session, state=answered, entries=entries)
+    history.finish_run(
+        run,
+        "completed",
+        None,
+        None,
+        True,
+        session_id=session,
+        state=answered,
+        entries=entries,
+        schedule_change=change,
+    )
     restored = history.load_session(session, owner)
     assert restored["state"] == answered[2]
     assert (restored["entries"], restored["next_entry_seq"]) == (
@@ -874,7 +909,7 @@ def test_postgres_finish_commits_status_state_and_entries_together(postgres_hist
         2,
     )
     with history._connect() as connection:
-        assert connection.execute("SELECT status FROM chat_runs").fetchone() == ("completed",)
+        assert connection.execute("SELECT status, schedule_change FROM chat_runs").fetchone() == ("completed", change)
 
 
 def test_postgres_event_rows_combine_fragments_without_losing_boundaries(postgres_history):
@@ -1004,7 +1039,7 @@ def test_postgres_upgrade_preserves_deployed_sessions_and_message_receipts(unini
     assert [(row[3], row[4].get("text")) for row in events] == [("delta", "Saved answer"), ("optimization", None)]
     assert events[0][4]["run_id"] == run_id
     with history._connect() as connection:
-        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (4,)
+        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (5,)
         assert connection.execute("SELECT auth_credential_id FROM chat_sessions").fetchone() == ("team-a",)
         assert connection.execute("SELECT model FROM chat_runs").fetchone() == ("saved-model",)
 
@@ -1582,6 +1617,58 @@ def test_postgres_restart_recovers_a_saved_terminal_with_an_unfinished_status(po
     with postgres_history._connect() as connection:
         assert connection.execute("SELECT status, committed FROM chat_runs").fetchone() == ("completed", True)
         assert connection.execute("SELECT count(*) FROM chat_session_events WHERE type = 'done'").fetchone() == (1,)
+
+
+def test_postgres_restart_replays_a_committed_schedule_before_its_missing_terminal(postgres_history):
+    session_id, owner, run_id = str(uuid4()), str(uuid4()), str(uuid4())
+    original = basic.schedule_yaml()
+    applied = original.replace("description: ''", "description: Changed")
+    assert applied != original
+    change = {
+        "type": "schedule_applied",
+        "run_id": run_id,
+        "schedule_yaml": applied,
+        "base_sha256": hashlib.sha256(original.encode()).hexdigest(),
+        "sha256": hashlib.sha256(applied.encode()).hexdigest(),
+        "diff": '- description: "" -> "Changed"',
+    }
+    state = session_state(owner)
+    postgres_history.save_session(session_id, state)
+    postgres_history.start_run(
+        run_id, session_id, state, "Change description", 0, model="model", attachment_count=0, message_id="change"
+    )
+    # Simulate a crash after the outcome transaction, before publication reaches the event writer.
+    postgres_history.finish_run(
+        run_id,
+        "completed",
+        None,
+        None,
+        True,
+        session_id=session_id,
+        state=session_state(owner, schedule_yaml=applied),
+        entries=[(1, run_id, AssistantMessage("Changed description"))],
+        schedule_change=change,
+    )
+
+    async def restarted():
+        provider = basic.FakeProvider([["Must not execute"]])
+        app = basic.create_test_app(settings=basic.make_settings(history_postgres_url="test"), provider=provider)
+        async with serving(app, owner) as client:
+            assert (
+                await client.post(
+                    f"/sessions/{session_id}/messages", json={"message": "Change description", "message_id": "change"}
+                )
+            ).json() == {"run_id": run_id}
+            assert provider.calls == []
+            assert app.state.session_store.get(session_id).schedule_yaml == applied
+            frames = await read_events(app, session_id, owner, until="session_reset")
+            reset = next(data for _id, kind, data in frames if kind == "session_reset")
+            assert [event["type"] for event in reset["events"]] == ["schedule_applied", "done"]
+            assert reset["events"][0]["data"] == {key: value for key, value in change.items() if key != "type"}
+
+    asyncio.run(restarted())
+    # A second restore finds a saved terminal and does not synthesize the application again.
+    assert postgres_history.load_session(session_id, owner)["unfinished_runs"] == []
 
 
 def test_postgres_explicit_reset_recovers_output_at_the_current_cursor(postgres_history):

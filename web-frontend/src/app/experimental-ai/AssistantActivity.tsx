@@ -63,6 +63,8 @@ export interface ScheduleCheckEntry {
 export interface ScheduleAppliedEntry {
   kind: 'schedule-applied';
   text: string;
+  runId?: string;
+  notice?: string;
 }
 
 export type ActivityEntry =
@@ -132,6 +134,11 @@ export function AssistantActivity({ entries }: { entries: ActivityEntry[] }) {
     <div aria-label="Assistant activity">
       {entries.map((entry, index) => (
         <div key={index}>
+          {entry.kind === 'schedule-applied' && entry.notice && (
+            <p role="status" className="my-2 rounded border border-amber-200 bg-amber-50 p-2 text-sm text-amber-900">
+              {entry.notice}
+            </p>
+          )}
           {index > 0 && (entry.kind === 'response' || entries[index - 1].kind === 'response') && (
             <hr className="my-3 border-gray-200" />
           )}
