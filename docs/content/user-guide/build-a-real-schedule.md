@@ -5,9 +5,9 @@ ward schedule for November 2025 in the web UI and **why** the ward chose its
 groups, staffing levels, requests, and weights. The guide focuses on the
 rationale behind each step, including the ward's
 workload, staff qualifications, rest policies, and preference priorities. These
-explanations help users and AI assistants adapt the configuration to another
-ward. The steps start from an empty schedule.
-**Save and Load → Download** produces the same scheduling data as the bundled
+explanations help users and AI assistants adapt the schedule data to another
+ward. The steps start from empty schedule data.
+**Save and Load → Download** produces the same schedule data as the bundled
 example (`large-ward-with-87-people-2025-11.yaml`). The exported YAML is not
 byte-for-byte identical: the running app stamps `appVersion` and can write
 requests or fields in a different order. See
@@ -19,14 +19,14 @@ use the app's descriptions.
 
 ## Input and output
 
-The complete ward workflow starts with an **unfilled monthly schedule**,
-usually an Excel workbook containing dates, people, staffing requirements,
-and shift requests, with daily assignments not yet filled in. It may also
-contain staff roles and previous-month shifts. Each ward uses its own layout
+The complete ward workflow starts with an **unfilled monthly schedule
+workbook** containing dates, people, staffing requirements, and shift
+requests, with daily assignments not yet filled in. It may also contain
+staff roles and previous-month shifts. Each ward uses its own layout
 and notation, and may provide additional requirements as text.
 
 This example starts with information already extracted from that source.
-It focuses on constructing the scheduling configuration through the GUI and
+It focuses on constructing the schedule data through the GUI and
 using it to generate an optimized schedule. Extracting an arbitrary ward
 workbook and converting the result into the ward's expected workbook are
 outside the walkthrough's scope. The following summary explains how the
@@ -61,7 +61,7 @@ example's inputs and outputs relate to those tasks.
   cells blank, so each GUI upload can apply its own weight. The supplied
   strong and moderate request CSVs emulate this extraction. The app does
   not interpret Excel colors or ward shorthand.
-- **Configuration and optimized schedule:** The GUI exports the configuration
+- **Schedule data and optimized schedule:** The GUI exports the schedule data
   as YAML. The optimizer uses it to produce daily assignments. In the real
   workflow, these assignments must then be converted back to the ward's
   workbook layout and shift notation. For example, if the ward labels
@@ -102,15 +102,36 @@ These terms follow the order of the GUI tabs:
   weighted objectives, including staffing requirements, requests, successions,
   counts, and affinities. Some are mandatory. Others can be traded off during optimization.
 
+### Naming the schedule
+
+These terms name the schedule by its state in the workflow:
+
+- **Schedule:** The nurse roster in any state of completion.
+- **Empty schedule data:** The schedule-data state right after **New
+  Schedule → Create empty schedule**: dates, people, shift types, and history
+  are unset, and only the built-in at-most-one-shift-per-day rule exists.
+- **Schedule data:** The schedule's editable content, stored in the browser
+  and saved as YAML: dates, people, shift types, histories, preference rules,
+  and the export layout. It holds no daily assignments before optimization.
+- **Optimized schedule:** The schedule after the optimizer fills in daily
+  assignments, downloaded as an XLSX workbook. The ward may adjust it further
+  before use.
+
 ## Ward conventions
 
 These describe the ward's source information and monthly staffing practice,
 rather than items created on a GUI tab.
 
-- **Unfilled monthly schedule:** The ward's source workbook before daily
-  assignments are completed. It contains dates, people, staffing requirements,
-  and shift requests, and may include staff roles and previous-month shifts.
-  Its layout and notation vary by ward. Written instructions may supplement it.
+- **Source materials:** Everything a ward supplies, in whatever form: the
+  unfilled monthly schedule workbook, last month's optimized schedule,
+  natural-language staffing and fairness policies, and verbal instructions.
+  When complete, a person or an AI assistant can interpret the source
+  materials into schedule data.
+- **Unfilled monthly schedule workbook:** The ward's roster document before
+  daily assignments are completed, usually an Excel workbook. It contains
+  dates, people, staffing requirements, and shift requests, and may include
+  staff roles and previous-month shifts. Its layout and notation vary by
+  ward. Written instructions may supplement it.
 - **Monthly primary shift:** Day, Evening, or Night designated as a nurse's
   primary shift category for the month. Daily assignments may differ to meet
   staffing needs or individual requests. For example, a nurse whose monthly
@@ -448,7 +469,7 @@ With this guide's `11b` and `11m` request tiers, `-1t` is the largest
 individual finite penalty. In practice, it usually keeps preferred staffing
 even alongside many `11b` requests. A shortfall remains possible. If none is
 acceptable, set Required equal to Preferred. That makes the count hard and
-may make an understaffed month infeasible with no schedule results, which makes debugging much more difficult.
+may make an understaffed month infeasible with no optimized schedule, which makes debugging much more difficult.
 
 The `D`, `E`, and `N` requirements count non-student nurses. `D` has separate
 workday and freeday counts because workload differs. The `+` requirements
@@ -521,7 +542,8 @@ together. Confirm their priority against the rest of a new ward's rules.
 
 This example assumes the ward balanced the number of `11b` requests per
 person before using the app, often through discussion while preparing the
-empty schedule. The optimizer does not equalize those requests: someone with
+unfilled monthly schedule workbook. The optimizer does not equalize those
+requests: someone with
 two and someone with ten receive the same weight per request. If that
 preparation is missing or the tier is unclear, start with `11m`, inspect how many requests are satisfied for each person, and only then promote selected requests to `11b`.
 

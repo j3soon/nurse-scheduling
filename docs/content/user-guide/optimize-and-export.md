@@ -2,9 +2,9 @@
 
 [Open Optimize and Export](https://nursescheduling.org/optimize-and-export){ .md-button .md-button--primary }
 
-This page sends the schedule to a solver and downloads the XLSX result. Server
-selection and submission are required. Workbook formatting, anonymization, and
-timeout changes are optional.
+This page sends the schedule data to a solver and downloads the optimized
+schedule as XLSX. Server selection and submission are required. Workbook
+formatting, anonymization, and timeout changes are optional.
 
 ## Real scenario example
 

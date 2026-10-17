@@ -60,6 +60,13 @@
   phrase such as "shift families." Distinguish a nurse's monthly primary shift
   from actual daily assignments. Define new concepts, such as near-hard
   constraints, before using them in explanations.
+- Use "schedule" as the umbrella term for the roster in any state, "schedule
+  data" for the browser-kept YAML input, and "optimized schedule" for the
+  optimizer output. Name the zero-content state after **Create empty
+  schedule** "empty schedule data," and the ward-supplied documents and
+  records interpreted into schedule data "source materials." Avoid "schedule
+  config" and "schedule result": solver options and a job's outcome and
+  score already use those words.
 - Keep introductory terminology short, with one bullet per concept in GUI tab
   order explaining its meaning and purpose. Put ward conventions in a separate
   section and detailed examples beside the steps that use them.
@@ -97,7 +104,7 @@
   them, and prefer descriptive bullets over tables for groups and rationale.
   Use tables where readers need to compare structured values.
 - Explain the input, output, and tutorial scope early. Distinguish source
-  workbooks, extracted inputs, scheduling configuration, optimized assignments,
+  workbooks, extracted inputs, schedule data, optimized assignments,
   and any conversion back to the ward's layout that the tutorial skips.
 - Keep paragraphs short and focused. Put case-specific run times or results
   in their own paragraph when they interrupt a general explanation. Use the

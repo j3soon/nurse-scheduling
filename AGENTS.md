@@ -174,6 +174,14 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   Name the specific property of other values too, such as "normalized
   selector" or "compiled selector." `scripts/check_terminology.sh` rejects
   vague jargon that hides it, and CI runs the check.
+- Use "schedule" as the umbrella term for the roster in any state. Name the
+  browser-kept YAML input "schedule data" (排班資訊) and the optimizer output
+  "optimized schedule" (排好的班). Name the format at API and code boundaries,
+  such as "schedule YAML" or "XLSX artifact," because "result" already means a
+  job's outcome and score. Avoid "schedule config": `ExportConfig` and solver
+  options already own "config." Name the zero-content state of the input
+  "empty schedule data" and the ward's scattered, not-yet-interpreted
+  documents "source materials."
 - When reporting validation, lead with what passed. Separate correctness checks
   from performance measurements, and limit each caveat to the claim it affects.
   If test input changed, say which checks were repeated and which measurements
