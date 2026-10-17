@@ -148,9 +148,14 @@ def test_xlsx_range_case_requires_successful_range_use_and_saved_caches(
     assert grade(case, outcome).passed is passed
 
 
+@pytest.mark.parametrize(
+    "case_id",
+    ["workbook-import-first-valid-proposal", "workbook-build-after-confirmation", "workbook-build-corrected-mapping"],
+)
 @pytest.mark.parametrize("defect", [None, "wrong-weight", "missing-rule", "repaired-invalid-write"])
-def test_workbook_import_requires_correct_weights_and_a_valid_first_proposal(defect):
-    case = next(c for c in load_cases(CASES_PATH) if c.id == "workbook-import-first-valid-proposal")
+def test_workbook_import_requires_correct_weights_and_a_valid_first_proposal(case_id, defect):
+    case = next(c for c in load_cases(CASES_PATH) if c.id == case_id)
+    black_weight = 22000000 if case_id == "workbook-build-corrected-mapping" else 11000000
     proposed = copy.deepcopy(FIXTURE_SCHEDULES["new-schedule"])
     proposed["dates"]["range"] = {"startDate": "2025-11-01", "endDate": "2025-11-03"}
     proposed["people"]["items"] = [
@@ -165,16 +170,18 @@ def test_workbook_import_requires_correct_weights_and_a_valid_first_proposal(def
             for person, date, shift, weight in (
                 ("Ada", "01", "OFF", 11000000000),
                 ("Ada", "03", "D", 11000000000),
-                ("Bela", "01", "OFF", 11000000),
+                ("Bela", "01", "OFF", black_weight),
                 ("Bela", "02", "E", 11000000000),
             )
         ],
     ]
     if defect == "wrong-weight":
-        proposed["preferences"][3]["weight"] = 11000000000
+        proposed["preferences"][3]["weight"] = 11000000 if black_weight == 22000000 else 11000000000
     if defect == "missing-rule":
         proposed = None
     activity = []
+    for turn in range(1, len(case.user_turns) + 1):
+        activity.extend([{"kind": "user", "turn": turn}, {"kind": "tool", "name": "bash", "ok": True}])
     if defect in {"missing-rule", "repaired-invalid-write"}:
         activity.append(
             {
@@ -184,7 +191,13 @@ def test_workbook_import_requires_correct_weights_and_a_valid_first_proposal(def
                 "result": "Trusted schedule check after this command:\nMissing required preferences: {'at most one shift per day'}",
             }
         )
-    outcome = RunOutcome(initial=FIXTURE_SCHEDULES[case.fixture], proposed=proposed, activity=activity)
+    outcome = RunOutcome(
+        initial=FIXTURE_SCHEDULES[case.fixture],
+        proposed=proposed,
+        activity=activity,
+        intermediate_answers=["Ada and Bela"],
+        proposal_turns=[False, proposed is not None] if len(case.user_turns) == 2 else [proposed is not None],
+    )
     assert grade(case, outcome).passed is (defect is None)
 
 

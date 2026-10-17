@@ -182,6 +182,8 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   options already own "config." Name the zero-content state of the input
   "empty schedule data" and the ward's scattered, not-yet-interpreted
   documents "source materials."
+- Use "schedule data" for YAML files and "schedule workbook" for XLSX files.
+  Describe XLSX-to-YAML imports as "build schedule data from an XLSX workbook."
 - When reporting validation, lead with what passed. Separate correctness checks
   from performance measurements, and limit each caveat to the claim it affects.
   If test input changed, say which checks were repeated and which measurements

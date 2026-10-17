@@ -1,0 +1,102 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "fixture": "new-schedule",
+  "attachments": [
+    "workbook-intake-xlsx"
+  ],
+  "tags": [
+    "workbook-intake",
+    "confirmed-analysis"
+  ],
+  "tool_usage": {
+    "forbidden": [
+      "optimizer"
+    ],
+    "max_validation_errors": 0
+  },
+  "id": "workbook-build-corrected-mapping",
+  "expect_proposal": true,
+  "changes": [
+    "description",
+    "people",
+    "dates",
+    "shiftTypes",
+    "preferences",
+    "export"
+  ],
+  "assert": [
+    {
+      "path": "people.items",
+      "count": 2
+    },
+    {
+      "path": "people.items[?id=Ada].history",
+      "equals": [
+        "OFF"
+      ]
+    },
+    {
+      "path": "people.items[?id=Bela].history",
+      "equals": [
+        "E",
+        "E"
+      ]
+    },
+    {
+      "path": "dates.range.startDate",
+      "equals": "2025-11-01"
+    },
+    {
+      "path": "dates.range.endDate",
+      "equals": "2025-11-03"
+    },
+    {
+      "path": "shiftTypes.items",
+      "count": 2
+    },
+    {
+      "path": "preferences[?type=shift request]",
+      "count": 4
+    },
+    {
+      "path": "preferences[?type=shift request][?person=Ada][?date=01][?shiftType=OFF].weight",
+      "equals": 11000000000
+    },
+    {
+      "path": "preferences[?type=shift request][?person=Ada][?date=03][?shiftType=D].weight",
+      "equals": 11000000000
+    },
+    {
+      "path": "preferences[?type=shift request][?person=Bela][?date=01][?shiftType=OFF].weight",
+      "equals": 22000000
+    },
+    {
+      "path": "preferences[?type=shift request][?person=Bela][?date=02][?shiftType=E].weight",
+      "equals": 11000000000
+    }
+  ],
+  "note": "This testcase is mostly AI generated. A corrected request-weight mapping overrides the earlier analysis. Preserve all other source values and never treat the confirmation as permission to reuse a superseded mapping.",
+  "user_turns": [
+    "Inspect the attached workbook for November 1-3, 2025 and explain the exact import mapping for confirmation. HN means head nurse and N means nurse. Yellow marks a senior nurse and blue marks a freeday. These roles and labels are descriptive only for this import. In History, off means OFF and 2E means E,E before November 1. The shift IDs are D, E and OFF. A 1 requests OFF: red means a finite +11b preference and black means a finite +11m preference. Red letters request the exact shift at finite +11b. Blanks make no request. Preserve both people and every request. Use exact person IDs and quoted day-of-month selectors in each request. We will only import this data. No staffing requirements, rest restrictions, or other role-based preferences are needed yet. Do not construct a proposal yet. Read the relevant guide and schema while preparing the mapping.",
+    "Confirmed except black 1 now means a finite +22m OFF request instead of +11m. All other mappings stay the same. Build the complete proposal from the workbook with this correction. Do not optimize."
+  ],
+  "intermediate_answer_contains": [
+    [
+      "Ada",
+      "Bela"
+    ]
+  ],
+  "turn_tool_usage": [
+    {
+      "required": [
+        "bash"
+      ]
+    },
+    {
+      "required": [
+        "bash"
+      ]
+    }
+  ]
+}

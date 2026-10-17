@@ -29,6 +29,13 @@ Contrast a fact-only question with a request to infer rules. Test a later user
 correction and check that the YAML uses the confirmed rules instead of the
 example's patterns. Keep solver-result explanations in a separate prompt step.
 
+For confirmed-analysis reuse, test an unchanged mapping, a corrected mapping and
+a follow-up that needs previously unread data. Check the resulting proposal and
+second-turn commands separately. A valid import alone does not prove reuse.
+Later turns retain assistant answers, not tool results or scratch files. Do not
+assume a fresh workspace still contains an analysis script. Keep mandatory-rule
+failures separate from redundant exploration when assessing a candidate.
+
 For repeated missing-library errors in an offline sandbox, consider preinstalling
 the library instead of adding more instructions to use another one. Check the
 rebuilt image with synthetic input. Mark comparisons that relied on its absence
