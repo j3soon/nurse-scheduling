@@ -246,6 +246,13 @@ def test_workbook_inspector_cli_preserves_existing_window_defaults(tmp_path, mon
         (["--range", "A1", "--max-columns", "2"], "cannot be combined"),
         (["--range", "A1", "--overview"], "cannot be combined"),
         (["--range", "First!A1", "--sheet", "Second"], "conflicts"),
+        (["--summary"], "requires --range"),
+        (["--axis", "row"], "require --summary"),
+        (["--max-groups", "1"], "require --summary"),
+        (["--summary", "--overview"], "not allowed"),
+        (["--summary", "--range", "A1", "--max-rows", "1"], "cannot be combined"),
+        (["--summary", "--range", "A1", "--max-groups", "0"], "between 1 and 1,000"),
+        (["--summary", "--range", "A1", "--max-groups", "1001"], "between 1 and 1,000"),
     ],
 )
 def test_workbook_inspector_cli_rejects_invalid_or_conflicting_ranges(monkeypatch, capsys, options, error):
@@ -527,3 +534,158 @@ def test_workbook_intake_fixture_preserves_ambiguous_codes_and_cell_colors():
     assert sheet["C4"].fill.fgColor.rgb == "00FFFF00"
     assert sheet["D2"].fill.fgColor.rgb == "009FC5E8"
     workbook.close()
+
+
+@pytest.mark.parametrize("axis", ["all", "row", "column"])
+def test_workbook_summary_counts_styles_rows_columns_and_blanks(tmp_path: Path, axis):
+    from nurse_scheduling.ai.attachment_tools.inspect_xlsx import summarize_workbook
+
+    attachment = load_attachment_fixtures(("counting-xlsx",))[0]
+    path = tmp_path / attachment.filename
+    path.write_bytes(attachment.data)
+    result = summarize_workbook(path, cell_range="Requests!B2:AC61", axis=axis, styles=True)
+    sheet = result["sheets"][0]
+
+    def counts(summary):
+        totals = {"red": 0, "black": 0, "blank": summary["blank_cells"]}
+        for group in summary["groups"]:
+            if group["value"] is None:
+                continue
+            rgb = result["styles"][group["style"]]["font"]["color"]["value"]
+            totals["red" if rgb == "FFFF0000" else "black"] += group["count"]
+        return totals
+
+    assert counts(sheet["summary"]) == {"red": 448, "black": 896, "blank": 336}
+    assert sheet["summary"]["cells"] == 1680
+    assert sheet["summary"]["group_count"] == 5  # Two fonts crossed with two fills, plus blanks.
+    assert not sheet["summary"]["groups_truncated"]
+    if axis == "row":
+        assert sheet["by_row"][0]["row"] == 2
+        assert counts(sheet["by_row"][0]) == {"red": 8, "black": 14, "blank": 6}
+        assert len(sheet["by_row"]) == 60
+    elif axis == "column":
+        assert sheet["by_column"][0]["column"] == "B"
+        assert counts(sheet["by_column"][0]) == {"red": 16, "black": 32, "blank": 12}
+        assert len(sheet["by_column"]) == 28
+    else:
+        plain = summarize_workbook(path, cell_range="Requests!B2:AC61")["sheets"][0]["summary"]
+        assert plain["groups"] == [
+            {"type": "int", "value": 1, "count": 1344, "first_cell": "C2"},
+            {"type": "NoneType", "value": None, "count": 336, "first_cell": "B2"},
+        ]
+
+
+def test_workbook_summary_preserves_formulas_missing_caches_and_truncation(tmp_path: Path):
+    from nurse_scheduling.ai.attachment_tools.inspect_xlsx import summarize_workbook
+
+    path = tmp_path / "formula.xlsx"
+    path.write_bytes(load_attachment_fixtures(("formula-xlsx",))[0].data)
+    result = summarize_workbook(path, cell_range="'Staffing checks'!C3:C5")
+    summary = result["sheets"][0]["summary"]
+    assert summary["formula_cells"] == 3
+    assert summary["blank_cells"] == 0
+    assert [group["cached_value"] for group in summary["groups"]] == [11, 10, None]
+    assert all(group["type"] == "formula" and group["formula"].startswith("=") for group in summary["groups"])
+    limited = summarize_workbook(path, cell_range="'Staffing checks'!C3:C5", max_groups=1)["sheets"][0]["summary"]
+    assert limited["groups"] == summary["groups"][:1]
+    assert limited["groups_truncated"] and limited["group_count"] == 3
+    assert limited["cells"] == limited["formula_cells"] == 3
+
+
+def test_workbook_summary_keeps_value_types_and_empty_padding(tmp_path: Path):
+    from nurse_scheduling.ai.attachment_tools.inspect_xlsx import summarize_workbook
+
+    path = tmp_path / "types.xlsx"
+    workbook = Workbook()
+    workbook.active.append([True, 1, "1"])
+    workbook.save(path)
+    workbook.close()
+    summary = summarize_workbook(path, cell_range="A1:D2", axis="row")["sheets"][0]
+    assert [(g["type"], g["value"], g["count"]) for g in summary["summary"]["groups"] if g["value"] is not None] == [
+        ("bool", True, 1),
+        ("int", 1, 1),
+        ("str", "1", 1),
+    ]
+    assert summary["summary"]["blank_cells"] == 5
+    assert summary["by_row"][1]["cells"] == summary["by_row"][1]["blank_cells"] == 4
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"cell_range": "A1:XFD1048576"},
+        {"cell_range": "A:A"},
+        {"cell_range": "A1", "axis": "diagonal"},
+        {"cell_range": "A1", "max_groups": 0},
+        {"cell_range": "A1", "max_groups": 1001},
+        {"cell_range": "First!A1", "sheet_name": "Other"},
+    ],
+)
+def test_workbook_summary_rejects_invalid_limits_before_loading(tmp_path: Path, options):
+    from nurse_scheduling.ai.attachment_tools.inspect_xlsx import summarize_workbook
+
+    with pytest.raises(ValueError):
+        summarize_workbook(tmp_path / "absent.xlsx", **options)
+
+
+@pytest.mark.parametrize("styles", [False, True])
+def test_workbook_summary_runs_as_a_standalone_sandbox_script(tmp_path: Path, styles):
+    import json
+    import subprocess
+    import sys
+
+    from nurse_scheduling.ai.attachment_tools import inspect_xlsx
+
+    path = tmp_path / "source.xlsx"
+    path.write_bytes(load_attachment_fixtures(("counting-xlsx",))[0].data)
+    script = tmp_path / "inspect_xlsx.py"
+    script.write_bytes(Path(inspect_xlsx.__file__).read_bytes())
+    run = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            str(path),
+            "--summary",
+            "--range",
+            "Requests!B2:AC61",
+            "--axis",
+            "row",
+            "--max-groups",
+            "1",
+            *(["--styles"] if styles else []),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    result = json.loads(run.stdout)
+    assert result["sheets"][0]["by_row"][0]["blank_cells"] == 6
+    summary = result["sheets"][0]["summary"]
+    assert summary["cells"] == 1680 and summary["blank_cells"] == 336
+    assert summary["groups"][0]["count"] == (768 if styles else 1344)
+    assert summary["groups_truncated"]
+    assert ("styles" in result) is styles
+
+
+def test_workbook_summary_preserves_styles_on_blank_cells(tmp_path: Path):
+    from openpyxl.styles import Font, PatternFill
+
+    from nurse_scheduling.ai.attachment_tools.inspect_xlsx import summarize_workbook
+
+    path = tmp_path / "blank-styles.xlsx"
+    workbook = Workbook()
+    workbook.active["A1"].fill = PatternFill("solid", fgColor="FFFF0000")
+    workbook.active["B1"].font = Font(color="FF0000FF")
+    workbook.save(path)
+    workbook.close()
+    result = summarize_workbook(path, cell_range="A1:C1", styles=True)
+    summary = result["sheets"][0]["summary"]
+    assert summary["blank_cells"] == summary["cells"] == 3
+    assert [(g["value"], g["count"], g["first_cell"]) for g in summary["groups"]] == [
+        (None, 1, "A1"),
+        (None, 1, "B1"),
+        (None, 1, "C1"),
+    ]
+    assert len({g["style"] for g in summary["groups"]}) == 3
+    assert result["styles"][summary["groups"][0]["style"]]["fill"]["foreground"]["value"] == "FFFF0000"
+    assert result["styles"][summary["groups"][1]["style"]]["font"]["color"]["value"] == "FF0000FF"

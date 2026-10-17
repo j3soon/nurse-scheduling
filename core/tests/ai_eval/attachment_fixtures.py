@@ -225,6 +225,24 @@ def _styled_requests_workbook() -> bytes:
     return _stable_workbook(workbook, {"xl/worksheets/sheet3.xml": {"C2": 13, "C3": 9}})
 
 
+def _counting_workbook() -> bytes:
+    """Repeated values with independent font and fill distinctions."""
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Requests"
+    sheet.append(["Person", *[f"Nov {day:02}" for day in range(1, 29)]])
+    for person in range(60):
+        sheet.append([f"P{person + 1:02}"])
+        for day in range(28):
+            if (person + day) % 5 == 0:
+                continue
+            cell = sheet.cell(person + 2, day + 2, 1)
+            cell.font = Font(color="FFFF0000" if (person + day) % 3 == 0 else "FF000000")
+            if day % 7 == 0:
+                cell.fill = PatternFill("solid", fgColor="FFEEEEEE")
+    return _stable_workbook(workbook)
+
+
 def _pdf() -> bytes:
     image = Image.open(BytesIO(_label_image("PDF VISION 3816"))).convert("RGB")
     output = BytesIO()
@@ -364,6 +382,11 @@ def _pptx() -> bytes:
 
 
 _FIXTURES: dict[str, tuple[str, str, Callable[[], bytes]]] = {
+    "counting-xlsx": (
+        "requests.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        _counting_workbook,
+    ),
     "request-table-csv": (
         "requests.csv",
         "text/csv",

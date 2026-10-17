@@ -203,6 +203,9 @@ skipped does not validate persistence.
 - Keep bundled attachment helpers general and optional. Preserve meaningful
   source data such as spreadsheet formulas and cached values, report truncation,
   and let the agent write a focused sandbox parser when a helper is insufficient.
+  Check the helper catalog and `--help` before generating read-only parsing or
+  counting code. Add recurring missing operations to a maintained inspector.
+  Keep source inspection separate from schedule construction and policy audits.
 - Fix repeated representation failures at the data boundary before adding prompt
   exceptions. Use the app's YAML 1.2 semantics for both reading and writing
   schedule data. Prefer the installed library over custom scalar converters.
@@ -210,10 +213,9 @@ skipped does not validate persistence.
   maintain a second validator.
 - When adding a bundled reference, include it in sandbox hydration, production
   Docker copy paths, and evaluation reference hashes.
-- Prefer extending an existing helper when an operation shares its parser,
-  dependencies, and output format. Reuse loading and validation instead of
-  adding a sibling script. Keep a separate helper when its interface is useful
-  independently.
+- Prefer one inspector per file format for related read-only operations.
+  Reuse its loading and validation for uploaded and generated files. Keep
+  schedule-specific calculations separate when they require schedule context.
 - Keep the agent run deadline separate from the sandbox provider's continuous
   runtime limit. Paused time still counts toward the agent run deadline.
 - Separate command execution deadlines from provider connection timeouts. Reuse a
@@ -260,6 +262,8 @@ skipped does not validate persistence.
   category or tag only when the changed behavior spans it or a selected case
   reveals a neighboring risk. A bare evaluation command exits without running
   cases. Use `--tuning` to opt into the default tuning set.
+- During commit review, defer validation of later unpublished commits. Report
+  pushed commits whose evaluation receipts need revalidation after helper changes.
 - Count exceeded model-output limits as behavior failures, not infrastructure
   outages. Count invalid or oversized generated downloads as behavior failures
   too. Keep the limit reason and partial trace. Keep provider connection and
