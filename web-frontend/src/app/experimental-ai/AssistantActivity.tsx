@@ -98,8 +98,18 @@ function ChunkedText({ text, label }: { text: string; label: string }) {
 function ToolBody({ entry }: { entry: ToolEntry }) {
   return (
     <div className="space-y-2">
-      {entry.arguments && entry.arguments !== '{}' && <ChunkedText text={entry.arguments} label="arguments" />}
-      {entry.result && <ChunkedText text={entry.result} label="output" />}
+      {entry.arguments && entry.arguments !== '{}' && (
+        <section aria-label="Tool arguments" className="rounded border border-gray-200 bg-white p-2">
+          <h3 className="mb-1 font-semibold text-gray-700">{entry.name === 'bash' ? 'Command' : 'Arguments'}</h3>
+          <ChunkedText text={entry.arguments} label="arguments" />
+        </section>
+      )}
+      {entry.result && (
+        <section aria-label="Tool result" className="rounded border border-gray-200 bg-white p-2">
+          <h3 className="mb-1 font-semibold text-gray-700">Result</h3>
+          <ChunkedText text={entry.result} label="output" />
+        </section>
+      )}
       {entry.state === 'interrupted' && !entry.result && (
         <p className="text-xs text-red-700">The command did not return before the turn ended.</p>
       )}

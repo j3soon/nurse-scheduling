@@ -174,10 +174,10 @@ function renderActivityDetailsHtml(entry: Exclude<ActivityEntry, { kind: 'respon
     body = renderScheduleChangeHtml(entry);
   } else {
     const argumentsOutput = entry.arguments && entry.arguments !== '{}'
-      ? `<pre class="activity-output">${escapeHtml(entry.arguments)}</pre>`
+      ? `<section class="tool-section" aria-label="Tool arguments"><h3>${entry.name === 'bash' ? 'Command' : 'Arguments'}</h3><pre class="activity-output">${escapeHtml(entry.arguments)}</pre></section>`
       : '';
     const resultOutput = entry.result
-      ? `<pre class="activity-output">${escapeHtml(entry.result)}</pre>`
+      ? `<section class="tool-section" aria-label="Tool result"><h3>Result</h3><pre class="activity-output">${escapeHtml(entry.result)}</pre></section>`
       : '';
     const interrupted = entry.state === 'interrupted' && !entry.result
       ? '<p class="interrupted">The command did not return before the turn ended.</p>'
@@ -428,6 +428,8 @@ export function buildHtmlChatExport(
     .activity-body { margin-top: 4px; border-radius: 4px; background: #f9fafb; padding: 8px; }
     .activity-output, .schedule-diff { max-height: 288px; overflow: auto; margin: 0; color: #4b5563; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.625 ui-monospace, monospace; }
     .tool-body { display: flex; flex-direction: column; gap: 8px; }
+    .tool-section { border: 1px solid #e5e7eb; border-radius: 4px; background: white; padding: 8px; }
+    .tool-section h3 { margin: 0 0 4px; font-size: 12px; font-weight: 600; color: #374151; }
     .schedule-diff .removed, .schedule-diff .added { display: block; }
     .schedule-diff .removed { color: #b91c1c; }
     .schedule-diff .added { color: #15803d; }

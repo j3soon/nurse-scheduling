@@ -42,6 +42,12 @@ def tool(summary, *outputs):
 
 
 class ExtractHtmlTracesTests(unittest.TestCase):
+    def test_labeled_tool_sections_preserve_input_and_result_order(self):
+        body = '<div class="activity-entry"><details class="activity-details"><summary>bash</summary><div class="tool-body"><section class="tool-section" aria-label="Tool arguments"><h3>Command</h3><pre class="activity-output">{&quot;command&quot;:&quot;echo ready&quot;}</pre></section><section class="tool-section" aria-label="Tool result"><h3>Result</h3><pre class="activity-output">ready\n</pre></section></div></details></div>'
+        result = extract_export(message("assistant", body))
+        self.assertEqual(result["messages"][0]["activity"][0]["outputs"], ['{"command":"echo ready"}', "ready\n"])
+        self.assertEqual(result["inventory"]["tool_calls"], 1)
+
     def test_app_notice_is_not_a_tool_or_model_response(self):
         exported = message("assistant", '<div class="activity-entry"><details class="activity-details"><summary>App notice</summary><div class="activity-body"><pre class="activity-output">Provider timed out. Retry is available.</pre></div></details></div>')
         result = extract_export(exported)

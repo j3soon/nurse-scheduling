@@ -184,6 +184,20 @@ describe('chat export', () => {
     expect(html).toContain('uploaded files: [&lt;b&gt;]');
   });
 
+  it('separates tool input and result in labeled sections without changing their bytes', () => {
+    const input = '{"command":"printf <value>"}';
+    const output = '<value>\nCommand exited with code 0';
+    const html = buildHtmlChatExport([{ role: 'assistant', content: '', activity: [
+      { kind: 'tool', name: 'bash', arguments: input, result: output, ok: true },
+      { kind: 'tool', name: 'read', arguments: '{"path":"file.txt"}', result: '', ok: true, state: 'running' },
+    ] }], metadata);
+    expect(html).toContain('aria-label="Tool arguments"><h3>Command</h3>');
+    expect(html).toContain('aria-label="Tool arguments"><h3>Arguments</h3>');
+    expect(html).toContain('aria-label="Tool result"><h3>Result</h3>');
+    expect(html).toContain('&lt;value&gt;\nCommand exited with code 0');
+    expect(html.match(/aria-label="Tool result"/g)).toHaveLength(1);
+  });
+
   it('exports schedule checks and applied changes', () => {
     const changed: ChatExportMessage[] = [{
       id: 'answer', role: 'assistant', content: 'Done.', activity: [

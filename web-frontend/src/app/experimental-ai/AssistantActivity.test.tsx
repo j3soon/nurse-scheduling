@@ -19,7 +19,7 @@
 
 // This test is mostly AI generated.
 
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ActivityEntry, AssistantActivity } from './AssistantActivity';
 
@@ -84,8 +84,21 @@ describe('AssistantActivity', () => {
 
     await user.click(screen.getByText('bash'));
 
-    expect(screen.getByText(/sed -i/)).toBeVisible();
-    expect(screen.getByText('exit_code: 0')).toBeVisible();
+    const argumentsSection = screen.getByRole('region', { name: 'Tool arguments' });
+    const resultSection = screen.getByRole('region', { name: 'Tool result' });
+    expect(within(argumentsSection).getByRole('heading', { name: 'Command' })).toBeVisible();
+    expect(within(argumentsSection).getByText(/sed -i/)).toBeVisible();
+    expect(within(resultSection).getByRole('heading', { name: 'Result' })).toBeVisible();
+    expect(within(resultSection).getByText('exit_code: 0')).toBeVisible();
+    expect(within(argumentsSection).queryByText('exit_code: 0')).not.toBeInTheDocument();
+  });
+
+  it('labels non-shell input as arguments and omits an empty result', async () => {
+    const user = userEvent.setup();
+    render(<AssistantActivity entries={[{ kind: 'tool', name: 'read', arguments: '{"path":"/workspace/schedule.yaml"}', result: '', ok: true, state: 'running' }]} />);
+    await user.click(screen.getByText('read · running'));
+    expect(screen.getByRole('heading', { name: 'Arguments' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Tool result' })).not.toBeInTheDocument();
   });
 
   it('shows a simple red and green schedule edit', async () => {
