@@ -122,10 +122,11 @@ excluded from the model's conversation context.
 Recovery lasts until the session expires, normally after 30 days of inactivity.
 Hosted deployments use PostgreSQL to
 recover messages after a backend restart. A restart interrupts active responses,
-but the saved question, partial output, and uploaded source files remain available.
-Result downloads are held in memory and can disappear after a restart or when a
-busy server unloads an idle chat. Without PostgreSQL, chats and files remain in
-memory only. Keep your original files.
+but the saved question, partial output, uploaded source files, generated ZIPs,
+and optimizer files remain available. Removing an upload or ZIP hides it from
+active use but keeps it in the session archive. All archived files expire with
+the chat. Without PostgreSQL, chats and files remain in memory only.
+Keep your original files.
 
 ## See what the assistant did
 
@@ -210,10 +211,11 @@ its changing score.
 When the assistant creates files for download, it puts them in one ZIP archive.
 Use **Download files (ZIP)** below its answer. The archive and its uncompressed
 contents are each limited to 50 MB by default. Downloads remain available while
-the chat session exists, subject to the service memory limit. A workspace path
+the chat session exists. Without PostgreSQL, the service memory limit also applies. A workspace path
 printed in an answer is not itself a download link.
 Use **Remove ZIP** after saving a file you no longer need in the chat. This frees
-session storage for new files and removes that ZIP's download button.
+active download storage and removes that ZIP's download button. With PostgreSQL,
+the archived ZIP remains until the chat expires.
 
 ## Ask how to use the app
 
@@ -243,7 +245,8 @@ and the page reports when a preserved chat has expired.
 The complete schedule YAML is sent to the configured AI service and placed in
 the assistant's temporary workspace. Relevant schedule content reaches the
 model when the assistant inspects it. Uploaded source files stay with the chat
-until removed or the session expires. The service loads them into each new
+for active use until removed or the session expires. Removed files stay in the
+archive until expiry. The service loads active files into each new
 workspace. File count and size limits apply to retained uploads. With PostgreSQL,
 the service loads saved file contents only when a response uses its workspace.
 Without PostgreSQL, their bytes share the service's session memory budget.

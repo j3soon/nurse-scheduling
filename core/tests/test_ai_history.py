@@ -102,7 +102,17 @@ def recorded_history(monkeypatch):
             {"run_id": run_id, "session_id": session_id, "state": state, "prompt": prompt, **fields}
         )
 
-    def finish(_self, *outcome, session_id=None, state=None, entries=(), schedule_change=None, uploads=()):
+    def finish(
+        _self,
+        *outcome,
+        session_id=None,
+        state=None,
+        entries=(),
+        schedule_change=None,
+        uploads=(),
+        downloads=None,
+        files=(),
+    ):
         records["entries"].extend(entries)
         records["finishes"].append((*outcome, state))
         records["schedule_changes"].append(schedule_change)
@@ -118,7 +128,15 @@ def recorded_history(monkeypatch):
     monkeypatch.setattr(
         ChatHistory, "append_entries", lambda _self, _session_id, entries: records["entries"].extend(entries)
     )
-    for operation in ("append_events", "stop_message", "message_stopped", "find_message", "load_session"):
+    for operation in (
+        "append_events",
+        "stop_message",
+        "message_stopped",
+        "find_message",
+        "load_session",
+        "load_file",
+        "latest_optimizer",
+    ):
         monkeypatch.setattr(ChatHistory, operation, lambda *_args, **_kwargs: None)
     return records
 
@@ -474,7 +492,7 @@ def test_recovery_state_writes_commit_in_capture_order(recorded_history, monkeyp
     release = threading.Event()
     committed = []
 
-    def save(_self, _session_id, *, state, credential_id=None, entries=(), uploads=()):
+    def save(_self, _session_id, *, state, credential_id=None, entries=(), uploads=(), downloads=None, files=()):
         if state[2]["schedule_yaml"] == older:
             blocked.set()
             release.wait(5)
@@ -822,13 +840,14 @@ def test_postgres_uploads_survive_restart_and_removal(postgres_history):
         client.cookies.update(cookies)
         assert client.get(f"/sessions/{session}/uploads").json() == [duplicate]
     with postgres_history._connect() as connection:
-        assert connection.execute("SELECT id::text, data FROM chat_uploads").fetchall() == [
+        assert connection.execute("SELECT source_id, data FROM chat_files WHERE removed_at IS NULL").fetchall() == [
             (duplicate["id"], b"handover\x00")
         ]
+        assert connection.execute("SELECT count(*) FROM chat_files").fetchone() == (2,)
         connection.execute("UPDATE chat_sessions SET expires_at = now() - interval '1 second'")
     postgres_history.prune()
     with postgres_history._connect() as connection:
-        assert connection.execute("SELECT count(*) FROM chat_uploads").fetchone() == (0,)
+        assert connection.execute("SELECT count(*) FROM chat_files").fetchone() == (0,)
 
 
 def test_postgres_failed_upload_is_not_acknowledged_and_can_retry(postgres_history, monkeypatch):
@@ -844,7 +863,7 @@ def test_postgres_failed_upload_is_not_acknowledged_and_can_retry(postgres_histo
         assert client.post(f"/sessions/{session}/uploads?upload_id={upload_id}", files=payload).status_code == 503
         assert app.state.session_store.get(session).uploads[upload_id].data == b"handover"
         with postgres_history._connect() as connection:
-            assert connection.execute("SELECT count(*) FROM chat_uploads").fetchone() == (0,)
+            assert connection.execute("SELECT count(*) FROM chat_files").fetchone() == (0,)
             assert not connection.execute("SELECT state FROM chat_sessions").fetchone()[0]["uploads"]
         monkeypatch.setattr(ChatHistory, "save_session", save)
         assert client.post(f"/sessions/{session}/uploads?upload_id={upload_id}", files=payload).status_code == 201
@@ -864,7 +883,10 @@ def test_postgres_failed_upload_is_not_acknowledged_and_can_retry(postgres_histo
             == 201
         )
     with postgres_history._connect() as connection:
-        assert connection.execute("SELECT data FROM chat_uploads").fetchall() == [(b"new bytes",)]
+        assert connection.execute("SELECT data FROM chat_files ORDER BY created_at").fetchall() == [
+            (b"handover",),
+            (b"new bytes",),
+        ]
 
 
 def test_postgres_upload_write_is_atomic(postgres_history, monkeypatch):
@@ -884,7 +906,7 @@ def test_postgres_upload_write_is_atomic(postgres_history, monkeypatch):
             postgres_history.save_session(session.id, store.recovery_state(session.id), uploads=uploads)
     with postgres_history._connect() as connection:
         assert connection.execute("SELECT count(*) FROM chat_sessions").fetchone() == (0,)
-        assert connection.execute("SELECT count(*) FROM chat_uploads").fetchone() == (0,)
+        assert connection.execute("SELECT count(*) FROM chat_files").fetchone() == (0,)
 
 
 def test_postgres_uploads_load_only_when_a_sandbox_is_used(postgres_history, monkeypatch):
@@ -951,7 +973,7 @@ def test_postgres_upload_read_failure_releases_run(postgres_history, monkeypatch
             monkeypatch.setattr(ChatHistory, "load_upload", unavailable)
         else:
             with postgres_history._connect() as connection:
-                connection.execute("DELETE FROM chat_uploads")
+                connection.execute("DELETE FROM chat_files")
         response = client.post(f"/sessions/{session}/messages", json={"message": "Read files"})
         assert response.status_code == 200
         assert any(kind == "error" for kind, _data in basic.parse_sse(response.text))
@@ -1055,7 +1077,7 @@ def test_postgres_duplicates_and_reconnection(postgres_history):
             *map(record, entries),
             record(app_event[2]),
         ]
-        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (6,)
+        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (7,)
     # Tool results never join later context, so the conversation is rebuilt without them.
     assert restarted.load_session(session, owner)["entries"] == [
         UserMessage("What's next?"),
@@ -1276,7 +1298,7 @@ def test_postgres_upgrade_preserves_deployed_sessions_and_message_receipts(unini
     assert [(row[3], row[4].get("text")) for row in events] == [("delta", "Saved answer"), ("optimization", None)]
     assert events[0][4]["run_id"] == run_id
     with history._connect() as connection:
-        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (6,)
+        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (7,)
         assert connection.execute("SELECT auth_credential_id FROM chat_sessions").fetchone() == ("team-a",)
         assert connection.execute("SELECT model FROM chat_runs").fetchone() == ("saved-model",)
 

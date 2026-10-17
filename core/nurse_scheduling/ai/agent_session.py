@@ -181,6 +181,8 @@ class RunRecorder(Protocol):
 
     async def read_upload(self, session_id: str, owner: str, upload: SandboxAttachment) -> bytes: ...
 
+    async def save(self, session_id: str, credential_id: str | None = None) -> bool: ...
+
     async def start_run(
         self,
         session_id: str,
@@ -255,7 +257,9 @@ class AgentSession:
     # Retained source files keyed by upload ID, in upload order, and generated ZIPs keyed by run ID.
     uploads: dict[str, SandboxAttachment] = field(default_factory=dict)
     pending_upload_removals: set[str] = field(default_factory=set)
-    downloads: dict[str, bytes] = field(default_factory=dict)
+    downloads: dict[str, bytes | None] = field(default_factory=dict)
+    pending_download_removals: set[str] = field(default_factory=set)
+    pending_archive_files: dict[tuple[str, str], dict] = field(default_factory=dict)
     # Last owner access, which orders eviction. A restored session keeps its stored expiry.
     last_used: float = field(default_factory=time.monotonic)
     latest_message: AcceptedMessage | None = None
@@ -309,6 +313,7 @@ class AgentSession:
             "schedule_yaml": self.schedule_yaml,
             "frontend_version": self.frontend_version,
             "frontend_timezone": self.frontend_timezone,
+            "downloads": list(self.downloads),
             "uploads": [
                 {
                     "id": upload.id,
@@ -345,7 +350,7 @@ class AgentSession:
     ) -> "AgentSession":
         """Rebuild a session from `recovery_state` and its saved conversation entries.
 
-        Downloads and optimizer results are not saved.
+        File bytes are loaded separately from their persisted references.
         """
         return cls(
             id=session_id,
@@ -358,6 +363,7 @@ class AgentSession:
             export_metadata=state.get("export_metadata", {}),
             transcript=retained_entries(entries),
             uploads={upload.id: upload for upload in uploads},
+            downloads=dict.fromkeys(state.get("downloads", [])),
             dropped_history_messages=state["dropped_history_messages"],
             dropped_entries=state["dropped_entries"],
             next_entry_seq=next_entry_seq,
@@ -709,7 +715,7 @@ class AgentSession:
         )
         return completion
 
-    def _publish_completion(
+    async def _publish_completion(
         self,
         run: AgentRun,
         schedule_change: dict[str, Any] | None,
@@ -731,7 +737,9 @@ class AgentSession:
             events.emit(schedule_change)
         if output.download is not None:
             # A ZIP that does not fit the session memory budget leaves the answer intact.
-            if runtime.store.save_download(self.id, run.id, output.download.content):
+            if runtime.store.save_download(self.id, run.id, output.download.content) and await runtime.recorder.save(
+                self.id
+            ):
                 events.emit({"type": "download", "download_id": run.id})
             else:
                 events.emit({"type": "warning", "message": DOWNLOAD_RETENTION_WARNING})
@@ -810,7 +818,7 @@ class AgentSession:
                 if not history_saved:
                     events.emit({"type": "warning", "message": RECOVERY_SAVE_WARNING})
             if outcome.completion is not None:
-                self._publish_completion(
+                await self._publish_completion(
                     run,
                     schedule_change,
                     outcome.completion,

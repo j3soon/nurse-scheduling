@@ -20,6 +20,7 @@
 # This file is mostly AI generated.
 
 import asyncio
+import json
 import logging
 from collections import Counter
 from collections.abc import Callable, Sequence
@@ -32,6 +33,7 @@ from fastapi import HTTPException
 from ..server.retry import RepeatedFailure
 from .agent_session import STALE_RUN_ERROR, AgentSession
 from .history import ChatHistory, EntryRow, EventRow, RunKind, RunStatus
+from .optimizer import OptimizerArtifact, SessionOptimization
 from .provider import TokenUsage
 from .sandbox import SandboxError
 from .session_event_stream import SessionEvent, SessionEventStream, fold_recovery
@@ -179,11 +181,19 @@ class SessionRecovery:
         assert session is not None
         uploads = tuple(session.uploads.values())
         removed = set(session.pending_upload_removals)
-        saved = await self.history.write(operation, *args, state=state, entries=entries, uploads=uploads, **kwargs)
+        downloads = dict(session.downloads)
+        files = tuple(session.pending_archive_files.values())
+        removed_downloads = set(session.pending_download_removals)
+        saved = await self.history.write(
+            operation, *args, state=state, entries=entries, uploads=uploads, downloads=downloads, files=files, **kwargs
+        )
         if saved:
             self._entries_saved(session_id, len(entries))
             session.pending_upload_removals.difference_update(removed)
             self._store.release_saved_uploads(session_id, uploads)
+            session.pending_download_removals.difference_update(removed_downloads)
+            self._store.release_saved_downloads(session_id, downloads)
+            self._store.release_saved_archive_files(session_id, files)
         return saved
 
     def _entries_saved(self, session_id: str, count: int) -> None:
@@ -229,6 +239,73 @@ class SessionRecovery:
         if data is None:
             raise SandboxError("An uploaded file is missing or has expired. Upload the source file again.")
         return data
+
+    async def read_file(self, session_id: str, owner: str, kind: str, source_id: str) -> bytes:
+        assert self.history is not None
+        try:
+            data = await self.history.read("load_file", session_id, owner, kind, source_id)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from None
+        if data is None:
+            raise HTTPException(status_code=404, detail="The session file is no longer available.")
+        return data
+
+    async def save_optimizer_result(self, job: SessionOptimization, artifact: OptimizerArtifact | None) -> bool:
+        files = []
+
+        def add(kind, filename, media_type, data):
+            files.append(
+                {"kind": kind, "source_id": job.id, "filename": filename, "media_type": media_type, "data": data}
+            )
+
+        status = {
+            **job.payload.model_dump(mode="json", exclude={"id"}),
+            "job_id": job.id,
+            "request": job.request,
+            "backend": job.backend,
+        }
+        add(
+            "optimizer-status",
+            "optimizer-result.json",
+            "application/json",
+            json.dumps(status, ensure_ascii=False).encode(),
+        )
+        add("optimizer-schedule", "schedule.yaml", "application/yaml", job.schedule_yaml.encode())
+        add("optimizer-input", "backend-input.yaml", "application/yaml", job.submitted_yaml.encode())
+        if artifact is not None:
+            add("optimizer-workbook", artifact.filename, artifact.media_type, artifact.content)
+            if artifact.schedule_context is not None:
+                add("optimizer-context", "schedule-context.json", "application/json", artifact.schedule_context)
+        try:
+            self._store.retain_archive_files(job.session_id, files)
+        except HTTPException:
+            return False
+        return await self.save(job.session_id)
+
+    async def load_optimizer_result(self, session_id: str, job_id: str | None) -> OptimizerArtifact | None:
+        assert self.history is not None
+        session = self._store.get(session_id)
+        if session is None:
+            return None
+        try:
+            if job_id is None:
+                job_id = await self.history.read("latest_optimizer", session_id, session.owner_token)
+                if job_id is None:
+                    return None
+            content = await self.history.read(
+                "load_file", session_id, session.owner_token, "optimizer-workbook", job_id
+            )
+            if content is None:
+                return None
+            context = await self.history.read("load_file", session_id, session.owner_token, "optimizer-context", job_id)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from None
+        return OptimizerArtifact(
+            content,
+            "optimized-schedule.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            context,
+        )
 
     async def save(self, session_id: str, credential_id: str | None = None) -> bool:
         if self.history is None:

@@ -402,6 +402,8 @@ def create_app(
         max_result_bytes=settings.optimizer_max_result_bytes,
         max_cached_result_bytes=settings.optimizer_result_cache_bytes,
         max_schedule_bytes=settings.max_schedule_bytes,
+        save_result=recovery.save_optimizer_result if recovery.enabled else None,
+        load_artifact=recovery.load_optimizer_result if recovery.enabled else None,
     )
 
     runtime = SessionRuntime(settings, store, concurrency_limit, recovery, provider, sandbox_factory, session_optimizer)
@@ -669,8 +671,11 @@ def create_app(
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> Response:
         """Deliver one captured ZIP without exposing arbitrary sandbox paths."""
+        content = store.download(session_id, owner, download_id)
+        if content is None:
+            content = await recovery.read_file(session_id, owner, "download", download_id)
         return Response(
-            content=store.download(session_id, owner, download_id),
+            content=content,
             media_type="application/zip",
             headers={"Content-Disposition": 'attachment; filename="download.zip"'},
         )
@@ -687,6 +692,8 @@ def create_app(
     ) -> Response:
         """Remove one generated ZIP from the owning session."""
         store.remove_download(session_id, owner, download_id)
+        if not await recovery.save(session_id):
+            raise HTTPException(status_code=503, detail="The file removal could not be saved.")
         response = Response(status_code=status.HTTP_204_NO_CONTENT)
         refresh_owner_cookie(response, owner)
         return response

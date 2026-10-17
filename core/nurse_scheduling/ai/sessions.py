@@ -68,7 +68,8 @@ def _session_bytes(session: "AgentSession") -> int:
     total += sum(_receipt_bytes(receipt) for receipt in session.accepted_messages.values())
     total += sum(_text_bytes(text) for text in session.queued_steering)
     total += sum(len(upload.data or b"") for upload in session.uploads.values())
-    return total + sum(map(len, session.downloads.values()))
+    total += sum(len(file["data"]) for file in session.pending_archive_files.values())
+    return total + sum(len(content or b"") for content in session.downloads.values())
 
 
 def _unique_filename(filename: str, taken: set[str]) -> str:
@@ -135,8 +136,7 @@ class SessionStore:
         """Unload the least recently used idle session at the session limit.
 
         Sessions live for the whole recovery period, so without eviction a month of chats
-        would hold every slot. The unloaded session loses only its downloads and
-        finished optimizer results, as after a restart.
+        would hold every slot. Persisted session files remain available on demand.
         """
         if self._evictable is None or len(self._sessions) < self._settings.max_sessions:
             return
@@ -486,14 +486,41 @@ class SessionStore:
         session = self._sessions.get(session_id)
         if session is None or len(content) > self._settings.max_download_bytes:
             return False
-        delta = len(content) - len(session.downloads.get(download_id, b""))
+        delta = len(content) - len(session.downloads.get(download_id) or b"")
         if self._retained_bytes + delta > self._settings.max_session_bytes:
             return False
         session.downloads[download_id] = content
         self._charge(session, delta)
         return True
 
-    def download(self, session_id: str, owner_token: str | None, download_id: str) -> bytes:
+    def retain_archive_files(self, session_id: str, files: Sequence[dict]) -> None:
+        """Keep failed file writes retryable within the shared memory budget."""
+        session = self._sessions[session_id]
+        delta = sum(
+            len(file["data"])
+            - len(session.pending_archive_files.get((file["kind"], file["source_id"]), {}).get("data", b""))
+            for file in files
+        )
+        self._require_capacity(max(0, delta))
+        session.pending_archive_files.update(((file["kind"], file["source_id"]), file) for file in files)
+        self._charge(session, delta)
+
+    def release_saved_archive_files(self, session_id: str, files: Sequence[dict]) -> None:
+        session = self._sessions[session_id]
+        for file in files:
+            key = file["kind"], file["source_id"]
+            if session.pending_archive_files.get(key) is file:
+                del session.pending_archive_files[key]
+                self._charge(session, -len(file["data"]))
+
+    def release_saved_downloads(self, session_id: str, downloads: dict[str, bytes | None]) -> None:
+        session = self._sessions[session_id]
+        for download_id, content in downloads.items():
+            if content is not None and session.downloads.get(download_id) is content:
+                session.downloads[download_id] = None
+                self._charge(session, -len(content))
+
+    def download(self, session_id: str, owner_token: str | None, download_id: str) -> bytes | None:
         """Read a generated ZIP only for its owning browser."""
         session = self._get_owned(session_id, owner_token)
         try:
@@ -504,11 +531,15 @@ class SessionStore:
     def remove_download(self, session_id: str, owner_token: str | None, download_id: str) -> None:
         """Remove an owned generated ZIP and reclaim its bytes."""
         session = self._get_owned(session_id, owner_token)
+        if download_id not in session.downloads and download_id in session.pending_download_removals:
+            return
         try:
             content = session.downloads.pop(download_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="This generated ZIP is no longer available.") from None
-        self._charge(session, -len(content))
+        if self._settings.history_postgres_url:
+            session.pending_download_removals.add(download_id)
+        self._charge(session, -len(content or b""))
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
 
     def abort(self, session_id: str, snapshot: RunSnapshot) -> None:

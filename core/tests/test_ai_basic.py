@@ -140,6 +140,8 @@ def configured_sandbox_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "find_message",
         "load_session",
         "load_events",
+        "load_file",
+        "latest_optimizer",
     ):
         monkeypatch.setattr(ChatHistory, operation, lambda *_args, **_kwargs: None)
 
@@ -2263,10 +2265,27 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         monkeypatch.setattr(ChatHistory, "initialize", lambda _self: None)
         monkeypatch.setattr(ChatHistory, "finish_run", lambda *_args, **_kwargs: None)
         stored_files = {}
+        archived_files = {}
+        latest_jobs = {}
 
-        def save_uploads(_self, session_id, *, uploads=(), **_kwargs):
+        def save_uploads(_self, session_id, *, uploads=(), files=(), **_kwargs):
+            save_artifacts(_self, session_id, files)
             stored_files.update(((session_id, upload.id), upload.data) for upload in uploads if upload.data is not None)
 
+        def save_artifacts(_self, session_id, files, **_kwargs):
+            for file in files:
+                archived_files[(session_id, file["kind"], file["source_id"])] = file["data"]
+                if file["kind"] == "optimizer-status":
+                    latest_jobs[session_id] = file["source_id"]
+
+        monkeypatch.setattr(
+            ChatHistory, "latest_optimizer", lambda _self, session_id, _owner: latest_jobs.get(session_id)
+        )
+        monkeypatch.setattr(
+            ChatHistory,
+            "load_file",
+            lambda _self, session_id, _owner, kind, source: archived_files.get((session_id, kind, source)),
+        )
         monkeypatch.setattr(ChatHistory, "save_session", save_uploads)
         monkeypatch.setattr(
             ChatHistory,
@@ -2289,6 +2308,8 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
             credential_id: str | None,
             entries: object,
             uploads: object,
+            downloads: object,
+            files: object,
         ) -> None:
             history_starts.append((run_id, session_id, credential_id, prompt, model, attachment_count))
 
