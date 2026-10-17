@@ -546,6 +546,22 @@ def test_invalid_answer_patterns_are_rejected(tmp_path: Path, field_name, raw):
         load_cases(_write(tmp_path, _case(expect_proposal=False, **{field_name: raw})))
 
 
+@pytest.mark.parametrize(
+    "answer, passed",
+    [
+        ("Should I renew Taiwan holiday date groups?", False),
+        ("Import Taiwan public holidays and make-up working days?", False),
+        (
+            "Would you like to update the Taiwan holiday calendar? This imports official public holidays and make-up working days, so rules can use workdays and days off instead of only weekdays and weekends.",
+            True,
+        ),
+    ],
+)
+def test_holiday_question_requires_a_useful_explanation(answer, passed):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "holiday-question-explains-workdays")
+    assert grade(case, RunOutcome(answer=answer)).passed is passed
+
+
 @pytest.mark.parametrize("answer", ["There is no shift type S in the schedule.", "S is absent.", "S was not found."])
 def test_missing_shift_case_accepts_equivalent_correct_refusals(answer):
     case = next(case for case in load_cases(CASES_PATH) if case.id == "rename-unknown-shift")

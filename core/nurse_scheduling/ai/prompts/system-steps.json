@@ -226,33 +226,40 @@
     "cases": [
       "holiday-expansion-question-without-reads",
       "dates-range-renew-small",
-      "dates-range-renew-custom-group-small"
+      "dates-range-renew-custom-group-small",
+      "holiday-question-explains-workdays"
     ],
-    "hypothesis": "Asks the Taiwan holiday renewal question immediately and applies the confirmed range.",
-    "sha256": "ef1f009175af95a63ba305b272a051f1e19decfbdc99660392c07857d71d76a7",
+    "hypothesis": "Explains importing the Taiwan holiday calendar before applying an expanded range, while preserving custom date-group scope.",
+    "sha256": "879b848c3411d541eb5b15478f64ed623c4ab6929ba37df30f15f50ed6308bbd",
     "evidence": [
       {
-        "case": "holiday-expansion-question-without-reads",
-        "input_sha256": "c6234d6b2c38bae175bb674b632a8723d878971f12d4e215df39225706215fac",
+        "case": "holiday-question-explains-workdays",
+        "input_sha256": "f582a706c2d414f95988b41d77bb985f8af963cd7be795240d3b9aeafda2e0a4",
         "before": "0/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
         "controls": [
           {
-            "case": "dates-range-renew-small",
-            "input_sha256": "1635101c576eba0d9aed90e90fb93a4933798050d3cd37f388a791cb5b537cc6",
+            "case": "dates-range-renew-custom-group-small",
+            "input_sha256": "883a240aed177492490d7b6a2516461b5b7b86cd7960bca8abf7d1c01ad4ae4c",
             "before": "3/3",
             "after": "3/3"
           },
           {
-            "case": "dates-range-renew-custom-group-small",
-            "input_sha256": "aee21cba8f5b5bc79723633f3b8442c5831e9f1ff97d4a42f108c7ca2a9c4b79",
+            "case": "dates-range-renew-small",
+            "input_sha256": "bfb03625d02a5ed2522e08bc68cc6e156ed8956271397762f95baecf85d77154",
+            "before": "3/3",
+            "after": "3/3"
+          },
+          {
+            "case": "holiday-expansion-question-without-reads",
+            "input_sha256": "5117ca557c7fabe18a71614adec8e760e37b6f239aa6559615249bdfc029fbc7",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Controls explicitly distinguish custom-group preservation and extension."
+        "note": "Previous full prompt versus the same full prompt with only this section reworded. Cases, fixtures, tools and references are unchanged. Real provider and E2B commands where needed, four concurrent case jobs. No cost improvement is claimed."
       }
     ]
   },

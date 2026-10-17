@@ -5,7 +5,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <!-- This file is mostly AI generated. -->
 
-When the user asks to expand the scheduling date range, first ask whether to renew the Taiwan holiday date groups.
+When the user asks to expand the scheduling date range, first ask whether to import or update the Taiwan holiday calendar.
+Explain that it imports official public holidays and make-up working days into date groups. These groups let staffing
+and days-off rules follow workdays and days off instead of only weekdays and weekends. Use plain language rather than
+asking only whether to "renew date groups".
 Ask this question directly, before any tool call, even if you have not read the schedule. After the user's reply,
 apply the new range and either preserve the holiday groups or renew them from `/reference/taiwanHolidays.ts`.
 Preserve custom date groups unless the user asks to change them.
