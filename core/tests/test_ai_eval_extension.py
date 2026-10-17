@@ -137,15 +137,19 @@ def test_extension_keeps_original_attempts_and_runs_only_missing_selected_pairs(
         ]
         for n in range(1, 4):
             name = f"{cases[0].id}--run-{n}.json"
-            assert json.loads((source / label / "cases" / name).read_text()) == json.loads(
-                (output / label / "cases" / name).read_text()
+            assert json.loads((source / label / "cases" / name).read_text(encoding="utf-8")) == json.loads(
+                (output / label / "cases" / name).read_text(encoding="utf-8")
             )
-        metadata = json.loads((output / label / "metadata.json").read_text())
+        metadata = json.loads((output / label / "metadata.json").read_text(encoding="utf-8"))
         assert metadata["repetitions_by_case"] == {cases[0].id: 5, cases[1].id: 3}
         assert metadata["extensions"][0]["first_repetitions"] == {cases[0].id: 4}
-    assert json.loads((output / "progress.json").read_text()) == {"status": "complete", "completed": 16, "expected": 16}
+    assert json.loads((output / "progress.json").read_text(encoding="utf-8")) == {
+        "status": "complete",
+        "completed": 16,
+        "expected": 16,
+    }
     assert original == {str(p.relative_to(source)): p.read_bytes() for p in source.rglob("*") if p.is_file()}
-    statistics = json.loads((output / "comparison.json").read_text())
+    statistics = json.loads((output / "comparison.json").read_text(encoding="utf-8"))
     assert statistics["cases"][cases[0].id]["metrics"]["total_tokens"]["pairs"] == 5
     assert statistics["cases"][cases[1].id]["metrics"]["total_tokens"]["pairs"] == 3
 
@@ -243,7 +247,7 @@ def test_extension_from_one_attempt_keeps_saved_files_and_labels_wall_time(tmp_p
     assert read_completed_reports(output)["production"].counts == {cases[0].id: 3, cases[1].id: 1}
     assert (source / "cases" / f"{cases[0].id}.json").exists()
     assert (output / "cases" / f"{cases[0].id}--run-1.json").exists()
-    assert "Extension wall time:" in (output / "summary.md").read_text()
+    assert "Extension wall time:" in (output / "summary.md").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("problem", ["outside-case", "existing-output", "missing-prompt-selector"])
@@ -275,7 +279,7 @@ def test_interrupted_extension_keeps_old_attempts_and_is_not_a_complete_report(t
     output = tmp_path / "interrupted"
     with pytest.raises(RuntimeError, match="interrupted extension"):
         runner.main(["--extend-report", str(source), "--output-dir", str(output)])
-    progress = json.loads((output / "progress.json").read_text())
+    progress = json.loads((output / "progress.json").read_text(encoding="utf-8"))
     assert progress == {"status": "interrupted", "completed": 6, "expected": 10}
     assert len(runner._load_report_records(output)) == 6
     assert not (output / "summary.md").exists()
@@ -298,7 +302,7 @@ def test_changed_fingerprints_stop_before_any_provider_or_sandbox_work(tmp_path,
     source = tmp_path / "source"
     saved_report(source)
     path = source / "metadata.json"
-    metadata = json.loads(path.read_text())
+    metadata = json.loads(path.read_text(encoding="utf-8"))
     metadata[field] = "changed"
     path.write_text(json.dumps(metadata))
     monkeypatch.setattr(runner.AiSettings, "from_env", settings)
@@ -316,17 +320,17 @@ def test_incomplete_or_inconsistent_evidence_is_rejected(tmp_path, monkeypatch, 
         (source / "progress.json").write_text(json.dumps({"status": "interrupted"}))
     elif corruption in {"duplicate", "missing"}:
         path = source / "before/results.jsonl"
-        lines = path.read_text().splitlines()
+        lines = path.read_text(encoding="utf-8").splitlines()
         lines = lines + [lines[0]] if corruption == "duplicate" else lines[1:]
         path.write_text("\n".join(lines) + "\n")
     elif corruption == "trajectory":
         path = next((source / "before/cases").glob("*.json"))
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         data["seconds"] = 999
         path.write_text(json.dumps(data))
     else:
         path = source / "after/metadata.json"
-        metadata = json.loads(path.read_text())
+        metadata = json.loads(path.read_text(encoding="utf-8"))
         metadata["case_ids"].reverse()
         path.write_text(json.dumps(metadata))
     monkeypatch.setattr(runner.AiSettings, "from_env", settings)
