@@ -19,8 +19,8 @@
 
 # This test is mostly AI generated.
 
+import json
 import os
-import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -33,6 +33,7 @@ import redis
 
 from nurse_scheduling.server.config import DEFAULT_JOB_RETENTION_SECONDS, DEFAULT_MAX_RETAINED_JOBS
 from nurse_scheduling.server.errors import (
+    ClientJobCapacityError,
     JobArtifactNotFoundError,
     JobCapacityError,
     JobInputNotFoundError,
@@ -125,12 +126,16 @@ def store(store_factory):
     return store_factory()
 
 
-def _controller(store, *, max_pending=8, max_retained=32, now=None, runtime_identity=None):
+def _controller(store, *, max_pending=8, max_retained=32, max_pending_per_client=None, now=None, runtime_identity=None):
     clock = (lambda: now) if now is not None else (lambda: datetime.now(timezone.utc))
     sequence = iter(f"job_{index}" for index in range(100))
     return JobController(
         store,
-        limits=StoreLimits(max_pending=max_pending, max_retained=max_retained),
+        limits=StoreLimits(
+            max_pending=max_pending,
+            max_retained=max_retained,
+            max_pending_per_client=max_pending_per_client,
+        ),
         retention_seconds=60,
         worker_lease_seconds=30,
         runtime_identity=runtime_identity,
@@ -139,7 +144,7 @@ def _controller(store, *, max_pending=8, max_retained=32, now=None, runtime_iden
     )
 
 
-def _create(controller, input_name="input.yaml"):
+def _create(controller, input_name="input.yaml", client_address=None):
     return controller.create_job(
         input_name=input_name,
         client_id="client",
@@ -147,6 +152,7 @@ def _create(controller, input_name="input.yaml"):
         prettify=True,
         timeout_seconds=60,
         input_bytes=b"apiVersion: alpha\n",
+        client_address=client_address,
     )
 
 
@@ -188,37 +194,24 @@ def test_utc_now_returns_timezone_aware_utc_datetime():
     assert utc_now().tzinfo is timezone.utc
 
 
-def test_redis_store_uses_default_connect_timeout_and_bounds_stream_reads(monkeypatch):
+def test_redis_store_bounds_every_operation_with_one_client(monkeypatch):
     from nurse_scheduling.server.stores import redis as redis_store
 
     operation_client = Mock()
     operation_client.get.return_value = b"existing-store-id"
-    stream_client = Mock()
-    from_url = Mock(side_effect=[operation_client, stream_client])
+    from_url = Mock(return_value=operation_client)
     monkeypatch.setattr(redis_store.redis.Redis, "from_url", from_url)
 
-    store = redis_store.RedisJobStore(
-        url="redis://redis.example/0",
-        key_prefix="test:jobs",
-        event_stream_keepalive_seconds=2.5,
-    )
+    store = redis_store.RedisJobStore(url="redis://redis.example/0", key_prefix="test:jobs")
 
-    operation_call, stream_call = from_url.call_args_list
+    (operation_call,) = from_url.call_args_list
     assert operation_call.args == ("redis://redis.example/0",)
-    assert stream_call.args == ("redis://redis.example/0",)
     assert {key: value for key, value in operation_call.kwargs.items() if key != "retry"} == {
         "decode_responses": False,
         "socket_connect_timeout": redis_store.REDIS_OPERATION_TIMEOUT_SECONDS,
         "socket_timeout": redis_store.REDIS_OPERATION_TIMEOUT_SECONDS,
     }
-    assert {key: value for key, value in stream_call.kwargs.items() if key != "retry"} == {
-        "decode_responses": False,
-        "socket_connect_timeout": redis_store.REDIS_OPERATION_TIMEOUT_SECONDS,
-        "socket_timeout": 7.5,
-    }
-    # The stream client reads a blocking-read timeout as its keepalive tick.
     assert redis.exceptions.TimeoutError in operation_call.kwargs["retry"]._supported_errors
-    assert redis.exceptions.TimeoutError not in stream_call.kwargs["retry"]._supported_errors
     operation_client.ping.assert_called_once_with()
 
     operation_client.reset_mock()
@@ -296,8 +289,6 @@ def test_memory_store_identity_can_match_its_process_instance():
     "settings",
     [
         {"key_prefix": ":"},
-        {"event_stream_keepalive_seconds": 0},
-        {"event_stream_keepalive_seconds": float("inf")},
         {"max_events_per_job": 0},
     ],
 )
@@ -354,16 +345,17 @@ def test_store_round_trips_lifecycle_input_events_and_artifact(store):
     assert completed.result.outcome == OptimizationOutcome.OPTIMAL
     assert controller.get_artifact(completed.id, "input.xlsx") == artifact
 
-    events = [event for event in controller.stream_events(completed.id, after_id=None, keepalive_seconds=0.01)]
-    assert [event.type for event in events if event is not None] == [
+    events, terminal = controller.read_events(completed.id, after_id=None)
+    assert terminal is True
+    assert [event.type for event in events] == [
         "job.state_changed",
         "job.state_changed",
         "job.phase_changed",
         "job.state_changed",
         "job.result_available",
     ]
-    assert all(event.id is not None for event in events if event is not None)
-    persisted_events = [event for event in events if event is not None]
+    assert all(event.id is not None for event in events)
+    persisted_events = events
     assert persisted_events[0].data["runtime"] == runtime_identity
     assert persisted_events[1].data["runtime"] == runtime_identity
     assert persisted_events[1].data["worker_id"] == "worker"
@@ -459,20 +451,25 @@ def test_store_reorders_queue_when_updated_without_events(store):
     saved = store.update_job(cancelled, first.revision, [])
 
     assert saved.state == JobState.CANCELLED
-    events = store.stream_events(second.id, after_id=None, keepalive_seconds=0.01)
-    assert [next(events).data["queue_position"], next(events).data["queue_position"]] == [2, 1]
+    events, _terminal = store.read_events(second.id, after_id=None)
+    assert [event.data["queue_position"] for event in events[:2]] == [2, 1]
 
 
-def test_live_event_stream_emits_keepalive_after_catching_up(store):
+def test_store_reads_events_after_a_cursor_without_waiting(store):
     controller = _controller(store)
     created = _create(controller)
-    events = store.stream_events(created.id, after_id=None, keepalive_seconds=0.01)
-    initial = next(events)
-    assert initial is not None
 
-    resumed = store.stream_events(created.id, after_id=initial.id, keepalive_seconds=0.01)
-    assert next(resumed) is None
-    assert next(resumed) is None
+    events, terminal = store.read_events(created.id, after_id=None)
+    assert [(event.type, event.data["state"]) for event in events] == [("job.state_changed", "queued")]
+    assert terminal is False
+    assert store.read_events(created.id, after_id=events[-1].id) == ([], False)
+
+    controller.cancel_job(created.id)
+    final_events, terminal = store.read_events(created.id, after_id=events[-1].id)
+    assert [event.data["state"] for event in final_events] == ["cancelled"]
+    assert terminal is True
+    with pytest.raises(JobNotFoundError):
+        store.read_events("missing", after_id=None)
 
 
 @pytest.mark.parametrize(
@@ -498,10 +495,9 @@ def test_event_stream_replays_from_invalid_cursor(store_factory, after_id):
     controller = _controller(store)
     created = _create(controller)
 
-    event = next(store.stream_events(created.id, after_id=after_id, keepalive_seconds=0.01))
+    events, _terminal = store.read_events(created.id, after_id=after_id)
 
-    assert event is not None
-    assert event.type == "job.state_changed"
+    assert events[0].type == "job.state_changed"
 
 
 def test_redis_normalizes_long_zero_padded_cursor():
@@ -515,17 +511,11 @@ def test_redis_store_retries_dropped_connections(fake_redis_store_factory):
     # its own policy or a single blip fails the operation.
     store = fake_redis_store_factory()
 
-    ordinary = store._redis.connection_pool.make_connection().retry
-    stream = store._stream_redis.connection_pool.make_connection().retry
+    retry = store._redis.connection_pool.make_connection().retry
 
-    assert ordinary._retries > 0
-    assert stream._retries > 0
-    assert redis.exceptions.ConnectionError in ordinary._supported_errors
-    assert redis.exceptions.ConnectionError in stream._supported_errors
-    # A blocking read timeout is how `stream_events` paces its keepalives, so
-    # retrying it there would stall the stream for another full timeout.
-    assert redis.exceptions.TimeoutError in ordinary._supported_errors
-    assert redis.exceptions.TimeoutError not in stream._supported_errors
+    assert retry._retries > 0
+    assert redis.exceptions.ConnectionError in retry._supported_errors
+    assert redis.exceptions.TimeoutError in retry._supported_errors
 
 
 def test_redis_store_recovers_from_a_dropped_connection(fake_redis_store_factory, monkeypatch):
@@ -587,19 +577,6 @@ def test_redis_store_removes_corrupt_queue_entries(fake_redis_store_factory):
     store._redis.zadd(store._queue_key, {created.id: now.timestamp()})
 
     assert store.claim_next_job(lease, now) is None
-
-
-def test_redis_event_stream_treats_socket_timeout_as_keepalive(fake_redis_store_factory, monkeypatch):
-    store = fake_redis_store_factory()
-    controller = _controller(store)
-    created = _create(controller)
-    initial = next(store.stream_events(created.id, after_id=None, keepalive_seconds=0.01))
-    assert initial is not None
-    monkeypatch.setattr(store._stream_redis, "xread", Mock(side_effect=redis.exceptions.TimeoutError))
-
-    resumed = store.stream_events(created.id, after_id=initial.id, keepalive_seconds=0.01)
-
-    assert next(resumed) is None
 
 
 @pytest.mark.parametrize("operation", ["create", "register", "renew", "claim", "update", "delete"])
@@ -671,11 +648,7 @@ def test_store_rejects_events_from_stale_workers_and_terminal_jobs(store):
     )
     assert late.revision == terminal.revision
 
-    events = [
-        event
-        for event in controller.stream_events(created.id, after_id=None, keepalive_seconds=0.01)
-        if event is not None
-    ]
+    events, _terminal = controller.read_events(created.id, after_id=None)
     assert [(event.type, event.data.get("source")) for event in events] == [
         ("job.state_changed", None),
         ("job.state_changed", None),
@@ -702,11 +675,7 @@ def test_store_caps_replayable_events_per_job(store_factory):
         controller.record_event(created.id, "job.test", {"index": index})
     controller.cancel_job(created.id)
 
-    events = [
-        event
-        for event in controller.stream_events(created.id, after_id=None, keepalive_seconds=0.01)
-        if event is not None
-    ]
+    events, _terminal = controller.read_events(created.id, after_id=None)
 
     assert len(events) == 4
     assert [(event.type, event.data.get("index")) for event in events] == [
@@ -769,6 +738,60 @@ def test_store_enforces_capacity_across_concurrent_creates(store):
         results = list(executor.map(create, range(8)))
 
     assert sum(not isinstance(result, JobCapacityError) for result in results) == 4
+
+
+def test_store_limits_active_jobs_per_client_address(store):
+    controller = _controller(store, max_pending_per_client=2)
+    first = _create(controller, client_address="203.0.113.1")
+    _create(controller, client_address="203.0.113.1")
+
+    with pytest.raises(ClientJobCapacityError, match="from this address"):
+        _create(controller, client_address="203.0.113.1")
+    # Other addresses and trusted callers keep the remaining shared capacity.
+    _create(controller, client_address="203.0.113.2")
+    _create(controller)
+
+    controller.cancel_job(first.id)
+    replacement = _create(controller, client_address="203.0.113.1")
+
+    assert replacement.request.client_key == first.request.client_key
+    assert "203.0.113.1" not in first.request.client_key
+
+
+def test_store_enforces_client_capacity_across_concurrent_creates(store):
+    controller = _controller(store, max_pending_per_client=3)
+
+    def create(index: int):
+        try:
+            return _create(controller, f"{index}.yaml", client_address="203.0.113.1")
+        except JobCapacityError as error:
+            return error
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(create, range(8)))
+
+    assert sum(not isinstance(result, JobCapacityError) for result in results) == 3
+    assert all(isinstance(result, ClientJobCapacityError) for result in results if isinstance(result, Exception))
+
+
+def test_redis_processes_sharing_a_store_derive_the_same_client_key(fake_redis_store_factory):
+    first = fake_redis_store_factory(key_prefix="test:jobs:shared")
+    second = fake_redis_store_factory(key_prefix="test:jobs:shared")
+    other = fake_redis_store_factory(key_prefix="test:jobs:other")
+
+    assert first.client_key("203.0.113.1") == second.client_key("203.0.113.1")
+    assert first.client_key("203.0.113.1") != other.client_key("203.0.113.1")
+    assert first.client_key("203.0.113.1") != first.client_key("203.0.113.2")
+
+
+def test_redis_store_reads_jobs_saved_before_client_keys(fake_redis_store_factory):
+    store = fake_redis_store_factory()
+    job = _create(_controller(store), client_address="203.0.113.1")
+    saved = json.loads(store._redis.get(store._job_key(job.id)))
+    del saved["request"]["client_key"]
+    store._redis.set(store._job_key(job.id), json.dumps(saved))
+
+    assert store.get(job.id).request.client_key is None
 
 
 def test_store_claims_each_job_at_most_once_under_concurrency(store):
@@ -1015,12 +1038,10 @@ def test_completed_job_can_resume_after_client_sleeps(store):
     lease, running = _claim(controller)
     assert running is not None
 
-    event_stream = controller.stream_events(running.id, after_id=None, keepalive_seconds=0.01)
-    while True:
-        last_seen = next(event_stream)
-        assert last_seen is not None
-        if last_seen.type == "job.state_changed" and last_seen.data["state"] == "running":
-            break
+    events, _terminal = controller.read_events(running.id, after_id=None)
+    last_seen = events[-1]
+    assert last_seen.type == "job.state_changed"
+    assert last_seen.data["state"] == "running"
 
     artifact = StoredArtifact("input.xlsx", "application/test", b"xlsx")
     controller.complete_job(
@@ -1039,37 +1060,23 @@ def test_completed_job_can_resume_after_client_sleeps(store):
     )
     assert after_sleep.expire_jobs() == []
 
-    replayed = list(
-        after_sleep.stream_events(
-            created.id,
-            after_id=last_seen.id,
-            keepalive_seconds=0.01,
-        )
-    )
-    assert [event.type for event in replayed if event is not None] == [
+    replayed, _terminal = after_sleep.read_events(created.id, after_id=last_seen.id)
+    assert [event.type for event in replayed] == [
         "job.state_changed",
         "job.result_available",
     ]
     assert after_sleep.get_artifact(created.id, artifact.name) == artifact
 
 
-def test_terminal_event_stream_returns_immediately_when_cursor_is_caught_up(store):
+def test_terminal_job_read_with_a_caught_up_cursor_is_empty_and_terminal(store):
     controller = _controller(store)
     created = _create(controller)
     controller.cancel_job(created.id)
-    initial = [
-        event
-        for event in controller.stream_events(created.id, after_id=None, keepalive_seconds=0.01)
-        if event is not None
-    ]
+    initial, _terminal = controller.read_events(created.id, after_id=None)
     last_event_id = initial[-1].id
     assert last_event_id is not None
 
-    started_at = time.monotonic()
-    resumed = list(controller.stream_events(created.id, after_id=last_event_id, keepalive_seconds=1))
-
-    assert resumed == []
-    assert time.monotonic() - started_at < 0.5
+    assert controller.read_events(created.id, after_id=last_event_id) == ([], True)
 
 
 def test_queue_position_events_track_queue_reordering(store):
@@ -1079,8 +1086,8 @@ def test_queue_position_events_track_queue_reordering(store):
 
     _claim(controller)
 
-    events = controller.stream_events(second.id, after_id=None, keepalive_seconds=0.01)
-    queued = [next(events), next(events)]
+    events, _terminal = controller.read_events(second.id, after_id=None)
+    queued = events[:2]
     assert [event.data["queue_position"] for event in queued] == [2, 1]
     assert controller.get_job(first.id).state == JobState.RUNNING
 

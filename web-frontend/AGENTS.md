@@ -30,7 +30,11 @@ them. The full suite takes about two minutes in the dev container. If you
 cannot run it, tell the user that it was not run and that they can run it before
 pushing.
 Frontend unit/component tests use Vitest; browser integration tests use
-Playwright.
+Playwright. Keep test files and runner configuration outside the production
+TypeScript project. Validate them with their respective test runners.
+
+For row reorder tests, drop inside the intended half of the target row. Its
+midpoint separates insertion before and after, so center drops are ambiguous.
 
 Filesystem failure tests must accept the supported platforms' error codes.
 Assert the failed operation and path as well as output preservation.
@@ -55,6 +59,14 @@ changed app source or public assets. Without explicit spec paths or `--full`,
 it fails rather than silently skipping those changes. Every Playwright run
 builds the current checkout, launches its own server on an OS-selected port,
 and shuts it down afterwards. Existing local servers are never reused.
+
+`next dev` can append a managed Next.js agent-rules block to this file. Browser
+tests that launch a dev server can also cause this edit. After those checks,
+inspect `git diff -- web-frontend/AGENTS.md` from the repository root. Review
+generated guidance separately from intentional edits. If it is outside the
+task scope, remove only the newly appended block after the dev server stops.
+Preserve existing guidance and user changes.
+
 New schedules contain no user-defined people, shift types, or groups. E2E tests
 that require populated entities must seed them explicitly.
 
@@ -82,7 +94,8 @@ an explicit version, for example:
 APP_VERSION_OVERRIDE=v0.0.0 bun run dev -- --port 3006
 ```
 
-Leave `APP_VERSION_OVERRIDE` unset for normal Git-derived versions.
+Leave `APP_VERSION_OVERRIDE` unset for normal Git-derived versions. Set it
+explicitly when an E2E build must use another version.
 
 Persist the saving app version with Optimize and Export backend settings. Add
 targeted migrations for known older app versions or legacy shapes, and preserve

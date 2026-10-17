@@ -222,3 +222,17 @@ def test_sandbox_service_failures_still_fail_the_turn():
 
     with pytest.raises(SandboxError, match="service failed reading"):
         asyncio.run(tools.execute(READ_TOOL, '{"path":"notes.txt"}'))
+
+
+@pytest.mark.parametrize("tool", [READ_TOOL, EDIT_TOOL])
+def test_oversized_files_are_rejected_before_rendering_or_editing(tool, monkeypatch):
+    from nurse_scheduling.ai.sandbox import fake
+
+    monkeypatch.setattr(fake, "DEFAULT_MAX_FILE_BYTES", 4)
+    backend = FakeSandboxBackend("bounded", initial_files={"/workspace/notes.txt": b"12345"})
+    arguments = '{"path":"notes.txt","edits":[{"oldText":"1","newText":"x"}]}'
+    outcome = asyncio.run(SandboxPiTools(backend, 10).execute(tool, arguments))
+
+    assert not outcome.ok
+    assert "read limit" in outcome.text
+    assert backend.files["/workspace/notes.txt"] == b"12345"

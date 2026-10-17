@@ -1,0 +1,4 @@
+interface:
+  display_name: "Security Scan"
+  short_description: "Scan an isolated loopback copy of the backend for security issues"
+  default_prompt: "Use $security-scan to run an adversarial security scan against an isolated copy of the backend services."

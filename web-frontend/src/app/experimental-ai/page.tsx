@@ -306,9 +306,13 @@ export default function ExperimentalAiPage() {
     event.preventDefault();
     await submitMessage(draft.trim(), selectedAttachments.map(attachment => attachment.file));
   };
-  hasMessagesRef.current = messages.length > 0;
+  useEffect(() => {
+    hasMessagesRef.current = messages.length > 0;
+  }, [messages.length]);
 
   useEffect(() => {
+    // Reset the pending request when the server reports a different optimizer job.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setCancellingOptimizationId(current => current === activeOptimization?.jobId ? current : null);
   }, [activeOptimization?.jobId]);
 
@@ -320,6 +324,8 @@ export default function ExperimentalAiPage() {
       const stored = window.localStorage.getItem(AI_STORAGE_KEY);
       if (stored !== null) {
         const preferences = JSON.parse(stored) as Partial<AiPreferences>;
+        // Restore browser preferences after hydration.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         if (typeof preferences.showReasoning === 'boolean') setShowReasoning(preferences.showReasoning);
         if (typeof preferences.showTools === 'boolean') setShowTools(preferences.showTools);
       }
@@ -371,6 +377,8 @@ export default function ExperimentalAiPage() {
   useEffect(() => {
     if (!isClientReady) return;
     const capabilitiesController = new AbortController();
+    // Reset the displayed status before checking the selected external service.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setServerStatus('checking');
     setBackendVersion(undefined);
     setCapabilitiesError(null);
@@ -468,7 +476,9 @@ export default function ExperimentalAiPage() {
     };
 
     const pageBottom = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+    // Initialize the scroll subscription from the current browser position.
     setFollowPageBottom(window.scrollY >= pageBottom);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setShowScrollToTop(window.scrollY > 128);
     window.addEventListener('scroll', handleScroll, { passive: true });
     window.addEventListener('scrollend', handleScrollEnd, { passive: true });

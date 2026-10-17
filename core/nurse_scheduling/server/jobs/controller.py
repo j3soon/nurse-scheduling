@@ -18,7 +18,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import logging
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, TypeVar
@@ -104,16 +104,19 @@ class JobController:
         timeout_seconds: int,
         input_bytes: bytes,
         auth_credential_id: str | None = None,
+        client_address: str | None = None,
     ) -> Job:
         """Create and enqueue a job with its submitted input.
 
-        ID collisions are retried before reporting an application conflict.
+        ID collisions are retried before reporting an application conflict. A job with a
+        `client_address` counts against that address's share of the pending capacity.
 
         Raises:
-            JobCapacityError: If pending or retained capacity is exhausted.
+            JobCapacityError: If pending, per-client, or retained capacity is exhausted.
             JobOperationContentionError: If a unique job ID cannot be allocated.
         """
         now = self._clock()
+        client_key = self._store.client_key(client_address) if client_address is not None else None
 
         def create() -> Job:
             """Build and atomically persist one job-ID candidate."""
@@ -126,6 +129,7 @@ class JobController:
                     solver=solver,
                     prettify=prettify,
                     timeout_seconds=timeout_seconds,
+                    client_key=client_key,
                 ),
                 created_at=now,
             )
@@ -465,21 +469,13 @@ class JobController:
             job.state.terminal or lost_claim or expired_claim or job.cancel_requested or job.early_completion_requested
         )
 
-    def stream_events(
-        self,
-        job_id: str,
-        *,
-        after_id: str | None,
-        keepalive_seconds: float,
-    ) -> Iterator[JobEvent | None]:
-        """Stream persisted events after a cursor until the job becomes terminal.
-
-        Iteration blocks up to the keepalive interval when no newer event exists.
+    def read_events(self, job_id: str, *, after_id: str | None) -> tuple[list[JobEvent], bool]:
+        """Return stored events after a cursor and whether the job is terminal, without waiting.
 
         Raises:
-            JobNotFoundError: If the job does not exist or is deleted while streaming.
+            JobNotFoundError: If the job does not exist.
         """
-        return self._store.stream_events(job_id, after_id, keepalive_seconds)
+        return self._store.read_events(job_id, after_id)
 
     def delete_job(self, job_id: str) -> None:
         """Delete a terminal job and all associated data.

@@ -39,6 +39,7 @@ from .sandbox import (
     SandboxError,
     SandboxFactory,
     SandboxFileNotFoundError,
+    SandboxFileSizeError,
     SandboxLifecycleMetrics,
     managed_sandbox,
 )
@@ -428,7 +429,11 @@ def attachment_path(attachment: SandboxAttachment, index: int) -> str:
 async def _read_candidate(sandbox: SandboxBackend, max_schedule_bytes: int) -> str:
     started = time.perf_counter()
     try:
-        candidate = await sandbox.read_file(WORKSPACE_SCHEDULE)
+        candidate = await sandbox.read_file(WORKSPACE_SCHEDULE, max_bytes=max_schedule_bytes)
+    except SandboxFileSizeError as exc:
+        raise SandboxCandidateError(
+            f"The sandbox candidate exceeds the {max_schedule_bytes}-byte schedule limit."
+        ) from exc
     except SandboxFileNotFoundError as exc:
         # The model owns the working copy and can delete it, which is a failed
         # turn rather than a sandbox failure.
@@ -459,7 +464,12 @@ class _ScheduleCandidateTracker:
     async def review_if_changed(self) -> tuple[AgentToolOutcome, str | None] | None:
         prefix = "Trusted schedule check after this command:"
         try:
-            content = await self._sandbox.read_file(WORKSPACE_SCHEDULE)
+            content = await self._sandbox.read_file(WORKSPACE_SCHEDULE, max_bytes=self._max_bytes)
+        except SandboxFileSizeError:
+            return (
+                AgentToolOutcome(f"{prefix}\nThe candidate exceeds the {self._max_bytes}-byte schedule limit.", False),
+                None,
+            )
         except SandboxFileNotFoundError:
             # Report the deletion to the model instead of failing the turn, so it
             # can restore the working copy it removed.

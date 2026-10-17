@@ -286,7 +286,11 @@ later `tool` event carries its result and whether the call did what it was
 asked. Sandbox backends return raw command output to the AI layer. The AI
 `bash` adapter combines stdout and stderr, keeps the last 2,000 lines or 50 KB,
 and stores the full output in the temporary sandbox when truncation occurs.
-This policy stays outside the provider-neutral sandbox interface.
+This display policy stays outside the provider-neutral sandbox interface.
+The E2B adapter separately bounds combined stdout and stderr to 4 MiB while
+receiving it. Exceeding that bound stops the stream, destroys the sandbox,
+and fails the turn. File reads stream at most 16 MiB by default. Schedule
+reads use the configured schedule limit, and ZIP reads use the download limit.
 
 When one model response requests multiple reads, the reads run concurrently
 and their results are returned in the model's original call order. Batches that
@@ -757,13 +761,22 @@ curl -H "Authorization: Bearer ${AI_AUTH_TOKEN}" \
   browser route uses HTTPS, even if NGINX uses internal HTTP to the container.
   Secure deployments set the owner cookie to `SameSite=None`; the CORS origin
   allowlist still limits which browser origins may make credentialed requests.
+- The allowlist accepts `nursescheduling.org` and its subdomains over HTTPS,
+  and loopback origins over HTTP, as on the optimizer API. It refuses
+  private-network origins such as `http://192.168.0.10:3000`, because any
+  device on a shared network can serve one. Open a development frontend
+  through `localhost` or `127.0.0.1`.
 - The owner cookie contains an opaque UUID, not the provider key. It is not a
   replacement for future account authentication.
 - The complete schedule is sent to the AI service. Relevant content is sent to
   the configured provider through model-facing tool results. Use approved
   services and anonymize sensitive schedules when required.
 - Arbitrary uploads are bounded, assigned safe sandbox paths, and treated as
-  untrusted data. Configure a matching request-body limit at the public reverse
+  untrusted data. Session requests authenticate before reading their bodies.
+  The AI service checks declared and streamed body bytes before parsing JSON
+  or multipart data. JSON bounds allow escaped schedules and messages. Only
+  upload routes receive the larger attachment body budget.
+  Configure a matching request-body limit at the public reverse
   proxy. Never add attachment execution to the sandbox workflow.
 - The Pi-compatible `read` tool recognizes JPEG, PNG, GIF, WebP, and BMP content.
   It normalizes and bounds images before returning them to the model as

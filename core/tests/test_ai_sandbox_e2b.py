@@ -23,11 +23,13 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Sequence
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock
 
 import pytest
 from e2b.exceptions import FileNotFoundException, InvalidArgumentException, SandboxException, TimeoutException
 from e2b.sandbox.commands.command_handle import CommandExitException
+from e2b.sandbox_async.commands.command_handle import AsyncCommandHandle
+from protobuf import Oneof
 
 from nurse_scheduling.ai.agent_loop import agent_loop
 from nurse_scheduling.ai.agent_types import AgentToolOutcome, AgentToolUse
@@ -45,13 +47,24 @@ from nurse_scheduling.ai.sandbox.e2b_commands import isolated_command
 from .ai_test_helper import bind_agent_tools
 
 
+class FakeFileStream:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
+    async def __aiter__(self):
+        yield b"schedule"
+
+
 class FakeE2BSandbox:
     def __init__(self) -> None:
         self.sandbox_id = "sandbox-123"
         self.files = SimpleNamespace(
             write=AsyncMock(),
             write_files=AsyncMock(),
-            read=AsyncMock(return_value=bytearray(b"schedule")),
+            read=AsyncMock(return_value=FakeFileStream()),
             exists=AsyncMock(return_value=True),
         )
         self.handle = SimpleNamespace(
@@ -196,7 +209,7 @@ def test_backend_reads_writes_and_runs_in_the_workspace_as_user():
 
     sandbox, result = asyncio.run(exercise())
     sandbox.files.write.assert_awaited_once_with("/workspace/schedule.yaml", b"schedule", user="user")
-    sandbox.files.read.assert_awaited_once_with("/workspace/schedule.yaml", format="bytes", user="user")
+    sandbox.files.read.assert_awaited_once_with("/workspace/schedule.yaml", format="stream", user="user")
     sandbox.commands.run.assert_awaited_once_with(
         isolated_command("rg P1 schedule.yaml"),
         background=True,
@@ -204,6 +217,8 @@ def test_backend_reads_writes_and_runs_in_the_workspace_as_user():
         cwd="/workspace",
         timeout=0,
         request_timeout=2,
+        on_stdout=ANY,
+        on_stderr=ANY,
     )
     assert result.stdout == "ok\n"
     assert result.exit_code == 0
@@ -609,7 +624,7 @@ def test_read_operations_can_overlap():
                 both_started.set()
             await both_started.wait()
             active -= 1
-            return bytearray(b"schedule")
+            return FakeFileStream()
 
         sandbox.files.read.side_effect = read
         e2b_backend = make_backend(sandbox)
@@ -636,7 +651,7 @@ def test_mutation_waits_for_active_reads():
         async def read(*_args, **_kwargs):
             read_started.set()
             await release_read.wait()
-            return bytearray(b"schedule")
+            return FakeFileStream()
 
         sandbox.files.read.side_effect = read
         e2b_backend = make_backend(sandbox)
@@ -663,7 +678,7 @@ def test_close_waits_for_active_reads_before_destroying():
         async def read(*_args, **_kwargs):
             read_started.set()
             await release_read.wait()
-            return bytearray(b"schedule")
+            return FakeFileStream()
 
         sandbox.files.read.side_effect = read
         e2b_backend = make_backend(sandbox)
@@ -1000,10 +1015,95 @@ def test_bounded_file_read_stops_and_closes_the_stream():
         sandbox.files.read.return_value = stream
         backend = make_backend(sandbox)
         try:
-            with pytest.raises(SandboxFileSizeError, match="download size limit"):
+            with pytest.raises(SandboxFileSizeError, match="read limit"):
                 await backend.read_file("/workspace/download.zip", max_bytes=4)
             assert stream.closed
             sandbox.files.read.assert_awaited_once_with("/workspace/download.zip", format="stream", user="user")
+        finally:
+            await backend.close()
+
+    asyncio.run(exercise())
+
+
+def test_default_file_read_stops_before_buffering_the_rest(monkeypatch):
+    monkeypatch.setattr(e2b_module, "DEFAULT_MAX_FILE_BYTES", 4, raising=False)
+
+    class Stream:
+        closed = False
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            self.closed = True
+
+        async def __aiter__(self):
+            yield b"1234"
+            yield b"5"
+            pytest.fail("The default file limit did not stop the stream")
+
+    async def exercise():
+        sandbox = FakeE2BSandbox()
+        stream = Stream()
+        sandbox.files.read.return_value = stream
+        backend = make_backend(sandbox)
+        try:
+            with pytest.raises(SandboxFileSizeError):
+                await backend.read_file("/workspace/large.txt")
+            assert stream.closed
+        finally:
+            await backend.close()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("cleanup", [False, True])
+def test_command_output_limit_stops_sdk_streams(monkeypatch, cleanup):
+    monkeypatch.setattr(e2b_module, "MAX_COMMAND_OUTPUT_BYTES", 4, raising=False)
+
+    async def exercise():
+        sandbox = FakeE2BSandbox()
+        closed = asyncio.Event()
+
+        async def events():
+            try:
+                for channel, chunk in (("stdout", "é".encode()), ("stderr", b"123")):
+                    yield SimpleNamespace(
+                        event=SimpleNamespace(
+                            event=Oneof(field="data", value=SimpleNamespace(output=Oneof(field=channel, value=chunk)))
+                        )
+                    )
+                pytest.fail("The SDK kept buffering after the combined UTF-8 byte limit")
+            finally:
+                closed.set()
+
+        async def run(_command, **kwargs):
+            sandbox.handle = AsyncCommandHandle(
+                pid=42,
+                handle_kill=AsyncMock(),
+                events=events(),
+                on_stdout=kwargs["on_stdout"],
+                on_stderr=kwargs["on_stderr"],
+            )
+            if kwargs.get("background"):
+                return sandbox.handle
+            try:
+                return await sandbox.handle.wait()
+            finally:
+                await sandbox.handle.disconnect()
+
+        sandbox.commands.run.side_effect = run
+        backend = make_backend(sandbox)
+        try:
+            if cleanup:
+                assert not await backend._stop_command_group(42)
+                sandbox.kill.assert_not_awaited()
+            else:
+                with pytest.raises(SandboxError, match="output.*limit"):
+                    await backend.run("generate output")
+                sandbox.kill.assert_awaited_once()
+            assert closed.is_set()
+            assert sandbox.commands.run.await_count == 1
         finally:
             await backend.close()
 

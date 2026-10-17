@@ -17,8 +17,10 @@ jobs:
           persist-credentials: false
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
       - name: Install dependencies
-        run: cd web-frontend && bun install
+        run: cd web-frontend && bun install --frozen-lockfile
       - name: Test bundled skill scripts
         run: |
           bash skills/run-ci/scripts/run-ci.test.sh
