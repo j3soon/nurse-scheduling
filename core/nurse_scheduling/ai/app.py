@@ -47,7 +47,7 @@ from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_regis
 from ..server.request_limits import MULTIPART_OVERHEAD_BYTES
 from ..service_logging import configure_service_logging
 from ..version import get_app_version
-from .agent_session import AgentSession, SessionRuntime
+from .agent_session import AgentSession, SessionRuntime, schedule_data_changed
 from .chat_archive import ChatArchiveResponse, create_chat_archive
 from .config import AiSettings, validate_ai_auth_credentials
 from .context import validate_frontend_timezone
@@ -893,7 +893,10 @@ def create_app(
         """Point an existing session at the schedule the browser now holds."""
         if len(request.schedule_yaml.encode("utf-8")) > settings.max_schedule_bytes:
             raise HTTPException(status_code=413, detail="The schedule is too large for the AI service.")
-        store.update_schedule(session_id, owner, request.schedule_yaml)
+        base = store.require_owned(session_id, owner).schedule_yaml
+        # Parsing a large schedule on the event loop would stall every session's stream.
+        data_changed = await asyncio.to_thread(schedule_data_changed, base, request.schedule_yaml)
+        store.update_schedule(session_id, owner, request.schedule_yaml, compared=(base, data_changed))
         # A retry repeats the same update, so the browser can send it again until it is saved.
         if not await recovery.save(session_id):
             raise HTTPException(status_code=503, detail="AI message recovery is temporarily unavailable.")

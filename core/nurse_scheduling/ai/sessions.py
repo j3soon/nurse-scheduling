@@ -393,7 +393,14 @@ class SessionStore:
         self._charge(session, -sum(_text_bytes(text) for _message_id, text in queued))
         return queued
 
-    def update_schedule(self, session_id: str, owner_token: str | None, schedule_yaml: str) -> None:
+    def update_schedule(
+        self,
+        session_id: str,
+        owner_token: str | None,
+        schedule_yaml: str,
+        *,
+        compared: tuple[str, bool] | None = None,
+    ) -> None:
         """Replace the schedule snapshot, which makes an in-flight run stale."""
         session = self._get_owned(session_id, owner_token)
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
@@ -402,7 +409,7 @@ class SessionStore:
         additional_bytes = _text_bytes(schedule_yaml) - _text_bytes(session.schedule_yaml)
         if additional_bytes > 0:
             self._require_capacity(additional_bytes)
-        session.update_schedule(schedule_yaml)
+        session.update_schedule(schedule_yaml, compared)
         self._cap_history(session)
         self._recount(session)
 

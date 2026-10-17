@@ -104,6 +104,11 @@ def _schedule_data(schedule_yaml: str) -> object:
         return schedule_yaml
 
 
+def schedule_data_changed(before: str, after: str) -> bool:
+    """Report whether a schedule change is more than formatting. Callers may run it off the event loop."""
+    return before != after and _schedule_data(before) != _schedule_data(after)
+
+
 @dataclass(frozen=True)
 class RunCompletion:
     """Whether a completed run and its optional schedule change were retained."""
@@ -588,11 +593,18 @@ class AgentSession:
     def queued_steering(self) -> tuple[str, ...]:
         return self.agent.queued_steering if self.active else ()
 
-    def update_schedule(self, schedule_yaml: str) -> None:
-        """Replace the session schedule, invalidate in-flight results, and record the change."""
+    def update_schedule(self, schedule_yaml: str, compared: tuple[str, bool] | None = None) -> None:
+        """Replace the session schedule, invalidate in-flight results, and record the change.
+
+        `compared` holds a base schedule and its `schedule_data_changed` result. It is reused
+        only while that base is still the session schedule.
+        """
         if self.schedule_yaml == schedule_yaml:
             return
-        data_changed = _schedule_data(self.schedule_yaml) != _schedule_data(schedule_yaml)
+        if compared is not None and compared[0] == self.schedule_yaml:
+            data_changed = compared[1]
+        else:
+            data_changed = schedule_data_changed(self.schedule_yaml, schedule_yaml)
         self.version += 1
         self.schedule_yaml = schedule_yaml
         self.revision = schedule_revision(schedule_yaml)
