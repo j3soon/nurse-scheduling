@@ -958,7 +958,7 @@ def test_postgres_uploads_load_only_when_a_sandbox_is_used(postgres_history, mon
 
 
 @pytest.mark.parametrize("failure", ["unavailable", "missing"], ids=["database-outage", "missing-file"])
-def test_postgres_upload_read_failure_releases_run(postgres_history, monkeypatch, failure):
+def test_postgres_upload_read_failure_releases_run(postgres_history, monkeypatch, failure, caplog):
     read = ToolCallRequest((ToolCall("read", "read", json.dumps({"path": "/workspace/schedule.yaml"})),))
     factory = FakeSandboxFactory()
     app = basic.create_test_app(
@@ -979,11 +979,22 @@ def test_postgres_upload_read_failure_releases_run(postgres_history, monkeypatch
                 connection.execute("DELETE FROM chat_files")
         response = client.post(f"/sessions/{session}/messages", json={"message": "Read files"})
         assert response.status_code == 200
-        assert any(kind == "error" for kind, _data in basic.parse_sse(response.text))
+        error = next(data for kind, data in basic.parse_sse(response.text) if kind == "error")
+        assert error["message"] == (
+            "Uploaded file storage is temporarily unavailable."
+            if failure == "unavailable"
+            else "An uploaded file is missing or has expired. Upload the source file again."
+        )
         assert "secret-database-url" not in response.text
         assert not app.state.session_store.get(session).active
         assert factory.created[0].closed
         assert all(upload.data is None for upload in app.state.session_store.get(session).uploads.values())
+        assert "AI sandbox run failed" not in caplog.text
+        with postgres_history._connect() as connection:
+            assert connection.execute("SELECT status, error_code FROM chat_runs").fetchone() == (
+                "failed",
+                "attachment_unavailable",
+            )
 
 
 def test_postgres_run_saves_pending_upload_before_loading_it(postgres_history, monkeypatch):

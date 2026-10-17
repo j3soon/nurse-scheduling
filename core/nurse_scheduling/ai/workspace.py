@@ -102,6 +102,10 @@ class SandboxDownloadError(SandboxError):
     """The generated ZIP could not be captured safely."""
 
 
+class SandboxAttachmentUnavailableError(SandboxError):
+    """A retained attachment could not be loaded into the sandbox."""
+
+
 class SandboxDownloadValidationError(SandboxDownloadError):
     """The agent generated a ZIP that violates the download contract."""
 
@@ -410,7 +414,7 @@ async def hydrate_sandbox(
         if attachment.data is not None:
             continue
         if load_attachment is None:
-            raise SandboxError("Uploaded file storage is unavailable.")
+            raise SandboxAttachmentUnavailableError("Uploaded file storage is unavailable.")
         data = await load_attachment(attachment)
         try:
             await sandbox.write_file(attachment_path(attachment, index), data)

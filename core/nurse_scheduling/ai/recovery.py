@@ -35,11 +35,10 @@ from .agent_session import STALE_RUN_ERROR, AgentSession
 from .history import ChatHistory, EntryRow, EventRow, RunKind, RunStatus
 from .optimizer import OptimizerArtifact, SessionOptimization
 from .provider import TokenUsage
-from .sandbox import SandboxError
 from .session_event_stream import SessionEvent, SessionEventStream, fold_recovery
 from .session_events import AgentSessionTerminalEvent
 from .sessions import SessionStore
-from .workspace import SandboxAttachment
+from .workspace import SandboxAttachment, SandboxAttachmentUnavailableError
 
 logger = logging.getLogger("nurse_scheduling.ai.recovery")
 RESTART_ERROR = (
@@ -231,13 +230,15 @@ class SessionRecovery:
     async def read_upload(self, session_id: str, owner: str, upload: SandboxAttachment) -> bytes:
         """Load one file only when sandbox hydration needs its bytes."""
         if self.history is None:
-            raise SandboxError("Uploaded file storage is unavailable.")
+            raise SandboxAttachmentUnavailableError("Uploaded file storage is unavailable.")
         try:
             data = await self.history.read("load_upload", session_id, owner, upload.id, upload.byte_count)
         except RuntimeError:
-            raise SandboxError("Uploaded file storage is temporarily unavailable.") from None
+            raise SandboxAttachmentUnavailableError("Uploaded file storage is temporarily unavailable.") from None
         if data is None:
-            raise SandboxError("An uploaded file is missing or has expired. Upload the source file again.")
+            raise SandboxAttachmentUnavailableError(
+                "An uploaded file is missing or has expired. Upload the source file again."
+            )
         return data
 
     async def read_file(self, session_id: str, owner: str, kind: str, source_id: str) -> bytes:

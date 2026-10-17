@@ -66,6 +66,7 @@ from .transcript import (
 )
 from .workspace import (
     SandboxAttachment,
+    SandboxAttachmentUnavailableError,
     SandboxCandidateError,
     SandboxCommandTimeoutError,
     SandboxDownloadError,
@@ -942,6 +943,8 @@ class AgentSession:
                 error_code, message = "provider_error", exc.user_message or PROVIDER_ERROR
             elif isinstance(exc, SandboxDownloadError):
                 error_code, message = "download_error", str(exc)
+            elif isinstance(exc, SandboxAttachmentUnavailableError):
+                error_code, message = "attachment_unavailable", str(exc)
             elif isinstance(exc, SandboxCommandTimeoutError):
                 error_code, message = "sandbox_command_timeout", SANDBOX_COMMAND_TIMEOUT_ERROR
             elif isinstance(exc, SandboxTurnTimeoutError):

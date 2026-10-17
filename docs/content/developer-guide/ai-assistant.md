@@ -895,8 +895,10 @@ A connection failure or server error is retried up to three times. Each file
 uses one UUID in the `upload_id` query parameter across every attempt. A retry
 returns the original metadata without adding another file or charging storage
 again. The server rejects reuse with a different filename, media type, or content.
-Upload IDs and file bytes remain process-local and disappear together on expiry,
-removal, or restart. If an upload still fails, earlier
+With PostgreSQL, upload IDs and file bytes survive restarts and stay archived
+until the session expires. Removal detaches a file from active use. Without
+PostgreSQL, uploads remain process-local and disappear on expiry, removal, or
+restart. If an upload still fails, earlier
 successful uploads remain in Session files. The question is not submitted, and
 the retry asks only for the files that did not upload. Remove unused uploads to
 free session capacity.
@@ -905,8 +907,8 @@ The backend bounds each streamed request body to the per-file limit plus
 
 Upload requests contain only repeated `files` fields. Other field names are
 rejected. Uploads are refused while a response is active. Every turn can read
-all retained files. Sessions are process-local. Use one AI backend instance
-until shared AI storage is added.
+all retained files. PostgreSQL restores saved sessions after restarts. Live runs
+and sandbox ownership remain process-local, so use one AI backend instance.
 
 ### Provider request layout
 
