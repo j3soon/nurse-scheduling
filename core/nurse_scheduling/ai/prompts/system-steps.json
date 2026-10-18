@@ -1301,5 +1301,48 @@
         "note": "Adjacent prefixes, three repetitions, four concurrent jobs with live provider and E2B. Both retained-analysis mappings improved from 0/3 to 3/3. The unread-data control passed 3/3 on both sides after its unstable ZIP timestamps were fixed and both arms rerun. Unchanged witness attempts and the new control were combined with verified per-case fingerprints. Notes are source-bound live-session memory, not policy or approval. File and shell reads of saved content are accepted. Earlier ambiguous questions, derived-value mistakes, a tool-specific false negative and interrupted attempts remain local diagnostics. No constructor-reliability or latency claim."
       }
     ]
+  },
+  {
+    "id": "editable-schedule-source",
+    "file": "steps/editable-schedule-source.md",
+    "cases": [
+      "completed-roster-source-question",
+      "completed-roster-source-unavailable",
+      "completed-roster-inspection-only",
+      "completed-roster-confirmed-policy"
+    ],
+    "hypothesis": "Asks once for an optional editable source when reconstructing missing original rules, without blocking unavailable-source or inspection-only work.",
+    "sha256": "536b9ee46cf6754547e7c025f92009bb071fd02d607acc7a16129db20f968313",
+    "evidence": [
+      {
+        "case": "completed-roster-source-question",
+        "input_sha256": "60102e84a322f8be0ff2512f9c527bbfc3e462d1b43c8811f5b5516574c6359b",
+        "before": "0/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "completed-roster-confirmed-policy",
+            "input_sha256": "5dab9aeec6165eff04dc4f4360d2c2052b2c31fe8ebb361cb228f9ba1f2ef276",
+            "before": "3/3",
+            "after": "3/3"
+          },
+          {
+            "case": "completed-roster-inspection-only",
+            "input_sha256": "6016dcafb63cba6a31d31668310fa839a25ff4256867f8a2994aaa431f14ca19",
+            "before": "3/3",
+            "after": "3/3"
+          },
+          {
+            "case": "completed-roster-source-unavailable",
+            "input_sha256": "d722d9a6b96e4b74116331736fff2acbf62be58ad5cb23653a9c137a4bfce560",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Adjacent prefixes with live provider and E2B, three repetitions and four jobs. The optional saved-source question improved from 0/3 to 3/3. Unavailable-source, inspection-only and confirmed-policy controls each passed 3/3 in both versions. No cost improvement is claimed because the witness has no matched passing baseline runs."
+      }
+    ]
   }
 ]

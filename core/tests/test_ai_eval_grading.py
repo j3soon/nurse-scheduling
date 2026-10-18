@@ -2280,6 +2280,22 @@ def test_calendar_makeup_case_checks_real_calendar_members_and_custom_groups(mut
     assert grade(case, outcome).passed == (mutation is None)
 
 
+@pytest.mark.parametrize(
+    "answer,passed",
+    [
+        (
+            "Do you have a saved schedule data file from this app? It preserves rules and settings. If not, we can confirm missing rules together.",
+            True,
+        ),
+        ("What is the maximum consecutive working days?", False),
+        ("Upload the saved schedule file before I can continue. It contains the original rules.", False),
+    ],
+)
+def test_editable_source_question_is_optional_and_explains_its_value(answer, passed):
+    case = next(c for c in load_cases(CASES_PATH) if c.id == "completed-roster-source-question")
+    assert grade(case, RunOutcome(answer=answer)).passed == passed
+
+
 @pytest.mark.parametrize("suffix", ["partial-edit", "restore-last-accepted", "valid-edit-control"])
 @pytest.mark.parametrize("defect", [None, "lost-accepted-edit", "unrelated-change", "missing-tool"])
 def test_schedule_recovery_cases_require_the_saved_edit_and_preserve_other_data(suffix, defect):
