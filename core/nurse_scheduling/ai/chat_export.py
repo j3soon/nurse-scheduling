@@ -123,8 +123,8 @@ def _render_node(node) -> str:
             r"^(https?|ircs?|mailto|xmpp):", href, re.IGNORECASE
         ):
             href = ""
-        external = ' target="_blank" rel="noopener noreferrer"' if href.startswith(("http://", "https://")) else ""
-        return f'<a href="{escape_html(href, react=True)}"{external}>' + render() + "</a>"
+        # The exported page is the chat itself, so every link opens in a new tab.
+        return f'<a href="{escape_html(href, react=True)}" target="_blank" rel="noopener noreferrer">' + render() + "</a>"
     if kind == "paragraph" and node.hidden:
         return render()
     tag = "del" if kind == "s" else node.tag
@@ -282,7 +282,7 @@ def _file_html(row):
     label = escape_html(row["label"], react=True)
     if not row["url"]:
         return label
-    return f'<a href="{escape_html(row["url"], react=True)}">{label}</a>'
+    return f'<a href="{escape_html(row["url"], react=True)}" target="_blank" rel="noopener noreferrer">{label}</a>'
 
 
 def _message_files(message, urls=None):

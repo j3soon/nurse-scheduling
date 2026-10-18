@@ -99,6 +99,9 @@ def test_response_renderer_links_urls_but_not_filenames_or_references():
     # URLs and emails link, bare domains never do, so filenames stay plain text.
     assert '<a href="https://adguard.local/setup"' in html
     assert '<a href="mailto:ops@nursescheduling.org"' in html
+    # The exported page is the chat itself, so every link opens in a new tab.
+    assert '<a href="https://adguard.local/setup" target="_blank" rel="noopener noreferrer">' in html
+    assert '<a href="mailto:ops@nursescheduling.org" target="_blank" rel="noopener noreferrer">' in html
     for token in ("icon128.png", "schema-core.md", "www.example.com"):
         assert token in html
         assert f">{token}</a>" not in html and f">{token}:</a>" not in html

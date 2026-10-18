@@ -309,8 +309,8 @@ def test_archive_documents_link_uploaded_files_without_touching_the_snapshot():
     assert uploads, "the golden archive should bundle uploaded files"
     for file in uploads:
         url = file["path"]
-        # Each uploaded-file entry links to its copy inside the ZIP.
-        assert f'<a href="{url}">{file["filename"]} (' in html
+        # Each uploaded-file entry links to its copy inside the ZIP in a new tab.
+        assert f'<a href="{url}" target="_blank" rel="noopener noreferrer">{file["filename"]} (' in html
         assert f"]({url})" in markdown
     # chat.json keeps the untouched snapshot, and snapshot-only exports stay plain.
     assert "file_urls" not in snapshot.get("metadata", {})
