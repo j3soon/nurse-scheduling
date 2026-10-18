@@ -441,6 +441,19 @@ counts to the measured helper bytes. This adds an adoption condition without
 replacing the receipt's correctness or declared cost requirement.
 
 
+The bundled `inspect_xlsx.py --comments` reads stored legacy comment text, including
+blank cells. Use `--range` to select at most 10,000 cells. It returns at most 100
+comments per sheet and 2000 characters per comment, with separate truncation flags.
+`comment_part` identifies the source XML part or is null when no legacy comment
+part exists. `threaded_comment_part` reports unsupported threaded comments anywhere
+on the sheet without reading their text. The reader streams legacy comment XML
+and does not traverse worksheet cells.
+The cell modes keep their existing streaming behavior.
+The fresh comment comparison passes 3/3 per case and arm. Its receipt requires
+both `--comments` and `--range` on every candidate run. Generated tokens fall
+48.7% for extraction and 52.5% for the empty control. Empty-control candidates
+still write verification scripts. See [helper evidence](helper-evidence.md).
+
 ## Taiwan calendar generator adoption
 
 The renewal policy generates holiday groups with

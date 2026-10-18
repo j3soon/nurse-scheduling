@@ -21,7 +21,9 @@
 
 import argparse
 import json
+import posixpath
 from collections import defaultdict
+from itertools import islice
 from pathlib import Path
 from typing import Any
 from zipfile import BadZipFile, ZipFile
@@ -29,12 +31,14 @@ from zipfile import BadZipFile, ZipFile
 from defusedxml import ElementTree
 from openpyxl import load_workbook
 from openpyxl.cell.read_only import ReadOnlyCell
-from openpyxl.utils.cell import get_column_letter, range_boundaries
+from openpyxl.utils.cell import coordinate_to_tuple, get_column_letter, range_boundaries
 from openpyxl.xml.functions import DEFUSEDXML
 
 MAX_ARCHIVE_ENTRIES = 1_000
 MAX_UNCOMPRESSED_BYTES = 50_000_000
 MAX_SHEETS = 20
+MAX_COMMENTS = 100
+MAX_TEXT_CHARS = 2000
 
 if not DEFUSEDXML:
     raise RuntimeError("defusedxml is required for untrusted XLSX files")
@@ -378,6 +382,96 @@ def _parse_cell_range(value: str) -> tuple[str | None, int, int, int, int]:
     return sheet, first_row, first_column, max_rows, max_columns
 
 
+def _comment_part(archive, sheet_path, relationship="comments"):
+    directory, filename = posixpath.split(sheet_path)
+    relationships = posixpath.join(directory, "_rels", filename + ".rels")
+    if relationships not in archive.namelist():
+        return None
+    with archive.open(relationships) as stream:
+        for _, element in ElementTree.iterparse(stream):
+            if element.get("Type", "").endswith(f"/{relationship}"):
+                if element.get("TargetMode") == "External":
+                    raise ValueError("External comment relationships are not supported")
+                target = element.attrib["Target"]
+                return (
+                    target.lstrip("/")
+                    if target.startswith("/")
+                    else posixpath.normpath(posixpath.join(directory, target))
+                )
+            element.clear()
+    return None
+
+
+def _sheet_comments(archive, sheet_path, window):
+    part = _comment_part(archive, sheet_path)
+    comments = []
+    if part is None:
+        return part, comments, False
+    row, column, rows, columns = window
+    with archive.open(part) as stream:
+        for _, element in ElementTree.iterparse(stream):
+            # Keep rich-text children until their complete comment is available.
+            if element.tag.rsplit("}", 1)[-1] != "comment":
+                continue
+            cell = element.attrib["ref"]
+            cell_row, cell_column = coordinate_to_tuple(cell)
+            if row <= cell_row < row + rows and column <= cell_column < column + columns:
+                if len(comments) == MAX_COMMENTS:
+                    return part, comments, True
+                characters = (
+                    char
+                    for child in element.iter()
+                    if child.tag.rsplit("}", 1)[-1] == "t"
+                    for char in (child.text or "")
+                )
+                text = "".join(islice(characters, MAX_TEXT_CHARS + 1))
+                comments.append(
+                    {"cell": cell, "text": text[:MAX_TEXT_CHARS], "text_truncated": len(text) > MAX_TEXT_CHARS}
+                )
+            element.clear()
+    return part, comments, False
+
+
+def inspect_comments(path: Path, *, sheet_name=None, cell_range="A1:AX200"):
+    """Read legacy comment text within a bounded window, including blank cells."""
+    selected_sheet, *window = _parse_cell_range(cell_range)
+    if selected_sheet is not None:
+        if sheet_name is not None and selected_sheet != sheet_name:
+            raise ValueError("--sheet conflicts with the sheet name in --range")
+        sheet_name = selected_sheet
+    _check_archive(path)
+    workbook = load_workbook(path, read_only=True, data_only=False, keep_links=False)
+    try:
+        selected = [sheet_name] if sheet_name is not None else workbook.sheetnames[:MAX_SHEETS]
+        if any(name not in workbook.sheetnames for name in selected):
+            raise ValueError("Unknown worksheet")
+        sheets = []
+        with ZipFile(path) as archive:
+            for name in selected:
+                part, comments, truncated = _sheet_comments(archive, workbook[name]._worksheet_path, window)
+                sheets.append(
+                    {
+                        "name": name,
+                        "comment_part": part,
+                        "threaded_comment_part": _comment_part(
+                            archive, workbook[name]._worksheet_path, "threadedComment"
+                        ),
+                        "comments": comments,
+                        "comments_truncated": truncated,
+                    }
+                )
+        return {
+            "path": str(path),
+            "range": cell_range,
+            "scope": "Stored legacy comment text in the selected range. Threaded text is not read. "
+            "threaded_comment_part reports its presence anywhere on the sheet.",
+            "sheets": sheets,
+            "sheets_truncated": sheet_name is None and len(workbook.sheetnames) > MAX_SHEETS,
+        }
+    finally:
+        workbook.close()
+
+
 def main() -> None:
     """Run the workbook inspector from the sandbox shell."""
     parser = argparse.ArgumentParser(
@@ -401,6 +495,7 @@ def main() -> None:
     mode.add_argument(
         "--summary", action="store_true", help="Count typed values in an explicit --range instead of listing cells."
     )
+    mode.add_argument("--comments", action="store_true", help="Read stored legacy comments without traversing cells")
     parser.add_argument(
         "--axis", choices=("all", "row", "column"), help="With --summary, also count each row or column. Default: all."
     )
@@ -425,6 +520,17 @@ def main() -> None:
     parser.add_argument("--max-columns", type=int)
     args = parser.parse_args()
     window = (args.start_row, args.start_column, args.max_rows, args.max_columns)
+    if args.comments:
+        if args.styles or any(value is not None for value in (*window, args.axis, args.max_groups)):
+            parser.error("--comments cannot be combined with styles, summary or row/column window options")
+        try:
+            result = inspect_comments(
+                args.path, sheet_name=args.sheet, cell_range="A1:AX200" if args.cell_range is None else args.cell_range
+            )
+        except (ValueError, KeyError, OSError) as error:
+            parser.exit(1, f"{error}\n")
+        print(json.dumps(result, ensure_ascii=False))
+        return
     if args.summary and args.cell_range is None:
         parser.error("--summary requires --range")
     if not args.summary and (args.axis is not None or args.max_groups is not None):

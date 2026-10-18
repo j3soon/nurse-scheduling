@@ -23,8 +23,9 @@ clarification, construction, solving and delivery separately. A run that fails
 clarification does not establish anything about optimizer behavior.
 For onboarding from an XLSX completed schedule, test useful rule suggestions
 with their observed evidence and a request for confirmation. Do not grade
-uncertainty alone as successful onboarding. State any required JSON field types
-in the question, so a valid alternative format does not fail the grader.
+uncertainty alone as successful onboarding. State the top-level JSON type,
+required field names and field types in the question, so a valid alternative
+format does not fail the grader.
 Observed patterns support candidate rules, but do not establish the original
 hard limits, eligibility or weights.
 Contrast a fact-only question with a request to infer rules. Test a later user
@@ -86,3 +87,17 @@ distinct invalid mutations.
 Report a command's outcome separately from an unresolved rejected schedule edit.
 A successful read does not accept that edit. Keep its warning visible and block
 finishing or optimization until the edit is corrected or explicitly discarded.
+
+For stored XLSX comment text, including comments on blank cells, use
+`inspect_xlsx.py FILE --comments --range 'Sheet!A1:H20'`. It reads comment XML
+without traversing worksheet cells and reuses the cell inspector's archive and
+range checks. A null `comment_part` means that sheet has no stored legacy comment
+part. Text and record limits have separate truncation flags.
+`threaded_comment_part` identifies unsupported threaded comments on the sheet
+without parsing their text. Their presence is defined by a
+[worksheet relationship](https://learn.microsoft.com/en-us/openspecs/office_standards/ms-xlsx/66e1875d-c60a-48eb-bf88-41066d45fea8).
+
+For a partial-format reader, report whether unsupported related data is present.
+An empty supported result does not prove that the whole requested data is absent.
+Keep unsupported content explicit instead of asking the model to guess or adding
+a prompt exception that suppresses legitimate verification.

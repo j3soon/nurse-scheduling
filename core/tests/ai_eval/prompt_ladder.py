@@ -239,6 +239,8 @@ def case_digest(case: EvalCase) -> str:
                 helper_names.add("inspect_xlsx.py")
     if {"xlsx-overview", "xlsx-summary"} & set(case.tags):
         helper_names.add("inspect_xlsx.py")
+    if "xlsx-comments" in case.tags:
+        helper_names.add("inspect_xlsx.py")
     if "pdf-find" in case.tags:
         helper_names.add("inspect_pdf.py")
     if helper_names:

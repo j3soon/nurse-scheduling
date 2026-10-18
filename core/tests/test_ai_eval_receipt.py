@@ -177,6 +177,21 @@ def test_helper_use_requires_execution_target_flag_and_structured_output(command
     assert not uses_helper({"events": [event]}, "inspect_optimizer_result.py", ("--statistics",))
 
 
+@pytest.mark.parametrize(
+    "options,used",
+    [("--comments --range 'Roster!A1:C3'", True), ("--comments", False), ("--range 'Roster!A1:C3'", False)],
+)
+def test_helper_use_accepts_multiline_json_and_requires_each_flag(options, used):
+    event = {
+        "kind": "tool",
+        "name": "bash",
+        "ok": True,
+        "arguments": json.dumps({"command": f"python /reference/tools/inspect_xlsx.py input.xlsx {options}"}),
+        "result": json.dumps({"sheets": [{"name": "Roster", "comments": []}]}, indent=2),
+    }
+    assert uses_helper({"events": [event]}, "inspect_xlsx.py", ("--comments", "--range")) is used
+
+
 def _helper_reports(tmp_path):
     for arm, tokens in (("before", 100), ("after", 60)):
         directory = tmp_path / arm

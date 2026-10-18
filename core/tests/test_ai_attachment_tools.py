@@ -19,24 +19,31 @@
 
 # This test is mostly AI generated.
 
+import json
 from io import BytesIO
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 from openpyxl import Workbook
+from openpyxl.comments import Comment
 from PIL import Image
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from nurse_scheduling.ai.attachment_tools.inspect_pdf import inspect_pdf
-from nurse_scheduling.ai.attachment_tools.inspect_xlsx import inspect_workbook
+from nurse_scheduling.ai.attachment_tools.inspect_xlsx import (
+    MAX_COMMENTS,
+    MAX_TEXT_CHARS,
+    inspect_comments,
+    inspect_workbook,
+)
 
 from .ai_eval.attachment_fixtures import load_attachment_fixtures
 
 
 def test_evaluation_workbooks_preserve_stale_caches_colors_and_reproducible_bytes(tmp_path: Path):
-    names = ("formula-xlsx", "colored-xlsx", "multi-sheet-xlsx")
+    names = ("formula-xlsx", "colored-xlsx", "multi-sheet-xlsx", "comment-notes-xlsx")
     attachments = load_attachment_fixtures(names)
     assert [attachment.data for attachment in attachments] == [
         attachment.data for attachment in load_attachment_fixtures(names)
@@ -689,3 +696,160 @@ def test_workbook_summary_preserves_styles_on_blank_cells(tmp_path: Path):
     assert len({g["style"] for g in summary["groups"]}) == 3
     assert result["styles"][summary["groups"][0]["style"]]["fill"]["foreground"]["value"] == "FFFF0000"
     assert result["styles"][summary["groups"][1]["style"]]["font"]["color"]["value"] == "FF0000FF"
+
+
+def test_comment_inspection_includes_blank_cells_and_respects_the_window(tmp_path):
+    (attachment,) = load_attachment_fixtures(("comment-notes-xlsx",))
+    path = tmp_path / "notes.xlsx"
+    path.write_bytes(attachment.data)
+    result = inspect_comments(path, cell_range="Notes!A1:H10")
+    assert result["sheets"] == [
+        {
+            "name": "Notes",
+            "comment_part": "xl/comments/comment1.xml",
+            "threaded_comment_part": None,
+            "comments_truncated": False,
+            "comments": [
+                {"cell": "B3", "text": "Handoff code LARCH 2841", "text_truncated": False},
+                {"cell": "D5", "text": "Training slot AMBER 6032", "text_truncated": False},
+                {"cell": "F7", "text": "Rest note CEDAR 9156", "text_truncated": False},
+            ],
+        }
+    ]
+    assert inspect_comments(path, cell_range="Notes!H11:H12")["sheets"][0]["comments"][0]["cell"] == "H12"
+    assert inspect_comments(path, cell_range="Notes!A1:A2")["sheets"][0]["comments"] == []
+    with pytest.raises(ValueError, match="conflicts"):
+        inspect_comments(path, sheet_name="Other", cell_range="Notes!A1:H10")
+    with pytest.raises(ValueError, match="Unknown worksheet"):
+        inspect_comments(path, sheet_name="Other")
+
+
+def test_comment_inspection_reports_text_and_record_truncation(tmp_path):
+    book = Workbook()
+    sheet = book.active
+    for row in range(1, MAX_COMMENTS + 2):
+        sheet.cell(row, 1).comment = Comment("z" * (MAX_TEXT_CHARS + 1), "Fixture")
+    path = tmp_path / "notes.xlsx"
+    book.save(path)
+    result = inspect_comments(path)["sheets"][0]
+    assert len(result["comments"]) == MAX_COMMENTS
+    assert result["comments_truncated"]
+    assert all(len(note["text"]) == MAX_TEXT_CHARS and note["text_truncated"] for note in result["comments"])
+
+
+def test_comment_inspection_runs_from_standalone_hydrated_helpers(tmp_path):
+    import subprocess
+    import sys
+
+    from nurse_scheduling.ai.workspace import REFERENCE_ATTACHMENT_TOOLS
+
+    (attachment,) = load_attachment_fixtures(("comment-notes-xlsx",))
+    path = tmp_path / "notes.xlsx"
+    path.write_bytes(attachment.data)
+    for source in REFERENCE_ATTACHMENT_TOOLS.values():
+        (tmp_path / source.name).write_bytes(source.read_bytes())
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(tmp_path / "inspect_xlsx.py"),
+            "--comments",
+            str(path),
+            "--range",
+            "Notes!B3:B3",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert json.loads(result.stdout)["sheets"][0]["comments"][0]["text"] == "Handoff code LARCH 2841"
+
+
+def test_comment_inspection_handles_rich_text_and_relative_relationships(tmp_path):
+    (attachment,) = load_attachment_fixtures(("comment-notes-xlsx",))
+    path = tmp_path / "notes.xlsx"
+    with ZipFile(BytesIO(attachment.data)) as source, ZipFile(path, "w") as target:
+        for item in source.infolist():
+            payload = source.read(item.filename)
+            if item.filename.endswith(".rels"):
+                payload = payload.replace(b'Target="/xl/comments/', b'Target="../comments/')
+            if item.filename.startswith("xl/comments/") and item.filename.endswith(".xml"):
+                payload = payload.replace(
+                    b"<text><t>Handoff code LARCH 2841</t></text>",
+                    b"<text><r><t>Handoff code </t></r><r><t>LARCH 2841</t></r></text>",
+                )
+            target.writestr(item, payload)
+    result = inspect_comments(path, cell_range="Notes!B3:B3")
+    assert result["sheets"][0]["comments"][0]["text"] == "Handoff code LARCH 2841"
+
+
+def test_comment_inspection_does_not_traverse_worksheet_cells(tmp_path, monkeypatch):
+    from openpyxl.worksheet._read_only import ReadOnlyWorksheet
+
+    (attachment,) = load_attachment_fixtures(("comment-notes-xlsx",))
+    path = tmp_path / "notes.xlsx"
+    path.write_bytes(attachment.data)
+
+    def unexpected_cells(*_, **__):
+        pytest.fail("Comment inspection must not read worksheet cells")
+
+    monkeypatch.setattr(ReadOnlyWorksheet, "iter_rows", unexpected_cells)
+    assert len(inspect_comments(path)["sheets"][0]["comments"]) == 4
+
+
+def test_comment_inspection_distinguishes_an_absent_part_from_an_empty_window(tmp_path):
+    (attachment,) = load_attachment_fixtures(("workbook-intake-xlsx",))
+    path = tmp_path / "roster.xlsx"
+    path.write_bytes(attachment.data)
+    sheet = inspect_comments(path)["sheets"][0]
+    assert sheet["comment_part"] is None
+    assert sheet["threaded_comment_part"] is None
+    assert sheet["comments"] == []
+    assert sheet["comments_truncated"] is False
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["--styles"],
+        ["--start-row", "2"],
+        ["--max-columns", "4"],
+        ["--axis", "row"],
+        ["--max-groups", "1"],
+        ["--summary"],
+        ["--overview"],
+    ],
+)
+def test_comment_mode_rejects_incompatible_cell_options(monkeypatch, options):
+    import sys
+
+    from nurse_scheduling.ai.attachment_tools.inspect_xlsx import main
+
+    monkeypatch.setattr(sys, "argv", ["inspect_xlsx.py", "unused.xlsx", "--comments", *options])
+    with pytest.raises(SystemExit) as error:
+        main()
+    assert error.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "target", ["../threadedComments/threadedComment1.xml", "/xl/threadedComments/threadedComment1.xml"]
+)
+def test_comment_inspection_reports_unsupported_threaded_parts_without_parsing_them(tmp_path, target):
+    (attachment,) = load_attachment_fixtures(("comment-notes-xlsx",))
+    path = tmp_path / "threaded.xlsx"
+    part = "xl/threadedComments/threadedComment1.xml"
+    with ZipFile(BytesIO(attachment.data)) as source, ZipFile(path, "w") as archive:
+        for item in source.infolist():
+            payload = source.read(item.filename)
+            if item.filename == "xl/worksheets/_rels/sheet1.xml.rels":
+                relationship = (
+                    '<Relationship Id="threaded" '
+                    'Type="http://schemas.microsoft.com/office/2017/10/relationships/threadedComment" '
+                    f'Target="{target}"/>'
+                )
+                payload = payload.replace(b"</Relationships>", relationship.encode() + b"</Relationships>")
+            archive.writestr(item, payload)
+        # Detection must not read or claim to parse unsupported comment text.
+        archive.writestr(part, b"not parsed")
+    result = inspect_comments(path, cell_range="Notes!A1:A2")["sheets"][0]
+    assert result["threaded_comment_part"] == part
+    assert result["comments"] == []

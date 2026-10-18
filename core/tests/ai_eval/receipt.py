@@ -228,7 +228,8 @@ def uses_helper(trajectory: dict[str, Any], helper: str, flags: tuple[str, ...] 
                 continue
             options = {word.split("=", 1)[0] for word in words[2:]}
             if not options.intersection({"-h", "--help"}) and set(flags) <= options:
-                for line in str(event.get("result", "")).splitlines():
+                output = str(event.get("result", ""))
+                for line in (output, *output.splitlines()):
                     try:
                         if isinstance(json.loads(line), dict):
                             return True

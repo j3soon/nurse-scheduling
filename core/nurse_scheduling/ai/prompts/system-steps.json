@@ -453,42 +453,37 @@
       "xlsx-styled-requests-and-caches",
       "xlsx-sheet-inventory"
     ],
-    "hypothesis": "Reduces generated XLSX parsing while preserving color-dependent requests and last-saved formula caches.",
-    "sha256": "b166d9f3956a724a6747b1d554b1a742d60f2a819e39a207eab2836f8491d62c",
+    "hypothesis": "Uses the maintained XLSX cell inspector for values, stored styles and saved formula caches before writing a parser.",
+    "sha256": "253648fab336668c7f0506ce814659cb46ff35823fa895aca84edcf81d0b4807",
     "evidence": [
       {
-        "case": "xlsx-sheet-inventory",
-        "input_sha256": "c12a1721ee4d4828ea5b92703e7250059a0350895c265fd072193094a4c41f28",
-        "before": "3/3",
+        "case": "xlsx-styled-requests-and-caches",
+        "input_sha256": "2872f3fe3d6082e8eb851cc2f8b8b78ffd91627c7eb8679718aea91e39b9d8db",
+        "before": "2/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
         "controls": [
           {
             "case": "xlsx-color-fallback",
-            "input_sha256": "4ea7978977edb53330e80a3badfd82e2d88af56270d1873876578606426458fa",
+            "input_sha256": "d0c18d61d2e0a3004b18c9ef4e57fb3d662000aa23ff6b92223a48424709e230",
             "before": "3/3",
             "after": "3/3"
           },
           {
             "case": "xlsx-formulas-and-caches",
-            "input_sha256": "94add7c51af64c4bf5912a70dfe9529a59ba18c99d6362610f2d4e6a89ff9c6e",
+            "input_sha256": "51ae6073720414e014a9fa12e16cf08c682d867a8998c4d50e78059bb4bf7735",
             "before": "3/3",
             "after": "3/3"
           },
           {
-            "case": "xlsx-styled-requests-and-caches",
-            "input_sha256": "ce79a3d696cfe0a4eba3d3d39b36df3ad32a65f4eb261bce8fbf21ea5684c980",
+            "case": "xlsx-sheet-inventory",
+            "input_sha256": "6dfa00d396f98095146be542f02ed1f55e9dd13454f320e133085be14c06add5",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Adjacent prefix comparison with the A1-range helper. The predeclared total-token target is 0.80. Formula caches, stored colors, and styled requests remain correct.",
-        "cost_metric": "total-tokens",
-        "cost_ratio": 0.39351841987514113,
-        "cost_target": 0.8,
-        "grading_note": "Regraded saved outputs after numeric comparison correction. Case and fixture fingerprints match. Pass counts and costs are unchanged.",
-        "fingerprint_note": "Expanded JSON comparator dependency coverage. Grading, model inputs and historical measurements are unchanged. Grading helpers are fingerprinted transitively, and list numbers compare by value. Model inputs, measurements, and grades of saved outputs are unchanged."
+        "note": "Historical correctness receipt. The fresh adjacent comparison with the shared inspector passes all four cell cases 3/3 in both versions, so it shows no new correctness gain. No cost target was declared. The historical fingerprint is not refreshed as if this comparison demonstrated a new benefit."
       }
     ]
   },
@@ -1342,6 +1337,60 @@
           }
         ],
         "note": "Adjacent prefixes with live provider and E2B, three repetitions and four jobs. The optional saved-source question improved from 0/3 to 3/3. Unavailable-source, inspection-only and confirmed-policy controls each passed 3/3 in both versions. No cost improvement is claimed because the witness has no matched passing baseline runs."
+      }
+    ]
+  },
+  {
+    "id": "xlsx-comments",
+    "file": "steps/xlsx-comments.md",
+    "cases": [
+      "xlsx-cell-comments",
+      "xlsx-no-cell-comments"
+    ],
+    "hypothesis": "Reads stored XLSX comments with the maintained bounded inspector, including blank cells and a no-comment control.",
+    "sha256": "12189769e0bf3fd2dcd22904066c5c31f42359e5d8c6e827112a33ca507e111b",
+    "evidence": [
+      {
+        "case": "xlsx-cell-comments",
+        "input_sha256": "c83ee8397999502f69ce91f91dc0cd89e0ffc5e78527d4094e8cea85ae8dc911",
+        "before": "3/3",
+        "after": "3/3",
+        "cost_ratio": 0.513469827586207,
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "comparison_passed": true,
+        "cost_metric": "completion-tokens",
+        "cost_target": 0.9,
+        "controls": [
+          {
+            "case": "xlsx-no-cell-comments",
+            "input_sha256": "97063307af33a9dd3785d9d5dd73e8c87752f51eb06a2e76f80765b1b2712f3d",
+            "before": "3/3",
+            "after": "3/3",
+            "cost_ratio": 0.4745328896851805
+          }
+        ],
+        "helper_usage": {
+          "helper": "inspect_xlsx.py",
+          "sha256": "8c16cf3ba4238aa0480373f98f78b6120fc39a5921975542bad4049e19b9b314",
+          "flags": [
+            "--comments",
+            "--range"
+          ],
+          "cases": [
+            {
+              "case": "xlsx-cell-comments",
+              "before": "1/3",
+              "after": "3/3"
+            },
+            {
+              "case": "xlsx-no-cell-comments",
+              "before": "0/3",
+              "after": "3/3"
+            }
+          ]
+        },
+        "note": "Fresh adjacent prefixes 37/38 on the shared-inspector implementation, three repetitions and four jobs. Both questions explicitly require the root JSON object and named string fields. Both cases pass 3/3 per arm. Generated tokens fall 48.7% for extraction and 52.5% for the empty control, meeting the declared 10% target without a control increase. Every candidate executes inspect_xlsx.py with --comments and --range. Extraction uses one helper call without custom parsing. Empty-control candidates still write verification scripts. The initial bare-array response and its failed batch are preserved separately."
       }
     ]
   }

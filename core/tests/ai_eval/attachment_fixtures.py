@@ -27,6 +27,7 @@ from xml.etree import ElementTree
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from openpyxl import Workbook
+from openpyxl.comments import Comment
 from openpyxl.styles import Font, PatternFill
 from PIL import Image, ImageDraw, ImageFont
 from pypdf import PdfWriter
@@ -98,6 +99,21 @@ def _completed_roster_workbook() -> bytes:
     sheet.append(["P1", "D", "D", "OFF", "D", "D", "OFF"])
     sheet.append(["P2", "E", "E", "OFF", "E", "E", "OFF"])
     sheet.append(["P3", "N", "OFF", "N", "N", "OFF", "N"])
+    return _stable_workbook(book)
+
+
+def _comment_workbook() -> bytes:
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "Notes"
+    sheet["A1"] = "Handover notes"
+    for cell, text in {
+        "B3": "Handoff code LARCH 2841",
+        "D5": "Training slot AMBER 6032",
+        "F7": "Rest note CEDAR 9156",
+        "H12": "Outside the selected range",
+    }.items():
+        sheet[cell].comment = Comment(text, "Fixture")
     return _stable_workbook(book)
 
 
@@ -382,6 +398,11 @@ def _pptx() -> bytes:
 
 
 _FIXTURES: dict[str, tuple[str, str, Callable[[], bytes]]] = {
+    "comment-notes-xlsx": (
+        "notes.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        _comment_workbook,
+    ),
     "counting-xlsx": (
         "requests.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
