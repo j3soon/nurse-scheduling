@@ -606,10 +606,15 @@ def create_app(
             raise HTTPException(status_code=409, detail="Saved chat export requires PostgreSQL history.")
         release = recovery.pin(session_id)
         try:
-            async with asyncio.timeout(5):
-                if not await recovery.save(session_id):
-                    raise HTTPException(status_code=503, detail="The chat snapshot could not be saved.")
-                await recovery.flush(session_id)
+            try:
+                async with asyncio.timeout(5):
+                    if not await recovery.save(session_id):
+                        raise HTTPException(status_code=503, detail="The chat snapshot could not be saved.")
+                    await recovery.flush(session_id)
+            except TimeoutError as exc:
+                raise HTTPException(
+                    status_code=503, detail="The chat snapshot is still being saved. Try again."
+                ) from exc
             with anyio.CancelScope(shield=True):
                 archive = await anyio.to_thread.run_sync(
                     lambda: create_chat_archive(recovery.history, session_id, owner=owner)
@@ -621,8 +626,6 @@ def create_app(
             raise HTTPException(status_code=503, detail="The chat archive could not be created. Try again.") from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from None
-        except TimeoutError as exc:
-            raise HTTPException(status_code=503, detail="The chat snapshot is still being saved. Try again.") from exc
         finally:
             release()
         return ChatArchiveResponse(archive, f"schedule-ai-chat-{session_id}.zip")

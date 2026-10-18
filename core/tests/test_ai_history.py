@@ -358,6 +358,46 @@ def test_saved_export_read_failure_returns_503_and_allows_retry(recorded_history
     assert provider.calls == []
 
 
+@pytest.mark.parametrize("phase", ["save", "flush"])
+def test_saved_export_timeout_reports_pending_snapshot_and_allows_retry(recorded_history, monkeypatch, caplog, phase):
+    app = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test"), provider=basic.FakeProvider()
+    )
+
+    async def timed_out(*_args):
+        raise TimeoutError
+
+    monkeypatch.setattr(app_module, "create_chat_archive", lambda *_args, **_kwargs: io.BytesIO(b"ZIP"))
+    with basic.AuthenticatedTestClient(app) as client:
+        session = basic.create_session(client)
+        with monkeypatch.context() as patch:
+            patch.setattr(app.state.recovery, phase, timed_out)
+            response = client.get(f"/sessions/{session}/export")
+        assert response.status_code == 503
+        assert response.json() == {"detail": "The chat snapshot is still being saved. Try again."}
+        assert "AI chat archive creation failed" not in caplog.text
+        assert not app.state.recovery._pins
+        assert client.get(f"/sessions/{session}/export").content == b"ZIP"
+
+
+@pytest.mark.parametrize("error", [OSError, TimeoutError], ids=["disk-error", "archive-io-timeout"])
+def test_saved_export_archive_io_failure_is_not_reported_as_a_pending_save(recorded_history, monkeypatch, error):
+    app = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test"), provider=basic.FakeProvider()
+    )
+
+    def failed(*_args, **_kwargs):
+        raise error("private archive path")
+
+    monkeypatch.setattr(app_module, "create_chat_archive", failed)
+    with basic.AuthenticatedTestClient(app) as client:
+        session = basic.create_session(client)
+        response = client.get(f"/sessions/{session}/export")
+        assert response.status_code == 503
+        assert response.json() == {"detail": "The chat archive could not be created. Try again."}
+        assert not app.state.recovery._pins
+
+
 @asynccontextmanager
 async def serving(app, owner: str | None = None):
     """Run the application lifespan with an HTTP client that receives JSON acknowledgements."""
