@@ -87,6 +87,9 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   suite to diagnose its failure.
 - Run security scans with `skills/security-scan` against an isolated loopback
   copy of the services. Never scan the public domain or the running deployment.
+- Diagnose hanging backend requests with `skills/debug-backend-hangs`. A browser
+  CORS error for the APIs can mean the origin never responded, so isolate the
+  hop before changing CORS or proxy configuration.
 
 ## Git
 - Commit validated implementation work as part of the task unless the user asks
