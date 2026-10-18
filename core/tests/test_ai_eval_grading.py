@@ -22,6 +22,7 @@
 import copy
 import hashlib
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -2212,10 +2213,18 @@ def test_result_explanation_cases_check_cause_and_read_only_scope(conflict, muta
         ("One request is unmet. This does not prove it was traded for stronger requests.", True),
         ("One request is unmet. It might have been traded for stronger requests.", True),
         ("One request is unmet. A feasible timed-out result need not be optimal.", True),
+        ("One request is unmet, as the higher-weight constraints took precedence.", False),
+        ("One request was missed because stronger requests took precedence.", False),
+        ("One request is unmet. Higher weights take precedence in the objective.", True),
+        ("One request is unmet, but this does not prove higher weights took precedence.", True),
     ],
 )
-def test_summary_cause_oracle_distinguishes_affirmative_claims_from_uncertainty(answer, passed):
-    case = load_cases(CASES_PATH / "basics/12-optimizer-results/result-summary-without-proven-tradeoff.json")[0]
+@pytest.mark.parametrize(
+    "case_id", ["result-summary-without-proven-tradeoff", "result-retry-summary-without-proven-tradeoff"]
+)
+def test_summary_cause_oracle_distinguishes_affirmative_claims_from_uncertainty(answer, passed, case_id):
+    case = load_cases(CASES_PATH / f"basics/12-optimizer-results/{case_id}.json")[0]
+    case = replace(case, semantic_check="", tool_usage=None, turn_tool_usage=(), intermediate_answer_contains=())
     activity = [
         {"kind": "tool", "name": "optimizer", "ok": True, "arguments": '{"action":"start"}'},
         {"kind": "optimizer", "turn": 2},

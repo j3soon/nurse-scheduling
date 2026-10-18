@@ -12,6 +12,44 @@ behavioral hypothesis, witness testcase, and contrasting controls. It keeps one 
 clause: model, paired pass counts, infrastructure-error count, and an input fingerprint. Counts are directional
 evidence for the named model and cases, not proof that a clause is universally necessary.
 
+## Causal explanation checks
+
+A fresh check after restoring YAML parser guidance reproduces four false passes
+in the parent checks. The revised grading suite passes 455 tests. Two independent
+solver checks confirm that the compatible fixture can satisfy every request and
+that the contrasting fixture has a genuine conflict.
+
+The unchanged production agent passes 9/9 automatically, but manual review
+accepts only 2/3 summaries, 0/3 retry explanations and 3/3 verified-conflict
+controls. It still invents priority tradeoffs for compatible requests. The
+sentence-wide uncertainty filter can treat the month May as a modal verb, and
+paraphrases can escape the patterns. These are known limitations of the
+conservative language check. Do not treat its pass rate as validated explanation
+quality or extend it with one pattern for each observed sentence. Keep manual
+review of causal claims. No production prompt or cost improvement is claimed.
+
+The summary and retry cases now reject claims that an unmet request was caused by
+higher-weight requests taking precedence. Negation, uncertainty and general
+statements about the weighted objective remain allowed. This is a grader change,
+not an agent behavior improvement.
+
+Earlier manual review of the production prompt found a false pass containing
+an unsupported cause, incorrect counts and a reversed hard prohibition. A fresh
+comparison with the corrected cases passes 2/3 summaries, 3/3 retries and 3/3
+verified-conflict controls. All runs use the real provider and E2B sandbox with
+verified result fixtures, three repetitions and four jobs. No HTTP optimizer jobs
+run. Two focused conflict-wording candidates pass 6/9 and 8/9 versus 8/9 baseline.
+Both are rejected. A separate audit-scope description experiment passes 9/9
+automatically but only 8/9 on manual review: one answer acknowledges uncertainty
+then still asserts that higher weights caused the miss. It is also rejected.
+No infrastructure errors occur in these completed batches.
+
+These historical comparisons included the now-removed evidence-strength step.
+Their pass rates describe that prompt. Unsupported causal explanations remain
+unresolved. Manual
+review is still needed for facts and causal language beyond the conservative
+patterns. No cost or reliability improvement is claimed.
+
 ## Repository and artifact boundary
 
 Keep prompt text, testcase definitions, hypotheses, concise scope notes, and the latest aggregate receipts tracked.

@@ -25,7 +25,10 @@ format, and workbook. Uploading a workbook alone does not test that delivery.
 Correct counts do not prove a causal explanation. Contrast compatible missed
 preferences with requests that cannot both hold. Verify those facts against the
 source rules. Preserve multiple results when the error follows a retry, and
-review explanations as well as structured answer fields.
+review explanations as well as structured answer fields. Check each causal claim,
+even when another clause acknowledges uncertainty. Check signed weights:
+satisfying a negative-weight request means avoiding its selected shift. Count
+request cells separately from roster assignment cells.
 
 For rest-policy coverage, check constructed group members and the actual ordered
 succession rule before optimization. A valid rule can still omit qualified shift
