@@ -2116,8 +2116,9 @@ def test_postgres_export_snapshot_matches_the_complete_chat_fixture_and_cli(post
         database_url = connection.info.dsn
         if connection.info.password:
             database_url = make_conninfo(database_url, password=connection.info.password)
-    assert postgres_history.export_snapshot(session_id) == fixture
-    assert postgres_history.export_snapshot(str(uuid4())) is None
+    with postgres_history._connect() as connection:
+        assert postgres_history.export_snapshot(connection, session_id) == fixture
+        assert postgres_history.export_snapshot(connection, str(uuid4())) is None
     repo = Path(__file__).resolve().parents[2]
     actual = tmp_path / "actual.zip"
     result = subprocess.run(

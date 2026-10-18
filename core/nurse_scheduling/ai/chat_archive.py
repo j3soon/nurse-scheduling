@@ -140,7 +140,7 @@ def write_chat_archive(history: ChatHistory, session_id: str, output: BinaryIO, 
         ).fetchone()
         if row is None or (owner is not None and row[0] != _owner_hash(owner)):
             raise ChatSessionNotFoundError("Chat session not found.")
-        snapshot = history.export_snapshot(session_id, snapshot_connection=connection)
+        snapshot = history.export_snapshot(connection, session_id)
         if snapshot is None:
             raise ChatSessionNotFoundError("Chat session not found.")
         snapshot = {**snapshot, "session_state": row[1], "expires_at": round(float(row[2]) * 1000)}

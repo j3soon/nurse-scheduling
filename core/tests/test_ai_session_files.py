@@ -123,9 +123,8 @@ def test_generated_download_survives_restart_and_removal(postgres_history):
         assert restarted.state.session_store.get(session).archive_bytes == len(content)
         owner = cookies[basic.OWNER_COOKIE]
     assert postgres_history.load_file(session, owner, "download", download_id) is None
-    assert postgres_history.load_file(session, owner, "download", download_id, True) == content
     with postgres_history._connect() as connection:
-        assert connection.execute("SELECT removed_at IS NOT NULL FROM chat_files").fetchone() == (True,)
+        assert connection.execute("SELECT data, removed_at IS NOT NULL FROM chat_files").fetchone() == (content, True)
         connection.execute("UPDATE chat_sessions SET expires_at = now() - interval '1 second'")
     postgres_history.prune()
     with postgres_history._connect() as connection:

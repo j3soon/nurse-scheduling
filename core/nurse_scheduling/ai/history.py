@@ -23,7 +23,7 @@ import asyncio
 import hashlib
 import logging
 from collections.abc import Sequence
-from contextlib import nullcontext, suppress
+from contextlib import suppress
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, Literal
@@ -446,17 +446,14 @@ class ChatHistory:
             ).fetchone()
         return None if row is None else row[0]
 
-    def load_file(
-        self, session_id: str, owner: str, kind: str, source_id: str | None, include_removed: bool = False
-    ) -> bytes | None:
-        """Read a bounded generated file for an owned session."""
+    def load_file(self, session_id: str, owner: str, kind: str, source_id: str) -> bytes | None:
+        """Read one active generated file of an owned, unexpired session."""
         with self._connect() as connection:
             row = connection.execute(
                 "SELECT f.data FROM chat_files f JOIN chat_sessions s ON s.id = f.session_id "
                 "WHERE f.session_id = %s AND s.owner_hash = %s AND s.expires_at > now() "
-                "AND f.kind = %s AND (%s::text IS NULL OR f.source_id = %s) "
-                "AND (%s OR f.removed_at IS NULL) ORDER BY f.created_at DESC LIMIT 1",
-                (session_id, _owner_hash(owner), kind, source_id, source_id, include_removed),
+                "AND f.kind = %s AND f.source_id = %s AND f.removed_at IS NULL",
+                (session_id, _owner_hash(owner), kind, source_id),
             ).fetchone()
         return None if row is None else row[0]
 
@@ -470,29 +467,26 @@ class ChatHistory:
             ).fetchone()
         return None if row is None else row[0]
 
-    def export_snapshot(self, session_id: str, *, snapshot_connection=None) -> dict[str, Any] | None:
-        """Read complete saved events and metadata in one consistent, read-only transaction."""
-        own_connection = snapshot_connection is None
-        with self._connect() if own_connection else nullcontext(snapshot_connection) as connection:
-            if own_connection:
-                connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            session = connection.execute(
-                "SELECT state, extract(epoch FROM created_at) FROM chat_sessions WHERE id = %s", (session_id,)
-            ).fetchone()
-            if session is None:
-                return None
-            runs = connection.execute(
-                "SELECT r.id, r.kind, r.status, extract(epoch FROM r.started_at), "
-                "extract(epoch FROM r.finished_at), "
-                "(SELECT payload->>'text' FROM chat_session_entries WHERE run_id = r.id AND type = 'user' "
-                "ORDER BY seq LIMIT 1) FROM chat_runs r WHERE r.session_id = %s ORDER BY r.sequence",
-                (session_id,),
-            ).fetchall()
-            events = connection.execute(
-                "SELECT type, data, extract(epoch FROM created_at) FROM chat_session_events "
-                "WHERE session_id = %s ORDER BY event_id",
-                (session_id,),
-            ).fetchall()
+    @staticmethod
+    def export_snapshot(connection, session_id: str) -> dict[str, Any] | None:
+        """Read complete saved events and metadata through the caller's consistent read-only transaction."""
+        session = connection.execute(
+            "SELECT state, extract(epoch FROM created_at) FROM chat_sessions WHERE id = %s", (session_id,)
+        ).fetchone()
+        if session is None:
+            return None
+        runs = connection.execute(
+            "SELECT r.id, r.kind, r.status, extract(epoch FROM r.started_at), "
+            "extract(epoch FROM r.finished_at), "
+            "(SELECT payload->>'text' FROM chat_session_entries WHERE run_id = r.id AND type = 'user' "
+            "ORDER BY seq LIMIT 1) FROM chat_runs r WHERE r.session_id = %s ORDER BY r.sequence",
+            (session_id,),
+        ).fetchall()
+        events = connection.execute(
+            "SELECT type, data, extract(epoch FROM created_at) FROM chat_session_events "
+            "WHERE session_id = %s ORDER BY event_id",
+            (session_id,),
+        ).fetchall()
         state, created_at = session
         milliseconds = lambda timestamp: round(float(timestamp) * 1000)
         return {
