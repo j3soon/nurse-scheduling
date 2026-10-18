@@ -26,11 +26,13 @@ import time
 from dataclasses import replace
 from pathlib import Path
 from uuid import uuid4
+from zipfile import ZipFile
 
 import pytest
 from fastapi import HTTPException
 
 from nurse_scheduling.ai.agent_session import DOWNLOAD_RETENTION_WARNING, RECOVERY_SAVE_WARNING
+from nurse_scheduling.ai.chat_archive import create_chat_archive
 from nurse_scheduling.ai.downloads import WORKSPACE_DOWNLOAD
 from nurse_scheduling.ai.history import ChatHistory, _migrate_legacy_transcripts
 from nurse_scheduling.ai.optimizer import OptimizerArtifact, OptimizerJobPayload, SessionOptimization
@@ -167,6 +169,48 @@ def test_generated_download_is_announced_when_its_recovery_save_fails(postgres_h
         assert client.portal.call(app.state.recovery.save, session)
         assert app.state.session_store.get(session).downloads[download_id] is None
         assert client.get(f"/sessions/{session}/downloads/{download_id}").content == content
+
+
+@pytest.mark.parametrize("kind", ["upload", "download"])
+def test_removing_an_unsaved_file_keeps_its_archive_bytes(postgres_history, monkeypatch, kind):
+    app = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test"), provider=basic.FakeProvider()
+    )
+    content = b"file retained during a storage outage"
+    with basic.AuthenticatedTestClient(app) as client:
+        session = basic.create_session(client)
+        store = app.state.session_store
+        live = store.get(session)
+        with monkeypatch.context() as patch:
+            patch.setattr(ChatHistory, "save_session", unavailable)
+            if kind == "upload":
+                assert (
+                    client.post(
+                        f"/sessions/{session}/uploads", files={"files": ("notes.txt", content, "text/plain")}
+                    ).status_code
+                    == 503
+                )
+                source_id = next(iter(live.uploads))
+            else:
+                source_id = "generated-run"
+                assert store.save_download(session, source_id, content)
+                assert not client.portal.call(app.state.recovery.save, session)
+            path = f"/sessions/{session}/{kind}s/{source_id}"
+            for _ in range(2):
+                assert client.delete(path).status_code == 503
+            assert live.pending_archive_files[kind, source_id]["data"] == content
+            assert live.archive_bytes == len(content)
+            assert not app.state.recovery.evictable(session)
+            retained = store.retained_bytes
+        assert client.delete(path).status_code == 204
+        assert store.retained_bytes == retained - len(content)
+        assert live.pending_archive_files == {}
+        assert postgres_history.load_file(session, live.owner_token, kind, source_id) is None
+        assert live.archive_bytes == len(content)
+        with create_chat_archive(postgres_history, session) as output, ZipFile(output) as archive:
+            (file,) = json.loads(archive.read("manifest.json"))["files"]
+            assert file["kind"] == kind and file["removed_at"] is not None
+            assert archive.read(file["path"]) == content
 
 
 def test_optimizer_files_survive_restart_without_cached_workbooks(postgres_history):

@@ -488,8 +488,16 @@ class SessionStore:
         session.require_idle("removing files")
         if upload_id not in session.uploads and upload_id in session.pending_upload_removals:
             return
-        session.remove_upload(upload_id)
-        if not self._settings.history_postgres_url:
+        upload = session.remove_upload(upload_id)
+        if self._settings.history_postgres_url and upload.data is not None:
+            session.pending_archive_files["upload", upload_id] = {
+                "kind": "upload",
+                "source_id": upload_id,
+                "filename": upload.filename,
+                "media_type": upload.media_type,
+                "data": upload.data,
+            }
+        elif not self._settings.history_postgres_url:
             session.pending_upload_removals.clear()
         self._cap_history(session)
         self._recount(session)
@@ -566,7 +574,17 @@ class SessionStore:
             raise HTTPException(status_code=404, detail="This generated ZIP is no longer available.") from None
         if self._settings.history_postgres_url:
             session.pending_download_removals.add(download_id)
-        self._charge(session, -len(content or b""))
+            if content is not None:
+                session.pending_archive_files["download", download_id] = {
+                    "kind": "download",
+                    "source_id": download_id,
+                    "run_id": download_id,
+                    "filename": "download.zip",
+                    "media_type": "application/zip",
+                    "data": content,
+                }
+        else:
+            self._charge(session, -len(content or b""))
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
 
     def abort(self, session_id: str, snapshot: RunSnapshot) -> None:

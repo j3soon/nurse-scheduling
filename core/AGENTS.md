@@ -206,6 +206,8 @@ from the trust-based local harness.
   time during sandbox hydration. Count all pending file writes, memory-only uploads, and
   generated downloads against the session memory budget. Count every stored file
   version, including removed files, against `AI_MAX_ARCHIVE_BYTES` before accepting it.
+  Test removal during a storage outage. Keep unsaved file bytes in the pending
+  archive until a successful write, even after the user removes the active file.
 - Bound sandbox file and command output bytes while receiving them. Truncating
   tool output after buffering does not bound the AI service's memory use.
 - Test file workflows across message boundaries and session expiry. Check the
