@@ -76,3 +76,9 @@ Measure helper use on a representative workload as well as a small control.
 A table that the agent can count directly may hide the value of a maintained
 calculation. Report costs and adoption separately for each workload. Do not
 attribute a difference only to size when the question or other inputs differ.
+
+For controlled rejected-write recovery, inject a synthetic fault through the real
+tool and validator. Label the injected response and exclude it from live provider
+telemetry. Keep final-source recovery and zero-rejection first-write cases separate.
+Persistent rejection feedback can recur on reads. Do not count those reports as
+distinct invalid mutations.

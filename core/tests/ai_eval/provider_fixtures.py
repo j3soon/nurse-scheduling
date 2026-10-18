@@ -1,4 +1,4 @@
-"""Inject one interrupted attempt through the production provider retry policy."""
+"""Inject controlled provider responses for live recovery evaluations."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -19,11 +19,12 @@
 
 # This test is mostly AI generated.
 
+import json
 from contextlib import aclosing
 
 import httpx
 
-from nurse_scheduling.ai.provider import OpenAiCompatibleProvider, TextDelta
+from nurse_scheduling.ai.provider import OpenAiCompatibleProvider, ResponseEnd, TextDelta, ToolCall, ToolCallRequest
 
 
 class TimeoutOnceProvider(OpenAiCompatibleProvider):
@@ -40,5 +41,24 @@ class TimeoutOnceProvider(OpenAiCompatibleProvider):
             yield TextDelta(partial_text)
             raise httpx.ReadTimeout("Injected evaluation timeout after partial text")
         async with aclosing(self._provider._stream_attempt(timeout, headers, payload)) as events:
+            async for event in events:
+                yield event
+
+
+class RejectedWriteOnceProvider:
+    """Seed one malformed schedule write, then delegate repair to the provider."""
+
+    def __init__(self, provider):
+        self._provider = provider
+        self._injected = False
+
+    async def stream_events(self, messages, tools=None):
+        if not self._injected:
+            self._injected = True
+            arguments = json.dumps({"path": "/workspace/schedule.yaml", "content": "dates: [\n"})
+            yield ToolCallRequest((ToolCall("eval-rejected-write", "write", arguments),))
+            yield ResponseEnd("tool_calls")
+            return
+        async with aclosing(self._provider.stream_events(messages, tools)) as events:
             async for event in events:
                 yield event

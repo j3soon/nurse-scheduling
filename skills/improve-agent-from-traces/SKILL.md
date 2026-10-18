@@ -266,6 +266,10 @@ specific investigation. If both versions fail, find the shared cause before
 adding more instructions. Do not weaken the task or pass/fail criteria to obtain
 a positive result.
 
+For test-only changes, distinguish validated coverage from a production improvement.
+Run the testcase on the reviewed revision. Attribute a measured behavior change to
+the production change tested, not to the addition of its testcase.
+
 Require understood failures and repeated correctness or cost gains before calling
 a candidate an agent improvement. A small
 success-rate change alone is weak evidence. Inspect the failed attempts and

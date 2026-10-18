@@ -141,6 +141,7 @@ class EvalCase:
     optimizer_download_file: str = ""
     staffing_contract: dict[str, Any] = field(default_factory=dict)
     provider_timeout_after_text: str = ""
+    rejected_write_turn: int = 0
 
     def __post_init__(self) -> None:
         """Keep direct test construction compatible with single-turn cases."""
@@ -252,6 +253,7 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         "optimizer_download_file",
         "staffing_contract",
         "provider_timeout_after_text",
+        "rejected_write_turn",
         "changes",
         "answer_contains",
         "answer_matches",
@@ -289,6 +291,13 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         or not all(isinstance(turn, str) and turn for turn in raw_turns)
     ):
         raise EvalCaseError(f"{source} `user_turns` must be a non-empty list of strings.")
+    rejected_write_turn = entry.get("rejected_write_turn", 0)
+    if (
+        isinstance(rejected_write_turn, bool)
+        or not isinstance(rejected_write_turn, int)
+        or not 0 <= rejected_write_turn <= len(raw_turns)
+    ):
+        raise EvalCaseError(f"{source} rejected_write_turn must be zero or a user turn number.")
     follow_up_completions = entry.get("optimizer_follow_up_completions", [])
     if (
         not isinstance(follow_up_completions, list)
@@ -486,6 +495,7 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         optimizer_download_file=optimizer_download_file,
         staffing_contract=staffing_contract,
         provider_timeout_after_text=timeout_text,
+        rejected_write_turn=rejected_write_turn,
         changes=tuple(entry.get("changes", ())),
         answer_contains=tuple(
             tuple(value) if isinstance(value, list) else value for value in entry.get("answer_contains", ())
@@ -673,6 +683,18 @@ def _build_expected_diff(raw: object, source: str) -> ExpectedDiff:
 def grade(case: EvalCase, outcome: RunOutcome, computed: dict[str, Any] | None = None) -> CaseResult:
     """Apply every criterion of one case to what the run produced."""
     checks: list[CheckResult] = []
+    if case.rejected_write_turn:
+        checks.append(
+            CheckResult(
+                "rejected write kept the draft and exposed the last accepted schedule",
+                any(
+                    _schedule_validation_failed(event)
+                    and "Your edits are kept" in event.get("result", "")
+                    and "/workspace/last-accepted-schedule.yaml" in event.get("result", "")
+                    for event in outcome.activity
+                ),
+            )
+        )
     proposal_turns = outcome.proposal_turns
     if not proposal_turns and outcome.intermediate_proposals:
         proposal_turns = [*outcome.intermediate_proposals, outcome.proposed is not None]

@@ -121,6 +121,7 @@ def case_digest(case: EvalCase) -> str:
         "optimizer_download_file",
         "staffing_contract",
         "provider_timeout_after_text",
+        "rejected_write_turn",
     ):
         if not fields[optional]:
             fields.pop(optional)
@@ -140,6 +141,12 @@ def case_digest(case: EvalCase) -> str:
 
         fields["provider_timeout_fixture_sha256"] = hashlib.sha256(
             inspect.getsource(TimeoutOnceProvider).encode()
+        ).hexdigest()
+    if case.rejected_write_turn:
+        from .provider_fixtures import RejectedWriteOnceProvider
+
+        fields["rejected_write_fixture_sha256"] = hashlib.sha256(
+            inspect.getsource(RejectedWriteOnceProvider).encode()
         ).hexdigest()
     if case.optimizer_completion:
         from nurse_scheduling.ai.result_context import _project_context

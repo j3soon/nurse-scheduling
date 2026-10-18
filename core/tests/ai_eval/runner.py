@@ -114,7 +114,7 @@ from .grading import (
 )
 from .optimizer_fixtures import RESULT_SOURCES, completion_result
 from .prompt_ladder import case_digest, load_prompt_steps, prompt_at_step
-from .provider_fixtures import TimeoutOnceProvider
+from .provider_fixtures import RejectedWriteOnceProvider, TimeoutOnceProvider
 from .report_extension import prepare_extension, read_completed_reports
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -506,8 +506,13 @@ async def run_case(
             turn_event_offset = len(events)
             events.append({"kind": "optimizer" if completion else "user", "turn": turn_index + 1, "text": question})
             agent = Agent()
+            turn_provider = counting
+            if case.rejected_write_turn == turn_index + 1:
+                events.append({"kind": "evaluation_fault", "fault": "rejected-write", "turn": turn_index + 1})
+                # Inject outside counting so provider telemetry covers only real requests.
+                turn_provider = RejectedWriteOnceProvider(counting)
             agent_events = run_workspace(
-                counting,
+                turn_provider,
                 sandbox_factory,
                 text,
                 messages,
@@ -729,6 +734,7 @@ def _trajectory(
     return {
         "fixture": case.fixture,
         "question": case.question,
+        **({"rejected_write_turn": case.rejected_write_turn} if case.rejected_write_turn else {}),
         **(
             {"provider_timeout_after_text": case.provider_timeout_after_text}
             if case.provider_timeout_after_text

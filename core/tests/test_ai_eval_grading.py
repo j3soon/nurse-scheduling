@@ -154,7 +154,12 @@ def test_xlsx_range_case_requires_successful_range_use_and_saved_caches(
 
 @pytest.mark.parametrize(
     "case_id",
-    ["workbook-import-first-valid-proposal", "workbook-build-after-confirmation", "workbook-build-corrected-mapping"],
+    [
+        "workbook-import-first-valid-proposal",
+        "workbook-build-after-confirmation",
+        "workbook-build-corrected-mapping",
+        "workbook-build-rejected-write-recovery",
+    ],
 )
 @pytest.mark.parametrize(
     "defect",
@@ -169,7 +174,7 @@ def test_xlsx_range_case_requires_successful_range_use_and_saved_caches(
         "repaired-invalid-write",
     ],
 )
-def test_workbook_import_requires_correct_weights_and_a_valid_first_proposal(case_id, defect):
+def test_workbook_import_checks_source_values_and_rejection_policy(case_id, defect):
     case = next(c for c in load_cases(CASES_PATH) if c.id == case_id)
     black_weight = 22000000 if case_id == "workbook-build-corrected-mapping" else 11000000
     proposed = copy.deepcopy(FIXTURE_SCHEDULES["new-schedule"])
@@ -220,6 +225,15 @@ def test_workbook_import_requires_correct_weights_and_a_valid_first_proposal(cas
                 {"kind": "tool", "name": "bash" if turn == 1 else "write", "ok": True},
             ]
         )
+    if case.rejected_write_turn:
+        activity.append(
+            {
+                "kind": "tool",
+                "name": "write",
+                "ok": False,
+                "result": "Your edits are kept. Last accepted schedule: /workspace/last-accepted-schedule.yaml\nTrusted schedule check after this command:\nInvalid YAML",
+            }
+        )
     if defect in {"missing-rule", "repaired-invalid-write"}:
         activity.append(
             {
@@ -236,7 +250,8 @@ def test_workbook_import_requires_correct_weights_and_a_valid_first_proposal(cas
         intermediate_answers=["Ada and Bela"],
         proposal_turns=[False, proposed is not None] if len(case.user_turns) == 2 else [proposed is not None],
     )
-    assert grade(case, outcome).passed is (defect is None)
+    expected = defect is None or (bool(case.rejected_write_turn) and defect == "repaired-invalid-write")
+    assert grade(case, outcome).passed is expected
 
 
 def qualified_staffing_proposal(general_count=1, qualified=("S1", "S2")):
@@ -2297,6 +2312,44 @@ def test_calendar_makeup_case_checks_real_calendar_members_and_custom_groups(mut
 def test_editable_source_question_is_optional_and_explains_its_value(answer, passed):
     case = next(c for c in load_cases(CASES_PATH) if c.id == "completed-roster-source-question")
     assert grade(case, RunOutcome(answer=answer)).passed == passed
+
+
+@pytest.mark.parametrize("turn", [True, -1, 2, "1", None])
+def test_invalid_rejected_write_turn_is_rejected(tmp_path, turn):
+    with pytest.raises(EvalCaseError, match="rejected_write_turn must be zero or a user turn number"):
+        load_cases(_write(tmp_path, _case(expect_proposal=False, rejected_write_turn=turn)))
+
+
+@pytest.mark.parametrize(
+    "feedback,passed",
+    [
+        ("", False),
+        ("Your edits are kept.", False),
+        ("/workspace/last-accepted-schedule.yaml", False),
+        ("Your edits are kept. Last accepted schedule: /workspace/last-accepted-schedule.yaml", True),
+    ],
+)
+def test_recovery_case_requires_draft_and_recovery_copy_feedback(feedback, passed):
+    case = EvalCase(
+        id="recovery",
+        fixture="small-clinic",
+        question="Check the schedule",
+        expect_proposal=False,
+        rejected_write_turn=1,
+    )
+    outcome = RunOutcome(
+        initial=FIXTURE_SCHEDULES["small-clinic"],
+        proposed=None,
+        activity=[
+            {
+                "kind": "tool",
+                "name": "write",
+                "ok": False,
+                "result": f"Trusted schedule check after this command:\nInvalid YAML\n{feedback}",
+            }
+        ],
+    )
+    assert grade(case, outcome).passed is passed
 
 
 @pytest.mark.parametrize("suffix", ["partial-edit", "restore-last-accepted", "valid-edit-control"])

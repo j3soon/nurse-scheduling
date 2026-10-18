@@ -122,6 +122,26 @@ Use `provider_timeout_after_text` to inject one partial assistant answer followe
 The production retry policy sends the retained answer and interruption status to the live provider.
 Only that recovery request is live. The initial text and timeout are synthetic, so their timing does not measure
 a real provider outage. The ordinary response control runs without this field.
+Use `rejected_write_turn` to inject one malformed schedule write before a selected
+user turn's first live model request. Zero disables it. The seed runs through the
+production tool and trusted validator. The trace labels it `evaluation_fault`.
+Provider timing and token telemetry exclude the synthetic response. Tool counts
+include its write and validation. This tests recovery, not first-write reliability.
+`workbook-build-rejected-write-recovery` retains the strict construction case's
+source assertions and requires feedback that keeps the draft and names the recovery copy. It grades final recovery,
+so it does not limit repeated validation feedback while the rejection is unresolved.
+Keep strict cases at zero rejections. Do not replay customer commands as fixtures.
+The retained-draft recovery case and `workbook-build-after-confirmation` control
+both passed 3/3 with `unsloth/Qwen3.8-27B-NVFP4`, the isolated
+`nurse-scheduling-trace-validation` E2B template, four jobs and a 900-second test-only
+turn limit. No infrastructure errors occurred. Every proposal preserved the full
+source assertions. One recovery run made an additional schema-invalid write before
+repairing it. None read the last accepted copy. These results validate controlled
+final recovery, not first-write reliability, backup use or provider-outage recovery.
+This test-only change does not establish a production improvement or cost saving.
+Deterministic checks also verify that the draft remains malformed and the recovery
+copy keeps the starting schedule before the live provider responds.
+
 Use `tool_usage.max_validation_errors` to bound failed trusted schedule checks. A valid final proposal does not erase
 an invalid intermediate mutation. Unrelated tool errors are not schedule-validation repairs.
 
