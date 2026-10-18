@@ -163,6 +163,13 @@ hashes so comparisons do not silently mix configurations. Reference hashes cover
 including the user guide pages the app-UI cases are graded on. Case hashes cover each case's parsed criteria, including
 untracked case files during local development.
 
+Each result records `provider_responses` with completion-signal presence, finish
+reason and emitted text/reasoning character counts per model request. A completed
+response with no finish reason means the endpoint sent `[DONE]`. An incomplete
+request remains `completed: false`. Counts include partial retry output, but contain
+no response text. Use the saved prompts and events to compare model output with
+retained history. A mid-word ending alone does not establish a transport error.
+
 Completed attempts are saved immediately to `results.jsonl` and `cases/`, with initial metadata and a
 `progress.json` status. Comparison arms keep separate directories. Interrupted batches retain completed
 attempts and are not complete comparisons. Final reports restore dataset order. Existing output directories

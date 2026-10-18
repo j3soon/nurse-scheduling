@@ -1332,6 +1332,7 @@ def test_the_report_records_enough_to_explain_a_run():
         "error",
         "token_usage",
         "provider_requests",
+        "provider_responses",
         "tool_batches",
     }
     assert record["timing"]["end_to_end_seconds"] == pytest.approx(run.seconds, abs=0.001)
@@ -2046,3 +2047,28 @@ def test_autonomous_review_delivers_each_completed_workbook_only_after_its_start
         assert contexts[0]["source_sha256"] == contexts[1]["source_sha256"]
         assert len(run.trajectory["user_turns"]) == 1
         assert sum(event["kind"] == "optimizer_artifact" for event in run.trajectory["events"]) == 2
+
+
+@pytest.mark.parametrize(
+    "ending,completed,reason", [("stop", True, "stop"), ("length", True, "length"), (None, False, None)]
+)
+def test_evaluation_records_completion_metadata_without_guessing_from_partial_words(ending, completed, reason):
+    from nurse_scheduling.ai.provider import ResponseEnd
+
+    from .ai_eval.runner import _CountingProvider
+
+    class Provider:
+        async def stream_events(self, messages, tools=None):
+            yield TextDelta("Even")
+            if ending is not None:
+                yield ResponseEnd(ending)
+
+    async def collect():
+        provider = _CountingProvider(Provider())
+        events = [event async for event in provider.stream_events([])]
+        assert events[0] == TextDelta("Even")
+        return provider.responses
+
+    assert asyncio.run(collect()) == [
+        {"completed": completed, "finish_reason": reason, "text_chars": 4, "reasoning_chars": 0}
+    ]

@@ -479,6 +479,7 @@ class OpenAiCompatibleProvider:
             partial_calls: dict[int, _PartialToolCall] = {}
             finish_reason: str | None = None
             done_received = False
+            text_chars = reasoning_chars = 0
             async for line in response.aiter_lines():
                 if not line.startswith("data:"):
                     continue
@@ -522,14 +523,24 @@ class OpenAiCompatibleProvider:
                 except (json.JSONDecodeError, KeyError, TypeError) as exc:
                     raise ProviderError.for_user("The AI provider returned an invalid stream.") from exc
                 if isinstance(content, str) and content:
+                    text_chars += len(content)
                     yield TextDelta(content)
                 # Providers name this field either way, and llama.cpp uses the first.
                 reasoning = delta.get("reasoning_content") or delta.get("reasoning")
                 if isinstance(reasoning, str) and reasoning:
+                    reasoning_chars += len(reasoning)
                     yield ReasoningDelta(reasoning)
                 _merge_tool_call_fragments(partial_calls, delta.get("tool_calls"))
             # Pi checks completion before releasing tools. Accept [DONE] for endpoints
             # that omit finish_reason, but never infer completion from HTTP EOF alone.
+            logger.info(
+                "AI provider stream ended finish_reason=%s done_received=%s text_chars=%s reasoning_chars=%s tool_calls=%s",
+                finish_reason,
+                done_received,
+                text_chars,
+                reasoning_chars,
+                len(partial_calls),
+            )
             if finish_reason is None and not done_received:
                 raise ProviderError.for_user("The AI provider stream ended before completion.", retryable=True)
             if finish_reason is not None and finish_reason not in SUPPORTED_FINISH_REASONS:

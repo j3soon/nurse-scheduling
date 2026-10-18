@@ -807,3 +807,24 @@ def test_duplicate_empty_completion_and_usage_chunks_are_accepted(monkeypatch):
     usage = {"choices": [], "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}}
     provider = _streaming_provider(monkeypatch, _sse_body(final, repeated, usage))
     assert _events(provider) == [TextDelta("Done"), TokenUsage(1, 1, 2), ResponseEnd("stop")]
+
+
+@pytest.mark.parametrize("reason,done", [("stop", True), ("length", False), (None, True), (None, False)])
+def test_stream_end_diagnostics_record_signals_without_response_text(monkeypatch, caplog, reason, done):
+    import logging
+
+    chunk = _delta_chunk({"content": "private words Even", "reasoning_content": "private reasoning"})
+    chunk["choices"][0]["finish_reason"] = reason
+    body = _sse_body(chunk)
+    if not done:
+        body = body.removesuffix("data: [DONE]\n\n")
+    caplog.set_level(logging.INFO, logger="nurse_scheduling.ai.provider")
+    provider = _streaming_provider(monkeypatch, body)
+    if reason is None and not done:
+        with pytest.raises(ProviderError, match="before completion"):
+            _events(provider)
+    else:
+        assert _events(provider)[-1] == ResponseEnd(reason)
+    assert f"finish_reason={reason} done_received={done}" in caplog.text
+    assert "text_chars=18 reasoning_chars=17 tool_calls=0" in caplog.text
+    assert "private words" not in caplog.text and "private reasoning" not in caplog.text

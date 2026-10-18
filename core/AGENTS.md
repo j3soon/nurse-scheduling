@@ -415,6 +415,10 @@ skipped does not validate persistence.
 - When changing `ai/pi`, compare with the exact upstream Pi revision cited in
   the module header. Preserve model-facing wording and edge-case behavior, add
   focused regression tests, and document intentional differences beside the port.
+- Diagnose partial replies with completion signals and character counts before
+  changing retry behavior. Preserve finish reasons in evaluation reports. A reply
+  ending mid-word does not prove a transport failure when the provider reports
+  completion. Keep response content and credentials out of diagnostic logs.
 - Retry provider timeouts with bounded exponential backoff. After visible text,
   continue with the partial answer as context instead of replaying the original
   request. Discard incomplete tool calls and release tools only after confirmed

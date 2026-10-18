@@ -64,6 +64,9 @@ from nurse_scheduling.ai.provider import (
     ProviderAttempt,
     ProviderError,
     ProviderResponseLimitError,
+    ReasoningDelta,
+    ResponseEnd,
+    TextDelta,
     TokenUsage,
     ToolCallRequest,
 )
@@ -157,6 +160,7 @@ class CaseRun:
     sandbox_metrics: WorkspaceMetrics | None = None
     provider_attempts: int = 0
     provider_attempts_per_turn: list[int] = field(default_factory=list)
+    provider_responses: list[dict[str, Any]] = field(default_factory=list)
     tool_calls_per_turn: list[int] = field(default_factory=list)
     tool_batch_metrics: list[AgentToolBatchMetrics] = field(default_factory=list)
     repetition: int = 1
@@ -259,6 +263,7 @@ class CaseRun:
                 self.provider_attempts,
                 self.provider_attempts_per_turn,
             ),
+            "provider_responses": self.provider_responses,
             "tool_batches": _tool_batch_record(self.tool_calls_per_turn, self.tool_batch_metrics),
         }
 
@@ -280,6 +285,7 @@ class _CountingProvider:
         self.attempts = 0
         self.attempts_per_turn: list[int] = []
         self.tool_calls_per_turn: list[int] = []
+        self.responses: list[dict[str, Any]] = []
 
     async def stream_events(
         self,
@@ -291,6 +297,8 @@ class _CountingProvider:
         turn_seconds = 0.0
         turn_attempts = 0
         turn_tool_calls = 0
+        completed, finish_reason = False, None
+        text_chars = reasoning_chars = 0
         try:
             while True:
                 started = time.perf_counter()
@@ -311,10 +319,24 @@ class _CountingProvider:
                     continue
                 if isinstance(event, ToolCallRequest):
                     turn_tool_calls += len(event.calls)
+                elif isinstance(event, ResponseEnd):
+                    completed, finish_reason = True, event.finish_reason
+                elif isinstance(event, TextDelta):
+                    text_chars += len(event.text)
+                elif isinstance(event, ReasoningDelta):
+                    reasoning_chars += len(event.text)
                 yield event
         finally:
             if turn_attempts == 0:
                 turn_attempts = 1
+            self.responses.append(
+                {
+                    "completed": completed,
+                    "finish_reason": finish_reason,
+                    "text_chars": text_chars,
+                    "reasoning_chars": reasoning_chars,
+                }
+            )
             self.attempts += turn_attempts
             self.attempts_per_turn.append(turn_attempts)
             self.tool_calls_per_turn.append(turn_tool_calls)
@@ -628,6 +650,7 @@ async def run_case(
             sandbox_metrics=sandbox_metrics,
             provider_attempts=counting.attempts,
             provider_attempts_per_turn=counting.attempts_per_turn,
+            provider_responses=counting.responses,
             tool_calls_per_turn=counting.tool_calls_per_turn,
             tool_batch_metrics=tool_batch_metrics,
         )
@@ -664,6 +687,7 @@ async def run_case(
         sandbox_metrics=sandbox_metrics,
         provider_attempts=counting.attempts,
         provider_attempts_per_turn=counting.attempts_per_turn,
+        provider_responses=counting.responses,
         tool_calls_per_turn=counting.tool_calls_per_turn,
         tool_batch_metrics=tool_batch_metrics,
     )
