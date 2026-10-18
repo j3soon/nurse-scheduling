@@ -78,6 +78,11 @@ from the trust-based local harness.
 - Initialize Sentry with the application build version, not the API version.
   Standalone services use `version.get_app_version()` and keep a distinct `app`
   tag. API services also pass their API version for event tags and log attributes.
+- Services that re-read raw request bodies with a custom `Request` wrapper, such
+  as the AI upload endpoint, must initialize Sentry with
+  `fastapi_integration=False`. The SDK's FastApiIntegration reads
+  `request.json()`/`request.form()` before the handler, which drains the body
+  stream and hangs the re-read.
   Use `configure_service_logging` for the shared service logging defaults.
   Short-lived services flush Sentry in a `finally` block before exit.
 

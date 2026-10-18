@@ -199,14 +199,17 @@ def test_application_initializes_sentry_for_ai_service(monkeypatch):
     calls = []
     monkeypatch.setattr(
         "nurse_scheduling.ai.app.init_sentry",
-        lambda version, *, app, api_version: calls.append((version, app, api_version)),
+        lambda version, *, app, api_version, fastapi_integration: calls.append(
+            (version, app, api_version, fastapi_integration)
+        ),
     )
     monkeypatch.setattr("nurse_scheduling.ai.app.configure_service_logging", lambda _logger: calls.append("logging"))
 
     monkeypatch.setattr("nurse_scheduling.ai.app.get_app_version", lambda: "v0.2.0-572-gbecfc27fb644")
     app = create_test_app(settings=make_settings(), provider=FakeProvider())
 
-    assert calls == [(app.state.app_version, "ai-backend", app.version), "logging"]
+    # fastapi_integration=False keeps the SDK from draining upload request bodies.
+    assert calls == [(app.state.app_version, "ai-backend", app.version, False), "logging"]
     assert app.state.app_version == "v0.2.0-572-gbecfc27fb644"
     assert app.version == "0.2.0"
 

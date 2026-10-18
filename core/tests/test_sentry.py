@@ -259,6 +259,39 @@ def test_init_sentry_adds_api_version_to_event_tags_and_log_attributes(monkeypat
     assert attributes == [("api_version", "0.2.0")]
 
 
+def test_init_sentry_can_disable_the_fastapi_integration(monkeypatch):
+    """Body-re-reading services opt out of the integration that drains multipart uploads."""
+    init_calls = []
+    fake_fastapi_integration = types.SimpleNamespace(FastApiIntegration=lambda: "fastapi-integration")
+    fake_sentry_sdk = types.SimpleNamespace(
+        init=lambda **kwargs: init_calls.append(kwargs),
+        set_tag=lambda _name, _value: None,
+        integrations=types.SimpleNamespace(fastapi=fake_fastapi_integration),
+    )
+    monkeypatch.setattr("nurse_scheduling.sentry._should_enable_sentry", lambda: True)
+    monkeypatch.setitem(sys.modules, "sentry_sdk", fake_sentry_sdk)
+    monkeypatch.setitem(sys.modules, "sentry_sdk.integrations", fake_sentry_sdk.integrations)
+    monkeypatch.setitem(sys.modules, "sentry_sdk.integrations.fastapi", fake_fastapi_integration)
+
+    init_sentry("v1.2.3", fastapi_integration=False)
+
+    assert init_calls[0]["disabled_integrations"] == ["fastapi-integration"]
+
+
+def test_init_sentry_keeps_fastapi_integrations_by_default(monkeypatch):
+    init_calls = []
+    fake_sentry_sdk = types.SimpleNamespace(
+        init=lambda **kwargs: init_calls.append(kwargs),
+        set_tag=lambda _name, _value: None,
+    )
+    monkeypatch.setattr("nurse_scheduling.sentry._should_enable_sentry", lambda: True)
+    monkeypatch.setitem(sys.modules, "sentry_sdk", fake_sentry_sdk)
+
+    init_sentry("v1.2.3")
+
+    assert "disabled_integrations" not in init_calls[0]
+
+
 def test_stream_token_redaction_decodes_parameter_names():
     query = "x=1&%74oken=live-secret&TOKEN=second-secret&x=2"
     event = {

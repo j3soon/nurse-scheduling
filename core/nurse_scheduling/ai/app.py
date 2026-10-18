@@ -320,7 +320,9 @@ def create_app(
 ) -> FastAPI:
     """Construct the independently deployable AI application."""
     app_version = get_app_version()
-    init_sentry(app_version, app="ai-backend", api_version=API_VERSION)
+    # The AI API re-reads upload request bodies, which the FastApiIntegration breaks.
+    # Remove this opt-out after https://github.com/getsentry/sentry-python/issues/7285 is fixed.
+    init_sentry(app_version, app="ai-backend", api_version=API_VERSION, fastapi_integration=False)
     configure_service_logging(logger)
     settings = settings or AiSettings.from_env()
     auth_token, auth_tokens = validate_ai_auth_credentials(
