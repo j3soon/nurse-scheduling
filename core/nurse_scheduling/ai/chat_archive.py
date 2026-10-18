@@ -37,6 +37,10 @@ from .history import ChatHistory, _owner_hash
 FILE_CHUNK_BYTES = 1024 * 1024
 
 
+class ChatSessionNotFoundError(Exception):
+    """The session is missing, expired, or owned by another browser."""
+
+
 def _filename(value: str) -> str:
     name = PurePosixPath(value.replace("\\", "/")).name
     return re.sub(r'[\x00-\x1f<>:"/\\|?*]', "_", name).strip(" .")[:180] or "attachment"
@@ -131,10 +135,10 @@ def write_chat_archive(history: ChatHistory, session_id: str, output: BinaryIO, 
             (session_id,),
         ).fetchone()
         if row is None or (owner is not None and row[0] != _owner_hash(owner)):
-            raise LookupError("Chat session not found.")
+            raise ChatSessionNotFoundError("Chat session not found.")
         snapshot = history.export_snapshot(session_id, snapshot_connection=connection)
         if snapshot is None:
-            raise LookupError("Chat session not found.")
+            raise ChatSessionNotFoundError("Chat session not found.")
         snapshot = {**snapshot, "session_state": row[1], "expires_at": round(float(row[2]) * 1000)}
         files = _files(connection, session_id)
         at = max([snapshot["snapshot_at"], *(file["removed_at"] or file["created_at"] for file in files)])

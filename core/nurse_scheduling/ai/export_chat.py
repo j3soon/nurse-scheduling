@@ -31,7 +31,7 @@ import psycopg
 
 from ..sentry import flush_sentry, init_sentry
 from ..version import get_app_version
-from .chat_archive import create_chat_archive, write_chat_archive
+from .chat_archive import ChatSessionNotFoundError, create_chat_archive, write_chat_archive
 from .history import ChatHistory
 
 
@@ -61,7 +61,7 @@ def _main() -> None:
                 write_chat_archive(history, str(args.session_id), archive)
             temporary.replace(output)
             temporary = None
-    except (psycopg.Error, OSError, LookupError):
+    except (psycopg.Error, OSError, ChatSessionNotFoundError):
         parser.exit(1, "Could not export the saved chat. Check the session, PostgreSQL access, and output path.\n")
     finally:
         if temporary is not None:

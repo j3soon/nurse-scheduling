@@ -48,7 +48,7 @@ from ..server.request_limits import MULTIPART_OVERHEAD_BYTES
 from ..service_logging import configure_service_logging
 from ..version import get_app_version
 from .agent_session import AgentSession, SessionRuntime, schedule_data_changed
-from .chat_archive import ChatArchiveResponse, create_chat_archive
+from .chat_archive import ChatArchiveResponse, ChatSessionNotFoundError, create_chat_archive
 from .config import AiSettings, validate_ai_auth_credentials
 from .context import validate_frontend_timezone
 from .history import ChatHistory, stop_maintenance
@@ -639,7 +639,7 @@ def create_app(
                 archive = await anyio.to_thread.run_sync(
                     lambda: create_chat_archive(recovery.history, session_id, owner=owner)
                 )
-        except LookupError as exc:
+        except ChatSessionNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Chat session not found.") from exc
         except (psycopg.Error, OSError) as exc:
             logger.error("AI chat archive creation failed")

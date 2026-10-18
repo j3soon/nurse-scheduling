@@ -38,7 +38,12 @@ from psycopg.conninfo import make_conninfo
 from starlette.requests import ClientDisconnect
 
 from nurse_scheduling.ai import chat_archive
-from nurse_scheduling.ai.chat_archive import FILE_CHUNK_BYTES, ChatArchiveResponse, create_chat_archive
+from nurse_scheduling.ai.chat_archive import (
+    FILE_CHUNK_BYTES,
+    ChatArchiveResponse,
+    ChatSessionNotFoundError,
+    create_chat_archive,
+)
 from nurse_scheduling.ai.chat_export import build_saved_chat_export
 from nurse_scheduling.ai.sessions import SessionStore
 from nurse_scheduling.ai.workspace import SandboxAttachment
@@ -152,14 +157,28 @@ def test_zip_checks_owner_and_expiry_and_closes_failed_output(postgres_history, 
         return output
 
     monkeypatch.setattr(chat_archive.tempfile, "TemporaryFile", temporary)
-    with pytest.raises(LookupError):
+    with pytest.raises(ChatSessionNotFoundError):
         create_chat_archive(postgres_history, session.id, owner=str(uuid4()))
     assert outputs[-1].closed
     with postgres_history._connect() as connection:
         connection.execute("UPDATE chat_sessions SET expires_at = now() - interval '1 second'")
-    with pytest.raises(LookupError):
+    with pytest.raises(ChatSessionNotFoundError):
         create_chat_archive(postgres_history, session.id)
     assert outputs[-1].closed
+
+
+def test_zip_rendering_errors_are_not_reported_as_missing_sessions(postgres_history, monkeypatch):
+    def broken(_snapshot, _format):
+        raise KeyError("run_id")
+
+    monkeypatch.setattr(chat_archive, "build_saved_chat_export", broken)
+    app = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test"), provider=basic.FakeProvider()
+    )
+    with basic.AuthenticatedTestClient(app, raise_server_exceptions=False) as client:
+        session = basic.create_session(client)
+        # A rendering bug is a server error that monitoring reports, not a missing chat.
+        assert client.get(f"/sessions/{session}/export").status_code == 500
 
 
 @pytest.mark.parametrize("disconnect", [False, True], ids=["complete", "disconnect"])
