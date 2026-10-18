@@ -376,6 +376,9 @@ def create_app(
         session_id = request.path_params.get("session_id")
         if session_id is None or not recovery.enabled or owner is None or store.get(session_id) is not None:
             return
+        if getattr(request.state, "export_link", False):
+            # The signed link replaces browser ownership, so another browser's cookie must not reject it.
+            return
         await recovery.restore(session_id, owner)
 
     def refresh_owner_cookie(response: Response, owner: str | None) -> None:
@@ -614,12 +617,9 @@ def create_app(
     ) -> Response:
         """Stream the same complete ZIP that the administrator command writes."""
         if getattr(request.state, "export_link", False):
-            # The signed link replaces browser ownership: resolve the owner from the
-            # session record so the archive filters the right history.
-            session_record = store.get(session_id)
-            if session_record is None:
-                raise HTTPException(status_code=404, detail="Chat session not found.")
-            owner = session_record.owner_token
+            # The signed link authorizes this session in place of browser ownership. The
+            # archive reads storage directly, so the session need not be loaded.
+            owner = None
         else:
             store.require_owned(session_id, owner)
         if recovery.history is None:

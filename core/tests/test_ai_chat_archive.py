@@ -277,6 +277,24 @@ def test_native_download_link_is_scoped_to_the_session_and_expires(postgres_hist
         )
 
 
+@pytest.mark.parametrize("cookies", [{}, {"nurse_scheduling_ai_owner": str(uuid4())}])
+def test_native_download_link_works_for_a_session_that_is_not_loaded(postgres_history, cookies):
+    settings = basic.make_settings(history_postgres_url="test")
+    with basic.AuthenticatedTestClient(
+        basic.create_test_app(settings=settings, provider=basic.FakeProvider())
+    ) as client:
+        session = basic.create_session(client)
+        token = client.post(f"/sessions/{session}/export").json()["download_token"]
+    # A restarted service has not loaded the session, and this browser sends no owner
+    # cookie or another browser's owner cookie.
+    restarted = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
+    with basic.AuthenticatedTestClient(restarted, cookies=cookies) as client:
+        downloaded = client.get(f"/sessions/{session}/export?token={token}", headers={"Authorization": ""})
+    assert downloaded.status_code == 200
+    with ZipFile(io.BytesIO(downloaded.content)) as archive:
+        assert json.loads(archive.read("manifest.json"))["session_id"] == session
+
+
 def test_native_export_without_shared_auth_still_requires_owner(postgres_history):
     app = basic.create_test_app(
         settings=basic.make_settings(history_postgres_url="test", auth_token=None), provider=basic.FakeProvider()

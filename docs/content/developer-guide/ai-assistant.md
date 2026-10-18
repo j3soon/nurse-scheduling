@@ -848,7 +848,10 @@ needs temporary disk space for the ZIP. The command writes atomically so a
 failed export preserves an existing destination.
 
 The browser first sends an authenticated `POST /sessions/{session_id}/export`.
-It receives a five-minute download token bound to that session and owner cookie.
+It receives a five-minute download token bound to that session. Minting requires
+the owner cookie. Redemption does not, because browsers do not always send the
+cookie with the download navigation. The archive is read from storage, so a link
+also works for a session that the service has not loaded.
 The subsequent native `GET` streams the ZIP without a browser Blob. The token
 uses the existing signing primitive with a separate export scope and never
 contains the bearer credential. The request-limit middleware and route both
@@ -876,7 +879,7 @@ controls. `/capabilities.app_version` identifies the AI service. The parent
 | `GET /capabilities` | Public attachment limits, session lifetime, and authentication requirement. |
 | `POST /sessions` | Store a YAML snapshot and create a browser-owned session. |
 | `GET /sessions/{id}` | Check the remaining session lifetime without renewing it. |
-| `POST /sessions/{id}/export` | Authorize a native ZIP download with a short-lived session and owner token. |
+| `POST /sessions/{id}/export` | Authorize a native ZIP download with a short-lived, session-scoped token. |
 | `GET /sessions/{id}/export` | Stream the complete chat ZIP with a bearer credential or the scoped download token. |
 | `POST /sessions/{id}/uploads?upload_id={uuid}` | Retain one multipart file under a stable retry ID and return its metadata. Omitting the ID also accepts an unkeyed file batch. |
 | `GET /sessions/{id}/uploads` | List retained file metadata. |
