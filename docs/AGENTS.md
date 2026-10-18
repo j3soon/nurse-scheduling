@@ -1,5 +1,12 @@
 # Documentation Guidelines
 
+## Paths
+
+- Resolve the repository root with `git rev-parse --show-toplevel`. A dev
+  container (`/.dockerenv` exists) mounts the checkout at `/workspace`, while
+  a host checkout uses the local clone path. Keep documented commands relative
+  to the repository root where possible so they work in both environments.
+
 ## Writing
 
 - Write pages under `user-guide/` for people who prepare schedules. Use

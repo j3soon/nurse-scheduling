@@ -14,6 +14,20 @@ misleading error. Work from the browser inward, prove which layer stops
 answering, and instrument inside the container instead of reading logs from
 outside.
 
+## Environment
+
+- Detect the session location with `test -f /.dockerenv` and resolve the
+  repository root with `git rev-parse --show-toplevel`. A dev container
+  mounts the checkout at `/workspace`; a host checkout uses the local clone
+  path.
+- The bypass and instrumentation steps need `docker` and Compose against the
+  daemon that runs the stack. From a dev container, check `command -v docker`
+  and whether `docker compose ps` shows the target project. When the daemon
+  is unreachable, probe the services over the Compose network hostnames or
+  ask the user for a host shell.
+- Container names, `/tmp` probe files, and loopback URLs below belong to the
+  shell that reaches the daemon, not to the checked-out worktree.
+
 ## Read the symptoms
 
 Symptoms that point at the same root cause, a request with no response:

@@ -9,6 +9,9 @@ Turn a batch of small changes into a coherent, verified commit series. Preserve
 the user's requested scope and let repository instructions govern Git, testing,
 and style details.
 
+Check `test -f /.dockerenv` and follow the root `AGENTS.md` environment rules
+before choosing setup and validation commands.
+
 ## Plan the series
 
 Before editing:
