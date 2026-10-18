@@ -152,17 +152,29 @@ def test_xlsx_range_case_requires_successful_range_use_and_saved_caches(
     "case_id",
     ["workbook-import-first-valid-proposal", "workbook-build-after-confirmation", "workbook-build-corrected-mapping"],
 )
-@pytest.mark.parametrize("defect", [None, "wrong-weight", "missing-rule", "repaired-invalid-write"])
+@pytest.mark.parametrize(
+    "defect",
+    [
+        None,
+        "wrong-weight",
+        "wrong-history",
+        "missing-request",
+        "wrong-shift",
+        "wrong-range",
+        "missing-rule",
+        "repaired-invalid-write",
+    ],
+)
 def test_workbook_import_requires_correct_weights_and_a_valid_first_proposal(case_id, defect):
     case = next(c for c in load_cases(CASES_PATH) if c.id == case_id)
     black_weight = 22000000 if case_id == "workbook-build-corrected-mapping" else 11000000
     proposed = copy.deepcopy(FIXTURE_SCHEDULES["new-schedule"])
     proposed["dates"]["range"] = {"startDate": "2025-11-01", "endDate": "2025-11-03"}
     proposed["people"]["items"] = [
-        {"id": "Ada", "history": ["OFF"]},
-        {"id": "Bela", "history": ["E", "E"]},
+        {"id": "Ada", "description": "", "history": ["OFF"]},
+        {"id": "Bela", "description": "", "history": ["E", "E"]},
     ]
-    proposed["shiftTypes"]["items"] = [{"id": shift} for shift in ("D", "E")]
+    proposed["shiftTypes"]["items"] = [{"id": shift, "description": ""} for shift in ("D", "E")]
     proposed["preferences"] = [
         {"type": "at most one shift per day"},
         *[
@@ -175,13 +187,35 @@ def test_workbook_import_requires_correct_weights_and_a_valid_first_proposal(cas
             )
         ],
     ]
+    if len(case.user_turns) == 2:
+        proposed["people"]["items"][0]["description"] = "HN, senior"
+        proposed["people"]["items"][1]["description"] = "N"
+        proposed["dates"]["groups"] = [{"id": "Freeday", "description": "Blue headers", "members": ["01", "02"]}]
+    from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
+
+    from .ai_test_helper import schedule_yaml
+
+    assert validate_frontend_schedule_yaml(schedule_yaml(proposed), 1_000_000).valid
+    if defect == "wrong-history":
+        proposed["people"]["items"][1]["history"] = ["E"]
+    if defect == "missing-request":
+        proposed["preferences"].pop()
+    if defect == "wrong-shift":
+        proposed["preferences"][2]["shiftType"] = ["E"]
+    if defect == "wrong-range":
+        proposed["dates"]["range"]["endDate"] = "2025-11-02"
     if defect == "wrong-weight":
         proposed["preferences"][3]["weight"] = 11000000 if black_weight == 22000000 else 11000000000
     if defect == "missing-rule":
         proposed = None
     activity = []
     for turn in range(1, len(case.user_turns) + 1):
-        activity.extend([{"kind": "user", "turn": turn}, {"kind": "tool", "name": "bash", "ok": True}])
+        activity.extend(
+            [
+                {"kind": "user", "turn": turn},
+                {"kind": "tool", "name": "bash" if turn == 1 else "write", "ok": True},
+            ]
+        )
     if defect in {"missing-rule", "repaired-invalid-write"}:
         activity.append(
             {
@@ -1741,6 +1775,9 @@ def test_every_membership_check_also_pins_the_collection_size():
         sized = {a.path for a in case.assertions if a.kind in {"count", "delta", "added", "removed"}}
         for assertion in case.assertions:
             if assertion.kind != "contains" or assertion.path in sized:
+                continue
+            if assertion.path.split(".")[-1] == "description":
+                # Imported entities can be absent initially, but descriptions are always text.
                 continue
             found = resolve(schedule, assertion.path)
             # Text fields are exempt, because `contains` means substring there.

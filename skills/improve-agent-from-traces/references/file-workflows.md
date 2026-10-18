@@ -8,6 +8,8 @@ For file workflows, check actual delivered bytes and a later message in a fresh
 workspace. A claimed download path or a successful first-turn read does not prove
 delivery or retention. For complete imports, compare the whole parsed source
 with the proposal. Keep a partial-update control.
+Grade construction of YAML schedule data from an XLSX workbook by its validated proposal. Require a specific tool only when
+its use establishes evidence that the final artifact cannot show.
 For generated import files, grade the delivered file against the destination
 importer's row and field rules. Test malformed output with the real importer
 to detect silent conversions. Fix parser defects separately from model mistakes.

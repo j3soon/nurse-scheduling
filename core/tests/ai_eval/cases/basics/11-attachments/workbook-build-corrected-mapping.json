@@ -74,11 +74,47 @@
     {
       "path": "preferences[?type=shift request][?person=Bela][?date=02][?shiftType=E].weight",
       "equals": 11000000000
+    },
+    {
+      "path": "people.items[?id=Ada].description",
+      "contains": "HN"
+    },
+    {
+      "path": "people.items[?id=Ada].description",
+      "contains": "senior"
+    },
+    {
+      "path": "people.items[?id=Bela].description",
+      "contains": "N"
+    },
+    {
+      "path": "dates.groups[?id=Freeday].members",
+      "count": 2
+    },
+    {
+      "path": "dates.groups[?id=Freeday].members",
+      "contains": "01"
+    },
+    {
+      "path": "dates.groups[?id=Freeday].members",
+      "contains": "02"
+    },
+    {
+      "path": "shiftTypes.items[?id=D]",
+      "count": 1
+    },
+    {
+      "path": "shiftTypes.items[?id=E]",
+      "count": 1
+    },
+    {
+      "path": "preferences",
+      "count": 5
     }
   ],
-  "note": "This testcase is mostly AI generated. A corrected request-weight mapping overrides the earlier analysis. Preserve all other source values and never treat the confirmation as permission to reuse a superseded mapping.",
+  "note": "This testcase is mostly AI generated. A corrected request-weight mapping overrides the earlier analysis. Preserve all other source values and never treat the confirmation as permission to reuse a superseded mapping. Complete construction also preserves descriptive role/seniority labels and the blue-header date group. The confirmation turn may use any editing tool. A Bash call is not evidence of source reuse or proposal correctness.",
   "user_turns": [
-    "Inspect the attached workbook for November 1-3, 2025 and explain the exact import mapping for confirmation. HN means head nurse and N means nurse. Yellow marks a senior nurse and blue marks a freeday. These roles and labels are descriptive only for this import. In History, off means OFF and 2E means E,E before November 1. The shift IDs are D, E and OFF. A 1 requests OFF: red means a finite +11b preference and black means a finite +11m preference. Red letters request the exact shift at finite +11b. Blanks make no request. Preserve both people and every request. Use exact person IDs and quoted day-of-month selectors in each request. We will only import this data. No staffing requirements, rest restrictions, or other role-based preferences are needed yet. Do not construct a proposal yet. Read the relevant guide and schema while preparing the mapping.",
+    "Inspect the attached workbook for November 1-3, 2025 and explain the exact import mapping for confirmation. HN means head nurse and N means nurse. Yellow marks a senior nurse and blue marks a freeday. These roles and labels are descriptive only for this import. In History, off means OFF and 2E means E,E before November 1. The shift IDs are D, E and OFF. A 1 requests OFF: red means a finite +11b preference and black means a finite +11m preference. Red letters request the exact shift at finite +11b. Blanks make no request. Preserve both people and every request. Use exact person IDs and quoted day-of-month selectors in each request. We will only import this data. No staffing requirements, rest restrictions, or other role-based preferences are needed yet. Do not construct a proposal yet. Read the relevant guide and schema while preparing the mapping. Preserve the original role codes and senior labels in person descriptions. Represent the blue date headers as a date group named Freeday, with quoted day-of-month members.",
     "Confirmed except black 1 now means a finite +22m OFF request instead of +11m. All other mappings stay the same. Build the complete proposal from the workbook with this correction. Do not optimize."
   ],
   "intermediate_answer_contains": [
@@ -93,10 +129,6 @@
         "bash"
       ]
     },
-    {
-      "required": [
-        "bash"
-      ]
-    }
+    null
   ]
 }
