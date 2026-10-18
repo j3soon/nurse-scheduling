@@ -179,6 +179,13 @@ To test whether naming a helper saves work, compare prompts with and without
 that instruction while both versions have the same helper available. Check the
 helper's correctness separately. Accept other correct approaches. Calling the
 helper alone does not count as success.
+Use the evaluation receipt tool's `check-helper` command to check actual helper
+execution and required mode flags alongside correctness and the declared cost
+target. Source reads and `--help` do not count as use. Keep adoption separate
+from benefit, and preserve a failed gate rather than choosing a cost target
+after seeing the results. For helper-selection prompt comparisons, pass the
+helper, mode flags and targeted cases to `receipt write` so the saved receipt
+and CI enforce adoption as well as benefit.
 
 Fix retry, attachment retention, or backend failures in code when that layer
 owns them. Do not conceal infrastructure defects behind unrelated prompt text.

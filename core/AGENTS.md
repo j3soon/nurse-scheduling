@@ -216,6 +216,8 @@ skipped does not validate persistence.
 - Prefer one inspector per file format for related read-only operations.
   Reuse its loading and validation for uploaded and generated files. Keep
   schedule-specific calculations separate when they require schedule context.
+  Group related schedule analyses in one inspector when they share an assignment
+  reader and source context.
 - Keep the agent run deadline separate from the sandbox provider's continuous
   runtime limit. Paused time still counts toward the agent run deadline.
 - Separate command execution deadlines from provider connection timeouts. Reuse a

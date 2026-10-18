@@ -1,4 +1,4 @@
-"""Record prompt section hashes and reviewed comparison receipts in the prompt ledger."""
+"""Record prompt receipts and check helper adoption against correctness and cost."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -22,12 +22,15 @@
 import argparse
 import hashlib
 import json
+import re
+import shlex
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from nurse_scheduling.ai.system_prompt import load_system_prompt_entries, load_system_prompt_sections
 
+from .comparison import comparison_statistics
 from .grading import load_cases
 from .prompt_ladder import (
     STEPS_PATH,
@@ -69,7 +72,15 @@ def refresh_hash(step_id: str, path: Path = STEPS_PATH) -> None:
     path.write_text(json.dumps(entries, indent=2) + "\n", encoding="utf-8")
 
 
-def build_receipt(report: Path, witness: str, note: str | None = None) -> tuple[str, dict[str, Any]]:
+def build_receipt(
+    report: Path,
+    witness: str,
+    note: str | None = None,
+    *,
+    helper: str | None = None,
+    flags: tuple[str, ...] = (),
+    helper_cases: tuple[str, ...] = (),
+) -> tuple[str, dict[str, Any]]:
     """Build a receipt after checking that the report measured the current inputs.
 
     The witness gets the counts, model, and any cost gain. The report's other cases become controls.
@@ -130,6 +141,25 @@ def build_receipt(report: Path, witness: str, note: str | None = None) -> tuple[
         }
     if controls := [observation for observation in observations if observation["case"] != witness]:
         record["controls"] = controls
+    if helper:
+        checked = helper_comparison(report / "before", report / "after", helper_cases or (witness,), helper, flags)
+        if not checked["helper_use_passed"]:
+            raise ValueError("Candidate runs did not execute the helper with all required flags")
+        record["helper_usage"] = {
+            "helper": helper,
+            "sha256": measured["after"]["references_sha256"][f"tools/{helper}"],
+            "flags": list(flags),
+            "cases": [
+                {
+                    "case": case_id,
+                    **{
+                        arm: f"{usage[case_id]['used']}/{usage[case_id]['runs']}"
+                        for arm, usage in checked["helper_usage"].items()
+                    },
+                }
+                for case_id in checked["helper_usage"]["after"]
+            ],
+        }
     if note:
         record["note"] = note
     validate_prompt_evidence((replace(step, evidence=(record,)),), cases, fixtures)
@@ -145,6 +175,129 @@ def write_receipt(step_id: str, record: dict[str, Any], path: Path = STEPS_PATH)
     path.write_text(json.dumps(entries, indent=2) + "\n", encoding="utf-8")
 
 
+def uses_helper(trajectory: dict[str, Any], helper: str, flags: tuple[str, ...] = ()) -> bool:
+    """Count successful direct Python invocations, excluding discovery and shell text."""
+    for event in trajectory.get("events", []):
+        if (
+            event.get("kind") != "tool"
+            or event.get("name") != "bash"
+            or event.get("ok") is not True
+            or event.get("seeded")
+        ):
+            continue
+        try:
+            command = json.loads(event.get("arguments", ""))["command"]
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not isinstance(command, str):
+            continue
+        # Parse command words without treating a quoted script name as execution.
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>\n")
+        lexer.whitespace = " \t\r"
+        lexer.whitespace_split = True
+        lexer.commenters = "#"
+        try:
+            tokens = list(lexer)
+        except ValueError:
+            continue
+        segments = [[]]
+        for token in tokens:
+            if token and all(char in ";&|()<>\n" for char in token):
+                segments.append([])
+            else:
+                segments[-1].append(token)
+        for words in segments:
+            if len(words) < 2 or not re.fullmatch(r"python(?:[0-9]+(?:\.[0-9]+)*)?", Path(words[0]).name):
+                continue
+            if words[1] != f"/reference/tools/{helper}":
+                continue
+            options = {word.split("=", 1)[0] for word in words[2:]}
+            if not options.intersection({"-h", "--help"}) and set(flags) <= options:
+                for line in str(event.get("result", "")).splitlines():
+                    try:
+                        if isinstance(json.loads(line), dict):
+                            return True
+                    except ValueError:
+                        continue
+    return False
+
+
+def helper_comparison(
+    before: Path,
+    after: Path,
+    cases: tuple[str, ...],
+    helper: str,
+    flags: tuple[str, ...] = (),
+    *,
+    metric: str | None = None,
+    max_ratio: float | None = None,
+) -> dict[str, Any]:
+    """Check adoption in addition to the existing correctness and cost criteria."""
+    if (metric is None) != (max_ratio is None) or (max_ratio is not None and not 0 < max_ratio < 1):
+        raise ValueError("Specify a cost metric and a ratio strictly between zero and one together")
+    if not cases or len(set(cases)) != len(cases):
+        raise ValueError("Select distinct helper-use cases")
+    records, metadata, usage = {}, {}, {}
+    for arm, directory in (("before", before), ("after", after)):
+        metadata[arm] = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))
+        records[arm] = [
+            json.loads(line) for line in (directory / "results.jsonl").read_text(encoding="utf-8").splitlines()
+        ]
+        usage[arm] = {}
+        for case_id in cases:
+            selected = [record for record in records[arm] if record["case_id"] == case_id]
+            if len(selected) < 3:
+                raise ValueError(f"{arm} {case_id} needs at least three repetitions")
+            used = 0
+            for record in selected:
+                path = directory / "cases" / f"{case_id}--run-{record['repetition']}.json"
+                trajectory = json.loads(path.read_text(encoding="utf-8"))
+                if any(trajectory.get(key) != record.get(key) for key in ("case_id", "repetition", "passed", "error")):
+                    raise ValueError("Trajectory and result record disagree")
+                used += uses_helper(trajectory, helper, flags)
+            usage[arm][case_id] = {"used": used, "runs": len(selected)}
+    if {record["case_id"] for record in records["before"]} != {record["case_id"] for record in records["after"]}:
+        raise ValueError("Compared reports contain different case sets")
+    for case_id in {record["case_id"] for record in records["before"]}:
+        source_inputs = []
+        for directory in (before, after):
+            path = directory / "cases" / f"{case_id}--run-1.json"
+            trajectory = json.loads(path.read_text(encoding="utf-8"))
+            source_inputs.append({key: trajectory.get(key) for key in ("question", "user_turns", "fixture")})
+        if source_inputs[0] != source_inputs[1]:
+            raise ValueError(f"Compared questions or fixtures changed for {case_id}")
+    if metadata["before"].get("fixtures_sha256") != metadata["after"].get("fixtures_sha256"):
+        raise ValueError("Compared fixture bytes changed")
+    summary = comparison_statistics(records["before"], records["after"])
+    valid, gain = True, False
+    for case_id, result in summary["cases"].items():
+        left, right = result["before"], result["after"]
+        paired = result["matched_pairs"] >= 3 and not result["unmatched_before"] and not result["unmatched_after"]
+        valid &= paired and not left["infrastructure_errors"] and not right["infrastructure_errors"]
+        valid &= right["passed"] == right["runs"]
+        gain |= case_id in cases and right["passed"] > left["passed"]
+        if metric and left["passed"] == left["runs"] and right["passed"] == right["runs"]:
+            cost = result["metrics"][COST_KEYS[metric]]
+            ratio = None if cost["relative_delta"] is None else cost["relative_delta"] + 1
+            valid &= not cost["missing_pairs"] and ratio is not None and ratio <= 1
+            gain |= case_id in cases and ratio is not None and ratio <= max_ratio
+    if metadata["before"]["provider_model"] != metadata["after"]["provider_model"]:
+        raise ValueError("Compared reports use different provider models")
+    adoption = all(counts["used"] == counts["runs"] for counts in usage["after"].values())
+    return {
+        **summary,
+        "helper": helper,
+        "flags": list(flags),
+        "helper_usage": usage,
+        "metadata": metadata,
+        "cost_metric": metric,
+        "cost_ratio": max_ratio,
+        "benefit_passed": bool(valid and gain),
+        "helper_use_passed": adoption,
+        "improved": bool(valid and gain and adoption),
+    }
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -154,11 +307,47 @@ def main(argv: list[str] | None = None) -> None:
     write_command.add_argument("report", type=Path, help="comparison output directory")
     write_command.add_argument("--case", required=True, help="witness testcase. Other report cases become controls")
     write_command.add_argument("--note", help="concise scope note")
+    write_command.add_argument("--helper", help="also require actual helper execution in the saved receipt")
+    write_command.add_argument("--flag", action="append", default=[], help="required helper option")
+    write_command.add_argument("--helper-case", action="append", default=[], help="case requiring helper execution")
+    helper_command = commands.add_parser(
+        "check-helper", help="check helper execution, correctness and declared cost benefit"
+    )
+    helper_command.add_argument("before", type=Path)
+    helper_command.add_argument("after", type=Path)
+    helper_command.add_argument("--case", action="append", required=True, help="case requiring helper execution")
+    helper_command.add_argument("--helper", required=True, help="helper filename in /reference/tools")
+    helper_command.add_argument(
+        "--flag", action="append", default=[], help="required option, such as --flag=--statistics"
+    )
+    helper_command.add_argument("--cost-metric", choices=COST_KEYS)
+    helper_command.add_argument("--cost-ratio", type=float)
+    helper_command.add_argument("--output", type=Path, required=True)
     arguments = parser.parse_args(argv)
+    if arguments.command == "check-helper":
+        record = helper_comparison(
+            arguments.before,
+            arguments.after,
+            tuple(arguments.case),
+            arguments.helper,
+            tuple(arguments.flag),
+            metric=arguments.cost_metric,
+            max_ratio=arguments.cost_ratio,
+        )
+        arguments.output.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+        print(json.dumps({key: record[key] for key in ("helper_use_passed", "benefit_passed", "improved")}))
+        raise SystemExit(0 if record["improved"] else 1)
     if arguments.command == "hash":
         refresh_hash(arguments.step)
         return
-    step_id, record = build_receipt(arguments.report.resolve(), arguments.case, arguments.note)
+    step_id, record = build_receipt(
+        arguments.report.resolve(),
+        arguments.case,
+        arguments.note,
+        helper=arguments.helper,
+        flags=tuple(arguments.flag),
+        helper_cases=tuple(arguments.helper_case),
+    )
     write_receipt(step_id, record)
     print(json.dumps(record, indent=2))
 

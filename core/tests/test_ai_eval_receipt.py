@@ -22,12 +22,19 @@
 import hashlib
 import json
 import shutil
+from dataclasses import replace
 
 import pytest
 
 from tests.ai_eval.grading import load_cases
-from tests.ai_eval.prompt_ladder import STEPS_PATH, case_digest, load_prompt_steps, prompt_at_step
-from tests.ai_eval.receipt import build_receipt, refresh_hash, write_receipt
+from tests.ai_eval.prompt_ladder import (
+    STEPS_PATH,
+    case_digest,
+    load_prompt_steps,
+    prompt_at_step,
+    validate_prompt_evidence,
+)
+from tests.ai_eval.receipt import build_receipt, helper_comparison, refresh_hash, uses_helper, write_receipt
 from tests.ai_eval.runner import CASES, fixture_text
 
 CASE_BY_ID = {case.id: case for case in load_cases(CASES)}
@@ -143,3 +150,221 @@ def test_hash_refresh_records_the_current_section(tmp_path):
     refresh_hash(entries[0]["id"], ledger)
     assert json.loads(ledger.read_text(encoding="utf-8"))[0]["sha256"] == original
     assert ledger.read_text(encoding="utf-8") == STEPS_PATH.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "command,ok,result,used",
+    [
+        ("python /reference/tools/inspect_optimizer_result.py --statistics", True, "{}", True),
+        ("python3 /reference/tools/inspect_optimizer_result.py --statistics | head -30", True, "{}", True),
+        ("ls /reference/tools\npython /reference/tools/inspect_optimizer_result.py --statistics", True, "{}", True),
+        ("python /reference/tools/inspect_optimizer_result.py", True, "{}", False),
+        ("python /reference/tools/inspect_optimizer_result.py; echo --statistics", True, "{}", False),
+        ("python /reference/tools/inspect_optimizer_result.py --statistics --help", True, "{}", False),
+        ("cat /reference/tools/inspect_optimizer_result.py --statistics", True, "{}", False),
+        ("echo 'python /reference/tools/inspect_optimizer_result.py --statistics'", True, "{}", False),
+        ("python /reference/tools/inspect_optimizer_result.py --statistics", False, "{}", False),
+        ("python /reference/tools/inspect_optimizer_result.py --statistics | head", True, "missing context", False),
+        ("python /reference/tools/inspect_optimizer_result.py --statistics-extra", True, "{}", False),
+        ("python /reference/tools/inspect_optimizer_result.py '--statistics", True, "{}", False),
+    ],
+)
+def test_helper_use_requires_execution_target_flag_and_structured_output(command, ok, result, used):
+    event = {"kind": "tool", "name": "bash", "ok": ok, "arguments": json.dumps({"command": command}), "result": result}
+    assert uses_helper({"events": [event]}, "inspect_optimizer_result.py", ("--statistics",)) is used
+    event["name"] = "read"
+    assert not uses_helper({"events": [event]}, "inspect_optimizer_result.py", ("--statistics",))
+
+
+def _helper_reports(tmp_path):
+    for arm, tokens in (("before", 100), ("after", 60)):
+        directory = tmp_path / arm
+        (directory / "cases").mkdir(parents=True)
+        (directory / "metadata.json").write_text(json.dumps({"provider_model": "test-model"}), encoding="utf-8")
+        records = []
+        for case_id in ("witness", "control"):
+            for repetition in range(1, 4):
+                record = {
+                    "case_id": case_id,
+                    "repetition": repetition,
+                    "passed": True,
+                    "error": "",
+                    "token_usage": {"available": True, "complete": True, "completion_tokens": tokens},
+                }
+                records.append(record)
+                trajectory = {
+                    **record,
+                    "question": case_id,
+                    "fixture": "test",
+                    "events": [
+                        {
+                            "kind": "tool",
+                            "name": "bash",
+                            "ok": True,
+                            "arguments": json.dumps(
+                                {"command": "python /reference/tools/inspect_optimizer_result.py --statistics"}
+                            ),
+                            "result": "{}",
+                        }
+                    ],
+                }
+                (directory / "cases" / f"{case_id}--run-{repetition}.json").write_text(
+                    json.dumps(trajectory), encoding="utf-8"
+                )
+        (directory / "results.jsonl").write_text(
+            "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8"
+        )
+    return tmp_path / "before", tmp_path / "after"
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "none",
+        "wrong-answer",
+        "no-flag",
+        "discovery-only",
+        "no-saving",
+        "control-regression",
+        "missing-usage",
+        "infrastructure",
+    ],
+)
+def test_helper_benefit_requires_correctness_execution_and_declared_savings(tmp_path, change):
+    before, after = _helper_reports(tmp_path)
+    records = [json.loads(line) for line in (after / "results.jsonl").read_text(encoding="utf-8").splitlines()]
+    for record in records:
+        path = after / "cases" / f"{record['case_id']}--run-{record['repetition']}.json"
+        trajectory = json.loads(path.read_text(encoding="utf-8"))
+        if change == "wrong-answer":
+            record["passed"] = trajectory["passed"] = False
+        if change == "infrastructure":
+            record["error"] = trajectory["error"] = "sandbox unavailable"
+        if change == "no-flag":
+            trajectory["events"][0]["arguments"] = json.dumps(
+                {"command": "python /reference/tools/inspect_optimizer_result.py"}
+            )
+        if change == "discovery-only":
+            trajectory["events"][0]["arguments"] = json.dumps(
+                {"command": "python /reference/tools/inspect_optimizer_result.py --statistics --help"}
+            )
+        if change == "no-saving":
+            record["token_usage"]["completion_tokens"] = 99
+        if change == "missing-usage":
+            record["token_usage"]["complete"] = False
+        if change == "control-regression" and record["case_id"] == "control":
+            record["token_usage"]["completion_tokens"] = 120
+        path.write_text(json.dumps(trajectory), encoding="utf-8")
+    (after / "results.jsonl").write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+    result = helper_comparison(
+        before,
+        after,
+        ("witness",),
+        "inspect_optimizer_result.py",
+        ("--statistics",),
+        metric="completion-tokens",
+        max_ratio=0.9,
+    )
+    assert result["improved"] is (change == "none")
+    assert result["helper_usage"]["after"]["witness"]["used"] == (0 if change in ("no-flag", "discovery-only") else 3)
+
+
+def test_helper_comparison_rejects_changed_inputs_and_unpaired_repetitions(tmp_path):
+    before, after = _helper_reports(tmp_path)
+    path = after / "cases/witness--run-1.json"
+    trajectory = json.loads(path.read_text(encoding="utf-8"))
+    trajectory["question"] = "different question"
+    path.write_text(json.dumps(trajectory), encoding="utf-8")
+    with pytest.raises(ValueError, match="questions or fixtures"):
+        helper_comparison(before, after, ("witness",), "inspect_optimizer_result.py")
+    trajectory["question"] = "witness"
+    path.write_text(json.dumps(trajectory), encoding="utf-8")
+    records = [json.loads(line) for line in (after / "results.jsonl").read_text(encoding="utf-8").splitlines()]
+    records = [record for record in records if record["case_id"] != "witness" or record["repetition"] != 3]
+    (after / "results.jsonl").write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+    with pytest.raises(ValueError, match="three repetitions"):
+        helper_comparison(before, after, ("witness",), "inspect_optimizer_result.py")
+
+
+def test_helper_adoption_alone_is_not_a_benefit(tmp_path):
+    before, after = _helper_reports(tmp_path)
+    result = helper_comparison(before, after, ("witness",), "inspect_optimizer_result.py", ("--statistics",))
+    assert result["helper_use_passed"]
+    assert not result["improved"]
+
+
+def test_unrelated_control_gain_cannot_establish_helper_benefit(tmp_path):
+    before, after = _helper_reports(tmp_path)
+    records = [json.loads(line) for line in (before / "results.jsonl").read_text(encoding="utf-8").splitlines()]
+    for record in records:
+        if record["case_id"] == "control":
+            record["passed"] = False
+    (before / "results.jsonl").write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+    result = helper_comparison(before, after, ("witness",), "inspect_optimizer_result.py", ("--statistics",))
+    assert result["helper_use_passed"]
+    assert not result["improved"]
+
+
+@pytest.mark.parametrize("change", ["none", "no-flag", "stale-helper", "incomplete-use"])
+def test_prompt_receipt_can_require_helper_execution_and_flags(tmp_path, change):
+    from nurse_scheduling.ai.workspace import REFERENCE_ATTACHMENT_TOOLS
+
+    number = next(i for i, step in enumerate(load_prompt_steps(), 1) if len(step.cases) > 1)
+    step = _report(tmp_path, number)
+    helper = "inspect_optimizer_result.py"
+    key = f"/reference/tools/{helper}"
+    digest = hashlib.sha256(REFERENCE_ATTACHMENT_TOOLS[key].read_bytes()).hexdigest()
+    for arm in ("before", "after"):
+        directory = tmp_path / arm
+        metadata = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))
+        metadata["references_sha256"] = {f"tools/{helper}": digest}
+        (directory / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+        (directory / "cases").mkdir()
+        records = []
+        for case_id in step.cases:
+            for repetition in range(1, 4):
+                record = {
+                    "case_id": case_id,
+                    "repetition": repetition,
+                    "passed": arm == "after" or case_id != step.cases[0],
+                    "error": "",
+                }
+                records.append(record)
+                command = f"python {key}" + ("" if change == "no-flag" and arm == "after" else " --statistics")
+                trajectory = {
+                    **record,
+                    "question": case_id,
+                    "events": [
+                        {
+                            "kind": "tool",
+                            "name": "bash",
+                            "ok": True,
+                            "arguments": json.dumps({"command": command}),
+                            "result": "{}",
+                        }
+                    ],
+                }
+                (directory / "cases" / f"{case_id}--run-{repetition}.json").write_text(
+                    json.dumps(trajectory), encoding="utf-8"
+                )
+        (directory / "results.jsonl").write_text(
+            "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8"
+        )
+    if change == "no-flag":
+        with pytest.raises(ValueError, match="required flags"):
+            build_receipt(tmp_path, step.cases[0], helper=helper, flags=("--statistics",))
+        return
+    _, record = build_receipt(tmp_path, step.cases[0], helper=helper, flags=("--statistics",))
+    assert record["helper_usage"]["flags"] == ["--statistics"]
+    assert record["helper_usage"]["cases"][0]["after"] == "3/3"
+    if change == "stale-helper":
+        record["helper_usage"]["sha256"] = "outdated"
+    if change == "incomplete-use":
+        record["helper_usage"]["cases"][0]["after"] = "2/3"
+    cases = {case.id: case for case in load_cases(CASES)}
+    fixtures = {case.fixture: _sha256(fixture_text(case.fixture)) for case in cases.values()}
+    if change != "none":
+        with pytest.raises(ValueError, match="stale helper|all after attempts"):
+            validate_prompt_evidence((replace(step, evidence=(record,)),), cases, fixtures)
+    else:
+        validate_prompt_evidence((replace(step, evidence=(record,)),), cases, fixtures)

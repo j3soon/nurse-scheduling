@@ -340,3 +340,64 @@ Run `--prompt-ablate-step N` only for a requested full-prompt removal check. It 
 section N against the complete prompt. Ordinary step comparisons run only the cases named for that step, unless
 additional `--case`, `--category`, `--tag`, `--tuning`, or `--full` scope is explicitly selected. Add a contrasting
 exact-target or holdout case when a new section might cause over-clarification or another nearby regression.
+
+## Optimizer inspector statistics
+
+Use `inspect_optimizer_result.py --statistics --source-sha256 HASH` for observed
+per-person shift counts and longest work/OFF runs. `--include-history` uses only
+source YAML whose bytes match the completed run. These statistics do not audit
+scheduling policies.
+
+A repeated comparison checked the same calculations exposed through a separate
+roster command versus this inspector mode. The prompt, case inputs and fixed
+assignments were unchanged. The CLI and helper catalog changed together.
+Both versions used `unsloth/Qwen3.8-27B-NVFP4`, real E2B commands, three repetitions
+and four concurrent case jobs. Optimizer submission was simulated with verified
+assignments exported as real XLSX files.
+
+| Case | Separate command correctness | Inspector correctness | Separate command use | Inspector statistics use |
+| --- | ---: | ---: | ---: | ---: |
+| `result-roster-statistics` | 3/3 | 3/3 | 2/3 | 3/3 |
+| `result-single-tier-summary` | 3/3 | 3/3 | 0/3 | 0/3 |
+
+Neither version had infrastructure errors. Helper use counts runs that execute
+the calculation, excluding source reads and `--help`. The single-tier control
+correctly answered from completion metadata without an inspection call. Three
+repetitions establish observed adoption, not a general reliability estimate. Twelve deterministic CLI comparisons also preserved
+statistics, history-source checks, request audits and assignment queries.
+This supports consolidation for maintainability. No efficiency gain is claimed.
+
+
+Check helper adoption on saved before/after reports with the receipt tool:
+
+```sh
+python -m tests.ai_eval.receipt check-helper BEFORE AFTER \
+  --case result-roster-statistics --helper inspect_optimizer_result.py \
+  --flag=--statistics --cost-metric completion-tokens --cost-ratio 0.9 \
+  --output helper-comparison.json
+```
+
+Declare the cost target before running the comparison. The command exits nonzero
+unless all candidate runs pass, every selected case executes the helper with the
+required flags, and a selected helper-use case has a correctness gain or the declared cost benefit.
+All report cases remain correctness controls. With a cost target, missing usage
+or a cost increase in any passing control also fails the gate. Reports retain
+all token categories, tool calls, reads, turns, timing and paired variation.
+
+Execution checks recognize direct Python commands with structured JSON output.
+Source reads, `--help`, quoted command text and failed calls do not count.
+Calls through inline Python or another wrapper need separate trajectory review.
+The target flags must occur on the helper invocation, not elsewhere in the call.
+Keep answer grading independent so correct alternative methods remain valid.
+
+The roster consolidation comparison passes the helper-use gate. It has no
+correctness gain or declared cost target, so it does not pass the benefit gate.
+It supports the tested capability and consolidation, not an efficiency claim.
+
+
+For a prompt comparison, `receipt write` also accepts `--helper NAME`, repeated
+`--flag=--OPTION` and `--helper-case CASE` options. It checks the saved trajectories
+before storing helper-use counts with the existing benefit receipt. The prompt
+evidence validator requires all candidate runs to use the helper and binds those
+counts to the measured helper bytes. This adds an adoption condition without
+replacing the receipt's correctness or declared cost requirement.

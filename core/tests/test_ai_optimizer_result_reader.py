@@ -26,7 +26,12 @@ import sys
 import pytest
 from openpyxl import load_workbook
 
-from nurse_scheduling.ai.attachment_tools.inspect_optimizer_result import _assigned, inspect_result, load_context
+from nurse_scheduling.ai.attachment_tools.inspect_optimizer_result import (
+    _assigned,
+    inspect_result,
+    load_context,
+    summarize_roster,
+)
 from nurse_scheduling.ai.result_context import MAX_REQUEST_AUDIT_BYTES, build_request_audit, build_result_context
 from nurse_scheduling.ai.workspace import INSPECTION_HELPERS, REFERENCE_ATTACHMENT_TOOLS, inspection_helper_catalog
 
@@ -337,3 +342,134 @@ def test_result_cli_selects_pending_source_and_respects_explicit_context(tmp_pat
         reader.main()
         result = json.loads(capsys.readouterr().out)
         assert result["summary"] == [{"weight": 11000000000, "total": 5, "satisfied": 3, "unmet": 2}]
+
+
+def test_roster_statistics_count_exact_shifts_and_bound_people(audit):
+    path, context = audit
+    result = summarize_roster(path, context, context["source_sha256"], max_people=2)
+    assert result["statistics_truncated"]
+    assert result["statistics"][0] == {
+        "person": "Alex",
+        "shift_counts": {"OFF": 1, "K": 1, "D": 1},
+        "max_work_run": 2,
+        "max_off_run": 1,
+    }
+    assert result["statistics"][1]["person"] == "Mira"
+    assert "not a policy audit" in result["scope"]
+    assert "summary" not in result
+
+
+def test_roster_statistics_include_only_history_runs_crossing_the_boundary(audit, tmp_path):
+    path, _ = audit
+    payload = parse_schedule(FIXTURE.read_text(encoding="utf-8"))
+    for person, history in zip(payload["people"]["items"], [["OFF", "OFF"], ["D", "N"], None]):
+        person["history"] = history
+    source = tmp_path / "source.yaml"
+    source.write_text(schedule_yaml(payload), encoding="utf-8")
+    context = build_result_context(source.read_text(encoding="utf-8"))
+    result = summarize_roster(path, context, context["source_sha256"], include_history=True, source=source)
+    alex, mira, kai = result["statistics"]
+    assert alex["max_off_run_including_history"] == 3
+    assert alex["shift_counts"]["OFF"] == 1
+    assert mira["max_work_run_including_history"] == 4
+    assert kai["max_work_run_including_history"] is None
+    assert kai["history_days"] is None
+    # Changed source history must not be used with an earlier optimizer result.
+    source.write_text(source.read_text(encoding="utf-8") + "\n# changed", encoding="utf-8")
+    alex = summarize_roster(path, context, context["source_sha256"], include_history=True, source=source)["statistics"][
+        0
+    ]
+    assert alex["history_days"] is None
+
+
+@pytest.mark.parametrize("options", [{"max_people": 0}, {"max_people": 1001}, {"people": ["missing"]}])
+def test_roster_statistics_reject_unknown_people_and_unbounded_options(audit, options):
+    path, context = audit
+    with pytest.raises(ValueError):
+        summarize_roster(path, context, context["source_sha256"], **options)
+
+
+def test_statistics_preserve_qualified_shifts_and_ignore_annotations(audit):
+    path, context = audit
+    workbook = load_workbook(path)
+    context["shift_types"].append("D+")
+    for row in workbook.active:
+        for cell in row:
+            if str(cell.value) == "D" or str(cell.value).startswith("D ["):
+                cell.value = "D+ [OFF]"
+    workbook.save(path)
+    result = summarize_roster(path, context, context["source_sha256"])
+    alex = result["statistics"][0]
+    assert alex["shift_counts"] == {"OFF": 1, "K": 1, "D+": 1}
+    assert alex["max_work_run"] == 2
+
+
+def test_standalone_roster_statistics_reuse_the_hydrated_readers(audit, tmp_path):
+    path, context = audit
+    for source in REFERENCE_ATTACHMENT_TOOLS.values():
+        (tmp_path / source.name).write_bytes(source.read_bytes())
+    source = tmp_path / "source.yaml"
+    source.write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    context_path = tmp_path / "context.json"
+    context_path.write_text(json.dumps(context), encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(tmp_path / "inspect_optimizer_result.py"),
+            "--statistics",
+            str(path),
+            "--context",
+            str(context_path),
+            "--source-sha256",
+            context["source_sha256"],
+            "--source",
+            str(source),
+            "--include-history",
+            "--person",
+            "Alex",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    row = json.loads(result.stdout)["statistics"][0]
+    assert row["history_days"] == 3
+    assert row["shift_counts"] == {"OFF": 1, "K": 1, "D": 1}
+    assert row["max_work_run_including_history"] == 2
+
+
+def test_history_only_streak_does_not_inflate_scheduled_work_run(audit, tmp_path):
+    path, _ = audit
+    payload = parse_schedule(FIXTURE.read_text(encoding="utf-8"))
+    payload["people"]["items"][0]["history"] = ["N"] * 10
+    source = tmp_path / "source.yaml"
+    source.write_text(schedule_yaml(payload), encoding="utf-8")
+    context = build_result_context(source.read_text(encoding="utf-8"))
+    row = summarize_roster(path, context, context["source_sha256"], source=source, include_history=True)["statistics"][
+        0
+    ]
+    assert row["history_days"] == 10
+    assert row["max_work_run_including_history"] == 2
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["--max-people", "1"],
+        ["--include-history"],
+        ["--source", "source.yaml"],
+        ["--statistics", "--weight", "11"],
+        ["--statistics", "--max-unmet", "20"],
+        ["--statistics", "--date", "2026-05-01"],
+        ["--statistics", "--max-assignments", "100"],
+    ],
+)
+def test_result_cli_rejects_options_from_another_mode(monkeypatch, capsys, options):
+    from nurse_scheduling.ai.attachment_tools.inspect_optimizer_result import main
+
+    monkeypatch.setattr(sys, "argv", ["inspect_optimizer_result.py", "--source-sha256", "unused", *options])
+    with pytest.raises(SystemExit) as error:
+        main()
+    assert error.value.code == 2
+    assert "--statistics" in capsys.readouterr().err

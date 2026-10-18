@@ -48,3 +48,20 @@ preservation independently of its explanation. An offer need not list every
 loop step. Keep policy counts and report formats in separate result-review
 cases. When the user changes the intended behavior, retain stronger existing
 cases as diagnostics and report the tradeoff.
+
+For observed shift counts and longest work/OFF runs, use the existing result
+reader `inspect_optimizer_result.py --statistics`. Add `--include-history` to
+include known history suffixes crossing the first scheduled date. Counts exclude history. Unknown
+history stays unknown. These statistics do not establish policy compliance.
+
+Measure helper execution separately from correct answers. Count runs that execute
+the requested calculation, excluding source reads and `--help`. Inspect whether
+the answer uses the result and whether custom parsing or verification remains.
+Report these rates per case. An answer already supplied in completion metadata
+can correctly need no helper call.
+
+Use the evaluation receipt tool's `check-helper` command for an explicit helper
+adoption gate. Require the intended mode flag, such as `--statistics`. Keep
+correctness and a declared cost benefit separate from adoption. A passing use
+rate alone does not establish a benefit. Never choose a cost target after seeing
+the measured costs.

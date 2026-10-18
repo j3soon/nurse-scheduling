@@ -70,7 +70,7 @@ INSPECTION_HELPERS = {
     "inspect_shift_requests.py": "Current YAML nonzero shift-request counts and resolved selectors. Repeat --weight, --person or --date to filter. --max-requests 0 returns counts only.",
     "inspect_xlsx.py": "XLSX sheets, cells, formulas and saved caches. Use --overview for sheet names, visibility and reported sizes. Use --styles for stored formatting. Use --summary --range A1:B10 for typed value frequencies and optional --axis row|column counts. With --styles, summaries separate values by style. Reports blanks and truncation without recalculating formulas.",
     "inspect_pdf.py": "PDF page text and rendered page images. Use --find TEXT for bounded literal search with matching page numbers and excerpts. Reports search truncation and pages without text. No OCR.",
-    "inspect_optimizer_result.py": "Optimizer assignments, signed request counts and available staffing/succession audits using a compiled schedule context.",
+    "inspect_optimizer_result.py": "Optimizer assignments, signed request counts and available staffing/succession audits using compiled schedule context. Use --statistics for per-person shift counts and longest work/OFF runs over all scheduled dates. --include-history uses only matching source history. Statistics are not a policy audit.",
 }
 REFERENCE_ATTACHMENT_TOOLS = {
     f"/reference/tools/{name}": ATTACHMENT_TOOL_DIRECTORY / name for name in INSPECTION_HELPERS

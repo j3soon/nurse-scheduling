@@ -316,6 +316,21 @@ def validate_prompt_evidence(
                 # A targeted extension need not rerun controls already verified in
                 # a smaller paired batch. Each observation still needs 3–10 trials.
                 _receipt_counts(observation, label)
+            if usage := record.get("helper_usage"):
+                from nurse_scheduling.ai.workspace import REFERENCE_ATTACHMENT_TOOLS
+
+                path = REFERENCE_ATTACHMENT_TOOLS.get(f"/reference/tools/{usage['helper']}")
+                if path is None or hashlib.sha256(path.read_bytes()).hexdigest() != usage.get("sha256"):
+                    raise ValueError(f"{label} has stale helper inputs")
+                if not usage.get("cases") or not isinstance(usage.get("flags"), list):
+                    raise ValueError(f"{label} needs helper-use cases and flags")
+                observations = {item["case"]: item for item in (record, *record.get("controls", []))}
+                for item in usage["cases"]:
+                    if item.get("case") not in observations:
+                        raise ValueError(f"{label} names an unlinked helper-use testcase")
+                    _, _, total = _receipt_counts(item, label)
+                    if total != _receipt_counts(observations[item["case"]], label)[2]:
+                        raise ValueError(f"{label} has mismatched helper-use repetitions")
 
 
 def _receipt_counts(record: dict[str, Any], label: str) -> tuple[int, int, int]:
