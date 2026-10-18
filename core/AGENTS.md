@@ -85,6 +85,10 @@ from the trust-based local harness.
   `fastapi_integration=False`. The SDK's FastApiIntegration reads
   `request.json()`/`request.form()` before the handler, which drains the body
   stream and hangs the re-read.
+- `_should_enable_sentry()` disables Sentry under pytest, so integration
+  wiring bugs only surface in deployed environments. After changing
+  `init_sentry` options or integration flags, smoke-test the affected
+  endpoints on a staging deploy.
   Use `configure_service_logging` for the shared service logging defaults.
   Short-lived services flush Sentry in a `finally` block before exit.
 
