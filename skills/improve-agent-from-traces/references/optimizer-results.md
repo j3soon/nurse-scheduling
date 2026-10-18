@@ -65,3 +65,8 @@ adoption gate. Require the intended mode flag, such as `--statistics`. Keep
 correctness and a declared cost benefit separate from adoption. A passing use
 rate alone does not establish a benefit. Never choose a cost target after seeing
 the measured costs.
+
+The roster summary includes shift totals and distributions of each person's
+longest work/OFF run over all selected people. Person row limits do not limit
+these totals. Use `--summary-only` to omit person rows. Extended-run distributions
+exclude unknown history and report its person count separately.

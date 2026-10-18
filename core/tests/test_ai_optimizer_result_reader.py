@@ -356,7 +356,8 @@ def test_roster_statistics_count_exact_shifts_and_bound_people(audit):
     }
     assert result["statistics"][1]["person"] == "Mira"
     assert "not a policy audit" in result["scope"]
-    assert "summary" not in result
+    assert result["summary"]["people"] == 3
+    assert sum(result["summary"]["shift_counts"].values()) == 9
 
 
 def test_roster_statistics_include_only_history_runs_crossing_the_boundary(audit, tmp_path):
@@ -404,7 +405,8 @@ def test_statistics_preserve_qualified_shifts_and_ignore_annotations(audit):
     assert alex["max_work_run"] == 2
 
 
-def test_standalone_roster_statistics_reuse_the_hydrated_readers(audit, tmp_path):
+@pytest.mark.parametrize("summary_only", [False, True])
+def test_standalone_roster_statistics_reuse_the_hydrated_readers(audit, tmp_path, summary_only):
     path, context = audit
     for source in REFERENCE_ATTACHMENT_TOOLS.values():
         (tmp_path / source.name).write_bytes(source.read_bytes())
@@ -417,6 +419,7 @@ def test_standalone_roster_statistics_reuse_the_hydrated_readers(audit, tmp_path
             sys.executable,
             str(tmp_path / "inspect_optimizer_result.py"),
             "--statistics",
+            *(["--summary-only"] if summary_only else []),
             str(path),
             "--context",
             str(context_path),
@@ -433,7 +436,13 @@ def test_standalone_roster_statistics_reuse_the_hydrated_readers(audit, tmp_path
         text=True,
         check=True,
     )
-    row = json.loads(result.stdout)["statistics"][0]
+    output = json.loads(result.stdout)
+    assert output["summary"]["shift_counts"] == {"OFF": 1, "K": 1, "D": 1}
+    assert output["summary"]["max_work_run_including_history"] == 2
+    if summary_only:
+        assert output["statistics"] == []
+        return
+    row = output["statistics"][0]
     assert row["history_days"] == 3
     assert row["shift_counts"] == {"OFF": 1, "K": 1, "D": 1}
     assert row["max_work_run_including_history"] == 2
@@ -456,6 +465,7 @@ def test_history_only_streak_does_not_inflate_scheduled_work_run(audit, tmp_path
 @pytest.mark.parametrize(
     "options",
     [
+        ["--summary-only"],
         ["--max-people", "1"],
         ["--include-history"],
         ["--source", "source.yaml"],
@@ -481,8 +491,44 @@ def test_monthly_statistics_match_independent_counts_and_run_lengths(tmp_path):
     path = tmp_path / "monthly.xlsx"
     path.write_bytes(completion_result("monthly-roster-statistics", source)[0])
     rows = summarize_roster(path, context, context["source_sha256"])["statistics"]
+    summary = summarize_roster(path, context, context["source_sha256"], summary_only=True)["summary"]
+    assert summary == {
+        "people": 60,
+        "shift_counts": {"D": 232, "D+": 232, "E": 465, "N": 466, "OFF": 465},
+        "max_work_run": 6,
+        "max_work_run_distribution": {6: 60},
+        "max_off_run": 2,
+        "max_off_run_distribution": {2: 60},
+    }
     assert len(rows) == 60
     assert {
         shift: sum(row["shift_counts"].get(shift, 0) for row in rows) for shift in ["D", "D+", "E", "N", "OFF"]
     } == {"D": 232, "D+": 232, "E": 465, "N": 466, "OFF": 465}
     assert all(row["max_work_run"] == 6 and row["max_off_run"] == 2 for row in rows)
+
+
+def test_roster_summary_selects_people_before_limiting_rows(audit):
+    path, context = audit
+    full = summarize_roster(path, context, context["source_sha256"])
+    bounded = summarize_roster(path, context, context["source_sha256"], max_people=1)
+    assert bounded["summary"] == full["summary"]
+    selected = summarize_roster(path, context, context["source_sha256"], people=["Alex", "Alex"], summary_only=True)
+    assert selected["statistics"] == []
+    assert selected["statistics_truncated"]
+    assert selected["summary"] == {
+        "people": 1,
+        "shift_counts": {"OFF": 1, "K": 1, "D": 1},
+        "max_work_run": 2,
+        "max_work_run_distribution": {2: 1},
+        "max_off_run": 1,
+        "max_off_run_distribution": {1: 1},
+    }
+
+
+def test_roster_summary_keeps_unknown_history_separate(audit):
+    path, context = audit
+    summary = summarize_roster(path, context, context["source_sha256"], include_history=True)["summary"]
+    assert summary["max_work_run_including_history"] is None
+    assert summary["max_work_run_including_history_distribution"] == {}
+    assert summary["max_work_run_including_history_unknown_people"] == 3
+    assert sum(summary["max_work_run_distribution"].values()) == 3

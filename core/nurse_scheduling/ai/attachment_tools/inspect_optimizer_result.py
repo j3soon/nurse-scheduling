@@ -226,7 +226,7 @@ def _longest_run(shifts: Sequence[str], working: bool, history: Sequence[str] = 
     return longest
 
 
-def _statistics(assignments, context, people, histories, include_history, max_people):
+def _statistics(assignments, context, people, histories, include_history, max_people, summary_only):
     person_ids = {str(person): person for person in context["people"]}
     if len(person_ids) != len(context["people"]):
         raise ValueError("Person IDs cannot be uniquely selected as text")
@@ -234,7 +234,7 @@ def _statistics(assignments, context, people, histories, include_history, max_pe
     if set(selected) - person_ids.keys():
         raise ValueError("Unknown person ID in statistics query")
     rows = []
-    for selected_id in selected[:max_people]:
+    for selected_id in selected:
         person = person_ids[selected_id]
         shifts = [assignments[person][day] for day in context["dates"]]
         row = {
@@ -251,18 +251,34 @@ def _statistics(assignments, context, people, histories, include_history, max_pe
                 max_off_run_including_history=None if history is None else _longest_run(shifts, False, history),
             )
         rows.append(row)
+    shift_counts = Counter()
+    for row in rows:
+        shift_counts.update(row["shift_counts"])
+    summary = {"people": len(rows), "shift_counts": dict(shift_counts)}
+    run_fields = ["max_work_run", "max_off_run"]
+    if include_history:
+        run_fields += ["max_work_run_including_history", "max_off_run_including_history"]
+    for field in run_fields:
+        known = [row[field] for row in rows if row[field] is not None]
+        summary[field] = max(known, default=None)
+        summary[field + "_distribution"] = dict(sorted(Counter(known).items()))
+        if include_history and field.endswith("including_history"):
+            summary[field + "_unknown_people"] = len(rows) - len(known)
     return {
         "source_sha256": context["source_sha256"],
         "scope": "Observed assignments over the full scheduled date range, not a policy audit. "
         "Counts exclude history. Extended runs include only history suffixes crossing the first scheduled date. "
         "Unknown history remains null.",
         "dates": context["dates"],
-        "statistics": rows,
-        "statistics_truncated": len(selected) > max_people,
+        "summary": summary,
+        "statistics": [] if summary_only else rows[:max_people],
+        "statistics_truncated": bool(rows) if summary_only else len(rows) > max_people,
     }
 
 
-def summarize_roster(path, context, source_sha256, *, people=None, max_people=100, include_history=False, source=None):
+def summarize_roster(
+    path, context, source_sha256, *, people=None, max_people=100, include_history=False, source=None, summary_only=False
+):
     """Summarize observed assignments, independently of scheduling policy."""
     if context.get("schema_version") != 1 or context.get("source_sha256") != source_sha256:
         raise ValueError("The compiled context does not match the optimizer source")
@@ -275,7 +291,7 @@ def summarize_roster(path, context, source_sha256, *, people=None, max_people=10
             data = YAML(typ="safe").load(content)
             histories = {person["id"]: person.get("history") for person in data["people"]["items"]}
     assignments, _, _ = _read_assignments(path, context)
-    return _statistics(assignments, context, people, histories, include_history, max_people)
+    return _statistics(assignments, context, people, histories, include_history, max_people, summary_only)
 
 
 def _weight_arguments(arguments: list[str]) -> list[str]:
@@ -336,6 +352,7 @@ def main() -> None:
         "--date", action="append", help="ISO date YYYY-MM-DD, repeatable. Selects assignment-query output."
     )
     parser.add_argument("--max-assignments", type=int, help="Assignment-query row limit, at most 1000. Default: 100.")
+    parser.add_argument("--summary-only", action="store_true", help="Return statistics totals without person rows")
     parser.add_argument("--max-people", type=int, help="Statistics row limit, at most 1000. Default: 100.")
     parser.add_argument("--include-history", action="store_true", help="Include known history suffixes in statistics")
     parser.add_argument(
@@ -347,8 +364,8 @@ def main() -> None:
     if args.statistics:
         if any(value is not None for value in (args.weight, args.max_unmet, args.date, args.max_assignments)):
             parser.error("--statistics cannot be combined with --weight, --max-unmet, --date or --max-assignments")
-    elif args.max_people is not None or args.include_history or args.source is not None:
-        parser.error("--max-people, --include-history and --source require --statistics")
+    elif args.summary_only or args.max_people is not None or args.include_history or args.source is not None:
+        parser.error("--summary-only, --max-people, --include-history and --source require --statistics")
     try:
         context = load_context(args.source_sha256, args.context)
         if args.statistics:
@@ -360,6 +377,7 @@ def main() -> None:
                 max_people=100 if args.max_people is None else args.max_people,
                 include_history=args.include_history,
                 source=args.source or Path("/workspace/schedule.yaml"),
+                summary_only=args.summary_only,
             )
         else:
             result = inspect_result(
