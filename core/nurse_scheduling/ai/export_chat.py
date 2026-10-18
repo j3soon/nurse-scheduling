@@ -61,8 +61,8 @@ def _main() -> None:
                 write_chat_archive(history, str(args.session_id), archive)
             temporary.replace(output)
             temporary = None
-    except (psycopg.Error, OSError, ChatSessionNotFoundError):
-        parser.exit(1, "Could not export the saved chat. Check the session, PostgreSQL access, and output path.\n")
+    except (psycopg.Error, OSError, ChatSessionNotFoundError) as exc:
+        parser.exit(1, f"Could not export the saved chat: {exc}\n")
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)

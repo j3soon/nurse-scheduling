@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+import sentry_sdk.scrubber  # noqa: F401 - init_sentry loads it while tests fake sentry_sdk.
 from ruamel.yaml import YAML
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
@@ -210,6 +211,7 @@ def test_init_sentry_configures_sdk_when_enabled(monkeypatch):
 
     init_sentry("v1.2.3")
 
+    scrubber = init_calls[0].pop("event_scrubber")
     assert init_calls == [
         {
             "dsn": "https://backend-key@example.ingest.sentry.io/123",
@@ -226,6 +228,12 @@ def test_init_sentry_configures_sdk_when_enabled(monkeypatch):
         }
     ]
     assert tags == [("app", "backend")]
+    # Logged database errors carry psycopg's connection settings in stack frame variables.
+    frame = {"vars": {"conninfo": "host=db password=hunter2", "params": {"host": "db", "password": "hunter2"}}}
+    event = {"exception": {"values": [{"stacktrace": {"frames": [frame]}}]}}
+    scrubber.scrub_event(event)
+    assert "hunter2" not in str(event)
+    assert frame["vars"]["params"]["host"] == "db"
 
 
 def test_init_sentry_accepts_service_tag(monkeypatch):

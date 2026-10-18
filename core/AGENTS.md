@@ -91,6 +91,10 @@ from the trust-based local harness.
   endpoints on a staging deploy.
   Use `configure_service_logging` for the shared service logging defaults.
   Short-lived services flush Sentry in a `finally` block before exit.
+- Log a caught failure with its exception through `logger.exception` or
+  `exc_info`. Do not drop the exception or keep only its type to keep data out
+  of logs, because sending that data to Sentry is acceptable. Keep credentials
+  out with the `event_scrubber` in `init_sentry` instead.
 
 ## Server Job Processes
 - `run_optimization_process` owns its optimization process tree through

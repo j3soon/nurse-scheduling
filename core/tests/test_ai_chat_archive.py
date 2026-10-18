@@ -235,6 +235,7 @@ def test_zip_cli_matches_the_shared_writer_and_preserves_output_on_error(postgre
         check=False,
     )
     assert result.returncode == 1
+    assert b"Could not export the saved chat: Chat session not found." in result.stderr
     assert destination.read_bytes() == before
     assert not list(tmp_path.glob(".chat-export-*"))
 

@@ -62,6 +62,7 @@ def init_sentry(
         return
 
     import sentry_sdk
+    from sentry_sdk.scrubber import DEFAULT_DENYLIST, EventScrubber
 
     extra_kwargs: dict = {}
     if not fastapi_integration:
@@ -76,6 +77,9 @@ def init_sentry(
         # Add data like request headers and IP for users, if applicable;
         # see https://docs.sentry.io/platforms/python/data-management/data-collected/ for more info
         send_default_pii=True,
+        # Logged exceptions carry stack frame variables. psycopg keeps the database URL,
+        # password included, in `conninfo` and in nested `password` keys.
+        event_scrubber=EventScrubber(denylist=[*DEFAULT_DENYLIST, "conninfo"], recursive=True, send_default_pii=True),
         # Set traces_sample_rate to 1.0 to capture 100%
         # of transactions for tracing.
         traces_sample_rate=1.0,

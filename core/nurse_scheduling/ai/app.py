@@ -642,7 +642,7 @@ def create_app(
         except ChatSessionNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Chat session not found.") from exc
         except (psycopg.Error, OSError) as exc:
-            logger.error("AI chat archive creation failed")
+            logger.exception("AI chat archive creation failed")
             raise HTTPException(status_code=503, detail="The chat archive could not be created. Try again.") from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from None

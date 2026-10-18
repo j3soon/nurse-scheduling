@@ -537,7 +537,7 @@ class SessionRecovery:
             await asyncio.wait_for(self.flush(session_id), FLUSH_TIMEOUT_SECONDS)
             rows = await self.history.read("load_events", session_id, after_id)
         except (TimeoutError, RuntimeError):
-            logger.error("AI recovery reset fell back to the replay projection session_id=%s", session_id)
+            logger.exception("AI recovery reset fell back to the replay projection session_id=%s", session_id)
             return None
         # Rows saved after the cursor capture are part of the reset, so the reader skips them later.
         covered = max([covered, *(last for _first, last, *_rest in rows)])

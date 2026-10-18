@@ -196,7 +196,7 @@ class E2BSandboxCleanupManager:
             except SandboxNotFoundException:
                 killed = False
             except (SandboxException, TimeoutError) as error:
-                self._record_failure(sandbox_id, cleanup, now, type(error).__name__)
+                self._record_failure(sandbox_id, cleanup, now, type(error).__name__, error)
                 continue
 
             try:
@@ -204,7 +204,7 @@ class E2BSandboxCleanupManager:
             except asyncio.CancelledError:
                 raise
             except (SandboxException, TimeoutError) as error:
-                self._record_failure(sandbox_id, cleanup, now, type(error).__name__)
+                self._record_failure(sandbox_id, cleanup, now, type(error).__name__, error)
                 continue
             if still_exists:
                 self._record_failure(sandbox_id, cleanup, now, "SandboxStillPresent")
@@ -243,6 +243,7 @@ class E2BSandboxCleanupManager:
         cleanup: _DeferredCleanup,
         now: float,
         error_type: str,
+        error: BaseException | None = None,
     ) -> None:
         cleanup.attempts += 1
         exponent = min(cleanup.attempts - 1, 16)
@@ -267,6 +268,7 @@ class E2BSandboxCleanupManager:
                 "retry_in_seconds": delay,
                 "error_type": error_type,
             },
+            exc_info=error,
         )
 
     async def _run(self) -> None:
@@ -306,5 +308,5 @@ def _parse_deadline(value: str | None) -> float | None:
     try:
         return float(value)
     except ValueError:
-        logger.warning("sandbox has invalid hard-deadline metadata")
+        logger.warning("sandbox has invalid hard-deadline metadata", exc_info=True)
         return None

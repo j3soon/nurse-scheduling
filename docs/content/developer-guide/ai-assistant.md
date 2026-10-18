@@ -621,9 +621,9 @@ backoff. This covers file reads and replacements, automatic resume, and sandbox
 destruction. Auto-resume attempts also have an application-enforced control
 request deadline. Idle pause is attempted once because it is optional and a
 failed response cannot prove whether E2B accepted it. Retry logs include the
-operation, sandbox ID, attempt, delay, and exception type without response
-contents. Sandbox creation and Bash execution are not replayed because a failed
-response cannot prove that the original operation did not take effect.
+operation, sandbox ID, attempt, delay, and exception. Sandbox creation and Bash
+execution are not replayed because a failed response cannot prove that the
+original operation did not take effect.
 
 ## Configuration
 

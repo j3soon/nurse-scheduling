@@ -232,8 +232,8 @@ def test_final_write_failure_preserves_successful_conversation(recorded_history,
     events = basic.parse_sse(response.text)
     assert ("warning", {"message": RECOVERY_SAVE_WARNING, "run_id": events[-1][1]["run_id"]}) in events
     assert events[-1][1]["history_saved"] is False
-    assert "AI history finish_run failed" in caplog.text
-    assert "secret-database-url" not in caplog.text
+    failures = [record for record in caplog.records if record.getMessage() == "AI history finish_run failed"]
+    assert failures and all(isinstance(record.exc_info[1], psycopg.OperationalError) for record in failures)
 
 
 def test_records_queued_steering_in_run_order(recorded_history):
@@ -751,7 +751,7 @@ def test_recovery_writers_report_each_outage_once_and_report_recovery(monkeypatc
     assert attempts == 8 and len(saved_batches) == 2
     assert delays == [1, 2, 4, 1, 2, 4]
     assert recoveries == [(f"ai.history.{operation}", 3)] * 2
-    assert "secret-database-url" not in caplog.text
+    assert all(isinstance(record.exc_info[1], psycopg.OperationalError) for record in errors)
 
 
 def record(entry) -> tuple[str, dict]:
