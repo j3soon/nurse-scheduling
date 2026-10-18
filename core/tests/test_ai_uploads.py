@@ -28,7 +28,7 @@ from nurse_scheduling.ai.context import removal_event, upload_event
 from nurse_scheduling.ai.provider import TextDelta, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxFactory
 from nurse_scheduling.ai.sessions import SessionStore, _unique_filename
-from nurse_scheduling.ai.workspace import SandboxAttachment
+from nurse_scheduling.ai.workspace import SandboxAttachment, attachment_path
 
 from .test_ai_basic import AuthenticatedTestClient, ScriptedToolProvider, create_session, create_test_app, make_settings
 
@@ -105,7 +105,7 @@ def test_upload_history_is_charged_before_retaining_files():
 
 
 def test_upload_limits_removal_and_expiry_reclaim_bytes():
-    store = SessionStore(make_settings(max_attachment_files=3, max_session_bytes=2000))
+    store = SessionStore(make_settings(max_attachment_files=3, max_session_bytes=2500))
     session = store.create("owner", "description: test")
     original = store.retained_bytes
     first = store.retain_uploads(session.id, "owner", [SandboxAttachment("ward.csv", "text/csv", b"abc")])[0]
@@ -142,9 +142,10 @@ def test_upload_limits_removal_and_expiry_reclaim_bytes():
     store.remove_upload(session.id, "owner", first.id)
     store.remove_upload(session.id, "owner", third.id)
     store.remove_upload(session.id, "owner", reused.id)
-    # File bytes are reclaimed. The upload and removal events stay in history.
+    # File bytes are reclaimed. Events and reserved paths remain until session expiry.
     history_bytes = sum(len(event["content"]) for event in store._sessions[session.id].history)
-    assert store.retained_bytes == original + history_bytes
+    reserved_path_bytes = sum(len(attachment_path(upload, 0).encode()) for upload in (first, second, third, reused))
+    assert store.retained_bytes == original + history_bytes + reserved_path_bytes
     assert store._sessions[session.id].history[-1]["content"] == removal_event(reused, 3)
     store.retain_uploads(session.id, "owner", [first])
     session.expires_at = 0

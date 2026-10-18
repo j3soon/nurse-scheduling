@@ -37,7 +37,7 @@ from .history import EntryRow
 from .lifecycle import RunSnapshot
 from .session_event_stream import SessionEventStream
 from .transcript import AgentMessage, entry_text, starts_exchange
-from .workspace import SandboxAttachment
+from .workspace import SandboxAttachment, attachment_path
 
 __all__ = ["SessionStore", "schedule_revision"]
 
@@ -69,6 +69,7 @@ def _session_bytes(session: "AgentSession") -> int:
     total += sum(_receipt_bytes(receipt) for receipt in session.accepted_messages.values())
     total += sum(_text_bytes(text) for text in session.queued_steering)
     total += sum(len(upload.data or b"") for upload in session.uploads.values())
+    total += sum(_text_bytes(path) for path in session.removed_upload_paths)
     total += sum(len(file["data"]) for file in session.pending_archive_files.values())
     return total + sum(len(content or b"") for content in session.downloads.values())
 
@@ -84,6 +85,13 @@ def _unique_filename(filename: str, taken: set[str]) -> str:
     while f"{stem} ({counter}){dot}{extension}" in taken:
         counter += 1
     return f"{stem} ({counter}){dot}{extension}"
+
+
+def _archive_file_key(file: dict) -> tuple[str, str]:
+    if file["kind"] == "upload":
+        upload = SandboxAttachment(file["filename"], file["media_type"], None, id=file["source_id"])
+        return "upload", attachment_path(upload, 0)
+    return file["kind"], file["source_id"]
 
 
 class SessionStore:
@@ -272,6 +280,7 @@ class SessionStore:
         entries: Sequence[AgentMessage],
         next_entry_seq: int,
         uploads: Sequence[SandboxAttachment] = (),
+        removed_upload_paths: Sequence[str] = (),
         archive_bytes: int = 0,
     ) -> AgentSession:
         """Load a saved session and its rebuilt conversation with the stored expiry.
@@ -294,6 +303,7 @@ class SessionStore:
             entries=entries,
             next_entry_seq=next_entry_seq,
             uploads=uploads,
+            removed_upload_paths=removed_upload_paths,
             archive_bytes=archive_bytes,
             event_stream=self._event_stream,
             entry_log=self._on_entry,
@@ -459,6 +469,10 @@ class SessionStore:
             retained.append(
                 replace(upload, filename=filename, id=upload_id or str(uuid4()), request_sha256=request_sha256)
             )
+            if attachment_path(retained[-1], 0) in session.removed_upload_paths:
+                raise HTTPException(
+                    status_code=409, detail="The upload ID was already used for this path. Use a new ID."
+                )
         event = upload_event(retained, len(session.uploads) + 1)
         self._require_capacity(sum(len(upload.data or b"") for upload in retained) + _text_bytes(event))
         session.add_uploads(retained, event)
@@ -490,7 +504,7 @@ class SessionStore:
             return
         upload = session.remove_upload(upload_id)
         if self._settings.history_postgres_url and upload.data is not None:
-            session.pending_archive_files["upload", upload_id] = {
+            session.pending_archive_files["upload", attachment_path(upload, 0)] = {
                 "kind": "upload",
                 "source_id": upload_id,
                 "filename": upload.filename,
@@ -523,14 +537,13 @@ class SessionStore:
         """Keep failed file writes retryable within the shared memory budget."""
         session = self._sessions[session_id]
         delta = sum(
-            len(file["data"])
-            - len(session.pending_archive_files.get((file["kind"], file["source_id"]), {}).get("data", b""))
+            len(file["data"]) - len(session.pending_archive_files.get(_archive_file_key(file), {}).get("data", b""))
             for file in files
         )
         if not self._archive_fits(session, delta):
             raise HTTPException(status_code=413, detail=ARCHIVE_LIMIT_MESSAGE)
         self._require_capacity(max(0, delta))
-        session.pending_archive_files.update(((file["kind"], file["source_id"]), file) for file in files)
+        session.pending_archive_files.update((_archive_file_key(file), file) for file in files)
         session.archive_bytes += delta
         self._charge(session, delta)
 
@@ -543,7 +556,7 @@ class SessionStore:
     def release_saved_archive_files(self, session_id: str, files: Sequence[dict]) -> None:
         session = self._sessions[session_id]
         for file in files:
-            key = file["kind"], file["source_id"]
+            key = _archive_file_key(file)
             if session.pending_archive_files.get(key) is file:
                 del session.pending_archive_files[key]
                 self._charge(session, -len(file["data"]))

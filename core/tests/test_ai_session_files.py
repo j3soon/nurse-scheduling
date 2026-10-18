@@ -21,6 +21,7 @@
 
 import asyncio
 import hashlib
+import io
 import json
 import time
 from dataclasses import replace
@@ -198,7 +199,7 @@ def test_removing_an_unsaved_file_keeps_its_archive_bytes(postgres_history, monk
             path = f"/sessions/{session}/{kind}s/{source_id}"
             for _ in range(2):
                 assert client.delete(path).status_code == 503
-            assert live.pending_archive_files[kind, source_id]["data"] == content
+            assert next(iter(live.pending_archive_files.values()))["data"] == content
             assert live.archive_bytes == len(content)
             assert not app.state.recovery.evictable(session)
             retained = store.retained_bytes
@@ -211,6 +212,64 @@ def test_removing_an_unsaved_file_keeps_its_archive_bytes(postgres_history, monk
             (file,) = json.loads(archive.read("manifest.json"))["files"]
             assert file["kind"] == kind and file["removed_at"] is not None
             assert archive.read(file["path"]) == content
+
+
+@pytest.mark.parametrize("saved", [True, False], ids=["saved", "pending"])
+@pytest.mark.parametrize(
+    "filenames", [("roster.csv", "roster.csv"), ("a b.csv", "a+b.csv")], ids=["same-name", "sanitized-name"]
+)
+def test_removed_upload_paths_cannot_be_reused(postgres_history, monkeypatch, saved, filenames):
+    filename, reused_filename = filenames
+    settings = basic.make_settings(history_postgres_url="test")
+    app = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
+    upload_id = str(uuid4())
+    with basic.AuthenticatedTestClient(app) as client:
+        session = basic.create_session(client)
+        route = f"/sessions/{session}/uploads?upload_id={upload_id}"
+        with monkeypatch.context() as patch:
+            if not saved:
+                patch.setattr(ChatHistory, "save_session", unavailable)
+            assert client.post(route, files={"files": (filename, b"draft", "text/csv")}).status_code == (
+                201 if saved else 503
+            )
+            assert client.delete(f"/sessions/{session}/uploads/{upload_id}").status_code == (204 if saved else 503)
+            live = app.state.session_store.get(session)
+            for content in (b"draft", b"other"):
+                assert client.post(route, files={"files": (reused_filename, content, "text/csv")}).status_code == 409
+                assert live.uploads == {} and live.archive_bytes == len(b"draft")
+            assert client.post(route, files={"files": ("new.csv", b"other", "text/csv")}).status_code == (
+                201 if saved else 503
+            )
+        assert client.portal.call(app.state.recovery.save, session)
+        assert postgres_history.load_upload(session, live.owner_token, upload_id, len(b"other")) == b"other"
+        cookies = dict(client.cookies)
+    restarted = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
+    with basic.AuthenticatedTestClient(restarted, cookies=cookies) as client:
+        assert client.delete(f"/sessions/{session}/uploads/{upload_id}").status_code == 204
+        assert client.post(route, files={"files": (reused_filename, b"other", "text/csv")}).status_code == 409
+        exported = client.get(f"/sessions/{session}/export")
+        with ZipFile(io.BytesIO(exported.content)) as archive:
+            files = json.loads(archive.read("manifest.json"))["files"]
+            assert len(files) == 2
+            assert {file["filename"]: archive.read(file["path"]) for file in files} == {
+                filename: b"draft",
+                "new.csv": b"other",
+            }
+            assert all(file["removed_at"] is not None for file in files)
+
+
+def test_upload_id_reuse_checks_the_retained_filename():
+    store = SessionStore(basic.make_settings())
+    session = store.create("owner", "description: draft")
+    upload = SandboxAttachment("roster.csv", "text/csv", b"draft")
+    store.retain_uploads(session.id, "owner", [upload])
+    upload_id = str(uuid4())
+    (retained,) = store.retain_uploads(session.id, "owner", [upload], upload_id=upload_id)
+    assert retained.filename == "roster (1).csv"
+    store.remove_upload(session.id, "owner", upload_id)
+    with pytest.raises(HTTPException) as refused:
+        store.retain_uploads(session.id, "owner", [upload], upload_id=upload_id)
+    assert refused.value.status_code == 409
 
 
 def test_optimizer_files_survive_restart_without_cached_workbooks(postgres_history):

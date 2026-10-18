@@ -451,6 +451,7 @@ class SessionRecovery:
                 entries=record["entries"],
                 next_entry_seq=record["next_entry_seq"],
                 uploads=record.get("uploads", ()),
+                removed_upload_paths=record.get("removed_upload_paths", ()),
                 archive_bytes=record.get("archive_bytes", 0),
             )
             self._event_stream.restore(session_id, record["last_event_id"])

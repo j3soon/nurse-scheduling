@@ -208,6 +208,8 @@ from the trust-based local harness.
   version, including removed files, against `AI_MAX_ARCHIVE_BYTES` before accepting it.
   Test removal during a storage outage. Keep unsaved file bytes in the pending
   archive until a successful write, even after the user removes the active file.
+  Keep removed upload paths reserved through restart, so reused IDs cannot change
+  the file version referenced by an earlier transcript entry.
   After rejecting optimizer files, check that a restart does not load an older
   workbook as the latest result.
 - Bound sandbox file and command output bytes while receiving them. Truncating

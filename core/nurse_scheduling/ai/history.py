@@ -37,7 +37,7 @@ from ..sentry import report_outage_recovery
 from ..server.retry import RepeatedFailure
 from .provider import TokenUsage
 from .transcript import AgentMessage, AssistantMessage, UserMessage, entry_from_record, entry_record
-from .workspace import SandboxAttachment
+from .workspace import SandboxAttachment, attachment_path
 
 logger = logging.getLogger("nurse_scheduling.ai.history")
 RunStatus = Literal["completed", "failed", "cancelled", "stale"]
@@ -152,7 +152,8 @@ class ChatHistory:
             for run_id, content in (downloads or {}).items()
             if content is not None
         )
-        ChatHistory._save_files(connection, session_id, [*retained_files, *files])
+        # Save detached versions first, so an active upload that reuses their source ID stays current.
+        ChatHistory._save_files(connection, session_id, [*files, *retained_files])
         for kind, active in (
             ("upload", [upload["id"] for upload in data.get("uploads", [])]),
             ("download", data.get("downloads", [])),
@@ -381,6 +382,11 @@ class ChatHistory:
             (archive_bytes,) = connection.execute(
                 "SELECT coalesce(sum(octet_length(data)), 0) FROM chat_files WHERE session_id = %s", (session_id,)
             ).fetchone()
+            removed_uploads = connection.execute(
+                "SELECT DISTINCT source_id, filename FROM chat_files WHERE session_id = %s "
+                "AND kind = 'upload' AND removed_at IS NOT NULL",
+                (session_id,),
+            ).fetchall()
             unfinished = connection.execute(
                 "SELECT r.id, r.kind, r.status, r.schedule_change, (SELECT e.type FROM chat_session_events e "
                 "WHERE e.session_id = r.session_id AND e.run_id = r.id "
@@ -393,6 +399,10 @@ class ChatHistory:
         return {
             "state": row[0],
             "uploads": [SandboxAttachment(data=None, **metadata) for metadata in row[0].get("uploads", [])],
+            "removed_upload_paths": [
+                attachment_path(SandboxAttachment(filename, "", None, id=upload_id), 0)
+                for upload_id, filename in removed_uploads
+            ],
             "expires_at": float(row[1]),
             "entries": [
                 replace(entry, stop_reason="aborted" if status == "cancelled" else "error")

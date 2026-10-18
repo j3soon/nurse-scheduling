@@ -72,6 +72,7 @@ from .workspace import (
     SandboxDownloadError,
     SandboxTurnTimeoutError,
     WorkspaceLimits,
+    attachment_path,
 )
 from .workspace_tools import run_workspace
 
@@ -265,6 +266,7 @@ class AgentSession:
     # Retained source files keyed by upload ID, in upload order, and generated ZIPs keyed by run ID.
     uploads: dict[str, SandboxAttachment] = field(default_factory=dict)
     pending_upload_removals: set[str] = field(default_factory=set)
+    removed_upload_paths: set[str] = field(default_factory=set)
     downloads: dict[str, bytes | None] = field(default_factory=dict)
     pending_download_removals: set[str] = field(default_factory=set)
     pending_archive_files: dict[tuple[str, str], dict] = field(default_factory=dict)
@@ -355,6 +357,7 @@ class AgentSession:
         entries: Sequence[AgentMessage],
         next_entry_seq: int,
         uploads: Sequence[SandboxAttachment] = (),
+        removed_upload_paths: Sequence[str] = (),
         archive_bytes: int = 0,
         event_stream: SessionEventStream | None,
         entry_log: Callable[[str, EntryRow], None] | None,
@@ -374,6 +377,7 @@ class AgentSession:
             export_metadata=state.get("export_metadata", {}),
             transcript=retained_entries(entries),
             uploads={upload.id: upload for upload in uploads},
+            removed_upload_paths=set(removed_upload_paths),
             archive_bytes=archive_bytes,
             downloads=dict.fromkeys(state.get("downloads", [])),
             dropped_history_messages=state["dropped_history_messages"],
@@ -635,6 +639,7 @@ class AgentSession:
         index = list(self.uploads).index(upload_id) + 1
         upload = self.uploads.pop(upload_id)
         self.pending_upload_removals.add(upload_id)
+        self.removed_upload_paths.add(attachment_path(upload, index))
         self._add_entry(AppEventEntry(removal_event(upload, index)))
         return upload
 
