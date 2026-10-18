@@ -344,9 +344,12 @@ def create_app(
     auth_registry = create_auth_registry(settings.auth_token, settings.auth_tokens)
     require_auth = create_auth_dependency(auth_registry)
 
-    def export_scope(session_id: str, owner: str) -> str:
+    def export_scope(session_id: str) -> str:
         # Namespace the signing primitive so stream tokens cannot authorize an export.
-        return f"ai-chat-export:{session_id}:{owner}"
+        # The link is a short-lived capability, like the events stream tokens: browsers
+        # send the owner cookie inconsistently between the minting fetch and the download
+        # navigation, so the redemption request cannot bind it.
+        return f"ai-chat-export:{session_id}"
 
     def require_session_auth(request: Request) -> None:
         # The body-limit middleware runs before router path parameters exist.
@@ -354,12 +357,18 @@ def create_app(
         match = re.fullmatch(r"/sessions/([^/]+)/export", path)
         if auth_registry.enabled and request.method == "GET" and match is not None:
             credential = auth_registry.authenticate_stream(
-                export_scope(match[1], request.cookies.get(OWNER_COOKIE, "")),
+                export_scope(match[1]),
                 request.query_params.get("token"),
             )
             if credential is not None:
                 request.state.auth_credential_id = credential.id
+                request.state.export_link = True
                 return
+            if request.query_params.get("token") is not None:
+                raise HTTPException(
+                    status_code=401,
+                    detail="The export download link is invalid or has expired.",
+                )
         require_auth(request)
 
     async def restore_session(request: Request, owner: str | None = Cookie(default=None, alias=OWNER_COOKIE)) -> None:
@@ -590,7 +599,7 @@ def create_app(
             if credential is None
             else create_stream_token(
                 credential.token,
-                export_scope(session_id, owner),
+                export_scope(session_id),
                 ttl_seconds=300,
             )
         )
@@ -600,10 +609,19 @@ def create_app(
     @app.get("/sessions/{session_id}/export", dependencies=[Depends(require_session_auth), Depends(restore_session)])
     async def export_session(
         session_id: str,
+        request: Request,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> Response:
         """Stream the same complete ZIP that the administrator command writes."""
-        store.require_owned(session_id, owner)
+        if getattr(request.state, "export_link", False):
+            # The signed link replaces browser ownership: resolve the owner from the
+            # session record so the archive filters the right history.
+            session_record = store.get(session_id)
+            if session_record is None:
+                raise HTTPException(status_code=404, detail="Chat session not found.")
+            owner = session_record.owner_token
+        else:
+            store.require_owned(session_id, owner)
         if recovery.history is None:
             raise HTTPException(status_code=409, detail="Saved chat export requires PostgreSQL history.")
         release = recovery.pin(session_id)

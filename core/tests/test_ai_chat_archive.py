@@ -219,7 +219,7 @@ def test_zip_cli_matches_the_shared_writer_and_preserves_output_on_error(postgre
     assert not list(tmp_path.glob(".chat-export-*"))
 
 
-def test_native_download_link_is_bound_to_session_owner_and_expiry(postgres_history):
+def test_native_download_link_is_scoped_to_the_session_and_expires(postgres_history):
     app = basic.create_test_app(
         settings=basic.make_settings(history_postgres_url="test"), provider=basic.FakeProvider()
     )
@@ -243,19 +243,22 @@ def test_native_download_link_is_bound_to_session_owner_and_expiry(postgres_hist
             == 401
         )
         other = basic.AuthenticatedTestClient(app)
-        assert other.get(url, headers={"Authorization": ""}).status_code == 401
+        # A browser that does not send the owner cookie can still redeem the link.
+        other_downloaded = other.get(url, headers={"Authorization": ""})
+        assert other_downloaded.status_code == 200 and other_downloaded.content == downloaded.content
+        # Minting still requires the browser ownership cookie.
         assert other.post(f"/sessions/{session}/export").status_code == 404
         other.close()
         expired = create_stream_token(
             basic.AI_AUTH_TOKEN,
-            f"ai-chat-export:{session}:{owner}",
+            f"ai-chat-export:{session}",
             ttl_seconds=300,
             now=datetime.now(UTC) - timedelta(seconds=600),
         )
-        assert (
-            client.get(f"/sessions/{session}/export?token={expired}", headers={"Authorization": ""}).status_code == 401
-        )
-        assert client.get(f"/sessions/{session}/export?token=invalid", headers={"Authorization": ""}).status_code == 401
+        for bad in (expired, "invalid"):
+            rejected = client.get(f"/sessions/{session}/export?token={bad}", headers={"Authorization": ""})
+            assert rejected.status_code == 401
+            assert rejected.json()["detail"] == "The export download link is invalid or has expired."
         assert client.get(f"/sessions/{session}/export", headers={"Authorization": ""}).status_code == 401
         assert client.post(url, headers={"Authorization": ""}).status_code == 401
         assert (
