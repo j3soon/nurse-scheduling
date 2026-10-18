@@ -314,6 +314,24 @@ def test_native_download_link_works_for_a_session_that_is_not_loaded(postgres_hi
         assert json.loads(archive.read("manifest.json"))["session_id"] == session
 
 
+def test_upload_events_link_their_own_version_of_a_reused_filename(postgres_history):
+    app = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test"), provider=basic.FakeProvider()
+    )
+    with basic.AuthenticatedTestClient(app) as client:
+        session = basic.create_session(client)
+        (first,) = basic.upload_files(client, session, ("roster.csv", b"draft", "text/csv"))
+        assert client.delete(f"/sessions/{session}/uploads/{first}").status_code == 204
+        (second,) = basic.upload_files(client, session, ("roster.csv", b"corrected", "text/csv"))
+        assert client.post(f"/sessions/{session}/messages", json={"message": "Hello"}).status_code == 200
+        exported = client.get(f"/sessions/{session}/export")
+    with ZipFile(io.BytesIO(exported.content)) as archive:
+        html = archive.read("chat.html").decode()
+        paths = {file["source_id"]: file["path"] for file in json.loads(archive.read("manifest.json"))["files"]}
+    uploaded = [block.split('href="', 1)[1].split('"', 1)[0] for block in html.split('<ul class="attachments">')[1:]]
+    assert uploaded == [paths[first], paths[second]]
+
+
 def test_native_export_without_shared_auth_still_requires_owner(postgres_history):
     app = basic.create_test_app(
         settings=basic.make_settings(history_postgres_url="test", auth_token=None), provider=basic.FakeProvider()

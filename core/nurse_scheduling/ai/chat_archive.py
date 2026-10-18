@@ -33,6 +33,7 @@ from starlette.responses import StreamingResponse
 
 from .chat_export import _file_html, _file_markdown, build_saved_chat_export
 from .history import ChatHistory, _owner_hash
+from .workspace import SandboxAttachment, attachment_path
 
 FILE_CHUNK_BYTES = 1024 * 1024
 
@@ -98,7 +99,16 @@ def _documents(snapshot, files):
     if files:
         # Point uploaded-file entries at the copies inside this archive. Render
         # from a copy so the links stay out of chat.json's exported snapshot.
-        urls = {file["filename"]: quote(file["path"], safe="/") for file in files if file["kind"] == "upload"}
+        urls = {}
+        for file in files:
+            if file["kind"] == "upload":
+                url = quote(file["path"], safe="/")
+                # Upload events name each version by its sandbox path, which includes the upload ID.
+                upload = SandboxAttachment(file["filename"], file["media_type"], None, id=file["source_id"])
+                urls[attachment_path(upload, 0)] = url
+                # The current file list has only filenames. A later upload of an active filename
+                # is renamed, so the newest version of a filename is the active one.
+                urls[file["filename"]] = url
         snapshot = {**snapshot, "metadata": {**(snapshot.get("metadata") or {}), "file_urls": urls}}
     html = build_saved_chat_export(snapshot, "html")
     markdown = build_saved_chat_export(snapshot, "markdown")

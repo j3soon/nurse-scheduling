@@ -265,9 +265,14 @@ def _file_rows(files, urls=None):
         value = Decimal(str(count / 1000)).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
         return f"{value:,f}".rstrip("0").rstrip(".") if value % 1 else f"{int(value):,}"
 
-    # `urls` maps filenames to bundled attachment paths when the export carries files.
+    # `urls` maps upload event paths and filenames to bundled attachment paths when the
+    # export carries files. Only upload event entries have a path.
+    urls = urls or {}
     return [
-        {"label": f"{file['filename']} ({size(file['bytes'])} KB)", "url": (urls or {}).get(file["filename"])}
+        {
+            "label": f"{file['filename']} ({size(file['bytes'])} KB)",
+            "url": urls.get(file.get("path"), urls.get(file["filename"])),
+        }
         for file in files
     ]
 
