@@ -66,6 +66,7 @@ REFERENCE_USER_GUIDE = "/reference/user-guide"
 REFERENCE_SCHEDULE_EXAMPLE = "/reference/examples/large-ward-with-87-people-2025-11.yaml"
 ATTACHMENT_TOOL_DIRECTORY = Path(__file__).with_name("attachment_tools")
 INSPECTION_HELPERS = {
+    "build_taiwan_holiday_groups.py": "Read-only Taiwan WORKDAY/FREEDAY group generation from the bundled calendar, including official holidays and makeup workdays. Preserves custom groups. Defaults to current schedule. --start/--end override the range. Rejects unsupported dates.",
     "inspect_request_tiers.py": "Current YAML inventory of all nonzero shift-request weight tiers, with entry and expanded target counts. --max-tiers bounds returned tiers.",
     "inspect_shift_requests.py": "Current YAML nonzero shift-request counts and resolved selectors. Repeat --weight, --person or --date to filter. --max-requests 0 returns counts only.",
     "inspect_xlsx.py": "XLSX sheets, cells, formulas and saved caches. Use --overview for sheet names, visibility and reported sizes. Use --styles for stored formatting. Use --summary --range A1:B10 for typed value frequencies and optional --axis row|column counts. With --styles, summaries separate values by style. Reports blanks and truncation without recalculating formulas.",

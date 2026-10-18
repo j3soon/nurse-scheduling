@@ -65,3 +65,9 @@ followed by a custom parser does not establish adoption. If several discovery
 surfaces fail, retain their results and test a different cause before adding
 more capability text or tool fields. Declare any maintainability tradeoff before
 measuring it, rather than choosing a favorable metric afterward.
+
+For Taiwan calendar groups, use `build_taiwan_holiday_groups.py` with the
+current schedule and optional `--start`/`--end`. It reads the frontend's bundled
+calendar table, preserves custom groups and returns JSON without editing files.
+Test an official holiday and a makeup workday, not just an ordinary month.
+Reject unsupported dates instead of silently generating weekday-only groups.

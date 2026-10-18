@@ -401,3 +401,43 @@ before storing helper-use counts with the existing benefit receipt. The prompt
 evidence validator requires all candidate runs to use the helper and binds those
 counts to the measured helper bytes. This adds an adoption condition without
 replacing the receipt's correctness or declared cost requirement.
+
+
+## Taiwan calendar generator adoption
+
+The renewal policy generates holiday groups with
+`build_taiwan_holiday_groups.py --start START --end END`. The TypeScript table
+remains the generator's input, without a direct-read instruction in this policy.
+A fresh comparison used the original policy and this wording, with the same
+helper, fixtures, model and full production prompt otherwise unchanged.
+Both versions used `unsloth/Qwen3.8-27B-NVFP4`, real E2B commands, three repetitions
+and four concurrent jobs. No optimizer jobs ran.
+
+| Case | Correct before / after | Generator use before / after | TypeScript reads before / after |
+| --- | ---: | ---: | ---: |
+| `dates-range-renew-small` | 3/3 / 3/3 | 1/3 / 3/3 | 3/3 / 0/3 |
+| `dates-range-renew-custom-group-small` | 3/3 / 3/3 | 0/3 / 3/3 | 3/3 / 1/3 |
+| `dates-range-renew-makeup` | 3/3 / 3/3 | 0/3 / 3/3 | 3/3 / 1/3 |
+
+Use counts require successful calculation with both range flags. Source reads
+and `--help` do not count. Custom-group scope and the makeup workday remained
+correct. Some runs still read the source table after using the generator.
+
+Generated tokens, mean ± sample standard deviation, with three matched pairs:
+
+| Case | Before | After | Paired change ± SD |
+| --- | ---: | ---: | ---: |
+| Ordinary renewal | 5547 ± 2040 | 3825 ± 835 | -1722 ± 1733 |
+| Custom-group renewal | 5685 ± 271 | 5279 ± 2211 | -406 ± 2380 |
+| Makeup-workday renewal | 6244 ± 1098 | 4510 ± 897 | -1734 ± 202 |
+
+These are descriptive measurements. No cost target was declared, so the
+original-versus-revised comparison passes adoption but not the benefit gate.
+
+A separate full-prompt ablation removed the complete revised renewal policy.
+The four candidate cases each passed 3/3, including explanation-before-edit and
+custom-group controls. Both renewal controls executed the generator with both
+range flags in 3/3 runs. The saved prompt receipt enforces this adoption condition
+and binds it to the helper bytes. Its correctness benefit validates the complete
+policy, not the independent effect of selecting the generator. Neither comparison
+had infrastructure errors.

@@ -117,6 +117,7 @@ from .report_extension import prepare_extension, read_completed_reports
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 CASES = Path(__file__).resolve().parent / "cases"
 FIXTURES = {
+    "calendar-makeup": Path(__file__).resolve().parent / "fixtures" / "calendar-makeup.yaml",
     "shift-groups": Path(__file__).resolve().parent / "fixtures" / "shift-groups.yaml",
     "policy-audit": Path(__file__).resolve().parent / "fixtures" / "policy-audit.yaml",
     "request-audit-groups": Path(__file__).resolve().parent / "fixtures" / "request-audit-groups.yaml",

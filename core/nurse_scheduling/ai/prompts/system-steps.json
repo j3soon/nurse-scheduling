@@ -229,12 +229,12 @@
       "dates-range-renew-custom-group-small",
       "holiday-question-explains-workdays"
     ],
-    "hypothesis": "Explains importing the Taiwan holiday calendar before applying an expanded range, while preserving custom date-group scope.",
-    "sha256": "879b848c3411d541eb5b15478f64ed623c4ab6929ba37df30f15f50ed6308bbd",
+    "hypothesis": "Explains importing the Taiwan holiday calendar before expanding the range, then generates its groups with the maintained helper while preserving custom-group scope.",
+    "sha256": "530c501b18b7dd041fc0acd26e4fc910f5635e93e644867a4d1048849ec1d0d3",
     "evidence": [
       {
         "case": "holiday-question-explains-workdays",
-        "input_sha256": "f582a706c2d414f95988b41d77bb985f8af963cd7be795240d3b9aeafda2e0a4",
+        "input_sha256": "1406c72e4fe7b86f03e00456d4997c7c4fb2b49a1920b123f7260c98ea043635",
         "before": "0/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
@@ -242,26 +242,47 @@
         "controls": [
           {
             "case": "dates-range-renew-custom-group-small",
-            "input_sha256": "883a240aed177492490d7b6a2516461b5b7b86cd7960bca8abf7d1c01ad4ae4c",
-            "before": "3/3",
+            "input_sha256": "b9c60e76671b3589bf752b8d9b3cb5fed5b4d69eea9287f27e0fde48c3706def",
+            "before": "2/3",
             "after": "3/3"
           },
           {
             "case": "dates-range-renew-small",
-            "input_sha256": "bfb03625d02a5ed2522e08bc68cc6e156ed8956271397762f95baecf85d77154",
+            "input_sha256": "76cda2cecc44c9426580037fe3467da9215994ad405d4acef9ef84992773a420",
             "before": "3/3",
             "after": "3/3"
           },
           {
             "case": "holiday-expansion-question-without-reads",
-            "input_sha256": "5117ca557c7fabe18a71614adec8e760e37b6f239aa6559615249bdfc029fbc7",
-            "before": "3/3",
+            "input_sha256": "7e7c6c75ddc15e7b1b976f45d5ca6b82575689be4893461a67a11001faaa68b1",
+            "before": "0/3",
             "after": "3/3"
           }
         ],
-        "note": "Previous full prompt versus the same full prompt with only this section reworded. Cases, fixtures, tools and references are unchanged. Real provider and E2B commands where needed, four concurrent case jobs. No cost improvement is claimed."
+        "helper_usage": {
+          "helper": "build_taiwan_holiday_groups.py",
+          "sha256": "a87ca83d0174344afc2873f30a2fe35b0a6dc688eea2e62c4bce6238290517db",
+          "flags": [
+            "--start",
+            "--end"
+          ],
+          "cases": [
+            {
+              "case": "dates-range-renew-small",
+              "before": "1/3",
+              "after": "3/3"
+            },
+            {
+              "case": "dates-range-renew-custom-group-small",
+              "before": "1/3",
+              "after": "3/3"
+            }
+          ]
+        },
+        "note": "Full production prompt with the revised renewal policy versus that prompt with the complete policy omitted. Three repetitions and four concurrent jobs with real provider and E2B commands. All four candidate cases passed 3/3. Both renewal cases executed the generator with --start and --end in 3/3 runs. This validates the complete policy and its adoption condition, not the independent benefit of changing the calendar source. A separate original-versus-revised comparison preserves correctness and measures adoption. No cost target or efficiency gain is claimed."
       }
-    ]
+    ],
+    "comparison_mode": "ablation"
   },
   {
     "id": "optimizer-start",

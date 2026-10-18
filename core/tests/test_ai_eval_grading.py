@@ -53,6 +53,7 @@ CROSS_YEAR_UNIT_PATH = Path(__file__).parent / "ai_eval" / "fixtures" / "cross-y
 WARD_PATH = Path(__file__).parent / "testcases" / "real" / "large-ward-with-87-people-2025-11.yaml"
 
 FIXTURE_SCHEDULES = {
+    "calendar-makeup": _load_yaml((CASES_PATH.parent / "fixtures" / "calendar-makeup.yaml").read_bytes()),
     "shift-groups": _load_yaml((CASES_PATH.parent / "fixtures" / "shift-groups.yaml").read_bytes()),
     "policy-audit": _load_yaml((CASES_PATH.parent / "fixtures" / "policy-audit.yaml").read_bytes()),
     "request-audit-groups": _load_yaml((CASES_PATH.parent / "fixtures" / "request-audit-groups.yaml").read_bytes()),
@@ -2234,6 +2235,49 @@ def test_retained_analysis_cases_require_real_reuse_and_current_mapping(correcte
         answer=answer, activity=activity, intermediate_answers=["Inspection complete. Awaiting confirmation."]
     )
     assert grade(case, outcome).passed is (defect is None)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [None, "weekend-only", "missing-custom"],
+    ids=["correct", "wrong-makeup-workday", "dropped-custom-group"],
+)
+def test_calendar_makeup_case_checks_real_calendar_members_and_custom_groups(mutation):
+    from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
+
+    from .ai_test_helper import schedule_yaml
+
+    case = next(c for c in load_cases(CASES_PATH) if c.id == "dates-range-renew-makeup")
+    initial = FIXTURE_SCHEDULES[case.fixture]
+    proposed = copy.deepcopy(initial)
+    proposed["dates"]["range"] = {"startDate": "2024-02-01", "endDate": "2024-02-18"}
+    proposed["dates"]["groups"].extend(
+        [
+            {
+                "id": "WORKDAY",
+                "description": "Taiwan workdays imported from the current holiday calendar",
+                "members": ["01", "02", "05", "06", "07", "15", "16", "17"],
+            },
+            {
+                "id": "FREEDAY",
+                "description": "Taiwan freedays imported from the current holiday calendar",
+                "members": ["03", "04", "08", "09", "10", "11", "12", "13", "14", "18"],
+            },
+        ]
+    )
+    assert validate_frontend_schedule_yaml(schedule_yaml(proposed), 50_000).valid
+    if mutation == "weekend-only":
+        proposed["dates"]["groups"][-2]["members"].remove("17")
+        proposed["dates"]["groups"][-1]["members"].append("17")
+    elif mutation == "missing-custom":
+        proposed["dates"]["groups"].pop(0)
+    outcome = RunOutcome(
+        initial=initial,
+        proposed=proposed,
+        intermediate_answers=["Import the Taiwan holiday calendar?"],
+        proposal_turns=[False, True],
+    )
+    assert grade(case, outcome).passed == (mutation is None)
 
 
 @pytest.mark.parametrize("suffix", ["partial-edit", "restore-last-accepted", "valid-edit-control"])
