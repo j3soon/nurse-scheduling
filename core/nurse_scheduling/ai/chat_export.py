@@ -124,7 +124,9 @@ def _render_node(node) -> str:
         ):
             href = ""
         # The exported page is the chat itself, so every link opens in a new tab.
-        return f'<a href="{escape_html(href, react=True)}" target="_blank" rel="noopener noreferrer">' + render() + "</a>"
+        return (
+            f'<a href="{escape_html(href, react=True)}" target="_blank" rel="noopener noreferrer">' + render() + "</a>"
+        )
     if kind == "paragraph" and node.hidden:
         return render()
     tag = "del" if kind == "s" else node.tag
@@ -426,9 +428,7 @@ def build_html_chat(messages, metadata):
         source = " " + message["source"] if message.get("source") else ""
         files = _message_files(message, urls)
         uploads = (
-            '<ul class="attachments">'
-            + "".join("<li>" + _file_html(file) + "</li>" for file in files)
-            + "</ul>"
+            '<ul class="attachments">' + "".join("<li>" + _file_html(file) + "</li>" for file in files) + "</ul>"
             if files
             else ""
         )

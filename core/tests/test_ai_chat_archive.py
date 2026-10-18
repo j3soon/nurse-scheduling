@@ -349,6 +349,8 @@ def test_archive_documents_link_uploaded_files_without_touching_the_snapshot():
         # Each uploaded-file entry links to its copy inside the ZIP in a new tab.
         assert f'<a href="{url}" target="_blank" rel="noopener noreferrer">{file["filename"]} (' in html
         assert f"]({url})" in markdown
+    # Every link, including the session file index, keeps the chat page open.
+    assert html.count("<a ") == html.count('target="_blank" rel="noopener noreferrer"') > len(uploads)
     # chat.json keeps the untouched snapshot, and snapshot-only exports stay plain.
     assert "file_urls" not in snapshot.get("metadata", {})
     solo_html = build_saved_chat_export(snapshot, "html")

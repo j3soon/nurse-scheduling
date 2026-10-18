@@ -31,7 +31,7 @@ from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile, ZipInfo
 
 from starlette.responses import StreamingResponse
 
-from .chat_export import build_saved_chat_export, escape_html
+from .chat_export import _file_html, _file_markdown, build_saved_chat_export
 from .history import ChatHistory, _owner_hash
 
 FILE_CHUNK_BYTES = 1024 * 1024
@@ -98,30 +98,24 @@ def _documents(snapshot, files):
     if files:
         # Point uploaded-file entries at the copies inside this archive. Render
         # from a copy so the links stay out of chat.json's exported snapshot.
-        urls = {
-            file["filename"]: quote(file["path"], safe="/") for file in files if file["kind"] == "upload"
-        }
+        urls = {file["filename"]: quote(file["path"], safe="/") for file in files if file["kind"] == "upload"}
         snapshot = {**snapshot, "metadata": {**(snapshot.get("metadata") or {}), "file_urls": urls}}
     html = build_saved_chat_export(snapshot, "html")
     markdown = build_saved_chat_export(snapshot, "markdown")
     if files:
-        rows, lines = [], []
+        # Link the index like the uploaded-file entries, with the same escaping and new-tab targets.
+        rows = []
         for file in files:
-            label = (
-                file["filename"] + " (" + file["kind"] + (", removed" if file["removed_at"] is not None else "") + ")"
-            )
-            url = quote(file["path"], safe="/")
-            rows.append(f'<li><a href="{escape_html(url)}">{escape_html(label)}</a> ({file["bytes"]} bytes)</li>')
-            # Escape labels so filenames cannot add Markdown links or formatting.
-            md_label = re.sub(r"([\\`*_{}\[\]<>])", r"\\\1", label)
-            lines.append(f"- [{md_label}]({url}) ({file['bytes']} bytes)")
+            removed = ", removed" if file["removed_at"] is not None else ""
+            link = {"label": f"{file['filename']} ({file['kind']}{removed})", "url": quote(file["path"], safe="/")}
+            rows.append((link, f" ({file['bytes']} bytes)"))
         index = (
             '<section class="proposal" aria-label="Session files"><h2>Session files</h2><ul>'
-            + "".join(rows)
+            + "".join(f"<li>{_file_html(link)}{size}</li>" for link, size in rows)
             + "</ul></section>\n"
         )
         html = html.replace("  </main>", "    " + index + "  </main>")
-        markdown += "\n## Session files\n\n" + "\n".join(lines) + "\n"
+        markdown += "\n## Session files\n\n" + "".join(f"- {_file_markdown(link)}{size}\n" for link, size in rows)
     return html, markdown
 
 
