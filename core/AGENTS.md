@@ -208,6 +208,8 @@ from the trust-based local harness.
   version, including removed files, against `AI_MAX_ARCHIVE_BYTES` before accepting it.
   Test removal during a storage outage. Keep unsaved file bytes in the pending
   archive until a successful write, even after the user removes the active file.
+  After rejecting optimizer files, check that a restart does not load an older
+  workbook as the latest result.
 - Bound sandbox file and command output bytes while receiving them. Truncating
   tool output after buffering does not bound the AI service's memory use.
 - Test file workflows across message boundaries and session expiry. Check the

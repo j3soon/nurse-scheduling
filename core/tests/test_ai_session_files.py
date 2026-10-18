@@ -335,6 +335,42 @@ def test_failed_optimizer_file_write_is_retained_and_retried(postgres_history, m
         assert latest == loaded
 
 
+def test_archive_limit_does_not_restore_an_older_optimizer_workbook(postgres_history):
+    settings = basic.make_settings(history_postgres_url="test", max_archive_bytes=10_000)
+    app = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
+    with basic.AuthenticatedTestClient(app) as client:
+        session = basic.create_session(client)
+        job = SessionOptimization(
+            id="old-job",
+            session_id=session,
+            remote_id="remote",
+            source_sha256="hash",
+            payload=OptimizerJobPayload(id="remote", state="completed", terminal=True),
+            original_id_by_anonymized_id={},
+            people_count=0,
+            schedule_yaml="description: original",
+        )
+        artifact = OptimizerArtifact(b"old workbook", "result.xlsx", "application/xlsx", b"{}")
+        assert client.portal.call(app.state.recovery.save_optimizer_result, job, artifact) is None
+        live = app.state.session_store.get(session)
+        remaining = settings.max_archive_bytes - live.archive_bytes
+        assert app.state.session_store.save_download(session, "fill-archive", b"x" * remaining)
+        assert client.portal.call(app.state.recovery.save, session)
+        newer = replace(job, id="new-job", payload=OptimizerJobPayload(id="new", state="failed", terminal=True))
+        app.state.session_optimizer._jobs[newer.id] = newer
+        assert client.portal.call(app.state.recovery.save_optimizer_result, newer, None) is not None
+        client.portal.call(app.state.session_optimizer._notify_update, newer)
+        client.portal.call(app.state.recovery.flush, session)
+        assert client.portal.call(app.state.session_optimizer.latest_result_artifact, session) is None
+        cookies = dict(client.cookies)
+    restarted = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
+    with basic.AuthenticatedTestClient(restarted, cookies=cookies) as client:
+        assert client.get(f"/sessions/{session}/uploads").status_code == 200
+        assert client.portal.call(restarted.state.session_optimizer.latest_result_artifact, session) is None
+        # The earlier workbook remains available as an explicit historical download.
+        assert client.get(f"/sessions/{session}/optimizations/{job.id}/xlsx").content == artifact.content
+
+
 @pytest.mark.parametrize("operation", ["latest_optimizer", "load_file"])
 def test_optional_optimizer_read_failure_still_finishes_the_chat(postgres_history, monkeypatch, operation):
     app = basic.create_test_app(
