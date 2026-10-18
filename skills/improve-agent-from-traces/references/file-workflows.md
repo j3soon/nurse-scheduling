@@ -58,3 +58,10 @@ blanks, formulas and truncated groups. Omit `--summary` for individual cells. Ke
 and missing formula caches unknown. Test a changed layout and contrasting formula
 case. Grade answers independently of helper use, then inspect generated commands
 before claiming that the agent avoided custom scripts.
+
+Separate a missing inspector feature from failure to select an available feature.
+Check the actual arguments and custom parsing in each repetition. A helper call
+followed by a custom parser does not establish adoption. If several discovery
+surfaces fail, retain their results and test a different cause before adding
+more capability text or tool fields. Declare any maintainability tradeoff before
+measuring it, rather than choosing a favorable metric afterward.
