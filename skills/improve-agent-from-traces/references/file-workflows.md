@@ -71,3 +71,8 @@ current schedule and optional `--start`/`--end`. It reads the frontend's bundled
 calendar table, preserves custom groups and returns JSON without editing files.
 Test an official holiday and a makeup workday, not just an ordinary month.
 Reject unsupported dates instead of silently generating weekday-only groups.
+
+Measure helper use on a representative workload as well as a small control.
+A table that the agent can count directly may hide the value of a maintained
+calculation. Report costs and adoption separately for each workload. Do not
+attribute a difference only to size when the question or other inputs differ.

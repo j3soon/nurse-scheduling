@@ -53,6 +53,9 @@ CROSS_YEAR_UNIT_PATH = Path(__file__).parent / "ai_eval" / "fixtures" / "cross-y
 WARD_PATH = Path(__file__).parent / "testcases" / "real" / "large-ward-with-87-people-2025-11.yaml"
 
 FIXTURE_SCHEDULES = {
+    "monthly-roster-statistics": _load_yaml(
+        (CASES_PATH.parent / "fixtures" / "monthly-roster-statistics.yaml").read_bytes()
+    ),
     "calendar-makeup": _load_yaml((CASES_PATH.parent / "fixtures" / "calendar-makeup.yaml").read_bytes()),
     "shift-groups": _load_yaml((CASES_PATH.parent / "fixtures" / "shift-groups.yaml").read_bytes()),
     "policy-audit": _load_yaml((CASES_PATH.parent / "fixtures" / "policy-audit.yaml").read_bytes()),

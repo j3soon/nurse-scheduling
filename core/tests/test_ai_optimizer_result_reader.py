@@ -473,3 +473,16 @@ def test_result_cli_rejects_options_from_another_mode(monkeypatch, capsys, optio
         main()
     assert error.value.code == 2
     assert "--statistics" in capsys.readouterr().err
+
+
+def test_monthly_statistics_match_independent_counts_and_run_lengths(tmp_path):
+    source = RESULT_SOURCES["monthly-roster-statistics"].read_text(encoding="utf-8")
+    context = build_result_context(source)
+    path = tmp_path / "monthly.xlsx"
+    path.write_bytes(completion_result("monthly-roster-statistics", source)[0])
+    rows = summarize_roster(path, context, context["source_sha256"])["statistics"]
+    assert len(rows) == 60
+    assert {
+        shift: sum(row["shift_counts"].get(shift, 0) for row in rows) for shift in ["D", "D+", "E", "N", "OFF"]
+    } == {"D": 232, "D+": 232, "E": 465, "N": 466, "OFF": 465}
+    assert all(row["max_work_run"] == 6 and row["max_off_run"] == 2 for row in rows)

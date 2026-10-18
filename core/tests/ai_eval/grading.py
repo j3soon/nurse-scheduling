@@ -382,6 +382,7 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         raise EvalCaseError(f"{source} `optimizer_error` must be a string.")
     optimizer_completion = entry.get("optimizer_completion", "")
     completion_names = {
+        "monthly-roster-statistics",
         "",
         "request-audit",
         "request-audit-pending",
