@@ -303,6 +303,7 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
         "frontendVersion": snapshot["frontend_version"],
         "backendVersion": source.get("backend_version", "unknown"),
         "uploadedFiles": source.get("uploaded_files", []),
+        "fileUrls": source.get("file_urls", {}),
     }
     if optimization:
         request = optimization.get("request") or {}

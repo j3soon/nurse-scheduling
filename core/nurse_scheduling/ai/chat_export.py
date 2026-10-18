@@ -78,7 +78,9 @@ def _markdown():
     parser = MarkdownIt("gfm-like2", {"html": True, "alerts": False})
     # Parse unsafe links as links, then apply react-markdown's protocol allowlist.
     parser.validateLink = lambda _url: True
-    parser.linkify.tlds("[a-z]{2,}", keep_old=True)
+    # Match react-markdown with remark-gfm: autolink scheme URLs and emails only.
+    # Bare domains would swallow filenames and doc paths (icon128.png, get-started.md).
+    parser.linkify.set({"fuzzy_link": False})
     return parser
 
 
@@ -256,15 +258,34 @@ def message_label(message):
     return "User · " + source.capitalize() + topic if source in {"app", "status"} else "User"
 
 
-def _file_lines(files):
+def _file_rows(files, urls=None):
     def size(count):
         value = Decimal(str(count / 1000)).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
         return f"{value:,f}".rstrip("0").rstrip(".") if value % 1 else f"{int(value):,}"
 
-    return [f"{file['filename']} ({size(file['bytes'])} KB)" for file in files]
+    # `urls` maps filenames to bundled attachment paths when the export carries files.
+    return [
+        {"label": f"{file['filename']} ({size(file['bytes'])} KB)", "url": (urls or {}).get(file["filename"])}
+        for file in files
+    ]
 
 
-def _message_files(message):
+def _file_markdown(row):
+    if not row["url"]:
+        return row["label"]
+    # Escape labels so filenames cannot add Markdown links or formatting.
+    label = re.sub(r"([\\`*_{}\[\]<>])", r"\\\1", row["label"])
+    return f"[{label}]({row['url']})"
+
+
+def _file_html(row):
+    label = escape_html(row["label"], react=True)
+    if not row["url"]:
+        return label
+    return f'<a href="{escape_html(row["url"], react=True)}">{label}</a>'
+
+
+def _message_files(message, urls=None):
     if message.get("source") != "app" or message.get("title") != "Files Uploaded":
         return []
     try:
@@ -277,7 +298,7 @@ def _message_files(message):
             for file in files
         ):
             return []
-        return _file_lines(files)
+        return _file_rows(files, urls)
     except (ValueError, IndexError):
         return []
 
@@ -336,11 +357,12 @@ def build_markdown_chat(messages, metadata):
         "- Backend version: " + metadata.get("backendVersion", "unknown"),
         "- AI server: " + metadata["endpoint"],
     ]
+    urls = metadata.get("fileUrls", {})
     for message in messages:
         lines += ["", "## " + message_label(message)]
-        files = _message_files(message)
+        files = _message_files(message, urls)
         if files:
-            lines += ["", *["- " + file for file in files]]
+            lines += ["", *["- " + _file_markdown(file) for file in files]]
         if message["role"] == "optimizer":
             summary, details = _optimizer_parts(message["content"])
             lines += ["", summary or "[No message text]"]
@@ -376,7 +398,8 @@ def build_markdown_chat(messages, metadata):
         if details:
             lines += ["", *["- " + detail for detail in details]]
     if files := metadata.get("uploadedFiles"):
-        lines += ["", "## Uploaded files", "", *["- " + line for line in _file_lines(files)]]
+        rows = _file_rows(files, urls)
+        lines += ["", "## Uploaded files", "", *["- " + _file_markdown(row) for row in rows]]
     if running := metadata.get("runningOptimization"):
         lines += [
             "",
@@ -397,13 +420,15 @@ def _template():
 
 
 def build_html_chat(messages, metadata):
-    rendered = []
+    rendered, urls = [], metadata.get("fileUrls", {})
     for message in messages:
         role = message["role"]
         source = " " + message["source"] if message.get("source") else ""
-        files = _message_files(message)
+        files = _message_files(message, urls)
         uploads = (
-            '<ul class="attachments">' + "".join("<li>" + escape_html(file) + "</li>" for file in files) + "</ul>"
+            '<ul class="attachments">'
+            + "".join("<li>" + _file_html(file) + "</li>" for file in files)
+            + "</ul>"
             if files
             else ""
         )
@@ -475,7 +500,7 @@ def build_html_chat(messages, metadata):
     if metadata.get("uploadedFiles"):
         uploads = (
             '\n    <section class="proposal" aria-label="Uploaded files">\n      <h2>Uploaded files</h2>\n      <ul>'
-            + "".join("<li>" + escape_html(line) + "</li>" for line in _file_lines(metadata["uploadedFiles"]))
+            + "".join("<li>" + _file_html(row) + "</li>" for row in _file_rows(metadata["uploadedFiles"], urls))
             + "</ul>\n    </section>"
         )
     running = ""

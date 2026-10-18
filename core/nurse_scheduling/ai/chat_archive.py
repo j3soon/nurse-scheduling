@@ -91,6 +91,13 @@ def read_file_chunk(connection, session_id: str, file_id: str, offset: int, leng
 
 
 def _documents(snapshot, files):
+    if files:
+        # Point uploaded-file entries at the copies inside this archive. Render
+        # from a copy so the links stay out of chat.json's exported snapshot.
+        urls = {
+            file["filename"]: quote(file["path"], safe="/") for file in files if file["kind"] == "upload"
+        }
+        snapshot = {**snapshot, "metadata": {**(snapshot.get("metadata") or {}), "file_urls": urls}}
     html = build_saved_chat_export(snapshot, "html")
     markdown = build_saved_chat_export(snapshot, "markdown")
     if files:

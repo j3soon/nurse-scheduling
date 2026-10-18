@@ -39,6 +39,7 @@ from starlette.requests import ClientDisconnect
 
 from nurse_scheduling.ai import chat_archive
 from nurse_scheduling.ai.chat_archive import FILE_CHUNK_BYTES, ChatArchiveResponse, create_chat_archive
+from nurse_scheduling.ai.chat_export import build_saved_chat_export
 from nurse_scheduling.ai.sessions import SessionStore
 from nurse_scheduling.ai.workspace import SandboxAttachment
 from nurse_scheduling.server.auth import create_stream_token
@@ -296,3 +297,24 @@ def test_browser_archive_fixture_uses_the_current_python_documents():
         assert archive.read("chat.md").decode() == markdown
         for file in manifest["files"]:
             assert hashlib.sha256(archive.read(file["path"])).hexdigest() == file["sha256"]
+
+
+def test_archive_documents_link_uploaded_files_without_touching_the_snapshot():
+    reference = json.loads((Path(__file__).parent / "ai_fixtures/chat-export-archive.json").read_text(encoding="utf-8"))
+    with ZipFile(io.BytesIO(base64.b64decode(reference["zip_base64"]))) as archive:
+        snapshot = json.loads(archive.read("chat.json"))
+        manifest = json.loads(archive.read("manifest.json"))
+        html, markdown = chat_archive._documents(snapshot, manifest["files"])
+    uploads = [file for file in manifest["files"] if file["kind"] == "upload"]
+    assert uploads, "the golden archive should bundle uploaded files"
+    for file in uploads:
+        url = file["path"]
+        # Each uploaded-file entry links to its copy inside the ZIP.
+        assert f'<a href="{url}">{file["filename"]} (' in html
+        assert f"]({url})" in markdown
+    # chat.json keeps the untouched snapshot, and snapshot-only exports stay plain.
+    assert "file_urls" not in snapshot.get("metadata", {})
+    solo_html = build_saved_chat_export(snapshot, "html")
+    solo_markdown = build_saved_chat_export(snapshot, "markdown")
+    assert '<a href="attachments/upload/' not in solo_html
+    assert "](attachments/upload/" not in solo_markdown
