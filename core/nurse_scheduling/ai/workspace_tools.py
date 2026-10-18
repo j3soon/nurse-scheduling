@@ -123,16 +123,17 @@ class WorkspaceTools:
         if outcome.terminal:
             self.command_timeout = outcome.text
             return outcome
-        if name == READ_TOOL:
-            return outcome
-        candidate_status = await self.candidate_tracker.review_if_changed()
+        candidate_status = None if name == READ_TOOL else await self.candidate_tracker.review_if_changed()
         if candidate_status is None:
-            return outcome
-        validation, schedule_change = candidate_status
+            if self.candidate_tracker.rejection is None:
+                return outcome
+            validation, schedule_change = AgentToolOutcome(self.candidate_tracker.rejection, False), None
+        else:
+            validation, schedule_change = candidate_status
         return replace(
             outcome,
             text=f"{outcome.text}\n\n{validation.text}",
-            ok=outcome.ok and validation.ok,
+            ok=outcome.ok and (candidate_status is None or validation.ok),
             # The browser shows the check the model received and previews a valid working copy.
             details={
                 "schedule_check": {"ok": validation.ok, "text": validation.text},

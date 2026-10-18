@@ -512,9 +512,7 @@ class _ScheduleCandidateTracker:
         checked = (content, read_problem)
         if checked == self._last_checked:
             await self._sync_accepted_copy()
-            if self.rejection is None:
-                return None
-            return AgentToolOutcome(self.rejection, False), None
+            return None
         self._last_checked = checked
         if read_problem is not None:
             return await self._reject(f"{prefix}\n{read_problem}")

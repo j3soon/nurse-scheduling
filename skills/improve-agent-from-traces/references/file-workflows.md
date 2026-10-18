@@ -82,3 +82,7 @@ tool and validator. Label the injected response and exclude it from live provide
 telemetry. Keep final-source recovery and zero-rejection first-write cases separate.
 Persistent rejection feedback can recur on reads. Do not count those reports as
 distinct invalid mutations.
+
+Report a command's outcome separately from an unresolved rejected schedule edit.
+A successful read does not accept that edit. Keep its warning visible and block
+finishing or optimization until the edit is corrected or explicitly discarded.

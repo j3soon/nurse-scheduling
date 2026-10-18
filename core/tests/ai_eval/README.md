@@ -142,6 +142,17 @@ This test-only change does not establish a production improvement or cost saving
 Deterministic checks also verify that the draft remains malformed and the recovery
 copy keeps the starting schedule before the live provider responds.
 
+The command-outcome fix also passes these two live cases 3/3 each with the same
+model, template and settings. All recovery runs keep the rejection visible on
+successful commands without marking those commands as failed. The traces include
+reads, a shell command and scratch-file writes. One run needs two additional
+rejected edits before the final valid proposal. No infrastructure failures occur.
+The 15 command-status regression cases fail on the parent implementation and
+pass with the fix. A separate control preserves genuine command failures.
+Finalization and optimization remain blocked while the draft is invalid. These
+checks validate command status and final recovery, not first-write reliability
+or a performance gain.
+
 Use `tool_usage.max_validation_errors` to bound failed trusted schedule checks. A valid final proposal does not erase
 an invalid intermediate mutation. Unrelated tool errors are not schedule-validation repairs.
 

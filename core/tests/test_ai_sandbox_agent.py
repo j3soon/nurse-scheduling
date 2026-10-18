@@ -1355,3 +1355,74 @@ def test_restoring_the_last_accepted_copy_clears_the_rejection():
         assert result.details["schedule_yaml"] == accepted
 
     asyncio.run(check())
+
+
+@pytest.mark.parametrize(
+    "rejected",
+    [b"dates: [", b"", b"\xff", b"x" * (SCHEDULE_BYTE_LIMIT + 1), None],
+    ids=["malformed", "truncated", "encoding", "oversized", "deleted"],
+)
+@pytest.mark.parametrize(
+    "tool,arguments",
+    [
+        (READ_TOOL, {"path": WORKSPACE_LAST_ACCEPTED_SCHEDULE}),
+        (BASH_TOOL, {"command": "cat schedule.yaml"}),
+        (WRITE_TOOL, {"path": "notes.txt", "content": "notes"}),
+    ],
+)
+def test_pending_rejection_does_not_fail_unrelated_successful_commands(tool, arguments, rejected):
+    from nurse_scheduling.ai.workspace_tools import WorkspaceTools
+
+    async def check():
+        base = schedule_yaml()
+
+        def command(name, _timeout, backend):
+            if name == "break":
+                if rejected is None:
+                    backend.files.pop(WORKSPACE_SCHEDULE, None)
+                else:
+                    backend.files[WORKSPACE_SCHEDULE] = rejected
+            return CommandResult("read", "", 0)
+
+        backend = FakeSandboxBackend("pending-rejection", command_handler=command)
+        await hydrate_sandbox(backend, base)
+        tools = WorkspaceTools(backend, base, _limits(), None)
+        bad_edit = {"command": "break"}
+        assert not (await tools._execute(BASH_TOOL, json.dumps(bad_edit))).ok
+        result = await tools._execute(tool, json.dumps(arguments))
+        assert result.ok
+        assert result.details["schedule_check"]["ok"] is False
+        assert tools.candidate_tracker.rejection in result.text
+        assert tools.candidate_tracker.rejection is not None
+        assert backend.files.get(WORKSPACE_SCHEDULE) == rejected
+        assert backend.files[WORKSPACE_LAST_ACCEPTED_SCHEDULE] == base.encode()
+
+        async def unexpected_start(*_):
+            pytest.fail("An unresolved rejected edit must block optimization")
+
+        tools.execute_optimizer = unexpected_start
+        blocked = await tools._execute(OPTIMIZER_TOOL, '{"action":"start"}')
+        assert not blocked.ok
+        # Repeating the same draft must keep the failed check visible.
+        repeated = await tools._execute(BASH_TOOL, json.dumps(bad_edit))
+        assert not repeated.details["schedule_check"]["ok"]
+        assert tools.candidate_tracker.rejection is not None
+
+    asyncio.run(check())
+
+
+def test_pending_rejection_preserves_real_command_failure():
+    from nurse_scheduling.ai.workspace_tools import WorkspaceTools
+
+    async def check():
+        backend = FakeSandboxBackend("failed-command", command_handler=lambda *_: CommandResult("", "missing file", 1))
+        base = schedule_yaml()
+        await hydrate_sandbox(backend, base)
+        tools = WorkspaceTools(backend, base, _limits(), None)
+        await tools._execute(WRITE_TOOL, json.dumps({"path": WORKSPACE_SCHEDULE, "content": "dates: ["}))
+        result = await tools._execute(BASH_TOOL, json.dumps({"command": "cat missing"}))
+        assert not result.ok
+        assert "missing file" in result.text
+        assert tools.candidate_tracker.rejection is not None
+
+    asyncio.run(check())
