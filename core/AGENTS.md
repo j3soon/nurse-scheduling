@@ -356,6 +356,16 @@ skipped does not validate persistence.
   successful run commit, and count it in session memory. Invalidate it when
   sources change. Treat it as untrusted working notes, not user approval.
   Do not retain arbitrary workspace files or execute saved notes automatically.
+- Keep unfinished edits in `/workspace/schedule.yaml`, including rejected drafts.
+  Keep authoritative last accepted contents outside the writable sandbox and
+  expose them at `/workspace/last-accepted-schedule.yaml`. Refresh that copy
+  after mutating tool calls, even if only the backup changed. Keep validation
+  feedback visible to the model and user. Require the current draft to pass
+  trusted review before optimization or successful completion. A nonzero command
+  exit alone must not undo an accepted schedule change. Pair deterministic
+  recovery checks with focused live cases for the model's response to validation
+  feedback. Grade the required recovery action as well as the final schedule.
+  Keep those cases with the implementation commit.
 - Restore only the mandatory one-shift-per-day rule during trusted candidate
   review, and only when the completed schedule passes the existing frontend
   validator. Report the restoration to the model and user. Keep the workspace,

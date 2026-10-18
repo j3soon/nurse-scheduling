@@ -2234,3 +2234,62 @@ def test_retained_analysis_cases_require_real_reuse_and_current_mapping(correcte
         answer=answer, activity=activity, intermediate_answers=["Inspection complete. Awaiting confirmation."]
     )
     assert grade(case, outcome).passed is (defect is None)
+
+
+@pytest.mark.parametrize("suffix", ["partial-edit", "restore-last-accepted", "valid-edit-control"])
+@pytest.mark.parametrize("defect", [None, "lost-accepted-edit", "unrelated-change", "missing-tool"])
+def test_schedule_recovery_cases_require_the_saved_edit_and_preserve_other_data(suffix, defect):
+    from copy import deepcopy
+
+    from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
+
+    from .ai_test_helper import schedule_yaml
+
+    case = next(case for case in load_cases(CASES_PATH) if case.id == f"schedule-recovery-{suffix}")
+    initial = FIXTURE_SCHEDULES[case.fixture]
+    proposed = deepcopy(initial)
+    proposed["description"] = "Accepted clinic edit"
+    if suffix == "partial-edit":
+        proposed["shiftTypes"]["groups"][0]["id"] = "Overnight"
+        proposed["preferences"][2]["shiftType"] = ["Overnight"]
+    assert validate_frontend_schedule_yaml(schedule_yaml(proposed), 1_000_000).valid
+    if defect == "lost-accepted-edit":
+        proposed["description"] = initial["description"]
+    if defect == "unrelated-change":
+        proposed["people"]["items"].pop()
+    activity = [
+        {"kind": "tool", "name": name, "arguments": json.dumps(arguments), "ok": True}
+        for name, arguments in case.tool_usage.required_calls
+    ]
+    activity.extend({"kind": "tool", "name": name, "ok": True} for name in case.tool_usage.required)
+    activity.append({"kind": "tool", "name": "bash", "ok": False, "result": "Expected fixture failure"})
+    if defect == "missing-tool":
+        activity.pop(0)
+    outcome = RunOutcome(initial=initial, proposed=proposed, activity=activity)
+    assert grade(case, outcome).passed is (defect is None)
+
+
+def test_schedule_recovery_requires_reading_the_accepted_copy_itself():
+    from copy import deepcopy
+
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "schedule-recovery-restore-last-accepted")
+    initial = FIXTURE_SCHEDULES[case.fixture]
+    proposed = deepcopy(initial)
+    proposed["description"] = "Accepted clinic edit"
+    activity = [
+        {"kind": "tool", "name": name, "arguments": json.dumps(arguments), "ok": True}
+        for name, arguments in case.tool_usage.required_calls
+        if name != "read"
+    ]
+    activity.extend(
+        [
+            {
+                "kind": "tool",
+                "name": "read",
+                "ok": True,
+                "arguments": json.dumps({"path": "/workspace/attachments/01-schedule-edit-checkpoint.txt"}),
+            },
+            {"kind": "tool", "name": "bash", "ok": False},
+        ]
+    )
+    assert not grade(case, RunOutcome(initial=initial, proposed=proposed, activity=activity)).passed

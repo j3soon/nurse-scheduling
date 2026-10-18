@@ -100,6 +100,8 @@ class WorkspaceTools:
                 optimizer_arguments = None
             if isinstance(optimizer_arguments, dict) and optimizer_arguments.get("action") in {"status", "finish_now"}:
                 return await self.execute_optimizer("", arguments)
+            if self.candidate_tracker.rejection is not None:
+                return AgentToolOutcome(self.candidate_tracker.rejection, False)
             try:
                 current_schedule = (
                     await self.sandbox.read_file(WORKSPACE_SCHEDULE, max_bytes=self.limits.max_schedule_bytes)
@@ -193,6 +195,11 @@ async def run_workspace(
                     raise SandboxCommandTimeoutError(f"{toolset.command_timeout}. The sandbox was terminated.")
                 if not sandbox.started:
                     return
+                if toolset.candidate_tracker.rejection is not None:
+                    raise SandboxCandidateError(
+                        "The sandbox candidate failed trusted schedule validation.",
+                        user_message=toolset.candidate_tracker.rejection,
+                    )
                 candidate = await _read_candidate(sandbox, limits.max_schedule_bytes)
                 review = review_schedule_candidate(schedule_yaml, candidate, limits.max_schedule_bytes)
                 logger.info(

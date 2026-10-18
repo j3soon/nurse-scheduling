@@ -460,6 +460,13 @@ _FIXTURES: dict[str, tuple[str, str, Callable[[], bytes]]] = {
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         _colored_workbook,
     ),
+    "schedule-edit-checkpoint": (
+        "schedule-edit-checkpoint.txt",
+        "text/plain",
+        lambda: (
+            (Path(__file__).with_name("fixtures") / "schedule-edit-checkpoint.txt").read_text(encoding="utf-8").encode()
+        ),
+    ),
     "timeout-checkpoint": (
         "timeout-checkpoint.txt",
         "text/plain",

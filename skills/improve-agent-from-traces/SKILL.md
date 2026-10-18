@@ -291,6 +291,10 @@ self-contained commit. Fold minor corrections into that commit. Follow the
 repository's Git and plain-English rules. Name the relevant
 case and observed change without adding routine validation footers or run-log
 paths. Lead with confirmed results and limit each caveat to the claim it affects.
+After amending or folding an improvement, check its rationale and comparison text
+against the resulting parent commit. Describe compared versions by their actual
+behavior. Replace labels or claims that depend on discarded revisions or removed
+implementations for context.
 
 For an authorized improvement loop, rank the remaining issues again after each
 validated fix. Do not count an inconclusive experiment as an improvement or add

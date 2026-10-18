@@ -92,6 +92,32 @@ answer wording is correct.
 Use `optimizer_error` to simulate an optimizer API outage, and `tool_usage.required_errors` to require an observed
 tool failure. This exercises the agent's response to a tool error without treating a controlled outage as a provider
 or sandbox infrastructure failure.
+The `schedule-recovery` cases use one uploaded script to save a valid description
+change, then stage an unfinished rename, a truncated YAML write, or an optional
+audit error in another tool call. They require the earlier accepted edit and
+preserve unrelated schedule data. The restore case requires a successful read
+of `/workspace/last-accepted-schedule.yaml`. The control runs the audit command
+unchanged so its nonzero exit reaches the tool.
+
+The final comparison uses the same prompt, fixture and provider in both versions,
+with three repetitions and four concurrent jobs. Provider requests and E2B commands
+are real. No optimizer job runs. Model: `unsloth/Qwen3.8-27B-NVFP4`. Template:
+`nurse-scheduling-trace-validation`, with a 900-second test-only turn limit.
+
+| Case | Automatic restoration | Separate draft and last accepted copy |
+| --- | --- | --- |
+| `schedule-recovery-partial-edit` | 3/3 | 3/3 |
+| `schedule-recovery-restore-last-accepted` | 0/3 | 3/3 |
+| `schedule-recovery-valid-edit-control` | 3/3 | 3/3 |
+
+The original flow does not provide the accepted file. One baseline run ended
+with an unresolved trusted-validation rejection. There were no provider or
+sandbox infrastructure failures. All three candidate partial-edit runs kept the
+unfinished group definition and edited only its remaining references. These
+checks validate the explicit recovery workflows. Performance was not an acceptance
+criterion. Earlier runs with a weaker restore check and an ambiguous control
+command remain in local reports. The final comparisons use the corrected cases.
+
 Use `provider_timeout_after_text` to inject one partial assistant answer followed by a stream timeout.
 The production retry policy sends the retained answer and interruption status to the live provider.
 Only that recovery request is live. The initial text and timeout are synthetic, so their timing does not measure

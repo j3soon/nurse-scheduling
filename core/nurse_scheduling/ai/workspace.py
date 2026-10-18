@@ -56,6 +56,7 @@ from .system_prompt import compose_system_prompt
 
 logger = logging.getLogger("nurse_scheduling.ai.sandbox_agent")
 WORKSPACE_SCHEDULE = f"/workspace/{SCHEDULE_FILENAME}"
+WORKSPACE_LAST_ACCEPTED_SCHEDULE = "/workspace/last-accepted-schedule.yaml"
 WORKSPACE_ATTACHMENTS = "/workspace/attachments"
 WORKSPACE_ANALYSIS = "/workspace/analysis.md"
 MAX_ANALYSIS_BYTES = 64 * 1024
@@ -382,7 +383,10 @@ async def hydrate_sandbox(
 ) -> None:
     """Copy trusted application state and searchable references into one turn."""
     started = time.perf_counter()
-    files: dict[str, str | bytes] = {WORKSPACE_SCHEDULE: schedule_yaml}
+    files: dict[str, str | bytes] = {
+        WORKSPACE_SCHEDULE: schedule_yaml,
+        WORKSPACE_LAST_ACCEPTED_SCHEDULE: schedule_yaml,
+    }
     if (
         analysis is not None
         and analysis.content
@@ -470,52 +474,55 @@ def _source_context_json(schedule_yaml: str) -> str:
 
 
 class _ScheduleCandidateTracker:
-    """Give the model trusted validation feedback after a shell edit."""
+    """Review drafts and keep authoritative recovery contents outside the sandbox."""
 
     def __init__(self, sandbox: SandboxBackend, base_text: str, max_bytes: int) -> None:
         self._sandbox = sandbox
         self._base_text = base_text
         self._max_bytes = max_bytes
-        self._last_content = base_text.encode("utf-8")
+        # The application's starting schedule is accepted even when incomplete.
+        self._last_accepted = base_text.encode("utf-8")
+        self._last_checked = (self._last_accepted, None)
+        self.rejection: str | None = None
+
+    async def _sync_accepted_copy(self) -> None:
+        # Rewrite after every mutating call, including calls that changed only this copy.
+        await self._sandbox.write_file(WORKSPACE_LAST_ACCEPTED_SCHEDULE, self._last_accepted)
+
+    async def _reject(self, message: str) -> tuple[AgentToolOutcome, None]:
+        await self._sync_accepted_copy()
+        self.rejection = (
+            f"{message}\nYour edits are kept. "
+            f"The server keeps the last accepted schedule at {WORKSPACE_LAST_ACCEPTED_SCHEDULE}. "
+            "Continue editing the draft or copy the last accepted schedule back to it. "
+            "The draft must pass trusted review before finishing or starting optimization."
+        )
+        return AgentToolOutcome(self.rejection, False), None
 
     async def review_if_changed(self) -> tuple[AgentToolOutcome, str | None] | None:
         prefix = "Trusted schedule check after this command:"
+        read_problem = None
         try:
             content = await self._sandbox.read_file(WORKSPACE_SCHEDULE, max_bytes=self._max_bytes)
         except SandboxFileSizeError:
-            return (
-                AgentToolOutcome(f"{prefix}\nThe candidate exceeds the {self._max_bytes}-byte schedule limit.", False),
-                None,
-            )
+            content, read_problem = b"", f"The candidate exceeds the {self._max_bytes}-byte schedule limit."
         except SandboxFileNotFoundError:
-            # Report the deletion to the model instead of failing the turn, so it
-            # can restore the working copy it removed.
-            return (
-                AgentToolOutcome(
-                    f"{prefix}\nThe working copy {WORKSPACE_SCHEDULE} no longer exists. "
-                    "Restore it before finishing this turn.",
-                    False,
-                ),
-                None,
-            )
-        if content == self._last_content:
-            return None
-        self._last_content = content
+            content, read_problem = b"", f"The working copy {WORKSPACE_SCHEDULE} no longer exists."
+        checked = (content, read_problem)
+        if checked == self._last_checked:
+            await self._sync_accepted_copy()
+            if self.rejection is None:
+                return None
+            return AgentToolOutcome(self.rejection, False), None
+        self._last_checked = checked
+        if read_problem is not None:
+            return await self._reject(f"{prefix}\n{read_problem}")
         if len(content) > self._max_bytes:
-            return (
-                AgentToolOutcome(
-                    f"{prefix}\nThe candidate exceeds the {self._max_bytes}-byte schedule limit.",
-                    False,
-                ),
-                None,
-            )
+            return await self._reject(f"{prefix}\nThe candidate exceeds the {self._max_bytes}-byte schedule limit.")
         try:
             candidate = content.decode("utf-8")
         except UnicodeDecodeError:
-            return (
-                AgentToolOutcome(f"{prefix}\nThe candidate is not valid UTF-8.", False),
-                None,
-            )
+            return await self._reject(f"{prefix}\nThe candidate is not valid UTF-8.")
 
         review = review_schedule_candidate(self._base_text, candidate, self._max_bytes)
         logger.info(
@@ -524,11 +531,16 @@ class _ScheduleCandidateTracker:
             review.outcome.ok,
             review.proposal is not None,
         )
+        if not review.outcome.ok:
+            return await self._reject(f"{prefix}\n{review.outcome.text}")
+        self.rejection = None
         restored = review.proposal is not None and review.proposal.text != candidate
         if restored:
             candidate = review.proposal.text
             await self._sandbox.write_file(WORKSPACE_SCHEDULE, candidate)
-            self._last_content = candidate.encode("utf-8")
+        self._last_accepted = candidate.encode("utf-8")
+        self._last_checked = (self._last_accepted, None)
+        await self._sync_accepted_copy()
         if review.outcome.ok:
             try:
                 # Compiling a large schedule would otherwise block every session's stream.
@@ -550,17 +562,14 @@ class _ScheduleCandidateTracker:
             return (
                 AgentToolOutcome(
                     f"{prefix}\nThe candidate passed trusted server-side validation and differs from the base schedule."
+                    f"\nThe server updated {WORKSPACE_LAST_ACCEPTED_SCHEDULE}."
                     + (f"\n{REQUIRED_RULE_NOTICE}" if restored else ""),
                     True,
                 ),
                 candidate,
             )
-        guidance = ""
-        if not review.outcome.ok:
-            guidance = (
-                "The working copy retains this command's changes. Repair the reported problems before finishing.\n"
-            )
+
         return (
-            AgentToolOutcome(f"{prefix}\n{guidance}{review.outcome.text}", review.outcome.ok),
+            AgentToolOutcome(f"{prefix}\n{review.outcome.text}", review.outcome.ok),
             candidate if review.outcome.ok else None,
         )

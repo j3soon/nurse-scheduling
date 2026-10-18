@@ -1,0 +1,45 @@
+{
+  "_license": "Copyright (C) 2023-2026 Johnson Sun. SPDX-License-Identifier: AGPL-3.0-or-later",
+  "_comment": "This test is mostly AI generated.",
+  "fixture": "small-clinic",
+  "attachments": [
+    "schedule-edit-checkpoint"
+  ],
+  "expect_proposal": true,
+  "tags": [
+    "sandbox-runtime",
+    "schedule-recovery"
+  ],
+  "tool_usage": {
+    "required_calls": [
+      {
+        "name": "bash",
+        "arguments": {
+          "command": "python3 /workspace/attachments/01-schedule-edit-checkpoint.txt prepare"
+        }
+      },
+      {
+        "name": "read",
+        "arguments": {
+          "path": "/workspace/last-accepted-schedule.yaml"
+        }
+      }
+    ],
+    "required_errors": [
+      "bash"
+    ]
+  },
+  "expected_diff": [
+    {
+      "path": "description",
+      "before": "Small pediatric clinic",
+      "after": "Accepted clinic edit"
+    }
+  ],
+  "changes": [
+    "description"
+  ],
+  "id": "schedule-recovery-restore-last-accepted",
+  "question": "Run `python3 /workspace/attachments/01-schedule-edit-checkpoint.txt prepare`. Then run `python3 /workspace/attachments/01-schedule-edit-checkpoint.txt truncate` in a separate bash tool call. The script simulates an interrupted YAML write. Use the read tool with path `/workspace/last-accepted-schedule.yaml` and restore the working schedule from it. Keep the description saved by prepare and all other schedule data. Propose the resulting schedule data. Do not modify the script or repeat either command. Do not optimize.",
+  "note": "This testcase is mostly AI generated. The uploaded fixture stages the edit through real sandbox calls. The provider receives production validation feedback. The final diff must retain the earlier accepted edit and preserve unrelated data. This is a recovery test, not a first-write reliability test."
+}

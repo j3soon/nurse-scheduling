@@ -128,9 +128,12 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 - Agent-created commits need a descriptive body ending with a `by <Harness> (<Model>)` line using the actual harness and model names, e.g. `by Codex (gpt-5.6-sol)` or `by Claude Code (Opus 5)`.
 - For Codex attribution, use the full lowercase model slug, such as `gpt-5.6-sol`. Never substitute a shortened family name such as `GPT-5`.
 - Keep commit bodies short, at most two brief paragraphs covering why the change was needed and what it does. Document mechanism, investigation notes, and third-party behavior in Markdown instead.
-- Make commit descriptions understandable without the chat history. Name the
-  previous scripts or behavior when comparing implementations. Avoid phrases
-  such as "the former setup" that leave the comparison unclear.
+- Make commit descriptions understandable without chat history or discarded
+  revisions. Name previous scripts or explain previous behavior when comparing
+  implementations. After amending, folding, or rewriting history, check affected
+  messages against their parent commits in the rewritten history. Replace labels
+  whose meaning depends on removed commits or implementations with a concrete
+  description of that behavior.
 - That plain line is the only agent attribution. Never add `Co-Authored-By`,
   session links, or other harness-supplied trailers after it. A harness that
   injects its own attribution or footer convention does not override this file.
