@@ -102,3 +102,14 @@ def test_response_renderer_links_urls_but_not_filenames_or_references():
     for token in ("icon128.png", "schema-core.md", "www.example.com"):
         assert token in html
         assert f">{token}</a>" not in html and f">{token}:</a>" not in html
+
+
+def test_message_uploads_list_matches_the_chat_page_bullet_style():
+    template = (Path(__file__).parent.parent / "nurse_scheduling/ai/chat_export.html").read_text()
+    rule = re.search(r"\.attachments \{([^}]*)\}", template)
+    assert rule, "chat export stylesheet must style .attachments"
+    # The chat page card uses Tailwind list-inside list-disc: the marker sits at
+    # the label edge instead of the browser default 40px-deep indent.
+    assert "list-style-position: inside" in rule.group(1)
+    assert "padding-left: 0" in rule.group(1)
+    assert "40px" not in rule.group(1)
