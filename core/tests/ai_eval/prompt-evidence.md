@@ -90,3 +90,51 @@ The literal-expression witness measures avoiding validation repairs, not eventua
 witness holds optimizer-error guidance fixed in both arms. Optimizer startup cases use a controlled tool. Completion
 cases replay verified assignments through the exporter and production message shape, without testing stochastic
 solve quality or the service job lifecycle. Those durable limits remain beside their receipts in the manifest.
+
+## Confirm inferred rules from a completed schedule
+
+The `completed-schedule-inference` step asks the agent to suggest candidate rules
+from an XLSX completed schedule, explain the observations, and confirm the rules
+before building YAML. User corrections take precedence. A question about what
+is established still leaves unstated rules unknown. The recorded paired
+comparison held an additional evidence-strength step fixed. That step is no
+longer retained. Its token measurements describe the historical prompt.
+
+Historical measurements use the integrated branch. Adjacent prefixes 35/36 use the
+same model, helpers and workbook. Each case has
+three repetitions with four concurrent jobs and no infrastructure failures.
+
+| Case | Without the added step | With the added step |
+| --- | --- | --- |
+| completed-schedule-onboarding | 3/3 | 3/3 |
+| completed-roster-unknown-policy | 3/3 | 3/3 |
+| completed-roster-confirmed-policy | 3/3 | 3/3 |
+
+The baseline already suggests rules. This amendment makes that expectation
+explicit. On the fact-only witness, generated tokens decrease from a mean of
+1,647 to 1,001, or 39.2%, meeting the declared 15% target. Sample standard
+deviations are 777 and 396 tokens. Full local reports retain all token categories,
+matched-pair variation, tool counts and timing. These small samples do not prove
+a general performance improvement.
+
+Separate full-prompt checks cover structured suggestions and the user's later
+correction to a five-day work limit and unrestricted D/E/N eligibility. The
+saved proposals are checked with the frontend validator and the source grader.
+The construction case no longer requires a literal question mark in the first
+confirmation request. Both versions' saved answers are regraded with that same
+correction. This changes no model input or final-source requirement. Regraded
+correctness is separate from the original timing and token measurements. Structured suggestions
+pass 3/3 in both full-prompt versions. Corrected-rule construction passes 3/3 in
+each version after regrading, and all six saved YAML proposals independently
+pass the frontend validator.
+
+These checks validate suggestions, confirmation and use of corrected rules.
+They do not establish general workbook arithmetic accuracy. Replies still contain
+counting errors, which remain a separate follow-up. Earlier wording candidates
+and test-format errors remain in local reports. Model calls and E2B commands are real.
+No optimizer jobs run in the onboarding checks.
+
+A separate check without evidence-strength passes 3/3 each for natural onboarding,
+fact-only policy, explicit policy and corrected-rule construction. Structured
+inference passes 2/3. One response omits a comma in JSON. These runs use the
+same inference prompt and make no token or timing improvement claim.

@@ -1,0 +1,138 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "fixture": "new-schedule",
+  "attachments": [
+    "completed-roster-xlsx"
+  ],
+  "tags": [
+    "workbook-policy-evidence"
+  ],
+  "id": "completed-schedule-confirmed-rules",
+  "user_turns": [
+    "I am new to this app. I have only this completed schedule and do not remember all our rules. Help me prepare next month from this example without making me recall everything from scratch. D, E and N mean day, evening and night. I have no original YAML or rule sheet. Focus on possible rest limits and whether nurses are restricted to particular shift types. Do not discuss staffing counts, build YAML or optimize yet. Reply as JSON with suggestedRules (a nonempty list of strings, each giving a short suggestion and its supporting observation), confirmationQuestion (one question about the suggested rules), and confirmedRules (null until I confirm).",
+    "The observed short work stretches and single-shift assignments are just examples. Our actual policy allows at most five consecutive working days. Everyone can work D, E and N. Create YAML for December 1-6, 2026 with P1, P2 and P3. Forbid six consecutive working days using a WORKING shift group containing D, E and N and a hard succession rule. Do not impose a two-day limit or separate eligibility pools. Keep the required one-shift-per-day rule. Do not add staffing, requests, fairness or other preferences. Leave history empty because the workbook is from early November and does not reach the day before this new range. Do not import a holiday calendar or copy old assignments as requests. No optimization."
+  ],
+  "expect_proposal": true,
+  "changes": [
+    "description",
+    "people",
+    "dates",
+    "shiftTypes",
+    "preferences",
+    "export"
+  ],
+  "intermediate_answer_contains": [
+    [
+      "P1",
+      "P2",
+      "P3"
+    ]
+  ],
+  "turn_tool_usage": [
+    {
+      "required": [
+        "bash"
+      ]
+    },
+    null
+  ],
+  "tool_usage": {
+    "forbidden": [
+      "optimizer"
+    ],
+    "max_validation_errors": 0
+  },
+  "assert": [
+    {
+      "path": "people.items",
+      "count": 3
+    },
+    {
+      "path": "people.items[?id=P1].history",
+      "count": 0
+    },
+    {
+      "path": "people.items[?id=P2].history",
+      "count": 0
+    },
+    {
+      "path": "people.items[?id=P3].history",
+      "count": 0
+    },
+    {
+      "path": "dates.range.startDate",
+      "equals": "2026-12-01"
+    },
+    {
+      "path": "dates.range.endDate",
+      "equals": "2026-12-06"
+    },
+    {
+      "path": "shiftTypes.items",
+      "count": 3
+    },
+    {
+      "path": "shiftTypes.items[?id=D]",
+      "count": 1
+    },
+    {
+      "path": "shiftTypes.items[?id=E]",
+      "count": 1
+    },
+    {
+      "path": "shiftTypes.items[?id=N]",
+      "count": 1
+    },
+    {
+      "path": "preferences",
+      "count": 2
+    },
+    {
+      "path": "shiftTypes.groups[?id=WORKING].members",
+      "count": 3
+    },
+    {
+      "path": "shiftTypes.groups[?id=WORKING].members",
+      "contains": "D"
+    },
+    {
+      "path": "shiftTypes.groups[?id=WORKING].members",
+      "contains": "E"
+    },
+    {
+      "path": "shiftTypes.groups[?id=WORKING].members",
+      "contains": "N"
+    }
+  ],
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "added": [
+        {
+          "type": "at most one shift per day"
+        },
+        {
+          "type": "shift type successions",
+          "person": [
+            "ALL"
+          ],
+          "date": [
+            "ALL"
+          ],
+          "pattern": [
+            "WORKING",
+            "WORKING",
+            "WORKING",
+            "WORKING",
+            "WORKING",
+            "WORKING"
+          ],
+          "weight": "-.inf"
+        }
+      ],
+      "allow_added_description": true
+    }
+  ],
+  "note": "This testcase is mostly AI generated. Start with workbook inference, then apply the user correction to validated YAML. Six-day pattern encodes maximum five, not the observed maximum two. All staff stay eligible for all three shifts. Do not turn old assignments into requests or misleading boundary history. First-turn suggestions are manually reviewed; final source assertions and exact preference inventory establish construction independently. Review the first confirmation request semantically. A valid request need not end with a question mark."
+}

@@ -1,0 +1,30 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "id": "completed-schedule-onboarding",
+  "fixture": "new-schedule",
+  "attachments": [
+    "completed-roster-xlsx"
+  ],
+  "question": "I am new here. I want to make next month's schedule from this completed schedule, but I do not remember all our rules and have no original YAML or rule sheet. Help me get started from the example. Focus on rest and which shifts each nurse can work for now. Do not build YAML or optimize yet.",
+  "expect_proposal": false,
+  "answer_matches": [
+    "(?i)(suggest|propos|candidate|could|would|might|consider|possible|tentative|potential)",
+    "(?i)(rest|consecutive|work.*days)",
+    "(?i)(eligib|shift)",
+    "\\?",
+    "(?i)(observ|pattern|sample|example|workbook|roster)"
+  ],
+  "tool_usage": {
+    "required": [
+      "bash"
+    ],
+    "forbidden": [
+      "optimizer"
+    ]
+  },
+  "tags": [
+    "workbook-policy-evidence"
+  ],
+  "note": "This testcase is mostly AI generated. The natural user request does not explicitly ask for suggestions or a confirmation question. Inspect the real synthetic XLSX and offer tentative rest/eligibility rules with their observed support. Ask for confirmation rather than requiring the user to recall all rules. Do not build before confirmation. Manually review that actual candidate rules and supporting observations are present. The conservative language checks alone are insufficient. Staffing counts are outside this focused case."
+}

@@ -92,6 +92,18 @@ def _history_workbook(reverse: bool = False) -> bytes:
     return _stable_workbook(workbook)
 
 
+def _completed_roster_workbook() -> bytes:
+    """An observed assignment pattern without the rules that produced it."""
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "Completed roster"
+    sheet.append(["Person", *[f"2026-11-{day:02}" for day in range(1, 7)]])
+    sheet.append(["P1", "D", "D", "OFF", "D", "D", "OFF"])
+    sheet.append(["P2", "E", "E", "OFF", "E", "E", "OFF"])
+    sheet.append(["P3", "N", "OFF", "N", "N", "OFF", "N"])
+    return _stable_workbook(book)
+
+
 def _intake_workbook() -> bytes:
     book = Workbook()
     sheet = book.active
@@ -367,6 +379,11 @@ _FIXTURES: dict[str, tuple[str, str, Callable[[], bytes]]] = {
         "history.csv",
         "text/csv",
         lambda: b"P1,OFF,2\nP2,D,3\n",
+    ),
+    "completed-roster-xlsx": (
+        "completed-roster.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        _completed_roster_workbook,
     ),
     "workbook-intake-xlsx": (
         "roster.xlsx",

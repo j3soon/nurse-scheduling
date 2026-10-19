@@ -1203,5 +1203,46 @@
         "note": "Adjacent final-step comparison with the previous full prompt. Both arms use the corrected formatting-only proposal contract and preserve every parsed value. The baseline uses YAML 1.1 and corrupts scalar types. The candidate uses the installed YAML 1.2 library. Real provider and E2B commands, four concurrent case jobs, no optimizer jobs. A discarded writer prototype and the earlier incorrect proposal expectation remain separate. No performance gain is claimed."
       }
     ]
+  },
+  {
+    "id": "completed-schedule-inference",
+    "file": "steps/completed-schedule-inference.md",
+    "cases": [
+      "completed-schedule-onboarding",
+      "completed-schedule-infer-rules",
+      "completed-schedule-confirmed-rules",
+      "completed-roster-unknown-policy",
+      "completed-roster-confirmed-policy"
+    ],
+    "hypothesis": "Suggests rules from completed-schedule observations and confirms them before building YAML, while respecting explicit user policies.",
+    "sha256": "0b176a2493ccf9ba5880e8290b8c124cd010b1019cf8232984cf0d900ad7716c",
+    "evidence": [
+      {
+        "case": "completed-roster-unknown-policy",
+        "input_sha256": "dde172f75aee7b20104a37973616a6dad0b1e1ddb200e976599084cbb21b6b17",
+        "before": "3/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "cost_metric": "completion-tokens",
+        "cost_ratio": 0.6079740943128922,
+        "cost_target": 0.85,
+        "controls": [
+          {
+            "case": "completed-roster-confirmed-policy",
+            "input_sha256": "70f1ad151692a38b947830514040ffca9f86a129cee194ac921fb1fd614d9706",
+            "before": "3/3",
+            "after": "3/3"
+          },
+          {
+            "case": "completed-schedule-onboarding",
+            "input_sha256": "eb61e7ed19c185e838115445bed92442c0835482f1bdc9d27e813433a49190c7",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Historical adjacent comparison held evidence-strength fixed before its removal. Three repetitions and four jobs. Natural onboarding and both policy controls pass 3/3 in both arms. Fact-only generated tokens decrease 39.2% in that historical context. These measurements do not establish a cost gain for the current prompt. Arithmetic and solver-result grounding remain separate risks."
+      }
+    ]
   }
 ]

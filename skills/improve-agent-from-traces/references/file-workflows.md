@@ -19,6 +19,15 @@ frontend validator and the grader before live runs. Check that each format
 belongs to the correct cell and that finite weights stay finite. Grade
 clarification, construction, solving and delivery separately. A run that fails
 clarification does not establish anything about optimizer behavior.
+For onboarding from an XLSX completed schedule, test useful rule suggestions
+with their observed evidence and a request for confirmation. Do not grade
+uncertainty alone as successful onboarding. State any required JSON field types
+in the question, so a valid alternative format does not fail the grader.
+Observed patterns support candidate rules, but do not establish the original
+hard limits, eligibility or weights.
+Contrast a fact-only question with a request to infer rules. Test a later user
+correction and check that the YAML uses the confirmed rules instead of the
+example's patterns. Keep solver-result explanations in a separate prompt step.
 
 For repeated missing-library errors in an offline sandbox, consider preinstalling
 the library instead of adding more instructions to use another one. Check the

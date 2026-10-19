@@ -1124,6 +1124,130 @@ def test_yaml_roundtrip_case_allows_formatting_but_preserves_all_data(mutation):
     assert grade(case, outcome).passed is (mutation is None)
 
 
+@pytest.mark.parametrize(
+    "limit,eligibility,passed",
+    [
+        (None, None, True),
+        (2, None, False),
+        (None, "fixed-pools", False),
+        (2, "fixed-pools", False),
+    ],
+)
+def test_completed_roster_case_distinguishes_observations_from_policy(limit, eligibility, passed):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "completed-roster-unknown-policy")
+    answer = json.dumps(
+        {
+            "maxConsecutiveWorkingDays": limit,
+            "eligibility": eligibility,
+            "explanation": "The original rules are unknown.",
+        }
+    )
+    outcome = RunOutcome(answer=answer, activity=[{"kind": "tool", "name": "bash", "ok": True}])
+    assert grade(case, outcome).passed is passed
+
+
+@pytest.mark.parametrize("defect", [None, "no-suggestions", "no-question", "no-inspection", "premature-proposal"])
+def test_completed_schedule_onboarding_requires_proactive_suggestions(defect):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "completed-schedule-onboarding")
+    answer = (
+        "The example shows short work stretches and a fixed shift type per nurse. "
+        "A candidate is a two-day consecutive-work limit and fixed shift eligibility. "
+        "Would you confirm or correct these suggestions before I build YAML?"
+    )
+    if defect == "no-suggestions":
+        answer = "The rules are unknown. What are your rest limits and shift eligibility rules?"
+    elif defect == "no-question":
+        answer = answer.replace("?", ".")
+    outcome = RunOutcome(
+        answer=answer,
+        proposed={} if defect == "premature-proposal" else None,
+        activity=[] if defect == "no-inspection" else [{"kind": "tool", "name": "bash", "ok": True}],
+    )
+    assert grade(case, outcome).passed is (defect is None)
+
+
+@pytest.mark.parametrize("defect", [None, "question-with-followup", "assumed", "no-suggestions", "no-confirmation"])
+def test_completed_schedule_inference_requires_suggestions_and_confirmation(defect):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "completed-schedule-infer-rules")
+    answer = {
+        "suggestedRules": ["The longest observed work stretch is two days. Consider a two-day limit."],
+        "confirmationQuestion": "Is that a strict limit or are longer stretches allowed?",
+        "confirmedRules": None,
+    }
+    if defect == "question-with-followup":
+        answer["confirmationQuestion"] += " Tell me what to change."
+    elif defect == "assumed":
+        answer["confirmedRules"] = {"maxConsecutiveWorkingDays": 2}
+    elif defect == "no-suggestions":
+        answer["suggestedRules"] = []
+    elif defect == "no-confirmation":
+        answer["confirmationQuestion"] = "I will use two days."
+    outcome = RunOutcome(answer=json.dumps(answer), activity=[{"kind": "tool", "name": "bash", "ok": True}])
+    assert grade(case, outcome).passed is (defect in {None, "question-with-followup"})
+
+
+@pytest.mark.parametrize(
+    "defect",
+    [
+        None,
+        "omitted-history",
+        "reordered-group",
+        "wrong-history",
+        "observed-limit",
+        "copied-assignments",
+        "no-proposal",
+    ],
+)
+def test_completed_schedule_correction_builds_only_confirmed_rules(defect):
+    from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
+
+    from .ai_test_helper import parse_schedule, schedule_yaml
+
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "completed-schedule-confirmed-rules")
+    original = parse_schedule(NEW_SCHEDULE_PATH.read_text(encoding="utf-8"))
+    proposed = copy.deepcopy(original)
+    proposed["dates"]["range"] = {"startDate": "2026-12-01", "endDate": "2026-12-06"}
+    proposed["people"]["items"] = [{"id": p, "description": "", "history": []} for p in ("P1", "P2", "P3")]
+    proposed["shiftTypes"]["items"] = [{"id": shift, "description": ""} for shift in ("D", "E", "N")]
+    proposed["shiftTypes"]["groups"] = [{"id": "WORKING", "description": "", "members": ["D", "E", "N"]}]
+    proposed["preferences"] = [
+        {"type": "at most one shift per day"},
+        {
+            "type": "shift type successions",
+            "person": ["ALL"],
+            "date": ["ALL"],
+            "pattern": ["WORKING"] * 6,
+            "weight": float("-inf"),
+        },
+    ]
+    assert validate_frontend_schedule_yaml(schedule_yaml(proposed), 50_000).valid
+    if defect == "omitted-history":
+        for person in proposed["people"]["items"]:
+            person.pop("history")
+    elif defect == "reordered-group":
+        proposed["shiftTypes"]["groups"][0]["members"] = ["N", "E", "D"]
+    elif defect == "wrong-history":
+        proposed["people"]["items"][0]["history"] = ["D"]
+    elif defect == "observed-limit":
+        proposed["preferences"][1]["pattern"] = ["WORKING"] * 3
+    elif defect == "copied-assignments":
+        proposed["preferences"].append(
+            {"type": "shift request", "person": ["P1"], "date": ["01"], "shiftType": ["D"], "weight": float("inf")}
+        )
+    outcome = RunOutcome(
+        initial=original,
+        proposed=None if defect == "no-proposal" else proposed,
+        intermediate_answers=["P1, P2 and P3 show short work stretches. Confirm a two-day limit?"],
+        proposal_turns=[False, defect != "no-proposal"],
+        activity=[
+            {"kind": "user", "turn": 1},
+            {"kind": "tool", "name": "bash", "ok": True},
+            {"kind": "user", "turn": 2},
+        ],
+    )
+    assert grade(case, outcome).passed is (defect in {None, "omitted-history", "reordered-group"})
+
+
 def test_validation_error_limit_distinguishes_repair_from_other_tool_errors(tmp_path: Path):
     case = load_cases(_write(tmp_path, _case(expect_proposal=False, tool_usage={"max_validation_errors": 0})))[0]
     prefix = "Trusted schedule check after this command:"
