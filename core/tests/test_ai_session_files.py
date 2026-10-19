@@ -430,6 +430,39 @@ def test_archive_limit_does_not_restore_an_older_optimizer_workbook(postgres_his
         assert client.get(f"/sessions/{session}/optimizations/{job.id}/xlsx").content == artifact.content
 
 
+@pytest.mark.parametrize("tied_status_file", [False, True], ids=["events-only", "with-status-file"])
+def test_latest_optimizer_uses_event_order_for_a_saved_batch(postgres_history, tied_status_file):
+    store = SessionStore(basic.make_settings())
+    session = store.create("owner", "description: draft")
+    postgres_history.save_session(session.id, store.recovery_state(session.id))
+    postgres_history.append_events(
+        session.id,
+        [
+            (event_id, event_id, None, "optimization", {"job_id": job_id, "terminal": True})
+            for event_id, job_id in [(1, "older-job"), (2, "newer-job")]
+        ],
+    )
+    if tied_status_file:
+        postgres_history.save_session(
+            session.id,
+            store.recovery_state(session.id),
+            files=[
+                {
+                    "kind": "optimizer-status",
+                    "source_id": "older-job",
+                    "filename": "result.json",
+                    "media_type": "application/json",
+                    "data": b"{}",
+                }
+            ],
+        )
+        with postgres_history._connect() as connection:
+            connection.execute("UPDATE chat_files SET created_at = (SELECT min(created_at) FROM chat_session_events)")
+    with postgres_history._connect() as connection:
+        assert connection.execute("SELECT count(DISTINCT created_at) FROM chat_session_events").fetchone() == (1,)
+    assert postgres_history.latest_optimizer(session.id, "owner") == "newer-job"
+
+
 @pytest.mark.parametrize("operation", ["latest_optimizer", "load_file"])
 def test_optional_optimizer_read_failure_still_finishes_the_chat(postgres_history, monkeypatch, operation):
     app = basic.create_test_app(

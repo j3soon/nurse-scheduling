@@ -472,12 +472,13 @@ class ChatHistory:
             row = connection.execute(
                 # A terminal update survives even when a storage limit refused all of that job's files.
                 "SELECT f.source_id FROM ("
-                "SELECT session_id, source_id, created_at FROM chat_files WHERE kind = 'optimizer-status' "
-                "UNION ALL SELECT session_id, data->>'job_id', created_at FROM chat_session_events "
+                "SELECT session_id, source_id, created_at, NULL::bigint AS event_id "
+                "FROM chat_files WHERE kind = 'optimizer-status' "
+                "UNION ALL SELECT session_id, data->>'job_id', created_at, event_id FROM chat_session_events "
                 "WHERE type = 'optimization' AND data->>'terminal' = 'true'"
                 ") f JOIN chat_sessions s ON s.id = f.session_id "
                 "WHERE f.session_id = %s AND s.owner_hash = %s AND s.expires_at > now() "
-                "ORDER BY f.created_at DESC LIMIT 1",
+                "ORDER BY f.created_at DESC, f.event_id DESC NULLS LAST LIMIT 1",
                 (session_id, _owner_hash(owner)),
             ).fetchone()
         return None if row is None else row[0]

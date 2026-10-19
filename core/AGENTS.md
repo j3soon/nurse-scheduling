@@ -177,6 +177,8 @@ from the trust-based local harness.
   inside a combined entry and an entry crossing the replay tail boundary.
   Save execution status with terminal output and conversation context instead
   of inferring status from a bounded replay buffer.
+  Break saved-event timestamp ties with event IDs. A batch can share one
+  database transaction timestamp.
 - Keep execution metadata on recovery sessions and runs. Use one expiry policy
   for content and metadata instead of adding a second conversation log.
 - Test Stop before acceptance, during execution, and after completion but before
