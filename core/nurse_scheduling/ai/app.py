@@ -644,8 +644,6 @@ def create_app(
         except (psycopg.Error, OSError) as exc:
             logger.exception("AI chat archive creation failed")
             raise HTTPException(status_code=503, detail="The chat archive could not be created. Try again.") from exc
-        except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from None
         finally:
             release()
         return ChatArchiveResponse(archive, f"schedule-ai-chat-{session_id}.zip")

@@ -398,6 +398,24 @@ def test_saved_export_archive_io_failure_is_not_reported_as_a_pending_save(recor
         assert not app.state.recovery._pins
 
 
+@pytest.mark.parametrize("error", [RuntimeError, RecursionError], ids=["runtime-error", "recursion-error"])
+def test_saved_export_renderer_failures_remain_server_errors(recorded_history, monkeypatch, error):
+    app = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test"), provider=basic.FakeProvider()
+    )
+
+    def failed(*_args, **_kwargs):
+        raise error("private renderer details")
+
+    monkeypatch.setattr(app_module, "create_chat_archive", failed)
+    with basic.AuthenticatedTestClient(app, raise_server_exceptions=False) as client:
+        session = basic.create_session(client)
+        response = client.get(f"/sessions/{session}/export")
+        assert response.status_code == 500
+        assert "private renderer details" not in response.text
+        assert not app.state.recovery._pins
+
+
 @asynccontextmanager
 async def serving(app, owner: str | None = None):
     """Run the application lifespan with an HTTP client that receives JSON acknowledgements."""

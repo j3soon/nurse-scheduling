@@ -23,6 +23,7 @@ import copy
 import hashlib
 import json
 import re
+from html import unescape
 from pathlib import Path
 
 import pytest
@@ -105,6 +106,15 @@ def test_response_renderer_links_urls_but_not_filenames_or_references():
     for token in ("icon128.png", "schema-core.md", "www.example.com"):
         assert token in html
         assert f">{token}</a>" not in html and f">{token}:</a>" not in html
+
+
+@pytest.mark.parametrize("delimiter", ["*", "**"], ids=["emphasis", "strong"])
+def test_deep_markdown_is_preserved_as_escaped_text(delimiter):
+    text = f"{delimiter}a " * 600 + "<script>unsafe()</script>" + f" a{delimiter}" * 600
+    rendered = render_markdown_html(text)
+    assert rendered.startswith("<pre>") and rendered.endswith("</pre>")
+    assert "<script>" not in rendered
+    assert unescape(rendered[5:-6]) == text
 
 
 def test_message_uploads_list_matches_the_chat_page_bullet_style():

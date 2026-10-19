@@ -675,6 +675,7 @@ writer. Each ZIP contains `chat.html`, `chat.md`, `chat.json`, `schedule.yaml`,
 `manifest.json`, and `attachments/`. It includes removed uploads, generated ZIPs,
 and optimizer files. The manifest records file origins, removal times, sizes,
 and hashes. HTML and Markdown link to the bundled files and display times in UTC.
+HTML exports show excessively nested Markdown as escaped plain text.
 
 Exports use one consistent database snapshot, including saved failed, stopped,
 and unfinished runs. File reads are bounded to 1 MiB chunks and the ZIP is built

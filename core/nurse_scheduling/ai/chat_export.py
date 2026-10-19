@@ -33,6 +33,8 @@ from markdown_it.tree import SyntaxTreeNode
 
 from .chat_projection import project_saved_chat
 
+MAX_MARKDOWN_DEPTH = 64
+
 
 def escape_html(value: str, *, react: bool = False) -> str:
     return (
@@ -153,7 +155,20 @@ def _render_node(node) -> str:
 
 
 def render_markdown_html(text: str) -> str:
-    return _render_node(SyntaxTreeNode(_markdown().parse(text or "[No message text]")))
+    text = text or "[No message text]"
+    tokens = _markdown().parse(text)
+    # Inline emphasis can exceed the parser's nesting limit. Check flat tokens before
+    # constructing the syntax tree, because its constructor and renderer both recurse.
+    pending = [(tokens, 0)]
+    while pending:
+        children, depth = pending.pop()
+        for token in children:
+            level = depth + token.level
+            if level > MAX_MARKDOWN_DEPTH:
+                return "<pre>" + escape_html(text, react=True) + "</pre>"
+            if token.children:
+                pending.append((token.children, level + 1))
+    return _render_node(SyntaxTreeNode(tokens))
 
 
 def _summary(entry):
