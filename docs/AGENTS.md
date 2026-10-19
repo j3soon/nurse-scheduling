@@ -61,9 +61,10 @@
   from actual daily assignments. Define new concepts, such as near-hard
   constraints, before using them in explanations.
 - Use "schedule" as the umbrella term for the roster in any state, "schedule
-  data" for the browser-kept YAML input, and "optimized schedule" for the
-  optimizer output. Name the zero-content state after **Create empty
-  schedule** "empty schedule data," and the ward-supplied documents and
+  data" for the browser-kept YAML input, "completed schedule" for the roster
+  with daily assignments completed by the optimizer or by hand, and "optimized
+  schedule" for the optimizer output. Name the zero-content state after
+  **Create empty schedule** "empty schedule data," and the ward-supplied documents and
   records interpreted into schedule data "source materials." Avoid "schedule
   config" and "schedule result": solver options and a job's outcome and
   score already use those words.

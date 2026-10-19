@@ -179,7 +179,9 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   vague jargon that hides it, and CI runs the check.
 - Use "schedule" as the umbrella term for the roster in any state. Name the
   browser-kept YAML input "schedule data" (排班資訊) and the optimizer output
-  "optimized schedule" (排好的班). Name the format at API and code boundaries,
+  "optimized schedule" (排好的班). Name the state with daily assignments
+  completed, whether by the optimizer or by hand, "completed schedule". Name
+  the format at API and code boundaries,
   such as "schedule YAML" or "XLSX artifact," because "result" already means a
   job's outcome and score. Avoid "schedule config": `ExportConfig` and solver
   options already own "config." Name the zero-content state of the input

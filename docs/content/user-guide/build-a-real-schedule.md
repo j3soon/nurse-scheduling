@@ -19,7 +19,7 @@ use the app's descriptions.
 
 ## Input and output
 
-The complete ward workflow starts with an **unfilled monthly schedule
+The complete ward workflow starts with an **uncompleted monthly schedule
 workbook** containing dates, people, staffing requirements, and shift
 requests, with daily assignments not yet filled in. It may also contain
 staff roles and previous-month shifts. Each ward uses its own layout
@@ -112,10 +112,14 @@ These terms name the schedule by its state in the workflow:
   are unset, and only the built-in at-most-one-shift-per-day rule exists.
 - **Schedule data:** The schedule's editable content, stored in the browser
   and saved as YAML: dates, people, shift types, histories, preference rules,
-  and the export layout. It holds no daily assignments before optimization.
-- **Optimized schedule:** The schedule after the optimizer fills in daily
-  assignments, downloaded as an XLSX workbook. The ward may adjust it further
+  and the export layout. It holds no daily assignments within the date range.
+- **Completed schedule:** The schedule with daily assignments filled in for
+  every person and date, whether by the optimizer or by hand. A blank `OFF`
+  cell still counts as an assignment. The ward may adjust it further by hand
   before use.
+- **Optimized schedule:** The optimizer's output when it completes a
+  schedule, downloaded as an XLSX workbook. It is one way to produce a
+  completed schedule.
 
 ## Ward conventions
 
@@ -123,11 +127,11 @@ These describe the ward's source information and monthly staffing practice,
 rather than items created on a GUI tab.
 
 - **Source materials:** Everything a ward supplies, in whatever form: the
-  unfilled monthly schedule workbook, last month's optimized schedule,
+  uncompleted monthly schedule workbook, last month's completed schedule,
   natural-language staffing and fairness policies, and verbal instructions.
-  When complete, a person or an AI assistant can interpret the source
-  materials into schedule data.
-- **Unfilled monthly schedule workbook:** The ward's roster document before
+  When the source materials are complete, a person or an AI assistant can
+  interpret them into schedule data.
+- **Uncompleted monthly schedule workbook:** The ward's roster document before
   daily assignments are completed, usually an Excel workbook. It contains
   dates, people, staffing requirements, and shift requests, and may include
   staff roles and previous-month shifts. Its layout and notation vary by
@@ -469,7 +473,7 @@ With this guide's `11b` and `11m` request tiers, `-1t` is the largest
 individual finite penalty. In practice, it usually keeps preferred staffing
 even alongside many `11b` requests. A shortfall remains possible. If none is
 acceptable, set Required equal to Preferred. That makes the count hard and
-may make an understaffed month infeasible with no optimized schedule, which makes debugging much more difficult.
+may make an understaffed month infeasible with no completed schedule, which makes debugging much more difficult.
 
 The `D`, `E`, and `N` requirements count non-student nurses. `D` has separate
 workday and freeday counts because workload differs. The `+` requirements
@@ -542,7 +546,7 @@ together. Confirm their priority against the rest of a new ward's rules.
 
 This example assumes the ward balanced the number of `11b` requests per
 person before using the app, often through discussion while preparing the
-unfilled monthly schedule workbook. The optimizer does not equalize those
+uncompleted monthly schedule workbook. The optimizer does not equalize those
 requests: someone with
 two and someone with ten receive the same weight per request. If that
 preparation is missing or the tier is unclear, start with `11m`, inspect how many requests are satisfied for each person, and only then promote selected requests to `11b`.
@@ -780,7 +784,7 @@ schedule meets the ward's policy.
    bun scripts/compare-schedule-yaml.mjs ../core/tests/testcases/real/large-ward-with-87-people-2025-11.yaml ../artifacts/exported-schedule.yaml
    ```
 
-![Downloaded YAML for the completed schedule](../assets/images/user-guide/build-a-real-schedule/build-real-final-yaml.png)
+![Downloaded schedule data YAML](../assets/images/user-guide/build-a-real-schedule/build-real-final-yaml.png)
 
 ## 13. Optimize and review the schedule
 
