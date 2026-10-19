@@ -377,6 +377,7 @@ class OpenAiCompatibleProvider:
                     attempt,
                     self._settings.provider_max_attempts,
                     delay,
+                    exc_info=True,
                 )
                 if delay > 0:
                     await asyncio.sleep(delay)

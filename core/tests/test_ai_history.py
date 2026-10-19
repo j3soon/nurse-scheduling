@@ -21,6 +21,7 @@
 
 import asyncio
 import hashlib
+import io
 import json
 import os
 import subprocess
@@ -30,19 +31,24 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
 from uuid import uuid4
+from zipfile import ZipFile
 
 import httpx
 import psycopg
 import pytest
 from psycopg import sql
+from psycopg.conninfo import make_conninfo
 
+from nurse_scheduling.ai import app as app_module
 from nurse_scheduling.ai import history as history_module
 from nurse_scheduling.ai import recovery as recovery_module
 from nurse_scheduling.ai.agent_session import BACKGROUND_RECOVERY_ERROR, RECOVERY_SAVE_WARNING
+from nurse_scheduling.ai.chat_export import build_saved_chat_export
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.history import ChatHistory, _insert_entries
-from nurse_scheduling.ai.provider import ProviderError, ReasoningDelta, TextDelta, TokenUsage
+from nurse_scheduling.ai.provider import ProviderError, ReasoningDelta, TextDelta, TokenUsage, ToolCallRequest
 from nurse_scheduling.ai.recovery import SessionRecovery, _event_rows
+from nurse_scheduling.ai.sandbox.fake import FakeSandboxFactory
 from nurse_scheduling.ai.session_event_stream import SessionEvent, SessionEventStream, fold_recovery
 from nurse_scheduling.ai.sessions import SessionStore
 from nurse_scheduling.ai.transcript import (
@@ -54,6 +60,7 @@ from nurse_scheduling.ai.transcript import (
     UserMessage,
     entry_from_record,
 )
+from nurse_scheduling.ai.workspace import SandboxAttachment
 
 from . import test_ai_basic as basic
 
@@ -100,7 +107,17 @@ def recorded_history(monkeypatch):
             {"run_id": run_id, "session_id": session_id, "state": state, "prompt": prompt, **fields}
         )
 
-    def finish(_self, *outcome, session_id=None, state=None, entries=(), schedule_change=None):
+    def finish(
+        _self,
+        *outcome,
+        session_id=None,
+        state=None,
+        entries=(),
+        schedule_change=None,
+        uploads=(),
+        downloads=None,
+        files=(),
+    ):
         records["entries"].extend(entries)
         records["finishes"].append((*outcome, state))
         records["schedule_changes"].append(schedule_change)
@@ -116,7 +133,15 @@ def recorded_history(monkeypatch):
     monkeypatch.setattr(
         ChatHistory, "append_entries", lambda _self, _session_id, entries: records["entries"].extend(entries)
     )
-    for operation in ("append_events", "stop_message", "message_stopped", "find_message", "load_session"):
+    for operation in (
+        "append_events",
+        "stop_message",
+        "message_stopped",
+        "find_message",
+        "load_session",
+        "load_file",
+        "latest_optimizer",
+    ):
         monkeypatch.setattr(ChatHistory, operation, lambda *_args, **_kwargs: None)
     return records
 
@@ -207,8 +232,8 @@ def test_final_write_failure_preserves_successful_conversation(recorded_history,
     events = basic.parse_sse(response.text)
     assert ("warning", {"message": RECOVERY_SAVE_WARNING, "run_id": events[-1][1]["run_id"]}) in events
     assert events[-1][1]["history_saved"] is False
-    assert "AI history finish_run failed" in caplog.text
-    assert "secret-database-url" not in caplog.text
+    failures = [record for record in caplog.records if record.getMessage() == "AI history finish_run failed"]
+    assert failures and all(isinstance(record.exc_info[1], psycopg.OperationalError) for record in failures)
 
 
 def test_records_queued_steering_in_run_order(recorded_history):
@@ -317,7 +342,7 @@ def test_recovery_read_failure_during_message_lookup_returns_503(recorded_histor
 
 
 def test_saved_export_read_failure_returns_503_and_allows_retry(recorded_history, monkeypatch):
-    monkeypatch.setattr(ChatHistory, "export_snapshot", unavailable)
+    monkeypatch.setattr(app_module, "create_chat_archive", unavailable)
     provider = basic.FakeProvider()
     app = basic.create_test_app(settings=basic.make_settings(history_postgres_url="test"), provider=provider)
     with basic.AuthenticatedTestClient(app) as client:
@@ -326,12 +351,69 @@ def test_saved_export_read_failure_returns_503_and_allows_retry(recorded_history
         assert response.status_code == 503
         assert "secret-database-url" not in response.text
         assert not app.state.recovery._pins
-        snapshot = json.loads(
-            Path(__file__).with_name("ai_fixtures").joinpath("chat-export.json").read_text(encoding="utf-8")
-        )
-        monkeypatch.setattr(ChatHistory, "export_snapshot", lambda *_args: snapshot)
-        assert client.get(f"/sessions/{session_id}/export").json() == snapshot
+        body = b"ZIP bytes from the server"
+        monkeypatch.setattr(app_module, "create_chat_archive", lambda *_args, **_kwargs: io.BytesIO(body))
+        retried = client.get(f"/sessions/{session_id}/export")
+        assert retried.content == body and retried.headers["content-type"] == "application/zip"
     assert provider.calls == []
+
+
+@pytest.mark.parametrize("phase", ["save", "flush"])
+def test_saved_export_timeout_reports_pending_snapshot_and_allows_retry(recorded_history, monkeypatch, caplog, phase):
+    app = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test"), provider=basic.FakeProvider()
+    )
+
+    async def timed_out(*_args):
+        raise TimeoutError
+
+    monkeypatch.setattr(app_module, "create_chat_archive", lambda *_args, **_kwargs: io.BytesIO(b"ZIP"))
+    with basic.AuthenticatedTestClient(app) as client:
+        session = basic.create_session(client)
+        with monkeypatch.context() as patch:
+            patch.setattr(app.state.recovery, phase, timed_out)
+            response = client.get(f"/sessions/{session}/export")
+        assert response.status_code == 503
+        assert response.json() == {"detail": "The chat snapshot is still being saved. Try again."}
+        assert "AI chat archive creation failed" not in caplog.text
+        assert not app.state.recovery._pins
+        assert client.get(f"/sessions/{session}/export").content == b"ZIP"
+
+
+@pytest.mark.parametrize("error", [OSError, TimeoutError], ids=["disk-error", "archive-io-timeout"])
+def test_saved_export_archive_io_failure_is_not_reported_as_a_pending_save(recorded_history, monkeypatch, error):
+    app = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test"), provider=basic.FakeProvider()
+    )
+
+    def failed(*_args, **_kwargs):
+        raise error("private archive path")
+
+    monkeypatch.setattr(app_module, "create_chat_archive", failed)
+    with basic.AuthenticatedTestClient(app) as client:
+        session = basic.create_session(client)
+        response = client.get(f"/sessions/{session}/export")
+        assert response.status_code == 503
+        assert response.json() == {"detail": "The chat archive could not be created. Try again."}
+        assert not app.state.recovery._pins
+
+
+@pytest.mark.parametrize("error", [RuntimeError, RecursionError], ids=["runtime-error", "recursion-error"])
+def test_saved_export_renderer_failures_remain_server_errors(recorded_history, monkeypatch, error):
+    app = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test"), provider=basic.FakeProvider()
+    )
+
+    def failed(*_args, **_kwargs):
+        raise error("private renderer details")
+
+    monkeypatch.setattr(app_module, "create_chat_archive", failed)
+    with basic.AuthenticatedTestClient(app, raise_server_exceptions=False) as client:
+        session = basic.create_session(client)
+        response = client.get(f"/sessions/{session}/export")
+        assert response.status_code == 500
+        assert "private renderer details" not in response.text
+        assert not app.state.recovery._pins
 
 
 @asynccontextmanager
@@ -472,7 +554,7 @@ def test_recovery_state_writes_commit_in_capture_order(recorded_history, monkeyp
     release = threading.Event()
     committed = []
 
-    def save(_self, _session_id, *, state, credential_id=None, entries=()):
+    def save(_self, _session_id, *, state, credential_id=None, entries=(), uploads=(), downloads=None, files=()):
         if state[2]["schedule_yaml"] == older:
             blocked.set()
             release.wait(5)
@@ -687,7 +769,7 @@ def test_recovery_writers_report_each_outage_once_and_report_recovery(monkeypatc
     assert attempts == 8 and len(saved_batches) == 2
     assert delays == [1, 2, 4, 1, 2, 4]
     assert recoveries == [(f"ai.history.{operation}", 3)] * 2
-    assert "secret-database-url" not in caplog.text
+    assert all(isinstance(record.exc_info[1], psycopg.OperationalError) for record in errors)
 
 
 def record(entry) -> tuple[str, dict]:
@@ -773,6 +855,256 @@ def session_state(owner: str, expires_in: float = 60, **changes) -> tuple[str, f
     return owner, time.time() + expires_in, {**EMPTY_STATE, **changes}
 
 
+def test_postgres_uploads_survive_restart_and_removal(postgres_history):
+    settings = basic.make_settings(history_postgres_url="test", max_attachment_total_bytes=20)
+    app = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
+    upload_id = str(uuid4())
+    payload = {"files": ("notes.txt", b"handover\x00", "text/plain")}
+    with basic.AuthenticatedTestClient(app) as client:
+        session = basic.create_session(client)
+        response = client.post(f"/sessions/{session}/uploads?upload_id={upload_id}", files=payload)
+        assert response.status_code == 201
+        first = response.json()[0]
+        duplicate = client.post(f"/sessions/{session}/uploads", files=payload).json()[0]
+        assert duplicate["filename"] == "notes (1).txt"
+        cookies = dict(client.cookies)
+
+    read = ToolCallRequest((ToolCall("read", "read", json.dumps({"path": "/workspace/schedule.yaml"})),))
+    provider = basic.ScriptedToolProvider([read], [TextDelta("Read")])
+    factory = FakeSandboxFactory()
+    restarted = basic.create_test_app(settings=settings, provider=provider, sandbox_factory=factory)
+    with basic.AuthenticatedTestClient(restarted) as client:
+        assert client.get(f"/sessions/{session}/uploads").status_code == 404
+        client.cookies.update(cookies)
+        assert client.get(f"/sessions/{session}/uploads").json() == [first, duplicate]
+        assert all(upload.data is None for upload in restarted.state.session_store.get(session).uploads.values())
+        retry = client.post(f"/sessions/{session}/uploads?upload_id={upload_id}", files=payload)
+        assert retry.status_code == 201 and retry.json() == [first]
+        conflict = client.post(
+            f"/sessions/{session}/uploads?upload_id={upload_id}",
+            files={"files": ("notes.txt", b"changed", "text/plain")},
+        )
+        assert conflict.status_code == 409
+        assert (
+            client.post(
+                f"/sessions/{session}/uploads", files={"files": ("large.txt", b"123", "text/plain")}
+            ).status_code
+            == 413
+        )
+        assert client.post(f"/sessions/{session}/messages", json={"message": "Read the files"}).status_code == 200
+        for metadata in (first, duplicate):
+            filename = metadata["filename"].replace(" (1)", "_1_")
+            path = f"/workspace/attachments/{metadata['id']}-{filename}"
+            assert factory.created[0].files[path] == b"handover\x00"
+        assert client.delete(f"/sessions/{session}/uploads/{upload_id}").status_code == 204
+    again = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
+    with basic.AuthenticatedTestClient(again) as client:
+        client.cookies.update(cookies)
+        assert client.get(f"/sessions/{session}/uploads").json() == [duplicate]
+    with postgres_history._connect() as connection:
+        assert connection.execute("SELECT source_id, data FROM chat_files WHERE removed_at IS NULL").fetchall() == [
+            (duplicate["id"], b"handover\x00")
+        ]
+        assert connection.execute("SELECT count(*) FROM chat_files").fetchone() == (2,)
+        connection.execute("UPDATE chat_sessions SET expires_at = now() - interval '1 second'")
+    postgres_history.prune()
+    with postgres_history._connect() as connection:
+        assert connection.execute("SELECT count(*) FROM chat_files").fetchone() == (0,)
+
+
+def test_postgres_failed_upload_is_not_acknowledged_and_can_retry(postgres_history, monkeypatch):
+    app = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test"), provider=basic.FakeProvider()
+    )
+    with basic.AuthenticatedTestClient(app) as client:
+        session = basic.create_session(client)
+        upload_id = str(uuid4())
+        payload = {"files": ("notes.txt", b"handover", "text/plain")}
+        save = ChatHistory.save_session
+        monkeypatch.setattr(ChatHistory, "save_session", unavailable)
+        assert client.post(f"/sessions/{session}/uploads?upload_id={upload_id}", files=payload).status_code == 503
+        assert app.state.session_store.get(session).uploads[upload_id].data == b"handover"
+        with postgres_history._connect() as connection:
+            assert connection.execute("SELECT count(*) FROM chat_files").fetchone() == (0,)
+            assert not connection.execute("SELECT state FROM chat_sessions").fetchone()[0]["uploads"]
+        monkeypatch.setattr(ChatHistory, "save_session", save)
+        assert client.post(f"/sessions/{session}/uploads?upload_id={upload_id}", files=payload).status_code == 201
+        assert app.state.session_store.get(session).uploads[upload_id].data is None
+        assert len(client.get(f"/sessions/{session}/uploads").json()) == 1
+        monkeypatch.setattr(ChatHistory, "save_session", unavailable)
+        assert client.delete(f"/sessions/{session}/uploads/{upload_id}").status_code == 503
+        monkeypatch.setattr(ChatHistory, "save_session", save)
+        assert client.delete(f"/sessions/{session}/uploads/{upload_id}").status_code == 204
+        assert client.delete(f"/sessions/{session}/uploads/{upload_id}").status_code == 404
+        # A removed ID can be used for a new upload, with new bytes.
+        assert (
+            client.post(
+                f"/sessions/{session}/uploads?upload_id={upload_id}",
+                files={"files": ("new.txt", b"new bytes", "text/plain")},
+            ).status_code
+            == 201
+        )
+    with postgres_history._connect() as connection:
+        assert connection.execute("SELECT data FROM chat_files ORDER BY created_at").fetchall() == [
+            (b"handover",),
+            (b"new bytes",),
+        ]
+
+
+def test_postgres_upload_write_is_atomic(postgres_history, monkeypatch):
+    store = SessionStore(basic.make_settings())
+    session = store.create(str(uuid4()), basic.schedule_yaml())
+    uploads = store.retain_uploads(session.id, session.owner_token, [SandboxAttachment("notes", "text/plain", b"hi")])
+    # Fail after the session row and file bytes have been written. Neither may commit.
+    with monkeypatch.context() as patch:
+        original = ChatHistory._save_state
+
+        def fail_after_write(*args, **kwargs):
+            original(*args, **kwargs)
+            raise psycopg.OperationalError("interrupted transaction")
+
+        patch.setattr(ChatHistory, "_save_state", staticmethod(fail_after_write))
+        with pytest.raises(psycopg.OperationalError):
+            postgres_history.save_session(session.id, store.recovery_state(session.id), uploads=uploads)
+    with postgres_history._connect() as connection:
+        assert connection.execute("SELECT count(*) FROM chat_sessions").fetchone() == (0,)
+        assert connection.execute("SELECT count(*) FROM chat_files").fetchone() == (0,)
+
+
+def test_postgres_uploads_load_only_when_a_sandbox_is_used(postgres_history, monkeypatch):
+    loads = []
+    load = ChatHistory.load_upload
+
+    def record_load(self, session_id, owner, upload_id, size_bytes):
+        loads.append((upload_id, size_bytes))
+        return load(self, session_id, owner, upload_id, size_bytes)
+
+    monkeypatch.setattr(ChatHistory, "load_upload", record_load)
+    read = ToolCallRequest((ToolCall("read", "read", json.dumps({"path": "/workspace/schedule.yaml"})),))
+    provider = basic.ScriptedToolProvider([TextDelta("No files needed")], [read], [TextDelta("Read")])
+    factory = FakeSandboxFactory()
+    app = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test", max_sessions=1),
+        provider=provider,
+        sandbox_factory=factory,
+    )
+    with basic.AuthenticatedTestClient(app) as client:
+        session = basic.create_session(client)
+        payload = b"x" * 1_000_000
+        response = client.post(
+            f"/sessions/{session}/uploads",
+            files=[("files", (name, payload, "text/plain")) for name in ("one.txt", "two.txt")],
+        )
+        assert response.status_code == 201
+        metadata = response.json()
+        store = app.state.session_store
+        assert all(
+            upload.data is None and upload.byte_count == len(payload) for upload in store.get(session).uploads.values()
+        )
+        assert store.retained_bytes < len(payload)
+        # A full store unloads the first chat. Restoring its metadata must not read file bytes.
+        basic.create_session(client)
+        assert store.get(session) is None
+        assert client.get(f"/sessions/{session}/uploads").json() == metadata
+        assert all(upload.data is None for upload in store.get(session).uploads.values())
+        assert store.retained_bytes < len(payload)
+        assert client.post(f"/sessions/{session}/messages", json={"message": "Hello"}).status_code == 200
+        assert loads == [] and factory.created == []
+        assert client.post(f"/sessions/{session}/messages", json={"message": "Read files"}).status_code == 200
+        assert loads == [(file["id"], len(payload)) for file in metadata]
+        assert all(upload.data is None for upload in store.get(session).uploads.values())
+        assert store.retained_bytes < len(payload)
+
+
+@pytest.mark.parametrize("failure", ["unavailable", "missing"], ids=["database-outage", "missing-file"])
+def test_postgres_upload_read_failure_releases_run(postgres_history, monkeypatch, failure, caplog):
+    read = ToolCallRequest((ToolCall("read", "read", json.dumps({"path": "/workspace/schedule.yaml"})),))
+    factory = FakeSandboxFactory()
+    app = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test"),
+        provider=basic.ScriptedToolProvider([read], [TextDelta("Read")]),
+        sandbox_factory=factory,
+    )
+    with basic.AuthenticatedTestClient(app) as client:
+        session = basic.create_session(client)
+        assert (
+            client.post(f"/sessions/{session}/uploads", files={"files": ("notes.txt", b"hi", "text/plain")}).status_code
+            == 201
+        )
+        if failure == "unavailable":
+            monkeypatch.setattr(ChatHistory, "load_upload", unavailable)
+        else:
+            with postgres_history._connect() as connection:
+                connection.execute("DELETE FROM chat_files")
+        response = client.post(f"/sessions/{session}/messages", json={"message": "Read files"})
+        assert response.status_code == 200
+        error = next(data for kind, data in basic.parse_sse(response.text) if kind == "error")
+        assert error["message"] == (
+            "Uploaded file storage is temporarily unavailable."
+            if failure == "unavailable"
+            else "An uploaded file is missing or has expired. Upload the source file again."
+        )
+        assert "secret-database-url" not in response.text
+        assert not app.state.session_store.get(session).active
+        assert factory.created[0].closed
+        assert all(upload.data is None for upload in app.state.session_store.get(session).uploads.values())
+        assert "AI sandbox run failed" not in caplog.text
+        with postgres_history._connect() as connection:
+            assert connection.execute("SELECT status, error_code FROM chat_runs").fetchone() == (
+                "failed",
+                "attachment_unavailable",
+            )
+
+
+def test_postgres_run_saves_pending_upload_before_loading_it(postgres_history, monkeypatch):
+    read = ToolCallRequest((ToolCall("read", "read", json.dumps({"path": "/workspace/schedule.yaml"})),))
+    factory = FakeSandboxFactory()
+    app = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test"),
+        provider=basic.ScriptedToolProvider([read], [TextDelta("Read")]),
+        sandbox_factory=factory,
+    )
+    with basic.AuthenticatedTestClient(app) as client:
+        session = basic.create_session(client)
+        with monkeypatch.context() as patch:
+            patch.setattr(ChatHistory, "save_session", unavailable)
+            assert (
+                client.post(
+                    f"/sessions/{session}/uploads", files={"files": ("notes.txt", b"pending", "text/plain")}
+                ).status_code
+                == 503
+            )
+        live = app.state.session_store.get(session)
+        upload = next(iter(live.uploads.values()))
+        assert upload.data == b"pending"
+        load = ChatHistory.load_upload
+
+        def check_snapshot(self, *args):
+            assert live.snapshot is not None
+            assert all(item.data is None for item in live.snapshot.uploads)
+            return load(self, *args)
+
+        monkeypatch.setattr(ChatHistory, "load_upload", check_snapshot)
+        assert client.post(f"/sessions/{session}/messages", json={"message": "Read files"}).status_code == 200
+        assert factory.created[0].files[f"/workspace/attachments/{upload.id}-notes.txt"] == b"pending"
+        assert live.uploads[upload.id].data is None
+        assert not live.active
+
+
+def test_postgres_upload_read_checks_owner_expiry_and_size(postgres_history):
+    store = SessionStore(basic.make_settings())
+    session = store.create(str(uuid4()), basic.schedule_yaml())
+    uploads = store.retain_uploads(session.id, session.owner_token, [SandboxAttachment("notes", "text/plain", b"hi")])
+    postgres_history.save_session(session.id, store.recovery_state(session.id), uploads=uploads)
+    args = (session.id, session.owner_token, uploads[0].id)
+    assert postgres_history.load_upload(*args, 2) == b"hi"
+    assert postgres_history.load_upload(session.id, str(uuid4()), uploads[0].id, 2) is None
+    assert postgres_history.load_upload(*args, 1) is None
+    with postgres_history._connect() as connection:
+        connection.execute("UPDATE chat_sessions SET expires_at = now() - interval '1 second'")
+    assert postgres_history.load_upload(*args, 2) is None
+
+
 def test_postgres_duplicates_and_reconnection(postgres_history):
     history = postgres_history
     run, session, owner = str(uuid4()), str(uuid4()), str(uuid4())
@@ -818,7 +1150,7 @@ def test_postgres_duplicates_and_reconnection(postgres_history):
             *map(record, entries),
             record(app_event[2]),
         ]
-        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (5,)
+        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (7,)
     # Tool results never join later context, so the conversation is rebuilt without them.
     assert restarted.load_session(session, owner)["entries"] == [
         UserMessage("What's next?"),
@@ -1039,7 +1371,7 @@ def test_postgres_upgrade_preserves_deployed_sessions_and_message_receipts(unini
     assert [(row[3], row[4].get("text")) for row in events] == [("delta", "Saved answer"), ("optimization", None)]
     assert events[0][4]["run_id"] == run_id
     with history._connect() as connection:
-        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (5,)
+        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (7,)
         assert connection.execute("SELECT auth_credential_id FROM chat_sessions").fetchone() == ("team-a",)
         assert connection.execute("SELECT model FROM chat_runs").fetchone() == ("saved-model",)
 
@@ -1800,36 +2132,34 @@ def test_postgres_export_snapshot_matches_the_complete_chat_fixture_and_cli(post
                 (event["occurred_at"] / 1000, session_id, i),
             )
         database_url = connection.info.dsn
-    assert postgres_history.export_snapshot(session_id) == fixture
-    assert postgres_history.export_snapshot(str(uuid4())) is None
+        if connection.info.password:
+            database_url = make_conninfo(database_url, password=connection.info.password)
+    with postgres_history._connect() as connection:
+        assert postgres_history.export_snapshot(connection, session_id) == fixture
+        assert postgres_history.export_snapshot(connection, str(uuid4())) is None
     repo = Path(__file__).resolve().parents[2]
-    saved = tmp_path / "snapshot.json"
-    saved.write_text(json.dumps(fixture), encoding="utf-8")
-    for extension in ("html", "md"):
-        expected = tmp_path / f"expected.{extension}"
-        actual = tmp_path / f"actual.{extension}"
-        subprocess.run(
-            ["bun", str(repo / "web-frontend/scripts/export-ai-chat.ts"), str(expected), "--snapshot", str(saved)],
-            check=True,
-            capture_output=True,
-        )
-        result = subprocess.run(
-            [str(repo / "scripts/export_ai_chat.sh"), session_id, str(actual)],
-            env={**os.environ, "AI_HISTORY_POSTGRES_URL": database_url},
-            check=False,
-            capture_output=True,
-        )
-        assert result.returncode == 0, result.stderr.decode()
-        assert actual.read_bytes() == expected.read_bytes()
-    actual.write_text("keep this file", encoding="utf-8")
+    actual = tmp_path / "actual.zip"
+    result = subprocess.run(
+        [str(repo / "scripts/export_ai_chat.sh"), session_id, str(actual)],
+        env={**os.environ, "AI_HISTORY_POSTGRES_URL": database_url},
+        check=False,
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr.decode()
+    with ZipFile(actual) as archive:
+        assert archive.read("chat.html").decode() == build_saved_chat_export(fixture, "html")
+        assert archive.read("chat.md").decode() == build_saved_chat_export(fixture, "markdown")
+    actual.write_bytes(b"keep this file")
     failed = subprocess.run(
         [str(repo / "scripts/export_ai_chat.sh"), str(uuid4()), str(actual)],
         env={**os.environ, "AI_HISTORY_POSTGRES_URL": database_url},
         capture_output=True,
         check=False,
+        timeout=30,
     )
     assert failed.returncode != 0
-    assert actual.read_text(encoding="utf-8") == "keep this file"
+    assert actual.read_bytes() == b"keep this file"
 
 
 def test_postgres_saved_export_is_owned_and_survives_restart(postgres_history):
@@ -1848,7 +2178,7 @@ def test_postgres_saved_export_is_owned_and_survives_restart(postgres_history):
         assert client.post(f"/sessions/{session_id}/messages", json={"message": "Hello"}).status_code == 200
         exported = client.get(f"/sessions/{session_id}/export")
         assert exported.status_code == 200
-        snapshot = exported.json()
+        snapshot = json.loads(ZipFile(io.BytesIO(exported.content)).read("chat.json"))
         assert snapshot["frontend_version"] == "v0.4.3"
         assert snapshot["metadata"]["endpoint"] == "https://ai.example.test/ai"
         assert any(event["type"] == "model_input" for event in snapshot["events"])
@@ -1857,4 +2187,5 @@ def test_postgres_saved_export_is_owned_and_survives_restart(postgres_history):
     with basic.AuthenticatedTestClient(restarted) as client:
         assert client.get(f"/sessions/{session_id}/export").status_code == 404
         client.cookies.update(cookies)
-        assert client.get(f"/sessions/{session_id}/export").json() == snapshot
+        restored = client.get(f"/sessions/{session_id}/export")
+        assert restored.content == exported.content

@@ -20,6 +20,7 @@
 // This code is mostly AI generated.
 
 import type { ActivityEntry } from './AssistantActivity';
+import type { ChatMessageContent } from './chatTranscript';
 
 export function formatCharacterCount(characters: number): string {
   return characters >= 1000 ? `${(characters / 1000).toFixed(1)}k` : `${characters}`;
@@ -93,4 +94,35 @@ export function formatResponseTime(timestamp: number): string {
   return completed.toLocaleString([], sameDate
     ? { hour: 'numeric', minute: '2-digit' }
     : { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function uploadedFileLines(files: { filename: string; bytes: number }[]): string[] {
+  return files.map(file => `${file.filename} (${(file.bytes / 1000).toLocaleString('en-US')} KB)`);
+}
+
+export function messageUploadedFileLines(message: ChatMessageContent): string[] {
+  if (message.source !== 'app' || message.title !== 'Files Uploaded') return [];
+  const separator = message.content.indexOf(': ');
+  if (separator < 0) return [];
+  try {
+    const files: unknown = JSON.parse(message.content.slice(separator + 2));
+    if (!Array.isArray(files) || !files.every(file => file !== null && typeof file === 'object'
+      && typeof file.filename === 'string' && typeof file.bytes === 'number' && Number.isFinite(file.bytes) && file.bytes >= 0)) {
+      return [];
+    }
+    return uploadedFileLines(files);
+  } catch {
+    return [];
+  }
+}
+
+export function messageLabel(message: ChatMessageContent): string {
+  if (message.role === 'system') return 'System';
+  if (message.role === 'assistant') return 'Assistant';
+  if (message.role === 'optimizer') return 'Optimizer';
+  const topic = message.title ? ` - ${message.title}` : '';
+  if (message.source === 'app') return `User · App${topic}`;
+  if (message.source === 'status') return `User · Status${topic}`;
+  if (message.source === 'optimizer') return 'User · Optimizer';
+  return 'User';
 }

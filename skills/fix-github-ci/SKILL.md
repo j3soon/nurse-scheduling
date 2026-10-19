@@ -15,6 +15,10 @@ Inspect the failure log, runner matrix, workflow step, and exact command that
 failed. Reproduce the smallest relevant command locally when possible, then
 compare the local environment with the runner context.
 
+Before reproducing locally, check `test -f /.dockerenv` and follow the root
+`AGENTS.md` environment rules. Setup commands, interpreters, and absolute
+paths differ between a dev container (`/workspace`) and a host checkout.
+
 Use the evidence to distinguish among an application defect, a non-portable or
 flaky test, incorrect workflow setup, a dependency mismatch, and a transient
 runner or external-service failure. Consult focused history when the intended

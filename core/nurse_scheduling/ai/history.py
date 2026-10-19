@@ -37,6 +37,7 @@ from ..sentry import report_outage_recovery
 from ..server.retry import RepeatedFailure
 from .provider import TokenUsage
 from .transcript import AgentMessage, AssistantMessage, UserMessage, entry_from_record, entry_record
+from .workspace import SandboxAttachment, attachment_path
 
 logger = logging.getLogger("nurse_scheduling.ai.history")
 RunStatus = Literal["completed", "failed", "cancelled", "stale"]
@@ -104,7 +105,7 @@ class ChatHistory:
         self.prune()
 
     def prune(self) -> None:
-        """Delete expired sessions with their runs, entries, events, and Stop requests."""
+        """Delete expired sessions with their uploads, runs, entries, events, and Stop requests."""
         with self._connect() as connection:
             connection.execute("DELETE FROM chat_sessions WHERE expires_at < now()")
 
@@ -115,6 +116,9 @@ class ChatHistory:
         state: SessionState,
         entries: Sequence[EntryRow],
         credential_id: str | None = None,
+        uploads: Sequence[SandboxAttachment] = (),
+        downloads: dict[str, bytes | None] | None = None,
+        files: Sequence[dict] = (),
     ) -> None:
         """Save the state with the entries it counts, so a restore never skips an unsaved entry."""
         owner, expires_at, data = state
@@ -125,6 +129,65 @@ class ChatHistory:
             (session_id, _owner_hash(owner), expires_at, _jsonb(data), credential_id),
         )
         _insert_entries(connection, session_id, entries)
+        retained_files = [
+            {
+                "kind": "upload",
+                "source_id": upload.id,
+                "filename": upload.filename,
+                "media_type": upload.media_type,
+                "data": upload.data,
+            }
+            for upload in uploads
+            if upload.data is not None
+        ]
+        retained_files.extend(
+            {
+                "kind": "download",
+                "source_id": run_id,
+                "run_id": run_id,
+                "filename": "download.zip",
+                "media_type": "application/zip",
+                "data": content,
+            }
+            for run_id, content in (downloads or {}).items()
+            if content is not None
+        )
+        # Save detached versions first, so an active upload that reuses their source ID stays current.
+        ChatHistory._save_files(connection, session_id, [*files, *retained_files])
+        for kind, active in (
+            ("upload", [upload["id"] for upload in data.get("uploads", [])]),
+            ("download", data.get("downloads", [])),
+        ):
+            connection.execute(
+                "UPDATE chat_files SET removed_at = now() WHERE session_id = %s AND kind = %s "
+                "AND removed_at IS NULL AND NOT (source_id = ANY(%s::text[]))",
+                (session_id, kind, active),
+            )
+
+    @staticmethod
+    def _save_files(connection, session_id: str, files: Sequence[dict]) -> None:
+        for file in files:
+            # Reusing a detached source ID preserves the old file version.
+            connection.execute(
+                "UPDATE chat_files SET removed_at = now() WHERE session_id = %s AND kind = %s "
+                "AND source_id = %s AND removed_at IS NULL AND "
+                "(data <> %s OR filename <> %s OR media_type <> %s)",
+                (session_id, file["kind"], file["source_id"], file["data"], file["filename"], file["media_type"]),
+            )
+            connection.execute(
+                "INSERT INTO chat_files (session_id, kind, source_id, filename, media_type, data, run_id) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (session_id, kind, source_id) WHERE removed_at IS NULL DO NOTHING",
+                (
+                    session_id,
+                    file["kind"],
+                    file["source_id"],
+                    file["filename"],
+                    file["media_type"],
+                    file["data"],
+                    file.get("run_id"),
+                ),
+            )
 
     def save_session(
         self,
@@ -133,10 +196,13 @@ class ChatHistory:
         credential_id: str | None = None,
         *,
         entries: Sequence[EntryRow] = (),
+        uploads: Sequence[SandboxAttachment] = (),
+        downloads: dict[str, bytes | None] | None = None,
+        files: Sequence[dict] = (),
     ) -> None:
         """Keep session ownership, expiry, schedule, and new conversation entries."""
         with self._connect() as connection:
-            self._save_state(connection, session_id, state, entries, credential_id)
+            self._save_state(connection, session_id, state, entries, credential_id, uploads, downloads, files)
 
     def append_entries(self, session_id: str, entries: Sequence[EntryRow]) -> None:
         """Save entries as they end, as Pi saves each message on `message_end`."""
@@ -157,13 +223,16 @@ class ChatHistory:
         message_id: str | None = None,
         credential_id: str | None = None,
         entries: Sequence[EntryRow] = (),
+        uploads: Sequence[SandboxAttachment] = (),
+        downloads: dict[str, bytes | None] | None = None,
+        files: Sequence[dict] = (),
     ) -> None:
         """Atomically save the session state, a uniquely identified run, and its prompt entry.
 
         The prompt is written before model work, so it survives a process that dies mid-run.
         """
         with self._connect() as connection:
-            self._save_state(connection, session_id, state, entries)
+            self._save_state(connection, session_id, state, entries, uploads=uploads, downloads=downloads, files=files)
             inserted = connection.execute(
                 "INSERT INTO chat_runs (id, session_id, model, attachment_count, kind, message_id, auth_credential_id) "
                 "VALUES (%s, %s, %s, %s, %s, %s, "
@@ -186,13 +255,16 @@ class ChatHistory:
         state: SessionState,
         entries: Sequence[EntryRow] = (),
         schedule_change: dict[str, Any] | None = None,
+        uploads: Sequence[SandboxAttachment] = (),
+        downloads: dict[str, bytes | None] | None = None,
+        files: Sequence[dict] = (),
     ) -> None:
         """Commit the run outcome with the resulting session state, keeping the first terminal result.
 
         `committed` records whether the run's messages joined the session conversation.
         """
         with self._connect() as connection:
-            self._save_state(connection, session_id, state, entries)
+            self._save_state(connection, session_id, state, entries, uploads=uploads, downloads=downloads, files=files)
             connection.execute(
                 "UPDATE chat_runs SET status = %s, error_code = %s, usage = %s, committed = %s, "
                 "schedule_change = %s, finished_at = now() "
@@ -307,6 +379,14 @@ class ChatHistory:
                 "SELECT coalesce(max(last_event_id), 0) FROM chat_session_events WHERE session_id = %s",
                 (session_id,),
             ).fetchone()
+            (archive_bytes,) = connection.execute(
+                "SELECT coalesce(sum(octet_length(data)), 0) FROM chat_files WHERE session_id = %s", (session_id,)
+            ).fetchone()
+            removed_uploads = connection.execute(
+                "SELECT DISTINCT source_id, filename FROM chat_files WHERE session_id = %s "
+                "AND kind = 'upload' AND removed_at IS NOT NULL",
+                (session_id,),
+            ).fetchall()
             unfinished = connection.execute(
                 "SELECT r.id, r.kind, r.status, r.schedule_change, (SELECT e.type FROM chat_session_events e "
                 "WHERE e.session_id = r.session_id AND e.run_id = r.id "
@@ -318,6 +398,11 @@ class ChatHistory:
             ).fetchall()
         return {
             "state": row[0],
+            "uploads": [SandboxAttachment(data=None, **metadata) for metadata in row[0].get("uploads", [])],
+            "removed_upload_paths": [
+                attachment_path(SandboxAttachment(filename, "", None, id=upload_id), 0)
+                for upload_id, filename in removed_uploads
+            ],
             "expires_at": float(row[1]),
             "entries": [
                 replace(entry, stop_reason="aborted" if status == "cancelled" else "error")
@@ -328,6 +413,7 @@ class ChatHistory:
             ],
             "next_entry_seq": int(next_entry_seq),
             "last_event_id": int(last_event_id),
+            "archive_bytes": int(archive_bytes),
             "unfinished_runs": [
                 {
                     "id": str(run_id),
@@ -359,27 +445,64 @@ class ChatHistory:
             for first, last, run_id, kind, data in rows
         ]
 
-    def export_snapshot(self, session_id: str) -> dict[str, Any] | None:
-        """Read complete saved events and metadata in one consistent, read-only transaction."""
+    def load_upload(self, session_id: str, owner: str, upload_id: str, size_bytes: int) -> bytes | None:
+        """Read one owned, unexpired file whose byte count still matches its saved metadata."""
         with self._connect() as connection:
-            connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            session = connection.execute(
-                "SELECT state, extract(epoch FROM created_at) FROM chat_sessions WHERE id = %s", (session_id,)
+            row = connection.execute(
+                "SELECT u.data FROM chat_files u JOIN chat_sessions s ON s.id = u.session_id "
+                "WHERE u.session_id = %s AND u.source_id = %s AND u.kind = 'upload' AND u.removed_at IS NULL AND s.owner_hash = %s AND s.expires_at > now() "
+                "AND octet_length(u.data) = %s",
+                (session_id, upload_id, _owner_hash(owner), size_bytes),
             ).fetchone()
-            if session is None:
-                return None
-            runs = connection.execute(
-                "SELECT r.id, r.kind, r.status, extract(epoch FROM r.started_at), "
-                "extract(epoch FROM r.finished_at), "
-                "(SELECT payload->>'text' FROM chat_session_entries WHERE run_id = r.id AND type = 'user' "
-                "ORDER BY seq LIMIT 1) FROM chat_runs r WHERE r.session_id = %s ORDER BY r.sequence",
-                (session_id,),
-            ).fetchall()
-            events = connection.execute(
-                "SELECT type, data, extract(epoch FROM created_at) FROM chat_session_events "
-                "WHERE session_id = %s ORDER BY event_id",
-                (session_id,),
-            ).fetchall()
+        return None if row is None else row[0]
+
+    def load_file(self, session_id: str, owner: str, kind: str, source_id: str) -> bytes | None:
+        """Read one active generated file of an owned, unexpired session."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT f.data FROM chat_files f JOIN chat_sessions s ON s.id = f.session_id "
+                "WHERE f.session_id = %s AND s.owner_hash = %s AND s.expires_at > now() "
+                "AND f.kind = %s AND f.source_id = %s AND f.removed_at IS NULL",
+                (session_id, _owner_hash(owner), kind, source_id),
+            ).fetchone()
+        return None if row is None else row[0]
+
+    def latest_optimizer(self, session_id: str, owner: str) -> str | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                # A terminal update survives even when a storage limit refused all of that job's files.
+                "SELECT f.source_id FROM ("
+                "SELECT session_id, source_id, created_at, NULL::bigint AS event_id "
+                "FROM chat_files WHERE kind = 'optimizer-status' "
+                "UNION ALL SELECT session_id, data->>'job_id', created_at, event_id FROM chat_session_events "
+                "WHERE type = 'optimization' AND data->>'terminal' = 'true'"
+                ") f JOIN chat_sessions s ON s.id = f.session_id "
+                "WHERE f.session_id = %s AND s.owner_hash = %s AND s.expires_at > now() "
+                "ORDER BY f.created_at DESC, f.event_id DESC NULLS LAST LIMIT 1",
+                (session_id, _owner_hash(owner)),
+            ).fetchone()
+        return None if row is None else row[0]
+
+    @staticmethod
+    def export_snapshot(connection, session_id: str) -> dict[str, Any] | None:
+        """Read complete saved events and metadata through the caller's consistent read-only transaction."""
+        session = connection.execute(
+            "SELECT state, extract(epoch FROM created_at) FROM chat_sessions WHERE id = %s", (session_id,)
+        ).fetchone()
+        if session is None:
+            return None
+        runs = connection.execute(
+            "SELECT r.id, r.kind, r.status, extract(epoch FROM r.started_at), "
+            "extract(epoch FROM r.finished_at), "
+            "(SELECT payload->>'text' FROM chat_session_entries WHERE run_id = r.id AND type = 'user' "
+            "ORDER BY seq LIMIT 1) FROM chat_runs r WHERE r.session_id = %s ORDER BY r.sequence",
+            (session_id,),
+        ).fetchall()
+        events = connection.execute(
+            "SELECT type, data, extract(epoch FROM created_at) FROM chat_session_events "
+            "WHERE session_id = %s ORDER BY event_id",
+            (session_id,),
+        ).fetchall()
         state, created_at = session
         milliseconds = lambda timestamp: round(float(timestamp) * 1000)
         return {
@@ -410,11 +533,11 @@ class ChatHistory:
             with anyio.CancelScope(shield=True):
                 return await anyio.to_thread.run_sync(getattr(self, operation), *args)
         except (psycopg.Error, OSError):
-            logger.error("AI history %s failed", operation)
+            logger.exception("AI history %s failed", operation)
             raise RuntimeError(RECOVERY_UNAVAILABLE) from None
 
     async def write(self, operation: str, *args, failures: RepeatedFailure | None = None, **kwargs) -> bool:
-        """Report failures without leaking connection strings or chat text to logs."""
+        """Run a write. A failure is logged with its exception and returns False."""
         try:
             with anyio.CancelScope(shield=True):
                 await anyio.to_thread.run_sync(lambda: getattr(self, operation)(*args, **kwargs))
@@ -426,7 +549,7 @@ class ChatHistory:
             return True
         except (psycopg.Error, OSError):
             if failures is None or failures.report():
-                logger.error("AI history %s failed", operation)
+                logger.exception("AI history %s failed", operation)
             return False
 
     async def maintain(self) -> None:

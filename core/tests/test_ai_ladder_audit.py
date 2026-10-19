@@ -29,6 +29,8 @@ import pytest
 from tests.ai_eval import ladder_audit, runner
 from tests.ai_eval.prompt_ladder import load_prompt_steps
 
+pytestmark = pytest.mark.usefixtures("legacy_text_encoding")
+
 
 def test_audit_plan_reproduces_declared_contexts_and_only_ladder_cases(tmp_path):
     args, cases = runner._selected_cases(["--ladder-audit"])
@@ -105,8 +107,11 @@ def _executor(calls, *, improved=True, after_pass=3, infrastructure=0, missing=F
             return SimpleNamespace(returncode=2)
         directory.mkdir()
         if directory.name == "production":
+            # Reports keep non-ASCII answers, which a legacy Windows default cannot decode.
             (directory / "results.jsonl").write_text(
-                json.dumps({"case_id": "witness", "passed": True, "error": ""}) + "\n"
+                json.dumps({"case_id": "witness", "passed": True, "error": "", "answer": "排班"}, ensure_ascii=False)
+                + "\n",
+                encoding="utf-8",
             )
             return SimpleNamespace(returncode=0)
         record = {

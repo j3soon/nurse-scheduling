@@ -23,7 +23,7 @@ import { FiDownload } from 'react-icons/fi';
 
 import { AssistantActivity } from './AssistantActivity';
 import CollapsedText from './CollapsedText';
-import { messageLabel, messageUploadedFileLines } from './chatExport';
+import { messageLabel, messageUploadedFileLines } from './chatPresentation';
 import { formatResponseDuration, formatResponseTime, formatSessionExpiration, retentionLabel } from './chatPresentation';
 import { parseOptimizerMessage } from './optimizerMessage';
 

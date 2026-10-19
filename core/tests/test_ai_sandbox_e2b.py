@@ -321,7 +321,7 @@ def test_retries_a_replay_safe_file_request_with_logged_backoff(
     assert "operation=write_file" in caplog.text
     assert "attempt=1 max_attempts=3" in caplog.text
     assert "error_type=SandboxException" in caplog.text
-    assert "temporary failure" not in caplog.text
+    assert "temporary failure" in caplog.text
 
 
 def test_does_not_retry_an_optional_pause_failure(caplog: pytest.LogCaptureFixture):

@@ -42,6 +42,7 @@ from .workspace import (
     WORKSPACE_SCHEDULE,
     AgentDownload,
     AgentScheduleChange,
+    AttachmentLoader,
     SandboxAttachment,
     SandboxCandidateError,
     SandboxCommandTimeoutError,
@@ -102,7 +103,9 @@ class WorkspaceTools:
                 ).decode("utf-8")
             except (SandboxFileNotFoundError, SandboxFileSizeError, UnicodeDecodeError):
                 return AgentToolOutcome("The current working schedule is unavailable or invalid.", False)
-            review = review_schedule_candidate(self.schedule_yaml, current_schedule, self.limits.max_schedule_bytes)
+            review = await asyncio.to_thread(
+                review_schedule_candidate, self.schedule_yaml, current_schedule, self.limits.max_schedule_bytes
+            )
             if not review.outcome.ok:
                 check = f"Trusted schedule check before optimizer:\n{review.outcome.text}"
                 return AgentToolOutcome(check, False, details={"schedule_check": {"ok": False, "text": check}})
@@ -147,6 +150,7 @@ async def run_workspace(
     optimizer_context: bytes | None = None,
     agent: Agent | None = None,
     request_clock: Callable[[], datetime] | None = None,
+    load_attachment: AttachmentLoader | None = None,
 ) -> AsyncIterator[AgentEvent | AgentScheduleChange | AgentDownload]:
     """Hydrate, run, read, validate, and destroy one fresh sandbox run."""
     agent = agent or Agent()
@@ -161,6 +165,7 @@ async def run_workspace(
                 attachments,
                 optimizer_result,
                 optimizer_context,
+                load_attachment,
             ) as sandbox:
                 toolset = WorkspaceTools(sandbox, schedule_yaml, limits, execute_optimizer)
                 events = agent.prompt(
@@ -185,7 +190,9 @@ async def run_workspace(
                 if not sandbox.started:
                     return
                 candidate = await _read_candidate(sandbox, limits.max_schedule_bytes)
-                review = review_schedule_candidate(schedule_yaml, candidate, limits.max_schedule_bytes)
+                review = await asyncio.to_thread(
+                    review_schedule_candidate, schedule_yaml, candidate, limits.max_schedule_bytes
+                )
                 logger.info(
                     "sandbox candidate validated sandbox_id=%s valid=%s changed=%s",
                     sandbox.sandbox_id,

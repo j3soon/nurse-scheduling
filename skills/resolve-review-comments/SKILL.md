@@ -8,6 +8,11 @@ description: Triage unresolved pull request review comments against the current 
 Resolve the feedback that still improves the pull request. Do not treat every
 comment as a required change.
 
+Check `test -f /.dockerenv`. A dev container has no SSH key, so fetch refs
+through the HTTPS remote and leave pushes to the user, and authenticate `gh`
+with `GH_TOKEN` or fall back to the REST API, as the root `AGENTS.md`
+describes.
+
 ## Establish the current review state
 
 1. Inspect staged and unstaged changes and identify unrelated work.

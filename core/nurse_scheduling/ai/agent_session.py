@@ -66,11 +66,13 @@ from .transcript import (
 )
 from .workspace import (
     SandboxAttachment,
+    SandboxAttachmentUnavailableError,
     SandboxCandidateError,
     SandboxCommandTimeoutError,
     SandboxDownloadError,
     SandboxTurnTimeoutError,
     WorkspaceLimits,
+    attachment_path,
 )
 from .workspace_tools import run_workspace
 
@@ -82,7 +84,9 @@ PROVIDER_ERROR = "The AI provider failed. Please try again."
 SANDBOX_COMMAND_TIMEOUT_ERROR = (
     "An AI shell command timed out. The temporary workspace was discarded. Please try again."
 )
-DOWNLOAD_RETENTION_WARNING = "The generated ZIP could not be retained because the service memory limit was reached."
+DOWNLOAD_RETENTION_WARNING = (
+    "The generated ZIP could not be retained because a chat or service storage limit was reached."
+)
 SANDBOX_RUN_TIMEOUT_ERROR = "The AI response timed out. Please try again."
 STALE_RUN_ERROR = "The schedule changed while this response was generated, so the response was discarded."
 BACKGROUND_RECOVERY_ERROR = "AI message recovery is unavailable, so the optimizer result was not reviewed."
@@ -102,6 +106,11 @@ def _schedule_data(schedule_yaml: str) -> object:
         return _load_yaml(schedule_yaml.encode(), reject_aliases=True)
     except (ValueError, YAMLError):
         return schedule_yaml
+
+
+def schedule_data_changed(before: str, after: str) -> bool:
+    """Report whether a schedule change is more than formatting. Callers may run it off the event loop."""
+    return before != after and _schedule_data(before) != _schedule_data(after)
 
 
 @dataclass(frozen=True)
@@ -179,6 +188,10 @@ class RunRecorder(Protocol):
 
     async def stop_message(self, session_id: str, message_id: str) -> None: ...
 
+    async def read_upload(self, session_id: str, owner: str, upload: SandboxAttachment) -> bytes: ...
+
+    async def save(self, session_id: str, credential_id: str | None = None) -> bool: ...
+
     async def start_run(
         self,
         session_id: str,
@@ -252,7 +265,13 @@ class AgentSession:
     agent: Agent = field(default_factory=Agent)
     # Retained source files keyed by upload ID, in upload order, and generated ZIPs keyed by run ID.
     uploads: dict[str, SandboxAttachment] = field(default_factory=dict)
-    downloads: dict[str, bytes] = field(default_factory=dict)
+    pending_upload_removals: set[str] = field(default_factory=set)
+    removed_upload_paths: set[str] = field(default_factory=set)
+    downloads: dict[str, bytes | None] = field(default_factory=dict)
+    pending_download_removals: set[str] = field(default_factory=set)
+    pending_archive_files: dict[tuple[str, str], dict] = field(default_factory=dict)
+    # Bytes of every file version that recovery storage keeps for this session, including removed files.
+    archive_bytes: int = 0
     # Last owner access, which orders eviction. A restored session keeps its stored expiry.
     last_used: float = field(default_factory=time.monotonic)
     latest_message: AcceptedMessage | None = None
@@ -306,10 +325,21 @@ class AgentSession:
             "schedule_yaml": self.schedule_yaml,
             "frontend_version": self.frontend_version,
             "frontend_timezone": self.frontend_timezone,
+            "downloads": list(self.downloads),
+            "uploads": [
+                {
+                    "id": upload.id,
+                    "filename": upload.filename,
+                    "media_type": upload.media_type,
+                    "size_bytes": upload.byte_count,
+                    "request_sha256": upload.request_sha256,
+                }
+                for upload in self.uploads.values()
+            ],
             "export_metadata": {
                 **self.export_metadata,
                 "uploaded_files": [
-                    {"filename": upload.filename, "bytes": len(upload.data)} for upload in self.uploads.values()
+                    {"filename": upload.filename, "bytes": upload.byte_count} for upload in self.uploads.values()
                 ],
             },
             "dropped_history_messages": self.dropped_history_messages,
@@ -326,12 +356,15 @@ class AgentSession:
         *,
         entries: Sequence[AgentMessage],
         next_entry_seq: int,
+        uploads: Sequence[SandboxAttachment] = (),
+        removed_upload_paths: Sequence[str] = (),
+        archive_bytes: int = 0,
         event_stream: SessionEventStream | None,
         entry_log: Callable[[str, EntryRow], None] | None,
     ) -> "AgentSession":
         """Rebuild a session from `recovery_state` and its saved conversation entries.
 
-        Uploads, downloads, and optimizer results are not saved.
+        File bytes are loaded separately from their persisted references.
         """
         return cls(
             id=session_id,
@@ -343,6 +376,10 @@ class AgentSession:
             frontend_timezone=state.get("frontend_timezone", "UTC"),
             export_metadata=state.get("export_metadata", {}),
             transcript=retained_entries(entries),
+            uploads={upload.id: upload for upload in uploads},
+            removed_upload_paths=set(removed_upload_paths),
+            archive_bytes=archive_bytes,
+            downloads=dict.fromkeys(state.get("downloads", [])),
             dropped_history_messages=state["dropped_history_messages"],
             dropped_entries=state["dropped_entries"],
             next_entry_seq=next_entry_seq,
@@ -567,11 +604,18 @@ class AgentSession:
     def queued_steering(self) -> tuple[str, ...]:
         return self.agent.queued_steering if self.active else ()
 
-    def update_schedule(self, schedule_yaml: str) -> None:
-        """Replace the session schedule, invalidate in-flight results, and record the change."""
+    def update_schedule(self, schedule_yaml: str, compared: tuple[str, bool] | None = None) -> None:
+        """Replace the session schedule, invalidate in-flight results, and record the change.
+
+        `compared` holds a base schedule and its `schedule_data_changed` result. It is reused
+        only while that base is still the session schedule.
+        """
         if self.schedule_yaml == schedule_yaml:
             return
-        data_changed = _schedule_data(self.schedule_yaml) != _schedule_data(schedule_yaml)
+        if compared is not None and compared[0] == self.schedule_yaml:
+            data_changed = compared[1]
+        else:
+            data_changed = schedule_data_changed(self.schedule_yaml, schedule_yaml)
         self.version += 1
         self.schedule_yaml = schedule_yaml
         self.revision = schedule_revision(schedule_yaml)
@@ -594,6 +638,8 @@ class AgentSession:
             raise HTTPException(status_code=404, detail="The uploaded file is no longer available.")
         index = list(self.uploads).index(upload_id) + 1
         upload = self.uploads.pop(upload_id)
+        self.pending_upload_removals.add(upload_id)
+        self.removed_upload_paths.add(attachment_path(upload, index))
         self._add_entry(AppEventEntry(removal_event(upload, index)))
         return upload
 
@@ -654,6 +700,7 @@ class AgentSession:
                     runtime.session_optimizer, self.id, current_yaml, arguments, self.client_address
                 ),
                 attachments=snapshot.uploads,
+                load_attachment=lambda upload: runtime.recorder.read_upload(self.id, self.owner_token, upload),
                 optimizer_result=artifact.content if artifact is not None else None,
                 optimizer_context=artifact.schedule_context if artifact is not None else None,
                 agent=self.agent,
@@ -692,7 +739,7 @@ class AgentSession:
         )
         return completion
 
-    def _publish_completion(
+    async def _publish_completion(
         self,
         run: AgentRun,
         schedule_change: dict[str, Any] | None,
@@ -715,7 +762,10 @@ class AgentSession:
         if output.download is not None:
             # A ZIP that does not fit the session memory budget leaves the answer intact.
             if runtime.store.save_download(self.id, run.id, output.download.content):
+                saved = await runtime.recorder.save(self.id)
                 events.emit({"type": "download", "download_id": run.id})
+                if not saved:
+                    events.emit({"type": "warning", "message": RECOVERY_SAVE_WARNING})
             else:
                 events.emit({"type": "warning", "message": DOWNLOAD_RETENTION_WARNING})
         done: RunDoneEvent = {"type": "done"}
@@ -793,7 +843,7 @@ class AgentSession:
                 if not history_saved:
                     events.emit({"type": "warning", "message": RECOVERY_SAVE_WARNING})
             if outcome.completion is not None:
-                self._publish_completion(
+                await self._publish_completion(
                     run,
                     schedule_change,
                     outcome.completion,
@@ -899,6 +949,8 @@ class AgentSession:
                 error_code, message = "provider_error", exc.user_message or PROVIDER_ERROR
             elif isinstance(exc, SandboxDownloadError):
                 error_code, message = "download_error", str(exc)
+            elif isinstance(exc, SandboxAttachmentUnavailableError):
+                error_code, message = "attachment_unavailable", str(exc)
             elif isinstance(exc, SandboxCommandTimeoutError):
                 error_code, message = "sandbox_command_timeout", SANDBOX_COMMAND_TIMEOUT_ERROR
             elif isinstance(exc, SandboxTurnTimeoutError):

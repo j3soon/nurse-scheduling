@@ -41,6 +41,7 @@ import yaml
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from nurse_scheduling.ai import agent_session as agent_session_module
 from nurse_scheduling.ai.agent_session import (
     CANDIDATE_VALIDATION_ERROR,
     PROVIDER_ERROR,
@@ -140,6 +141,8 @@ def configured_sandbox_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "find_message",
         "load_session",
         "load_events",
+        "load_file",
+        "latest_optimizer",
     ):
         monkeypatch.setattr(ChatHistory, operation, lambda *_args, **_kwargs: None)
 
@@ -196,14 +199,17 @@ def test_application_initializes_sentry_for_ai_service(monkeypatch):
     calls = []
     monkeypatch.setattr(
         "nurse_scheduling.ai.app.init_sentry",
-        lambda version, *, app, api_version: calls.append((version, app, api_version)),
+        lambda version, *, app, api_version, fastapi_integration: calls.append(
+            (version, app, api_version, fastapi_integration)
+        ),
     )
     monkeypatch.setattr("nurse_scheduling.ai.app.configure_service_logging", lambda _logger: calls.append("logging"))
 
     monkeypatch.setattr("nurse_scheduling.ai.app.get_app_version", lambda: "v0.2.0-572-gbecfc27fb644")
     app = create_test_app(settings=make_settings(), provider=FakeProvider())
 
-    assert calls == [(app.state.app_version, "ai-backend", app.version), "logging"]
+    # fastapi_integration=False keeps the SDK from draining upload request bodies.
+    assert calls == [(app.state.app_version, "ai-backend", app.version, False), "logging"]
     assert app.state.app_version == "v0.2.0-572-gbecfc27fb644"
     assert app.version == "0.2.0"
 
@@ -1681,12 +1687,14 @@ def test_environment_configuration_reads_attachment_limits(monkeypatch: pytest.M
     monkeypatch.setenv("AI_MAX_ATTACHMENT_FILES", "6")
     monkeypatch.setenv("AI_MAX_ATTACHMENT_BYTES", "6000000")
     monkeypatch.setenv("AI_MAX_ATTACHMENT_TOTAL_BYTES", "12000000")
+    monkeypatch.setenv("AI_MAX_ARCHIVE_BYTES", "30000000")
 
     settings = AiSettings.from_env()
 
     assert settings.max_attachment_files == 6
     assert settings.max_attachment_bytes == 6_000_000
     assert settings.max_attachment_total_bytes == 12_000_000
+    assert settings.max_archive_bytes == 30_000_000
 
 
 def test_environment_configuration_reads_provider_retry_settings(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1837,6 +1845,39 @@ def test_schedule_edit_is_recorded_only_when_its_data_changes() -> None:
     store.update_schedule(session.id, "owner", "description:   old\n")
     assert store._sessions[session.id].transcript == []
     store.update_schedule(session.id, "owner", "description: new\n")
+    assert store._sessions[session.id].transcript == [AppEventEntry(SCHEDULE_CHANGED_EVENT)]
+
+
+def test_schedule_update_compares_large_schedules_off_the_event_loop(monkeypatch) -> None:
+    parsed_on_event_loop = []
+    schedule_data = agent_session_module._schedule_data
+
+    def record(schedule: str) -> object:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            parsed_on_event_loop.append(False)
+        else:
+            parsed_on_event_loop.append(True)
+        return schedule_data(schedule)
+
+    monkeypatch.setattr(agent_session_module, "_schedule_data", record)
+    app = create_test_app(settings=make_settings(), provider=FakeProvider())
+    with AuthenticatedTestClient(app) as client:
+        session_id = create_session(client, "description: old\n")
+        response = client.put(f"/sessions/{session_id}/schedule", json={"schedule_yaml": "description: new\n"})
+
+    assert response.status_code == 204
+    assert parsed_on_event_loop == [False, False]
+    assert app.state.session_store._sessions[session_id].transcript == [AppEventEntry(SCHEDULE_CHANGED_EVENT)]
+
+
+def test_schedule_update_compares_again_when_its_base_changed() -> None:
+    store = create_test_app(settings=make_settings(), provider=FakeProvider()).state.session_store
+    session = store.create("owner", "description: applied\n")
+
+    # A run applied this schedule after the route compared the update with an older one.
+    store.update_schedule(session.id, "owner", "description: new\n", compared=("description:   new\n", False))
     assert store._sessions[session.id].transcript == [AppEventEntry(SCHEDULE_CHANGED_EVENT)]
 
 
@@ -2262,6 +2303,34 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
     if history_enabled:
         monkeypatch.setattr(ChatHistory, "initialize", lambda _self: None)
         monkeypatch.setattr(ChatHistory, "finish_run", lambda *_args, **_kwargs: None)
+        stored_files = {}
+        archived_files = {}
+        latest_jobs = {}
+
+        def save_uploads(_self, session_id, *, uploads=(), files=(), **_kwargs):
+            save_artifacts(_self, session_id, files)
+            stored_files.update(((session_id, upload.id), upload.data) for upload in uploads if upload.data is not None)
+
+        def save_artifacts(_self, session_id, files, **_kwargs):
+            for file in files:
+                archived_files[(session_id, file["kind"], file["source_id"])] = file["data"]
+                if file["kind"] == "optimizer-status":
+                    latest_jobs[session_id] = file["source_id"]
+
+        monkeypatch.setattr(
+            ChatHistory, "latest_optimizer", lambda _self, session_id, _owner: latest_jobs.get(session_id)
+        )
+        monkeypatch.setattr(
+            ChatHistory,
+            "load_file",
+            lambda _self, session_id, _owner, kind, source: archived_files.get((session_id, kind, source)),
+        )
+        monkeypatch.setattr(ChatHistory, "save_session", save_uploads)
+        monkeypatch.setattr(
+            ChatHistory,
+            "load_upload",
+            lambda _self, session_id, _owner, upload_id, _size: stored_files[(session_id, upload_id)],
+        )
 
         def record_start(
             _self: ChatHistory,
@@ -2277,6 +2346,9 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
             message_id: str | None,
             credential_id: str | None,
             entries: object,
+            uploads: object,
+            downloads: object,
+            files: object,
         ) -> None:
             history_starts.append((run_id, session_id, credential_id, prompt, model, attachment_count))
 

@@ -9,6 +9,10 @@ Goal: hand the reviewer one file they can skim in minutes and a URL that
 opens immediately. Maximize cognitive offload, so the page answers "what
 changed, why, and is it safe" without a terminal.
 
+Detect the session location with `test -f /.dockerenv` and resolve
+`artifacts/` from `git rev-parse --show-toplevel`. A dev container mounts the
+checkout at `/workspace`; a host checkout uses the local clone path.
+
 ## Gather commit facts
 
 Default target: the last two commits. Use a user-supplied range or hash
@@ -75,7 +79,8 @@ every unclosed or mismatched tag before serving.
    and expect 200 with a sane byte count.
 4. Report the full URL plus the stop command (`pkill -f "http.server PORT"`).
    Never leave a server running without telling the user its port and how to
-   stop it.
+   stop it. From a dev container the port needs forwarding to the host, so
+   also state the artifacts directory and the port together.
 
 ## Answer follow-up questions
 

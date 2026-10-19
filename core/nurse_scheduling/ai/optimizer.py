@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 from uuid import uuid4
 
+from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from .optimizer_privacy import OptimizerResultError, prepare_optimizer_schedule, restore_people_ids
@@ -122,11 +123,13 @@ class SessionOptimization:
     original_id_by_anonymized_id: dict[str, str]
     people_count: int
     schedule_yaml: str
+    submitted_yaml: str = ""
     backend: dict[str, Any] = field(default_factory=dict)
     request: dict[str, Any] = field(default_factory=dict)
     client_address: str | None = None
     """Browser address that the optimizer bounds this job's submission and event streams by."""
     artifact: "OptimizerArtifact | None" = None
+    artifact_saved: bool = False
     retired: asyncio.Event = field(default_factory=asyncio.Event)
     deleted: bool = False
 
@@ -181,6 +184,8 @@ class SessionOptimizer:
         max_result_bytes: int = 10_000_000,
         max_cached_result_bytes: int = 100_000_000,
         max_schedule_bytes: int = 1_000_000,
+        save_result: Callable[[SessionOptimization, OptimizerArtifact | None], Awaitable[str | None]] | None = None,
+        load_artifact: Callable[[str, str | None], Awaitable[OptimizerArtifact | None]] | None = None,
     ) -> None:
         self._backend = backend
         self._poll_interval_seconds = poll_interval_seconds
@@ -193,6 +198,8 @@ class SessionOptimizer:
         self._max_result_bytes = max_result_bytes
         self._max_cached_result_bytes = max_cached_result_bytes
         self._max_schedule_bytes = max_schedule_bytes
+        self._save_result = save_result
+        self._load_artifact = load_artifact
         self._jobs: dict[str, SessionOptimization] = {}
         self._sessions: dict[str, OptimizerSession] = {}
         self._artifact_order: list[str] = []
@@ -215,6 +222,8 @@ class SessionOptimizer:
 
     async def result_artifact(self, session_id: str, job_id: str) -> OptimizerArtifact:
         """Return a completed artifact only to the session that started it."""
+        if self._load_artifact is not None and (artifact := await self._load_artifact(session_id, job_id)):
+            return artifact
         job = self._jobs.get(job_id)
         if job is None or job.session_id != session_id:
             raise OptimizerResultUnavailable("Optimizer result not found.")
@@ -224,14 +233,22 @@ class SessionOptimizer:
 
     async def latest_result_artifact(self, session_id: str) -> OptimizerArtifact | None:
         """Return the newest finished workbook for a follow-up sandbox turn."""
-        for job in reversed(self._jobs.values()):
-            # A run that is still going has no result yet, so an older workbook
-            # remains current. A finished run without one makes every earlier
-            # workbook stale, and mounting it would misreport the latest result.
-            if job.session_id != session_id or not _is_terminal(job.payload):
-                continue
-            return job.artifact
-        return None
+        try:
+            for job in reversed(self._jobs.values()):
+                # A run that is still going has no result yet, so an older workbook
+                # remains current. A finished run without one makes every earlier
+                # workbook stale, and mounting it would misreport the latest result.
+                if job.session_id != session_id or not _is_terminal(job.payload):
+                    continue
+                # A later recovery write can persist a result whose initial save failed.
+                if self._load_artifact is not None:
+                    return await self._load_artifact(session_id, job.id)
+                return job.artifact
+            return None if self._load_artifact is None else await self._load_artifact(session_id, None)
+        except HTTPException:
+            # Workbook inspection is optional. Explicit downloads still report storage errors.
+            logger.warning("Optimizer workbook could not be loaded for chat session_id=%s", session_id)
+            return None
 
     def has_unfinished_run(self, session_id: str) -> bool:
         """Report whether retiring the session would cancel one of its runs."""
@@ -342,6 +359,7 @@ class SessionOptimizer:
             original_id_by_anonymized_id=prepared.original_id_by_anonymized_id,
             people_count=prepared.people_count,
             schedule_yaml=schedule_yaml,
+            submitted_yaml=prepared.submission_yaml,
             backend=payload.backend or {},
             request={
                 **payload.request,
@@ -510,6 +528,7 @@ class SessionOptimizer:
 
     async def _complete(self, job: SessionOptimization) -> None:
         artifact_error: str | None = None
+        artifact = None
         request_audit = None
         if self._jobs.get(job.id) is job and job.payload.state == "completed":
             try:
@@ -529,13 +548,21 @@ class SessionOptimizer:
                     artifact.media_type,
                     json.dumps(context, ensure_ascii=False, allow_nan=False).encode(),
                 )
-                await self._retain_artifact(job, artifact)
-                if job.artifact is not None:
+                if self._save_result is None:
+                    await self._retain_artifact(job, artifact)
+                if artifact is not None:
                     request_audit = await asyncio.to_thread(build_request_audit, job.schedule_yaml, restored_content)
             except (OptimizerError, OptimizerResultError) as exc:
                 logger.warning("Optimizer result read failed job_id=%s error=%s", job.id, exc)
                 artifact_error = str(exc)
+                artifact = None
+        if self._save_result is not None and self._jobs.get(job.id) is job:
+            save_error = await self._save_result(job, artifact)
+            job.artifact_saved = save_error is None and artifact is not None
+            if save_error is not None:
+                artifact_error = save_error
         job.schedule_yaml = ""
+        job.submitted_yaml = ""
         await self._delete_retired(job)
         if self._jobs.get(job.id) is not job:
             return
@@ -545,10 +572,10 @@ class SessionOptimizer:
             "source_sha256": job.source_sha256,
             "result": job.payload.result,
             "error": job.payload.error,
-            "download_available": job.artifact is not None,
+            "download_available": job.artifact is not None or job.artifact_saved,
             "artifact_error": artifact_error,
         }
-        if job.artifact is not None and request_audit is not None:
+        if (job.artifact is not None or job.artifact_saved) and request_audit is not None:
             result_data["request_audit"] = request_audit
         await self._notify_update(job)
         if job.payload.state == "cancelled":
@@ -556,7 +583,7 @@ class SessionOptimizer:
         prompt = optimizer_completion_message(result_data)
         if self._jobs.get(job.id) is not job:
             return
-        await self._on_completion(job.session_id, prompt, job.artifact)
+        await self._on_completion(job.session_id, prompt, artifact if job.artifact_saved else job.artifact)
 
     async def _retain_artifact(self, job: SessionOptimization, artifact: OptimizerArtifact) -> None:
         if self._jobs.get(job.id) is not job:
@@ -587,7 +614,7 @@ class SessionOptimizer:
                 "request": job.request,
                 "result": job.payload.result,
                 "error": job.payload.error,
-                "downloadable": job.artifact is not None,
+                "downloadable": job.artifact is not None or job.artifact_saved,
             },
         )
 

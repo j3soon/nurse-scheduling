@@ -4,7 +4,11 @@ The app uses the Next.js App Router. Shared code lives under `src/components/`,
 `src/hooks/`, `src/utils/`, and `src/types/`.
 
 ## Commands
-Run commands from `web-frontend/`:
+Check `test -f /.dockerenv` first, per the root `AGENTS.md` environment
+section. In a dev container the checkout mounts at `/workspace/web-frontend`
+and the toolchain comes preinstalled. On a host checkout, run from your
+local `web-frontend/` clone and run `bun install --frozen-lockfile` before
+the other commands.
 
 - `bun install --frozen-lockfile`
 - `bun run dev`
@@ -32,6 +36,10 @@ pushing.
 Frontend unit/component tests use Vitest; browser integration tests use
 Playwright. Keep test files and runner configuration outside the production
 TypeScript project. Validate them with their respective test runners.
+
+For native downloads, open any download tab during the click before awaiting
+authorization. Test preparation and download failures separately. Keep large
+archives out of browser Blobs.
 
 For row reorder tests, drop inside the intended half of the target row. Its
 midpoint separates insertion before and after, so center drops are ambiguous.
@@ -211,3 +219,13 @@ To test specific source files from the repository root, run:
   `eslint.config.mjs`.
 - Every frontend test file (`*.test.ts` and `*.test.tsx`) must include the AGPL
   header documented in `../docs/agent-license-headers.md`.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+## This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

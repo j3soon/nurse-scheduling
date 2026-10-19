@@ -104,7 +104,7 @@ async def _retry_e2b_request(
     max_attempts: int,
     backoff_seconds: float,
 ) -> RequestResult:
-    """Retry replay-safe E2B requests without logging response contents."""
+    """Retry replay-safe E2B requests and log each retried failure with its exception."""
     for attempt in range(1, max_attempts + 1):
         try:
             return await operation()
@@ -123,6 +123,7 @@ async def _retry_e2b_request(
                 max_attempts,
                 delay,
                 type(error).__name__,
+                exc_info=True,
             )
             if delay > 0:
                 await asyncio.sleep(delay)

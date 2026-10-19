@@ -184,11 +184,23 @@ run and rejects conflicting finish reasons or further output after completion.
 The backend stores the YAML snapshot and retained conversation turns. Each
 provider request includes a schedule summary, recent history, and the current
 question. The complete YAML stays in the sandbox until the model reads relevant
-content through a tool. Uploaded files remain in process memory for later turns
-until removed or the session expires. A server restart can remove them without
-prior notice. Conversation context keeps filenames and attachment markers,
+content through a tool. With PostgreSQL, uploaded source files survive restarts
+and idle session eviction until the session expires. Removing a file detaches it
+from future turns but preserves its archive. Without PostgreSQL,
+they remain in process memory only. Conversation context keeps filenames and attachment markers,
 while recovery entries can retain inspected document content and tool output.
 The prompt gives the agent workspace paths for schedules and attachments.
+
+Persisted uploads keep only metadata in live sessions and run snapshots.
+Recovery and text-only responses do not read their bytes. Sandbox hydration
+loads and delivers one file at a time, which limits attachment buffering to one
+file per active sandbox. This adds a storage read and sandbox write per file.
+Upload requests can still buffer files within the configured request limits.
+Failed saves retain unsaved bytes for retry and count them against the memory
+budget until a later state save succeeds.
+Generated ZIPs and optimizer workbooks, original schedules, backend input YAML,
+inspection context, and result metadata use the same session archive. Saved
+downloads and optimizer workbooks are loaded on demand after recovery.
 
 ### Optimizer jobs and result reviews
 
@@ -349,6 +361,17 @@ database. Follow the [backup and restore runbook](backend-deployment.md#ai-chat-
 frontend. The migration runs in one transaction under the existing advisory lock.
 Verify restoration of a saved session and retry its accepted message ID before
 allowing traffic.
+
+Migration `006_chat_uploads.sql` adds upload storage without changing existing
+sessions. Files lost before this upgrade cannot be recovered. Database backups
+now include original uploads. Rolling back to code before this migration loses
+attachment references when that code next saves a session. Keep a backup of the
+upgraded database before a rollback.
+
+Migration `007_session_files.sql` preserves existing upload bytes and metadata
+in `chat_files`. Removal records a timestamp instead of deleting a file. All
+file types use the session expiry and cascade deletion. Older code expects the
+previous table layout, so a rollback requires the matching database backup.
 
 Reverting code alone cannot restore the old table layout. To roll back, stop the
 new AI instances, restore the backup into an isolated database, and deploy the old
@@ -598,9 +621,9 @@ backoff. This covers file reads and replacements, automatic resume, and sandbox
 destruction. Auto-resume attempts also have an application-enforced control
 request deadline. Idle pause is attempted once because it is optional and a
 failed response cannot prove whether E2B accepted it. Retry logs include the
-operation, sandbox ID, attempt, delay, and exception type without response
-contents. Sandbox creation and Bash execution are not replayed because a failed
-response cannot prove that the original operation did not take effect.
+operation, sandbox ID, attempt, delay, and exception. Sandbox creation and Bash
+execution are not replayed because a failed response cannot prove that the
+original operation did not take effect.
 
 ## Configuration
 
@@ -633,6 +656,7 @@ It saves the following data:
 | `chat_session_entries` | Conversation entries in session order, keyed by `(session_id, seq)`: run messages and app events such as uploads and schedule changes. Run messages name their run. Each row has a `type` and a JSON `payload` holding the fields of the matching `transcript.py` type. |
 | `chat_session_events` | Replayable session events except optimizer progress. Adjacent text fragments of one run share a row covering `event_id` through `last_event_id`. |
 | `chat_run_stops` | Named Stop requests, including messages that have not arrived yet. |
+| `chat_files` | Session file bytes as `bytea`, with a stable archive ID, kind, source run/job/upload ID, filename, media type, creation time, and removal time. Detached versions remain until session expiry. Active upload metadata and retry fingerprints stay in the session state. |
 
 Sessions are saved when they are created. Each run saves the session state with
 its prompt when it starts. As in Pi, each later message is saved when it ends, so
@@ -645,8 +669,11 @@ as well. A per-session lock commits these writes in capture order, so an older
 state never replaces a newer one. Each
 state write also saves every entry that is not saved yet, so the trimmed-entry
 count never skips an unsaved entry. Tool results can contain schedule and
-attachment text, so entries and events can contain staff information. Raw
-attachment files, images, and generated downloads are not stored. Database
+attachment text, so entries and events can contain staff information. Original
+uploads are stored with their session state and upload entries in one transaction.
+Removal detaches the file with the updated state and preserves its bytes. An upload save failure
+returns HTTP `503`. A retry with the same upload ID keeps the original file.
+Generated downloads and optimizer files are stored too. Tool result images are not stored separately. Database
 access is for operators.
 
 Published events are written after delivery, combining adjacent text fragments
@@ -657,7 +684,7 @@ newest stored run, which the browser may show with output that storage lacks.
 
 A session expires after `AI_SESSION_TTL_SECONDS` of inactivity, 30 days by
 default. Activity renews the expiry, so an active session can retain older
-content. Startup and hourly maintenance delete expired sessions with their runs,
+content. Startup and hourly maintenance delete expired sessions with all their files, runs,
 entries, events, and Stop requests. Backups need their own retention policy.
 
 An unavailable configured database prevents startup. A failed save of a new
@@ -676,8 +703,8 @@ Failed and interrupted runs can retain safe conversation context. Stale runs
 stay in the audit record only. Runs left running are reconciled with their saved terminal event. If no terminal
 event was saved, they end with an error that names the restart. Their saved
 question and output remain visible. A restart does not rerun model
-calls or mutating tools. Uploads, generated downloads, and finished optimizer
-results are not restored.
+calls or mutating tools. Active upload and download references are restored.
+Finished optimizer workbooks remain available for download and follow-up inspection.
 
 With PostgreSQL, a full store unloads the least recently used idle session
 instead of returning HTTP `429`. A session stays loaded while a run, optimizer
@@ -696,7 +723,9 @@ byte cap. Event replay keeps at most 4 MiB of serialized events per session and
 64 MiB for the process. It drops completed run output first and retains final
 events longest. Without PostgreSQL, an incomplete reset snapshot sets
 `incomplete: true`. These replay limits are separate from `AI_MAX_SESSION_BYTES`, which
-bounds live schedule, transcript, receipt, upload, and download retention.
+bounds live schedule, transcript, receipt, unsaved or memory-only upload, and
+download retention. Persisted upload sizes still count toward the attachment
+limits, independently of retained memory.
 PostgreSQL can supply output no longer retained by the in-memory projection.
 Replay limits do not cap database retention.
 
@@ -795,11 +824,43 @@ FastAPI.
 
 ## Export saved chats
 
-The HTML and Markdown controls use saved PostgreSQL history when available.
-The operator command produces the same bytes from the same saved snapshot.
+The single **Export Chat** control downloads a ZIP from the AI service.
+The browser and operator command use the same Python archive writer.
 See [Export saved AI chats](reproduce/core.md#export-saved-ai-chats) for the
-one-command Docker and native database workflow. Builds without PostgreSQL keep
-the browser transcript export.
+one-command Docker and native database workflow. Export requires PostgreSQL history.
+
+The Python formatter's HTML and Markdown match 52 TypeScript reference
+documents across 26 cases, including the complete saved-event fixture.
+The frozen reference hashes remain in the core export tests.
+
+The Python ZIP writer is available through
+`python -m nurse_scheduling.ai.export_chat SESSION_ID OUTPUT.zip` with
+`AI_HISTORY_POSTGRES_URL` set. It includes `chat.html`, `chat.md`, `chat.json`,
+`schedule.yaml`, `manifest.json`, and every archived file under `attachments/`.
+Both documents link to those files. The manifest records their origin, creation
+and removal times, byte counts, and SHA-256 hashes. The JSON keeps the saved
+events, run status, and current session state, including unfinished work.
+
+The writer uses one PostgreSQL repeatable-read snapshot for text, metadata, and
+file contents. It reads file bytes in chunks of at most 1 MiB. HTTP delivery
+uses a temporary disk file and closes it after completion or disconnect. Export
+needs temporary disk space for the ZIP. The command writes atomically so a
+failed export preserves an existing destination.
+
+The browser first sends an authenticated `POST /sessions/{session_id}/export`.
+It receives a five-minute download token bound to that session. Minting requires
+the owner cookie. Redemption does not, because browsers do not always send the
+cookie with the download navigation. The archive is read from storage, so a link
+also works for a session that the service has not loaded.
+The subsequent native `GET` streams the ZIP without a browser Blob. The token
+uses the existing signing primitive with a separate export scope and never
+contains the bearer credential. The request-limit middleware and route both
+check it. A bearer-authenticated `GET` remains available for API clients.
+Both responses use `Cache-Control: no-store`.
+The browser opens its download tab during the click, before awaiting the POST,
+so slow preparation does not lose popup permission. Preparation errors appear
+in the chat. Native GET errors appear in the download tab, leaving the chat
+available for retry. The ZIP is never buffered in JavaScript.
 
 ## HTTP API
 
@@ -818,6 +879,8 @@ controls. `/capabilities.app_version` identifies the AI service. The parent
 | `GET /capabilities` | Public attachment limits, session lifetime, and authentication requirement. |
 | `POST /sessions` | Store a YAML snapshot and create a browser-owned session. |
 | `GET /sessions/{id}` | Check the remaining session lifetime without renewing it. |
+| `POST /sessions/{id}/export` | Authorize a native ZIP download with a short-lived, session-scoped token. |
+| `GET /sessions/{id}/export` | Stream the complete chat ZIP with a bearer credential or the scoped download token. |
 | `POST /sessions/{id}/uploads?upload_id={uuid}` | Retain one multipart file under a stable retry ID and return its metadata. Omitting the ID also accepts an unkeyed file batch. |
 | `GET /sessions/{id}/uploads` | List retained file metadata. |
 | `DELETE /sessions/{id}/uploads/{upload_id}` | Remove one retained file. |
@@ -825,6 +888,12 @@ controls. `/capabilities.app_version` identifies the AI service. The parent
 
 The default limits are 32 retained files, 25 MB per file, and 200 MB of retained
 source files per session. MB uses 1,000,000 bytes.
+With PostgreSQL, `AI_MAX_ARCHIVE_BYTES` also limits the file bytes stored per
+session, 1 GB by default. It counts every stored upload, generated ZIP, and
+optimizer file, including removed files, because removal keeps the stored copy.
+A full session refuses new uploads with HTTP 413. It keeps the answer without a
+new generated ZIP, and an optimizer result that cannot be stored reports this
+limit to the agent. Restore recounts the stored bytes from `chat_files`.
 `/capabilities.file_attachments` publishes `max_files`, `max_bytes_per_file`,
 and `max_bytes_per_session`.
 The browser checks existing uploads and selected files against these limits.
@@ -833,8 +902,10 @@ A connection failure or server error is retried up to three times. Each file
 uses one UUID in the `upload_id` query parameter across every attempt. A retry
 returns the original metadata without adding another file or charging storage
 again. The server rejects reuse with a different filename, media type, or content.
-Upload IDs and file bytes remain process-local and disappear together on expiry,
-removal, or restart. If an upload still fails, earlier
+With PostgreSQL, upload IDs and file bytes survive restarts and stay archived
+until the session expires. Removal detaches a file from active use. Without
+PostgreSQL, uploads remain process-local and disappear on expiry, removal, or
+restart. If an upload still fails, earlier
 successful uploads remain in Session files. The question is not submitted, and
 the retry asks only for the files that did not upload. Remove unused uploads to
 free session capacity.
@@ -843,8 +914,8 @@ The backend bounds each streamed request body to the per-file limit plus
 
 Upload requests contain only repeated `files` fields. Other field names are
 rejected. Uploads are refused while a response is active. Every turn can read
-all retained files. Sessions are process-local. Use one AI backend instance
-until shared AI storage is added.
+all retained files. PostgreSQL restores saved sessions after restarts. Live runs
+and sandbox ownership remain process-local, so use one AI backend instance.
 
 ### Provider request layout
 

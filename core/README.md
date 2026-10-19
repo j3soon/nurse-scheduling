@@ -534,7 +534,7 @@ cleaned while the AI service is offline.
 | `AI_BACKEND_PORT` | `8001` | Port used by the development launcher. |
 | `AI_COOKIE_SECURE` | `0` in the launcher | Use `0` for local HTTP and `1` for public HTTPS. Secure deployments use `SameSite=None` so approved cross-site frontends can retain session ownership. |
 | `AI_SESSION_TTL_SECONDS` | `2592000` | Idle session lifetime. Session activity renews it. |
-| `AI_MAX_SESSIONS` | `1000` | Maximum process-local sessions. With PostgreSQL, a new or restored session unloads the least recently used idle session instead of getting HTTP 429. That session loses its uploads, downloads, and optimizer results, as after a restart. A session stays loaded while a response, optimizer run, or recovery write is unfinished, and after a failed save until a later save succeeds. |
+| `AI_MAX_SESSIONS` | `1000` | Maximum process-local sessions. With PostgreSQL, a new or restored session unloads the least recently used idle session instead of getting HTTP 429. Its stored uploads, generated ZIPs, and optimizer files remain in PostgreSQL and load again on demand. A session stays loaded while a response, optimizer run, or recovery write is unfinished, and after a failed save until a later save succeeds. |
 | `AI_MAX_SESSION_BYTES` | `1073741824` | Retained-byte budget across live sessions, including chat text, uploads, and generated downloads. It leaves room for several sessions at the `AI_MAX_ATTACHMENT_TOTAL_BYTES` limit. New sessions, uploads, schedule updates, and queued steering that would exceed it get HTTP 429. A completed turn instead drops its session's oldest complete exchanges and warns the browser. Size the process above this budget plus the newest turn of each session. |
 | `AI_MAX_HISTORY_MESSAGES` | `1000` | Conversation messages retained per session. The effective minimum is two, so a completed question and answer survive when this is set to one. |
 | `AI_MAX_HISTORY_CHARS` | `200000` | Prompt budget for retained history. The newest messages that fit are sent, so a long session cannot outgrow the model context window. |
@@ -544,6 +544,7 @@ cleaned while the AI service is offline.
 | `AI_MAX_ATTACHMENT_FILES` | `32` | Maximum retained files per session. |
 | `AI_MAX_ATTACHMENT_BYTES` | `25000000` | Maximum source bytes per file. The browser uploads one file per request. Keep this plus 64 KiB multipart overhead below NGINX's 64 MiB `/ai/` limit. |
 | `AI_MAX_ATTACHMENT_TOTAL_BYTES` | `200000000` | Maximum retained source bytes per session. These bytes also count toward `AI_MAX_SESSION_BYTES`. Remove unused uploads to free capacity. |
+| `AI_MAX_ARCHIVE_BYTES` | `1000000000` | Maximum file bytes that PostgreSQL stores per session: uploads, generated ZIPs, and optimizer files, including removed files. Removal does not free this capacity. A full session refuses new uploads with HTTP 413 and does not keep new generated ZIPs or optimizer results. Without PostgreSQL, this limit does not apply. |
 
 Attachments are always enabled. Every upload is copied unchanged into the
 disposable sandbox, where the agent can inspect it with Pi-compatible tools.
@@ -660,20 +661,25 @@ browser checks. Model, tool, and context changes need selected live cases.
 From the repository root, export one PostgreSQL-backed chat session:
 
 ```sh
-./scripts/export_ai_chat.sh SESSION_UUID artifacts/chat.html
-./scripts/export_ai_chat.sh SESSION_UUID artifacts/chat.md
+./scripts/export_ai_chat.sh SESSION_UUID artifacts/chat.zip
 ```
 
 The command reads PostgreSQL through the Docker Compose `ai` service. It uses
 `docker/.env` by default. Set `AI_ENV_FILE` to use another Compose environment
-file. Set `AI_HISTORY_POSTGRES_URL` to read a native database instead. Bun and
-the locked frontend dependencies must be installed on the host. Native database
-access also requires the core Python dependencies.
+file. Set `AI_HISTORY_POSTGRES_URL` to read a native database instead. Native
+database access requires the core Python dependencies. Docker exports do not
+require Python or frontend dependencies on the host.
 
-The browser and command use the same formatter and saved chat snapshot. They
-produce identical UTF-8 bytes for the same snapshot. Saved exports use the last
-stored event time as their export timestamp and display message times in UTC.
-They reconstruct all saved chat runs, including failed and stopped runs,
-even when the browser has trimmed its replay buffer. Files and workbooks remain
-separate downloads. Sessions remain exportable until PostgreSQL retention deletes
-them. Older sessions use the metadata available in their saved records.
+The browser's **Export Chat** control and this command use the same Python ZIP
+writer. Each ZIP contains `chat.html`, `chat.md`, `chat.json`, `schedule.yaml`,
+`manifest.json`, and `attachments/`. It includes removed uploads, generated ZIPs,
+and optimizer files. The manifest records file origins, removal times, sizes,
+and hashes. HTML and Markdown link to the bundled files and display times in UTC.
+HTML exports show excessively nested Markdown as escaped plain text.
+
+Exports use one consistent database snapshot, including saved failed, stopped,
+and unfinished runs. File reads are bounded to 1 MiB chunks and the ZIP is built
+on disk. A failed command preserves its destination. The browser downloads
+directly through a short-lived link rather than buffering the ZIP in JavaScript.
+PostgreSQL history is required. All files expire with their session. Files lost
+before the archive migrations cannot be recovered.

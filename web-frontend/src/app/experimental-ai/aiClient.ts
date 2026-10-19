@@ -812,12 +812,18 @@ export async function cancelOptimization(
   if (!response.ok) throw await responseError(response);
 }
 
-export async function getSavedChatSnapshot(sessionId: string, authToken: string | null, endpoint = getAiBaseUrl()): Promise<unknown> {
-  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/export`, {
-    credentials: 'include', headers: authorizedHeaders(authToken),
+export async function getChatExportUrl(sessionId: string, authToken: string | null, endpoint = getAiBaseUrl()): Promise<string> {
+  const path = `${endpoint}/sessions/${encodeURIComponent(sessionId)}/export`;
+  const response = await fetch(path, {
+    method: 'POST', credentials: 'include', headers: authorizedHeaders(authToken),
   });
   if (!response.ok) throw await responseError(response);
-  return response.json();
+  const value: unknown = await response.json();
+  if (!isRecord(value) || (value.download_token !== null && (typeof value.download_token !== 'string'
+    || !/^[0-9]{1,20}\.[0-9a-f]{64}$/.test(value.download_token)))) {
+    throw new Error('The AI backend returned an invalid chat download link.');
+  }
+  return value.download_token === null ? path : `${path}?token=${encodeURIComponent(value.download_token)}`;
 }
 
 /** Stop the named message's run, or every run of the session when no message is named. */
