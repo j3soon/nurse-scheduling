@@ -230,6 +230,7 @@ class SessionRuntime:
     provider: ToolCapableChatProvider
     sandbox_factory: SandboxFactory
     session_optimizer: SessionOptimizer
+    selection: dict[str, str] | None = None
 
 
 async def _complete(write: Awaitable[_Result]) -> _Result:
@@ -281,6 +282,8 @@ class AgentSession:
     client_address: str | None = None
     reported_version_mismatch: bool = False
     export_metadata: dict[str, Any] = field(default_factory=dict)
+    model_selection: dict[str, str] | None = None
+    provider_credential_id: str | None = None
     accepted_messages: dict[str, AcceptedMessage] = field(default_factory=dict)
     # Named Stop requests, including those for messages that have not arrived yet.
     stopped_message_ids: set[str] = field(default_factory=set)
@@ -323,6 +326,8 @@ class AgentSession:
         """
         return {
             "schedule_yaml": self.schedule_yaml,
+            "model_selection": self.model_selection,
+            "provider_credential_id": self.provider_credential_id,
             "frontend_version": self.frontend_version,
             "frontend_timezone": self.frontend_timezone,
             "downloads": list(self.downloads),
@@ -372,6 +377,8 @@ class AgentSession:
             expires_at=expires_at,
             schedule_yaml=state["schedule_yaml"],
             revision=schedule_revision(state["schedule_yaml"]),
+            model_selection=state.get("model_selection"),
+            provider_credential_id=state.get("provider_credential_id"),
             frontend_version=state.get("frontend_version"),
             frontend_timezone=state.get("frontend_timezone", "UTC"),
             export_metadata=state.get("export_metadata", {}),
@@ -459,6 +466,7 @@ class AgentSession:
         runs: SessionRuns,
         owner: str | None,
         credential_id: str | None,
+        prepare_runtime: Callable[[], Awaitable[SessionRuntime]] | None = None,
     ) -> MessageReceipt:
         """Start a run for a client message, or return the run that already answers it.
 
@@ -486,6 +494,8 @@ class AgentSession:
                 return MessageReceipt(run_id)
             if await runtime.recorder.message_stopped(self.id, message_id):
                 self.stopped_message_ids.add(message_id)
+        if prepare_runtime is not None:
+            runtime = await prepare_runtime()
         run = runs.start(
             self.id,
             lambda run: self.run(run, question, runtime=runtime, owner=owner, credential_id=credential_id),
@@ -697,7 +707,7 @@ class AgentSession:
                 WorkspaceLimits.from_settings(runtime.settings),
                 take_steering=None if background else lambda close: runtime.store.take_steering(self.id, close),
                 execute_optimizer=lambda current_yaml, arguments: execute_optimizer_tool(
-                    runtime.session_optimizer, self.id, current_yaml, arguments, self.client_address
+                    runtime.session_optimizer, self.id, current_yaml, arguments, self.client_address, runtime.selection
                 ),
                 attachments=snapshot.uploads,
                 load_attachment=lambda upload: runtime.recorder.read_upload(self.id, self.owner_token, upload),
@@ -879,6 +889,9 @@ class AgentSession:
         )
         if snapshot is None:
             return
+        if runtime.selection is not None and not background:
+            self.model_selection = runtime.selection
+            self.provider_credential_id = credential_id
         # History keeps the question as typed. Upload and removal events are separate history entries.
         output = RunOutput()
         run_entries: list[AgentMessage] = [UserMessage(question)]
@@ -929,6 +942,8 @@ class AgentSession:
                 events,
                 "optimizer" if background else "question",
             )
+            if runtime.selection is not None:
+                events.emit({"type": "model_selection", **runtime.selection})
             await self._execute_run(snapshot, messages, artifact, runtime, background, output, events, context_chars)
             run_entries = [run_entries[0], *self.agent.state.messages]
             completion = self._commit_run(run, snapshot, run_entries, output, store)

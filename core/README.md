@@ -347,7 +347,7 @@ The runner needs the same provider settings the service uses:
 | Variable | Required | Purpose |
 | --- | --- | --- |
 | `AI_PROVIDER_BASE_URL` | Yes | OpenAI-compatible endpoint. |
-| `AI_PROVIDER_API_KEY` | Yes | Provider bearer token. |
+| `AI_PROVIDER_API_KEY` | Conditional | Provider bearer token. Required unless `AI_PROVIDER_PROFILES` supplies keys. |
 | `AI_PROVIDER_MODEL` | No | Defaults to `local-model`. |
 | `AI_SANDBOX_BACKEND` | Yes | Use `e2b`. |
 | `E2B_API_KEY` | Yes | E2B Cloud credential used by the trusted application. |
@@ -503,8 +503,9 @@ cleaned while the AI service is offline.
 | `AI_AUTH_TOKENS` | Unset | JSON object mapping administrative IDs to bearer keys. |
 | `AI_AUTH_REQUIRED` | `false` (`true` in Docker) | Fail startup unless at least one key of 16 or more ASCII characters is configured. |
 | `AI_PROVIDER_BASE_URL` | Required | OpenAI-compatible API base URL. |
-| `AI_PROVIDER_API_KEY` | Required | Provider bearer token. Never commit it. |
-| `AI_PROVIDER_MODEL` | `local-model` | Model value sent to chat completions. |
+| `AI_PROVIDER_API_KEY` | Required unless profiles are set | Provider bearer token. Never commit it. |
+| `AI_PROVIDER_MODEL` | `local-model` | Default model sent to chat completions. |
+| `AI_PROVIDER_PROFILES` | Unset | JSON mapping AI credential IDs to LiteLLM `api_key` and `default_model`. |
 | `AI_HISTORY_POSTGRES_URL` | Unset | PostgreSQL connection string for session recovery and turn metadata. Compose sets its internal URL directly. |
 | `AI_REQUEST_LOG_ENABLED` | `true` | Log a question preview for each incoming message, which records chat text. |
 | `AI_PROVIDER_TIMEOUT_SECONDS` | `180` | Provider request timeout. |
@@ -548,6 +549,56 @@ cleaned while the AI service is offline.
 
 Attachments are always enabled. Every upload is copied unchanged into the
 disposable sandbox, where the agent can inspect it with Pi-compatible tools.
+
+### Model and reasoning selection
+
+The chat lists models through the authenticated AI `/models` route. The backend
+uses the caller's LiteLLM key for discovery and completion requests. Without
+profiles, all AI keys use `AI_PROVIDER_API_KEY`. To isolate provider access, set
+`AI_PROVIDER_PROFILES` in the ignored Compose environment file:
+
+```dotenv
+AI_PROVIDER_PROFILES='{"institution-a":{"api_key":"sk-example-a","default_model":"fast"},"person_b":{"api_key":"sk-example-b","default_model":"deep"}}'
+```
+
+The IDs must match `AI_AUTH_TOKENS`. The legacy `AI_AUTH_TOKEN` uses `legacy`.
+When profiles are set, a key without a profile is refused. Provider keys stay on
+the server. Rotating a provider key does not change chat ownership. Configure
+model access, budgets, and rate limits on the LiteLLM virtual keys.
+
+The backend intersects LiteLLM `/models` with optional `/model/info` metadata.
+It excludes models marked as non-chat or without function calling. Discovery
+results are cached per AI credential for 60 seconds. The gateway still enforces
+access on every completion. Unavailable metadata leaves only Default reasoning.
+Add explicit supported choices to each LiteLLM deployment's `model_info`:
+
+```yaml
+model_info:
+  chat_display_name: Deep model
+  chat_reasoning_options:
+    - id: off
+      label: Off
+      parameters:
+        thinking: {type: disabled}
+    - id: high
+      label: High
+      parameters:
+        reasoning_effort: high
+```
+
+Use only parameters supported by that exact model and gateway version. A budget
+preset can use `thinking: {type: enabled, budget_tokens: 8192}`. Off must use a
+model's actual disable setting, such as `reasoning_effort: none`, when supported.
+The example shows alternative mechanisms. It does not claim every model supports
+both. Default omits reasoning parameters and preserves gateway defaults. Do not
+configure the gateway to silently drop unsupported reasoning parameters.
+
+Users can switch models and reasoning between turns. Each accepted turn freezes
+its settings for tool follow-ups, retries, and optimizer reviews. Queued steering
+uses the active turn's settings. The UI remembers choices per model and credential
+for the current page visit. Model settings are separate from expanding returned
+reasoning text. Smaller context windows remain subject to the provider's input
+limits. The chat reports the selected model's context limit when available.
 
 `AI_AUTH_TOKENS` uses a JSON object such as
 `'{"institution-a":"first-key","person-b":"second-key"}'`. IDs may contain

@@ -95,6 +95,7 @@ export interface SessionReset {
 }
 
 export interface AiCapabilities {
+  model_selection?: boolean;
   app_version?: string;
   saved_chat_export?: boolean;
   auth: AuthRequirement | null;
@@ -106,6 +107,36 @@ export interface AiCapabilities {
     max_bytes_per_session: number;
     retained?: boolean;
   };
+}
+
+export interface ModelSelection {
+  model: string;
+  reasoning: string;
+}
+
+export interface AvailableModel {
+  id: string;
+  name: string;
+  context_tokens: number | null;
+  reasoning_options: { id: string; label: string }[];
+}
+
+export async function getModels(signal: AbortSignal, authToken: string | null, endpoint: string): Promise<{
+  default_model: string; models: AvailableModel[];
+}> {
+  const response = await fetch(`${endpoint}/models`, {
+    signal, credentials: 'include', headers: authorizedHeaders(authToken),
+  });
+  if (!response.ok) throw await responseError(response);
+  const body = await response.json();
+  if (typeof body.default_model !== 'string' || !Array.isArray(body.models)
+    || !body.models.every((model: AvailableModel) => model && typeof model.id === 'string'
+      && typeof model.name === 'string' && Array.isArray(model.reasoning_options)
+      && model.reasoning_options.some(option => option?.id === 'default')
+      && model.reasoning_options.every(option => option && typeof option.id === 'string' && typeof option.label === 'string'))) {
+    throw new Error('The AI backend returned an invalid model list.');
+  }
+  return body;
 }
 
 export interface UploadedFile {
@@ -150,6 +181,8 @@ interface SessionStatusResponse {
 }
 
 interface SsePayload {
+  model?: unknown;
+  reasoning?: unknown;
   text?: unknown;
   message?: unknown;
   name?: unknown;
@@ -468,7 +501,12 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
   const emit = (event: SessionEvent) => events.push(runId === undefined ? event : { ...event, runId });
   if (runId) emit({ type: 'run_context', runId });
 
-  if (eventType === 'run_start' && typeof payload.run_id === 'string') {
+  if (eventType === 'model_selection') {
+    if (typeof payload.model !== 'string' || typeof payload.reasoning !== 'string') {
+      throw new Error('The AI backend returned invalid model settings.');
+    }
+    emit({ type: 'model_selection', selection: { model: payload.model, reasoning: payload.reasoning } });
+  } else if (eventType === 'run_start' && typeof payload.run_id === 'string') {
     emit({
       type: 'run_start', runId: payload.run_id,
       trigger: typeof payload.trigger === 'string' ? payload.trigger : 'background work',
@@ -613,6 +651,7 @@ async function postMessage(
   endpoint: string,
   accept: string,
   messageId?: string,
+  selection?: ModelSelection,
 ): Promise<Response> {
   const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/messages`, {
     method: 'POST',
@@ -621,6 +660,7 @@ async function postMessage(
     body: JSON.stringify({
       message,
       message_id: messageId,
+      selection,
       frontend_version: CURRENT_APP_VERSION,
       frontend_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     }),
@@ -642,6 +682,7 @@ function waitForReconnect(delay: number, signal: AbortSignal): Promise<void> {
 }
 
 export interface SendMessageOptions {
+  selection?: ModelSelection;
   // The client message ID. A repeated POST with it returns the accepted run instead of asking again.
   messageId: string;
   shouldStop?: () => boolean;
@@ -662,7 +703,7 @@ export async function sendMessage(
   signal: AbortSignal,
   authToken: string | null,
   endpoint = getAiBaseUrl(),
-  { messageId, shouldStop, onConnectionChange }: SendMessageOptions = { messageId: crypto.randomUUID() },
+  { messageId, shouldStop, onConnectionChange, selection }: SendMessageOptions = { messageId: crypto.randomUUID() },
 ): Promise<string> {
   let retries = 0;
   let stopSaved = false;
@@ -687,7 +728,7 @@ export async function sendMessage(
       let body: { run_id?: unknown };
       try {
         const response = await postMessage(
-          sessionId, message, connection.signal, authToken, endpoint, 'application/json', messageId,
+          sessionId, message, connection.signal, authToken, endpoint, 'application/json', messageId, selection,
         );
         body = await response.json() as { run_id?: unknown };
       } catch (error) {

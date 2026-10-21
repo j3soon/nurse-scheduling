@@ -154,6 +154,7 @@ async function mockAiBackend(
   reportContext = true,
   // Run events published before `done`, such as a generated ZIP.
   answerEvents: { type: string; data: Record<string, unknown> }[] = [],
+  modelCatalog?: { default_model: string; models: unknown[] },
 ): Promise<CapturedRequests & {
   publishEvent: (type: string, data: Record<string, unknown>) => void;
   hasWaitingReader: () => boolean;
@@ -203,6 +204,7 @@ async function mockAiBackend(
         contentType: 'application/json',
         headers: corsHeaders,
         body: JSON.stringify({
+          model_selection: modelCatalog !== undefined,
           ...(requiredAuthToken ? { auth: { required: true, scheme: 'bearer' } } : {}),
           file_attachments: {
             enabled: true,
@@ -215,6 +217,11 @@ async function mockAiBackend(
     }
     const authorization = request.headers()['authorization'] ?? '';
     captured.authorizationHeaders.push(authorization);
+    if (request.url().endsWith('/models') && modelCatalog) {
+      await route.fulfill({ status: 200, contentType: 'application/json', headers: corsHeaders,
+        body: JSON.stringify(modelCatalog) });
+      return;
+    }
     if (requiredAuthToken && authorization !== `Bearer ${requiredAuthToken}`) {
       await route.fulfill({
         status: 401,
@@ -1097,4 +1104,29 @@ test('keeps the composer above a reduced visual viewport and ignores pinch zoom'
     visualViewport!.dispatchEvent(new Event('resize'));
   });
   await expect(composer).toHaveCSS('bottom', '0px');
+});
+
+
+test('selects model and reasoning settings independently between chat turns', async ({ page }) => {
+  const captured = await mockAiBackend(page, ['Selected model answered.'], false, undefined, [], true, [], {
+    default_model: 'fast', models: [
+      { id: 'fast', name: 'Fast', context_tokens: null, reasoning_options: [{ id: 'default', label: 'Default' }] },
+      { id: 'deep', name: 'Deep', context_tokens: 32000, reasoning_options: [
+        { id: 'default', label: 'Default' }, { id: 'off', label: 'Off' }, { id: 'high', label: 'High' },
+      ] },
+    ],
+  });
+  await page.goto('/experimental-ai');
+  await page.getByLabel('AI model').selectOption('deep');
+  await page.getByLabel('Reasoning', { exact: true }).selectOption('high');
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('First question');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('Selected model answered.')).toBeVisible();
+  expect(JSON.parse(captured.messageBodies[0]).selection).toEqual({ model: 'deep', reasoning: 'high' });
+  await page.getByLabel('AI model').selectOption('fast');
+  await expect(page.getByLabel('Reasoning', { exact: true })).toHaveCount(0);
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Next question');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect.poll(() => captured.messageBodies.length).toBe(2);
+  expect(JSON.parse(captured.messageBodies[1]).selection).toEqual({ model: 'fast', reasoning: 'default' });
 });

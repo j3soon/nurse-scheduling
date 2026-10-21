@@ -1102,6 +1102,7 @@ def test_capabilities_report_configured_attachment_limits(monkeypatch: pytest.Mo
     assert response.status_code == 200
     assert response.json() == {
         "app_version": "v0.4.2-backend",
+        "model_selection": True,
         "saved_chat_export": False,
         "file_attachments": {
             "enabled": True,

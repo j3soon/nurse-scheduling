@@ -53,6 +53,7 @@ from .config import AiSettings, validate_ai_auth_credentials
 from .context import validate_frontend_timezone
 from .history import ChatHistory, stop_maintenance
 from .lifecycle import TERMINAL_EVENTS, AgentRun, SessionRuns
+from .models import ModelCatalog, ModelSelection
 from .optimizer import (
     OptimizerArtifact,
     OptimizerBackend,
@@ -148,6 +149,7 @@ class ChatRequest(BaseModel):
     message_id: str | None = Field(default=None, min_length=1, max_length=100)
     frontend_version: str | None = Field(default=None, min_length=1, max_length=200)
     frontend_timezone: FrontendTimezone | None = None
+    selection: ModelSelection | None = None
 
 
 class StopChatRequest(BaseModel):
@@ -188,6 +190,7 @@ class CapabilitiesResponse(BaseModel):
     session_retention_seconds: int
     auth: dict[str, bool | str]
     saved_chat_export: bool
+    model_selection: bool = True
 
 
 def owner_cookie_token(owner: str | None) -> str:
@@ -332,6 +335,7 @@ def create_app(
     )
     settings = replace(settings, auth_token=auth_token, auth_tokens=auth_tokens)
     configure_request_logging(settings.request_log_enabled)
+    catalog = ModelCatalog(settings) if provider is None else None
     provider = provider or OpenAiCompatibleProvider(settings, include_usage=True)
     history_log = ChatHistory(settings.history_postgres_url) if settings.history_postgres_url else None
     if sandbox_factory is None:
@@ -408,13 +412,23 @@ def create_app(
             settings.optimizer_max_result_bytes,
         )
 
-    async def optimizer_completed(session_id: str, prompt: str, artifact: OptimizerArtifact | None) -> None:
+    async def optimizer_completed(
+        session_id: str, prompt: str, artifact: OptimizerArtifact | None, selection: dict[str, str] | None = None
+    ) -> None:
         session = store.get(session_id)
         if session is None:
             return
+        selected_runtime = await runtime_for(session.provider_credential_id, selection or session.model_selection)
         run = runs.start(
             session_id,
-            lambda run: session.run(run, prompt, runtime=runtime, background=True, artifact=artifact),
+            lambda run: session.run(
+                run,
+                prompt,
+                runtime=selected_runtime,
+                background=True,
+                artifact=artifact,
+                credential_id=session.provider_credential_id,
+            ),
             background=True,
         )
         run.task.add_done_callback(recovery.pin(session_id))
@@ -444,6 +458,14 @@ def create_app(
     )
 
     runtime = SessionRuntime(settings, store, concurrency_limit, recovery, provider, sandbox_factory, session_optimizer)
+
+    async def runtime_for(credential_id: str | None, selection: dict | ModelSelection | None) -> SessionRuntime:
+        if catalog is None:
+            return runtime
+        if isinstance(selection, dict):
+            selection = ModelSelection.model_validate(selection)
+        selected, selected_settings, selected_provider = await catalog.resolve(credential_id, selection)
+        return replace(runtime, settings=selected_settings, provider=selected_provider, selection=selected.model_dump())
 
     def retire_session(session_id: str) -> None:
         """Release everything keyed by a session once the store drops it."""
@@ -547,6 +569,27 @@ def create_app(
             auth={"required": auth_registry.enabled, "scheme": AUTH_SCHEME},
         )
 
+    @app.get("/models", dependencies=[Depends(require_auth)])
+    async def available_models(request: Request) -> dict:
+        if catalog is None:
+            return {
+                "default_model": settings.provider_model,
+                "models": [
+                    {
+                        "id": settings.provider_model,
+                        "name": settings.provider_model,
+                        "context_tokens": None,
+                        "reasoning_options": [{"id": "default", "label": "Default"}],
+                    }
+                ],
+            }
+        credential_id = request.state.auth_credential_id
+        models = await catalog.models(credential_id)
+        return {
+            "default_model": catalog.profile(credential_id).default_model,
+            "models": [model.public() for model in models],
+        }
+
     @app.post(
         "/sessions",
         response_model=CreateSessionResponse,
@@ -565,6 +608,7 @@ def create_app(
         owner = owner_cookie_token(owner)
         refresh_owner_cookie(response, owner)
         session = store.create(owner, request.schedule_yaml)
+        session.provider_credential_id = http_request.state.auth_credential_id
         session.observe_frontend_version(request.frontend_version, app.state.app_version)
         session.frontend_timezone = request.frontend_timezone
         session.client_address = http_request.client.host if http_request.client else None
@@ -877,6 +921,7 @@ def create_app(
             runs=runs,
             owner=owner,
             credential_id=request.state.auth_credential_id,
+            prepare_runtime=lambda: runtime_for(request.state.auth_credential_id, body.selection),
         )
         run = receipt.run
         if run is not None:

@@ -26,6 +26,8 @@ import Image from 'next/image';
 import { MobileDetails } from '@/components/MobileDetails';
 import { ChatTranscriptView } from './ChatTranscriptView';
 import { useAiChat } from './useAiChat';
+import { ModelControls } from './ModelControls';
+import type { ModelSelection } from './aiClient';
 import { readStoredConversation } from './chatConversation';
 import { isAuthenticationError } from './aiClient';
 
@@ -236,6 +238,8 @@ export default function ExperimentalAiPage() {
   const [authRejected, setAuthRejected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [capabilitiesError, setCapabilitiesError] = useState<string | null>(null);
+  const [modelSelectionEnabled, setModelSelectionEnabled] = useState(false);
+  const [selection, setSelection] = useState<ModelSelection>();
   const [savedChatExportEnabled, setSavedChatExportEnabled] = useState(false);
   const [isExportingChat, setIsExportingChat] = useState(false);
   const [fileCapability, setFileCapability] = useState(DISABLED_FILE_CAPABILITY);
@@ -282,7 +286,7 @@ export default function ExperimentalAiPage() {
     captureSession, newConversation, submitMessage, retryMessage, stop, removeUploadedFile,
     removeGeneratedFiles,
   } = useAiChat({
-    scheduleYaml, aiEndpoint, authRequired, authToken, isClientReady, serverStatus,
+    scheduleYaml, aiEndpoint, authRequired, authToken, isClientReady, serverStatus, selection,
     retainsUploads: fileCapability.retained ?? false, backendVersion, setError, reportRequestError,
     onReset: resetChatUi,
     onApplySchedule: appliedYaml => {
@@ -305,6 +309,7 @@ export default function ExperimentalAiPage() {
   });
   const send = async (event: FormEvent) => {
     event.preventDefault();
+    if (modelSelectionEnabled && !selection) return;
     await submitMessage(draft.trim(), selectedAttachments.map(attachment => attachment.file));
   };
   useEffect(() => {
@@ -388,6 +393,7 @@ export default function ExperimentalAiPage() {
         if (capabilitiesController.signal.aborted) return;
         setServerStatus('online');
         setAuthRequired(capabilities.auth?.required ?? false);
+        setModelSelectionEnabled(capabilities.model_selection === true);
         setFileCapability(capabilities.file_attachments);
         setSavedChatExportEnabled(capabilities.saved_chat_export === true);
         setSessionRetentionSeconds(
@@ -833,7 +839,7 @@ export default function ExperimentalAiPage() {
     }
   };
   const credentialsMissing = authRequired && authToken === null;
-  const composerUnavailable = credentialsMissing || conversationUnavailable;
+  const composerUnavailable = credentialsMissing || conversationUnavailable || (modelSelectionEnabled && !selection);
   const attachmentPickerDisabled = isStreaming
     || composerUnavailable
     || !fileCapability.enabled
@@ -1280,6 +1286,10 @@ export default function ExperimentalAiPage() {
             ))}
           </div>
         )}
+        {modelSelectionEnabled && serverStatus === 'online' && (!authRequired || authToken) && <ModelControls
+          endpoint={aiEndpoint} token={authToken} disabled={isStreaming}
+          onChange={setSelection}
+        />}
         <div className="flex min-h-14 items-end gap-1 rounded-[1.75rem] border border-gray-300 bg-white p-2 shadow-sm transition focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-200">
           {fileCapability.enabled && (
             <label

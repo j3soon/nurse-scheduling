@@ -46,6 +46,7 @@ export interface StoredChatConversation {
   pendingRequest?: {
     messageId: string; question: string; questionId: string; assistantId: string; activeAssistantId?: string; createdAt: number; uploading?: boolean;
     pendingFiles?: string[];
+    selection?: import('./aiClient').ModelSelection;
   } | null;
 }
 
@@ -167,7 +168,7 @@ export function readStoredConversation(): StoredChatConversation | null {
         || !Number.isFinite(pending.createdAt) || (pending.uploading !== undefined && typeof pending.uploading !== 'boolean')
         || !isOptionalStringArray(pending.pendingFiles)) return null;
       value.messages = value.messages.map(message => message.id === pending.questionId
-        ? { ...message, request: { id: pending.messageId, question: pending.question, questionId: pending.questionId,
+        ? { ...message, request: { selection: pending.selection, id: pending.messageId, question: pending.question, questionId: pending.questionId,
           assistantId: pending.assistantId, activeAssistantId: pending.activeAssistantId, active: true, uploading: pending.uploading,
           pendingFiles: pending.pendingFiles } } : message);
     }

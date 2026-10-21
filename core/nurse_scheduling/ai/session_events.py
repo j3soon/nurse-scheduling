@@ -32,6 +32,12 @@ class RunStartEvent(RunFields):
     trigger: Literal["user", "optimizer"]
 
 
+class ModelSelectionEvent(RunFields):
+    type: Literal["model_selection"]
+    model: str
+    reasoning: str
+
+
 class TextEvent(RunFields):
     type: Literal["delta", "reasoning"]
     text: str
@@ -171,6 +177,7 @@ class OptimizationProgressEvent(OptimizerProgressUpdate):
 AgentSessionTerminalEvent = RunDoneEvent | RunErrorEvent | RunStoppedEvent
 AgentSessionRunEvent = (
     RunStartEvent
+    | ModelSelectionEvent
     | TextEvent
     | TruncatedEvent
     | RunStoppedEvent

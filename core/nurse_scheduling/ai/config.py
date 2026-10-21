@@ -20,7 +20,7 @@
 # This code is mostly AI generated.
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal, cast
 
 from ..server.auth import AuthCredential, normalize_auth_credentials, parse_auth_credentials
@@ -114,6 +114,8 @@ class AiSettings:
     provider_base_url: str
     provider_api_key: str
     provider_model: str
+    # AI credential IDs map to LiteLLM keys. Never serialize this server configuration.
+    provider_profiles_json: str = field(default="", repr=False)
     auth_token: str | None = None
     auth_tokens: tuple[AuthCredential, ...] = ()
     auth_required: bool = False
@@ -175,7 +177,7 @@ class AiSettings:
             name=AI_AUTH_TOKENS_ENV_NAME,
         )
         provider_api_key = os.getenv("AI_PROVIDER_API_KEY", "").strip()
-        if not provider_api_key:
+        if not provider_api_key and not os.getenv("AI_PROVIDER_PROFILES", "").strip():
             raise ValueError("AI_PROVIDER_API_KEY is required")
 
         provider_base_url = os.getenv("AI_PROVIDER_BASE_URL", "").strip().rstrip("/")
@@ -199,6 +201,7 @@ class AiSettings:
             provider_base_url=provider_base_url,
             provider_api_key=provider_api_key,
             provider_model=provider_model,
+            provider_profiles_json=os.getenv("AI_PROVIDER_PROFILES", "").strip(),
             auth_token=auth_token,
             auth_tokens=auth_tokens,
             auth_required=_read_bool(AI_AUTH_REQUIRED_ENV_NAME, False),

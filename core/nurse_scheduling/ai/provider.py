@@ -253,10 +253,12 @@ class OpenAiCompatibleProvider:
         *,
         include_usage: bool = False,
         include_attempts: bool = False,
+        parameters: dict[str, Any] | None = None,
     ) -> None:
         self._settings = settings
         self._include_usage = include_usage
         self._include_attempts = include_attempts
+        self._parameters = parameters or {}
         self.context_tokens: int | None = None
         self._context_tokens_loaded = False
         self._context_tokens_lock = asyncio.Lock()
@@ -306,6 +308,7 @@ class OpenAiCompatibleProvider:
         timeout = httpx.Timeout(self._settings.provider_timeout_seconds, connect=10.0)
         headers = {"Authorization": f"Bearer {self._settings.provider_api_key}"}
         payload: dict[str, Any] = {
+            **self._parameters,
             "model": self._settings.provider_model,
             "messages": list(messages),
             "stream": True,

@@ -181,6 +181,9 @@ export function ChatTranscriptView({
                   </button>
                 </div>
               )}
+              {message.modelSelection && <div className="mt-2 text-xs text-gray-500">
+                {message.modelSelection.model} · {message.modelSelection.reasoning === 'default' ? 'Default reasoning' : message.modelSelection.reasoning}
+              </div>}
               {timestamp !== undefined && (
                 <time
                   dateTime={new Date(timestamp).toISOString()}
