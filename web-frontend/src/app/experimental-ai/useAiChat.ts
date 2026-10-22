@@ -686,7 +686,10 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
           id: assistantId, role: 'assistant', content: '', status: 'pending',
           responseStartedAt: original?.responseStartedAt ?? responseStartedAt, requestId: request.id,
           request: { ...request, activeAssistantId: assistantId },
-          ...(resume?.recover && original ? { content: original.content, activity: original.activity, runId: original.runId } : {}),
+          ...(resume?.recover && original ? {
+            content: original.content, activity: original.activity, runId: original.runId,
+            modelSelection: original.modelSelection, providerCalls: original.providerCalls, costSummary: original.costSummary,
+          } : {}),
         };
         const retained = previous.filter(message => message.id !== `status-${assistantId}`
           && (resume?.recover || message.requestId !== request.id || message.id === userMessage.id || message.id === assistantId))

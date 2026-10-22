@@ -603,6 +603,10 @@ describe('ExperimentalAiPage', () => {
   });
 
   it('reattaches a restored request to its run with the same message ID', async () => {
+    const modelSelection = { model: 'deep', reasoning: 'high' };
+    const costSummary = { usd: '0.1', calls: 1, pending: 0, unavailable: 0 };
+    const providerCalls = [{ callId: 'paid-call', model: 'deep', reasoning: 'high', status: 'reported',
+      costUsd: '0.1', providerCallId: 'gateway-id', responseModel: null, usage: null }];
     const pendingRequest = {
       messageId: 'original-request', question: 'Keep working', questionId: 'question', assistantId: 'answer',
       createdAt: Date.now() - 1000, uploading: false,
@@ -611,7 +615,8 @@ describe('ExperimentalAiPage', () => {
       sessionId: 'restored-session', endpoint: '/ai', expiresAt: Date.now() + 60_000, retentionSeconds: 2592000,
       messages: [
         { id: 'question', role: 'user', content: pendingRequest.question },
-        { id: 'answer', role: 'assistant', content: 'Partial', status: 'pending', activity: [{ kind: 'response', text: 'Partial' }] },
+        { id: 'answer', role: 'assistant', content: 'Partial', status: 'pending',
+          activity: [{ kind: 'response', text: 'Partial' }], modelSelection, costSummary, providerCalls },
       ],
       syncedSchedule: 'description: original schedule\n', sessionEventId: 4, pendingRequest,
     }));
@@ -634,6 +639,10 @@ describe('ExperimentalAiPage', () => {
     await waitFor(() => {
       const stored = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
       expect(stored.pendingRequest).toBeNull();
+    });
+    const stored = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
+    expect(stored.messages.find((message: { id: string }) => message.id === 'answer')).toMatchObject({
+      modelSelection, costSummary, providerCalls,
     });
   });
 
