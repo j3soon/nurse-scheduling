@@ -23,6 +23,7 @@ import type { ActivityEntry } from './AssistantActivity';
 import type { ChatMessage } from './chatTranscript';
 import type { ActiveOptimization } from './optimizerEvents';
 import { normalizeAiEndpoint, type ContextUsage } from './aiClient';
+import { isCostSummary, isProviderCallCost, type CostSummary } from './costs';
 
 export const AI_CONVERSATION_STORAGE_KEY = 'nurse-scheduling-ai-conversation';
 
@@ -41,11 +42,13 @@ export interface StoredChatConversation {
   activeOptimization?: ActiveOptimization | null;
   backendVersion?: string;
   contextUsage?: ContextUsage | null;
+  costSummary?: CostSummary | null;
   backgroundAssistantId?: string | null;
   trimmedHistoryCount?: number;
   pendingRequest?: {
     messageId: string; question: string; questionId: string; assistantId: string; activeAssistantId?: string; createdAt: number; uploading?: boolean;
     pendingFiles?: string[];
+    selection?: import('./aiClient').ModelSelection;
   } | null;
 }
 
@@ -78,6 +81,8 @@ function isChatMessage(value: unknown): value is ChatMessage {
   if (typeof value !== 'object' || value === null) return false;
   const message = value as Partial<ChatMessage>;
   return typeof message.id === 'string'
+    && (message.costSummary === undefined || isCostSummary(message.costSummary))
+    && (message.providerCalls === undefined || (Array.isArray(message.providerCalls) && message.providerCalls.every(isProviderCallCost)))
     && (message.role === 'system' || message.role === 'user' || message.role === 'assistant' || message.role === 'optimizer')
     && typeof message.content === 'string'
     && (message.failureReason === undefined || typeof message.failureReason === 'string')
@@ -127,6 +132,7 @@ export function readStoredConversation(): StoredChatConversation | null {
       || (value.retentionSeconds ?? 0) <= 0
       || !Array.isArray(value.messages)
       || !value.messages.every(isChatMessage)
+      || (value.costSummary != null && !isCostSummary(value.costSummary))
       || (value.backendVersion !== undefined && typeof value.backendVersion !== 'string')
       || (value.contextUsage != null && (!Number.isSafeInteger(value.contextUsage.usedChars)
         || value.contextUsage.usedChars < 0 || !Number.isSafeInteger(value.contextUsage.maxChars)
@@ -167,7 +173,7 @@ export function readStoredConversation(): StoredChatConversation | null {
         || !Number.isFinite(pending.createdAt) || (pending.uploading !== undefined && typeof pending.uploading !== 'boolean')
         || !isOptionalStringArray(pending.pendingFiles)) return null;
       value.messages = value.messages.map(message => message.id === pending.questionId
-        ? { ...message, request: { id: pending.messageId, question: pending.question, questionId: pending.questionId,
+        ? { ...message, request: { selection: pending.selection, id: pending.messageId, question: pending.question, questionId: pending.questionId,
           assistantId: pending.assistantId, activeAssistantId: pending.activeAssistantId, active: true, uploading: pending.uploading,
           pendingFiles: pending.pendingFiles } } : message);
     }

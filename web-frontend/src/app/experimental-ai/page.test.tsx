@@ -37,6 +37,9 @@ const mockCancelOptimization = vi.hoisted(() => vi.fn());
 const mockGetBackendVersion = vi.hoisted(() => vi.fn());
 const mockGetChatExportUrl = vi.hoisted(() => vi.fn());
 const mockGetCapabilities = vi.hoisted(() => vi.fn());
+const mockGetModels = vi.hoisted(() => vi.fn());
+const mockGetSessionModelSelection = vi.hoisted(() => vi.fn());
+const mockUpdateSessionModelSelection = vi.hoisted(() => vi.fn());
 const mockGetSessionStatus = vi.hoisted(() => vi.fn());
 const mockRunEvents = vi.hoisted(() => vi.fn());
 const mockSendMessage = vi.hoisted(() => vi.fn());
@@ -76,6 +79,9 @@ vi.mock('./aiClient', async importOriginal => {
   removeUpload: mockRemoveUpload,
   getAiBaseUrl: () => '/ai',
   getCapabilities: mockGetCapabilities,
+  getModels: mockGetModels,
+  getSessionModelSelection: mockGetSessionModelSelection,
+  updateSessionModelSelection: mockUpdateSessionModelSelection,
   getChatExportUrl: mockGetChatExportUrl,
   getBackendVersion: mockGetBackendVersion,
   getSessionStatus: mockGetSessionStatus,
@@ -167,6 +173,9 @@ describe('ExperimentalAiPage', () => {
       endpoint: string) => mockUploadFiles(sessionId, [file], authToken, endpoint, signal));
     mockDownloadOptimization.mockReset().mockResolvedValue(new Blob(['workbook']));
     mockGetCapabilities.mockReset().mockResolvedValue(defaultCapabilities);
+    mockGetModels.mockReset();
+    mockGetSessionModelSelection.mockReset();
+    mockUpdateSessionModelSelection.mockReset();
     mockGetBackendVersion.mockReset().mockResolvedValue('v0.4.3');
     mockCancelOptimization.mockReset().mockResolvedValue(undefined);
     mockGetSessionStatus.mockReset().mockResolvedValue(172800);
@@ -355,7 +364,7 @@ describe('ExperimentalAiPage', () => {
     expect(responseTime).toHaveAttribute('title', new Date(responseTime.getAttribute('dateTime')!).toLocaleString());
     const userTime = screen.getByText('Who works Monday?').closest('article')?.querySelector('time');
     expect(userTime).toHaveAttribute('title', new Date(userTime!.dateTime).toLocaleString());
-    expect(mockCreateSession).toHaveBeenCalledWith('description: current schedule\n', null, '/ai');
+    expect(mockCreateSession).toHaveBeenCalledWith('description: current schedule\n', null, '/ai', undefined);
     expect(mockRunEvents).toHaveBeenCalledWith(
       'session-id',
       'Who works Monday?',
@@ -447,7 +456,7 @@ describe('ExperimentalAiPage', () => {
     render(<ExperimentalAiPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
-    const usage = await screen.findByText('Chat history context: unavailable');
+    const usage = await screen.findByText('Context unavailable');
     expect(usage).toHaveAttribute('title', expect.stringContaining('The AI server has not reported context usage.'));
     expect(usage.closest('form')).toBeInTheDocument();
   });
@@ -460,14 +469,14 @@ describe('ExperimentalAiPage', () => {
     });
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     render(<ExperimentalAiPage />);
-    expect(screen.queryByText(/Chat history context:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Context /)).not.toBeInTheDocument();
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
-    const usage = await screen.findByText('Chat history context: 25.0%');
+    const usage = await screen.findByText('Context 25.0% used');
     expect(usage).toHaveAttribute('title', expect.stringContaining('500 of 2,000 characters'));
     expect(usage.closest('form')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Start new chat' }));
-    expect(screen.queryByText(/Chat history context:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Context /)).not.toBeInTheDocument();
   });
 
   it.each([131072, undefined])('shows request tokens beside the history budget with limit %s', async maxTokens => {
@@ -482,9 +491,10 @@ describe('ExperimentalAiPage', () => {
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
-    const usage = await screen.findByText(/Chat history context: 30\.0%/);
-    expect(usage).toHaveTextContent(`Chat history context: 30.0% · Tokens: 4,321 / ${maxTokens ? '131,072' : 'unavailable'}`);
-    expect(usage).toHaveAttribute('title', expect.stringContaining('latest model request'));
+    const usage = await screen.findByText(/Context 30\.0% used/);
+    expect(usage).toHaveAttribute('title', expect.stringContaining('600 of 2,000 characters'));
+    const tokens = screen.getByText(`Last: 4,321 / ${maxTokens ? '131,072' : 'unavailable'}`);
+    expect(tokens).toHaveAttribute('title', "Latest call's input + output tokens / model input limit. Not total conversation usage.");
   });
 
   it('restores the transcript and live session after navigating away', async () => {
@@ -602,6 +612,10 @@ describe('ExperimentalAiPage', () => {
   });
 
   it('reattaches a restored request to its run with the same message ID', async () => {
+    const modelSelection = { model: 'deep', reasoning: 'high' };
+    const costSummary = { usd: '0.1', calls: 1, pending: 0, unavailable: 0 };
+    const providerCalls = [{ callId: 'paid-call', model: 'deep', reasoning: 'high', status: 'reported',
+      costUsd: '0.1', providerCallId: 'gateway-id', responseModel: null, usage: null }];
     const pendingRequest = {
       messageId: 'original-request', question: 'Keep working', questionId: 'question', assistantId: 'answer',
       createdAt: Date.now() - 1000, uploading: false,
@@ -610,7 +624,8 @@ describe('ExperimentalAiPage', () => {
       sessionId: 'restored-session', endpoint: '/ai', expiresAt: Date.now() + 60_000, retentionSeconds: 2592000,
       messages: [
         { id: 'question', role: 'user', content: pendingRequest.question },
-        { id: 'answer', role: 'assistant', content: 'Partial', status: 'pending', activity: [{ kind: 'response', text: 'Partial' }] },
+        { id: 'answer', role: 'assistant', content: 'Partial', status: 'pending',
+          activity: [{ kind: 'response', text: 'Partial' }], modelSelection, costSummary, providerCalls },
       ],
       syncedSchedule: 'description: original schedule\n', sessionEventId: 4, pendingRequest,
     }));
@@ -634,15 +649,21 @@ describe('ExperimentalAiPage', () => {
       const stored = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
       expect(stored.pendingRequest).toBeNull();
     });
+    const stored = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
+    expect(stored.messages.find((message: { id: string }) => message.id === 'answer')).toMatchObject({
+      modelSelection, costSummary, providerCalls,
+    });
   });
 
   it.each([
     { steeringCount: 1, replacement: false }, { steeringCount: 2, replacement: false },
     { steeringCount: 1, replacement: true }, { steeringCount: 2, replacement: true },
   ])('restores the active reply after $steeringCount steering messages, replacement=$replacement', async ({ steeringCount, replacement }) => {
+    const modelSelection = { model: 'deep', reasoning: 'high' };
     let callbacks: SessionStreamOptions | undefined;
     mockRunEvents.mockImplementation(async (_session: string, _question: string, target: SessionStreamOptions) => {
       callbacks = target;
+      target.onEvent({ type: 'model_selection', selection: modelSelection });
       target.onEvent({ type: 'delta', text: 'Original answer.' });
       await new Promise<void>(() => {});
     });
@@ -665,6 +686,10 @@ describe('ExperimentalAiPage', () => {
     const messageId = mockSendMessage.mock.calls[0][5].messageId;
     expect(stored.pendingRequest).toMatchObject({ messageId, activeAssistantId: activeId });
     expect(stored.messages.at(-1).requestId).toBe(messageId);
+    expect(stored.messages.filter((message: { role: string }) => message.role === 'assistant')
+      .map((message: { modelSelection: object }) => message.modelSelection)).toEqual(
+      Array.from({ length: steeringCount + 1 }, () => modelSelection),
+    );
     expect(stored.messages.find((message: { id: string }) => message.id === `queued-${steeringCount}`).requestId).toBe(messageId);
 
     await act(async () => view.unmount());
@@ -676,6 +701,7 @@ describe('ExperimentalAiPage', () => {
         target.onEvent({ type: 'session_reset', reset: {
           runIds: ['user-run-1'], activeRunId: 'user-run-1', terminalRunIds: [], incomplete: false,
         } });
+        target.onEvent({ type: 'model_selection', selection: modelSelection });
         target.onEvent({ type: 'delta', text: 'Original answer.' });
         for (let index = 1; index <= steeringCount; index++) {
           target.onEvent({ type: 'steering', messageId: `queued-${index}`, message: `Compare day ${index}.` });
@@ -701,6 +727,10 @@ describe('ExperimentalAiPage', () => {
       expect(completed.pendingRequest).toBeNull();
       if (!replacement) expect(completed.messages.find((message: { id: string }) => message.id === activeId).status).toBeUndefined();
       expect(completed.messages.some((message: { status?: string }) => message.status === 'pending')).toBe(false);
+      expect(completed.messages.filter((message: { role: string }) => message.role === 'assistant')
+        .map((message: { modelSelection: object }) => message.modelSelection)).toEqual(
+        Array.from({ length: steeringCount + 1 }, () => modelSelection),
+      );
       expect(completed.messages.map((message: { role: string; content: string }) => [message.role, message.content])).toEqual([
         ['user', 'Explain coverage.'], ['assistant', 'Original answer.'],
         ...Array.from({ length: steeringCount }, (_, index) => [
@@ -1698,6 +1728,7 @@ describe('ExperimentalAiPage', () => {
       'description: current schedule\n',
       null,
       'http://localhost:8001',
+      undefined,
     );
     expect(screen.getByRole('button', { name: 'Change' })).toBeDisabled();
     expect(screen.getByText('This server is locked for the current conversation. Start a new chat to change servers.')).toBeInTheDocument();
@@ -2263,6 +2294,50 @@ describe('ExperimentalAiPage', () => {
     expect(screen.queryByText('This response failed before completion.')).not.toBeInTheDocument();
   });
 
+  it('changes the session model during streaming and uses the saved choice for the next queued turn', async () => {
+    const original = { model: 'deep', reasoning: 'high' };
+    const current = { model: 'fast', reasoning: 'default' };
+    mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, model_selection: true });
+    mockGetModels.mockResolvedValue({ default_model: 'fast', models: [
+      { id: 'fast', name: 'Fast', default_reasoning: 'default', reasoning_options: [{ id: 'default', label: 'Default' }] },
+      { id: 'deep', name: 'Deep', default_reasoning: 'high', reasoning_options: [
+        { id: 'off', label: 'Off' }, { id: 'high', label: 'High' },
+      ] },
+    ] });
+    mockGetSessionModelSelection.mockResolvedValue(original);
+    let finishStream!: () => void;
+    let finishSave!: (selection: typeof current) => void;
+    mockUpdateSessionModelSelection.mockImplementation(() => new Promise(resolve => { finishSave = resolve; }));
+    mockRunEvents.mockImplementationOnce(async (_session: string, _question: string, callbacks: SessionStreamOptions) => {
+      callbacks.onEvent({ type: 'model_selection', selection: original });
+      callbacks.onEvent({ type: 'delta', text: 'The first model is streaming.' });
+      await new Promise<void>(resolve => { finishStream = resolve; });
+    });
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await waitFor(() => expect(screen.getByLabelText('AI model')).toHaveValue('fast'));
+    await user.selectOptions(screen.getByLabelText('AI model'), 'deep');
+    const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+    await user.type(composer, 'First question');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('The first model is streaming.');
+    await waitFor(() => expect(composer).toBeEnabled());
+    expect(screen.getByLabelText('AI model')).toBeEnabled();
+    expect(screen.getByLabelText('Reasoning')).toBeEnabled();
+    await user.type(composer, 'Next question');
+    await user.keyboard('{Enter}');
+    await user.selectOptions(screen.getByLabelText('AI model'), 'fast');
+    expect(mockUpdateSessionModelSelection).toHaveBeenCalledWith('session-id', current, null, '/ai');
+    await act(async () => finishStream());
+    expect(mockSendMessage).toHaveBeenCalledTimes(1);
+    await act(async () => finishSave(current));
+    await waitFor(() => expect(mockSendMessage).toHaveBeenCalledTimes(2));
+    expect(mockCreateSession).toHaveBeenCalledWith('description: current schedule\n', null, '/ai', original);
+    expect(mockSendMessage.mock.calls[0][5].selection).toEqual(original);
+    expect(mockSendMessage.mock.calls[1][5].selection).toEqual(current);
+    expect(screen.getByText('deep · high')).toBeInTheDocument();
+  });
+
   it('queues a drafted question while a response is streaming', async () => {
     const user = userEvent.setup();
     let finishStream: (() => void) | undefined;
@@ -2346,6 +2421,7 @@ describe('ExperimentalAiPage', () => {
       'description: current schedule\n',
       'ai-session-token',
       '/ai',
+      undefined,
     ));
     expect(mockRunEvents.mock.calls[0][4]).toBe('ai-session-token');
   });
@@ -2392,6 +2468,7 @@ describe('ExperimentalAiPage', () => {
       'description: current schedule\n',
       'remembered-ai-token',
       '/ai',
+      undefined,
     ));
   });
 
@@ -2939,6 +3016,35 @@ describe('ExperimentalAiPage', () => {
     expect(contents).toContain('Recovered Q2');
     expect(contents).toContain('Recovered system Q1');
     expect(contents).toContain('Recovered system Q2');
+  });
+
+  it('replaces saved call details when a recovery snapshot replaces the answer', async () => {
+    const call = { callId: 'old', model: 'model', reasoning: 'high', status: 'reported' as const,
+      costUsd: '0.1', providerCallId: 'old-gateway', responseModel: null, usage: null };
+    mockRunEvents.mockImplementation(async (_session: string, _question: string, callbacks: SessionStreamOptions) => {
+      callbacks.onEvent({ type: 'delta', text: 'Costed answer' });
+      callbacks.onEvent({ type: 'provider_call', call });
+      callbacks.onEvent({ type: 'cost_summary', conversation: { usd: '0.1', calls: 1, pending: 0, unavailable: 0, version: 2 },
+        run: { usd: '0.1', calls: 1, pending: 0, unavailable: 0 } });
+    });
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Cost question');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Estimated turn cost: $0.1000 · 1 call');
+    const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
+    act(() => {
+      stream.onEvent({ type: 'session_reset', reset: { runIds: ['user-run-1'], activeRunId: null, terminalRunIds: ['user-run-1'], incomplete: false } });
+      stream.onEvent({ type: 'run_start', runId: 'user-run-1', trigger: 'user' });
+      stream.onEvent({ type: 'delta', runId: 'user-run-1', text: 'Restored answer' });
+      stream.onEvent({ type: 'provider_call', runId: 'user-run-1', call: { ...call, callId: 'new', providerCallId: 'new-gateway', costUsd: '0.2' } });
+      stream.onEvent({ type: 'cost_summary', runId: 'user-run-1', conversation: { usd: '0.2', calls: 1, pending: 0, unavailable: 0, version: 20 },
+        run: { usd: '0.2', calls: 1, pending: 0, unavailable: 0 } });
+      stream.onEvent({ type: 'done', runId: 'user-run-1' });
+    });
+    expect(screen.getByText('Estimated turn cost: $0.2000 · 1 call')).toBeInTheDocument();
+    expect(screen.queryByText('Call: old-gateway')).not.toBeInTheDocument();
+    expect(screen.getByText('Call: new-gateway')).toBeInTheDocument();
   });
 
 });

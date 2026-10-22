@@ -54,6 +54,9 @@ Use Playwright locator actions for form controls. Before interacting with
 statically rendered controls, wait for an observable result of client
 initialization, such as loaded backend options enabling Optimize.
 
+Treat transcript visibility preferences as display settings. Saved exports retain
+reasoning, tool activity, model selections, and costs.
+
 When comparing chat exports with the live transcript, identify the same message
 by its label or content. A foreground stream can prepend a system message after
 the export snapshot, so message position is not stable.
@@ -128,6 +131,9 @@ destroys that state.
 
 Experimental AI controls must follow backend `/capabilities` responses. The
 backend remains authoritative for feature enablement and input limits.
+Keep model and reasoning controls editable during streaming. Save the session's
+current choice separately from the active turn's accepted choice. Restore the
+session choice after reload and serialize saves before submitting a new turn.
 For retained attachments, count existing uploads toward session limits. Keep
 per-file and session totals separate. Upload one file per request and preserve
 confirmed uploads when a later upload fails.

@@ -41,6 +41,7 @@ export interface ChatMessage extends ChatMessageContent {
   id: string;
   requestId?: string;
   request?: {
+    selection?: import('./aiClient').ModelSelection;
     id: string; question: string; questionId: string; assistantId: string; activeAssistantId?: string; active: boolean;
     uploading?: boolean;
     // Names of attached files that the server has not confirmed yet, in upload order.
@@ -50,6 +51,9 @@ export interface ChatMessage extends ChatMessageContent {
   // Absolute history position of an app event, so a retried turn does not show it twice.
   historyIndex?: number;
   runId?: string;
+  modelSelection?: import('./aiClient').ModelSelection;
+  providerCalls?: import('./costs').ProviderCallCost[];
+  costSummary?: import('./costs').CostSummary;
   retry?: {
     question: string;
     requiresAttachments: boolean;

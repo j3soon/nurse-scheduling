@@ -141,11 +141,27 @@ from the trust-based local harness.
   joins owners before closing the sandbox factory and optimizer transport.
   Commit and abort through the owning `RunSnapshot`. A conversation version
   rejects stale work even when the schedule changes back to its original text.
+- Include delayed model discovery in admission and cancellation tests. Injecting
+  a provider bypasses model selection and does not exercise this path.
 - Use provider metadata for model limits instead of duplicate environment
   settings. Verify the configured endpoint before adding a provider workaround.
   Check metadata discovery and streamed usage separately. For a protected route,
   verify that missing and invalid credentials are rejected. Keep reported usage
   visible when the provider omits its model limit.
+- Scope model discovery and provider credentials to the authenticated AI key.
+  Describe reasoning choices with exact gateway metadata instead of guessing
+  supported levels from model names. Match configured reasoning parameters to
+  advertised choices when selecting a default. Do not infer defaults from option
+  order. If the gateway omits reasoning choices, hide the selector and preserve
+  its defaults. Keep the session's current selection separate from each accepted
+  run's frozen selection. Changing session settings must not change an active run.
+- Track provider costs by HTTP attempt ID. Replace streamed updates instead of
+  adding them, preserve missing prices as unknown, and use decimal USD totals.
+  Restore totals from saved call records and test replay before acknowledgement.
+  Preserve reported subnormal costs and keep decimal summaries within the client
+  length limit. Test Stop while cost checkpoints are pending. Version cost
+  snapshots by their cost publication, because unrelated stream events can advance
+  while a checkpoint waits.
 - Keep attachment limits server-configured and report them through
   `/capabilities`. Attachments and the optimizer tool are always offered.
   Keep schedules and attachments separate from model instructions.
@@ -492,6 +508,9 @@ from the trust-based local harness.
 
 ## Testing
 - Normal tests live under `tests/`.
+- When replacing a browser cookie in a test, delete the existing cookie first
+  or match its domain and path. Setting only its name can add a duplicate.
+  HTTP client versions can send those duplicates in different orders.
 - Derive a fixture timestamp from the current clock whenever the code under test
   compares it against real time, such as a Redis `EXPIREAT` or a retention
   window. A hardcoded date passes until that instant arrives and then fails for

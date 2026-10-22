@@ -32,6 +32,30 @@ class RunStartEvent(RunFields):
     trigger: Literal["user", "optimizer"]
 
 
+class ModelSelectionEvent(RunFields):
+    type: Literal["model_selection"]
+    model: str
+    reasoning: str
+
+
+class ProviderCallEvent(RunFields):
+    type: Literal["provider_call"]
+    call_id: str
+    model: str
+    reasoning: str
+    status: Literal["pending", "reported", "unavailable"]
+    cost_usd: str | None
+    usage: dict[str, Any] | None
+    provider_call_id: str | None
+    response_model: str | None
+
+
+class CostSummaryEvent(RunFields):
+    type: Literal["cost_summary"]
+    conversation: dict[str, Any]
+    run: dict[str, Any]
+
+
 class TextEvent(RunFields):
     type: Literal["delta", "reasoning"]
     text: str
@@ -171,6 +195,9 @@ class OptimizationProgressEvent(OptimizerProgressUpdate):
 AgentSessionTerminalEvent = RunDoneEvent | RunErrorEvent | RunStoppedEvent
 AgentSessionRunEvent = (
     RunStartEvent
+    | ModelSelectionEvent
+    | ProviderCallEvent
+    | CostSummaryEvent
     | TextEvent
     | TruncatedEvent
     | RunStoppedEvent

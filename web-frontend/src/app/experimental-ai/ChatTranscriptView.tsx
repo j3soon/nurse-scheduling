@@ -22,6 +22,7 @@
 import { FiDownload } from 'react-icons/fi';
 
 import { AssistantActivity } from './AssistantActivity';
+import { CostDetails } from './CostDetails';
 import CollapsedText from './CollapsedText';
 import { messageLabel, messageUploadedFileLines } from './chatPresentation';
 import { formatResponseDuration, formatResponseTime, formatSessionExpiration, retentionLabel } from './chatPresentation';
@@ -50,6 +51,8 @@ interface ChatTranscriptViewProps {
   messages: ChatMessage[];
   showReasoning: boolean;
   showTools: boolean;
+  showCosts: boolean;
+  showModels: boolean;
   steeringAssistantId: string | null;
   isStreaming: boolean;
   conversationUnavailable: boolean;
@@ -70,6 +73,8 @@ export function ChatTranscriptView({
   messages,
   showReasoning,
   showTools,
+  showCosts,
+  showModels,
   steeringAssistantId,
   isStreaming,
   conversationUnavailable,
@@ -181,6 +186,11 @@ export function ChatTranscriptView({
                   </button>
                 </div>
               )}
+              {showCosts && message.costSummary && <CostDetails summary={message.costSummary} calls={message.providerCalls ?? []}
+                running={message.status === 'pending'} />}
+              {showModels && message.modelSelection && <div className="mt-2 break-all text-xs text-gray-500">
+                {message.modelSelection.model} · {message.modelSelection.reasoning === 'default' ? 'Default reasoning' : message.modelSelection.reasoning}
+              </div>}
               {timestamp !== undefined && (
                 <time
                   dateTime={new Date(timestamp).toISOString()}

@@ -20,6 +20,7 @@
 // This code is mostly AI generated.
 
 import type { SessionEvent, SessionStreamOptions } from './sessionEvents';
+import { isCostSummary, isProviderCallCost } from './costs';
 import {
   buildAuthHeaders,
   parseAuthRequirement,
@@ -95,6 +96,7 @@ export interface SessionReset {
 }
 
 export interface AiCapabilities {
+  model_selection?: boolean;
   app_version?: string;
   saved_chat_export?: boolean;
   auth: AuthRequirement | null;
@@ -106,6 +108,69 @@ export interface AiCapabilities {
     max_bytes_per_session: number;
     retained?: boolean;
   };
+}
+
+export interface ModelSelection {
+  model: string;
+  reasoning: string;
+}
+
+function parseModelSelection(body: unknown): ModelSelection {
+  const selection = body as Partial<ModelSelection> | null;
+  if (!selection || typeof selection.model !== 'string' || !selection.model
+    || typeof selection.reasoning !== 'string' || !selection.reasoning) {
+    throw new Error('The AI backend returned invalid model settings.');
+  }
+  return selection as ModelSelection;
+}
+
+export async function getSessionModelSelection(
+  sessionId: string, signal: AbortSignal, authToken: string | null, endpoint: string,
+): Promise<ModelSelection> {
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/model-selection`, {
+    signal, credentials: 'include', headers: authorizedHeaders(authToken),
+  });
+  if (!response.ok) throw await responseError(response);
+  return parseModelSelection(await response.json());
+}
+
+export async function updateSessionModelSelection(
+  sessionId: string, selection: ModelSelection, authToken: string | null, endpoint: string,
+): Promise<ModelSelection> {
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/model-selection`, {
+    method: 'PUT', credentials: 'include',
+    headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
+    body: JSON.stringify(selection),
+  });
+  if (!response.ok) throw await responseError(response);
+  return parseModelSelection(await response.json());
+}
+
+export interface AvailableModel {
+  id: string;
+  name: string;
+  context_tokens: number | null;
+  default_reasoning: string;
+  reasoning_options: { id: string; label: string }[];
+}
+
+export async function getModels(signal: AbortSignal, authToken: string | null, endpoint: string): Promise<{
+  default_model: string; models: AvailableModel[];
+}> {
+  const response = await fetch(`${endpoint}/models`, {
+    signal, credentials: 'include', headers: authorizedHeaders(authToken),
+  });
+  if (!response.ok) throw await responseError(response);
+  const body = await response.json();
+  if (typeof body.default_model !== 'string' || !Array.isArray(body.models)
+    || !body.models.every((model: AvailableModel) => model && typeof model.id === 'string'
+      && typeof model.name === 'string' && Array.isArray(model.reasoning_options)
+      && typeof model.default_reasoning === 'string'
+      && model.reasoning_options.some(option => option?.id === model.default_reasoning)
+      && model.reasoning_options.every(option => option && typeof option.id === 'string' && typeof option.label === 'string'))) {
+    throw new Error('The AI backend returned an invalid model list.');
+  }
+  return body;
 }
 
 export interface UploadedFile {
@@ -150,6 +215,17 @@ interface SessionStatusResponse {
 }
 
 interface SsePayload {
+  call_id?: unknown;
+  status?: unknown;
+  cost_usd?: unknown;
+  usage?: unknown;
+  provider_call_id?: unknown;
+  response_model?: unknown;
+  conversation?: unknown;
+  run?: unknown;
+  cost_summary?: unknown;
+  model?: unknown;
+  reasoning?: unknown;
   text?: unknown;
   message?: unknown;
   name?: unknown;
@@ -319,6 +395,7 @@ export async function createSession(
   scheduleYaml: string,
   authToken: string | null,
   endpoint = getAiBaseUrl(),
+  selection?: ModelSelection,
 ): Promise<string> {
   const response = await fetch(`${endpoint}/sessions`, {
     method: 'POST',
@@ -326,6 +403,7 @@ export async function createSession(
     headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
     body: JSON.stringify({
       schedule_yaml: scheduleYaml,
+      selection,
       frontend_version: CURRENT_APP_VERSION,
       ai_endpoint: endpoint,
       frontend_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -449,6 +527,10 @@ function consumeEvent(block: string, callbacks: SessionStreamOptions): void {
       incomplete: payload.incomplete === true,
     };
     events = [{ type: 'session_reset', reset }, ...recoveredEvents];
+    if (payload.cost_summary !== undefined) {
+      if (!isCostSummary(payload.cost_summary)) throw new Error('The AI backend returned invalid cost totals.');
+      events.push({ type: 'cost_summary', conversation: payload.cost_summary });
+    }
   } else {
     events = decodeEvent(eventType, payload);
   }
@@ -468,7 +550,23 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
   const emit = (event: SessionEvent) => events.push(runId === undefined ? event : { ...event, runId });
   if (runId) emit({ type: 'run_context', runId });
 
-  if (eventType === 'run_start' && typeof payload.run_id === 'string') {
+  if (eventType === 'provider_call') {
+    const call = { callId: payload.call_id, model: payload.model, reasoning: payload.reasoning,
+      status: payload.status, costUsd: payload.cost_usd, usage: payload.usage,
+      providerCallId: payload.provider_call_id, responseModel: payload.response_model };
+    if (!isProviderCallCost(call)) throw new Error('The AI backend returned invalid provider cost details.');
+    emit({ type: 'provider_call', call });
+  } else if (eventType === 'cost_summary') {
+    if (!isCostSummary(payload.conversation) || (payload.run !== undefined && !isCostSummary(payload.run))) {
+      throw new Error('The AI backend returned invalid cost totals.');
+    }
+    emit({ type: 'cost_summary', conversation: payload.conversation, run: payload.run });
+  } else if (eventType === 'model_selection') {
+    if (typeof payload.model !== 'string' || typeof payload.reasoning !== 'string') {
+      throw new Error('The AI backend returned invalid model settings.');
+    }
+    emit({ type: 'model_selection', selection: { model: payload.model, reasoning: payload.reasoning } });
+  } else if (eventType === 'run_start' && typeof payload.run_id === 'string') {
     emit({
       type: 'run_start', runId: payload.run_id,
       trigger: typeof payload.trigger === 'string' ? payload.trigger : 'background work',
@@ -613,6 +711,7 @@ async function postMessage(
   endpoint: string,
   accept: string,
   messageId?: string,
+  selection?: ModelSelection,
 ): Promise<Response> {
   const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/messages`, {
     method: 'POST',
@@ -621,6 +720,7 @@ async function postMessage(
     body: JSON.stringify({
       message,
       message_id: messageId,
+      selection,
       frontend_version: CURRENT_APP_VERSION,
       frontend_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     }),
@@ -642,6 +742,7 @@ function waitForReconnect(delay: number, signal: AbortSignal): Promise<void> {
 }
 
 export interface SendMessageOptions {
+  selection?: ModelSelection;
   // The client message ID. A repeated POST with it returns the accepted run instead of asking again.
   messageId: string;
   shouldStop?: () => boolean;
@@ -662,7 +763,7 @@ export async function sendMessage(
   signal: AbortSignal,
   authToken: string | null,
   endpoint = getAiBaseUrl(),
-  { messageId, shouldStop, onConnectionChange }: SendMessageOptions = { messageId: crypto.randomUUID() },
+  { messageId, shouldStop, onConnectionChange, selection }: SendMessageOptions = { messageId: crypto.randomUUID() },
 ): Promise<string> {
   let retries = 0;
   let stopSaved = false;
@@ -687,7 +788,7 @@ export async function sendMessage(
       let body: { run_id?: unknown };
       try {
         const response = await postMessage(
-          sessionId, message, connection.signal, authToken, endpoint, 'application/json', messageId,
+          sessionId, message, connection.signal, authToken, endpoint, 'application/json', messageId, selection,
         );
         body = await response.json() as { run_id?: unknown };
       } catch (error) {

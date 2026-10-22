@@ -454,6 +454,8 @@ class SessionRecovery:
                 removed_upload_paths=record.get("removed_upload_paths", ()),
                 archive_bytes=record.get("archive_bytes", 0),
             )
+            if session.provider_credential_id is None:
+                session.provider_credential_id = record.get("credential_id")
             self._event_stream.restore(session_id, record["last_event_id"])
             release = self.pin(session_id)
             try:
@@ -529,6 +531,15 @@ class SessionRecovery:
             writer = writers.get(session_id)
             if writer is not None and not writer.done():
                 await asyncio.shield(writer)
+
+    async def save_provider_call(self, session_id: str, event: SessionEvent | None) -> bool:
+        """Checkpoint call metadata before publishing its cost totals or starting its HTTP attempt.
+
+        The normal event writer also retries this event. Event IDs make both writes idempotent.
+        """
+        if self.history is None or event is None:
+            return True
+        return await self.history.write("append_events", session_id, _event_rows([event]))
 
     async def _load_recovery(self, session_id: str, after_id: int) -> tuple[int, list[SessionEvent]] | None:
         """Build a complete reset from storage. None means storage lags, so the projection serves it."""

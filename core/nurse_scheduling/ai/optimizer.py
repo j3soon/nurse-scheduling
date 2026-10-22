@@ -124,6 +124,7 @@ class SessionOptimization:
     people_count: int
     schedule_yaml: str
     submitted_yaml: str = ""
+    model_selection: dict[str, str] | None = None
     backend: dict[str, Any] = field(default_factory=dict)
     request: dict[str, Any] = field(default_factory=dict)
     client_address: str | None = None
@@ -154,7 +155,7 @@ class OptimizerArtifact:
         return len(self.content) + len(self.schedule_context or b"")
 
 
-CompletionCallback = Callable[[str, str, OptimizerArtifact | None], Awaitable[None]]
+CompletionCallback = Callable[[str, str, OptimizerArtifact | None, dict[str, str] | None], Awaitable[None]]
 UpdateCallback = Callable[[str, dict[str, Any]], Awaitable[None]]
 
 
@@ -270,6 +271,7 @@ class SessionOptimizer:
         schedule_yaml: str,
         timeout_seconds: int | None,
         client_address: str | None = None,
+        model_selection: dict[str, str] | None = None,
     ) -> SessionOptimization:
         """Submit one optimizer job for a session, attributed to the browser address that asked for it."""
         if self._closed:
@@ -296,7 +298,9 @@ class SessionOptimizer:
         owner.reservation = reservation
         owner.runs += 1
         submission = asyncio.create_task(
-            self._submit(session_id, owner, reservation, schedule_yaml, timeout_seconds, client_address)
+            self._submit(
+                session_id, owner, reservation, schedule_yaml, timeout_seconds, client_address, model_selection
+            )
         )
         self._submissions.add(submission)
 
@@ -323,6 +327,7 @@ class SessionOptimizer:
         schedule_yaml: str,
         timeout_seconds: int | None,
         client_address: str | None,
+        model_selection: dict[str, str] | None,
     ) -> SessionOptimization:
         def owns_submission() -> bool:
             return not self._closed and self._sessions.get(session_id) is owner and owner.reservation is reservation
@@ -360,6 +365,7 @@ class SessionOptimizer:
             people_count=prepared.people_count,
             schedule_yaml=schedule_yaml,
             submitted_yaml=prepared.submission_yaml,
+            model_selection=model_selection,
             backend=payload.backend or {},
             request={
                 **payload.request,
@@ -583,7 +589,9 @@ class SessionOptimizer:
         prompt = optimizer_completion_message(result_data)
         if self._jobs.get(job.id) is not job:
             return
-        await self._on_completion(job.session_id, prompt, artifact if job.artifact_saved else job.artifact)
+        await self._on_completion(
+            job.session_id, prompt, artifact if job.artifact_saved else job.artifact, job.model_selection
+        )
 
     async def _retain_artifact(self, job: SessionOptimization, artifact: OptimizerArtifact) -> None:
         if self._jobs.get(job.id) is not job:

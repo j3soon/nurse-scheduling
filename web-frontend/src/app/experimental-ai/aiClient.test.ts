@@ -21,6 +21,7 @@
 
 import {
   AiStaleRunError,
+  decodeEvent,
   PRODUCTION_AI_API_URL,
   cancelOptimization,
   createSession,
@@ -30,6 +31,8 @@ import {
   getCapabilities,
   getBackendVersion,
   getSessionStatus,
+  getSessionModelSelection,
+  updateSessionModelSelection,
   getChatExportUrl,
   getUploads,
   isOfficialAiEndpoint,
@@ -108,6 +111,32 @@ describe('AI client', () => {
         max_bytes_per_file: 5000000,
         max_bytes_per_session: 200_000_000,
       },
+    });
+  });
+
+  it('loads and saves the authenticated session model choice', async () => {
+    const selection = { model: 'deep', reasoning: 'high' };
+    const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify(selection)));
+    vi.stubGlobal('fetch', fetchMock);
+    const signal = new AbortController().signal;
+    await expect(getSessionModelSelection('session/id', signal, 'chat-token', '/ai')).resolves.toEqual(selection);
+    expect(fetchMock).toHaveBeenLastCalledWith('/ai/sessions/session%2Fid/model-selection', {
+      signal, credentials: 'include', headers: { Authorization: 'Bearer chat-token' },
+    });
+    await expect(updateSessionModelSelection('session/id', selection, 'chat-token', '/ai')).resolves.toEqual(selection);
+    expect(fetchMock).toHaveBeenLastCalledWith('/ai/sessions/session%2Fid/model-selection', {
+      method: 'PUT', credentials: 'include',
+      headers: { Authorization: 'Bearer chat-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify(selection),
+    });
+  });
+
+  it('rejects malformed session choices and reports save errors', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ model: 'deep' }))));
+    await expect(getSessionModelSelection('s', new AbortController().signal, null, '/ai')).rejects.toThrow('invalid model settings');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: 'Storage unavailable' }), { status: 503 })));
+    await expect(updateSessionModelSelection('s', { model: 'deep', reasoning: 'high' }, null, '/ai')).rejects.toMatchObject({
+      status: 503, message: 'Storage unavailable',
     });
   });
 
@@ -1099,4 +1128,33 @@ describe('AI client', () => {
     ]);
   });
 
+});
+
+
+describe('provider cost events', () => {
+  const totals = { usd: '0.000123', calls: 1, pending: 0, unavailable: 0 };
+  it('decodes provider-reported costs and reasoning usage without adding output tokens', () => {
+    const events = decodeEvent('provider_call', { run_id: 'r', call_id: 'c', model: 'alias', reasoning: 'high',
+      status: 'reported', cost_usd: '0.000123', provider_call_id: 'gateway-c', response_model: 'actual',
+      usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120, reasoning_tokens: 10 } });
+    expect(events.at(-1)).toMatchObject({ type: 'provider_call', runId: 'r', call: {
+      callId: 'c', costUsd: '0.000123', usage: { completion_tokens: 20, reasoning_tokens: 10 },
+    } });
+    expect(decodeEvent('cost_summary', { conversation: totals, run: totals }).at(-1))
+      .toEqual({ type: 'cost_summary', conversation: totals, run: totals });
+  });
+  it('rejects malformed totals and prices before applying any events', () => {
+    expect(() => decodeEvent('cost_summary', { conversation: { ...totals, usd: 'NaN' } })).toThrow('invalid cost totals');
+    expect(() => decodeEvent('provider_call', { run_id: 'r', cost_usd: -1 })).toThrow('invalid provider cost');
+  });
+  it('applies the saved conversation total after older totals in a replacement replay', async () => {
+    const recovery = { events: [{ type: 'cost_summary', data: { conversation: { ...totals, usd: '0.000100' } } }],
+      cost_summary: totals, incomplete: false };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      `id: 9\nevent: session_reset\ndata: ${JSON.stringify(recovery)}\n\n`,
+    ])));
+    const events: SessionEvent[] = [];
+    await streamSessionEvents('s', { onEvent: event => events.push(event) }, new AbortController().signal, null);
+    expect(events.at(-1)).toEqual({ type: 'cost_summary', conversation: totals });
+  });
 });

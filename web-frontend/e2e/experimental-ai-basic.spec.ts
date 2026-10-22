@@ -37,6 +37,7 @@ interface CapturedRequests {
   uploadBatches: string[][];
   uploadContentType: string;
   authorizationHeaders: string[];
+  modelSelections: { model: string; reasoning: string }[];
 }
 
 function frontendOrigin(): string {
@@ -154,9 +155,12 @@ async function mockAiBackend(
   reportContext = true,
   // Run events published before `done`, such as a generated ZIP.
   answerEvents: { type: string; data: Record<string, unknown> }[] = [],
+  modelCatalog?: { default_model: string; models: unknown[] },
 ): Promise<CapturedRequests & {
   publishEvent: (type: string, data: Record<string, unknown>) => void;
   hasWaitingReader: () => boolean;
+  holdNextTurn: () => void;
+  finishTurn: () => void;
 }> {
   const captured = {
     scheduleYaml: '',
@@ -168,6 +172,7 @@ async function mockAiBackend(
     uploadBatches: [] as string[][],
     uploadContentType: '',
     authorizationHeaders: [] as string[],
+    modelSelections: [] as { model: string; reasoning: string }[],
   };
   const allowedOrigin = frontendOrigin();
   // Like the backend, record each upload as an app event that the next request sends before the question.
@@ -175,6 +180,9 @@ async function mockAiBackend(
   let historyLength = 0;
   const journal: string[] = [];
   let wakeReader: (() => void) | undefined;
+  let holdNextTurn = false;
+  let heldTerminal: { type: string; data: Record<string, unknown> } | undefined;
+  let currentSelection = { model: modelCatalog?.default_model ?? 'fast', reasoning: 'default' };
   const publish = (type: string, data: Record<string, unknown>) => {
     journal.push(`id: ${journal.length + 1}\nevent: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
     wakeReader?.();
@@ -190,7 +198,7 @@ async function mockAiBackend(
     const corsHeaders = {
       'Access-Control-Allow-Credentials': 'true',
       'Access-Control-Allow-Headers': 'Authorization, Content-Type, Last-Event-ID',
-      'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
       'Access-Control-Allow-Origin': allowedOrigin,
     };
     if (request.method() === 'OPTIONS') {
@@ -203,6 +211,7 @@ async function mockAiBackend(
         contentType: 'application/json',
         headers: corsHeaders,
         body: JSON.stringify({
+          model_selection: modelCatalog !== undefined,
           ...(requiredAuthToken ? { auth: { required: true, scheme: 'bearer' } } : {}),
           file_attachments: {
             enabled: true,
@@ -215,6 +224,11 @@ async function mockAiBackend(
     }
     const authorization = request.headers()['authorization'] ?? '';
     captured.authorizationHeaders.push(authorization);
+    if (request.url().endsWith('/models') && modelCatalog) {
+      await route.fulfill({ status: 200, contentType: 'application/json', headers: corsHeaders,
+        body: JSON.stringify(modelCatalog) });
+      return;
+    }
     if (requiredAuthToken && authorization !== `Bearer ${requiredAuthToken}`) {
       await route.fulfill({
         status: 401,
@@ -225,7 +239,8 @@ async function mockAiBackend(
       return;
     }
     if (request.url().endsWith('/sessions')) {
-      const body = request.postDataJSON() as { schedule_yaml: string; frontend_timezone: string };
+      const body = request.postDataJSON() as { schedule_yaml: string; frontend_timezone: string; selection?: typeof currentSelection };
+      currentSelection = body.selection ?? currentSelection;
       captured.scheduleYaml = body.schedule_yaml;
       captured.frontendTimezone = body.frontend_timezone;
       await route.fulfill({
@@ -234,6 +249,19 @@ async function mockAiBackend(
         headers: corsHeaders,
         body: JSON.stringify({ id: 'browser-session' }),
       });
+      return;
+    }
+    if (request.url().endsWith('/sessions/browser-session/model-selection')) {
+      if (request.method() === 'PUT') {
+        currentSelection = request.postDataJSON() as typeof currentSelection;
+        captured.modelSelections.push(currentSelection);
+      }
+      await route.fulfill({ status: 200, contentType: 'application/json', headers: corsHeaders,
+        body: JSON.stringify(currentSelection) });
+      return;
+    }
+    if (request.url().endsWith('/sessions/browser-session/messages/queue')) {
+      await route.fulfill({ status: 202, headers: corsHeaders });
       return;
     }
     if (request.url().endsWith('/sessions/browser-session/events')) {
@@ -303,12 +331,22 @@ async function mockAiBackend(
       const type = lines.find(line => line.startsWith('event: '))!.slice(7);
       if (!reportContext && type === 'context_usage') continue;
       const data = JSON.parse(lines.find(line => line.startsWith('data: '))!.slice(6));
-      publish(type, { ...data, run_id: runId });
+      if (holdNextTurn && ['done', 'error', 'stopped'].includes(type)) {
+        heldTerminal = { type, data: { ...data, run_id: runId } };
+        holdNextTurn = false;
+      } else publish(type, { ...data, run_id: runId });
     }
     await route.fulfill({ status: 202, contentType: 'application/json', headers: corsHeaders, body: JSON.stringify({ run_id: runId }) });
   });
 
-  return Object.assign(captured, { publishEvent: publish, hasWaitingReader: () => wakeReader !== undefined });
+  return Object.assign(captured, {
+    publishEvent: publish, hasWaitingReader: () => wakeReader !== undefined,
+    holdNextTurn: () => { holdNextTurn = true; },
+    finishTurn: () => {
+      if (heldTerminal) publish(heldTerminal.type, heldTerminal.data);
+      heldTerminal = undefined;
+    },
+  });
 }
 
 test('asks about the current schedule and renders a streamed answer', async ({ page }) => {
@@ -320,7 +358,7 @@ test('asks about the current schedule and renders a streamed answer', async ({ p
 
   await expect(page.getByText('The image and schedule were received.')).toBeVisible();
   await expect(page.getByText('Backend v0.4.3-backend')).toBeVisible();
-  await expect(page.getByText('Chat history context: 25.0%')).toBeVisible();
+  await expect(page.getByText('Context 25.0% used')).toBeVisible();
   const userTime = page.locator('article').filter({ hasText: 'Who works first?' }).locator('time');
   await expect(userTime).toHaveAttribute('datetime', /T/);
   await expect(userTime).toHaveAttribute('title', /\d{4}/);
@@ -360,7 +398,7 @@ test('explains unavailable context usage when the backend omits it', async ({ pa
   await page.goto('/experimental-ai');
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Question');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
-  const usage = page.getByText('Chat history context: unavailable');
+  const usage = page.getByText('Context unavailable');
   await expect(usage).toBeVisible();
   await expect(usage).toHaveAttribute('title', /The AI server has not reported context usage/);
 });
@@ -1067,8 +1105,9 @@ test.describe('phone chat keyboard', () => {
     expect(requests.messageBodies).toHaveLength(0);
     await page.getByRole('button', { name: 'Send', exact: true }).tap();
     await expect(page.getByText('Phone reply.', { exact: true })).toBeVisible();
-    await page.getByText('Chat history context:', { exact: false }).tap();
-    await expect(page.getByText('characters in retained chat history.', { exact: false })).toBeVisible();
+    const usage = page.getByText('Context 25.0% used', { exact: true });
+    await expect(usage).toBeVisible();
+    expect(await usage.evaluate(element => element.closest('details'))).toBeNull();
   });
 });
 
@@ -1098,3 +1137,92 @@ test('keeps the composer above a reduced visual viewport and ignores pinch zoom'
   });
   await expect(composer).toHaveCSS('bottom', '0px');
 });
+
+
+test('changes model and reasoning during streaming for future turns and reload', async ({ page }) => {
+  const captured = await mockAiBackend(page, ['Selected model answered.'], false, undefined, [], true, [], {
+    default_model: 'fast', models: [
+      { id: 'fast', name: 'Fast', context_tokens: null, default_reasoning: 'default', reasoning_options: [{ id: 'default', label: 'Default' }] },
+      { id: 'deep', name: 'Deep', context_tokens: 32000, default_reasoning: 'off', reasoning_options: [
+        { id: 'off', label: 'Off' }, { id: 'high', label: 'High' },
+      ] },
+    ],
+  });
+  captured.holdNextTurn();
+  await page.goto('/experimental-ai');
+  await page.getByLabel('AI model').selectOption('deep');
+  await expect(page.getByLabel('Reasoning', { exact: true })).toHaveValue('off');
+  await expect(page.getByLabel('Reasoning', { exact: true }).locator('option')).toHaveText(['Off', 'High']);
+  await page.getByLabel('Reasoning', { exact: true }).selectOption('high');
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('First question');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('Selected model answered.')).toBeVisible();
+  expect(JSON.parse(captured.messageBodies[0]).selection).toEqual({ model: 'deep', reasoning: 'high' });
+  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
+  await expect(page.getByLabel('AI model')).toBeEnabled();
+  await expect(page.getByLabel('Reasoning', { exact: true })).toBeEnabled();
+  await page.getByLabel('Reasoning', { exact: true }).selectOption('off');
+  await expect.poll(() => captured.modelSelections.at(-1)).toEqual({ model: 'deep', reasoning: 'off' });
+  await page.getByLabel('AI model').selectOption('fast');
+  await expect.poll(() => captured.modelSelections.at(-1)).toEqual({ model: 'fast', reasoning: 'default' });
+  expect(JSON.parse(captured.messageBodies[0]).selection).toEqual({ model: 'deep', reasoning: 'high' });
+  await expect(page.getByLabel('Reasoning', { exact: true })).toHaveCount(0);
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Next question');
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).press('Enter');
+  await expect(page.getByText('Queued for steering')).toBeVisible();
+  captured.finishTurn();
+  await expect.poll(() => captured.messageBodies.length).toBe(2);
+  expect(JSON.parse(captured.messageBodies[1]).selection).toEqual({ model: 'fast', reasoning: 'default' });
+  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeHidden();
+  await page.reload();
+  await expect(page.getByLabel('AI model')).toHaveValue('fast');
+});
+
+
+for (const [cost, display] of [['0.0123', '$0.0123'], ['4.45E-322', '<$0.000001']]) {
+  test(`keeps conversation cost ${cost} across reload and shows call usage`, async ({ page }) => {
+    await mockAiBackend(page, ['Costed answer.'], false, undefined, [], true, [
+      { type: 'model_selection', data: { model: 'deep', reasoning: 'high' } },
+      { type: 'provider_call', data: { call_id: 'call-one', model: 'deep', reasoning: 'high', status: 'reported',
+        cost_usd: cost, provider_call_id: 'gateway-one', response_model: 'deep',
+        usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120, reasoning_tokens: 10 } } },
+      { type: 'provider_call', data: { call_id: 'call-one', model: 'deep', reasoning: 'high', status: 'reported',
+        cost_usd: cost, provider_call_id: 'gateway-one', response_model: 'deep',
+        usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120, reasoning_tokens: 10 } } },
+      { type: 'cost_summary', data: { conversation: { usd: cost, calls: 1, pending: 0, unavailable: 0 },
+        run: { usd: cost, calls: 1, pending: 0, unavailable: 0 } } },
+    ]);
+    await page.goto('/experimental-ai');
+    await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Cost question');
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await expect(page.getByText(`Est. cost: ${display}`)).toBeVisible();
+    const conversationCost = page.getByText(`Est. cost: ${display}`, { exact: true });
+    await expect(conversationCost).toBeVisible();
+    await expect(conversationCost).toHaveAttribute('title', /Estimated LLM cost across this conversation/);
+    expect(await page.getByText(/^Context /).evaluate((element, footerText) => {
+      const cost = [...document.querySelectorAll('span')].find(node => node.textContent?.trim() === footerText);
+      return !!cost && element.closest('p') === cost.closest('p')
+        && !element.closest('details')
+        && !!(element.compareDocumentPosition(cost) & Node.DOCUMENT_POSITION_FOLLOWING);
+    }, `Est. cost: ${display}`)).toBe(true);
+    await expect(page.getByText('deep · high', { exact: true })).toBeVisible();
+    await page.getByRole('checkbox', { name: 'Show turn costs' }).uncheck();
+    await expect(page.getByText(/^Estimated turn cost:/)).toHaveCount(0);
+    await page.getByRole('checkbox', { name: 'Show models', exact: true }).uncheck();
+    await expect(page.getByText('deep · high', { exact: true })).toHaveCount(0);
+    await expect(conversationCost).toBeVisible();
+    await page.reload();
+    await expect(page.getByRole('checkbox', { name: 'Show turn costs' })).not.toBeChecked();
+    await expect(page.getByRole('checkbox', { name: 'Show models', exact: true })).not.toBeChecked();
+    await expect(page.getByText(/^Estimated turn cost:/)).toHaveCount(0);
+    await page.getByRole('checkbox', { name: 'Show turn costs' }).check();
+    await page.getByRole('checkbox', { name: 'Show models', exact: true }).check();
+    await expect(page.getByText('deep · high', { exact: true })).toBeVisible();
+    await page.getByText(`Estimated turn cost: ${display} · 1 call`).click();
+    await expect(page.getByText('Call: gateway-one')).toHaveCount(1);
+    await expect(page.getByText(/Reasoning \(included in output\): 10/)).toBeVisible();
+    await page.reload();
+    await expect(page.getByText(`Est. cost: ${display}`)).toBeVisible();
+    await expect(page.getByText(`Estimated turn cost: ${display} · 1 call`)).toBeVisible();
+  });
+}

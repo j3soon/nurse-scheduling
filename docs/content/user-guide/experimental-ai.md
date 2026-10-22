@@ -131,17 +131,23 @@ Keep your original files.
 
 ## See what the assistant did
 
-**Chat history context** below the message box shows the portion of the server's
+You can change **Model** and **Reasoning** while an answer streams. The active
+turn keeps its original settings, including tool calls and steering. The session
+saves your new choice for later turns, including new optimizer reviews. Reloading
+the page restores that choice.
+
+**Context X% used** below the message box shows the portion of the server's
 conversation history budget selected for the next turn. It excludes instructions,
 schedule data, tools, and attachments. If the server does not report usage, the
 chat displays **unavailable**. Update the AI server to enable the percentage.
 
-When the provider reports token usage, the line also shows **Tokens:
-used / limit**. It counts the tokens of the latest model request, including
-instructions, tool output, and the reply. A turn with long tool output can
+When the provider reports token usage, the line also shows **Last: X / N**.
+X counts the latest model call’s input and output tokens, including instructions,
+tool output, and the reply. N is the model input limit. A turn with long tool output can
 therefore use many more tokens than its history percentage suggests.
 The server reads the limit from the provider's model metadata. If the provider
-does not report a limit, the chat shows **unavailable** for the limit.
+does not report a limit, the chat shows **unavailable** for the limit. Hover over
+**Context**, **Last**, or **Est. cost** for a short description of that value.
 
 Small grey rows under an answer record how it was produced. They stay collapsed
 until you select one.
@@ -160,7 +166,11 @@ reason an answer arrives without a schedule change.
 
 Long output is revealed a portion at a time with **Show more**. Clear
 **Show reasoning** or **Show tool activity** near the top of the page to hide
-either kind. The choice is remembered on this browser.
+either kind. **Show turn costs** controls each reply’s cost summary and call
+details. **Show models** controls each reply’s model and reasoning setting.
+These choices are remembered on this browser. Exports always include these
+details regardless of the display settings. The conversation cost appears as
+**Est. cost** beside context usage on one line that wraps when needed.
 
 If a turn fails, read the error beside its response. Chat exports retain that
 error with any partial answer. A provider error can include an HTTP status and

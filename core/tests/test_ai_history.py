@@ -1628,7 +1628,14 @@ def test_postgres_recovers_background_metadata_after_restart(postgres_history):
     provider = basic.FakeProvider()
 
     async def exercise():
-        app = basic.create_test_app(settings=basic.make_settings(history_postgres_url="test"), provider=provider)
+        app = basic.create_test_app(
+            settings=basic.make_settings(
+                history_postgres_url="test",
+                auth_token=None,
+                auth_tokens=(basic.AuthCredential(id="team-a", token=basic.AI_AUTH_TOKEN),),
+            ),
+            provider=provider,
+        )
         async with serving(app, owner) as client:
             assert (await client.get(f"/sessions/{session}")).status_code == 200
 

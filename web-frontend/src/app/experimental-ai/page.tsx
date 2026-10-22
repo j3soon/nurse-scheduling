@@ -26,6 +26,9 @@ import Image from 'next/image';
 import { MobileDetails } from '@/components/MobileDetails';
 import { ChatTranscriptView } from './ChatTranscriptView';
 import { useAiChat } from './useAiChat';
+import { ModelControls } from './ModelControls';
+import { costLabel } from './costs';
+import type { ModelSelection } from './aiClient';
 import { readStoredConversation } from './chatConversation';
 import { isAuthenticationError } from './aiClient';
 
@@ -70,6 +73,8 @@ const SPEECH_LANGUAGES = [
 interface AiPreferences {
   showReasoning: boolean;
   showTools: boolean;
+  showCosts: boolean;
+  showModels: boolean;
 }
 
 interface StoredAiAuth {
@@ -236,6 +241,8 @@ export default function ExperimentalAiPage() {
   const [authRejected, setAuthRejected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [capabilitiesError, setCapabilitiesError] = useState<string | null>(null);
+  const [modelSelectionEnabled, setModelSelectionEnabled] = useState(false);
+  const [selection, setSelection] = useState<ModelSelection>();
   const [savedChatExportEnabled, setSavedChatExportEnabled] = useState(false);
   const [isExportingChat, setIsExportingChat] = useState(false);
   const [fileCapability, setFileCapability] = useState(DISABLED_FILE_CAPABILITY);
@@ -249,6 +256,8 @@ export default function ExperimentalAiPage() {
   const [showScrollToTop, setShowScrollToTop] = useState(false);
   const [showReasoning, setShowReasoning] = useState(true);
   const [showTools, setShowTools] = useState(true);
+  const [showCosts, setShowCosts] = useState(true);
+  const [showModels, setShowModels] = useState(true);
   const authTokensRef = useRef<Record<string, string>>({});
   const selectedAttachmentsRef = useRef<SelectedAttachment[]>([]);
   const followPageBottomRef = useRef(true);
@@ -275,14 +284,14 @@ export default function ExperimentalAiPage() {
     setIsExportingChat(false);
   }, []);
   const {
-    messages, uploadedFiles, removingUploadId, removingDownloadId, contextUsage, activeSessionId,
+    messages, uploadedFiles, removingUploadId, removingDownloadId, contextUsage, costSummary, activeSessionId,
     sessionExpiresAt, sessionRetentionSeconds, conversationUnavailable, sessionNotice, trimmedHistoryCount,
     isStreaming, isStopping, isReconnecting, activeOptimization, queuedMessages, steeringAssistantId,
     setSessionRetentionSeconds, restoreConversation,
     captureSession, newConversation, submitMessage, retryMessage, stop, removeUploadedFile,
     removeGeneratedFiles,
   } = useAiChat({
-    scheduleYaml, aiEndpoint, authRequired, authToken, isClientReady, serverStatus,
+    scheduleYaml, aiEndpoint, authRequired, authToken, isClientReady, serverStatus, selection, modelSelectionEnabled,
     retainsUploads: fileCapability.retained ?? false, backendVersion, setError, reportRequestError,
     onReset: resetChatUi,
     onApplySchedule: appliedYaml => {
@@ -305,6 +314,7 @@ export default function ExperimentalAiPage() {
   });
   const send = async (event: FormEvent) => {
     event.preventDefault();
+    if (modelSelectionEnabled && !selection) return;
     await submitMessage(draft.trim(), selectedAttachments.map(attachment => attachment.file));
   };
   useEffect(() => {
@@ -329,6 +339,8 @@ export default function ExperimentalAiPage() {
         // eslint-disable-next-line react-hooks/set-state-in-effect
         if (typeof preferences.showReasoning === 'boolean') setShowReasoning(preferences.showReasoning);
         if (typeof preferences.showTools === 'boolean') setShowTools(preferences.showTools);
+        if (typeof preferences.showCosts === 'boolean') setShowCosts(preferences.showCosts);
+        if (typeof preferences.showModels === 'boolean') setShowModels(preferences.showModels);
       }
     } catch {
       // Unreadable storage keeps the defaults rather than blocking the page.
@@ -365,9 +377,12 @@ export default function ExperimentalAiPage() {
     ));
   }, [restoreConversation]);
 
-  const rememberPreferences = (preferences: AiPreferences) => {
+  const rememberPreferences = (updates: Partial<AiPreferences>) => {
+    const preferences = { showReasoning, showTools, showCosts, showModels, ...updates };
     setShowReasoning(preferences.showReasoning);
     setShowTools(preferences.showTools);
+    setShowCosts(preferences.showCosts);
+    setShowModels(preferences.showModels);
     try {
       window.localStorage.setItem(AI_STORAGE_KEY, JSON.stringify(preferences));
     } catch {
@@ -388,6 +403,7 @@ export default function ExperimentalAiPage() {
         if (capabilitiesController.signal.aborted) return;
         setServerStatus('online');
         setAuthRequired(capabilities.auth?.required ?? false);
+        setModelSelectionEnabled(capabilities.model_selection === true);
         setFileCapability(capabilities.file_attachments);
         setSavedChatExportEnabled(capabilities.saved_chat_export === true);
         setSessionRetentionSeconds(
@@ -558,6 +574,7 @@ export default function ExperimentalAiPage() {
   };
 
   const saveAuthToken = (token: string, remember: boolean) => {
+    if (token !== authToken) setSelection(undefined);
     setAuthToken(token);
     setRememberAuthToken(remember);
     setIsEditingAuthToken(false);
@@ -604,6 +621,7 @@ export default function ExperimentalAiPage() {
     }
     const token = authTokensRef.current[endpoint] ?? null;
     setAiEndpoint(endpoint);
+    if (endpoint !== aiEndpoint) setSelection(undefined);
     setAuthToken(token);
     setRememberAuthToken(readStoredAuthTokens()[endpoint] !== undefined);
     setAuthRequired(false);
@@ -833,7 +851,7 @@ export default function ExperimentalAiPage() {
     }
   };
   const credentialsMissing = authRequired && authToken === null;
-  const composerUnavailable = credentialsMissing || conversationUnavailable;
+  const composerUnavailable = credentialsMissing || conversationUnavailable || (modelSelectionEnabled && !selection);
   const attachmentPickerDisabled = isStreaming
     || composerUnavailable
     || !fileCapability.enabled
@@ -866,12 +884,8 @@ export default function ExperimentalAiPage() {
   const serverLocked = activeSessionId !== null || messages.length > 0;
 
   const contextDescription = contextUsage !== null
-    ? `${contextUsage.usedChars.toLocaleString()} of ${contextUsage.maxChars.toLocaleString()} characters in retained chat history. Excludes instructions, schedule, tools, and attachments.${
-      contextUsage.usedTokens !== undefined
-        ? ' Tokens count the latest model request, including instructions, tool output, and the reply.'
-        : ' The AI server does not report model tokens.'
-    }`
-    : 'The AI server has not reported context usage. Update the AI server to a version that reports its chat history budget.';
+    ? `${contextUsage.usedChars.toLocaleString()} of ${contextUsage.maxChars.toLocaleString()} characters in retained chat history. Excludes instructions, schedule, tools, and attachments.`
+    : 'The AI server has not reported context usage.';
 
   // The Session files panel is fixed on the right at xl, so the chat and composer reserve
   // equal space on both sides to stay centered without overlapping it.
@@ -1056,7 +1070,7 @@ export default function ExperimentalAiPage() {
                 <input
                   type="checkbox"
                   checked={showReasoning}
-                  onChange={event => rememberPreferences({ showReasoning: event.target.checked, showTools })}
+                  onChange={event => rememberPreferences({ showReasoning: event.target.checked })}
                   className="h-4 w-4 accent-gray-400 sm:h-3 sm:w-3"
                 />
                 Show reasoning
@@ -1065,10 +1079,22 @@ export default function ExperimentalAiPage() {
                 <input
                   type="checkbox"
                   checked={showTools}
-                  onChange={event => rememberPreferences({ showReasoning, showTools: event.target.checked })}
+                  onChange={event => rememberPreferences({ showTools: event.target.checked })}
                   className="h-4 w-4 accent-gray-400 sm:h-3 sm:w-3"
                 />
                 Show tool activity
+              </label>
+              <label className="flex min-h-11 items-center gap-1.5 sm:min-h-0">
+                <input type="checkbox" checked={showCosts}
+                  onChange={event => rememberPreferences({ showCosts: event.target.checked })}
+                  className="h-4 w-4 accent-gray-400 sm:h-3 sm:w-3" />
+                Show turn costs
+              </label>
+              <label className="flex min-h-11 items-center gap-1.5 sm:min-h-0">
+                <input type="checkbox" checked={showModels}
+                  onChange={event => rememberPreferences({ showModels: event.target.checked })}
+                  className="h-4 w-4 accent-gray-400 sm:h-3 sm:w-3" />
+                Show models
               </label>
             </div>
             {process.env.NEXT_PUBLIC_DISABLE_SENTRY !== '1' && (
@@ -1135,6 +1161,8 @@ export default function ExperimentalAiPage() {
         messages={messages}
         showReasoning={showReasoning}
         showTools={showTools}
+        showCosts={showCosts}
+        showModels={showModels}
         steeringAssistantId={steeringAssistantId}
         isStreaming={isStreaming}
         conversationUnavailable={conversationUnavailable}
@@ -1280,6 +1308,10 @@ export default function ExperimentalAiPage() {
             ))}
           </div>
         )}
+        {modelSelectionEnabled && serverStatus === 'online' && (!authRequired || authToken) && <ModelControls
+          endpoint={aiEndpoint} token={authToken} sessionId={activeSessionId} disabled={conversationUnavailable}
+          onChange={setSelection}
+        />}
         <div className="flex min-h-14 items-end gap-1 rounded-[1.75rem] border border-gray-300 bg-white p-2 shadow-sm transition focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-200">
           {fileCapability.enabled && (
             <label
@@ -1407,18 +1439,26 @@ export default function ExperimentalAiPage() {
             )}
           </div>
         </div>
-        {(contextUsage !== null || messages.length > 0) && (
-          <details className="mt-2 text-center text-[0.6875rem] text-gray-500">
-            <summary className="min-h-8 cursor-pointer list-none rounded py-1 focus-visible:ring-2 focus-visible:ring-blue-400 sm:min-h-0 sm:py-0" title={contextDescription}>
-              Chat history context: {contextUsage !== null
-                ? `${(100 * contextUsage.usedChars / contextUsage.maxChars).toFixed(1)}%`
+        {(contextUsage !== null || messages.length > 0 || costSummary) && (
+          <p className="mt-2 px-2 text-center text-[0.6875rem] text-gray-500" aria-live="polite">
+            {(contextUsage !== null || messages.length > 0) && <span title={contextDescription}>
+              Context {contextUsage !== null
+                ? `${(100 * contextUsage.usedChars / contextUsage.maxChars).toFixed(1)}% used`
                 : 'unavailable'}
-              {contextUsage?.usedTokens !== undefined && (
-                <> · Tokens: {contextUsage.usedTokens.toLocaleString('en-US')} / {contextUsage.maxTokens?.toLocaleString('en-US') ?? 'unavailable'}</>
-              )}
-            </summary>
-            <p className="max-h-24 overflow-y-auto px-2 py-2 text-left text-xs">{contextDescription}</p>
-          </details>
+            </span>}
+            {contextUsage?.usedTokens !== undefined && <>
+              {' · '}
+              <span title="Latest call's input + output tokens / model input limit. Not total conversation usage.">
+                Last: {contextUsage.usedTokens.toLocaleString('en-US')} / {contextUsage.maxTokens?.toLocaleString('en-US') ?? 'unavailable'}
+              </span>
+            </>}
+            {costSummary && <>
+              {(contextUsage !== null || messages.length > 0) && ' · '}
+              <span title="Estimated LLM cost across this conversation, including retries and tool follow-up calls.">
+                Est. cost: {costLabel(costSummary, false)}
+              </span>
+            </>}
+          </p>
         )}
       </form>
     </main>
