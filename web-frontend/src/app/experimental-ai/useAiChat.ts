@@ -159,7 +159,6 @@ function assistantEventCallbacks(
 }
 
 interface QueuedChatMessage {
-  selection?: ModelSelection;
   createdAt: number;
   id: string;
   content: string;
@@ -167,6 +166,7 @@ interface QueuedChatMessage {
 
 interface AiChatOptions {
   selection?: ModelSelection;
+  modelSelectionEnabled?: boolean;
   scheduleYaml: string;
   aiEndpoint: string;
   authRequired: boolean;
@@ -184,7 +184,7 @@ interface AiChatOptions {
 
 /** Own chat operations and saved conversation state independently of composer UI. */
 export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, isClientReady,
-  serverStatus, retainsUploads, backendVersion, selection, setError, reportRequestError, onSendStart, onReset, onApplySchedule,
+  serverStatus, retainsUploads, backendVersion, selection, modelSelectionEnabled = false, setError, reportRequestError, onSendStart, onReset, onApplySchedule,
 }: AiChatOptions) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
@@ -639,6 +639,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     requestSelection = resume?.selection ?? selection,
   ) => {
     if (!question || lifecycle.busy || conversationUnavailable || (authRequired && authToken === null)) return;
+    if (modelSelectionEnabled && !requestSelection) return;
 
     const userMessage: ChatMessage = {
       id: resume?.questionId ?? messageId(),
@@ -713,7 +714,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       let sessionId = sessionIdRef.current;
       const sessionEndpoint = sessionEndpointRef.current ?? aiEndpoint;
       if (sessionId === null) {
-        sessionId = await createSession(scheduleYaml, authToken, sessionEndpoint);
+        sessionId = await createSession(scheduleYaml, authToken, sessionEndpoint, requestSelection);
         if (!lifecycle.owns(operation)) return;
         controller.signal.throwIfAborted();
         sessionIdRef.current = sessionId;
@@ -954,17 +955,17 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   };
 
   const sendQueuedMessage = useEffectEvent(() => {
-    if (lifecycle.busy || conversationUnavailable) return;
+    if (lifecycle.busy || conversationUnavailable || (modelSelectionEnabled && !selection)) return;
     const next = queuedMessagesRef.current[0];
     if (!next) return;
     queuedMessagesRef.current = queuedMessagesRef.current.slice(1);
     setQueuedMessages(queuedMessagesRef.current);
-    void sendRequest(next.content, [], false, next.createdAt, undefined, next.selection);
+    void sendRequest(next.content, [], false, next.createdAt);
   });
 
   useEffect(() => {
     if (!isStreaming && queuedMessages.length > 0) sendQueuedMessage();
-  }, [isStreaming, queuedMessages.length]);
+  }, [isStreaming, queuedMessages.length, selection]);
 
   const failInterruptedUpload = (pending: NonNullable<ChatMessage['request']>) => {
     setMessages(previous => previous.map(message => ({
@@ -982,6 +983,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       || (authRequired && authToken === null)) return;
     const pending = messages.find(message => message.request?.active)?.request;
     if (!pending || resumedRequestRef.current === pending.id) return;
+    if (modelSelectionEnabled && !pending.selection && !selection) return;
     resumedRequestRef.current = pending.id;
     // Resume or fail the externally stored request after its session becomes ready.
     if (pending.uploading) failInterruptedUpload(pending);
@@ -991,7 +993,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   const submitMessage = async (question: string, attachments: File[]) => {
     if (!question || (authRequired && authToken === null)) return;
     if (isStreaming) {
-      const queuedMessage = { id: messageId(), content: question, createdAt: Date.now(), selection };
+      const queuedMessage = { id: messageId(), content: question, createdAt: Date.now() };
       queuedMessagesRef.current = [...queuedMessagesRef.current, queuedMessage];
       setQueuedMessages(queuedMessagesRef.current);
       onSendStart('queue');

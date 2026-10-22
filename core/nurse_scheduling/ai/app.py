@@ -139,6 +139,7 @@ class CreateSessionRequest(BaseModel):
     frontend_version: str | None = Field(default=None, min_length=1, max_length=200)
     ai_endpoint: str | None = Field(default=None, min_length=1, max_length=2048)
     frontend_timezone: FrontendTimezone = "UTC"
+    selection: ModelSelection | None = None
 
 
 class ChatRequest(BaseModel):
@@ -430,17 +431,18 @@ def create_app(
         session = store.get(session_id)
         if session is None:
             return
-        selection = selection or session.model_selection
         run = runs.start(
             session_id,
             lambda run: session.run(
                 run,
                 prompt,
-                runtime=replace(runtime, selection=selection),
+                runtime=replace(runtime, selection=session.model_selection or selection),
                 background=True,
                 artifact=artifact,
                 credential_id=session.provider_credential_id,
-                prepare_runtime=lambda: runtime_for(session.provider_credential_id, selection),
+                prepare_runtime=lambda: runtime_for(
+                    session.provider_credential_id, session.model_selection or selection
+                ),
             ),
             background=True,
         )
@@ -473,10 +475,14 @@ def create_app(
     runtime = SessionRuntime(settings, store, concurrency_limit, recovery, provider, sandbox_factory, session_optimizer)
 
     async def runtime_for(credential_id: str | None, selection: dict | ModelSelection | None) -> SessionRuntime:
-        if catalog is None:
-            return runtime
         if isinstance(selection, dict):
             selection = ModelSelection.model_validate(selection)
+        if catalog is None:
+            if selection is None:
+                return runtime
+            if selection.model != settings.provider_model or selection.reasoning != "default":
+                raise HTTPException(422, "The selected model settings are not available.")
+            return replace(runtime, selection=selection.model_dump())
         selected, selected_settings, selected_provider = await catalog.resolve(credential_id, selection)
         return replace(runtime, settings=selected_settings, provider=selected_provider, selection=selected.model_dump())
 
@@ -592,6 +598,7 @@ def create_app(
                         "id": settings.provider_model,
                         "name": settings.provider_model,
                         "context_tokens": None,
+                        "default_reasoning": "default",
                         "reasoning_options": [{"id": "default", "label": "Default"}],
                     }
                 ],
@@ -618,10 +625,20 @@ def create_app(
         """Create a chat session for the calling browser."""
         if len(request.schedule_yaml.encode("utf-8")) > settings.max_schedule_bytes:
             raise HTTPException(status_code=413, detail="Schedule is too large.")
+        credential_id = http_request.state.auth_credential_id
+        if request.selection is not None:
+            selected_runtime = await runtime_for(credential_id, request.selection)
+            selection = selected_runtime.selection
+        else:
+            default_model = (
+                catalog.profile(credential_id).default_model if catalog is not None else settings.provider_model
+            )
+            selection = ModelSelection(model=default_model).model_dump()
         owner = owner_cookie_token(owner)
         refresh_owner_cookie(response, owner)
         session = store.create(owner, request.schedule_yaml)
         session.provider_credential_id = http_request.state.auth_credential_id
+        session.model_selection = selection
         session.observe_frontend_version(request.frontend_version, app.state.app_version)
         session.frontend_timezone = request.frontend_timezone
         session.client_address = http_request.client.host if http_request.client else None
@@ -882,6 +899,45 @@ def create_app(
         """Report whether a stored browser session remains available without extending it."""
         return SessionStatusResponse(expires_in_seconds=store.status(session_id, owner))
 
+    @app.get(
+        "/sessions/{session_id}/model-selection",
+        response_model=ModelSelection,
+        dependencies=[Depends(require_auth), Depends(restore_session)],
+    )
+    async def current_model_selection(
+        session_id: str,
+        request: Request,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> ModelSelection:
+        session = store.require_owned(session_id, owner)
+        if session.model_selection is not None:
+            return ModelSelection.model_validate(session.model_selection)
+        default_model = (
+            catalog.profile(request.state.auth_credential_id).default_model
+            if catalog is not None
+            else settings.provider_model
+        )
+        return ModelSelection(model=default_model)
+
+    @app.put(
+        "/sessions/{session_id}/model-selection",
+        response_model=ModelSelection,
+        dependencies=[Depends(require_auth), Depends(restore_session)],
+    )
+    async def update_model_selection(
+        session_id: str,
+        body: ModelSelection,
+        request: Request,
+        response: Response,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> ModelSelection:
+        session = store.require_owned(session_id, owner)
+        selection = await session.select_model(
+            lambda: runtime_for(request.state.auth_credential_id, body), runtime=runtime
+        )
+        refresh_owner_cookie(response, owner)
+        return ModelSelection.model_validate(selection)
+
     @app.post(
         "/sessions/{session_id}/messages/queue",
         status_code=status.HTTP_202_ACCEPTED,
@@ -934,7 +990,9 @@ def create_app(
             runs=runs,
             owner=owner,
             credential_id=request.state.auth_credential_id,
-            prepare_runtime=lambda: runtime_for(request.state.auth_credential_id, body.selection),
+            prepare_runtime=lambda: runtime_for(
+                request.state.auth_credential_id, body.selection or session.model_selection
+            ),
         )
         run = receipt.run
         if run is not None:

@@ -29,14 +29,15 @@ from fastapi import HTTPException
 
 from nurse_scheduling.ai.models import ModelCatalog, ModelSelection
 from nurse_scheduling.ai.provider import OpenAiCompatibleProvider
+from nurse_scheduling.ai.sessions import SessionStore
 
 from . import test_ai_basic as basic
-from .test_ai_history import recorded_history
+from .test_ai_history import postgres_history, recorded_history, uninitialized_postgres_history
 
-__all__ = ["recorded_history"]
+__all__ = ["postgres_history", "recorded_history", "uninitialized_postgres_history"]
 
 
-def gateway(monkeypatch, *, parameters=None, options=None, metadata_status=200):
+def gateway(monkeypatch, *, parameters=None, options=None, metadata_status=200, chat_responder=None):
     calls = []
     client_type = httpx.AsyncClient
 
@@ -73,6 +74,8 @@ def gateway(monkeypatch, *, parameters=None, options=None, metadata_status=200):
             )
         payload = json.loads(request.content)
         calls.append((key, payload))
+        if chat_responder is not None:
+            return chat_responder(request)
         events = [
             {"choices": [{"delta": {"content": "Answer"}, "finish_reason": None}]},
             {"choices": [{"delta": {}, "finish_reason": "stop"}]},
@@ -141,7 +144,7 @@ def test_turns_freeze_reasoning_switch_model_and_replay_without_calls(monkeypatc
             app.state.session_optimizer._on_completion, session, "Review", None, {"model": "deep", "reasoning": "off"}
         )
     assert len(calls) == 3
-    assert calls[2][1]["model"] == "deep" and calls[2][1]["thinking"] == {"type": "disabled"}
+    assert calls[2][1]["model"] == "fast" and "thinking" not in calls[2][1]
     assert calls[0][0] == "Bearer key-a" and calls[0][1]["reasoning_effort"] == "high"
     assert "reasoning_effort" not in calls[1][1]
     assert calls[1][1]["model"] == "fast"
@@ -225,14 +228,161 @@ def test_invalid_profile_does_not_include_secret_in_exception():
     assert "private-secret" not in str(error.value)
 
 
+def test_current_session_selection_is_authorized_validated_and_saved(monkeypatch, recorded_history):
+    calls = gateway(monkeypatch)
+    configuration = replace(settings(), history_postgres_url="postgresql://unused")
+    app = basic.create_test_app(settings=configuration, provider=None)
+    with basic.AuthenticatedTestClient(app, headers={"Authorization": "Bearer institution-a-ai-token"}) as client:
+        session_id = basic.create_session(client)
+        path = f"/sessions/{session_id}/model-selection"
+        assert client.get(path).json() == {"model": "fast", "reasoning": "default"}
+        selection = {"model": "deep", "reasoning": "off"}
+        assert client.put(path, json=selection).json() == selection
+        assert client.get(path).json() == selection
+        assert client.get(path, headers={"Authorization": "Bearer wrong"}).status_code == 401
+        assert client.put(path, json=selection, headers={"Authorization": "Bearer wrong"}).status_code == 401
+        assert client.get(path, headers={"Authorization": "Bearer person-b-ai-token"}).status_code == 404
+        assert client.put(path, json=selection, headers={"Cookie": f"{basic.OWNER_COOKIE}=other"}).status_code == 404
+        assert client.put(path, json={"model": "unknown"}).status_code == 422
+        assert client.put(path, json={"model": "fast", "reasoning": "high"}).status_code == 422
+        assert client.get(path).json() == selection
+
+        async def unavailable(*_args):
+            return False
+
+        with monkeypatch.context() as storage_failure:
+            storage_failure.setattr(app.state.recovery, "save", unavailable)
+            failed = client.put(path, json=selection)
+            assert failed.status_code == 503
+            assert "could not be saved" in failed.json()["detail"]
+        assert client.put(path, json=selection).status_code == 200
+        owner, expires_at, state = recorded_history["saves"][-1]["state"]
+        restored = SessionStore(configuration).restore(
+            session_id, owner, state, expires_at, entries=[], next_entry_seq=0
+        )
+        assert restored.model_selection == selection
+    assert calls == []
+
+
+def test_midstream_selection_changes_only_future_turns(monkeypatch):
+    client_type = httpx.AsyncClient
+
+    async def exercise():
+        started, release = asyncio.Event(), asyncio.Event()
+        requests = []
+
+        class PausedToolStream(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                yield b'data: {"choices":[{"delta":{"content":"Working"},"finish_reason":null}]}\n\n'
+                started.set()
+                await release.wait()
+                call = {
+                    "id": "read-call",
+                    "index": 0,
+                    "type": "function",
+                    "function": {"name": "read", "arguments": '{"path":"/workspace/schedule.yaml"}'},
+                }
+                yield (
+                    "data: "
+                    + json.dumps({"choices": [{"delta": {"tool_calls": [call]}, "finish_reason": "tool_calls"}]})
+                    + "\n\n"
+                ).encode()
+                yield b"data: [DONE]\n\n"
+
+        def respond(request):
+            requests.append(request)
+            if len(requests) == 1:
+                return httpx.Response(200, stream=PausedToolStream())
+            return httpx.Response(
+                200, text='data: {"choices":[{"delta":{"content":"Done"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'
+            )
+
+        calls = gateway(monkeypatch, chat_responder=respond)
+        app = basic.create_test_app(settings=settings(), provider=None)
+        async with (
+            app.router.lifespan_context(app),
+            client_type(
+                transport=httpx.ASGITransport(app),
+                base_url="http://testserver",
+                headers={"Authorization": "Bearer institution-a-ai-token", "Accept": "application/json"},
+            ) as client,
+        ):
+            original = {"model": "deep", "reasoning": "high"}
+            created = await client.post("/sessions", json={"schedule_yaml": "description: test", "selection": original})
+            session_id = created.json()["id"]
+            messages = f"/sessions/{session_id}/messages"
+            path = f"/sessions/{session_id}/model-selection"
+            assert (await client.post(messages, json={"message": "Read", "message_id": "one"})).status_code == 202
+            await asyncio.wait_for(started.wait(), timeout=1)
+            review = asyncio.create_task(
+                app.state.session_optimizer._on_completion(session_id, "Queued review", None, original)
+            )
+            await asyncio.sleep(0)
+            assert len(app.state.runs._runs[session_id]) == 2
+            assert (await client.put(path, json={"model": "deep", "reasoning": "off"})).status_code == 200
+            current = {"model": "fast", "reasoning": "default"}
+            assert (await client.put(path, json=current)).status_code == 200
+            assert app.state.session_store.get(session_id).active
+            release.set()
+
+            async def finish():
+                while app.state.runs.busy(session_id):
+                    await asyncio.sleep(0)
+
+            await asyncio.wait_for(finish(), timeout=2)
+            await review
+            assert (await client.get(path)).json() == current
+            # A delayed request may override its own turn but cannot reset newer session defaults.
+            assert (await client.post(messages, json={"message": "Delayed", "selection": original})).status_code == 202
+            await asyncio.wait_for(finish(), timeout=2)
+            assert (await client.get(path)).json() == current
+            assert (await client.post(messages, json={"message": "Next", "message_id": "two"})).status_code == 202
+            await asyncio.wait_for(finish(), timeout=2)
+            await app.state.session_optimizer._on_completion(session_id, "Review", None, original)
+            assert [call[1]["model"] for call in calls] == ["deep", "deep", "fast", "deep", "fast", "fast"]
+            assert [call[1].get("reasoning_effort") for call in calls] == ["high", "high", None, "high", None, None]
+            assert (
+                await client.post(messages, json={"message": "Read", "message_id": "one", "selection": original})
+            ).status_code == 202
+            assert (await client.get(path)).json() == current
+            assert len(calls) == 6
+
+    asyncio.run(exercise())
+
+
+def test_postgres_restores_current_model_choice_after_restart(monkeypatch, postgres_history):
+    calls = gateway(monkeypatch)
+    configuration = replace(settings(), history_postgres_url="postgresql://unused")
+    headers = {"Authorization": "Bearer institution-a-ai-token"}
+    first = basic.create_test_app(settings=configuration, provider=None)
+    with basic.AuthenticatedTestClient(first, headers=headers) as client:
+        created = client.post(
+            "/sessions",
+            json={"schedule_yaml": "description: test", "selection": {"model": "deep", "reasoning": "high"}},
+        )
+        session_id = created.json()["id"]
+        owner = client.cookies[basic.OWNER_COOKIE]
+        selection = {"model": "deep", "reasoning": "off"}
+        assert client.put(f"/sessions/{session_id}/model-selection", json=selection).status_code == 200
+    restored = basic.create_test_app(settings=configuration, provider=None)
+    with basic.AuthenticatedTestClient(
+        restored, headers={**headers, "Cookie": f"{basic.OWNER_COOKIE}={owner}"}
+    ) as client:
+        assert client.get(f"/sessions/{session_id}/model-selection").json() == selection
+        assert client.post(f"/sessions/{session_id}/messages", json={"message": "Continue"}).status_code == 200
+    assert calls[0][1]["model"] == "deep"
+    assert calls[0][1]["thinking"] == {"type": "disabled"}
+
+
 @pytest.mark.parametrize("status", [422, 503])
 def test_optimizer_review_reports_model_discovery_failure(monkeypatch, status, recorded_history):
     calls = gateway(monkeypatch)
     app = basic.create_test_app(settings=replace(settings(), history_postgres_url="postgresql://unused"), provider=None)
     headers = {"Authorization": "Bearer institution-a-ai-token"}
     with basic.AuthenticatedTestClient(app, headers=headers) as client:
-        session_id = basic.create_session(client)
         selection = {"model": "deep", "reasoning": "high"}
+        created = client.post("/sessions", json={"schedule_yaml": "description: test", "selection": selection})
+        session_id = created.json()["id"]
         assert (
             client.post(
                 f"/sessions/{session_id}/messages", json={"message": "Help", "selection": selection}

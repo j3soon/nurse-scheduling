@@ -792,7 +792,8 @@ def test_stop_endpoint_cancels_an_active_assistant_turn() -> None:
     # Stop is a typed terminal outcome, not synthetic answer text.
     assert events[0][0] == "run_start"
     assert events[1][0] == "context_usage"
-    assert events[2] == ("delta", {"text": "Partial answer.", "run_id": events[-1][1]["run_id"]})
+    assert events[2] == ("model_selection", {"model": "test-model", "reasoning": "default", "run_id": ANY})
+    assert events[3] == ("delta", {"text": "Partial answer.", "run_id": events[-1][1]["run_id"]})
     assert events[-1][0] == "stopped"
     assert [name for name, _ in events].count("stopped") == 1
 
@@ -855,7 +856,14 @@ def test_an_answer_cut_off_by_the_output_limit_is_saved_with_its_stop_reason() -
 
     events = parse_sse(client.post(f"/sessions/{session_id}/messages", json={"message": "Explain."}).text)
 
-    assert [name for name, _ in events] == ["run_start", "delta", "truncated", "context_usage", "done"]
+    assert [name for name, _ in events] == [
+        "run_start",
+        "model_selection",
+        "delta",
+        "truncated",
+        "context_usage",
+        "done",
+    ]
     assert app.state.session_store._sessions[session_id].transcript == [
         UserMessage("Explain."),
         AssistantMessage("The first half", "length"),
@@ -1046,6 +1054,7 @@ def test_health_and_streamed_schedule_question() -> None:
     assert isinstance(run_id, str) and run_id
     assert events == [
         ("run_start", {"trigger": "user", "run_id": run_id}),
+        ("model_selection", {"model": "test-model", "reasoning": "default", "run_id": run_id}),
         ("delta", {"text": "Hello from AI", "run_id": run_id}),
         ("context_usage", {"used_chars": 97, "max_chars": 200_000, "run_id": run_id}),
         ("done", {"run_id": run_id}),
@@ -1466,6 +1475,7 @@ def test_provider_failure_retains_safe_context_for_retry() -> None:
     assert parse_sse(failed.text) == [
         ("run_start", {"trigger": "user", "run_id": ANY}),
         ("context_usage", {"used_chars": 0, "max_chars": 200_000, "run_id": ANY}),
+        ("model_selection", {"model": "test-model", "reasoning": "default", "run_id": ANY}),
         ("delta", {"text": "Provisional answer.", "run_id": ANY}),
         ("error", {"message": PROVIDER_ERROR, "run_id": ANY}),
     ]
@@ -1515,6 +1525,7 @@ def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming(monke
     assert parse_sse(response.text) == [
         ("run_start", {"trigger": "user", "run_id": ANY}),
         ("context_usage", {"used_chars": 0, "max_chars": 200_000, "run_id": ANY}),
+        ("model_selection", {"model": "test-model", "reasoning": "default", "run_id": ANY}),
         ("delta", {"text": "Obsolete answer.", "run_id": ANY}),
         ("stale", {"message": STALE_RUN_ERROR, "run_id": ANY}),
     ]
@@ -1545,6 +1556,7 @@ def test_sandbox_timeout_does_not_expose_exception_details(exception, message) -
     assert parse_sse(response.text) == [
         ("run_start", {"trigger": "user", "run_id": ANY}),
         ("context_usage", {"used_chars": 0, "max_chars": 200_000, "run_id": ANY}),
+        ("model_selection", {"model": "test-model", "reasoning": "default", "run_id": ANY}),
         ("error", {"message": message, "run_id": ANY}),
     ]
     assert private_error not in response.text
@@ -2447,6 +2459,7 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
             "optimization",
             "run_start",
             "model_input",
+            "model_selection",
             "tool_start",
             "tool",
             "delta",
@@ -2476,9 +2489,10 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
             "run_id": run_id,
         }
         assert provider.calls[2][0] == provider.calls[0][0]
-        assert events[7].data == {"text": "The optimizer returned score 23.", "run_id": run_id}
-        assert events[8].data["max_chars"] == 200_000
-        assert events[8].data["used_chars"] > 0
+        assert events[5].data == {"model": "test-model", "reasoning": "default", "run_id": run_id}
+        assert events[8].data == {"text": "The optimizer returned score 23.", "run_id": run_id}
+        assert events[9].data["max_chars"] == 200_000
+        assert events[9].data["used_chars"] > 0
         if history_enabled:
             assert len(history_starts) == 3
             assert history_starts[-1][1] == session_id
@@ -2691,6 +2705,7 @@ def test_sandbox_cleanup_failure_does_not_commit_provisional_turn_or_schedule() 
     assert [name for name, _ in events] == [
         "run_start",
         "context_usage",
+        "model_selection",
         "tool_start",
         "tool",
         "schedule_change",
@@ -2728,8 +2743,8 @@ def test_sandbox_command_failure_still_streams_the_requested_command() -> None:
     failed = client.post(f"/sessions/{session_id}/messages", json={"message": "Run an edit"})
 
     events = parse_sse(failed.text)
-    assert [name for name, _ in events] == ["run_start", "context_usage", "tool_start", "error"]
-    assert events[2][1] == {
+    assert [name for name, _ in events] == ["run_start", "context_usage", "model_selection", "tool_start", "error"]
+    assert events[3][1] == {
         "run_id": events[-1][1]["run_id"],
         "tool_call_id": "call_0",
         "name": BASH_TOOL,
@@ -2768,8 +2783,16 @@ def test_final_validation_failure_discards_edits_and_retains_safe_context(invali
     failed = client.post(f"/sessions/{session_id}/messages", json={"message": "Invalid edit"})
 
     events = parse_sse(failed.text)
-    assert [name for name, _ in events] == ["run_start", "context_usage", "tool_start", "tool", "delta", "error"]
-    assert events[3][1]["ok"] is False
+    assert [name for name, _ in events] == [
+        "run_start",
+        "context_usage",
+        "model_selection",
+        "tool_start",
+        "tool",
+        "delta",
+        "error",
+    ]
+    assert events[4][1]["ok"] is False
     assert events[-1][1]["message"].startswith(CANDIDATE_VALIDATION_ERROR)
     assert "schedule.yaml introduces problems" in events[-1][1]["message"]
     assert ("not readable YAML" if invalid_kind == "yaml" else "people.items[0].history") in events[-1][1]["message"]

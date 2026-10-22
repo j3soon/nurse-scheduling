@@ -37,6 +37,7 @@ interface CapturedRequests {
   uploadBatches: string[][];
   uploadContentType: string;
   authorizationHeaders: string[];
+  modelSelections: { model: string; reasoning: string }[];
 }
 
 function frontendOrigin(): string {
@@ -158,6 +159,8 @@ async function mockAiBackend(
 ): Promise<CapturedRequests & {
   publishEvent: (type: string, data: Record<string, unknown>) => void;
   hasWaitingReader: () => boolean;
+  holdNextTurn: () => void;
+  finishTurn: () => void;
 }> {
   const captured = {
     scheduleYaml: '',
@@ -169,6 +172,7 @@ async function mockAiBackend(
     uploadBatches: [] as string[][],
     uploadContentType: '',
     authorizationHeaders: [] as string[],
+    modelSelections: [] as { model: string; reasoning: string }[],
   };
   const allowedOrigin = frontendOrigin();
   // Like the backend, record each upload as an app event that the next request sends before the question.
@@ -176,6 +180,9 @@ async function mockAiBackend(
   let historyLength = 0;
   const journal: string[] = [];
   let wakeReader: (() => void) | undefined;
+  let holdNextTurn = false;
+  let heldTerminal: { type: string; data: Record<string, unknown> } | undefined;
+  let currentSelection = { model: modelCatalog?.default_model ?? 'fast', reasoning: 'default' };
   const publish = (type: string, data: Record<string, unknown>) => {
     journal.push(`id: ${journal.length + 1}\nevent: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
     wakeReader?.();
@@ -191,7 +198,7 @@ async function mockAiBackend(
     const corsHeaders = {
       'Access-Control-Allow-Credentials': 'true',
       'Access-Control-Allow-Headers': 'Authorization, Content-Type, Last-Event-ID',
-      'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
       'Access-Control-Allow-Origin': allowedOrigin,
     };
     if (request.method() === 'OPTIONS') {
@@ -232,7 +239,8 @@ async function mockAiBackend(
       return;
     }
     if (request.url().endsWith('/sessions')) {
-      const body = request.postDataJSON() as { schedule_yaml: string; frontend_timezone: string };
+      const body = request.postDataJSON() as { schedule_yaml: string; frontend_timezone: string; selection?: typeof currentSelection };
+      currentSelection = body.selection ?? currentSelection;
       captured.scheduleYaml = body.schedule_yaml;
       captured.frontendTimezone = body.frontend_timezone;
       await route.fulfill({
@@ -241,6 +249,19 @@ async function mockAiBackend(
         headers: corsHeaders,
         body: JSON.stringify({ id: 'browser-session' }),
       });
+      return;
+    }
+    if (request.url().endsWith('/sessions/browser-session/model-selection')) {
+      if (request.method() === 'PUT') {
+        currentSelection = request.postDataJSON() as typeof currentSelection;
+        captured.modelSelections.push(currentSelection);
+      }
+      await route.fulfill({ status: 200, contentType: 'application/json', headers: corsHeaders,
+        body: JSON.stringify(currentSelection) });
+      return;
+    }
+    if (request.url().endsWith('/sessions/browser-session/messages/queue')) {
+      await route.fulfill({ status: 202, headers: corsHeaders });
       return;
     }
     if (request.url().endsWith('/sessions/browser-session/events')) {
@@ -310,12 +331,22 @@ async function mockAiBackend(
       const type = lines.find(line => line.startsWith('event: '))!.slice(7);
       if (!reportContext && type === 'context_usage') continue;
       const data = JSON.parse(lines.find(line => line.startsWith('data: '))!.slice(6));
-      publish(type, { ...data, run_id: runId });
+      if (holdNextTurn && ['done', 'error', 'stopped'].includes(type)) {
+        heldTerminal = { type, data: { ...data, run_id: runId } };
+        holdNextTurn = false;
+      } else publish(type, { ...data, run_id: runId });
     }
     await route.fulfill({ status: 202, contentType: 'application/json', headers: corsHeaders, body: JSON.stringify({ run_id: runId }) });
   });
 
-  return Object.assign(captured, { publishEvent: publish, hasWaitingReader: () => wakeReader !== undefined });
+  return Object.assign(captured, {
+    publishEvent: publish, hasWaitingReader: () => wakeReader !== undefined,
+    holdNextTurn: () => { holdNextTurn = true; },
+    finishTurn: () => {
+      if (heldTerminal) publish(heldTerminal.type, heldTerminal.data);
+      heldTerminal = undefined;
+    },
+  });
 }
 
 test('asks about the current schedule and renders a streamed answer', async ({ page }) => {
@@ -1108,7 +1139,7 @@ test('keeps the composer above a reduced visual viewport and ignores pinch zoom'
 });
 
 
-test('selects model and reasoning settings independently between chat turns', async ({ page }) => {
+test('changes model and reasoning during streaming for future turns and reload', async ({ page }) => {
   const captured = await mockAiBackend(page, ['Selected model answered.'], false, undefined, [], true, [], {
     default_model: 'fast', models: [
       { id: 'fast', name: 'Fast', context_tokens: null, default_reasoning: 'default', reasoning_options: [{ id: 'default', label: 'Default' }] },
@@ -1117,6 +1148,7 @@ test('selects model and reasoning settings independently between chat turns', as
       ] },
     ],
   });
+  captured.holdNextTurn();
   await page.goto('/experimental-ai');
   await page.getByLabel('AI model').selectOption('deep');
   await expect(page.getByLabel('Reasoning', { exact: true })).toHaveValue('off');
@@ -1126,12 +1158,24 @@ test('selects model and reasoning settings independently between chat turns', as
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Selected model answered.')).toBeVisible();
   expect(JSON.parse(captured.messageBodies[0]).selection).toEqual({ model: 'deep', reasoning: 'high' });
+  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
+  await expect(page.getByLabel('AI model')).toBeEnabled();
+  await expect(page.getByLabel('Reasoning', { exact: true })).toBeEnabled();
+  await page.getByLabel('Reasoning', { exact: true }).selectOption('off');
+  await expect.poll(() => captured.modelSelections.at(-1)).toEqual({ model: 'deep', reasoning: 'off' });
   await page.getByLabel('AI model').selectOption('fast');
+  await expect.poll(() => captured.modelSelections.at(-1)).toEqual({ model: 'fast', reasoning: 'default' });
+  expect(JSON.parse(captured.messageBodies[0]).selection).toEqual({ model: 'deep', reasoning: 'high' });
   await expect(page.getByLabel('Reasoning', { exact: true })).toHaveCount(0);
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Next question');
-  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).press('Enter');
+  await expect(page.getByText('Queued for steering')).toBeVisible();
+  captured.finishTurn();
   await expect.poll(() => captured.messageBodies.length).toBe(2);
   expect(JSON.parse(captured.messageBodies[1]).selection).toEqual({ model: 'fast', reasoning: 'default' });
+  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeHidden();
+  await page.reload();
+  await expect(page.getByLabel('AI model')).toHaveValue('fast');
 });
 
 

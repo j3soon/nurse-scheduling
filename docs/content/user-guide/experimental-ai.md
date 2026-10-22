@@ -131,6 +131,11 @@ Keep your original files.
 
 ## See what the assistant did
 
+You can change **Model** and **Reasoning** while an answer streams. The active
+turn keeps its original settings, including tool calls and steering. The session
+saves your new choice for later turns, including new optimizer reviews. Reloading
+the page restores that choice.
+
 **Context X% used** below the message box shows the portion of the server's
 conversation history budget selected for the next turn. It excludes instructions,
 schedule data, tools, and attachments. If the server does not report usage, the

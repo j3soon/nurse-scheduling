@@ -31,6 +31,8 @@ import {
   getCapabilities,
   getBackendVersion,
   getSessionStatus,
+  getSessionModelSelection,
+  updateSessionModelSelection,
   getChatExportUrl,
   getUploads,
   isOfficialAiEndpoint,
@@ -109,6 +111,32 @@ describe('AI client', () => {
         max_bytes_per_file: 5000000,
         max_bytes_per_session: 200_000_000,
       },
+    });
+  });
+
+  it('loads and saves the authenticated session model choice', async () => {
+    const selection = { model: 'deep', reasoning: 'high' };
+    const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify(selection)));
+    vi.stubGlobal('fetch', fetchMock);
+    const signal = new AbortController().signal;
+    await expect(getSessionModelSelection('session/id', signal, 'chat-token', '/ai')).resolves.toEqual(selection);
+    expect(fetchMock).toHaveBeenLastCalledWith('/ai/sessions/session%2Fid/model-selection', {
+      signal, credentials: 'include', headers: { Authorization: 'Bearer chat-token' },
+    });
+    await expect(updateSessionModelSelection('session/id', selection, 'chat-token', '/ai')).resolves.toEqual(selection);
+    expect(fetchMock).toHaveBeenLastCalledWith('/ai/sessions/session%2Fid/model-selection', {
+      method: 'PUT', credentials: 'include',
+      headers: { Authorization: 'Bearer chat-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify(selection),
+    });
+  });
+
+  it('rejects malformed session choices and reports save errors', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ model: 'deep' }))));
+    await expect(getSessionModelSelection('s', new AbortController().signal, null, '/ai')).rejects.toThrow('invalid model settings');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: 'Storage unavailable' }), { status: 503 })));
+    await expect(updateSessionModelSelection('s', { model: 'deep', reasoning: 'high' }, null, '/ai')).rejects.toMatchObject({
+      status: 503, message: 'Storage unavailable',
     });
   });
 

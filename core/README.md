@@ -608,12 +608,22 @@ in reasoning presets.
 Advertise these choices in the gateway’s `model_info.chat_reasoning_options`.
 The authenticated LiteLLM model list controls model access.
 
-Users can switch models and reasoning between turns. Each accepted turn freezes
-its settings for tool follow-ups, retries, and optimizer reviews. Queued steering
-uses the active turn's settings. The UI remembers choices per model and credential
-for the current page visit. Model settings are separate from expanding returned
-reasoning text. Smaller context windows remain subject to the provider's input
-limits. The chat reports the selected model's context limit when available.
+Users can switch models and reasoning while an answer streams. Each session saves
+its current choice. Authenticated session owners can read or change it through
+GET or PUT `/sessions/{session_id}/model-selection`, using `{model, reasoning}`.
+Session creation also accepts an optional `selection`. A message without an
+explicit selection uses the session's current choice.
+An explicit message selection overrides that turn without changing the session
+choice, so a delayed request cannot overwrite a newer choice.
+
+Each accepted turn freezes its settings for retries, tool follow-ups, and steering.
+Changing the current choice affects later turns, including new optimizer reviews.
+Queued optimizer reviews use the session choice when they start.
+Locally queued messages use the choice current when they start a new turn.
+Reloading restores the session choice. PostgreSQL recovery preserves it across
+backend restarts. Model settings are separate from expanding returned reasoning
+text. Smaller context windows remain subject to the provider's input limits. The
+chat reports the selected model's context limit when available.
 
 ### Provider cost estimates
 

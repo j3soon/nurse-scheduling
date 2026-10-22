@@ -80,3 +80,48 @@ it('reports discovery errors and allows retry without accepting a stale selectio
   await user.click(screen.getByText('Retry'));
   await waitFor(() => expect(screen.getByLabelText('AI model')).toHaveValue('fast'));
 });
+
+it('restores the session choice and saves rapid edits in order while controls stay enabled', async () => {
+  const user = userEvent.setup();
+  const onChange = vi.fn();
+  let finishFirst!: (response: object) => void;
+  const writes: object[] = [];
+  vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string, request?: RequestInit) => {
+    if (url.endsWith('/models')) return { ok: true, json: async () => catalog };
+    if (request?.method !== 'PUT') return { ok: true, json: async () => ({ model: 'deep', reasoning: 'high' }) };
+    const selection = JSON.parse(request.body as string);
+    writes.push(selection);
+    if (writes.length === 1) return new Promise(resolve => { finishFirst = resolve; });
+    return { ok: true, json: async () => selection };
+  }));
+  render(<ModelControls endpoint="https://ai.example" token="chat-key" sessionId="session" disabled={false} onChange={onChange} />);
+  await waitFor(() => expect(screen.getByLabelText('Reasoning')).toHaveValue('high'));
+  expect(onChange).toHaveBeenLastCalledWith({ model: 'deep', reasoning: 'high' });
+  await user.selectOptions(screen.getByLabelText('Reasoning'), 'off');
+  await user.selectOptions(screen.getByLabelText('AI model'), 'fast');
+  expect(writes).toEqual([{ model: 'deep', reasoning: 'off' }]);
+  expect(screen.getByLabelText('AI model')).toBeEnabled();
+  expect(onChange).toHaveBeenLastCalledWith(undefined);
+  finishFirst({ ok: true, json: async () => ({ model: 'deep', reasoning: 'off' }) });
+  await waitFor(() => expect(writes).toEqual([
+    { model: 'deep', reasoning: 'off' }, { model: 'fast', reasoning: 'default' },
+  ]));
+  await waitFor(() => expect(onChange).toHaveBeenLastCalledWith({ model: 'fast', reasoning: 'default' }));
+});
+
+it('blocks new submissions after a save failure until the session choice reloads', async () => {
+  const user = userEvent.setup();
+  const onChange = vi.fn();
+  vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string, request?: RequestInit) => {
+    if (url.endsWith('/models')) return { ok: true, json: async () => catalog };
+    if (request?.method === 'PUT') throw new Error('Choice could not be saved');
+    return { ok: true, json: async () => ({ model: 'deep', reasoning: 'high' }) };
+  }));
+  render(<ModelControls endpoint="https://ai.example" token="chat-key" sessionId="session" disabled={false} onChange={onChange} />);
+  await waitFor(() => expect(screen.getByLabelText('Reasoning')).toHaveValue('high'));
+  await user.selectOptions(screen.getByLabelText('Reasoning'), 'off');
+  expect(await screen.findByRole('alert')).toHaveTextContent('Choice could not be saved');
+  expect(onChange).toHaveBeenLastCalledWith(undefined);
+  await user.click(screen.getByRole('button', { name: 'Retry' }));
+  await waitFor(() => expect(onChange).toHaveBeenLastCalledWith({ model: 'deep', reasoning: 'high' }));
+});

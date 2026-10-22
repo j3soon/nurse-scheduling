@@ -464,6 +464,18 @@ class AgentSession:
         ready = accepted.run.ready
         return None if ready.done() and not ready.result() else accepted
 
+    async def select_model(
+        self, prepare_runtime: Callable[[], Awaitable[SessionRuntime]], *, runtime: SessionRuntime
+    ) -> dict[str, str]:
+        """Save the current choice without changing any accepted run's runtime."""
+        async with self._admission_lock:
+            selected = await prepare_runtime()
+            assert selected.selection is not None
+            self.model_selection = selected.selection
+            if not await _complete(runtime.recorder.save(self.id, self.provider_credential_id)):
+                raise HTTPException(503, "The model choice could not be saved yet. Please try again.")
+            return self.model_selection
+
     async def accept_message(
         self,
         question: str,
@@ -951,9 +963,6 @@ class AgentSession:
         )
         if snapshot is None:
             return
-        if runtime.selection is not None and not background:
-            self.model_selection = runtime.selection
-            self.provider_credential_id = credential_id
         # History keeps the question as typed. Upload and removal events are separate history entries.
         output = RunOutput()
         run_entries: list[AgentMessage] = [UserMessage(question)]

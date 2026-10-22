@@ -20,28 +20,38 @@
 // This code is mostly AI generated.
 
 import { useEffect, useRef, useState } from 'react';
-import { getModels, type AvailableModel, type ModelSelection } from './aiClient';
+import { getModels, getSessionModelSelection, updateSessionModelSelection, type AvailableModel, type ModelSelection } from './aiClient';
 
-export function ModelControls({ endpoint, token, disabled, onChange }: {
+export function ModelControls({ endpoint, token, disabled, sessionId = null, onChange }: {
   endpoint: string; token: string | null; disabled: boolean;
+  sessionId?: string | null;
   onChange: (selection: ModelSelection | undefined) => void;
 }) {
   const [models, setModels] = useState<AvailableModel[]>([]);
   const [selection, setSelection] = useState<ModelSelection>();
   const [error, setError] = useState<string>();
+  const [saving, setSaving] = useState(false);
   const [reload, setReload] = useState(0);
   const [loadedScope, setLoadedScope] = useState<string>();
   const choices = useRef(new Map<string, ModelSelection>());
+  const saves = useRef(Promise.resolve());
+  const generation = useRef(0);
+  const latestChange = useRef(0);
   const scope = `${endpoint}\n${token ?? ''}`;
-  const requestScope = `${scope}\n${reload}`;
+  const requestScope = `${scope}\n${sessionId ?? ''}\n${reload}`;
   const ready = loadedScope === requestScope;
   const model = models.find(item => item.id === selection?.model);
   useEffect(() => {
     const controller = new AbortController();
+    generation.current += 1;
+    saves.current = Promise.resolve();
     onChange(undefined);
-    getModels(controller.signal, token, endpoint).then(result => {
+    Promise.all([
+      getModels(controller.signal, token, endpoint),
+      sessionId ? getSessionModelSelection(sessionId, controller.signal, token, endpoint) : Promise.resolve(null),
+    ]).then(([result, current]) => {
       if (controller.signal.aborted) return;
-      const saved = choices.current.get(scope);
+      const saved = current ?? choices.current.get(scope);
       const selected = result.models.find(item => item.id === saved?.model)
         ?? result.models.find(item => item.id === result.default_model) ?? result.models[0];
       if (!selected) throw new Error('No compatible chat models are available to this AI key.');
@@ -51,20 +61,43 @@ export function ModelControls({ endpoint, token, disabled, onChange }: {
       setSelection(next);
       setLoadedScope(requestScope);
       setError(undefined);
+      setSaving(false);
+      choices.current.set(scope, next);
       onChange(next);
     }).catch((failure: unknown) => {
       if (!controller.signal.aborted) {
         setError(failure instanceof Error ? failure.message : 'Could not load AI models.');
       }
     });
-    return () => controller.abort();
-  }, [endpoint, token, scope, requestScope, onChange]);
+    return () => { controller.abort(); generation.current += 1; };
+  }, [endpoint, token, sessionId, scope, requestScope, onChange]);
 
   const select = (next: ModelSelection) => {
     choices.current.set(`${scope}\n${next.model}`, next);
     choices.current.set(scope, next);
     setSelection(next);
-    onChange(next);
+    if (!sessionId) {
+      onChange(next);
+      return;
+    }
+    onChange(undefined);
+    setSaving(true);
+    const currentGeneration = generation.current;
+    const change = ++latestChange.current;
+    // Keep writes in selection order even when a previous request responds slowly.
+    saves.current = saves.current.then(async () => {
+      const saved = await updateSessionModelSelection(sessionId, next, token, endpoint);
+      if (generation.current === currentGeneration && change === latestChange.current) {
+        setError(undefined);
+        setSaving(false);
+        onChange(saved);
+      }
+    }).catch((failure: unknown) => {
+      if (generation.current === currentGeneration && change === latestChange.current) {
+        setSaving(false);
+        setError(failure instanceof Error ? failure.message : 'Could not save the model choice.');
+      }
+    });
   };
   return <div className="flex flex-wrap items-center gap-3 px-2 text-xs text-gray-700">
     <label className="flex min-w-0 max-w-full items-center gap-2">Model
@@ -87,5 +120,7 @@ export function ModelControls({ endpoint, token, disabled, onChange }: {
       </select>
     </label>}
     {error && <span role="alert">{error} <button type="button" className="underline" onClick={() => setReload(value => value + 1)}>Retry</button></span>}
+    {saving && <span role="status">Saving model choice…</span>}
+    <span className="text-gray-500">Changes apply to future turns.</span>
   </div>;
 }

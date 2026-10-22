@@ -115,6 +115,37 @@ export interface ModelSelection {
   reasoning: string;
 }
 
+function parseModelSelection(body: unknown): ModelSelection {
+  const selection = body as Partial<ModelSelection> | null;
+  if (!selection || typeof selection.model !== 'string' || !selection.model
+    || typeof selection.reasoning !== 'string' || !selection.reasoning) {
+    throw new Error('The AI backend returned invalid model settings.');
+  }
+  return selection as ModelSelection;
+}
+
+export async function getSessionModelSelection(
+  sessionId: string, signal: AbortSignal, authToken: string | null, endpoint: string,
+): Promise<ModelSelection> {
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/model-selection`, {
+    signal, credentials: 'include', headers: authorizedHeaders(authToken),
+  });
+  if (!response.ok) throw await responseError(response);
+  return parseModelSelection(await response.json());
+}
+
+export async function updateSessionModelSelection(
+  sessionId: string, selection: ModelSelection, authToken: string | null, endpoint: string,
+): Promise<ModelSelection> {
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/model-selection`, {
+    method: 'PUT', credentials: 'include',
+    headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
+    body: JSON.stringify(selection),
+  });
+  if (!response.ok) throw await responseError(response);
+  return parseModelSelection(await response.json());
+}
+
 export interface AvailableModel {
   id: string;
   name: string;
@@ -364,6 +395,7 @@ export async function createSession(
   scheduleYaml: string,
   authToken: string | null,
   endpoint = getAiBaseUrl(),
+  selection?: ModelSelection,
 ): Promise<string> {
   const response = await fetch(`${endpoint}/sessions`, {
     method: 'POST',
@@ -371,6 +403,7 @@ export async function createSession(
     headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
     body: JSON.stringify({
       schedule_yaml: scheduleYaml,
+      selection,
       frontend_version: CURRENT_APP_VERSION,
       ai_endpoint: endpoint,
       frontend_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
