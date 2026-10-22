@@ -159,7 +159,9 @@ from the trust-based local harness.
   adding them, preserve missing prices as unknown, and use decimal USD totals.
   Restore totals from saved call records and test replay before acknowledgement.
   Preserve reported subnormal costs and keep decimal summaries within the client
-  length limit.
+  length limit. Test Stop while cost checkpoints are pending. Version cost
+  snapshots by their cost publication, because unrelated stream events can advance
+  while a checkpoint waits.
 - Keep attachment limits server-configured and report them through
   `/capabilities`. Attachments and the optimizer tool are always offered.
   Keep schedules and attachments separate from model instructions.

@@ -219,7 +219,7 @@ async def _session_sse(
                 data = {
                     **data,
                     "active_run_id": session.snapshot.run_id if session.snapshot else None,
-                    "cost_summary": {**session.cost_totals.public(), "version": event.id},
+                    "cost_summary": {**session.cost_totals.public(), "version": session.cost_totals_version},
                 }
             yield f"id: {event.id}\nevent: {event.type}\ndata: {json.dumps(data)}\n\n"
             if until_run is not None and (

@@ -808,7 +808,13 @@ class AgentSession:
                 async with aclosing(agent_events):
                     async for event in agent_events:
                         if isinstance(event, ProviderCall):
-                            await self._report_provider_call(event, runtime, output, events)
+                            report = self._report_provider_call(event, runtime, output, events)
+                            if event.status == "pending" and event.id not in output.calls:
+                                # Stop during admission must not count an unstarted HTTP request.
+                                await report
+                            else:
+                                # Retain received prices and totals before Stop finalizes the run.
+                                await _complete(report)
                             continue
                         self._save_run_messages(snapshot.run_id, self.agent.state.messages)
                         wire_event = output.consume(event)

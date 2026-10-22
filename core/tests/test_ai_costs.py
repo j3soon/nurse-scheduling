@@ -31,6 +31,7 @@ import pytest
 from nurse_scheduling.ai.costs import CostTotals
 from nurse_scheduling.ai.provider import OpenAiCompatibleProvider, ProviderCall, TokenUsage, _parse_cost
 from nurse_scheduling.ai.session_event_stream import SessionEventStream
+from nurse_scheduling.ai.sessions import SessionStore
 
 from . import test_ai_basic as basic
 from .test_ai_history import postgres_history, recorded_history, uninitialized_postgres_history
@@ -188,6 +189,146 @@ def test_cancelled_run_reports_unknown_cost_instead_of_free():
             "unavailable": 1,
         }
         assert basic.parse_sse(result.text)[-1][0] == "stopped"
+
+
+@pytest.mark.parametrize("checkpoint_saved", [False, True])
+@pytest.mark.parametrize("phase", ["initial", "header", "reported"])
+def test_stop_during_cost_checkpoint_preserves_reported_prices(monkeypatch, postgres_history, checkpoint_saved, phase):
+    from nurse_scheduling.ai.provider import TextDelta
+    from nurse_scheduling.ai.recovery import SessionRecovery
+
+    save_checkpoint = SessionRecovery.save_provider_call
+
+    async def exercise():
+        started, release = asyncio.Event(), asyncio.Event()
+        attempted = []
+
+        class Provider:
+            async def stream_events(self, messages, tools=None):
+                yield ProviderCall("stop-call", "model")
+                attempted.append(True)
+                yield ProviderCall("stop-call", "model", "pending" if phase == "header" else "reported", "0.1")
+                yield TextDelta("Answer")
+
+        async def checkpoint(recorder, session_id, event):
+            call = event.data
+            target = (
+                call["cost_usd"] is None
+                if phase == "initial"
+                else call["status"] == ("pending" if phase == "header" else "reported") and call["cost_usd"] == "0.1"
+            )
+            if target and not started.is_set():
+                started.set()
+                await release.wait()
+            if target and not checkpoint_saved:
+                return False
+            return await save_checkpoint(recorder, session_id, event)
+
+        monkeypatch.setattr(SessionRecovery, "save_provider_call", checkpoint)
+        configuration = basic.make_settings(history_postgres_url="test")
+        app = basic.create_test_app(settings=configuration, provider=Provider())
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app), base_url="http://testserver", headers=basic.AI_AUTH_HEADERS
+            ) as client,
+        ):
+            created = await client.post("/sessions", json={"schedule_yaml": "description: test"})
+            session_id = created.json()["id"]
+            response = asyncio.create_task(
+                client.post(f"/sessions/{session_id}/messages", json={"message": "Question", "message_id": "one"})
+            )
+            try:
+                await asyncio.wait_for(started.wait(), timeout=1)
+                stopped = await client.post(f"/sessions/{session_id}/stop", json={"message_id": "one"})
+                assert stopped.status_code == 202
+            finally:
+                release.set()
+                result = await asyncio.wait_for(response, timeout=2)
+            assert basic.parse_sse(result.text)[-1][0] == "stopped"
+            expected = {
+                "usd": "0" if phase == "initial" else "0.1",
+                "calls": int(phase != "initial"),
+                "pending": 0,
+                "unavailable": 0,
+            }
+            session = app.state.session_store.get(session_id)
+            assert session.cost_totals.public() == expected
+            assert attempted == ([] if phase == "initial" else [True])
+            assert not session.pending_provider_calls
+            assert not app.state.runs.busy(session_id)
+            await app.state.recovery.flush(session_id)
+            owner = client.cookies[basic.OWNER_COOKIE]
+            saved = await asyncio.to_thread(postgres_history.load_session, session_id, owner)
+            assert saved["state"]["cost_totals"] == expected
+            restored = SessionStore(configuration).restore(
+                session_id, owner, saved["state"], saved["expires_at"], entries=[], next_entry_seq=0
+            )
+            assert restored.cost_totals.public() == expected
+            if phase != "initial":
+                calls = [data for kind, data in basic.parse_sse(result.text) if kind == "provider_call"]
+                assert calls[-1]["status"] == "reported"
+                assert calls[-1]["cost_usd"] == "0.1"
+                saved_events = await asyncio.to_thread(postgres_history.load_events, session_id, 0)
+                saved_calls = [data for _first, _last, _run, kind, data in saved_events if kind == "provider_call"]
+                assert saved_calls[-1]["status"] == "reported"
+                assert saved_calls[-1]["cost_usd"] == "0.1"
+
+    asyncio.run(exercise())
+
+
+def test_reset_during_cost_checkpoint_keeps_the_cost_publication_version(monkeypatch):
+    from nurse_scheduling.ai.provider import TextDelta
+    from nurse_scheduling.ai.recovery import SessionRecovery
+
+    from .test_ai_history import read_events
+
+    async def exercise():
+        started, release = asyncio.Event(), asyncio.Event()
+
+        class Provider:
+            async def stream_events(self, messages, tools=None):
+                yield ProviderCall("reset-call", "model")
+                yield ProviderCall("reset-call", "model", "reported", "0.1")
+                yield TextDelta("Answer")
+
+        async def checkpoint(_self, _session_id, event):
+            if event.data["status"] == "reported":
+                started.set()
+                await release.wait()
+            return True
+
+        monkeypatch.setattr(SessionRecovery, "save_provider_call", checkpoint)
+        app = basic.create_test_app(settings=basic.make_settings(), provider=Provider())
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app), base_url="http://testserver", headers=basic.AI_AUTH_HEADERS
+            ) as client,
+        ):
+            created = await client.post("/sessions", json={"schedule_yaml": "description: test"})
+            session_id = created.json()["id"]
+            response = asyncio.create_task(
+                client.post(f"/sessions/{session_id}/messages", json={"message": "Question"})
+            )
+            await asyncio.wait_for(started.wait(), timeout=1)
+            session = app.state.session_store.get(session_id)
+            session.publish({"type": "warning", "message": "An intervening event"})
+            try:
+                frames = await read_events(
+                    app, session_id, client.cookies[basic.OWNER_COOKIE], until="session_reset", reset=True
+                )
+                reset = next(data for _identity, kind, data in frames if kind == "session_reset")
+                assert reset["cost_summary"] == {**session.cost_totals.public(), "version": session.cost_totals_version}
+            finally:
+                release.set()
+                result = await asyncio.wait_for(response, timeout=2)
+            summaries = [data for kind, data in basic.parse_sse(result.text) if kind == "cost_summary"]
+            final = summaries[-1]["conversation"]
+            assert final["usd"] == "0.1"
+            assert final["version"] > reset["cost_summary"]["version"]
+
+    asyncio.run(exercise())
 
 
 @pytest.mark.parametrize("amount", ["0.123", "4.45e-322"])
