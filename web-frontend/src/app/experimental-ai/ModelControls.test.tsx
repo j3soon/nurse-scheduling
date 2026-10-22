@@ -19,7 +19,7 @@
 
 // This test is mostly AI generated.
 
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup } from '@testing-library/react';
@@ -124,4 +124,28 @@ it('blocks new submissions after a save failure until the session choice reloads
   expect(onChange).toHaveBeenLastCalledWith(undefined);
   await user.click(screen.getByRole('button', { name: 'Retry' }));
   await waitFor(() => expect(onChange).toHaveBeenLastCalledWith({ model: 'deep', reasoning: 'high' }));
+});
+
+it('saves edits made before session creation finishes instead of restoring its older choice', async () => {
+  const user = userEvent.setup();
+  const onChange = vi.fn();
+  let finishSave!: (response: object) => void;
+  const writes: object[] = [];
+  vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string, request?: RequestInit) => {
+    if (url.endsWith('/models')) return { ok: true, json: async () => catalog };
+    if (request?.method !== 'PUT') return { ok: true, json: async () => ({ model: 'deep', reasoning: 'off' }) };
+    writes.push(JSON.parse(request.body as string));
+    return new Promise(resolve => { finishSave = resolve; });
+  }));
+  const view = render(<ModelControls endpoint="https://ai.example" token="chat-key" disabled={false} onChange={onChange} />);
+  await waitFor(() => expect(screen.getByLabelText('AI model')).toHaveValue('fast'));
+  await user.selectOptions(screen.getByLabelText('AI model'), 'deep');
+  // Creation started with Deep. The user chooses Fast before it returns a session ID.
+  await user.selectOptions(screen.getByLabelText('AI model'), 'fast');
+  view.rerender(<ModelControls endpoint="https://ai.example" token="chat-key" sessionId="session" disabled={false} onChange={onChange} />);
+  await waitFor(() => expect(writes).toEqual([{ model: 'fast', reasoning: 'default' }]));
+  expect(onChange).toHaveBeenLastCalledWith(undefined);
+  await act(async () => finishSave({ ok: true, json: async () => ({ model: 'fast', reasoning: 'default' }) }));
+  await waitFor(() => expect(onChange).toHaveBeenLastCalledWith({ model: 'fast', reasoning: 'default' }));
+  expect(screen.getByLabelText('AI model')).toHaveValue('fast');
 });

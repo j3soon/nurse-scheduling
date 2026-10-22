@@ -34,6 +34,7 @@ export function ModelControls({ endpoint, token, disabled, sessionId = null, onC
   const [reload, setReload] = useState(0);
   const [loadedScope, setLoadedScope] = useState<string>();
   const choices = useRef(new Map<string, ModelSelection>());
+  const pendingChoices = useRef(new Map<string, ModelSelection>());
   const saves = useRef(Promise.resolve());
   const generation = useRef(0);
   const latestChange = useRef(0);
@@ -49,14 +50,23 @@ export function ModelControls({ endpoint, token, disabled, sessionId = null, onC
     Promise.all([
       getModels(controller.signal, token, endpoint),
       sessionId ? getSessionModelSelection(sessionId, controller.signal, token, endpoint) : Promise.resolve(null),
-    ]).then(([result, current]) => {
+    ]).then(async ([result, current]) => {
       if (controller.signal.aborted) return;
-      const saved = current ?? choices.current.get(scope);
+      const pending = pendingChoices.current.get(scope);
+      const saved = pending ?? current ?? choices.current.get(scope);
       const selected = result.models.find(item => item.id === saved?.model)
         ?? result.models.find(item => item.id === result.default_model) ?? result.models[0];
       if (!selected) throw new Error('No compatible chat models are available to this AI key.');
       const reasoning = selected.reasoning_options.some(option => option.id === saved?.reasoning) ? saved!.reasoning : selected.default_reasoning;
-      const next = { model: selected.id, reasoning };
+      let next = { model: selected.id, reasoning };
+      if (sessionId && pending) {
+        if (next.model !== current?.model || next.reasoning !== current?.reasoning) {
+          setSaving(true);
+          next = await updateSessionModelSelection(sessionId, next, token, endpoint);
+          if (controller.signal.aborted) return;
+        }
+        pendingChoices.current.delete(scope);
+      }
       setModels(result.models);
       setSelection(next);
       setLoadedScope(requestScope);
@@ -66,6 +76,7 @@ export function ModelControls({ endpoint, token, disabled, sessionId = null, onC
       onChange(next);
     }).catch((failure: unknown) => {
       if (!controller.signal.aborted) {
+        setSaving(false);
         setError(failure instanceof Error ? failure.message : 'Could not load AI models.');
       }
     });
@@ -77,6 +88,7 @@ export function ModelControls({ endpoint, token, disabled, sessionId = null, onC
     choices.current.set(scope, next);
     setSelection(next);
     if (!sessionId) {
+      pendingChoices.current.set(scope, next);
       onChange(next);
       return;
     }

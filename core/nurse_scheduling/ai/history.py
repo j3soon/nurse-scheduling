@@ -35,7 +35,8 @@ from psycopg.types.json import Jsonb
 
 from ..sentry import report_outage_recovery
 from ..server.retry import RepeatedFailure
-from .provider import TokenUsage
+from .costs import CostTotals
+from .provider import ProviderCall, TokenUsage
 from .transcript import AgentMessage, AssistantMessage, UserMessage, entry_from_record, entry_record
 from .workspace import SandboxAttachment, attachment_path
 
@@ -366,18 +367,29 @@ class ChatHistory:
             ).fetchone()
             if row is None:
                 return None
-            # Rebuild totals from durable call events, including records before a process crash.
-            # Streamed updates replace a call's contribution by its stable call ID.
+            # Saved totals can be newer than a failed call checkpoint. Apply only
+            # later publications, replacing calls that were pending in that snapshot.
+            version = row[0].get("cost_totals_version", -1)
+            totals = CostTotals.restored(row[0].get("cost_totals") if version >= 0 else None)
+            pending = {call["id"]: ProviderCall(**call) for call in row[0].get("pending_provider_calls", [])}
             costs = connection.execute(
-                "WITH calls AS (SELECT DISTINCT ON (data->>'call_id') data "
+                "WITH calls AS (SELECT DISTINCT ON (data->>'call_id') event_id, data "
                 "FROM chat_session_events WHERE session_id = %s AND type = 'provider_call' "
                 "ORDER BY data->>'call_id', event_id DESC) "
-                "SELECT coalesce(sum((data->>'cost_usd')::numeric), 0)::text, count(*), "
-                "count(*) FILTER (WHERE data->>'cost_usd' IS NULL) FROM calls",
-                (session_id,),
-            ).fetchone()
-            if costs[1] or "cost_totals" in row[0]:
-                row[0]["cost_totals"] = {"usd": costs[0], "calls": costs[1], "pending": 0, "unavailable": costs[2]}
+                "SELECT event_id, data FROM calls WHERE event_id > %s ORDER BY event_id",
+                (session_id, version),
+            ).fetchall()
+            for event_id, data in costs:
+                call_id, amount = data["call_id"], data.get("cost_usd")
+                final = ProviderCall(call_id, "", "reported" if amount is not None else "unavailable", amount)
+                totals.update(final, pending.pop(call_id, None))
+                version = max(version, event_id)
+            for call in pending.values():
+                totals.update(replace(call, status="reported" if call.cost_usd is not None else "unavailable"), call)
+            if costs or "cost_totals" in row[0]:
+                row[0]["cost_totals"] = totals.public()
+                row[0]["cost_totals_version"] = max(version, 0)
+                row[0]["pending_provider_calls"] = []
             entries = connection.execute(
                 "SELECT e.type, e.payload, r.status FROM chat_session_entries e LEFT JOIN chat_runs r ON r.id = e.run_id "
                 "WHERE e.session_id = %s AND e.type <> 'tool_result' "

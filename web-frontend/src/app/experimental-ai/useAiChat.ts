@@ -755,8 +755,11 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
           setCostSummary(previous => latestCostSummary(previous, conversation));
           if (run) setMessages(previous => previous.map(message => message.id === initialAssistantId ? { ...message, costSummary: run } : message));
         },
-        onModelSelection: modelSelection => setMessages(previous => previous.map(message =>
-          message.id === activeAssistantId ? { ...message, modelSelection } : message)),
+        onModelSelection: modelSelection => {
+          const assistantId = activeAssistantId;
+          setMessages(previous => previous.map(message =>
+            message.id === assistantId ? { ...message, modelSelection } : message));
+        },
         onDone: finishRun,
         onStopped: () => { controller.abort(); finishRun(); },
         onError: message => rejectRun(new Error(message)),
@@ -814,6 +817,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
               const next: ChatMessage = {
                 id: nextAssistantId,
                 runId,
+                modelSelection: previous[completedIndex]?.modelSelection,
                 requestId: request.id,
                 request: { ...request, activeAssistantId: nextAssistantId },
                 role: 'assistant',

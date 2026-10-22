@@ -288,6 +288,8 @@ class AgentSession:
     model_selection: dict[str, str] | None = None
     provider_credential_id: str | None = None
     cost_totals: CostTotals = field(default_factory=CostTotals)
+    cost_totals_version: int = 0
+    pending_provider_calls: dict[str, ProviderCall] = field(default_factory=dict)
     accepted_messages: dict[str, AcceptedMessage] = field(default_factory=dict)
     # Named Stop requests, including those for messages that have not arrived yet.
     stopped_message_ids: set[str] = field(default_factory=set)
@@ -334,6 +336,11 @@ class AgentSession:
             "model_selection": self.model_selection,
             "provider_credential_id": self.provider_credential_id,
             "cost_totals": self.cost_totals.public(),
+            "cost_totals_version": self.cost_totals_version,
+            "pending_provider_calls": [
+                {"id": call.id, "model": call.model, "status": call.status, "cost_usd": call.cost_usd}
+                for call in self.pending_provider_calls.values()
+            ],
             "frontend_version": self.frontend_version,
             "frontend_timezone": self.frontend_timezone,
             "downloads": list(self.downloads),
@@ -386,6 +393,10 @@ class AgentSession:
             model_selection=state.get("model_selection"),
             provider_credential_id=state.get("provider_credential_id"),
             cost_totals=CostTotals.restored(state.get("cost_totals")),
+            cost_totals_version=state.get("cost_totals_version", 0),
+            pending_provider_calls={
+                call["id"]: ProviderCall(**call) for call in state.get("pending_provider_calls", [])
+            },
             frontend_version=state.get("frontend_version"),
             frontend_timezone=state.get("frontend_timezone", "UTC"),
             export_metadata=state.get("export_metadata", {}),
@@ -471,8 +482,10 @@ class AgentSession:
         async with self._admission_lock:
             selected = await prepare_runtime()
             assert selected.selection is not None
+            previous = self.model_selection
             self.model_selection = selected.selection
             if not await _complete(runtime.recorder.save(self.id, self.provider_credential_id)):
+                self.model_selection = previous
                 raise HTTPException(503, "The model choice could not be saved yet. Please try again.")
             return self.model_selection
 
@@ -514,11 +527,14 @@ class AgentSession:
                     return MessageReceipt(run_id)
                 if await runtime.recorder.message_stopped(self.id, message_id):
                     self.stopped_message_ids.add(message_id)
-            if prepare_runtime is not None:
-                runtime = await prepare_runtime()
+
+            async def execute(run: AgentRun) -> None:
+                selected_runtime = await prepare_runtime() if prepare_runtime is not None else runtime
+                await self.run(run, question, runtime=selected_runtime, owner=owner, credential_id=credential_id)
+
             run = runs.start(
                 self.id,
-                lambda run: self.run(run, question, runtime=runtime, owner=owner, credential_id=credential_id),
+                execute,
                 message_id=message_id,
             )
             if message_id is not None:
@@ -716,15 +732,17 @@ class AgentSession:
         previous = output.calls.get(call.id)
         if call == previous:
             return
-        output.calls[call.id] = call
-        output.costs.update(call, previous)
-        self.cost_totals.update(call, previous)
         data = asdict(call)
         data["call_id"] = data.pop("id")
         publication = events.emit(
             {"type": "provider_call", **data, "reasoning": (runtime.selection or {}).get("reasoning", "default")}
         )
-        saved = await runtime.recorder.save_provider_call(self.id, publication)
+        try:
+            saved = await runtime.recorder.save_provider_call(self.id, publication)
+        finally:
+            # A rejected attempt must not reappear in totals when its event is retried.
+            if publication is not None:
+                self.cost_totals_version = publication.id
         if not saved:
             events.emit(
                 {
@@ -737,6 +755,13 @@ class AgentSession:
                 raise ProviderError.for_user(
                     "Cost recovery storage is unavailable, so the provider request was not started. Please try again."
                 )
+        output.calls[call.id] = call
+        output.costs.update(call, previous)
+        self.cost_totals.update(call, previous)
+        if call.status == "pending":
+            self.pending_provider_calls[call.id] = call
+        else:
+            self.pending_provider_calls.pop(call.id, None)
         events.emit(
             {
                 "type": "cost_summary",

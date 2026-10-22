@@ -21,7 +21,7 @@
 
 import asyncio
 import json
-from dataclasses import replace
+from dataclasses import asdict, replace
 from decimal import Decimal
 from uuid import uuid4
 
@@ -33,9 +33,9 @@ from nurse_scheduling.ai.provider import OpenAiCompatibleProvider, ProviderCall,
 from nurse_scheduling.ai.session_event_stream import SessionEventStream
 
 from . import test_ai_basic as basic
-from .test_ai_history import postgres_history, uninitialized_postgres_history
+from .test_ai_history import postgres_history, recorded_history, uninitialized_postgres_history
 
-__all__ = ["postgres_history", "uninitialized_postgres_history"]
+__all__ = ["postgres_history", "recorded_history", "uninitialized_postgres_history"]
 
 
 def stream_response(cost, *, usage=True, header_cost="0", text="Answer"):
@@ -221,6 +221,45 @@ def test_call_updates_fold_by_call_id_instead_of_run_id():
     assert [event.data["call_id"] for event in calls] == ["two", "one"]
 
 
+@pytest.mark.parametrize("phase", ["reported", "pending", "rejected"])
+@pytest.mark.parametrize("newer", [False, True])
+def test_postgres_reconciles_call_events_after_the_saved_cost_version(postgres_history, phase, newer):
+    from .test_ai_history import session_state
+
+    session, owner, run = str(uuid4()), str(uuid4()), str(uuid4())
+    pending = ProviderCall("one", "model", cost_usd="0.1")
+    totals = CostTotals()
+    if phase != "rejected":
+        totals.update(pending if phase == "pending" else replace(pending, status="reported", cost_usd="0.3"))
+    state = session_state(
+        owner,
+        cost_totals=totals.public(),
+        cost_totals_version=2,
+        pending_provider_calls=[asdict(pending)] if phase == "pending" else [],
+    )
+    postgres_history.save_session(session, state)
+    # The newer checkpoint failed, leaving only the initial pending call on disk.
+    records = [(1, 1, run, "provider_call", {"call_id": "one", "cost_usd": None, "status": "pending"})]
+    if newer:
+        identity, amount = ("one", "0.3") if phase == "pending" else ("two", "0.2")
+        records.append((3, 3, run, "provider_call", {"call_id": identity, "cost_usd": amount, "status": "reported"}))
+    postgres_history.append_events(session, records)
+    restored = postgres_history.load_session(session, owner)["state"]
+    expected = {
+        ("reported", False): ("0.3", 1),
+        ("reported", True): ("0.5", 2),
+        ("pending", False): ("0.1", 1),
+        ("pending", True): ("0.3", 1),
+        ("rejected", False): ("0", 0),
+        ("rejected", True): ("0.2", 1),
+    }
+    amount, count = expected[phase, newer]
+    assert restored["cost_totals"] == {"usd": amount, "calls": count, "pending": 0, "unavailable": 0}
+    assert restored["pending_provider_calls"] == []
+    postgres_history.save_session(session, (state[0], state[1], restored))
+    assert postgres_history.load_session(session, owner)["state"]["cost_totals"] == restored["cost_totals"]
+
+
 def test_tool_follow_up_calls_contribute_to_the_same_turn_total():
     from nurse_scheduling.ai.provider import TextDelta, ToolCall, ToolCallRequest
 
@@ -239,7 +278,11 @@ def test_tool_follow_up_calls_contribute_to_the_same_turn_total():
         assert summary["run"] == {"usd": "0.3", "calls": 2, "pending": 0, "unavailable": 0}
 
 
-def test_cost_checkpoint_failure_does_not_start_provider_or_leave_run_open(monkeypatch):
+@pytest.mark.parametrize("failed_status", ["pending", "reported"])
+def test_cost_checkpoint_failure_preserves_attempt_counts_and_saved_totals(
+    monkeypatch, recorded_history, failed_status
+):
+    from nurse_scheduling.ai.provider import TextDelta
     from nurse_scheduling.ai.recovery import SessionRecovery
 
     sent = []
@@ -248,20 +291,42 @@ def test_cost_checkpoint_failure_does_not_start_provider_or_leave_run_open(monke
         async def stream_events(self, messages, tools=None):
             yield ProviderCall("new-call", "model")
             sent.append(True)
+            yield ProviderCall("new-call", "model", "reported", "0.1")
+            yield TextDelta("Answer")
 
-    async def unavailable(*_args):
-        return False
+    async def unavailable(_self, _session_id, event):
+        return event.data["status"] != failed_status
 
     monkeypatch.setattr(SessionRecovery, "save_provider_call", unavailable)
-    app = basic.create_test_app(settings=basic.make_settings(), provider=Provider())
+    app = basic.create_test_app(settings=basic.make_settings(history_postgres_url="test"), provider=Provider())
     with basic.AuthenticatedTestClient(app) as client:
         session = basic.create_session(client)
         response = client.post(f"/sessions/{session}/messages", json={"message": "Question"})
         events = basic.parse_sse(response.text)
-        assert events[-1][0] == "error"
-        assert "provider request was not started" in events[-1][1]["message"]
-        assert sent == []
-        assert not app.state.session_store.get(session).active
+        if failed_status == "pending":
+            assert events[-1][0] == "error"
+            assert "provider request was not started" in events[-1][1]["message"]
+            assert sent == []
+            expected = {"usd": "0", "calls": 0, "pending": 0, "unavailable": 0}
+        else:
+            assert events[-1][0] == "done"
+            assert sent == [True]
+            expected = {"usd": "0.1", "calls": 1, "pending": 0, "unavailable": 0}
+        current = app.state.session_store.get(session)
+        assert not current.active
+        assert current.cost_totals.public() == expected
+        assert not current.pending_provider_calls
+        assert not any(kind == "provider_call" and data["status"] == "unavailable" for kind, data in events)
+        state = recorded_history["finishes"][-1][-1][2]
+        assert state["cost_totals"] == expected
+        assert (
+            state["cost_totals_version"]
+            == [
+                event.id
+                for event in app.state.session_event_stream.events_after(session)
+                if event.type == "provider_call"
+            ][-1]
+        )
 
 
 def test_tiny_totals_and_restored_mixed_prices_fit_the_browser_contract():

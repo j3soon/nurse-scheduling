@@ -21,6 +21,7 @@
 
 import asyncio
 import json
+import logging
 import time
 from dataclasses import dataclass, replace
 from typing import Any
@@ -31,6 +32,8 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, m
 
 from .config import AiSettings
 from .provider import OpenAiCompatibleProvider
+
+logger = logging.getLogger(__name__)
 
 
 class ModelSelection(BaseModel):
@@ -147,7 +150,7 @@ class ModelCatalog:
                     "AI_PROVIDER_PROFILES must map AI credential IDs to api_key and default_model"
                 ) from None
         self._cache: dict[str | None, tuple[float, tuple[AvailableModel, ...]]] = {}
-        self._lock = asyncio.Lock()
+        self._locks: dict[str | None, asyncio.Lock] = {}
 
     def profile(self, credential_id: str | None) -> ProviderProfile:
         if self.profiles:
@@ -159,7 +162,10 @@ class ModelCatalog:
 
     async def models(self, credential_id: str | None) -> tuple[AvailableModel, ...]:
         profile = self.profile(credential_id)
-        async with self._lock:
+        saved = self._cache.get(credential_id)
+        if saved is not None and saved[0] > time.monotonic():
+            return saved[1]
+        async with self._locks.setdefault(credential_id, asyncio.Lock()):
             saved = self._cache.get(credential_id)
             if saved is not None and saved[0] > time.monotonic():
                 return saved[1]
@@ -178,8 +184,10 @@ class ModelCatalog:
                         )
                         info = info_response.json().get("data", []) if info_response.is_success else []
                     except (httpx.HTTPError, ValueError, AttributeError):
+                        logger.exception("AI reasoning metadata discovery failed")
                         info = []
             except (httpx.HTTPError, ValueError, KeyError, TypeError):
+                logger.exception("AI model discovery failed")
                 raise HTTPException(503, "AI model discovery is unavailable. Please try again.") from None
             metadata = (
                 {
@@ -227,6 +235,7 @@ class ModelCatalog:
                         )
                     )
             except (ValueError, TypeError):
+                logger.exception("AI model reasoning metadata is invalid")
                 raise HTTPException(503, "AI model reasoning metadata is invalid.") from None
             result = tuple({model.id: model for model in models}.values())
             self._cache[credential_id] = (time.monotonic() + 60, result)

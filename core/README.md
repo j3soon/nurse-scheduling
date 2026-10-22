@@ -558,7 +558,7 @@ profiles, all AI keys use `AI_PROVIDER_API_KEY`. To isolate provider access, set
 `AI_PROVIDER_PROFILES` in the ignored Compose environment file:
 
 ```dotenv
-AI_PROVIDER_PROFILES='{"institution-a":{"api_key":"sk-example-a","default_model":"fast"},"person_b":{"api_key":"sk-example-b","default_model":"deep"}}'
+AI_PROVIDER_PROFILES='{"institution-a":{"api_key":"sk-example-a","default_model":"fast"},"person-b":{"api_key":"sk-example-b","default_model":"deep"}}'
 ```
 
 The IDs must match `AI_AUTH_TOKENS`. The legacy `AI_AUTH_TOKEN` uses `legacy`.

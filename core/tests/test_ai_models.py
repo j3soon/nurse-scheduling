@@ -176,6 +176,45 @@ def test_profiles_isolate_concurrent_requests_and_reject_other_keys_models(monke
     assert calls[1][0] == "Bearer key-b" and "thinking" not in calls[1][1]
 
 
+@pytest.mark.parametrize("cached", [False, True])
+def test_slow_discovery_only_blocks_the_same_credential(monkeypatch, cached):
+    client_type = httpx.AsyncClient
+    catalog = ModelCatalog(settings())
+
+    async def exercise():
+        started, release = asyncio.Event(), asyncio.Event()
+        requests = []
+
+        async def respond(request):
+            if request.url.path.endswith("/model/info"):
+                return httpx.Response(404)
+            key = request.headers["Authorization"]
+            requests.append(key)
+            if key == "Bearer key-a":
+                started.set()
+                await release.wait()
+            return httpx.Response(200, json={"data": [{"id": "fast"}]})
+
+        monkeypatch.setattr(
+            httpx, "AsyncClient", lambda **kwargs: client_type(**{**kwargs, "transport": httpx.MockTransport(respond)})
+        )
+        if cached:
+            await catalog.models("person_b")
+        first = asyncio.create_task(catalog.models("institution-a"))
+        await asyncio.wait_for(started.wait(), timeout=1)
+        duplicate = asyncio.create_task(catalog.models("institution-a"))
+        try:
+            other = await asyncio.wait_for(catalog.models("person_b"), timeout=1)
+            assert other[0].id == "fast"
+            assert not first.done() and not duplicate.done()
+        finally:
+            release.set()
+            assert await first == await duplicate
+        assert requests.count("Bearer key-a") == requests.count("Bearer key-b") == 1
+
+    asyncio.run(exercise())
+
+
 @pytest.mark.parametrize("duplicate_question, expected_status", [("Help", 202), ("Different", 409)])
 def test_duplicate_message_during_model_discovery(monkeypatch, duplicate_question, expected_status):
     client_type = httpx.AsyncClient
@@ -221,6 +260,55 @@ def test_duplicate_message_during_model_discovery(monkeypatch, duplicate_questio
     assert len(calls) == 1
 
 
+@pytest.mark.parametrize("stop_message_id", [None, "one"])
+def test_stop_cancels_foreground_model_discovery(monkeypatch, stop_message_id):
+    client_type = httpx.AsyncClient
+    calls = gateway(monkeypatch)
+    app = basic.create_test_app(settings=basic.make_settings(provider_model="fast"), provider=None)
+
+    async def exercise():
+        started, cancelled = asyncio.Event(), asyncio.Event()
+
+        async def delayed(*_args):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+        async with (
+            app.router.lifespan_context(app),
+            client_type(
+                transport=httpx.ASGITransport(app), base_url="http://testserver", headers=basic.AI_AUTH_HEADERS
+            ) as client,
+        ):
+            created = await client.post("/sessions", json={"schedule_yaml": "description: test"})
+            session_id = created.json()["id"]
+            with monkeypatch.context() as discovery:
+                discovery.setattr(ModelCatalog, "resolve", delayed)
+                pending = asyncio.create_task(
+                    client.post(f"/sessions/{session_id}/messages", json={"message": "Help", "message_id": "one"})
+                )
+                await asyncio.wait_for(started.wait(), timeout=1)
+                stopped = await client.post(
+                    f"/sessions/{session_id}/stop", json={"message_id": stop_message_id} if stop_message_id else None
+                )
+                assert stopped.status_code == 202
+                assert (await asyncio.wait_for(pending, timeout=1)).status_code == 202
+                assert cancelled.is_set()
+            assert not app.state.runs.busy(session_id)
+            assert not app.state.session_store.get(session_id).active
+            assert app.state.session_event_stream.events_after(session_id)[-1].type == "stopped"
+            assert calls == []
+            response = await client.post(
+                f"/sessions/{session_id}/messages", json={"message": "Next", "message_id": "two"}
+            )
+            assert response.status_code == 200
+
+    asyncio.run(exercise())
+    assert len(calls) == 1
+
+
 def test_invalid_profile_does_not_include_secret_in_exception():
     value = basic.make_settings(provider_profiles_json='{"a":{"api_key":"private-secret","extra":true}}')
     with pytest.raises(ValueError) as error:
@@ -252,16 +340,21 @@ def test_current_session_selection_is_authorized_validated_and_saved(monkeypatch
 
         with monkeypatch.context() as storage_failure:
             storage_failure.setattr(app.state.recovery, "save", unavailable)
-            failed = client.put(path, json=selection)
+            failed = client.put(path, json={"model": "fast"})
             assert failed.status_code == 503
             assert "could not be saved" in failed.json()["detail"]
-        assert client.put(path, json=selection).status_code == 200
+        assert client.get(path).json() == selection
+        assert (
+            client.post(f"/sessions/{session_id}/messages", json={"message": "Use the saved model"}).status_code == 200
+        )
         owner, expires_at, state = recorded_history["saves"][-1]["state"]
         restored = SessionStore(configuration).restore(
             session_id, owner, state, expires_at, entries=[], next_entry_seq=0
         )
         assert restored.model_selection == selection
-    assert calls == []
+    assert len(calls) == 1
+    assert calls[0][1]["model"] == "deep"
+    assert calls[0][1]["thinking"] == {"type": "disabled"}
 
 
 def test_midstream_selection_changes_only_future_turns(monkeypatch):
@@ -471,10 +564,35 @@ def test_missing_reasoning_choices_preserve_gateway_default(monkeypatch, metadat
         {"thinking": {"type": "disabled", "budget_tokens": 1024}},
     ],
 )
-def test_reasoning_metadata_cannot_override_other_request_fields(monkeypatch, parameters):
+def test_reasoning_metadata_cannot_override_other_request_fields(monkeypatch, parameters, caplog):
     gateway(monkeypatch, options=[{"id": "custom", "label": "Custom", "parameters": parameters}])
     with pytest.raises(HTTPException, match="metadata is invalid"):
         asyncio.run(ModelCatalog(settings()).models("institution-a"))
+    assert caplog.records[-1].exc_info is not None
+
+
+@pytest.mark.parametrize("path", ["/models", "/model/info"])
+def test_discovery_logs_gateway_failures_without_exposing_details(monkeypatch, caplog, path):
+    client_type = httpx.AsyncClient
+
+    def respond(request):
+        if request.url.path.endswith(path):
+            raise httpx.ReadTimeout("private-gateway-detail")
+        return httpx.Response(200, json={"data": [{"id": "fast"}]})
+
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda **kwargs: client_type(**{**kwargs, "transport": httpx.MockTransport(respond)})
+    )
+    catalog = ModelCatalog(settings())
+    if path == "/models":
+        with pytest.raises(HTTPException) as error:
+            asyncio.run(catalog.models("institution-a"))
+        assert error.value.status_code == 503
+        assert "private-gateway-detail" not in error.value.detail
+    else:
+        assert asyncio.run(catalog.models("institution-a"))[0].id == "fast"
+    assert caplog.records[-1].exc_info is not None
+    assert "private-gateway-detail" in caplog.text
 
 
 def test_omitted_reasoning_resolves_to_configured_default(monkeypatch):
