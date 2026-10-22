@@ -297,6 +297,7 @@ class AgentSession:
     _saved_run_messages: int = field(default=0, repr=False)
     _listeners: list[Callable[[AgentSessionEvent], None]] = field(default_factory=list, repr=False)
     _events_closed: bool = False
+    _admission_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
     def observe_frontend_version(self, version: str | None, backend_version: str) -> None:
         """Keep the browser build available and report a mismatch once per loaded session."""
@@ -484,39 +485,40 @@ class AgentSession:
             HTTPException: With status 409 when the message ID belongs to another question or
                 a run is active, or 503 when recovery storage is unavailable.
         """
-        if message_id is not None:
-            accepted = self._accepted_message(message_id)
-            if accepted is not None:
-                if accepted.question != question:
-                    raise HTTPException(status_code=409, detail="This message ID belongs to a different question.")
-                accepted_run = accepted.run
-                if accepted_run is None or await asyncio.shield(accepted_run.ready):
-                    return MessageReceipt(accepted.run_id)
-            found = None if accepted is not None else await runtime.recorder.find_message(self.id, message_id)
-            if found is not None:
-                run_id, accepted_question = found
-                if accepted_question != question:
-                    raise HTTPException(status_code=409, detail="This message ID belongs to a different question.")
-                return MessageReceipt(run_id)
-            if await runtime.recorder.message_stopped(self.id, message_id):
-                self.stopped_message_ids.add(message_id)
-        if prepare_runtime is not None:
-            runtime = await prepare_runtime()
-        run = runs.start(
-            self.id,
-            lambda run: self.run(run, question, runtime=runtime, owner=owner, credential_id=credential_id),
-            message_id=message_id,
-        )
-        if message_id is not None:
-            accepted = AcceptedMessage(message_id, question, run, run.id)
-            if not runtime.recorder.enabled:
-                try:
-                    runtime.store.remember_message(self.id, accepted)
-                except HTTPException:
-                    run.cancel()
-                    await asyncio.shield(run.done)
-                    raise
-            self.latest_message = accepted
+        async with self._admission_lock:
+            if message_id is not None:
+                accepted = self._accepted_message(message_id)
+                if accepted is not None:
+                    if accepted.question != question:
+                        raise HTTPException(status_code=409, detail="This message ID belongs to a different question.")
+                    accepted_run = accepted.run
+                    if accepted_run is None or await asyncio.shield(accepted_run.ready):
+                        return MessageReceipt(accepted.run_id)
+                found = None if accepted is not None else await runtime.recorder.find_message(self.id, message_id)
+                if found is not None:
+                    run_id, accepted_question = found
+                    if accepted_question != question:
+                        raise HTTPException(status_code=409, detail="This message ID belongs to a different question.")
+                    return MessageReceipt(run_id)
+                if await runtime.recorder.message_stopped(self.id, message_id):
+                    self.stopped_message_ids.add(message_id)
+            if prepare_runtime is not None:
+                runtime = await prepare_runtime()
+            run = runs.start(
+                self.id,
+                lambda run: self.run(run, question, runtime=runtime, owner=owner, credential_id=credential_id),
+                message_id=message_id,
+            )
+            if message_id is not None:
+                accepted = AcceptedMessage(message_id, question, run, run.id)
+                if not runtime.recorder.enabled:
+                    try:
+                        runtime.store.remember_message(self.id, accepted)
+                    except HTTPException:
+                        run.cancel()
+                        await asyncio.shield(run.done)
+                        raise
+                self.latest_message = accepted
         if not await asyncio.shield(run.ready):
             if run.cancelled and not run.shutdown:
                 # A Stop arrived before the run reported its start. A run cancelled before

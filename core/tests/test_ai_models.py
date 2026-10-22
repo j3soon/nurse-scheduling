@@ -173,6 +173,51 @@ def test_profiles_isolate_concurrent_requests_and_reject_other_keys_models(monke
     assert calls[1][0] == "Bearer key-b" and "thinking" not in calls[1][1]
 
 
+@pytest.mark.parametrize("duplicate_question, expected_status", [("Help", 202), ("Different", 409)])
+def test_duplicate_message_during_model_discovery(monkeypatch, duplicate_question, expected_status):
+    client_type = httpx.AsyncClient
+    calls = gateway(monkeypatch)
+    app = basic.create_test_app(settings=basic.make_settings(provider_model="fast"), provider=None)
+    original_models = ModelCatalog.models
+
+    async def exercise():
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def delayed(catalog, credential_id):
+            started.set()
+            await release.wait()
+            return await original_models(catalog, credential_id)
+
+        monkeypatch.setattr(ModelCatalog, "models", delayed)
+        async with (
+            app.router.lifespan_context(app),
+            client_type(
+                transport=httpx.ASGITransport(app), base_url="http://testserver", headers=basic.AI_AUTH_HEADERS
+            ) as client,
+        ):
+            created = await client.post("/sessions", json={"schedule_yaml": "description: test"})
+            session_id = created.json()["id"]
+            path = f"/sessions/{session_id}/messages"
+            first = asyncio.create_task(client.post(path, json={"message": "Help", "message_id": "one"}))
+            await asyncio.wait_for(started.wait(), timeout=1)
+            duplicate = asyncio.create_task(
+                client.post(path, json={"message": duplicate_question, "message_id": "one"})
+            )
+            await asyncio.sleep(0.02)
+            release.set()
+            responses = await asyncio.wait_for(asyncio.gather(first, duplicate), timeout=2)
+            assert responses[0].status_code == 200
+            assert responses[1].status_code == expected_status
+            if expected_status == 202:
+                run_id = basic.parse_sse(responses[0].text)[0][1]["run_id"]
+                assert responses[1].json() == {"run_id": run_id}
+            else:
+                assert "different question" in responses[1].json()["detail"]
+
+    asyncio.run(exercise())
+    assert len(calls) == 1
+
+
 def test_invalid_profile_does_not_include_secret_in_exception():
     value = basic.make_settings(provider_profiles_json='{"a":{"api_key":"private-secret","extra":true}}')
     with pytest.raises(ValueError) as error:

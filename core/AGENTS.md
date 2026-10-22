@@ -141,6 +141,8 @@ from the trust-based local harness.
   joins owners before closing the sandbox factory and optimizer transport.
   Commit and abort through the owning `RunSnapshot`. A conversation version
   rejects stale work even when the schedule changes back to its original text.
+- Include delayed model discovery in admission and cancellation tests. Injecting
+  a provider bypasses model selection and does not exercise this path.
 - Use provider metadata for model limits instead of duplicate environment
   settings. Verify the configured endpoint before adding a provider workaround.
   Check metadata discovery and streamed usage separately. For a protected route,
