@@ -569,7 +569,8 @@ model access, budgets, and rate limits on the LiteLLM virtual keys.
 The backend intersects LiteLLM `/models` with optional `/model/info` metadata.
 It excludes models marked as non-chat or without function calling. Discovery
 results are cached per AI credential for 60 seconds. The gateway still enforces
-access on every completion. Unavailable metadata leaves only Default reasoning.
+access on every completion. When the gateway does not advertise reasoning
+choices, the chat hides the reasoning dropdown and uses the gateway default.
 Add explicit supported choices to each LiteLLM deployment's `model_info`:
 
 ```yaml
@@ -590,8 +591,22 @@ Use only parameters supported by that exact model and gateway version. A budget
 preset can use `thinking: {type: enabled, budget_tokens: 8192}`. Off must use a
 model's actual disable setting, such as `reasoning_effort: none`, when supported.
 The example shows alternative mechanisms. It does not claim every model supports
-both. Default omits reasoning parameters and preserves gateway defaults. Do not
+both. The chat matches each advertised choice against the deployment’s configured
+`litellm_params` and selects the unique matching choice automatically. When a
+match exists, the dropdown contains only advertised choices. Otherwise, Provider
+default omits reasoning parameters and preserves gateway defaults. Do not
 configure the gateway to silently drop unsupported reasoning parameters.
+
+For a compatible Qwen deployment on vLLM, an Off option can set
+`"parameters":{"chat_template_kwargs":{"enable_thinking":false}}`. An On
+option sets the same boolean to `true`. Test these parameters on the deployment.
+A Qwen effort preset can also set `reasoning_effort` inside
+`chat_template_kwargs`, alongside `enable_thinking: true`. The backend permits
+only these chat-template fields, `thinking`, and top-level `reasoning_effort`
+in reasoning presets.
+
+Advertise these choices in the gateway’s `model_info.chat_reasoning_options`.
+The authenticated LiteLLM model list controls model access.
 
 Users can switch models and reasoning between turns. Each accepted turn freezes
 its settings for tool follow-ups, retries, and optimizer reviews. Queued steering
@@ -599,6 +614,48 @@ uses the active turn's settings. The UI remembers choices per model and credenti
 for the current page visit. Model settings are separate from expanding returned
 reasoning text. Smaller context windows remain subject to the provider's input
 limits. The chat reports the selected model's context limit when available.
+
+### Provider cost estimates
+
+Enable cost reporting in the LiteLLM gateway configuration:
+
+```yaml
+litellm_settings:
+  include_cost_in_streaming_usage: true
+```
+
+Verify this setting on the pinned LiteLLM release and each configured model.
+The chat uses `usage.cost` from streaming responses. It ignores initial HTTP
+cost headers because a stream can start before the gateway knows its cost.
+The gateway remains responsible for model pricing, cache rates, and provider
+billing rules. A gateway-reported zero is recorded as zero. Positive costs below
+$0.000001 remain reported costs and display as `<$0.000001`, including subnormal
+float values returned by gateways. Configure prices for custom models so missing
+gateway pricing does not appear free.
+
+Each HTTP attempt has a stable local call ID and an optional LiteLLM call ID.
+The chat includes retries, tool follow-ups, and optimizer reviews in its totals.
+It keeps input, output, cached input, and reasoning token counts when supplied.
+Reasoning tokens are already included in output tokens and are not added again.
+Costs use decimal USD arithmetic on the server. The UI shows a turn total,
+expandable call details, and the conversation total.
+
+Pending calls have no final estimate yet. Unavailable means the gateway did not
+report a cost, which can happen after Stop, a timeout, or a lost stream. Both
+states remain visible beside the sum of known costs. These estimates cover LLM
+calls. They exclude sandbox and scheduling service charges.
+
+With `AI_HISTORY_POSTGRES_URL`, provider call events are durable in the existing
+session event journal. A new attempt is checkpointed before its completion
+request starts. Recovery replaces records by call ID and rebuilds totals from
+the saved records, even if the process stopped before saving the session outcome.
+Unfinished calls without a reported cost become unavailable after restart. Raw call events remain in chat
+exports and share the session's retention policy. Without PostgreSQL, costs last
+for the process lifetime and the browser retains its displayed totals for reload.
+A cost record that could not be saved produces a warning and the normal journal
+writer retries it. A crash can still lose cost data that the gateway never
+returned or that storage could not save. Use LiteLLM spend logs and call IDs to
+reconcile those calls. The displayed estimate is not a provider invoice.
 
 `AI_AUTH_TOKENS` uses a JSON object such as
 `'{"institution-a":"first-key","person-b":"second-key"}'`. IDs may contain

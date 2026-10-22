@@ -146,6 +146,17 @@ from the trust-based local harness.
   Check metadata discovery and streamed usage separately. For a protected route,
   verify that missing and invalid credentials are rejected. Keep reported usage
   visible when the provider omits its model limit.
+- Scope model discovery and provider credentials to the authenticated AI key.
+  Describe reasoning choices with exact gateway metadata instead of guessing
+  supported levels from model names. Match configured reasoning parameters to
+  advertised choices when selecting a default. Do not infer defaults from option
+  order. If the gateway omits reasoning choices, hide the selector and preserve
+  its defaults. Freeze selections for each accepted run.
+- Track provider costs by HTTP attempt ID. Replace streamed updates instead of
+  adding them, preserve missing prices as unknown, and use decimal USD totals.
+  Restore totals from saved call records and test replay before acknowledgement.
+  Preserve reported subnormal costs and keep decimal summaries within the client
+  length limit.
 - Keep attachment limits server-configured and report them through
   `/capabilities`. Attachments and the optimizer tool are always offered.
   Keep schedules and attachments separate from model instructions.

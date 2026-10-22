@@ -21,6 +21,9 @@
 
 from typing import Any
 
+from .costs import CostTotals
+from .provider import ProviderCall
+
 
 def _finish(message: dict, kind: str, at: int, reason: str = "") -> None:
     message["status"] = {"done": None, "stopped": "stopped"}.get(kind, "failed")
@@ -103,6 +106,9 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
     supported = {
         "run_start",
         "model_input",
+        "model_selection",
+        "provider_call",
+        "cost_summary",
         "steering",
         "delta",
         "reasoning",
@@ -154,6 +160,8 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
             turns[run_id] = {
                 "question": question,
                 "assistant": assistant,
+                "cost_assistant": assistant,
+                "calls": {},
                 "has_output": False,
                 "schedule": "",
                 "working": None,
@@ -161,7 +169,15 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
         turn = turns[run_id]
         assistant = turn["assistant"]
         activity = assistant.setdefault("activity", [])
-        if kind == "model_input":
+        if kind == "model_selection":
+            selection = {key: data[key] for key in ("model", "reasoning")}
+            turn["selection"] = selection
+            assistant["modelSelection"] = selection
+        elif kind == "provider_call":
+            turn["calls"][data["call_id"]] = data
+        elif kind == "cost_summary":
+            turn["cost_assistant"]["costSummary"] = data["run"]
+        elif kind == "model_input":
             turn["schedule"] = data.get("schedule_yaml", turn["schedule"])
             messages = [m for m in messages if m.get("source") != "status"]
             previous_system = next((m for m in reversed(messages) if m["role"] == "system"), None)
@@ -216,6 +232,8 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
             if turn["has_output"]:
                 _finish(assistant, "done", at)
                 assistant = {"role": "assistant", "content": "", "status": "pending", "responseStartedAt": at}
+                if "selection" in turn:
+                    assistant["modelSelection"] = turn["selection"]
                 messages[index + 1 : index + 1] = [question, assistant]
                 turn["assistant"], turn["has_output"] = assistant, False
             else:
@@ -287,6 +305,12 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
                 data.get("message", "The AI response became stale." if kind == "stale" else "The AI request failed."),
             )
     for run_id, turn in turns.items():
+        if turn["calls"]:
+            totals = CostTotals()
+            for call in turn["calls"].values():
+                totals.update(ProviderCall(call["call_id"], call["model"], call["status"], call.get("cost_usd")))
+            turn["cost_assistant"]["costSummary"] = totals.public()
+            turn["cost_assistant"]["providerCalls"] = list(turn["calls"].values())
         run = runs.get(run_id, {})
         if turn["assistant"].get("status") == "pending" and run.get("status", "running") != "running":
             kind = {"cancelled": "stopped", "completed": "done"}.get(run["status"], "error")

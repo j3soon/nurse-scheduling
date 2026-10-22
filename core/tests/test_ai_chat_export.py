@@ -126,3 +126,48 @@ def test_message_uploads_list_matches_the_chat_page_bullet_style():
     assert "list-style-position: inside" in rule.group(1)
     assert "padding-left: 0" in rule.group(1)
     assert "40px" not in rule.group(1)
+
+
+@pytest.mark.parametrize("format", ["html", "markdown"])
+@pytest.mark.parametrize("cost", ["0", "0.0123", "4.45E-322", None])
+def test_saved_exports_always_include_models_and_latest_call_costs(format, cost):
+    snapshot = saved_case("default")
+    first = next(event for event in snapshot["events"] if event["type"] == "run_start")
+    run_id = first["data"]["run_id"]
+    call = {
+        "run_id": run_id,
+        "call_id": "cost-call",
+        "model": "qwen",
+        "reasoning": "xhigh",
+        "provider_call_id": "gateway-cost-call",
+        "status": "pending",
+        "cost_usd": None,
+        "usage": {"prompt_tokens": 100, "completion_tokens": 20, "reasoning_tokens": 10},
+    }
+    events = [
+        ("model_selection", {"run_id": run_id, "model": "qwen", "reasoning": "xhigh"}),
+        ("provider_call", call),
+        ("provider_call", {**call, "status": "reported" if cost is not None else "unavailable", "cost_usd": cost}),
+    ]
+    index = snapshot["events"].index(first) + 1
+    snapshot["events"][index:index] = [{**first, "type": kind, "data": data} for kind, data in events]
+    rendered = build_saved_chat_export(snapshot, format)
+    text = unescape(re.sub("<[^>]+>", "", rendered)) if format == "html" else rendered
+    assert "Model: qwen · xhigh" in text
+    assert "Estimated turn cost:" in text and " · 1 call" in text
+    assert " · 2 calls" not in text
+    assert (
+        "1. qwen · xhigh · "
+        + (
+            "Cost unavailable"
+            if cost is None
+            else "<$0.000001"
+            if "E-322" in cost
+            else "$0.0000"
+            if cost == "0"
+            else "$0.0123"
+        )
+        in text
+    )
+    assert "Input: 100 · Output: 20 · Reasoning (included in output): 10" in text
+    assert "Call: gateway-cost-call" in text

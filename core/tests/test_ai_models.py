@@ -32,7 +32,7 @@ from nurse_scheduling.ai.provider import OpenAiCompatibleProvider
 from . import test_ai_basic as basic
 
 
-def gateway(monkeypatch):
+def gateway(monkeypatch, *, parameters=None, options=None, metadata_status=200):
     calls = []
     client_type = httpx.AsyncClient
 
@@ -42,16 +42,23 @@ def gateway(monkeypatch):
             ids = ["fast", "deep"] if key != "Bearer key-b" else ["fast"]
             return httpx.Response(200, json={"data": [{"id": name} for name in ids]})
         if request.url.path.endswith("/model/info"):
+            if metadata_status != 200:
+                return httpx.Response(metadata_status)
             return httpx.Response(
                 200,
                 json={
                     "data": [
                         {
                             "model_name": "deep",
-                            "litellm_params": {"api_key": "must-not-leak"},
+                            "litellm_params": {
+                                "api_key": "must-not-leak",
+                                **({"reasoning_effort": "high"} if parameters is None else parameters),
+                            },
                             "model_info": {
                                 "max_input_tokens": 32000,
-                                "chat_reasoning_options": [
+                                "chat_reasoning_options": options
+                                if options is not None
+                                else [
                                     {"id": "off", "label": "Off", "parameters": {"thinking": {"type": "disabled"}}},
                                     {"id": "high", "label": "High", "parameters": {"reasoning_effort": "high"}},
                                 ],
@@ -98,10 +105,11 @@ def test_models_are_authenticated_filtered_and_do_not_expose_credentials(monkeyp
         assert [item["id"] for item in first.json()["models"]] == ["fast", "deep"]
         assert [item["id"] for item in second.json()["models"]] == ["fast"]
         assert first.json()["models"][1]["reasoning_options"] == [
-            {"id": "default", "label": "Default"},
             {"id": "off", "label": "Off"},
             {"id": "high", "label": "High"},
         ]
+        assert first.json()["models"][1]["default_reasoning"] == "high"
+        assert first.json()["models"][0]["default_reasoning"] == "default"
         assert "api_key" not in first.text and "must-not-leak" not in first.text
 
 
@@ -112,6 +120,9 @@ def test_turns_freeze_reasoning_switch_model_and_replay_without_calls(monkeypatc
     with basic.AuthenticatedTestClient(app, headers=headers) as client:
         session = basic.create_session(client)
         path = f"/sessions/{session}/messages"
+        assert (
+            client.get(f"/sessions/{session}", headers={"Authorization": "Bearer person-b-ai-token"}).status_code == 404
+        )
         request = {"message": "Help", "message_id": "one", "selection": {"model": "deep", "reasoning": "high"}}
         first = client.post(path, json=request)
         assert first.status_code == 200
@@ -163,3 +174,103 @@ def test_invalid_profile_does_not_include_secret_in_exception():
     with pytest.raises(ValueError) as error:
         ModelCatalog(value)
     assert "private-secret" not in str(error.value)
+
+
+@pytest.mark.parametrize("metadata_status", [200, 403, 404])
+def test_missing_reasoning_choices_preserve_gateway_default(monkeypatch, metadata_status):
+    calls = gateway(monkeypatch, options=[], metadata_status=metadata_status)
+    catalog = ModelCatalog(settings())
+
+    async def exercise():
+        models = await catalog.models("institution-a")
+        assert [item.id for item in models] == ["fast", "deep"]
+        assert all(item.reasoning == () for item in models)
+        with pytest.raises(HTTPException, match="not supported"):
+            await catalog.resolve("institution-a", ModelSelection(model="deep", reasoning="high"))
+        selection, _, provider = await catalog.resolve("institution-a", ModelSelection(model="deep"))
+        assert selection.reasoning == "default"
+        return [item async for item in provider.stream_events([])]
+
+    asyncio.run(exercise())
+    assert "reasoning_effort" not in calls[0][1]
+    assert "chat_template_kwargs" not in calls[0][1]
+
+
+@pytest.mark.parametrize(
+    "parameters",
+    [
+        {"messages": []},
+        {"api_key": "secret"},
+        {"reasoning_effort": None},
+        {"chat_template_kwargs": {"enable_thinking": "false"}},
+        {"chat_template_kwargs": {"enable_thinking": True, "reasoning_effort": "unsupported"}},
+        {"chat_template_kwargs": {"enable_thinking": True, "api_key": "secret"}},
+        {"thinking": None},
+        {"thinking": {"type": "disabled", "budget_tokens": 1024}},
+    ],
+)
+def test_reasoning_metadata_cannot_override_other_request_fields(monkeypatch, parameters):
+    gateway(monkeypatch, options=[{"id": "custom", "label": "Custom", "parameters": parameters}])
+    with pytest.raises(HTTPException, match="metadata is invalid"):
+        asyncio.run(ModelCatalog(settings()).models("institution-a"))
+
+
+def test_omitted_reasoning_resolves_to_configured_default(monkeypatch):
+    calls = gateway(monkeypatch)
+    catalog = ModelCatalog(settings())
+
+    async def exercise():
+        selection, _, provider = await catalog.resolve("institution-a", ModelSelection(model="deep"))
+        assert selection.reasoning == "high"
+        return [event async for event in provider.stream_events([])]
+
+    asyncio.run(exercise())
+    assert calls[0][1]["reasoning_effort"] == "high"
+
+
+@pytest.mark.parametrize("configured", [{}, {"reasoning_effort": "low"}])
+def test_unknown_default_keeps_provider_default_without_guessing(monkeypatch, configured):
+    gateway(monkeypatch, parameters=configured)
+    model = asyncio.run(ModelCatalog(settings()).models("institution-a"))[1].public()
+    assert model["default_reasoning"] == "default"
+    assert model["reasoning_options"][0] == {"id": "default", "label": "Provider default"}
+
+
+def test_nested_qwen_default_and_explicit_choice_reach_provider(monkeypatch):
+    options = [
+        {"id": "none", "label": "None", "parameters": {"chat_template_kwargs": {"enable_thinking": False}}},
+        *[
+            {
+                "id": effort,
+                "label": effort,
+                "parameters": {"chat_template_kwargs": {"enable_thinking": True, "reasoning_effort": effort}},
+            }
+            for effort in ("low", "xhigh")
+        ],
+    ]
+    calls = gateway(
+        monkeypatch,
+        parameters={
+            "chat_template_kwargs": {"enable_thinking": True, "reasoning_effort": "xhigh", "other_template_setting": 1}
+        },
+        options=options,
+    )
+    catalog = ModelCatalog(settings())
+
+    async def exercise():
+        model = (await catalog.models("institution-a"))[1].public()
+        assert model["default_reasoning"] == "xhigh"
+        assert [option["id"] for option in model["reasoning_options"]] == ["none", "low", "xhigh"]
+        for reasoning in ("default", "low", "none"):
+            selection, _, provider = await catalog.resolve(
+                "institution-a", ModelSelection(model="deep", reasoning=reasoning)
+            )
+            assert selection.reasoning == ("xhigh" if reasoning == "default" else reasoning)
+            _ = [event async for event in provider.stream_events([])]
+
+    asyncio.run(exercise())
+    assert [call[1]["chat_template_kwargs"] for call in calls] == [
+        {"enable_thinking": True, "reasoning_effort": "xhigh"},
+        {"enable_thinking": True, "reasoning_effort": "low"},
+        {"enable_thinking": False},
+    ]

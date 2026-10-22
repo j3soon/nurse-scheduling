@@ -25,7 +25,7 @@ import logging
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import aclosing
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Literal, Protocol, TypeVar
 
 from fastapi import HTTPException
@@ -43,11 +43,12 @@ from .context import (
     removal_event,
     retained_entries,
 )
+from .costs import CostTotals
 from .history import RECOVERY_UNAVAILABLE, EntryRow, RunKind, RunStatus
 from .lifecycle import AgentRun, RunSnapshot, SessionRuns
 from .optimizer import OptimizerArtifact, SessionOptimizer
 from .optimizer_tool import execute_optimizer_tool
-from .provider import ChatMessage, ProviderError, TokenUsage, ToolCapableChatProvider
+from .provider import ChatMessage, ProviderCall, ProviderError, TokenUsage, ToolCapableChatProvider
 from .sandbox import SandboxError, SandboxFactory
 from .session_event_projection import RunEvents, RunOutput
 from .session_event_stream import SessionEvent, SessionEventStream
@@ -182,6 +183,8 @@ class RunRecorder(Protocol):
     @property
     def enabled(self) -> bool: ...
 
+    async def save_provider_call(self, session_id: str, event: SessionEvent | None) -> bool: ...
+
     async def find_message(self, session_id: str, message_id: str) -> tuple[str, str] | None: ...
 
     async def message_stopped(self, session_id: str, message_id: str) -> bool: ...
@@ -284,6 +287,7 @@ class AgentSession:
     export_metadata: dict[str, Any] = field(default_factory=dict)
     model_selection: dict[str, str] | None = None
     provider_credential_id: str | None = None
+    cost_totals: CostTotals = field(default_factory=CostTotals)
     accepted_messages: dict[str, AcceptedMessage] = field(default_factory=dict)
     # Named Stop requests, including those for messages that have not arrived yet.
     stopped_message_ids: set[str] = field(default_factory=set)
@@ -328,6 +332,7 @@ class AgentSession:
             "schedule_yaml": self.schedule_yaml,
             "model_selection": self.model_selection,
             "provider_credential_id": self.provider_credential_id,
+            "cost_totals": self.cost_totals.public(),
             "frontend_version": self.frontend_version,
             "frontend_timezone": self.frontend_timezone,
             "downloads": list(self.downloads),
@@ -379,6 +384,7 @@ class AgentSession:
             revision=schedule_revision(state["schedule_yaml"]),
             model_selection=state.get("model_selection"),
             provider_credential_id=state.get("provider_credential_id"),
+            cost_totals=CostTotals.restored(state.get("cost_totals")),
             frontend_version=state.get("frontend_version"),
             frontend_timezone=state.get("frontend_timezone", "UTC"),
             export_metadata=state.get("export_metadata", {}),
@@ -425,13 +431,13 @@ class AgentSession:
 
         return unsubscribe
 
-    def publish(self, event: AgentSessionEvent) -> None:
+    def publish(self, event: AgentSessionEvent) -> SessionEvent | None:
         if self._events_closed:
             return
-        if self.event_stream is not None:
-            self.event_stream.publish(self.id, event)
+        publication = self.event_stream.publish(self.id, event) if self.event_stream is not None else None
         for listener in tuple(self._listeners):
             listener(event)
+        return publication
 
     async def events(self, after_id: int, *, force_reset: bool = False) -> AsyncGenerator[SessionEvent | None]:
         if self._events_closed:
@@ -686,6 +692,45 @@ class AgentSession:
             events.emit({"type": "history_trimmed", "dropped": dropped_history})
         return messages, dropped_history, history.used_chars
 
+    async def _report_provider_call(
+        self,
+        call: ProviderCall,
+        runtime: SessionRuntime,
+        output: RunOutput,
+        events: RunEvents,
+    ) -> None:
+        previous = output.calls.get(call.id)
+        if call == previous:
+            return
+        output.calls[call.id] = call
+        output.costs.update(call, previous)
+        self.cost_totals.update(call, previous)
+        data = asdict(call)
+        data["call_id"] = data.pop("id")
+        publication = events.emit(
+            {"type": "provider_call", **data, "reasoning": (runtime.selection or {}).get("reasoning", "default")}
+        )
+        saved = await runtime.recorder.save_provider_call(self.id, publication)
+        if not saved:
+            events.emit(
+                {
+                    "type": "warning",
+                    "message": "Provider cost details could not be saved yet. Recovery storage will retry.",
+                }
+            )
+            if previous is None and call.status == "pending":
+                # Do not incur a new provider charge without a durable attempt record.
+                raise ProviderError.for_user(
+                    "Cost recovery storage is unavailable, so the provider request was not started. Please try again."
+                )
+        events.emit(
+            {
+                "type": "cost_summary",
+                "conversation": {**self.cost_totals.public(), "version": publication.id if publication else 0},
+                "run": output.costs.public(),
+            }
+        )
+
     async def _execute_run(
         self,
         snapshot: RunSnapshot,
@@ -698,36 +743,50 @@ class AgentSession:
         context_chars: int,
     ) -> None:
         """Execute the agent and await workspace cleanup before returning."""
-        async with runtime.concurrency_limit:
-            agent_events = run_workspace(
-                runtime.provider,
-                runtime.sandbox_factory,
-                snapshot.schedule_yaml,
-                messages,
-                WorkspaceLimits.from_settings(runtime.settings),
-                take_steering=None if background else lambda close: runtime.store.take_steering(self.id, close),
-                execute_optimizer=lambda current_yaml, arguments: execute_optimizer_tool(
-                    runtime.session_optimizer, self.id, current_yaml, arguments, self.client_address, runtime.selection
-                ),
-                attachments=snapshot.uploads,
-                load_attachment=lambda upload: runtime.recorder.read_upload(self.id, self.owner_token, upload),
-                optimizer_result=artifact.content if artifact is not None else None,
-                optimizer_context=artifact.schedule_context if artifact is not None else None,
-                agent=self.agent,
-            )
-            async with aclosing(agent_events):
-                async for event in agent_events:
-                    self._save_run_messages(snapshot.run_id, self.agent.state.messages)
-                    wire_event = output.consume(event)
-                    if wire_event is not None:
-                        events.emit(wire_event)
-                    elif isinstance(event, TokenUsage):
-                        events.emit(
-                            {
-                                "type": "context_usage",
-                                **context_usage(context_chars, runtime.settings, event, runtime.provider),
-                            }
-                        )
+        try:
+            async with runtime.concurrency_limit:
+                agent_events = run_workspace(
+                    runtime.provider,
+                    runtime.sandbox_factory,
+                    snapshot.schedule_yaml,
+                    messages,
+                    WorkspaceLimits.from_settings(runtime.settings),
+                    take_steering=None if background else lambda close: runtime.store.take_steering(self.id, close),
+                    execute_optimizer=lambda current_yaml, arguments: execute_optimizer_tool(
+                        runtime.session_optimizer,
+                        self.id,
+                        current_yaml,
+                        arguments,
+                        self.client_address,
+                        runtime.selection,
+                    ),
+                    attachments=snapshot.uploads,
+                    load_attachment=lambda upload: runtime.recorder.read_upload(self.id, self.owner_token, upload),
+                    optimizer_result=artifact.content if artifact is not None else None,
+                    optimizer_context=artifact.schedule_context if artifact is not None else None,
+                    agent=self.agent,
+                )
+                async with aclosing(agent_events):
+                    async for event in agent_events:
+                        if isinstance(event, ProviderCall):
+                            await self._report_provider_call(event, runtime, output, events)
+                            continue
+                        self._save_run_messages(snapshot.run_id, self.agent.state.messages)
+                        wire_event = output.consume(event)
+                        if wire_event is not None:
+                            events.emit(wire_event)
+                        elif isinstance(event, TokenUsage):
+                            events.emit(
+                                {
+                                    "type": "context_usage",
+                                    **context_usage(context_chars, runtime.settings, event, runtime.provider),
+                                }
+                            )
+        finally:
+            for call in tuple(output.calls.values()):
+                if call.status == "pending":
+                    final = replace(call, status="reported" if call.cost_usd is not None else "unavailable")
+                    await _complete(self._report_provider_call(final, runtime, output, events))
 
     def _commit_run(
         self,

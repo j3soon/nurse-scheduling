@@ -27,6 +27,7 @@ from contextlib import aclosing, asynccontextmanager
 from datetime import datetime
 
 from .agent_types import (
+    AgentEvent,
     AgentMessageEnd,
     AgentReasoning,
     AgentSteering,
@@ -44,6 +45,7 @@ from .agent_types import (
 from .context import prepare_provider_request
 from .provider import (
     ChatMessage,
+    ProviderCall,
     ReasoningDelta,
     ResponseEnd,
     TextDelta,
@@ -79,7 +81,7 @@ async def agent_loop(
     max_tool_calls: int | None = None,
     run_messages: list[AgentMessage] | None = None,
     request_clock: Callable[[], datetime] | None = None,
-) -> AsyncIterator[AgentText | AgentReasoning | AgentToolStart | AgentToolUse]:
+) -> AsyncIterator[AgentEvent]:
     """Run the model/tool loop shared by agent capability layers."""
     registered = {tool.name: tool for tool in tools}
 
@@ -115,7 +117,7 @@ async def agent_loop(
                     elif isinstance(event, ReasoningDelta):
                         reasoning.append(event.text)
                         yield AgentReasoning(event.text)
-                    elif isinstance(event, TokenUsage):
+                    elif isinstance(event, (TokenUsage, ProviderCall)):
                         yield event
                     elif isinstance(event, ToolCallRequest):
                         calls = event.calls

@@ -370,6 +370,59 @@ def _running_details(running):
     return lines
 
 
+def _usd(value) -> str:
+    amount = Decimal(value)
+    if 0 < amount < Decimal("0.000001"):
+        return "<$0.000001"
+    text = f"{amount:,.6f}"
+    while text.endswith("0") and len(text.partition(".")[2]) > 4:
+        text = text[:-1]
+    return "$" + text
+
+
+def _model_cost_lines(message) -> list[str]:
+    """Always include saved model and cost details, independent of browser settings."""
+    lines = []
+    if selection := message.get("modelSelection"):
+        lines.append(f"Model: {selection['model']} · {selection['reasoning']}")
+    if summary := message.get("costSummary"):
+        calls = message.get("providerCalls", [])
+        running = message.get("status") == "pending"
+        known_pending = sum(call["status"] == "pending" and call.get("cost_usd") is not None for call in calls)
+        pending = summary["pending"] if running else 0
+        unavailable = summary["unavailable"] + (0 if running else max(0, summary["pending"] - known_pending))
+        text = f"Estimated turn cost: {_usd(summary['usd'])} · {summary['calls']} "
+        text += "call" if summary["calls"] == 1 else "calls"
+        if pending:
+            text += f" · {pending} pending"
+        if unavailable:
+            text += f" · {unavailable} unavailable"
+        lines.append(text)
+        for index, call in enumerate(calls, 1):
+            price = (
+                _usd(call["cost_usd"])
+                if call.get("cost_usd") is not None
+                else "Cost pending"
+                if call["status"] == "pending" and running
+                else "Cost unavailable"
+            )
+            lines.append(f"{index}. {call['model']} · {call.get('reasoning', 'default')} · {price}")
+            if call.get("response_model") and call["response_model"] != call["model"]:
+                lines.append("Reported model: " + call["response_model"])
+            if usage := call.get("usage"):
+                labels = [
+                    ("Input", "prompt_tokens"),
+                    ("Output", "completion_tokens"),
+                    ("Cached input", "cached_prompt_tokens"),
+                    ("Reasoning (included in output)", "reasoning_tokens"),
+                ]
+                lines.append(
+                    " · ".join(f"{label}: {usage[key]:,}" for label, key in labels if usage.get(key) is not None)
+                )
+            lines.append("Call: " + (call.get("provider_call_id") or call["call_id"]))
+    return lines
+
+
 def build_markdown_chat(messages, metadata):
     lines = [
         "# Schedule AI Chat",
@@ -401,7 +454,7 @@ def build_markdown_chat(messages, metadata):
                     lines += ["", entry["text"] or "[No message text]"]
                 else:
                     lines += ["", "### " + _activity_label(entry), "", "```text", _activity_text(entry), "```"]
-        details = []
+        details = _model_cost_lines(message)
         if "createdAt" in message:
             details.append("Sent: " + _iso(message["createdAt"]))
         status = message.get("status")
@@ -509,12 +562,16 @@ def build_html_chat(messages, metadata):
                 else ""
             )
             timing = f'<time datetime="{iso}" title="{escape_html(display)}">{escape_html(display)}{duration}</time>'
+        model_cost = "".join(
+            '<p class="activity-details" style="overflow-wrap:anywhere">' + escape_html(line) + "</p>"
+            for line in _model_cost_lines(message)
+        )
         rendered.append(f"""
       <article class="message {role}{source}">
         <div class="label">{escape_html(message_label(message))}</div>
         {uploads}
         {timeline}
-        {status}{timing}
+        {model_cost}{status}{timing}
       </article>""")
     uploads = ""
     if metadata.get("uploadedFiles"):

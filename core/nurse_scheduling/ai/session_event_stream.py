@@ -31,7 +31,9 @@ from .session_events import AgentSessionEvent
 # Serialized JSON bytes, including event IDs and types. SSE framing is added by HTTP.
 DEFAULT_SESSION_REPLAY_BYTES = 4 * 1024 * 1024
 DEFAULT_TOTAL_REPLAY_BYTES = 64 * 1024 * 1024
-REPLACEABLE_EVENTS = frozenset({"optimization_progress", "context_usage", "schedule_change"})
+REPLACEABLE_EVENTS = frozenset(
+    {"optimization_progress", "context_usage", "schedule_change", "provider_call", "cost_summary"}
+)
 # A restored stream continues this far past its last stored ID. A browser cursor from the
 # previous process can be ahead of storage, and must still fall inside the replaced range.
 RESTORE_CURSOR_GAP = 1_000_000
@@ -84,7 +86,10 @@ class _Replay:
 def _replacement_key(event: SessionEvent) -> tuple[str, object] | None:
     if event.type not in REPLACEABLE_EVENTS:
         return None
-    return event.type, event.data.get("job_id" if event.type == "optimization_progress" else "run_id")
+    field = (
+        "job_id" if event.type == "optimization_progress" else "call_id" if event.type == "provider_call" else "run_id"
+    )
+    return event.type, event.data.get(field)
 
 
 def _fold(recovery: list[SessionEvent], event: SessionEvent) -> list[SessionEvent]:
@@ -165,7 +170,7 @@ class SessionEventStream:
         # or None when storage cannot serve them.
         self.load_recovery: Callable[[str, int], Awaitable[tuple[int, list[SessionEvent]] | None]] | None = None
 
-    def publish(self, session_id: str, publication: AgentSessionEvent) -> None:
+    def publish(self, session_id: str, publication: AgentSessionEvent) -> SessionEvent:
         if session_id not in self._sessions and len(self._sessions) >= self._max_sessions:
             self.forget_session(next(iter(self._sessions)))
         replay = self._sessions.setdefault(session_id, _Replay())
@@ -185,6 +190,7 @@ class SessionEventStream:
             self.observer(session_id, event)
         for signal in self._signals.get(session_id, ()):
             signal.set()
+        return event
 
     def restore(self, session_id: str, stored_through: int) -> None:
         """Continue a restored session's IDs past storage and serve every reset from storage."""

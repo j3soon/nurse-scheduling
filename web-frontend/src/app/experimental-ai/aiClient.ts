@@ -20,6 +20,7 @@
 // This code is mostly AI generated.
 
 import type { SessionEvent, SessionStreamOptions } from './sessionEvents';
+import { isCostSummary, isProviderCallCost } from './costs';
 import {
   buildAuthHeaders,
   parseAuthRequirement,
@@ -118,6 +119,7 @@ export interface AvailableModel {
   id: string;
   name: string;
   context_tokens: number | null;
+  default_reasoning: string;
   reasoning_options: { id: string; label: string }[];
 }
 
@@ -132,7 +134,8 @@ export async function getModels(signal: AbortSignal, authToken: string | null, e
   if (typeof body.default_model !== 'string' || !Array.isArray(body.models)
     || !body.models.every((model: AvailableModel) => model && typeof model.id === 'string'
       && typeof model.name === 'string' && Array.isArray(model.reasoning_options)
-      && model.reasoning_options.some(option => option?.id === 'default')
+      && typeof model.default_reasoning === 'string'
+      && model.reasoning_options.some(option => option?.id === model.default_reasoning)
       && model.reasoning_options.every(option => option && typeof option.id === 'string' && typeof option.label === 'string'))) {
     throw new Error('The AI backend returned an invalid model list.');
   }
@@ -181,6 +184,15 @@ interface SessionStatusResponse {
 }
 
 interface SsePayload {
+  call_id?: unknown;
+  status?: unknown;
+  cost_usd?: unknown;
+  usage?: unknown;
+  provider_call_id?: unknown;
+  response_model?: unknown;
+  conversation?: unknown;
+  run?: unknown;
+  cost_summary?: unknown;
   model?: unknown;
   reasoning?: unknown;
   text?: unknown;
@@ -482,6 +494,10 @@ function consumeEvent(block: string, callbacks: SessionStreamOptions): void {
       incomplete: payload.incomplete === true,
     };
     events = [{ type: 'session_reset', reset }, ...recoveredEvents];
+    if (payload.cost_summary !== undefined) {
+      if (!isCostSummary(payload.cost_summary)) throw new Error('The AI backend returned invalid cost totals.');
+      events.push({ type: 'cost_summary', conversation: payload.cost_summary });
+    }
   } else {
     events = decodeEvent(eventType, payload);
   }
@@ -501,7 +517,18 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
   const emit = (event: SessionEvent) => events.push(runId === undefined ? event : { ...event, runId });
   if (runId) emit({ type: 'run_context', runId });
 
-  if (eventType === 'model_selection') {
+  if (eventType === 'provider_call') {
+    const call = { callId: payload.call_id, model: payload.model, reasoning: payload.reasoning,
+      status: payload.status, costUsd: payload.cost_usd, usage: payload.usage,
+      providerCallId: payload.provider_call_id, responseModel: payload.response_model };
+    if (!isProviderCallCost(call)) throw new Error('The AI backend returned invalid provider cost details.');
+    emit({ type: 'provider_call', call });
+  } else if (eventType === 'cost_summary') {
+    if (!isCostSummary(payload.conversation) || (payload.run !== undefined && !isCostSummary(payload.run))) {
+      throw new Error('The AI backend returned invalid cost totals.');
+    }
+    emit({ type: 'cost_summary', conversation: payload.conversation, run: payload.run });
+  } else if (eventType === 'model_selection') {
     if (typeof payload.model !== 'string' || typeof payload.reasoning !== 'string') {
       throw new Error('The AI backend returned invalid model settings.');
     }

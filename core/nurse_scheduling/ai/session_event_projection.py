@@ -35,7 +35,9 @@ from .agent_types import (
     AgentToolUse,
 )
 from .context import interrupted_entries
-from .provider import TokenUsage
+from .costs import CostTotals
+from .provider import ProviderCall, TokenUsage
+from .session_event_stream import SessionEvent
 from .session_events import AgentSessionEvent, AgentSessionRunEvent, AgentSessionTerminalEvent, TextEvent, ToolEndEvent
 from .transcript import AgentMessage
 from .workspace import AgentDownload, AgentScheduleChange
@@ -53,6 +55,8 @@ class RunOutput:
     usage: TokenUsage | None = None
     # The latest provider call holds the whole request, so it shows how full the context window is.
     last_call: TokenUsage | None = None
+    calls: dict[str, ProviderCall] = field(default_factory=dict)
+    costs: CostTotals = field(default_factory=CostTotals)
 
     def interrupted_entries(
         self, entries: Sequence[AgentMessage], stop_reason: Literal["aborted", "error"]
@@ -107,7 +111,7 @@ class RunOutput:
 class RunEvents:
     """Batch text for one run and defer its terminal event until finalization."""
 
-    def __init__(self, run_id: str, publish: Callable[[AgentSessionEvent], None]) -> None:
+    def __init__(self, run_id: str, publish: Callable[[AgentSessionEvent], SessionEvent | None]) -> None:
         self.run_id = run_id
         self._publish = publish
         self._pending: TextEvent | None = None
@@ -122,7 +126,7 @@ class RunEvents:
             self._publish(self._pending)
             self._pending = None
 
-    def emit(self, event: AgentSessionRunEvent) -> None:
+    def emit(self, event: AgentSessionRunEvent) -> SessionEvent | None:
         # Every replayable fragment identifies its run, even after run_start expires.
         event = event.copy()
         event["run_id"] = self.run_id
@@ -145,7 +149,8 @@ class RunEvents:
                 self._timer = asyncio.get_running_loop().call_later(0.025, self.flush)
         else:
             self.flush()
-            self._publish(event)
+            return self._publish(event)
+        return None
 
     def finish(self) -> None:
         self.flush()

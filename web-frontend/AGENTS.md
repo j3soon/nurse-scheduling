@@ -54,6 +54,9 @@ Use Playwright locator actions for form controls. Before interacting with
 statically rendered controls, wait for an observable result of client
 initialization, such as loaded backend options enabling Optimize.
 
+Treat transcript visibility preferences as display settings. Saved exports retain
+reasoning, tool activity, model selections, and costs.
+
 When comparing chat exports with the live transcript, identify the same message
 by its label or content. A foreground stream can prepend a system message after
 the export snapshot, so message position is not stable.

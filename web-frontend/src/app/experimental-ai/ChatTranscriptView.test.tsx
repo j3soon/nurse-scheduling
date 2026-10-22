@@ -39,6 +39,8 @@ it.each<{ label: string; content: string; activity: ActivityEntry[] }>([
     messages={[message]}
     showReasoning={false}
     showTools={false}
+    showCosts={true}
+    showModels={true}
     steeringAssistantId={null}
     isStreaming={false}
     conversationUnavailable={false}

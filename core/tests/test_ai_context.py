@@ -187,6 +187,7 @@ def test_legacy_recovery_preserves_the_next_provider_request_after_app_events_an
     assert set(state) == {
         "model_selection",
         "provider_credential_id",
+        "cost_totals",
         "downloads",
         "uploads",
         "schedule_yaml",

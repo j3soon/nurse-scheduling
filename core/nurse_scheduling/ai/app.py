@@ -215,7 +215,11 @@ async def _session_sse(
             data = event.data
             reset = cast(SessionResetData, data) if event.type == "session_reset" else None
             if reset is not None:
-                data = {**data, "active_run_id": session.snapshot.run_id if session.snapshot else None}
+                data = {
+                    **data,
+                    "active_run_id": session.snapshot.run_id if session.snapshot else None,
+                    "cost_summary": {**session.cost_totals.public(), "version": event.id},
+                }
             yield f"id: {event.id}\nevent: {event.type}\ndata: {json.dumps(data)}\n\n"
             if until_run is not None and (
                 (data.get("run_id") == until_run.id and event.type in TERMINAL_EVENTS)
@@ -378,12 +382,20 @@ def create_app(
     async def restore_session(request: Request, owner: str | None = Cookie(default=None, alias=OWNER_COOKIE)) -> None:
         """Load a saved session that is not in memory after a restart or eviction."""
         session_id = request.path_params.get("session_id")
-        if session_id is None or not recovery.enabled or owner is None or store.get(session_id) is not None:
+        if session_id is None:
             return
         if getattr(request.state, "export_link", False):
             # The signed link replaces browser ownership, so another browser's cookie must not reject it.
             return
-        await recovery.restore(session_id, owner)
+        if recovery.enabled and owner is not None and store.get(session_id) is None:
+            await recovery.restore(session_id, owner)
+        session = store.get(session_id)
+        if (
+            session is not None
+            and session.provider_credential_id is not None
+            and session.provider_credential_id != request.state.auth_credential_id
+        ):
+            raise HTTPException(status_code=404, detail="Chat session not found.")
 
     def refresh_owner_cookie(response: Response, owner: str | None) -> None:
         """Keep browser ownership available for the session's sliding lifetime."""

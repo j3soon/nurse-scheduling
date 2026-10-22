@@ -72,8 +72,11 @@ import {
 } from './assistantEvents';
 import { AI_CONVERSATION_STORAGE_KEY, type StoredChatConversation } from './chatConversation';
 import { isAuthenticationError } from './aiClient';
+import { latestCostSummary, replaceCall, type CostSummary, type ProviderCallCost } from './costs';
 
 interface StreamCallbacks {
+  onProviderCall?: (call: ProviderCallCost) => void;
+  onCostSummary?: (conversation: CostSummary, run?: CostSummary) => void;
   onModelSelection?: (selection: ModelSelection) => void;
   onDownload?: (id: string) => void;
   onWarning?: (message: string) => void;
@@ -102,6 +105,8 @@ interface StreamCallbacks {
 function dispatchPageEvent(event: SessionEvent, callbacks: StreamCallbacks): void {
   if (event.runId && event.type !== 'run_context' && event.type !== 'session_reset') callbacks.onRunContext?.(event.runId);
   switch (event.type) {
+    case 'provider_call': callbacks.onProviderCall?.(event.call); break;
+    case 'cost_summary': callbacks.onCostSummary?.(event.conversation, event.run); break;
     case 'model_selection': callbacks.onModelSelection?.(event.selection); break;
     case 'session_reset': callbacks.onReset?.(event.reset); break;
     case 'run_context': callbacks.onRunContext?.(event.runId); break;
@@ -186,6 +191,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   const [removingUploadId, setRemovingUploadId] = useState<string | null>(null);
   const [removingDownloadId, setRemovingDownloadId] = useState<string | null>(null);
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
+  const [costSummary, setCostSummary] = useState<CostSummary | null>(null);
   const updateContextUsage = useCallback((usage: ContextUsage) => setContextUsage(previous => (
     usage.usedTokens === undefined && previous?.usedTokens !== undefined
       ? { ...usage, usedTokens: previous.usedTokens, maxTokens: previous.maxTokens }
@@ -312,6 +318,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
           activeOptimization,
           backendVersion,
           contextUsage,
+          costSummary,
           backgroundAssistantId: lifecycle.current('background')?.id,
           trimmedHistoryCount,
           pendingRequest: (() => {
@@ -341,6 +348,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     activeOptimization,
     backendVersion,
     contextUsage,
+    costSummary,
     aiEndpoint,
     isClientReady,
     lifecycle,
@@ -486,7 +494,19 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       setError(message);
     };
     const ownsConversation = lifecycle.capture();
+    const updateBackgroundCosts = (update: (message: ChatMessage) => ChatMessage) => {
+      const runId = lifecycle.current('background')?.id;
+      setMessages(previous => {
+        const first = previous.find(message => message.role === 'assistant' && (message.runId ?? message.id) === runId);
+        return previous.map(message => message.id === first?.id ? update(message) : message);
+      });
+    };
     const handlers: StreamCallbacks = {
+      onProviderCall: call => updateBackgroundCosts(entry => ({ ...entry, providerCalls: replaceCall(entry.providerCalls, call) })),
+      onCostSummary: (conversation, run) => {
+        setCostSummary(previous => latestCostSummary(previous, conversation));
+        if (run) updateBackgroundCosts(entry => ({ ...entry, costSummary: run }));
+      },
       onModelSelection: modelSelection => updateBackgroundMessage(entry => ({ ...entry, modelSelection })),
       onReset: reset => {
         setMessages(previous => {
@@ -496,7 +516,8 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
             if (!reset.runIds.includes(runId)) return [message];
             if (message.role !== 'assistant' || keptRuns.has(runId)) return [];
             keptRuns.add(runId);
-            return [{ ...message, runId, content: '', activity: [], status: 'pending' as const, failureReason: undefined, responseCompletedAt: undefined }];
+            return [{ ...message, runId, content: '', activity: [], providerCalls: undefined, costSummary: undefined,
+              modelSelection: undefined, status: 'pending' as const, failureReason: undefined, responseCompletedAt: undefined }];
           });
         });
         setActiveOptimization(null);
@@ -724,6 +745,12 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       // Subscribe before submitting. Neither a fast terminal event nor a reconnect
       // should finish a different operation.
       const callbacks = scopedCallbacks<StreamCallbacks>({
+        onProviderCall: call => setMessages(previous => previous.map(message =>
+          message.id === initialAssistantId ? { ...message, providerCalls: replaceCall(message.providerCalls, call) } : message)),
+        onCostSummary: (conversation, run) => {
+          setCostSummary(previous => latestCostSummary(previous, conversation));
+          if (run) setMessages(previous => previous.map(message => message.id === initialAssistantId ? { ...message, costSummary: run } : message));
+        },
         onModelSelection: modelSelection => setMessages(previous => previous.map(message =>
           message.id === activeAssistantId ? { ...message, modelSelection } : message)),
         onDone: finishRun,
@@ -1051,6 +1078,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       setSessionRetentionSeconds(storedConversation.retentionSeconds);
       lastSessionEventIdRef.current = storedConversation.sessionEventId ?? 0;
       setContextUsage(storedConversation.contextUsage ?? null);
+      setCostSummary(storedConversation.costSummary ?? null);
       setActiveOptimization(storedConversation.activeOptimization
         ? { ...storedConversation.activeOptimization, points: storedConversation.activeOptimization.points ?? [] }
         : null);
@@ -1091,6 +1119,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     resetRuntime();
     setMessages([]);
     setContextUsage(null);
+    setCostSummary(null);
     setTrimmedHistoryCount(0);
     setConversationUnavailable(false);
     setSessionNotice(null);
@@ -1103,7 +1132,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     ownsConversation: lifecycle.capture(),
   });
   return {
-    messages, uploadedFiles, removingUploadId, removingDownloadId, contextUsage,
+    messages, uploadedFiles, removingUploadId, removingDownloadId, contextUsage, costSummary,
     activeSessionId, sessionExpiresAt, sessionRetentionSeconds, conversationUnavailable,
     sessionNotice, trimmedHistoryCount, isStreaming, isStopping, isReconnecting,
     activeOptimization, queuedMessages, steeringAssistantId,

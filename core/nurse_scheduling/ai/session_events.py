@@ -38,6 +38,24 @@ class ModelSelectionEvent(RunFields):
     reasoning: str
 
 
+class ProviderCallEvent(RunFields):
+    type: Literal["provider_call"]
+    call_id: str
+    model: str
+    reasoning: str
+    status: Literal["pending", "reported", "unavailable"]
+    cost_usd: str | None
+    usage: dict[str, Any] | None
+    provider_call_id: str | None
+    response_model: str | None
+
+
+class CostSummaryEvent(RunFields):
+    type: Literal["cost_summary"]
+    conversation: dict[str, Any]
+    run: dict[str, Any]
+
+
 class TextEvent(RunFields):
     type: Literal["delta", "reasoning"]
     text: str
@@ -178,6 +196,8 @@ AgentSessionTerminalEvent = RunDoneEvent | RunErrorEvent | RunStoppedEvent
 AgentSessionRunEvent = (
     RunStartEvent
     | ModelSelectionEvent
+    | ProviderCallEvent
+    | CostSummaryEvent
     | TextEvent
     | TruncatedEvent
     | RunStoppedEvent

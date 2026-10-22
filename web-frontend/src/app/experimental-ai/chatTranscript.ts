@@ -52,6 +52,8 @@ export interface ChatMessage extends ChatMessageContent {
   historyIndex?: number;
   runId?: string;
   modelSelection?: import('./aiClient').ModelSelection;
+  providerCalls?: import('./costs').ProviderCallCost[];
+  costSummary?: import('./costs').CostSummary;
   retry?: {
     question: string;
     requiresAttachments: boolean;

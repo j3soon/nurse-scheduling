@@ -30,8 +30,11 @@ export function ModelControls({ endpoint, token, disabled, onChange }: {
   const [selection, setSelection] = useState<ModelSelection>();
   const [error, setError] = useState<string>();
   const [reload, setReload] = useState(0);
+  const [loadedScope, setLoadedScope] = useState<string>();
   const choices = useRef(new Map<string, ModelSelection>());
   const scope = `${endpoint}\n${token ?? ''}`;
+  const requestScope = `${scope}\n${reload}`;
+  const ready = loadedScope === requestScope;
   const model = models.find(item => item.id === selection?.model);
   useEffect(() => {
     const controller = new AbortController();
@@ -42,10 +45,11 @@ export function ModelControls({ endpoint, token, disabled, onChange }: {
       const selected = result.models.find(item => item.id === saved?.model)
         ?? result.models.find(item => item.id === result.default_model) ?? result.models[0];
       if (!selected) throw new Error('No compatible chat models are available to this AI key.');
-      const reasoning = selected.reasoning_options.some(option => option.id === saved?.reasoning) ? saved!.reasoning : 'default';
+      const reasoning = selected.reasoning_options.some(option => option.id === saved?.reasoning) ? saved!.reasoning : selected.default_reasoning;
       const next = { model: selected.id, reasoning };
       setModels(result.models);
       setSelection(next);
+      setLoadedScope(requestScope);
       setError(undefined);
       onChange(next);
     }).catch((failure: unknown) => {
@@ -54,7 +58,7 @@ export function ModelControls({ endpoint, token, disabled, onChange }: {
       }
     });
     return () => controller.abort();
-  }, [endpoint, token, scope, reload, onChange]);
+  }, [endpoint, token, scope, requestScope, onChange]);
 
   const select = (next: ModelSelection) => {
     choices.current.set(`${scope}\n${next.model}`, next);
@@ -65,11 +69,11 @@ export function ModelControls({ endpoint, token, disabled, onChange }: {
   return <div className="flex flex-wrap items-center gap-3 px-2 text-xs text-gray-700">
     <label className="flex min-w-0 max-w-full items-center gap-2">Model
       <select aria-label="AI model" className="min-w-0 max-w-64 rounded-lg border border-gray-300 bg-white p-2"
-        disabled={disabled || !selection || !!error} value={selection?.model ?? ''}
+        disabled={disabled || !ready || !!error} value={selection?.model ?? ''}
         onChange={event => {
           const target = models.find(item => item.id === event.target.value)!;
           const saved = choices.current.get(`${scope}\n${target.id}`);
-          select({ model: target.id, reasoning: target.reasoning_options.some(option => option.id === saved?.reasoning) ? saved!.reasoning : 'default' });
+          select({ model: target.id, reasoning: target.reasoning_options.some(option => option.id === saved?.reasoning) ? saved!.reasoning : target.default_reasoning });
         }}>
         {!selection && <option value="">Loading models…</option>}
         {models.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
@@ -77,7 +81,7 @@ export function ModelControls({ endpoint, token, disabled, onChange }: {
     </label>
     {model && model.reasoning_options.length > 1 && <label className="flex items-center gap-2">Reasoning
       <select aria-label="Reasoning" className="rounded-lg border border-gray-300 bg-white p-2"
-        disabled={disabled || !!error} value={selection?.reasoning}
+        disabled={disabled || !ready || !!error} value={selection?.reasoning}
         onChange={event => select({ model: model.id, reasoning: event.target.value })}>
         {model.reasoning_options.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
       </select>

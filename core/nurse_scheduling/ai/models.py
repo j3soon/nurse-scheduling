@@ -49,6 +49,9 @@ class ProviderProfile(BaseModel):
     default_model: str = Field(min_length=1, max_length=256)
 
 
+REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+
+
 class ReasoningOption(BaseModel):
     """Gateway metadata describing an exact supported request configuration."""
 
@@ -62,13 +65,13 @@ class ReasoningOption(BaseModel):
         # Metadata cannot override routing, messages, tools, or streaming options.
         if self.id == "default" or not self.parameters:
             raise ValueError("Reasoning options must have parameters and cannot replace Default")
-        if set(self.parameters) - {"reasoning_effort", "thinking"}:
+        if set(self.parameters) - {"reasoning_effort", "thinking", "chat_template_kwargs"}:
             raise ValueError("Unsupported reasoning parameter")
         effort = self.parameters.get("reasoning_effort")
-        if effort is not None and effort not in {"none", "minimal", "low", "medium", "high", "xhigh", "max"}:
+        if "reasoning_effort" in self.parameters and effort not in REASONING_EFFORTS:
             raise ValueError("Unsupported reasoning effort")
         thinking = self.parameters.get("thinking")
-        if thinking is not None:
+        if "thinking" in self.parameters:
             if not isinstance(thinking, dict) or set(thinking) - {"type", "budget_tokens"}:
                 raise ValueError("Invalid thinking configuration")
             if thinking.get("type") not in {"enabled", "disabled", "adaptive"}:
@@ -78,6 +81,17 @@ class ReasoningOption(BaseModel):
                 raise ValueError("Thinking budget must be a positive integer")
             if thinking.get("type") == "disabled" and budget is not None:
                 raise ValueError("Disabled thinking cannot have a budget")
+        if "chat_template_kwargs" in self.parameters:
+            template = self.parameters["chat_template_kwargs"]
+            if (
+                not isinstance(template, dict)
+                or set(template) - {"enable_thinking", "reasoning_effort"}
+                or "enable_thinking" not in template
+                or type(template["enable_thinking"]) is not bool
+            ):
+                raise ValueError("Chat template reasoning must set enable_thinking to a boolean")
+            if "reasoning_effort" in template and template["reasoning_effort"] not in REASONING_EFFORTS:
+                raise ValueError("Unsupported chat template reasoning effort")
         return self
 
 
@@ -87,17 +101,32 @@ class AvailableModel:
     name: str
     reasoning: tuple[ReasoningOption, ...] = ()
     context_tokens: int | None = None
+    default_reasoning: str = "default"
 
     def public(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "name": self.name,
             "context_tokens": self.context_tokens,
+            "default_reasoning": self.default_reasoning,
             "reasoning_options": [
-                {"id": "default", "label": "Default"},
+                *([{"id": "default", "label": "Provider default"}] if self.default_reasoning == "default" else []),
                 *[{"id": option.id, "label": option.label} for option in self.reasoning],
             ],
         }
+
+
+def _matches_parameters(expected: dict, configured: dict) -> bool:
+    """Match only advertised reasoning fields, without publishing deployment secrets."""
+    return all(
+        key in configured
+        and (
+            isinstance(configured[key], dict) and _matches_parameters(value, configured[key])
+            if isinstance(value, dict)
+            else type(value) is type(configured[key]) and value == configured[key]
+        )
+        for key, value in expected.items()
+    )
 
 
 class ModelCatalog:
@@ -154,7 +183,7 @@ class ModelCatalog:
                 raise HTTPException(503, "AI model discovery is unavailable. Please try again.") from None
             metadata = (
                 {
-                    item["model_name"]: item.get("model_info", {})
+                    item["model_name"]: item
                     for item in info
                     if isinstance(item, dict) and isinstance(item.get("model_name"), str)
                 }
@@ -167,7 +196,8 @@ class ModelCatalog:
                     if not isinstance(item, dict) or not isinstance(item.get("id"), str):
                         continue
                     model_id = item["id"]
-                    details = {**item, **metadata.get(model_id, {})}
+                    deployment = metadata.get(model_id, {})
+                    details = {**item, **deployment.get("model_info", {})}
                     if details.get("mode", "chat") != "chat" or details.get("supports_function_calling") is False:
                         continue
                     # Explicit choices avoid guessing effort levels from model names.
@@ -176,6 +206,9 @@ class ModelCatalog:
                     )
                     if len({option.id for option in choices}) != len(choices):
                         raise TypeError
+                    configured = deployment.get("litellm_params") or {}
+                    defaults = [option.id for option in choices if _matches_parameters(option.parameters, configured)]
+                    default_reasoning = defaults[0] if len(defaults) == 1 else "default"
                     limit = next(
                         (
                             details[key]
@@ -185,7 +218,13 @@ class ModelCatalog:
                         None,
                     )
                     models.append(
-                        AvailableModel(model_id, str(details.get("chat_display_name") or model_id), choices, limit)
+                        AvailableModel(
+                            model_id,
+                            str(details.get("chat_display_name") or model_id),
+                            choices,
+                            limit,
+                            default_reasoning,
+                        )
                     )
             except (ValueError, TypeError):
                 raise HTTPException(503, "AI model reasoning metadata is invalid.") from None
@@ -200,6 +239,8 @@ class ModelCatalog:
         model = next((item for item in models if item.id == selection.model), None)
         if model is None:
             raise HTTPException(422, "The selected model is not available to this AI key.")
+        if selection.reasoning == "default":
+            selection = selection.model_copy(update={"reasoning": model.default_reasoning})
         parameters = {}
         if selection.reasoning != "default":
             option = next((item for item in model.reasoning if item.id == selection.reasoning), None)
@@ -207,7 +248,7 @@ class ModelCatalog:
                 raise HTTPException(422, "The selected reasoning option is not supported by this model.")
             parameters = option.parameters
         settings = replace(self.settings, provider_api_key=profile.api_key.get_secret_value(), provider_model=model.id)
-        provider = OpenAiCompatibleProvider(settings, include_usage=True, parameters=parameters)
+        provider = OpenAiCompatibleProvider(settings, include_usage=True, parameters=parameters, include_costs=True)
         provider.context_tokens = model.context_tokens
         provider._context_tokens_loaded = True
         return selection, settings, provider

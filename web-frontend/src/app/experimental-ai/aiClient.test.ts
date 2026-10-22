@@ -21,6 +21,7 @@
 
 import {
   AiStaleRunError,
+  decodeEvent,
   PRODUCTION_AI_API_URL,
   cancelOptimization,
   createSession,
@@ -1099,4 +1100,33 @@ describe('AI client', () => {
     ]);
   });
 
+});
+
+
+describe('provider cost events', () => {
+  const totals = { usd: '0.000123', calls: 1, pending: 0, unavailable: 0 };
+  it('decodes provider-reported costs and reasoning usage without adding output tokens', () => {
+    const events = decodeEvent('provider_call', { run_id: 'r', call_id: 'c', model: 'alias', reasoning: 'high',
+      status: 'reported', cost_usd: '0.000123', provider_call_id: 'gateway-c', response_model: 'actual',
+      usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120, reasoning_tokens: 10 } });
+    expect(events.at(-1)).toMatchObject({ type: 'provider_call', runId: 'r', call: {
+      callId: 'c', costUsd: '0.000123', usage: { completion_tokens: 20, reasoning_tokens: 10 },
+    } });
+    expect(decodeEvent('cost_summary', { conversation: totals, run: totals }).at(-1))
+      .toEqual({ type: 'cost_summary', conversation: totals, run: totals });
+  });
+  it('rejects malformed totals and prices before applying any events', () => {
+    expect(() => decodeEvent('cost_summary', { conversation: { ...totals, usd: 'NaN' } })).toThrow('invalid cost totals');
+    expect(() => decodeEvent('provider_call', { run_id: 'r', cost_usd: -1 })).toThrow('invalid provider cost');
+  });
+  it('applies the saved conversation total after older totals in a replacement replay', async () => {
+    const recovery = { events: [{ type: 'cost_summary', data: { conversation: { ...totals, usd: '0.000100' } } }],
+      cost_summary: totals, incomplete: false };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      `id: 9\nevent: session_reset\ndata: ${JSON.stringify(recovery)}\n\n`,
+    ])));
+    const events: SessionEvent[] = [];
+    await streamSessionEvents('s', { onEvent: event => events.push(event) }, new AbortController().signal, null);
+    expect(events.at(-1)).toEqual({ type: 'cost_summary', conversation: totals });
+  });
 });

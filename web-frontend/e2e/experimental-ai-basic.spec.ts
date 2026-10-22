@@ -327,7 +327,7 @@ test('asks about the current schedule and renders a streamed answer', async ({ p
 
   await expect(page.getByText('The image and schedule were received.')).toBeVisible();
   await expect(page.getByText('Backend v0.4.3-backend')).toBeVisible();
-  await expect(page.getByText('Chat history context: 25.0%')).toBeVisible();
+  await expect(page.getByText('Context 25.0% used')).toBeVisible();
   const userTime = page.locator('article').filter({ hasText: 'Who works first?' }).locator('time');
   await expect(userTime).toHaveAttribute('datetime', /T/);
   await expect(userTime).toHaveAttribute('title', /\d{4}/);
@@ -367,7 +367,7 @@ test('explains unavailable context usage when the backend omits it', async ({ pa
   await page.goto('/experimental-ai');
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Question');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
-  const usage = page.getByText('Chat history context: unavailable');
+  const usage = page.getByText('Context unavailable');
   await expect(usage).toBeVisible();
   await expect(usage).toHaveAttribute('title', /The AI server has not reported context usage/);
 });
@@ -1074,8 +1074,9 @@ test.describe('phone chat keyboard', () => {
     expect(requests.messageBodies).toHaveLength(0);
     await page.getByRole('button', { name: 'Send', exact: true }).tap();
     await expect(page.getByText('Phone reply.', { exact: true })).toBeVisible();
-    await page.getByText('Chat history context:', { exact: false }).tap();
-    await expect(page.getByText('characters in retained chat history.', { exact: false })).toBeVisible();
+    const usage = page.getByText('Context 25.0% used', { exact: true });
+    await expect(usage).toBeVisible();
+    expect(await usage.evaluate(element => element.closest('details'))).toBeNull();
   });
 });
 
@@ -1110,14 +1111,16 @@ test('keeps the composer above a reduced visual viewport and ignores pinch zoom'
 test('selects model and reasoning settings independently between chat turns', async ({ page }) => {
   const captured = await mockAiBackend(page, ['Selected model answered.'], false, undefined, [], true, [], {
     default_model: 'fast', models: [
-      { id: 'fast', name: 'Fast', context_tokens: null, reasoning_options: [{ id: 'default', label: 'Default' }] },
-      { id: 'deep', name: 'Deep', context_tokens: 32000, reasoning_options: [
-        { id: 'default', label: 'Default' }, { id: 'off', label: 'Off' }, { id: 'high', label: 'High' },
+      { id: 'fast', name: 'Fast', context_tokens: null, default_reasoning: 'default', reasoning_options: [{ id: 'default', label: 'Default' }] },
+      { id: 'deep', name: 'Deep', context_tokens: 32000, default_reasoning: 'off', reasoning_options: [
+        { id: 'off', label: 'Off' }, { id: 'high', label: 'High' },
       ] },
     ],
   });
   await page.goto('/experimental-ai');
   await page.getByLabel('AI model').selectOption('deep');
+  await expect(page.getByLabel('Reasoning', { exact: true })).toHaveValue('off');
+  await expect(page.getByLabel('Reasoning', { exact: true }).locator('option')).toHaveText(['Off', 'High']);
   await page.getByLabel('Reasoning', { exact: true }).selectOption('high');
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('First question');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
@@ -1130,3 +1133,52 @@ test('selects model and reasoning settings independently between chat turns', as
   await expect.poll(() => captured.messageBodies.length).toBe(2);
   expect(JSON.parse(captured.messageBodies[1]).selection).toEqual({ model: 'fast', reasoning: 'default' });
 });
+
+
+for (const [cost, display] of [['0.0123', '$0.0123'], ['4.45E-322', '<$0.000001']]) {
+  test(`keeps conversation cost ${cost} across reload and shows call usage`, async ({ page }) => {
+    await mockAiBackend(page, ['Costed answer.'], false, undefined, [], true, [
+      { type: 'model_selection', data: { model: 'deep', reasoning: 'high' } },
+      { type: 'provider_call', data: { call_id: 'call-one', model: 'deep', reasoning: 'high', status: 'reported',
+        cost_usd: cost, provider_call_id: 'gateway-one', response_model: 'deep',
+        usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120, reasoning_tokens: 10 } } },
+      { type: 'provider_call', data: { call_id: 'call-one', model: 'deep', reasoning: 'high', status: 'reported',
+        cost_usd: cost, provider_call_id: 'gateway-one', response_model: 'deep',
+        usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120, reasoning_tokens: 10 } } },
+      { type: 'cost_summary', data: { conversation: { usd: cost, calls: 1, pending: 0, unavailable: 0 },
+        run: { usd: cost, calls: 1, pending: 0, unavailable: 0 } } },
+    ]);
+    await page.goto('/experimental-ai');
+    await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Cost question');
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await expect(page.getByText(`Est. cost: ${display}`)).toBeVisible();
+    const conversationCost = page.getByText(`Est. cost: ${display}`, { exact: true });
+    await expect(conversationCost).toBeVisible();
+    await expect(conversationCost).toHaveAttribute('title', /Estimated LLM cost across this conversation/);
+    expect(await page.getByText(/^Context /).evaluate((element, footerText) => {
+      const cost = [...document.querySelectorAll('span')].find(node => node.textContent?.trim() === footerText);
+      return !!cost && element.closest('p') === cost.closest('p')
+        && !element.closest('details')
+        && !!(element.compareDocumentPosition(cost) & Node.DOCUMENT_POSITION_FOLLOWING);
+    }, `Est. cost: ${display}`)).toBe(true);
+    await expect(page.getByText('deep · high', { exact: true })).toBeVisible();
+    await page.getByRole('checkbox', { name: 'Show turn costs' }).uncheck();
+    await expect(page.getByText(/^Estimated turn cost:/)).toHaveCount(0);
+    await page.getByRole('checkbox', { name: 'Show models', exact: true }).uncheck();
+    await expect(page.getByText('deep · high', { exact: true })).toHaveCount(0);
+    await expect(conversationCost).toBeVisible();
+    await page.reload();
+    await expect(page.getByRole('checkbox', { name: 'Show turn costs' })).not.toBeChecked();
+    await expect(page.getByRole('checkbox', { name: 'Show models', exact: true })).not.toBeChecked();
+    await expect(page.getByText(/^Estimated turn cost:/)).toHaveCount(0);
+    await page.getByRole('checkbox', { name: 'Show turn costs' }).check();
+    await page.getByRole('checkbox', { name: 'Show models', exact: true }).check();
+    await expect(page.getByText('deep · high', { exact: true })).toBeVisible();
+    await page.getByText(`Estimated turn cost: ${display} · 1 call`).click();
+    await expect(page.getByText('Call: gateway-one')).toHaveCount(1);
+    await expect(page.getByText(/Reasoning \(included in output\): 10/)).toBeVisible();
+    await page.reload();
+    await expect(page.getByText(`Est. cost: ${display}`)).toBeVisible();
+    await expect(page.getByText(`Estimated turn cost: ${display} · 1 call`)).toBeVisible();
+  });
+}

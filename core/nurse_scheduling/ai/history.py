@@ -360,12 +360,24 @@ class ChatHistory:
         """
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT state, extract(epoch FROM expires_at) FROM chat_sessions "
+                "SELECT state, extract(epoch FROM expires_at), auth_credential_id FROM chat_sessions "
                 "WHERE id = %s AND owner_hash = %s AND expires_at > now()",
                 (session_id, _owner_hash(owner)),
             ).fetchone()
             if row is None:
                 return None
+            # Rebuild totals from durable call events, including records before a process crash.
+            # Streamed updates replace a call's contribution by its stable call ID.
+            costs = connection.execute(
+                "WITH calls AS (SELECT DISTINCT ON (data->>'call_id') data "
+                "FROM chat_session_events WHERE session_id = %s AND type = 'provider_call' "
+                "ORDER BY data->>'call_id', event_id DESC) "
+                "SELECT coalesce(sum((data->>'cost_usd')::numeric), 0)::text, count(*), "
+                "count(*) FILTER (WHERE data->>'cost_usd' IS NULL) FROM calls",
+                (session_id,),
+            ).fetchone()
+            if costs[1] or "cost_totals" in row[0]:
+                row[0]["cost_totals"] = {"usd": costs[0], "calls": costs[1], "pending": 0, "unavailable": costs[2]}
             entries = connection.execute(
                 "SELECT e.type, e.payload, r.status FROM chat_session_entries e LEFT JOIN chat_runs r ON r.id = e.run_id "
                 "WHERE e.session_id = %s AND e.type <> 'tool_result' "
@@ -398,6 +410,7 @@ class ChatHistory:
             ).fetchall()
         return {
             "state": row[0],
+            "credential_id": row[2],
             "uploads": [SandboxAttachment(data=None, **metadata) for metadata in row[0].get("uploads", [])],
             "removed_upload_paths": [
                 attachment_path(SandboxAttachment(filename, "", None, id=upload_id), 0)

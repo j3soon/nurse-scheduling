@@ -27,9 +27,9 @@ import { ModelControls } from './ModelControls';
 
 const catalog = {
   default_model: 'fast', models: [
-    { id: 'fast', name: 'Fast', context_tokens: null, reasoning_options: [{ id: 'default', label: 'Default' }] },
-    { id: 'deep', name: 'Deep', context_tokens: 32000, reasoning_options: [
-      { id: 'default', label: 'Default' }, { id: 'off', label: 'Off' }, { id: 'high', label: 'High' },
+    { id: 'fast', name: 'Fast', context_tokens: null, default_reasoning: 'default', reasoning_options: [{ id: 'default', label: 'Default' }] },
+    { id: 'deep', name: 'Deep', context_tokens: 32000, default_reasoning: 'off', reasoning_options: [
+      { id: 'off', label: 'Off' }, { id: 'high', label: 'High' },
     ] },
   ],
 };
@@ -45,6 +45,8 @@ it('shows supported reasoning choices and restores the choice when switching bac
   expect(fetch.mock.calls[0][1].headers.Authorization).toBe('Bearer chat-key');
   expect(screen.queryByLabelText('Reasoning')).not.toBeInTheDocument();
   await user.selectOptions(screen.getByLabelText('AI model'), 'deep');
+  expect(screen.getByLabelText('Reasoning')).toHaveValue('off');
+  expect(screen.queryByRole('option', { name: 'Default', exact: true })).not.toBeInTheDocument();
   await user.selectOptions(screen.getByLabelText('Reasoning'), 'high');
   await user.selectOptions(screen.getByLabelText('AI model'), 'fast');
   expect(onChange).toHaveBeenLastCalledWith({ model: 'fast', reasoning: 'default' });
@@ -61,6 +63,7 @@ it('loads models with the new credential and resets choices that it cannot use',
   const view = render(<ModelControls endpoint="https://ai.example" token="first" disabled={false} onChange={onChange} />);
   await waitFor(() => expect(onChange).toHaveBeenLastCalledWith({ model: 'fast', reasoning: 'default' }));
   view.rerender(<ModelControls endpoint="https://ai.example" token="second" disabled={false} onChange={onChange} />);
+  expect(screen.getByLabelText('AI model')).toBeDisabled();
   expect(onChange).toHaveBeenLastCalledWith(undefined);
   await waitFor(() => expect(onChange).toHaveBeenLastCalledWith({ model: 'fast', reasoning: 'default' }));
   expect(vi.mocked(fetch).mock.calls.at(-1)?.[1]?.headers).toEqual({ Authorization: 'Bearer second' });

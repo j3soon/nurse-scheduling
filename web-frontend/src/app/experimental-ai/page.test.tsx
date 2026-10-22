@@ -447,7 +447,7 @@ describe('ExperimentalAiPage', () => {
     render(<ExperimentalAiPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
-    const usage = await screen.findByText('Chat history context: unavailable');
+    const usage = await screen.findByText('Context unavailable');
     expect(usage).toHaveAttribute('title', expect.stringContaining('The AI server has not reported context usage.'));
     expect(usage.closest('form')).toBeInTheDocument();
   });
@@ -460,14 +460,14 @@ describe('ExperimentalAiPage', () => {
     });
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     render(<ExperimentalAiPage />);
-    expect(screen.queryByText(/Chat history context:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Context /)).not.toBeInTheDocument();
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
-    const usage = await screen.findByText('Chat history context: 25.0%');
+    const usage = await screen.findByText('Context 25.0% used');
     expect(usage).toHaveAttribute('title', expect.stringContaining('500 of 2,000 characters'));
     expect(usage.closest('form')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Start new chat' }));
-    expect(screen.queryByText(/Chat history context:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Context /)).not.toBeInTheDocument();
   });
 
   it.each([131072, undefined])('shows request tokens beside the history budget with limit %s', async maxTokens => {
@@ -482,9 +482,10 @@ describe('ExperimentalAiPage', () => {
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
-    const usage = await screen.findByText(/Chat history context: 30\.0%/);
-    expect(usage).toHaveTextContent(`Chat history context: 30.0% · Tokens: 4,321 / ${maxTokens ? '131,072' : 'unavailable'}`);
-    expect(usage).toHaveAttribute('title', expect.stringContaining('latest model request'));
+    const usage = await screen.findByText(/Context 30\.0% used/);
+    expect(usage).toHaveAttribute('title', expect.stringContaining('600 of 2,000 characters'));
+    const tokens = screen.getByText(`Last: 4,321 / ${maxTokens ? '131,072' : 'unavailable'}`);
+    expect(tokens).toHaveAttribute('title', "Latest call's input + output tokens / model input limit. Not total conversation usage.");
   });
 
   it('restores the transcript and live session after navigating away', async () => {
@@ -2939,6 +2940,35 @@ describe('ExperimentalAiPage', () => {
     expect(contents).toContain('Recovered Q2');
     expect(contents).toContain('Recovered system Q1');
     expect(contents).toContain('Recovered system Q2');
+  });
+
+  it('replaces saved call details when a recovery snapshot replaces the answer', async () => {
+    const call = { callId: 'old', model: 'model', reasoning: 'high', status: 'reported' as const,
+      costUsd: '0.1', providerCallId: 'old-gateway', responseModel: null, usage: null };
+    mockRunEvents.mockImplementation(async (_session: string, _question: string, callbacks: SessionStreamOptions) => {
+      callbacks.onEvent({ type: 'delta', text: 'Costed answer' });
+      callbacks.onEvent({ type: 'provider_call', call });
+      callbacks.onEvent({ type: 'cost_summary', conversation: { usd: '0.1', calls: 1, pending: 0, unavailable: 0, version: 2 },
+        run: { usd: '0.1', calls: 1, pending: 0, unavailable: 0 } });
+    });
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Cost question');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Estimated turn cost: $0.1000 · 1 call');
+    const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
+    act(() => {
+      stream.onEvent({ type: 'session_reset', reset: { runIds: ['user-run-1'], activeRunId: null, terminalRunIds: ['user-run-1'], incomplete: false } });
+      stream.onEvent({ type: 'run_start', runId: 'user-run-1', trigger: 'user' });
+      stream.onEvent({ type: 'delta', runId: 'user-run-1', text: 'Restored answer' });
+      stream.onEvent({ type: 'provider_call', runId: 'user-run-1', call: { ...call, callId: 'new', providerCallId: 'new-gateway', costUsd: '0.2' } });
+      stream.onEvent({ type: 'cost_summary', runId: 'user-run-1', conversation: { usd: '0.2', calls: 1, pending: 0, unavailable: 0, version: 20 },
+        run: { usd: '0.2', calls: 1, pending: 0, unavailable: 0 } });
+      stream.onEvent({ type: 'done', runId: 'user-run-1' });
+    });
+    expect(screen.getByText('Estimated turn cost: $0.2000 · 1 call')).toBeInTheDocument();
+    expect(screen.queryByText('Call: old-gateway')).not.toBeInTheDocument();
+    expect(screen.getByText('Call: new-gateway')).toBeInTheDocument();
   });
 
 });
