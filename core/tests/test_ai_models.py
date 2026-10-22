@@ -21,6 +21,7 @@
 
 import asyncio
 import json
+from dataclasses import replace
 
 import httpx
 import pytest
@@ -30,6 +31,9 @@ from nurse_scheduling.ai.models import ModelCatalog, ModelSelection
 from nurse_scheduling.ai.provider import OpenAiCompatibleProvider
 
 from . import test_ai_basic as basic
+from .test_ai_history import recorded_history
+
+__all__ = ["recorded_history"]
 
 
 def gateway(monkeypatch, *, parameters=None, options=None, metadata_status=200):
@@ -174,6 +178,69 @@ def test_invalid_profile_does_not_include_secret_in_exception():
     with pytest.raises(ValueError) as error:
         ModelCatalog(value)
     assert "private-secret" not in str(error.value)
+
+
+@pytest.mark.parametrize("status", [422, 503])
+def test_optimizer_review_reports_model_discovery_failure(monkeypatch, status, recorded_history):
+    calls = gateway(monkeypatch)
+    app = basic.create_test_app(settings=replace(settings(), history_postgres_url="postgresql://unused"), provider=None)
+    headers = {"Authorization": "Bearer institution-a-ai-token"}
+    with basic.AuthenticatedTestClient(app, headers=headers) as client:
+        session_id = basic.create_session(client)
+        selection = {"model": "deep", "reasoning": "high"}
+        assert (
+            client.post(
+                f"/sessions/{session_id}/messages", json={"message": "Help", "selection": selection}
+            ).status_code
+            == 200
+        )
+        cursor = app.state.session_event_stream.cursor(session_id)
+
+        async def unavailable(*_args):
+            raise HTTPException(status, "The selected model is temporarily unavailable.")
+
+        with monkeypatch.context() as failed_discovery:
+            failed_discovery.setattr(ModelCatalog, "resolve", unavailable)
+            client.portal.call(app.state.session_optimizer._on_completion, session_id, "Review", None, selection)
+
+        events = app.state.session_event_stream.events_after(session_id, cursor)
+        assert events[0].type == "run_start"
+        assert events[-1].type == "error"
+        assert events[-1].data["message"] == "The selected model is temporarily unavailable."
+        assert not app.state.runs.busy(session_id)
+        assert not app.state.session_store.get(session_id).active
+        assert recorded_history["starts"][-1]["model"] == "deep"
+        assert recorded_history["finishes"][-1][1:3] == ("failed", "provider_error")
+        # A later request can still review the retained optimizer result.
+        assert client.post(f"/sessions/{session_id}/messages", json={"message": "Try again"}).status_code == 200
+    assert len(calls) == 2
+
+
+def test_stop_cancels_optimizer_review_during_model_discovery(monkeypatch):
+    app = basic.create_test_app(settings=settings(), provider=None)
+    headers = {"Authorization": "Bearer institution-a-ai-token"}
+    with basic.AuthenticatedTestClient(app, headers=headers) as client:
+        session_id = basic.create_session(client)
+
+        async def exercise():
+            started = asyncio.Event()
+
+            async def delayed(*_args):
+                started.set()
+                await asyncio.Event().wait()
+
+            monkeypatch.setattr(ModelCatalog, "resolve", delayed)
+            review = asyncio.create_task(app.state.session_optimizer._on_completion(session_id, "Review", None))
+            await asyncio.wait_for(started.wait(), timeout=1)
+            assert app.state.runs.busy(session_id)
+            app.state.runs.stop(session_id)
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(review, timeout=1)
+            assert not app.state.runs.busy(session_id)
+            assert not app.state.session_store.get(session_id).active
+            assert app.state.session_event_stream.events_after(session_id)[-1].type == "stopped"
+
+        client.portal.call(exercise)
 
 
 @pytest.mark.parametrize("metadata_status", [200, 403, 404])

@@ -936,6 +936,7 @@ class AgentSession:
         owner: str | None = None,
         credential_id: str | None = None,
         artifact: OptimizerArtifact | None = None,
+        prepare_runtime: Callable[[], Awaitable[SessionRuntime]] | None = None,
     ) -> None:
         """Own every run phase and finalize once, regardless of trigger or transport."""
         run.begun = True
@@ -960,6 +961,14 @@ class AgentSession:
         events = RunEvents(run.id, self.publish)
 
         try:
+            preparation_error = None
+            if prepare_runtime is not None:
+                try:
+                    runtime = await prepare_runtime()
+                    settings = runtime.settings
+                except HTTPException as exc:
+                    # Record the failed review before publishing its terminal error.
+                    preparation_error = ProviderError.for_user(str(exc.detail))
             if recorder.enabled:
                 prompt_seq = self.next_entry_seq
                 self.next_entry_seq += 1
@@ -969,7 +978,7 @@ class AgentSession:
                         run.id,
                         question,
                         prompt_seq,
-                        model=settings.provider_model,
+                        model=(runtime.selection or {}).get("model", settings.provider_model),
                         attachment_count=len(snapshot.uploads),
                         kind="background" if background else "foreground",
                         message_id=run.message_id,
@@ -987,6 +996,8 @@ class AgentSession:
                     raise HTTPException(status_code=503, detail=RECOVERY_UNAVAILABLE)
             events.emit({"type": "run_start", "trigger": "optimizer" if background else "user"})
             run.ready.set_result(True)
+            if preparation_error is not None:
+                raise preparation_error
             if run.message_id is not None and run.message_id in self.stopped_message_ids:
                 # A Stop for this message arrived first, so its question never runs.
                 outcome = RunOutcome(terminal={"type": "stopped"})

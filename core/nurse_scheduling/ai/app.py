@@ -430,16 +430,17 @@ def create_app(
         session = store.get(session_id)
         if session is None:
             return
-        selected_runtime = await runtime_for(session.provider_credential_id, selection or session.model_selection)
+        selection = selection or session.model_selection
         run = runs.start(
             session_id,
             lambda run: session.run(
                 run,
                 prompt,
-                runtime=selected_runtime,
+                runtime=replace(runtime, selection=selection),
                 background=True,
                 artifact=artifact,
                 credential_id=session.provider_credential_id,
+                prepare_runtime=lambda: runtime_for(session.provider_credential_id, selection),
             ),
             background=True,
         )
