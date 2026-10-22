@@ -29,6 +29,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+import sentry_sdk.scrubber  # noqa: F401 - init_sentry loads it while captured fakes sentry_sdk.
 from fastapi.testclient import TestClient
 
 from nurse_scheduling.sentry import CLIENT_ADDRESS_TAG
@@ -684,6 +685,7 @@ def test_reading_another_browsers_job_is_reported(captured, suffix):
     client, job_id = _completed_job()
     try:
         captured.events.clear()
+        client.cookies.delete(CLIENT_ID_COOKIE_NAME)
         client.cookies.set(CLIENT_ID_COOKIE_NAME, uuid4().hex)
 
         response = client.get(f"/optimize/{job_id}{suffix}")
@@ -698,6 +700,7 @@ def test_cancelling_another_browsers_job_is_reported(captured):
     client = _client()
     job_id = client.post("/optimize", data={"yaml_content": "apiVersion: alpha"}).json()["id"]
     captured.events.clear()
+    client.cookies.delete(CLIENT_ID_COOKIE_NAME)
     client.cookies.set(CLIENT_ID_COOKIE_NAME, uuid4().hex)
 
     response = client.post(f"/optimize/{job_id}/cancel")
@@ -711,6 +714,7 @@ def test_failed_control_of_another_browsers_job_is_reported(captured, method, su
     client = _client()
     job_id = client.post("/optimize", data={"yaml_content": "apiVersion: alpha"}).json()["id"]
     captured.events.clear()
+    client.cookies.delete(CLIENT_ID_COOKIE_NAME)
     client.cookies.set(CLIENT_ID_COOKIE_NAME, uuid4().hex)
 
     response = getattr(client, method)(f"/optimize/{job_id}{suffix}")
@@ -723,6 +727,7 @@ def test_foreign_job_access_escalates_on_distinct_jobs(captured):
     client = _client(suspicion_escalate_count=3)
     job_ids = [client.post("/optimize", data={"yaml_content": "apiVersion: alpha"}).json()["id"] for _ in range(3)]
     captured.events.clear()
+    client.cookies.delete(CLIENT_ID_COOKIE_NAME)
     client.cookies.set(CLIENT_ID_COOKIE_NAME, uuid4().hex)
 
     for job_id in (job_ids[0], job_ids[0], job_ids[1], job_ids[2]):
@@ -743,6 +748,7 @@ def test_downloading_another_browsers_job_is_reported(captured):
     try:
         captured.events.clear()
 
+        client.cookies.delete(CLIENT_ID_COOKIE_NAME)
         client.cookies.set(CLIENT_ID_COOKIE_NAME, uuid4().hex)
 
         response = client.get(f"/optimize/{job_id}/xlsx")
@@ -786,6 +792,7 @@ def test_deleting_another_browsers_job_is_reported(captured):
     try:
         captured.events.clear()
 
+        client.cookies.delete(CLIENT_ID_COOKIE_NAME)
         client.cookies.set(CLIENT_ID_COOKIE_NAME, uuid4().hex)
 
         response = client.delete(f"/optimize/{job_id}")

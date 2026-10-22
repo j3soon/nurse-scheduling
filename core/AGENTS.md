@@ -506,6 +506,9 @@ from the trust-based local harness.
 
 ## Testing
 - Normal tests live under `tests/`.
+- When replacing a browser cookie in a test, delete the existing cookie first
+  or match its domain and path. Setting only its name can add a duplicate.
+  HTTP client versions can send those duplicates in different orders.
 - Derive a fixture timestamp from the current clock whenever the code under test
   compares it against real time, such as a Redis `EXPIREAT` or a retention
   window. A hardcoded date passes until that instant arrives and then fails for
