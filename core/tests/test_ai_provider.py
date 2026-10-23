@@ -954,7 +954,7 @@ def test_chat_uuid_reaches_tools_compaction_and_runs_after_restore(monkeypatch):
         if request.url.path.endswith("/models"):
             return httpx.Response(200, json={"data": [{"id": "test-model", "context_length": 32000}]})
         body = json.loads(request.content)
-        summary = str(body["messages"][0].get("content", "")).startswith("Summarize the supplied")
+        summary = str(body["messages"][0].get("content", "")).startswith("You are a context summarization assistant.")
         captured.append(
             (
                 request.headers.get("x-session-id"),

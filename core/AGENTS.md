@@ -119,6 +119,9 @@ from the trust-based local harness.
   Use Pi agent v1.0.0 as a reference for AI chat architecture and design philosophy.
   Clone external reference code under the ignored repository-root `artifacts/`
   directory and record the inspected revision in related developer documentation.
+  Preserve upstream compaction prompt text exactly and record its revision and
+  hashes. Keep project-specific workspace guidance in the main system prompt
+  instead of duplicating it in compaction prompts.
 - `AgentSession` owns conversation changes, steering, applied schedules, and
   the shared foreground and optimizer-review execution path. `SessionStore`
   owns access, expiry, and retained-byte budgets. `SessionRecovery` owns ordered

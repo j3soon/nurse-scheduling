@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from .agent_types import AgentCompaction
-from .context import apply_compaction, history_chars
+from .context import SUMMARY_PREFIX, apply_compaction, history_chars
 from .provider import (
     ChatMessage,
     ProviderCall,
@@ -79,7 +79,7 @@ def estimate_context_tokens(messages: Sequence[ChatMessage], tools: Sequence[dic
         if usage and source == identity and usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0) > 0:
             return max(estimate, usage["prompt_tokens"] + usage["completion_tokens"] + trailing)
         # A summary invalidates usage from the history it replaced.
-        if str(message.get("content", "")).startswith("[Conversation summary]\n"):
+        if message.get("_compaction_summary"):
             break
         trailing += estimate_tokens(message)
     return estimate
@@ -164,6 +164,9 @@ class ContextCompactor:
         if not force and not self.needed(messages, tools):
             return
         body = _conversation(messages)
+        previous_summary = ""
+        if body and body[0].get("_compaction_summary"):
+            previous_summary = body.pop(0)["content"].removeprefix(SUMMARY_PREFIX + "\n")
         if len(body) < 2:
             return
         window = self.window or 32768
@@ -184,48 +187,52 @@ class ContextCompactor:
             cut = len(body)
         older, recent = body[:cut], body[cut:]
         keep = sum(not message.get("_tool_image", False) for message in recent)
-        prompt = "\n\n".join(load_system_prompt_sections(load_system_prompt_entries(COMPACTION_MANIFEST)))
+        entries = load_system_prompt_entries(COMPACTION_MANIFEST)
+        prompts = dict(zip((entry["id"] for entry in entries), load_system_prompt_sections(entries), strict=True))
         max_summary_chars = min(16000, max(256, reserve * 2), max(256, self.history_limit // 4))
-        input_chars = (window - reserve) * 4 - len(prompt) - max_summary_chars - 512
+        instruction_chars = max(len(prompt) for key, prompt in prompts.items() if key != "compaction-system")
+        input_chars = (
+            (window - reserve) * 4 - len(prompts["compaction-system"]) - instruction_chars - max_summary_chars - 512
+        )
         if input_chars < 256:
             return
-        serialized = _serialize(older)
-        summary = ""
+        turn_start = None
+        if cut < len(body) and body[cut]["role"] == "assistant":
+            turn_start = next(
+                (
+                    index
+                    for index in range(cut - 1, -1, -1)
+                    if body[index]["role"] == "user" and not body[index].get("_tool_image")
+                ),
+                None,
+            )
+        history = older if turn_start is None else body[:turn_start]
+        summary = previous_summary
         try:
-            # Incremental summaries also handle a very large tool result or a provider
-            # overflow. Each request stays below the discovered input budget.
-            for offset in range(0, len(serialized), input_chars):
-                chunk = serialized[offset : offset + input_chars]
-                text, finish, ended, text_chars = [], None, False, 0
-                request = [
-                    ChatMessage(role="system", content=prompt),
-                    ChatMessage(
-                        role="user",
-                        content=(
-                            f"Summary character limit: {max_summary_chars}.\n"
-                            f"<previous-summary>\n{summary}\n</previous-summary>\n"
-                            f"<conversation>\n{chunk}\n</conversation>"
-                        ),
-                    ),
-                ]
-                events = self.provider.stream_events(request, [])
+            if history:
+                events = self._summarize(history, prompts, input_chars, max_summary_chars, summary)
                 async with aclosing(events):
                     async for event in events:
                         if isinstance(event, ProviderCall):
                             yield event
-                        elif isinstance(event, TextDelta):
-                            text.append(event.text)
-                            text_chars += len(event.text)
-                            if text_chars > max_summary_chars:
-                                raise ProviderError("Compaction summary exceeded its size limit")
-                        elif isinstance(event, ToolCallRequest) and event.calls:
-                            raise ProviderError("Compaction requested a tool")
-                        elif isinstance(event, ResponseEnd):
-                            finish = event.finish_reason
-                            ended = True
-                summary = "".join(text).strip()
-                if not summary or not ended or finish == "length":
-                    raise ProviderError("Compaction returned an empty or incomplete summary")
+                        else:
+                            summary = event
+            if turn_start is not None:
+                # Pi summarizes older history and the active turn prefix separately.
+                history_text = summary or "No prior history."
+                events = self._summarize(
+                    body[turn_start:cut],
+                    prompts,
+                    input_chars,
+                    max_summary_chars,
+                    initial_prompt="compaction-turn-prefix",
+                )
+                async with aclosing(events):
+                    async for event in events:
+                        if isinstance(event, ProviderCall):
+                            yield event
+                        else:
+                            summary = f"{history_text}\n\n---\n\n**Turn Context (split turn):**\n\n{event}"
             entry = CompactionEntry(summary, keep, self.tokens(messages, tools))
             if history_chars(apply_compaction(messages, entry)) >= history_chars(messages):
                 raise ProviderError("Compaction did not reduce context")
@@ -234,3 +241,48 @@ class ContextCompactor:
             logger.warning("AI context compaction failed. Original context retained.", exc_info=True)
             return
         yield AgentCompaction(entry)
+
+    async def _summarize(
+        self,
+        messages: Sequence[ChatMessage],
+        prompts: dict[str, str],
+        input_chars: int,
+        max_summary_chars: int,
+        summary: str = "",
+        *,
+        initial_prompt: str = "context-compaction",
+    ) -> AsyncIterator[ProviderCall | str]:
+        """Use Pi's initial or update instructions with explicit conversation data."""
+        serialized = _serialize(messages)
+        # Retain bounded chunking when a history cannot fit in one request.
+        for offset in range(0, len(serialized), input_chars):
+            chunk = serialized[offset : offset + input_chars]
+            instruction = prompts["compaction-update" if summary else initial_prompt]
+            content = f"<conversation>\n{chunk}\n</conversation>\n\n"
+            if summary:
+                content += f"<previous-summary>\n{summary}\n</previous-summary>\n\n"
+            content += instruction + f"\n\nSummary character limit: {max_summary_chars}."
+            request = [
+                ChatMessage(role="system", content=prompts["compaction-system"]),
+                ChatMessage(role="user", content=content),
+            ]
+            text, finish, ended, text_chars = [], None, False, 0
+            events = self.provider.stream_events(request, [])
+            async with aclosing(events):
+                async for event in events:
+                    if isinstance(event, ProviderCall):
+                        yield event
+                    elif isinstance(event, TextDelta):
+                        text.append(event.text)
+                        text_chars += len(event.text)
+                        if text_chars > max_summary_chars:
+                            raise ProviderError("Compaction summary exceeded its size limit")
+                    elif isinstance(event, ToolCallRequest) and event.calls:
+                        raise ProviderError("Compaction requested a tool")
+                    elif isinstance(event, ResponseEnd):
+                        finish = event.finish_reason
+                        ended = True
+            summary = "".join(text).strip()
+            if not summary or not ended or finish == "length":
+                raise ProviderError("Compaction returned an empty or incomplete summary")
+        yield summary

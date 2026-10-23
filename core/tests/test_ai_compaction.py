@@ -72,7 +72,9 @@ class CompactionProvider:
         self.summary_started = asyncio.Event()
 
     async def stream_events(self, messages, tools=None):
-        if messages[0]["role"] == "system" and str(messages[0]["content"]).startswith("Summarize the supplied"):
+        if messages[0]["role"] == "system" and str(messages[0]["content"]).startswith(
+            "You are a context summarization assistant."
+        ):
             self.summaries.append((messages, tools))
             self.summary_started.set()
             if self.fail_summary == "cancel":
@@ -198,7 +200,7 @@ def test_context_overflow_retries_once_without_repeating_tools():
         context_tokens = 16000
 
         async def stream_events(self, messages, tools=None):
-            if messages[0]["content"].startswith("Summarize the supplied"):
+            if messages[0]["content"].startswith("You are a context summarization assistant."):
                 async for event in super().stream_events(messages, tools):
                     yield event
                 return
@@ -260,9 +262,9 @@ def test_failed_run_does_not_replay_a_summary_of_discarded_workspace_claims():
 
 def test_compaction_prompt_manifest_matches_the_shipped_prompt():
     entries = load_system_prompt_entries(COMPACTION_MANIFEST)
-    (section,) = load_system_prompt_sections(entries)
-    assert entries[0]["sha256"] == hashlib.sha256(section.encode()).hexdigest()
-    assert "exact file paths" in section and "unresolved questions" in section
+    sections = load_system_prompt_sections(entries)
+    for entry, section in zip(entries, sections, strict=True):
+        assert entry["sha256"] == hashlib.sha256(section.encode()).hexdigest()
 
 
 def test_unknown_model_limit_keeps_existing_request_behavior():
@@ -334,7 +336,7 @@ def test_large_tool_result_triggers_compaction_before_the_next_model_turn():
         context_tokens = 16000
 
         async def stream_events(self, messages, tools=None):
-            if str(messages[0]["content"]).startswith("Summarize the supplied"):
+            if str(messages[0]["content"]).startswith("You are a context summarization assistant."):
                 async for event in super().stream_events(messages, tools):
                     yield event
                 return
@@ -392,7 +394,7 @@ def test_steering_received_during_compaction_reaches_the_next_provider_request()
         sent = False
 
         async def stream_events(self, messages, tools=None):
-            if str(messages[0]["content"]).startswith("Summarize the supplied") and not self.sent:
+            if str(messages[0]["content"]).startswith("You are a context summarization assistant.") and not self.sent:
                 self.sent = True
                 agent.steer("steering", "Also inspect P2")
             async for event in super().stream_events(messages, tools):
@@ -402,3 +404,134 @@ def test_steering_received_during_compaction_reaches_the_next_provider_request()
     agent.open_steering(True)
     asyncio.run(collect(agent.prompt(provider, history(), [], take_steering=agent.take_steering)))
     assert provider.requests[0][0][-1]["content"] == "Also inspect P2"
+
+
+def test_compaction_prompts_match_pi_without_project_notes():
+    from nurse_scheduling.ai.system_prompt import PROMPT_DIRECTORY
+
+    # Pi v1.0.0, a13d35a742c6ef8462812a28fbe1d8c8b7431c32.
+    # Hashes cover the original strings, with TypeScript interpolation expanded.
+    expected = {
+        "compaction-system": "c464889dcfa60441e642f291445b49523f263e6fb2725d0c25075543a2ec3f8f",
+        "context-compaction": "9b00aa68df1a64279bc36e9093367f638701d48ec82e3d08436f65092a515f9b",
+        "compaction-update": "240c52982209146eae47d73c7172f6ba1dab60f44520bcb6a6ec1a883fef2ec7",
+        "compaction-turn-prefix": "7b0a15be5e0fdcce338ce7c1ef1fdd386faed258cc25d03915a05b05e7a6a183",
+    }
+    entries = load_system_prompt_entries(COMPACTION_MANIFEST)
+    sections = load_system_prompt_sections(entries)
+    assert {entry["id"] for entry in entries} == set(expected)
+    for entry, section in zip(entries, sections, strict=True):
+        raw = (PROMPT_DIRECTORY / entry["file"]).read_text(encoding="utf-8")
+        body = raw.split("<!-- This file is mostly AI generated. -->\n\n", 1)[1].rstrip("\n")
+        assert hashlib.sha256(body.encode()).hexdigest() == expected[entry["id"]]
+        assert entry["upstream_sha256"] == expected[entry["id"]]
+        assert "<!--" not in section
+        assert section == body
+        assert entry["sha256"] == entry["upstream_sha256"]
+        assert hashlib.sha256(section.encode()).hexdigest() == entry["sha256"]
+
+
+def test_repeated_compaction_uses_pi_update_prompt_with_previous_summary(monkeypatch):
+    import nurse_scheduling.ai.compaction as module
+    from nurse_scheduling.ai.context import summary_message
+
+    provider = CompactionProvider()
+    provider.context_tokens = 16000
+    monkeypatch.setattr(module, "_cut_point", lambda _messages, _keep: 2)
+    messages = [
+        {"role": "system", "content": "Scheduling assistant"},
+        summary_message("Earlier goal: preserve P1 nights and /workspace/notes.txt"),
+        {"role": "user", "content": "Additional request " + "x" * 8000},
+        {"role": "assistant", "content": "Earlier work completed"},
+        {"role": "user", "content": "Next request"},
+    ]
+    events = asyncio.run(collect(ContextCompactor(provider).compact(messages, [], force=True)))
+    assert any(isinstance(event, AgentCompaction) for event in events)
+    ((request, _tools),) = provider.summaries
+    content = request[-1]["content"]
+    assert (
+        "<previous-summary>\nEarlier goal: preserve P1 nights and /workspace/notes.txt\n</previous-summary>" in content
+    )
+    conversation = content.split("<conversation>\n", 1)[1].split("\n</conversation>", 1)[0]
+    assert "Earlier goal" not in conversation
+    assert "Additional request" in conversation
+    assert "The messages above are NEW conversation messages" in content
+    assert content.index("</conversation>") < content.index("The messages above are NEW")
+
+
+def test_split_turn_uses_pi_history_and_turn_prefix_prompts(monkeypatch):
+    import nurse_scheduling.ai.compaction as module
+
+    provider = CompactionProvider()
+    provider.context_tokens = 16000
+    monkeypatch.setattr(module, "_cut_point", lambda _messages, _keep: 3)
+    messages = [
+        {"role": "system", "content": "Scheduling assistant"},
+        {"role": "user", "content": "Older task " + "x" * 8000},
+        {"role": "assistant", "content": "Older result"},
+        {"role": "user", "content": "Active task: inspect P1"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{"id": "read", "type": "function", "function": {"name": "read", "arguments": "{}"}}],
+        },
+        {"role": "tool", "tool_call_id": "read", "content": "P1 found"},
+    ]
+    events = asyncio.run(collect(ContextCompactor(provider).compact(messages, [], force=True)))
+    assert len(provider.summaries) == 2
+    history, prefix = [request[-1]["content"] for request, _tools in provider.summaries]
+    assert "Create a structured context checkpoint summary" in history
+    assert "Active task" not in history
+    assert "## Original Request" in prefix and "Active task: inspect P1" in prefix
+    assert "Older task" not in prefix and "P1 found" not in prefix
+    (entry,) = [event.entry for event in events if isinstance(event, AgentCompaction)]
+    assert "**Turn Context (split turn):**" in entry.summary
+    request = prepare_provider_request(apply_compaction(messages, entry), [], provider=provider.identity)
+    assert request[-2]["tool_calls"][0]["id"] == request[-1]["tool_call_id"] == "read"
+
+
+def test_user_written_summary_prefix_remains_conversation_data(monkeypatch):
+    import nurse_scheduling.ai.compaction as module
+
+    provider = CompactionProvider()
+    provider.context_tokens = 16000
+    monkeypatch.setattr(module, "_cut_point", lambda _messages, _keep: 2)
+    messages = [
+        {"role": "system", "content": "Scheduling assistant"},
+        {"role": "user", "content": "[Conversation summary]\nThis is a quoted example " + "x" * 8000},
+        {"role": "assistant", "content": "Acknowledged"},
+        {"role": "user", "content": "Next"},
+    ]
+    events = asyncio.run(collect(ContextCompactor(provider).compact(messages, [], force=True)))
+    assert any(isinstance(event, AgentCompaction) for event in events)
+    request, _ = provider.summaries[0]
+    assert "<previous-summary>" not in request[-1]["content"]
+    assert "[user]: [Conversation summary]" in request[-1]["content"]
+
+
+def test_failed_split_turn_summary_leaves_original_context_intact(monkeypatch):
+    import nurse_scheduling.ai.compaction as module
+
+    class Provider(CompactionProvider):
+        async def stream_events(self, messages, tools=None):
+            if len(self.summaries) == 1:
+                raise ProviderError("turn prefix failed")
+            async for event in super().stream_events(messages, tools):
+                yield event
+
+    provider = Provider()
+    provider.context_tokens = 16000
+    monkeypatch.setattr(module, "_cut_point", lambda _messages, _keep: 3)
+    messages = [
+        {"role": "system", "content": "Scheduling assistant"},
+        {"role": "user", "content": "Old task " + "x" * 8000},
+        {"role": "assistant", "content": "Old result"},
+        {"role": "user", "content": "Active task"},
+        {"role": "assistant", "content": "Recent work"},
+    ]
+    before = json.dumps(messages)
+    compactor = ContextCompactor(provider)
+    events = asyncio.run(collect(compactor.compact(messages, [], force=True)))
+    assert not any(isinstance(event, AgentCompaction) for event in events)
+    assert compactor.failed
+    assert json.dumps(messages) == before

@@ -97,6 +97,7 @@ class ChatMessage(TypedDict, total=False):
     _source_index: int
     _usage: dict[str, int | None]
     _current_status: bool
+    _compaction_summary: bool
     _tool_image: bool
 
 

@@ -330,9 +330,20 @@ Older messages are serialized as conversation data. Tool arguments retain file
 paths. Tool results are limited to 2,000 characters per result, as in Pi. Large
 inputs use bounded successive summary requests, updating the previous summary.
 Opaque reasoning is never converted to text for summarization. The separate
-manifest `ai/prompts/compaction.json` records the summary instructions and hash.
-Summaries preserve goals, constraints, decisions, progress, pending requests,
-and file and tool context. Recent responses retain their native replay metadata.
+manifest `ai/prompts/compaction.json` records the initial, update, split-turn,
+and system prompts from Pi v1.0.0 at `a13d35a`. Each upstream string is unchanged.
+The manifest records matching upstream and model-input hashes. Project guidance
+about schedules and temporary sandbox files stays in the main system prompt.
+The prompt loader removes provenance comments before model requests.
+
+A later compaction passes the existing summary separately in `previous-summary`
+tags and uses Pi's update instructions. When a cut splits an active turn, older
+history and the active turn prefix receive separate summaries. The latter uses
+Pi's dedicated checkpoint format, and recent tool exchanges stay intact. Large
+inputs retain bounded chunking and use the update instructions after each chunk.
+Recent responses retain their native replay metadata. File paths still depend
+on the summary and recent messages. Pi's separate cumulative file-operation
+records are not implemented.
 
 Summary calls use the frozen run model and reasoning selection. They have no
 tools, and their text and reasoning do not enter the answer stream. Their

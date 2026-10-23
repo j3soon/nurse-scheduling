@@ -351,7 +351,7 @@ SUMMARY_PREFIX = "[Conversation summary]"
 
 def summary_message(summary: str) -> ChatMessage:
     """Represent a compaction summary as conversation data."""
-    return ChatMessage(role="user", content=f"{SUMMARY_PREFIX}\n{summary}")
+    return ChatMessage(role="user", content=f"{SUMMARY_PREFIX}\n{summary}", _compaction_summary=True)
 
 
 def _recent_messages(projected: list[tuple[bool, ChatMessage]], count: int) -> list[tuple[bool, ChatMessage]]:
@@ -404,6 +404,7 @@ def compatible_provider_messages(
         message.pop("_usage", None)
         message.pop("_tool_image", None)
         message.pop("_current_status", None)
+        message.pop("_compaction_summary", None)
         compatible = provider is not None and source == asdict(provider)
         if message["role"] == "assistant" and not compatible:
             for name in (
