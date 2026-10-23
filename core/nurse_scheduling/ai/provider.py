@@ -26,6 +26,7 @@ import logging
 import re
 from collections.abc import AsyncIterator, Sequence
 from contextlib import aclosing
+from copy import copy
 from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal, Protocol, TypedDict
@@ -321,10 +322,17 @@ class OpenAiCompatibleProvider:
         self._include_attempts = include_attempts
         self._parameters = parameters or {}
         self._include_costs = include_costs
+        self._session_id: str | None = None
         self.identity = ProviderIdentity(settings.provider_base_url.rstrip("/"), settings.provider_model)
         self.context_tokens: int | None = None
         self._context_tokens_loaded = False
         self._context_tokens_lock = asyncio.Lock()
+
+    def with_session_id(self, session_id: str) -> "OpenAiCompatibleProvider":
+        """Bind a stable conversation ID without changing a shared provider."""
+        provider = copy(self)
+        provider._session_id = session_id
+        return provider
 
     async def _load_context_tokens(self) -> None:
         """Read and cache the configured model's context limit when metadata is available."""
@@ -374,6 +382,8 @@ class OpenAiCompatibleProvider:
             await self._load_context_tokens()
         timeout = httpx.Timeout(self._settings.provider_timeout_seconds, connect=10.0)
         headers = {"Authorization": f"Bearer {self._settings.provider_api_key}"}
+        if self._session_id is not None:
+            headers["x-session-id"] = self._session_id
         payload: dict[str, Any] = {
             **self._parameters,
             "model": self._settings.provider_model,

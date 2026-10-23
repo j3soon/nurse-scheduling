@@ -166,6 +166,10 @@ from the trust-based local harness.
   order. If the gateway omits reasoning choices, hide the selector and preserve
   its defaults. Keep the session's current selection separate from each accepted
   run's frozen selection. Changing session settings must not change an active run.
+- Bind the stable `AgentSession.id` to provider calls through a run-scoped
+  provider. Keep the same `x-session-id` for retries, tool follow-ups, compaction,
+  optimizer reviews, and restored sessions. Never mutate a provider shared by
+  concurrent chats or use the per-attempt call ID for session affinity.
 - Track provider costs by HTTP attempt ID. Replace streamed updates instead of
   adding them, preserve missing prices as unknown, and use decimal USD totals.
   Restore totals from saved call records and test replay before acknowledgement.

@@ -282,6 +282,26 @@ for operators. **Retry** resends the original text in a fresh sandbox. Uploaded
 files stay available for that retry. If an upload did not finish, **Prepare retry**
 restores the text and requires the files to be attached again before sending.
 
+## Provider session affinity
+
+Each run binds `AgentSession.id` to a provider copy through `with_session_id`.
+The copy preserves the selected model, reasoning parameters, credentials, and
+provider metadata. The shared provider stays unchanged, so concurrent chats
+cannot overwrite each other's session ID. Optional session binding also keeps
+existing providers without this capability usable.
+
+The Chat Completions adapter sends `x-session-id` on every completion request.
+Tool follow-ups, timeout retries, compaction summaries, and optimizer reviews
+use the same bound provider. Later runs and restored sessions use the same chat
+UUID. Each billable attempt still has its own `ProviderCall.id`.
+
+This follows [Pi v1.0.0's provider session options][pi-completions], using its
+`x-session-id` header format for the LiteLLM gateway. Enable `session_affinity`
+in the gateway's `router_settings.optional_pre_call_checks`. A live routing
+check can compare `x-litellm-model-id` response headers for successive requests,
+as described in the [gateway example][litellm-session-affinity]. The header does
+not change the prompt or add model-specific request parameters.
+
 ## Automatic context compaction
 
 `ContextCompactor` follows [Pi v1.0.0 compaction][pi-compaction]. Before a model
@@ -1183,3 +1203,5 @@ The investigated alternatives below were not adopted, except where noted:
 [pi-completions]: https://github.com/earendil-works/pi/blob/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/ai/src/api/openai-completions.ts
 
 [pi-compaction]: https://github.com/earendil-works/pi/blob/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/coding-agent/src/core/compaction/compaction.ts
+
+[litellm-session-affinity]: https://github.com/j3soon/local-llm-notes/blob/main/examples/basic-secure-api/cloudflare/litellm/README.md#qwen-load-balancing

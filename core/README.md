@@ -634,6 +634,14 @@ Without a reported context limit, the existing history limits still apply.
 A confirmed context overflow permits one compact-and-retry attempt. PostgreSQL
 recovery retains successful summaries across service restarts.
 
+The chat sends its stable session UUID in the `x-session-id` header on each
+completion request, including retries, tool follow-ups, compaction summaries,
+and optimizer reviews. It keeps the UUID after restoring a saved session.
+LiteLLM can use this header when `session_affinity` is enabled under
+`router_settings.optional_pre_call_checks` to keep a conversation on one
+deployment. The provider copy for each run keeps concurrent conversations
+separate. HTTP attempt IDs remain independent for cost accounting.
+
 ### Provider cost estimates
 
 Enable cost reporting in the LiteLLM gateway configuration:

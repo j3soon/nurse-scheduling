@@ -1011,6 +1011,9 @@ class AgentSession:
                 except HTTPException as exc:
                     # Record the failed review before publishing its terminal error.
                     preparation_error = ProviderError.for_user(str(exc.detail))
+            bind_session = getattr(runtime.provider, "with_session_id", None)
+            if bind_session is not None:
+                runtime = replace(runtime, provider=bind_session(session_id))
             if recorder.enabled:
                 prompt_seq = self.next_entry_seq
                 self.next_entry_seq += 1

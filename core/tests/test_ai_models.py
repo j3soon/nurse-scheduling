@@ -37,7 +37,7 @@ from .test_ai_history import postgres_history, recorded_history, uninitialized_p
 __all__ = ["postgres_history", "recorded_history", "uninitialized_postgres_history"]
 
 
-def gateway(monkeypatch, *, parameters=None, options=None, metadata_status=200, chat_responder=None):
+def gateway(monkeypatch, *, parameters=None, options=None, metadata_status=200, chat_responder=None, session_ids=None):
     calls = []
     client_type = httpx.AsyncClient
 
@@ -74,6 +74,8 @@ def gateway(monkeypatch, *, parameters=None, options=None, metadata_status=200, 
             )
         payload = json.loads(request.content)
         calls.append((key, payload))
+        if session_ids is not None:
+            session_ids.append(request.headers.get("x-session-id"))
         if chat_responder is not None:
             return chat_responder(request)
         events = [
@@ -121,7 +123,8 @@ def test_models_are_authenticated_filtered_and_do_not_expose_credentials(monkeyp
 
 
 def test_turns_freeze_reasoning_switch_model_and_replay_without_calls(monkeypatch):
-    calls = gateway(monkeypatch)
+    session_ids = []
+    calls = gateway(monkeypatch, session_ids=session_ids)
     app = basic.create_test_app(settings=settings(), provider=None)
     headers = {"Authorization": "Bearer institution-a-ai-token"}
     with basic.AuthenticatedTestClient(app, headers=headers) as client:
@@ -144,6 +147,7 @@ def test_turns_freeze_reasoning_switch_model_and_replay_without_calls(monkeypatc
             app.state.session_optimizer._on_completion, session, "Review", None, {"model": "deep", "reasoning": "off"}
         )
     assert len(calls) == 3
+    assert session_ids == [session] * 3
     assert calls[2][1]["model"] == "fast" and "thinking" not in calls[2][1]
     assert calls[0][0] == "Bearer key-a" and calls[0][1]["reasoning_effort"] == "high"
     assert "reasoning_effort" not in calls[1][1]

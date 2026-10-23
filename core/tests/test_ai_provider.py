@@ -891,3 +891,138 @@ def test_malformed_reasoning_metadata_remains_a_provider_error(monkeypatch, bloc
     provider = _streaming_provider(monkeypatch, _sse_body(_delta_chunk({"thinking_blocks": blocks})))
     with pytest.raises(ProviderError, match="invalid reasoning metadata"):
         _events(provider)
+
+
+def test_session_affinity_survives_timeout_retries_without_reusing_attempt_ids(monkeypatch):
+    from nurse_scheduling.ai.provider import ProviderCall
+
+    requests = []
+
+    def handle(request):
+        requests.append(request)
+        if len(requests) == 1:
+            return httpx.Response(200, stream=_InterruptedStream(_delta_chunk({"content": "Partial"})))
+        return httpx.Response(200, text=_sse_body(_delta_chunk({"content": "Recovered"})))
+
+    original = _transport_provider(monkeypatch, handle, provider_retry_backoff_seconds=0)
+    original._include_costs = True
+    provider = original.with_session_id("stable-chat-id")
+    events = _events(provider)
+    assert [request.headers.get("x-session-id") for request in requests] == ["stable-chat-id"] * 2
+    calls = [event for event in events if isinstance(event, ProviderCall) and event.status == "pending"]
+    assert len({call.id for call in calls}) == 2
+    assert all(call.id != "stable-chat-id" for call in calls)
+
+
+def test_concurrent_session_bindings_leave_the_shared_provider_unchanged(monkeypatch):
+    captured = []
+
+    async def handle(request):
+        await asyncio.sleep(0)
+        captured.append((json.loads(request.content)["messages"][0]["content"], request.headers.get("x-session-id")))
+        return httpx.Response(200, text=_sse_body(_delta_chunk({"content": "Done"})))
+
+    original = _transport_provider(monkeypatch, handle)
+    original.context_tokens = 32000
+    first = original.with_session_id("chat-a")
+    second = original.with_session_id("chat-b")
+    assert first.context_tokens == second.context_tokens == 32000
+    assert first.identity == second.identity == original.identity
+
+    async def run():
+        await asyncio.gather(
+            *(
+                _collect(provider.stream_events([{"role": "user", "content": text}]))
+                for provider, text in [(first, "a"), (second, "b"), (original, "unbound")]
+            )
+        )
+
+    asyncio.run(run())
+    assert sorted(captured) == [("a", "chat-a"), ("b", "chat-b"), ("unbound", None)]
+
+
+def test_chat_uuid_reaches_tools_compaction_and_runs_after_restore(monkeypatch):
+    from nurse_scheduling.ai.transcript import AssistantMessage, UserMessage
+
+    from . import test_ai_basic as basic
+    from .test_ai_optimizer import FakeOptimizerBackend
+
+    captured = []
+    expected_session = None
+
+    def handle(request):
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={"data": [{"id": "test-model", "context_length": 32000}]})
+        body = json.loads(request.content)
+        summary = str(body["messages"][0].get("content", "")).startswith("Summarize the supplied")
+        captured.append(
+            (
+                request.headers.get("x-session-id"),
+                expected_session,
+                summary,
+                any(message["role"] == "tool" for message in body["messages"]),
+            )
+        )
+        if len(captured) == 1:
+            delta = {
+                "tool_calls": [
+                    {
+                        "index": 0,
+                        "id": "read",
+                        "type": "function",
+                        "function": {"name": "read", "arguments": '{"path":"/workspace/schedule.yaml"}'},
+                    }
+                ]
+            }
+            reason = "tool_calls"
+        else:
+            delta = {"content": "Goal: inspect the current schedule." if summary else "Done."}
+            reason = "stop"
+        return httpx.Response(
+            200,
+            text=_sse_body(
+                _delta_chunk(delta),
+                {"choices": [{"delta": {}, "finish_reason": reason}]},
+                {"choices": [], "usage": {"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110}},
+            ),
+        )
+
+    provider = _transport_provider(monkeypatch, handle)
+    provider._include_usage = True
+    settings = basic.make_settings(max_history_messages=1000)
+    app = basic.create_test_app(settings=settings, provider=provider, optimizer_backend=FakeOptimizerBackend())
+    with basic.AuthenticatedTestClient(app) as client:
+        first = basic.create_session(client, basic.schedule_yaml())
+        second = basic.create_session(client, basic.schedule_yaml())
+        for session_id, question in [(first, "Inspect schedule"), (first, "Follow up"), (second, "New chat")]:
+            expected_session = session_id
+            response = client.post(f"/sessions/{session_id}/messages", json={"message": question})
+            assert basic.parse_sse(response.text)[-1][0] == "done"
+        store = app.state.session_store
+        session = store._sessions[first]
+        # Retained context from an earlier run must also use the chat ID during compaction.
+        snapshot = store.begin(first, session.owner_token)
+        store.finish(
+            first,
+            [UserMessage("Earlier constraints " + "x" * 100000), AssistantMessage("Earlier answer")],
+            snapshot=snapshot,
+        )
+        expected_session = first
+        response = client.post(f"/sessions/{first}/messages", json={"message": "Continue"})
+        events = basic.parse_sse(response.text)
+        assert events[-1][0] == "done"
+        assert any(kind == "context_usage" and data.get("max_tokens") == 32000 for kind, data in events)
+        owner, expires, state = store.recovery_state(first)
+        transcript, next_seq = list(session.transcript), session.next_entry_seq
+
+    restarted = basic.create_test_app(settings=settings, provider=provider, optimizer_backend=FakeOptimizerBackend())
+    restarted.state.session_store.restore(first, owner, state, expires, entries=transcript, next_entry_seq=next_seq)
+    with basic.AuthenticatedTestClient(restarted) as client:
+        client.cookies.set(basic.OWNER_COOKIE, owner)
+        expected_session = first
+        response = client.post(f"/sessions/{first}/messages", json={"message": "After restart"})
+        assert basic.parse_sse(response.text)[-1][0] == "done"
+    assert len(captured) >= 7
+    assert any(summary for _, _, summary, _ in captured)
+    assert any(tool for _, _, _, tool in captured)
+    assert all(actual == expected for actual, expected, _, _ in captured)
