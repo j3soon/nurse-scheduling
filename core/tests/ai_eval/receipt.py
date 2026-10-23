@@ -86,6 +86,8 @@ def build_receipt(
     The witness gets the counts, model, and any cost gain. The report's other cases become controls.
     """
     comparison = json.loads((report / "comparison.json").read_text(encoding="utf-8"))
+    if comparison.get("improved") is not True:
+        raise ValueError("The complete comparison did not demonstrate a benefit")
     measured = {
         arm: json.loads((report / arm / "metadata.json").read_text(encoding="utf-8")) for arm in ("before", "after")
     }
@@ -118,16 +120,29 @@ def build_receipt(
                 raise ValueError(f"The {arm} testcase or fixture of {case_id} changed after the comparison")
         if counts["before"]["infrastructure_errors"] or counts["after"]["infrastructure_errors"]:
             raise ValueError(f"Infrastructure errors make {case_id} inconclusive. Rerun it")
+        if (
+            comparison["cost_metric"]
+            and counts["before"]["passed"] == counts["after"]["passed"] == counts["after"]["runs"]
+        ):
+            cost = counts["metrics"][COST_KEYS[comparison["cost_metric"]]]
+            if cost["missing_pairs"] or not cost["before"]["mean"]:
+                raise ValueError(f"{case_id} has incomplete {comparison['cost_metric']} data")
+            ratio = cost["after"]["mean"] / cost["before"]["mean"]
+            if ratio > 1:
+                raise ValueError(f"Control {case_id} has a cost regression")
+        else:
+            ratio = None
         observations.append(
             {
                 "case": case_id,
                 "input_sha256": evidence_input_digest(step, case, fixtures[case.fixture]),
                 "before": f"{counts['before']['passed']}/{counts['before']['runs']}",
                 "after": f"{counts['after']['passed']}/{counts['after']['runs']}",
+                **({"cost_ratio": ratio} if ratio is not None else {}),
             }
         )
     record = next(observation for observation in observations if observation["case"] == witness)
-    record |= {"model": measured["after"]["provider_model"], "infrastructure_errors": 0}
+    record |= {"model": measured["after"]["provider_model"], "infrastructure_errors": 0, "comparison_passed": True}
     counts = comparison["cases"][witness]
     # A cost gain counts only when every attempt in both arms passes.
     if comparison["cost_metric"] and counts["before"]["passed"] == counts["after"]["passed"] == counts["after"]["runs"]:

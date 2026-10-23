@@ -76,6 +76,7 @@ def _report(tmp_path, step_number, witness_before=0, cost=None):
         json.dumps(
             {
                 "step": step.id,
+                "improved": True,
                 "cases": {
                     case.id: {
                         "before": counts(witness_before if case.id == step.cases[0] else 3),
@@ -368,3 +369,47 @@ def test_prompt_receipt_can_require_helper_execution_and_flags(tmp_path, change)
             validate_prompt_evidence((replace(step, evidence=(record,)),), cases, fixtures)
     else:
         validate_prompt_evidence((replace(step, evidence=(record,)),), cases, fixtures)
+
+
+@pytest.mark.parametrize("decision", [False, None])
+def test_receipt_rejects_a_failed_or_missing_comparison_decision(tmp_path, decision):
+    step = _report(
+        tmp_path, 1, witness_before=3, cost={"missing_pairs": 0, "before": {"mean": 100}, "after": {"mean": 50}}
+    )
+    path = tmp_path / "comparison.json"
+    report = json.loads(path.read_text(encoding="utf-8"))
+    report["improved"] = decision
+    path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(ValueError, match="comparison.*benefit"):
+        build_receipt(tmp_path, step.cases[0])
+
+
+def test_saved_receipt_rejects_a_failed_comparison_or_regressing_control(tmp_path):
+    number = next(i for i, step in enumerate(load_prompt_steps(), 1) if len(step.cases) > 1)
+    step = _report(
+        tmp_path, number, witness_before=3, cost={"missing_pairs": 0, "before": {"mean": 100}, "after": {"mean": 50}}
+    )
+    _, record = build_receipt(tmp_path, step.cases[0])
+    assert record["comparison_passed"]
+    assert record["controls"][0]["cost_ratio"] == 0.5
+    fixtures = {case.fixture: _sha256(fixture_text(case.fixture)) for case in CASE_BY_ID.values()}
+    record["controls"][0]["cost_ratio"] = 2
+    with pytest.raises(ValueError, match="control.*cost regression"):
+        validate_prompt_evidence((replace(step, evidence=(record,)),), CASE_BY_ID, fixtures)
+    record["controls"][0]["cost_ratio"] = 0.5
+    record["comparison_passed"] = False
+    with pytest.raises(ValueError, match="comparison.*benefit"):
+        validate_prompt_evidence((replace(step, evidence=(record,)),), CASE_BY_ID, fixtures)
+
+
+def test_receipt_rechecks_control_costs_even_with_a_positive_decision(tmp_path):
+    number = next(i for i, step in enumerate(load_prompt_steps(), 1) if len(step.cases) > 1)
+    step = _report(
+        tmp_path, number, witness_before=3, cost={"missing_pairs": 0, "before": {"mean": 100}, "after": {"mean": 50}}
+    )
+    path = tmp_path / "comparison.json"
+    report = json.loads(path.read_text(encoding="utf-8"))
+    report["cases"][step.cases[1]]["metrics"]["total_tokens"]["after"]["mean"] = 200
+    path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(ValueError, match="cost regression"):
+        build_receipt(tmp_path, step.cases[0])

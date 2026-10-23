@@ -441,3 +441,7 @@ range flags in 3/3 runs. The saved prompt receipt enforces this adoption conditi
 and binds it to the helper bytes. Its correctness benefit validates the complete
 policy, not the independent effect of selecting the generator. Neither comparison
 had infrastructure errors.
+
+Receipt creation rejects a failed or missing overall benefit decision. New
+receipts keep measured control cost ratios, and validation rejects a control
+cost regression. A favorable witness does not override the comparison result.

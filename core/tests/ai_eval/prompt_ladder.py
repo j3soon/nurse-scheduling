@@ -283,6 +283,8 @@ def validate_prompt_evidence(
             raise ValueError(f"Prompt step {step.id} has no benefit witness")
         for record in step.evidence:
             label = f"Prompt step {step.id} evidence"
+            if record.get("comparison_passed") is False:
+                raise ValueError(f"{label} comparison did not demonstrate a benefit")
             if record.get("infrastructure_errors") != 0:
                 raise ValueError(f"{label} is inconclusive due to infrastructure errors")
             if not isinstance(record.get("model"), str) or not record["model"]:
@@ -316,6 +318,8 @@ def validate_prompt_evidence(
                 # A targeted extension need not rerun controls already verified in
                 # a smaller paired batch. Each observation still needs 3–10 trials.
                 _receipt_counts(observation, label)
+                if observation is not record and observation.get("cost_ratio", 1) > 1:
+                    raise ValueError(f"{label} control has a cost regression")
             if usage := record.get("helper_usage"):
                 from nurse_scheduling.ai.workspace import REFERENCE_ATTACHMENT_TOOLS
 

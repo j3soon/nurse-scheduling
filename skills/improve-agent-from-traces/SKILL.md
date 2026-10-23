@@ -235,6 +235,10 @@ generated tokens. Do not add them again when calculating totals.
 With only one matched passing pair, standard deviation is unavailable and cost
 changes are preliminary. Report repeated correctness separately from those costs.
 
+Require the complete comparison to pass before writing a benefit receipt.
+Keep measured control costs in the receipt so a cheaper witness cannot hide a
+control regression. A separate successful comparison must have its own receipt.
+
 Require correct answers before claiming cost improvements. Compare tool
 calls, tokens, or latency among passing runs with matched inputs. A relative
 cost target can be useful when justified by the baseline. Do not choose a
