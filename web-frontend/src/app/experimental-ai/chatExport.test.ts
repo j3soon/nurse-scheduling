@@ -203,11 +203,19 @@ describe('chat export', () => {
       id: 'answer', role: 'assistant', content: 'Done.', activity: [
         { kind: 'schedule-check', ok: false, text: 'schedule.yaml introduces <problems>.' },
         { kind: 'schedule-applied', text: '- description: "" -> "April"', notice: 'Undo restores <previous work>.' },
+        { kind: 'notice', text: 'Retrying the current provider request.' },
       ],
     }];
 
     const markdown = buildMarkdownChatExport(changed, metadata);
     const html = buildHtmlChatExport(changed, metadata);
+    const entries = new DOMParser().parseFromString(html, 'text/html').querySelectorAll('.activity-entry');
+    // Saved chats keep the live view's distinction between model input and app notices.
+    expect([...entries].map(entry => entry.className)).toEqual([
+      'activity-entry model-input', 'activity-entry app-notice', 'activity-entry app-notice', 'activity-entry',
+    ]);
+    expect(entries[0].querySelector('.activity-status')?.textContent).toBe('Validation result sent to AI.');
+    expect(entries[1].querySelector('.activity-status')?.textContent).toBe('App notice. Not sent to AI.');
 
     expect(markdown).toContain('Schedule check failed');
     expect(markdown).toContain('schedule.yaml introduces <problems>.');

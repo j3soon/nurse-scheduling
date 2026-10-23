@@ -184,9 +184,12 @@ function renderActivityDetailsHtml(entry: Exclude<ActivityEntry, { kind: 'respon
       : '';
     body = `<div class="tool-body">${argumentsOutput}${resultOutput}${interrupted}</div>`;
   }
+  const audience = entry.kind === 'schedule-check'
+    ? '<p class="activity-status">Validation result sent to AI.</p>'
+    : entry.kind === 'schedule-applied' ? '<p class="activity-status">App notice. Not sent to AI.</p>' : '';
   return `<details class="activity-details"${entry.kind === 'schedule-check' && !entry.ok ? ' open' : ''}>
             <summary>${escapeHtml(activitySummary(entry))}</summary>
-            <div class="activity-body">${body}</div>
+            ${audience}<div class="activity-body">${body}</div>
           </details>`;
 }
 
@@ -253,7 +256,11 @@ function renderAssistantTimelineHtml(message: ChatExportMessage): string {
     const content = entry.kind === 'response'
       ? `<div class="content">${renderMarkdownHtml(entry.text)}</div>`
       : renderActivityDetailsHtml(entry);
-    return `<div class="activity-entry">${separator}${content}</div>`;
+    // Match the live chat: model inputs align right and app notices center.
+    const placement = entry.kind === 'schedule-check'
+      ? ' model-input'
+      : entry.kind === 'schedule-applied' || entry.kind === 'notice' ? ' app-notice' : '';
+    return `<div class="activity-entry${placement}">${separator}${content}</div>`;
   }).join('');
   return `<div class="assistant-activity" aria-label="Assistant activity">${activity}</div>`;
 }
@@ -420,7 +427,10 @@ export function buildHtmlChatExport(
     .content a { color: #1d4ed8; text-decoration: underline; }
     .remote-image-omitted { border-radius: 4px; background: #f3f4f6; padding: 2px 6px; color: #4b5563; }
     .activity-separator { margin: 12px 0; border: 0; border-top: 1px solid #e5e7eb; }
+    .activity-entry.model-input { margin-left: auto; max-width: 95%; }
+    .activity-entry.app-notice { margin: 0 auto; max-width: 95%; }
     .activity-details { color: #6b7280; font-size: 12px; }
+    .activity-status { margin: 0; }
     .activity-details summary { cursor: pointer; padding: 2px 0; }
     .system-prompt { color: #4b5563; font-size: 12px; }
     .system-prompt summary { cursor: pointer; }

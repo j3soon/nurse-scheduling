@@ -54,6 +54,12 @@ class ExtractHtmlTracesTests(unittest.TestCase):
         self.assertEqual(result["messages"][0]["activity"], [{"index": 0, "kind": "notice", "outputs": ["Provider timed out. Retry is available."]}])
         self.assertEqual(result["inventory"]["tool_calls"], 0)
 
+    def test_audience_labels_do_not_change_activity_outputs_or_message_status(self):
+        exported = message("assistant", '<div class="activity-entry model-input"><details class="activity-details" open><summary>Schedule check failed</summary><p class="activity-status">Validation result sent to AI.</p><div class="activity-body"><pre class="activity-output">schedule.yaml introduces problems.</pre></div></details></div>')
+        result = extract_export(exported)["messages"][0]
+        self.assertEqual(result["activity"], [{"index": 0, "kind": "schedule-check", "ok": False, "outputs": ["schedule.yaml introduces problems."]}])
+        self.assertEqual(result["status"], [])
+
     def test_collapsed_app_and_status_text_is_content_not_system_policy(self):
         source = message(
             "system", '<details class="system-prompt"><pre>Policy</pre></details>'
