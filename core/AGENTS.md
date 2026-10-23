@@ -117,6 +117,8 @@ from the trust-based local harness.
 ## Experimental AI
 - Prioritize maintainability, readability, and simplicity. Avoid over-engineering.
   Use Pi agent v1.0.0 as a reference for AI chat architecture and design philosophy.
+  Clone external reference code under the ignored repository-root `artifacts/`
+  directory and record the inspected revision in related developer documentation.
 - `AgentSession` owns conversation changes, steering, applied schedules, and
   the shared foreground and optimizer-review execution path. `SessionStore`
   owns access, expiry, and retained-byte budgets. `SessionRecovery` owns ordered
@@ -125,7 +127,10 @@ from the trust-based local harness.
 - Keep conversation entries independent of provider wire messages. Derive model
   requests and retained history through `context.py`. Count retained partial text
   in session byte budgets even when model context replaces it with an interruption
-  note. Release in-run tool results and images after session finalization.
+  note. Retain completed tool exchanges and native reasoning metadata across runs.
+  Replay opaque metadata only to its original endpoint, API, and model. Keep the
+  stored metadata intact when switching models. Release tool images after session
+  finalization and omit failed or incomplete native output from provider requests.
 - Apply queued steering before each follow-up provider request, including requests
   after refused tool batches. Reject conflicting provider finish reasons and any
   further output after a completion signal.

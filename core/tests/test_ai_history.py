@@ -283,7 +283,7 @@ def test_history_records_the_typed_prompt_and_the_retained_upload_count(recorded
     assert "ward.xlsx" in transcript[0].text
 
 
-def test_history_keeps_the_full_run_while_the_session_keeps_only_later_context(recorded_history):
+def test_history_and_session_keep_the_full_run_context(recorded_history):
     provider = basic.ScriptedToolProvider(
         [ReasoningDelta("Find P1. "), basic.TextDelta("Checking. "), *basic.rename_call()],
         [basic.TextDelta("Renamed P1.")],
@@ -306,7 +306,7 @@ def test_history_keeps_the_full_run_while_the_session_keeps_only_later_context(r
     assert (tool_result.tool_call_id, tool_result.tool_name, tool_result.ok) == (call.id, call.name, True)
     assert "passed trusted server-side validation" in tool_result.text
     assert answer == AssistantMessage("Renamed P1.")
-    assert retained == [UserMessage("Rename P1."), AssistantMessage("Checking. ", "tool_use"), answer]
+    assert retained == [prompt, tool_use, tool_result, answer]
 
 
 def test_database_unavailable_prevents_startup(recorded_history, monkeypatch):
@@ -1112,8 +1112,17 @@ def test_postgres_duplicates_and_reconnection(postgres_history):
     history.start_run(run, session, session_state(owner), "What's next?", 0, model="model", attachment_count=3)
     history.start_run(run, session, session_state(owner), "duplicate", 1, model="model", attachment_count=3)
     call = ToolCall("call-1", "read", '{"path":"schedule.yaml"}')
+    from nurse_scheduling.ai.transcript import ProviderIdentity
+
     entries = [
-        AssistantMessage("Checking.", "tool_use", "Look first.", (call,)),
+        AssistantMessage(
+            "Checking.",
+            "tool_use",
+            "Look first.",
+            (call,),
+            {"thinking_blocks": [{"type": "redacted_thinking", "data": "cipher"}]},
+            ProviderIdentity("https://gateway.example/v1", "model"),
+        ),
         ToolResultMessage("call-1", "read", "people: []", True),
         UserMessage("Only nights."),
         AssistantMessage("Answer"),
@@ -1150,11 +1159,12 @@ def test_postgres_duplicates_and_reconnection(postgres_history):
             *map(record, entries),
             record(app_event[2]),
         ]
-        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (7,)
-    # Tool results never join later context, so the conversation is rebuilt without them.
+        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (8,)
+    # Complete tool exchanges survive a process restart.
     assert restarted.load_session(session, owner)["entries"] == [
         UserMessage("What's next?"),
         entries[0],
+        entries[1],
         UserMessage("Only nights."),
         AssistantMessage("Answer"),
         app_event[2],
@@ -1371,7 +1381,7 @@ def test_postgres_upgrade_preserves_deployed_sessions_and_message_receipts(unini
     assert [(row[3], row[4].get("text")) for row in events] == [("delta", "Saved answer"), ("optimization", None)]
     assert events[0][4]["run_id"] == run_id
     with history._connect() as connection:
-        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (7,)
+        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (8,)
         assert connection.execute("SELECT auth_credential_id FROM chat_sessions").fetchone() == ("team-a",)
         assert connection.execute("SELECT model FROM chat_runs").fetchone() == ("saved-model",)
 
@@ -2196,3 +2206,36 @@ def test_postgres_saved_export_is_owned_and_survives_restart(postgres_history):
         client.cookies.update(cookies)
         restored = client.get(f"/sessions/{session_id}/export")
         assert restored.content == exported.content
+
+
+def test_postgres_upgrade_converts_old_trim_offsets(uninitialized_postgres_history):
+    history = uninitialized_postgres_history
+    # Build the deployed schema before the tool-context migration.
+    with history._connect() as connection:
+        connection.execute("CREATE TABLE ai_history_migrations (version text PRIMARY KEY)")
+        for migration in sorted(Path(history_module.__file__).with_name("migrations").glob("*.sql")):
+            if migration.name.startswith("008_"):
+                break
+            connection.execute(migration.read_text(encoding="utf-8"))
+            if migration.name.startswith("004_"):
+                history_module._migrate_legacy_transcripts(connection)
+            connection.execute("INSERT INTO ai_history_migrations (version) VALUES (%s)", (migration.name,))
+    run, session, owner = str(uuid4()), str(uuid4()), str(uuid4())
+    state = session_state(owner)
+    history.save_session(session, state)
+    history.start_run(run, session, state, "Old", 0, model="model", attachment_count=0)
+    entries = [
+        AssistantMessage("Check", "tool_use", tool_calls=(ToolCall("r", "read", "{}"),)),
+        ToolResultMessage("r", "read", "Old result", True),
+        AssistantMessage("Old answer"),
+        UserMessage("Keep"),
+        AssistantMessage("Kept answer"),
+    ]
+    history.append_entries(session, [(seq, run, entry) for seq, entry in enumerate(entries, 1)])
+    owner_token, expires, payload = state
+    payload["dropped_entries"] = 3
+    history.finish_run(run, "completed", None, None, True, session_id=session, state=(owner_token, expires, payload))
+    history.initialize()
+    loaded = history.load_session(session, owner)
+    assert loaded["state"]["dropped_entries"] == 4
+    assert loaded["entries"] == [UserMessage("Keep"), AssistantMessage("Kept answer")]

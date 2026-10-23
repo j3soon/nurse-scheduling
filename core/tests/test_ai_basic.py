@@ -739,7 +739,11 @@ def test_client_disconnect_leaves_the_run_active_until_explicit_stop(wait_stage:
         assert backend.close_calls == 1
     assert not session_active
     # The interrupted prompt stays for a follow-up. Its sandbox work does not.
-    responses = [AssistantMessage("", "tool_use")] if wait_stage == "command" else []
+    responses = (
+        [AssistantMessage("", "tool_use", tool_calls=(ToolCall("call-1", BASH_TOOL, '{"command":"sleep 30"}'),))]
+        if wait_stage == "command"
+        else []
+    )
     assert history == [
         UserMessage("Wait for me"),
         *[replace(response, stop_reason="aborted") for response in responses],

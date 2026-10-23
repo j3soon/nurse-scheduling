@@ -355,8 +355,7 @@ class ChatHistory:
         """Load an unexpired owned session, its conversation, and the runs whose terminal event was not stored.
 
         As Pi's `buildSessionContext`, the conversation is rebuilt from saved entries: app
-        events, proposal decisions, and the messages of committed runs. Tool results never
-        join later context, so each loaded entry is one conversation entry, and the entries
+        events, proposal decisions, and the messages of committed runs. The entries
         that retention trimmed from the front are skipped.
         """
         with self._connect() as connection:
@@ -392,7 +391,7 @@ class ChatHistory:
                 row[0]["pending_provider_calls"] = []
             entries = connection.execute(
                 "SELECT e.type, e.payload, r.status FROM chat_session_entries e LEFT JOIN chat_runs r ON r.id = e.run_id "
-                "WHERE e.session_id = %s AND e.type <> 'tool_result' "
+                "WHERE e.session_id = %s "
                 "AND (e.run_id IS NULL OR e.type IN ('app_event', 'proposal_decision') OR r.committed) ORDER BY e.seq OFFSET %s",
                 (session_id, row[0]["dropped_entries"]),
             ).fetchall()

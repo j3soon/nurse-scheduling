@@ -47,6 +47,7 @@ from .provider import (
     ChatMessage,
     ProviderCall,
     ReasoningDelta,
+    ReasoningReplay,
     ResponseEnd,
     TextDelta,
     TokenUsage,
@@ -104,8 +105,14 @@ async def agent_loop(
                 yield AgentSteering(message_id, text)
         answer, reasoning, calls = [], [], ()
         finish_reason = None
+        replay = None
         provider_events = provider.stream_events(
-            prepare_provider_request(messages, conversation, now=request_clock() if request_clock else None),
+            prepare_provider_request(
+                messages,
+                conversation,
+                now=request_clock() if request_clock else None,
+                provider=getattr(provider, "identity", None),
+            ),
             [] if final_answer_only else [tool.definition for tool in tools],
         )
         try:
@@ -117,6 +124,8 @@ async def agent_loop(
                     elif isinstance(event, ReasoningDelta):
                         reasoning.append(event.text)
                         yield AgentReasoning(event.text)
+                    elif isinstance(event, ReasoningReplay):
+                        replay = event
                     elif isinstance(event, (TokenUsage, ProviderCall)):
                         yield event
                     elif isinstance(event, ToolCallRequest):
@@ -128,7 +137,14 @@ async def agent_loop(
             conversation.append(AssistantMessage("".join(answer), reason, "".join(reasoning), calls))
             raise
         stop_reason = "length" if finish_reason == "length" else "tool_use" if calls else "stop"
-        response = AssistantMessage("".join(answer), stop_reason, "".join(reasoning), calls)
+        response = AssistantMessage(
+            "".join(answer),
+            stop_reason,
+            "".join(reasoning),
+            calls,
+            replay.native if replay else {},
+            replay.provider if replay else getattr(provider, "identity", None),
+        )
         conversation.append(response)
         yield AgentMessageEnd(response)
         if not calls:

@@ -19,11 +19,21 @@
 
 # This file is mostly AI generated.
 
-from dataclasses import asdict, dataclass, replace
+import json
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Literal
 
 # Pi's stop reasons. `tool_use` ends a response that requested tools.
 StopReason = Literal["stop", "length", "tool_use", "aborted", "error"]
+
+
+@dataclass(frozen=True)
+class ProviderIdentity:
+    """The endpoint, API, and model that own native replay metadata."""
+
+    endpoint: str
+    model: str
+    api: str = "openai-completions"
 
 
 @dataclass(frozen=True)
@@ -33,6 +43,7 @@ class ToolCall:
     id: str
     name: str
     arguments: str
+    native: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -53,6 +64,8 @@ class AssistantMessage:
     stop_reason: StopReason = "stop"
     reasoning: str = ""
     tool_calls: tuple[ToolCall, ...] = ()
+    native_reasoning: dict[str, Any] = field(default_factory=dict)
+    provider: ProviderIdentity | None = None
 
 
 @dataclass(frozen=True)
@@ -119,6 +132,8 @@ def entry_from_record(entry_type: str, payload: dict[str, Any]) -> AgentMessage:
             payload["stop_reason"],
             payload.get("reasoning", ""),
             tuple(ToolCall(**call) for call in payload.get("tool_calls", ())),
+            payload.get("native_reasoning", {}),
+            ProviderIdentity(**payload["provider"]) if payload.get("provider") else None,
         )
     if entry_type == "proposal_decision":
         return AppEventEntry(_LEGACY_DECISION_EVENTS[payload["decision"]])
@@ -136,5 +151,10 @@ def entry_text(entry: AgentMessage) -> str:
     if isinstance(entry, UserMessage | ToolResultMessage | AppEventEntry):
         return entry.text
     if isinstance(entry, AssistantMessage):
-        return entry.text + entry.reasoning + "".join(call.arguments for call in entry.tool_calls)
+        return (
+            entry.text
+            + entry.reasoning
+            + "".join(call.arguments + json.dumps(call.native, ensure_ascii=False) for call in entry.tool_calls)
+            + (json.dumps(entry.native_reasoning, ensure_ascii=False) if entry.native_reasoning else "")
+        )
     return ""

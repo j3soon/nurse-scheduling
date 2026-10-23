@@ -39,6 +39,7 @@ from nurse_scheduling.ai.provider import (
     ProviderError,
     ProviderResponseLimitError,
     ReasoningDelta,
+    ReasoningReplay,
     ResponseEnd,
     TextDelta,
     TokenUsage,
@@ -654,7 +655,7 @@ def test_rejects_a_tool_call_without_a_name(monkeypatch: pytest.MonkeyPatch) -> 
         _events(_streaming_provider(monkeypatch, body), TOOLS)
 
 
-@pytest.mark.parametrize("field", ["reasoning_content", "reasoning"])
+@pytest.mark.parametrize("field", ["reasoning_content", "reasoning", "reasoning_text"])
 def test_streams_reasoning_separately_from_the_answer(monkeypatch: pytest.MonkeyPatch, field: str) -> None:
     body = _sse_body(
         _delta_chunk({field: "The ward "}),
@@ -668,6 +669,10 @@ def test_streams_reasoning_separately_from_the_answer(monkeypatch: pytest.Monkey
         ReasoningDelta("The ward "),
         ReasoningDelta("has 3 nurses."),
         TextDelta("Yes."),
+        ReasoningReplay(
+            {field: "The ward has 3 nurses."},
+            provider_module.ProviderIdentity("https://provider.example/v1", "test-model"),
+        ),
         ResponseEnd(None),
     ]
 
@@ -757,3 +762,96 @@ def test_duplicate_empty_completion_and_usage_chunks_are_accepted(monkeypatch):
     usage = {"choices": [], "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}}
     provider = _streaming_provider(monkeypatch, _sse_body(final, repeated, usage))
     assert _events(provider) == [TextDelta("Done"), TokenUsage(1, 1, 2), ResponseEnd("stop")]
+
+
+def test_native_reasoning_metadata_round_trips_through_tool_turns_and_chat_runs(monkeypatch):
+    from nurse_scheduling.ai.context import prepare_provider_request, projected_history, retained_entries
+    from nurse_scheduling.ai.transcript import UserMessage, entry_from_record, entry_record
+
+    details = [
+        {"type": "reasoning.text", "text": "Plan", "signature": "signed", "id": "r", "index": 0},
+        {"type": "reasoning.encrypted", "data": "cipher", "id": "secret", "format": "native"},
+    ]
+    blocks = [
+        {"type": "thinking", "thinking": "Plan", "signature": "signature"},
+        {"type": "redacted_thinking", "data": "opaque"},
+    ]
+    bodies = [
+        _sse_body(
+            _delta_chunk(
+                {
+                    "reasoning_content": "Plan",
+                    "reasoning_details": details[:1],
+                    "thinking_blocks": [{"type": "thinking", "thinking": "Plan", "signature": "sig"}],
+                }
+            ),
+            _delta_chunk(
+                {
+                    "reasoning_details": [{"type": "reasoning.text", "text": " more", "index": 0}, details[1]],
+                    "thinking_blocks": [{"type": "thinking", "signature": "nature"}, blocks[1]],
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "read-1",
+                            "type": "function",
+                            "function": {"name": "schedule_patch", "arguments": "{}"},
+                            "extra_content": {"google": {"thought_signature": "tool-signature"}},
+                        }
+                    ],
+                }
+            ),
+        ),
+        _sse_body(_delta_chunk({"content": "Done"})),
+        _sse_body(_delta_chunk({"content": "Next"})),
+    ]
+    requests = []
+
+    def handle(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, text=bodies[len(requests) - 1])
+
+    provider = _transport_provider(monkeypatch, handle)
+    messages = []
+
+    async def execute(_name, _arguments):
+        return AgentToolOutcome("Saved tool result", True)
+
+    async def run():
+        async for _ in agent_loop(
+            provider, [{"role": "user", "content": "Read"}], bind_agent_tools(TOOLS, execute), run_messages=messages
+        ):
+            pass
+        entries = [UserMessage("Read"), *retained_entries(messages)]
+        restored = [
+            entry_from_record(kind, payload)
+            for kind, payload in json.loads(json.dumps([entry_record(e) for e in entries]))
+        ]
+        await _collect(
+            provider.stream_events(
+                prepare_provider_request(projected_history(restored), [UserMessage("Next")], provider=provider.identity)
+            )
+        )
+
+    asyncio.run(run())
+    for request in (requests[1], requests[2]):
+        assistant = next(m for m in request["messages"] if m["role"] == "assistant")
+        assert assistant["reasoning_content"] == "Plan"
+        assert assistant["reasoning_details"] == [{**details[0], "text": "Plan more"}, details[1]]
+        assert assistant["thinking_blocks"] == blocks
+        assert assistant["tool_calls"][0]["extra_content"]["google"]["thought_signature"] == "tool-signature"
+        assert "Saved tool result" in str(request["messages"])
+        assert "_provider" not in str(request)
+
+
+def test_reasoning_metadata_is_bounded_and_rejected_after_completion(monkeypatch):
+    monkeypatch.setattr(provider_module, "MAX_RESPONSE_REASONING_CHARS", 50)
+    body = _sse_body(_delta_chunk({"reasoning_details": [{"type": "reasoning.encrypted", "data": "x" * 100}]}))
+    with pytest.raises(ProviderResponseLimitError, match="reasoning metadata"):
+        _events(_streaming_provider(monkeypatch, body))
+    monkeypatch.undo()
+    body = _sse_body(
+        {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+        _delta_chunk({"thinking_blocks": [{"type": "redacted_thinking", "data": "x"}]}),
+    )
+    with pytest.raises(ProviderError, match="after completion"):
+        _events(_streaming_provider(monkeypatch, body))

@@ -161,8 +161,8 @@ The browser receives an HTTP-only owner cookie and an unguessable session UUID.
 Active sessions expire after 30 days of inactivity by default. Sending or
 queueing a message or synchronizing a changed schedule renews that window. The browser can retain the conversation within its current
 tab and verify the session without extending its lifetime.
-The session records typed questions, assistant responses, and app events. Tool results and reasoning belong to the current run and are released
-when it ends. Stop and failed runs retain their questions with an interruption
+The session records typed questions, assistant responses, app events, reasoning metadata,
+and tool exchanges. Tool images are released when a run ends. Stop and failed runs retain their questions with an interruption
 note. Later model context excludes claims from their discarded workspace.
 Recovery stores typed entries, including their origin and interruption state.
 Existing text history remains readable when the service restores older sessions.
@@ -284,11 +284,38 @@ restores the text and requires the files to be attached again before sending.
 
 ## Reasoning and tool activity
 
-Providers stream reasoning in a field of its own, either `reasoning_content` or
-`reasoning`, and the adapter forwards it as a separate event. It is never joined
-to the answer text, never stored in conversation history, and never sent back to
-the provider, so it cannot leak into an assistant message and costs nothing on
-later turns.
+Providers stream visible reasoning through `reasoning_content`, `reasoning`, or
+`reasoning_text`. The adapter forwards it as a separate display event. Completed
+responses also retain the original native fields, OpenRouter `reasoning_details`,
+and LiteLLM `thinking_blocks`, including signatures and encrypted or redacted
+blocks. The gateway can wrap thinking blocks in `provider_specific_fields`.
+Tool calls retain native `extra_content` and `provider_specific_fields` metadata.
+These fields survive session commits and PostgreSQL recovery. Migration 008
+converts older trim offsets to include tool results. Back up the database before
+upgrading. To roll back, restore that backup so older code reads its original
+trim offsets. Tool image bytes
+remain transient.
+
+The provider boundary replays native metadata only when the endpoint, API, and
+configured model match its source. Switching models omits incompatible metadata
+and normalizes tool call IDs with matching result IDs. Switching back can reuse
+the original metadata. Reasoning never becomes assistant answer text. Historical
+unsigned reasoning without source metadata remains display-only. Retained
+reasoning can increase later input token usage.
+
+This follows [Pi v1.0.0 message transformation][pi-replay] and its
+[Chat Completions adapter][pi-completions]. This service uses a Chat Completions
+gateway rather than native Anthropic or Responses transports. The gateway must
+support the replay fields it returns, as described in the
+[LiteLLM reasoning contract](https://docs.litellm.ai/docs/reasoning_content).
+Unknown fields are not guessed from model names. Provider rejection remains a
+normal provider error rather than silently dropping signed state.
+
+Aborted and errored responses are excluded from model replay. The existing
+interruption note describes discarded workspace changes. Timeout retries retain
+visible answer text as continuation context but discard incomplete native state.
+Missing tool results receive an explicit failure placeholder before the next
+turn, so each replayed tool call has a result.
 
 The `tool_start` event carries the tool name and arguments before execution, so
 the UI and evaluation artifact retain a command even if the sandbox fails. A
@@ -1056,7 +1083,7 @@ Each row lists shared behavior first, then what only one side has.
 | `Agent` / `AgentState`<br/>Pi: [Agent][pi-agent], [AgentState][pi-state] | Streaming flag, pending tool call IDs, in-run messages, the steering queue, and refusal of a second concurrent prompt. | Context arrives per run, and the session commits its retained transcript after cleanup. `AgentRun`, not `Agent`, owns cancellation, so Stop also reaches queued runs and cannot interrupt cleanup. | State also holds the model, thinking level, tools, persistent transcript, and partial streaming message. The agent becomes idle only after awaited `agent_end` subscribers finish. |
 | `agent_loop`<br/>Pi: [agentLoop][pi-loop] | Repeats model responses and tool batches. Steering enters before each follow-up request, or continues the run when it arrives as the answer ends. Tool calls from a response cut off by the output limit fail without running. | A batch runs concurrently only when every call is read-only. Round and call budgets end with an answer-only request, and a refused truncated batch spends a round. Each request passes through one context projection. | Parallel execution by default. The whole batch runs sequentially if configured globally or required by any tool in it. Supports before and after tool-call hooks and context transform hooks. Tool-result early termination requires every finalized tool result in the batch to set `terminate: true`. |
 | `AgentTool` / `AgentToolOutcome`<br/>Pi: [AgentTool / AgentToolResult][pi-tools] | A model-facing definition bound to execution. Results carry model content, UI details, and explicit failure status. Start and end events correlate by tool call ID. | Tools receive raw JSON arguments, return text, an optional image, and an `ok` flag, and declare whether they are read-only. | Schema-validated parameters, the call ID, an abort signal, and partial-update callbacks. Tools throw or return `isError: true` on failure. `structuredContent` follows the tool's `outputSchema` for programmatic callers and is excluded from model input. |
-| `AgentSession` / `RunOutput` / `AgentMessage`<br/>Pi: [AgentSession][pi-session], [AgentMessage][pi-messages] | An application layer over `Agent`. Runs produce `UserMessage`, `AssistantMessage`, and `ToolResultMessage` records shaped like Pi's messages, with Pi's stop reasons, persisted in order. Later model input excludes aborted answer content. | Snapshot-versioned commits after sandbox cleanup, schedule revisions, and applied schedule entries. The in-memory session keeps prompts, assistant text and stop reasons, and schedule changes. A stopped run retains its prompt and aborted partial answer. Later model context replaces that answer with an interruption note. With PostgreSQL, a session continues after a restart or unload, but it cannot branch. | An append-only, branchable JSONL session with model and label entries, automatic compaction into summary entries, automatic retry of retryable errors, and extensions. Aborted and error assistant messages stay in session history, but [provider message transformation][pi-replay] omits them from later model replay. [Context-edit entries][pi-recovery] can omit recovery attempts and their tool results from subsequent context while retaining the raw history. |
+| `AgentSession` / `RunOutput` / `AgentMessage`<br/>Pi: [AgentSession][pi-session], [AgentMessage][pi-messages] | An application layer over `Agent`. Runs produce `UserMessage`, `AssistantMessage`, and `ToolResultMessage` records shaped like Pi's messages, with Pi's stop reasons, persisted in order. Later model input excludes aborted answer content. | Snapshot-versioned commits after sandbox cleanup, schedule revisions, and applied schedule entries. The in-memory session keeps prompts, native reasoning metadata, complete tool exchanges, assistant text and stop reasons, and schedule changes. A stopped run retains its prompt and aborted partial answer. Later model context replaces that answer with an interruption note. With PostgreSQL, a session continues after a restart or unload, but it cannot branch. | An append-only, branchable JSONL session with model and label entries, automatic compaction into summary entries, automatic retry of retryable errors, and extensions. Aborted and error assistant messages stay in session history, but [provider message transformation][pi-replay] omits them from later model replay. [Context-edit entries][pi-recovery] can omit recovery attempts and their tool results from subsequent context while retaining the raw history. |
 | `SessionRuns` / `AgentRun` / `RunSnapshot`<br/>Pi: [ActiveRun and run lifecycle][pi-agent] | One active run with a cancellation handle, finishing before the next run starts. | Per-session FIFO execution, queued background runs, Stop that also cancels queued runs, and a versioned commit capability. A Stop can name a client message. It cancels only that message's run and also stops the message if it arrives later. Service shutdown leaves runs unfinished, so the restarted service reports them as interrupted. | The agent's own `AbortController`, passed to tools, with a single-run guard instead of a queue. |
 | Steering queue<br/>Pi: [steer / followUp][pi-agent] | Queued input reaches the model at a boundary without starting a new run. | One queue serves both roles. It drains every message, deduplicates retried POSTs by ID, and closes atomically with the answer. Optimizer wake-ups enter `SessionRuns` as fresh runs. | Separate steering and follow-up queues, each draining one message at a time or all at once. |
 | `WorkspaceTools` / `_LazySandboxTurn`<br/>Pi: [read, bash, edit, write][pi-coding-tools] | Pi's default `read`, `bash`, `edit`, and `write` contracts and output behavior, ported under `ai/pi`. | A lazy, disposable E2B VM per run with hydration, pause and resume, YAML validation after each change, and teardown before commit. A shorter `read` description, fixed image limits with a source-pixel bound, and server command timeouts. | Tools act on the user's local working directory, which persists across runs. Image resize options can follow the active model's limits. Built-in `powershell`, `find`, `grep`, and `ls` tools are available beyond the default active four. Nested calls through [`ctx.executeTool()`][pi-nested-tools] share validation and hooks and carry parent tool call IDs. |
@@ -1106,3 +1133,5 @@ The investigated alternatives below were not adopted, except where noted:
 [pi-recovery]: https://github.com/earendil-works/pi/blob/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/coding-agent/src/core/agent-session.ts#L1208
 [pi-nested-tools]: https://github.com/earendil-works/pi/blob/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/coding-agent/src/core/agent-session.ts#L702
 [pi-coding-tools]: https://github.com/earendil-works/pi/tree/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/coding-agent/src/core/tools
+
+[pi-completions]: https://github.com/earendil-works/pi/blob/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/ai/src/api/openai-completions.ts

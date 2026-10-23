@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -42,6 +42,7 @@ from .transcript import (
     AgentMessage,
     AppEventEntry,
     AssistantMessage,
+    ProviderIdentity,
     ToolCall,
     ToolResultMessage,
     UserMessage,
@@ -275,7 +276,12 @@ def model_input(
 
 
 def prepare_provider_request(
-    prefix: Sequence[ChatMessage], entries: Sequence[AgentMessage], *, now: datetime | None = None
+    prefix: Sequence[ChatMessage],
+    entries: Sequence[AgentMessage],
+    *,
+    now: datetime | None = None,
+    provider: ProviderIdentity | None = None,
+    _preserve_native: bool = False,
 ) -> list[ChatMessage]:
     """Project the agent's in-run messages at the provider boundary."""
     request = list(prefix)
@@ -310,58 +316,117 @@ def prepare_provider_request(
                     if entry.stop_reason == "length"
                     else entry.tool_calls
                 )
-                request.append(assistant_tool_call_message(calls, entry.text))
+                message = assistant_tool_call_message(calls, entry.text)
             else:
-                request.append(ChatMessage(role="assistant", content=entry.text))
-        elif isinstance(entry, UserMessage):
+                message = ChatMessage(role="assistant", content=entry.text)
+            if entry.stop_reason in {"aborted", "error"}:
+                continue
+            if entry.provider is not None:
+                message["_provider"] = asdict(entry.provider)
+                if entry.stop_reason != "length":
+                    message.update(entry.native_reasoning)
+            request.append(message)
+        elif isinstance(entry, UserMessage | AppEventEntry):
             request.append(ChatMessage(role="user", content=entry.text))
     flush_images()
     if clock_status is not None:
         request.append(clock_status)
-    return request
+    return (
+        _repair_tool_pairs(request) if _preserve_native else _compatible_messages(_repair_tool_pairs(request), provider)
+    )
 
 
 def retained_entries(entries: Sequence[AgentMessage]) -> list[AgentMessage]:
-    """Keep what later model context may use from a run's ordered entries.
+    """Retain native reasoning and tool exchanges. Release transient image bytes."""
+    return [replace(entry, image=None) if isinstance(entry, ToolResultMessage) else entry for entry in entries]
 
-    Tool calls, tool results, and reasoning describe a sandbox that no longer
-    exists, so later runs never see them. The in-run record keeps them until the
-    caller finishes.
-    """
-    return [
-        AssistantMessage(entry.text, entry.stop_reason) if isinstance(entry, AssistantMessage) else entry
-        for entry in entries
-        if not isinstance(entry, ToolResultMessage)
-    ]
+
+def _compatible_messages(messages: Sequence[ChatMessage], provider: ProviderIdentity | None) -> list[ChatMessage]:
+    """Replay opaque metadata only to its original API, endpoint, and model."""
+    import hashlib
+    import re
+
+    result = []
+    ids = {}
+    for original in messages:
+        message = dict(original)
+        source = message.pop("_provider", None)
+        compatible = provider is not None and source == asdict(provider)
+        if message["role"] == "assistant" and not compatible:
+            for name in (
+                "reasoning",
+                "reasoning_content",
+                "reasoning_text",
+                "reasoning_details",
+                "thinking_blocks",
+                "provider_specific_fields",
+            ):
+                message.pop(name, None)
+            if "tool_calls" in message:
+                calls = []
+                for call in message["tool_calls"]:
+                    call_id = call["id"]
+                    if provider is not None and source is not None:
+                        normalized = re.sub(r"[^a-zA-Z0-9_-]", "_", call_id)
+                        if normalized != call_id or len(normalized) > 40:
+                            normalized = normalized[:31] + "_" + hashlib.sha256(call_id.encode()).hexdigest()[:8]
+                        ids[call_id] = normalized
+                        call_id = normalized
+                    calls.append({"id": call_id, "type": "function", "function": dict(call["function"])})
+                message["tool_calls"] = calls
+        if message["role"] == "tool":
+            message["tool_call_id"] = ids.get(message["tool_call_id"], message["tool_call_id"])
+        result.append(message)
+    return result
+
+
+def _repair_tool_pairs(messages: Sequence[ChatMessage]) -> list[ChatMessage]:
+    """Complete interrupted tool batches before the next assistant or user message."""
+    result = []
+    pending = {}
+    for message in messages:
+        if message["role"] == "tool":
+            if message["tool_call_id"] in pending:
+                pending.pop(message["tool_call_id"])
+                result.append(message)
+            continue
+        for call_id in pending:
+            result.append(tool_result_message(call_id, "No result provided. The tool exchange was interrupted."))
+        pending = {call["id"]: call for call in message.get("tool_calls", [])}
+        result.append(message)
+    result.extend(
+        tool_result_message(call_id, "No result provided. The tool exchange was interrupted.") for call_id in pending
+    )
+    return result
 
 
 def _projected_messages(transcript: Sequence[AgentMessage]) -> list[tuple[bool, ChatMessage]]:
-    """Project entries into prior-run context, marking which messages are prompts."""
-    projected: list[tuple[bool, ChatMessage]] = []
-    answer: list[str] = []
-    interrupted = False
-    answering = False
+    """Project complete exchanges, retaining each native response and tool result."""
+    projected = []
+    response = []
 
     def close_answer() -> None:
-        nonlocal answer, interrupted, answering
-        if answering:
-            # Pi's provider adapters also skip aborted and errored assistant messages.
-            # We keep a note in their place because the interrupted run's sandbox is
-            # gone, so its partial text may claim schedule changes that no longer
-            # exist. A length-truncated answer finished its run and is replayed.
-            content = ABORTED_RESPONSE_HISTORY if interrupted else "".join(answer)
-            projected.append((False, ChatMessage(role="assistant", content=content)))
-        answer, interrupted, answering = [], False, False
+        if not response:
+            return
+        if any(isinstance(entry, AssistantMessage) and entry.stop_reason in {"aborted", "error"} for entry in response):
+            messages = [ChatMessage(role="assistant", content=ABORTED_RESPONSE_HISTORY)]
+        elif all(
+            isinstance(entry, AssistantMessage) and not entry.tool_calls and not entry.native_reasoning
+            for entry in response
+        ):
+            # Keep the historical text-only projection for legacy sessions.
+            messages = [ChatMessage(role="assistant", content="".join(entry.text for entry in response))]
+        else:
+            messages = prepare_provider_request([], response, _preserve_native=True)
+        projected.extend((False, message) for message in messages)
+        response.clear()
 
     for entry in transcript:
-        if isinstance(entry, AssistantMessage):
-            # The responses between two prompts form one answer, as the user saw it.
-            answering = True
-            answer.append(entry.text)
-            interrupted = interrupted or entry.stop_reason in ("aborted", "error")
-        elif isinstance(entry, UserMessage | AppEventEntry):
+        if isinstance(entry, UserMessage | AppEventEntry):
             close_answer()
-            projected.append((starts_exchange(entry), ChatMessage(role="user", content=entry.text)))
+            projected.append((True, ChatMessage(role="user", content=entry.text)))
+        else:
+            response.append(entry)
     close_answer()
     return projected
 

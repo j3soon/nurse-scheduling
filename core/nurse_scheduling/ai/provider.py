@@ -35,7 +35,7 @@ import httpx
 from typing_extensions import Required
 
 from .config import AiSettings
-from .transcript import ToolCall, ToolResultImage
+from .transcript import ProviderIdentity, ToolCall, ToolResultImage
 
 logger = logging.getLogger("nurse_scheduling.ai.provider")
 BEARER_TOKEN_PATTERN = re.compile(r"(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]+")
@@ -86,6 +86,12 @@ class ChatMessage(TypedDict, total=False):
     content: ChatContent | None
     tool_calls: list[dict[str, Any]]
     tool_call_id: str
+    reasoning_content: str
+    reasoning: str
+    reasoning_text: str
+    reasoning_details: list[dict[str, Any]]
+    thinking_blocks: list[dict[str, Any]]
+    provider_specific_fields: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -101,10 +107,18 @@ class ReasoningDelta:
 
     Reasoning arrives in its own field, so it is never mixed into the answer and
     cannot leak into the assistant message. It is shown to the user on request
-    and is never sent back to the provider.
+    separately from native metadata used for provider replay.
     """
 
     text: str
+
+
+@dataclass(frozen=True)
+class ReasoningReplay:
+    """Native reasoning from one successfully completed HTTP attempt."""
+
+    native: dict[str, Any]
+    provider: ProviderIdentity
 
 
 @dataclass(frozen=True)
@@ -181,6 +195,7 @@ class ProviderResponseMetadata:
 ChatStreamEvent = (
     TextDelta
     | ReasoningDelta
+    | ReasoningReplay
     | ToolCallRequest
     | ResponseEnd
     | TokenUsage
@@ -216,7 +231,12 @@ def assistant_tool_call_message(calls: Sequence[ToolCall], content: str | None =
         role="assistant",
         content=content or None,
         tool_calls=[
-            {"id": call.id, "type": "function", "function": {"name": call.name, "arguments": call.arguments}}
+            {
+                **call.native,
+                "id": call.id,
+                "type": "function",
+                "function": {"name": call.name, "arguments": call.arguments},
+            }
             for call in calls
         ],
     )
@@ -291,6 +311,7 @@ class OpenAiCompatibleProvider:
         self._include_attempts = include_attempts
         self._parameters = parameters or {}
         self._include_costs = include_costs
+        self.identity = ProviderIdentity(settings.provider_base_url.rstrip("/"), settings.provider_model)
         self.context_tokens: int | None = None
         self._context_tokens_loaded = False
         self._context_tokens_lock = asyncio.Lock()
@@ -363,7 +384,7 @@ class OpenAiCompatibleProvider:
                 yield ProviderAttempt(attempt)
             try:
                 # Keep tool calls private until the HTTP attempt also closes cleanly.
-                completed: list[ToolCallRequest | ResponseEnd] = []
+                completed: list[ToolCallRequest | ResponseEnd | ReasoningReplay] = []
                 async with aclosing(self._stream_attempt(timeout, headers, payload)) as events:
                     async for event in events:
                         if isinstance(event, ProviderResponseMetadata):
@@ -379,7 +400,7 @@ class OpenAiCompatibleProvider:
                             continue
                         if isinstance(event, TokenUsage):
                             call = replace(call, usage=event)
-                        if isinstance(event, (ToolCallRequest, ResponseEnd)):
+                        if isinstance(event, (ToolCallRequest, ResponseEnd, ReasoningReplay)):
                             completed.append(event)
                             continue
                         stream_started = True
@@ -486,6 +507,8 @@ class OpenAiCompatibleProvider:
                 )
 
             partial_calls: dict[int, _PartialToolCall] = {}
+            native_reasoning: dict[str, Any] = {}
+            native_chars = 0
             if self._include_costs:
                 yield ProviderResponseMetadata(provider_call_id=response.headers.get("x-litellm-call-id"))
             finish_reason: str | None = None
@@ -530,7 +553,17 @@ class OpenAiCompatibleProvider:
                         if reported_reason is not None and reported_reason != finish_reason:
                             raise ProviderError.for_user("The AI provider returned conflicting finish reasons.")
                         if any(
-                            delta.get(field) for field in ("content", "reasoning_content", "reasoning", "tool_calls")
+                            delta.get(field)
+                            for field in (
+                                "content",
+                                "reasoning_content",
+                                "reasoning",
+                                "reasoning_text",
+                                "reasoning_details",
+                                "thinking_blocks",
+                                "provider_specific_fields",
+                                "tool_calls",
+                            )
                         ):
                             raise ProviderError.for_user("The AI provider returned output after completion.")
                     if isinstance(reported_reason, str):
@@ -540,9 +573,14 @@ class OpenAiCompatibleProvider:
                 if isinstance(content, str) and content:
                     yield TextDelta(content)
                 # Providers name this field either way, and llama.cpp uses the first.
-                reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+                reasoning = delta.get("reasoning_content") or delta.get("reasoning") or delta.get("reasoning_text")
                 if isinstance(reasoning, str) and reasoning:
                     yield ReasoningDelta(reasoning)
+                native_chars += _merge_reasoning(native_reasoning, delta)
+                if native_chars > MAX_RESPONSE_REASONING_CHARS:
+                    raise ProviderResponseLimitError.for_user(
+                        "The AI provider returned more reasoning metadata than one answer may contain."
+                    )
                 _merge_tool_call_fragments(partial_calls, delta.get("tool_calls"))
             # Pi checks completion before releasing tools. Accept [DONE] for endpoints
             # that omit finish_reason, but never infer completion from HTTP EOF alone.
@@ -552,9 +590,60 @@ class OpenAiCompatibleProvider:
                 raise ProviderError.for_user(
                     f"The AI provider returned an unsuccessful finish reason: {finish_reason}."
                 )
+            if native_reasoning:
+                yield ReasoningReplay(native_reasoning, self.identity)
             if partial_calls:
                 yield ToolCallRequest(tuple(partial.complete() for _, partial in sorted(partial_calls.items())))
             yield ResponseEnd(finish_reason)
+
+
+def _merge_reasoning(target: dict[str, Any], delta: dict[str, Any]) -> int:
+    """Collect native fields without deriving replay data from displayed text."""
+    fields = ("reasoning_content", "reasoning", "reasoning_text", "reasoning_details", "thinking_blocks")
+    size = 0
+    for key in (*fields, "provider_specific_fields"):
+        value = delta.get(key)
+        if value is None:
+            continue
+        if key == "provider_specific_fields":
+            if not isinstance(value, dict):
+                raise ProviderError.for_user("The AI provider returned invalid reasoning metadata.")
+            # Preserve the gateway wrapper, but only its documented reasoning fields.
+            nested = {name: value[name] for name in fields if name in value}
+            size += _merge_reasoning(target.setdefault(key, {}), nested)
+            continue
+        size += len(value) if isinstance(value, str) else len(json.dumps(value, ensure_ascii=False))
+        if key in fields[:3]:
+            if not isinstance(value, str):
+                raise ProviderError.for_user("The AI provider returned invalid reasoning metadata.")
+            target[key] = target.get(key, "") + value
+            continue
+        if not isinstance(value, list) or any(not isinstance(block, dict) for block in value):
+            raise ProviderError.for_user("The AI provider returned invalid reasoning metadata.")
+        blocks = target.setdefault(key, [])
+        for block in value:
+            last = blocks[-1] if blocks else None
+            kind = block.get("type")
+            field = {"reasoning.text": "text", "reasoning.summary": "summary", "thinking": "thinking"}.get(kind)
+            same = (
+                last is not None
+                and last.get("type") == kind
+                and all(
+                    last.get(name) == block.get(name) or name not in last or name not in block
+                    for name in ("id", "index")
+                )
+            )
+            if field and same:
+                for name, part in block.items():
+                    if name == field or (key == "thinking_blocks" and name == "signature"):
+                        if not isinstance(part, str):
+                            raise ProviderError.for_user("The AI provider returned invalid reasoning metadata.")
+                        last[name] = last.get(name, "") + part
+                    elif name not in last or not last[name]:
+                        last[name] = part
+            else:
+                blocks.append(dict(block))
+    return size
 
 
 def _parse_token_usage(raw_usage: object) -> TokenUsage:
@@ -591,11 +680,12 @@ class _PartialToolCall:
     id: str = ""
     name: str = ""
     arguments: str = ""
+    native: dict[str, Any] | None = None
 
     def complete(self) -> ToolCall:
         if not self.name:
             raise ProviderError.for_user("The AI provider requested a tool without a name.")
-        return ToolCall(id=self.id or str(uuid4()), name=self.name, arguments=self.arguments)
+        return ToolCall(id=self.id or str(uuid4()), name=self.name, arguments=self.arguments, native=self.native or {})
 
 
 def _merge_tool_call_fragments(partial_calls: dict[int, _PartialToolCall], fragments: object) -> None:
@@ -613,6 +703,11 @@ def _merge_tool_call_fragments(partial_calls: dict[int, _PartialToolCall], fragm
             )
         if isinstance(fragment.get("id"), str):
             partial.id = fragment["id"]
+        for key in ("extra_content", "provider_specific_fields"):
+            if isinstance(fragment.get(key), dict):
+                partial.native = {**(partial.native or {}), key: fragment[key]}
+                if len(json.dumps(partial.native)) > MAX_RESPONSE_REASONING_CHARS:
+                    raise ProviderResponseLimitError.for_user("The AI provider returned too much tool metadata.")
         function = fragment.get("function")
         if not isinstance(function, dict):
             continue
