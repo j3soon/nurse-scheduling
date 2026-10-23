@@ -20,10 +20,10 @@
 # This code is mostly AI generated.
 
 from dataclasses import dataclass
-from io import StringIO
 
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
+from ruamel.yaml.nodes import MappingNode, SequenceNode
 
 from ..loader import _load_yaml
 from ..models import AT_MOST_ONE_SHIFT_PER_DAY
@@ -126,12 +126,31 @@ def _restore_required_rule(candidate: str, max_bytes: int) -> str:
             not isinstance(pref, dict) or pref.get("type") == AT_MOST_ONE_SHIFT_PER_DAY for pref in preferences
         ):
             return candidate
-        preferences.insert(0, {"type": AT_MOST_ONE_SHIFT_PER_DAY})
-        output = StringIO()
-        yaml = YAML(typ="safe")
-        yaml.default_flow_style = False
-        yaml.dump(data, output)
-        completed = output.getvalue()
+        completed = _insert_first_preference(candidate)
+        # Accept the text edit only when it adds exactly the rule and changes nothing else.
+        expected = {**data, "preferences": [{"type": AT_MOST_ONE_SHIFT_PER_DAY}, *preferences]}
+        if completed is None or _load_yaml(completed.encode("utf-8"), reject_aliases=True) != expected:
+            return candidate
         return completed if validate_frontend_schedule_yaml(completed, max_bytes).valid else candidate
     except (YAMLError, TypeError, ValueError):
         return candidate
+
+
+def _insert_first_preference(text: str) -> str | None:
+    """Insert the rule as text, so comments, key order and formatting stay as the model wrote them."""
+    # The bounded loader already accepted this text, so composing it is safe.
+    root = YAML(typ="safe").compose(text)
+    if not isinstance(root, MappingNode):
+        return None
+    node = next((value for key, value in root.value if key.value == "preferences"), None)
+    if not isinstance(node, SequenceNode):
+        return None
+    rule = f"type: {AT_MOST_ONE_SHIFT_PER_DAY}"
+    start = node.start_mark.index
+    if node.flow_style:
+        return f"{text[: start + 1]}{{{rule}}}{', ' if node.value else ''}{text[start + 1 :]}"
+    line_start = text.rfind("\n", 0, start) + 1
+    indent = text[line_start:start]
+    if indent.strip():
+        return None
+    return f"{text[:line_start]}{indent}- {rule}\n{text[line_start:]}"

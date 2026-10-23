@@ -370,10 +370,12 @@ skipped does not validate persistence.
   feedback. Grade the required recovery action as well as the final schedule.
   Keep those cases with the implementation commit.
 - Restore only the mandatory one-shift-per-day rule during trusted candidate
-  review, and only when the completed schedule passes the existing frontend
-  validator. Report the restoration to the model and user. Keep the workspace,
-  inspection context, preview and optimizer input on the same validated text.
-  Do not auto-repair optional staffing, rest, eligibility or preference rules.
+  review, and only when the restored schedule data passes the existing frontend
+  validator. Insert the rule as text so the rest of the model's text, including
+  comments and key order, stays unchanged. Report the restoration to the model
+  and user. Keep the workspace, inspection context, preview and optimizer input
+  on the same validated text. Do not auto-repair optional staffing, rest,
+  eligibility or preference rules.
 - Show known provider reasons and trusted validation details in both foreground
   and background chat errors. Keep raw provider bodies and private SDK errors
   in server logs. Test that failed validation still discards the turn's edits.

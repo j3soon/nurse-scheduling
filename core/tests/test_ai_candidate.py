@@ -19,9 +19,16 @@
 
 # This test is mostly AI generated.
 
+import difflib
+import json
+from io import StringIO
+
+import pytest
+from ruamel.yaml import YAML
+
 from nurse_scheduling.ai.candidate import review_schedule_candidate
 
-from .ai_test_helper import SCHEDULE_BYTE_LIMIT, schedule_yaml
+from .ai_test_helper import SCHEDULE_BYTE_LIMIT, base_schedule_payload, schedule_yaml
 
 
 def test_unchanged_candidate_creates_no_proposal():
@@ -80,6 +87,50 @@ def test_rebuilt_candidate_restores_only_the_required_rule():
     assert required == {"type": "at most one shift per day"}
     assert restored == payload
     assert "restored the required" in review.outcome.text
+
+
+def _browser_style_yaml(payload: dict) -> str:
+    # js-yaml indents sequences under their key. The default ruamel layout does not.
+    yaml = YAML(typ="safe", pure=True)
+    yaml.default_flow_style = False
+    yaml.representer.sort_base_mapping_type_on_output = False
+    yaml.indent(mapping=2, sequence=4, offset=2)
+    output = StringIO()
+    yaml.dump(payload, output)
+    return output.getvalue()
+
+
+@pytest.mark.parametrize("layout", ["block", "indented", "flow"])
+def test_required_rule_restoration_keeps_the_rest_of_the_text(layout):
+    from nurse_scheduling.loader import _load_yaml
+
+    payload = base_schedule_payload()
+    payload["description"] = "Rebuilt schedule"
+    payload["preferences"] = payload["preferences"][1:]
+    if layout == "flow":
+        rest = {key: value for key, value in payload.items() if key != "preferences"}
+        body = schedule_yaml(rest) + f"preferences: {json.dumps(payload['preferences'])}\n"
+    else:
+        body = schedule_yaml(payload) if layout == "block" else _browser_style_yaml(payload)
+    candidate = "# Ward roster kept by the model\n" + body
+
+    review = review_schedule_candidate(schedule_yaml(), candidate, SCHEDULE_BYTE_LIMIT)
+
+    assert review.outcome.ok
+    assert review.proposal is not None
+    restored = review.proposal.text
+    assert _load_yaml(restored.encode()) == {
+        **payload,
+        "preferences": [{"type": "at most one shift per day"}, *payload["preferences"]],
+    }
+    changes = [
+        line for line in difflib.ndiff(candidate.splitlines(), restored.splitlines()) if line[:2] in {"+ ", "- "}
+    ]
+    if layout == "flow":
+        assert [line[:15] for line in changes] == ["- preferences: ", "+ preferences: "]
+    else:
+        indent = "  " if layout == "indented" else ""
+        assert changes == [f"+ {indent}- type: at most one shift per day"]
 
 
 def test_required_rule_restoration_does_not_hide_other_errors():
