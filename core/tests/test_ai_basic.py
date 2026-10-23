@@ -1696,11 +1696,13 @@ def test_environment_configuration_reads_provider_retry_settings(monkeypatch: py
     monkeypatch.setenv("E2B_API_KEY", "e2b-key")
     monkeypatch.setenv("AI_PROVIDER_MAX_ATTEMPTS", "4")
     monkeypatch.setenv("AI_PROVIDER_RETRY_BACKOFF_SECONDS", "0.25")
+    monkeypatch.setenv("AI_PROVIDER_MANUAL_RETRY_TIMEOUT_SECONDS", "30")
 
     settings = AiSettings.from_env()
 
     assert settings.provider_max_attempts == 4
     assert settings.provider_retry_backoff_seconds == 0.25
+    assert settings.provider_manual_retry_timeout_seconds == 30
 
 
 def test_environment_configuration_defaults_to_three_provider_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1710,11 +1712,13 @@ def test_environment_configuration_defaults_to_three_provider_attempts(monkeypat
     monkeypatch.setenv("E2B_API_KEY", "e2b-key")
     monkeypatch.delenv("AI_PROVIDER_MAX_ATTEMPTS", raising=False)
     monkeypatch.delenv("AI_PROVIDER_RETRY_BACKOFF_SECONDS", raising=False)
+    monkeypatch.delenv("AI_PROVIDER_MANUAL_RETRY_TIMEOUT_SECONDS", raising=False)
 
     settings = AiSettings.from_env()
 
     assert settings.provider_max_attempts == 3
     assert settings.provider_retry_backoff_seconds == 1.0
+    assert settings.provider_manual_retry_timeout_seconds == 600
 
 
 def test_environment_configuration_defaults_to_thirty_day_session_retention(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3021,7 +3025,7 @@ def test_background_review_delivers_steering_after_tool_before_next_model_reques
         assert sum(entry == UserMessage("Check night coverage first.") for entry in session.transcript) == 1
 
 
-@pytest.mark.parametrize("outcome", ["retry", "stop", "deadline"])
+@pytest.mark.parametrize("outcome", ["retry", "stop", "deadline", "timeout"])
 def test_provider_retry_preserves_completed_tools_and_run_identity(outcome):
     error = ProviderError.for_user("The AI provider timed out.")
     error.retryable = True
@@ -3029,7 +3033,9 @@ def test_provider_retry_preserves_completed_tools_and_run_identity(outcome):
     factory = rename_factory()
     app = create_test_app(
         settings=make_settings(
-            max_schedule_bytes=SCHEDULE_BYTE_LIMIT, sandbox_turn_timeout_seconds=0.5 if outcome == "deadline" else 10
+            max_schedule_bytes=SCHEDULE_BYTE_LIMIT,
+            sandbox_turn_timeout_seconds=0.5 if outcome == "deadline" else 10,
+            provider_manual_retry_timeout_seconds=0.05 if outcome == "timeout" else 10,
         ),
         provider=provider,
         sandbox_factory=factory,
@@ -3066,7 +3072,10 @@ def test_provider_retry_preserves_completed_tools_and_run_identity(outcome):
             time.sleep(0.001)
         assert not app.state.runs.busy(session_id)
         events = app.state.session_event_stream.events_after(session_id)
-        assert events[-1].type == {"retry": "done", "stop": "stopped", "deadline": "error"}[outcome]
+        assert events[-1].type == {"retry": "done", "stop": "stopped", "deadline": "error", "timeout": "error"}[outcome]
+        if outcome == "timeout":
+            # An unanswered wait fails with the provider reason, as a failure without manual retry does.
+            assert events[-1].data["message"] == "The AI provider timed out."
         assert sum(event.type == "run_start" for event in events) == 1
         assert sum(event.type == "tool" for event in events) == 1
         assert client.post(retry_url).status_code == 409

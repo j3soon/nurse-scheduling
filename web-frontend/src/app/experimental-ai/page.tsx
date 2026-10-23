@@ -279,7 +279,7 @@ export default function ExperimentalAiPage() {
     setIsExportingChat(false);
   }, []);
   const {
-    messages, uploadedFiles, removingUploadId, removingDownloadId, contextUsage, activeSessionId,
+    messages, uploadedFiles, removingUploadId, removingDownloadId, retryingProviderId, contextUsage, activeSessionId,
     sessionExpiresAt, sessionRetentionSeconds, conversationUnavailable, sessionNotice, trimmedHistoryCount,
     isStreaming, isStopping, isReconnecting, activeOptimization, queuedMessages, steeringAssistantId,
     setSessionRetentionSeconds, restoreConversation,
@@ -1158,6 +1158,7 @@ export default function ExperimentalAiPage() {
         downloadingOptimizationId={downloadingOptimizationId}
         retryMessage={retryMessage}
         retryProvider={retryProvider}
+        retryingProviderId={retryingProviderId}
         prepareAttachmentRetry={prepareAttachmentRetry}
         downloadGeneratedFiles={downloadGeneratedFiles}
         removeGeneratedFiles={removeGeneratedFiles}

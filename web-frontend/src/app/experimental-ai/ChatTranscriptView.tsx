@@ -56,6 +56,7 @@ interface ChatTranscriptViewProps {
   removingDownloadId: string | null;
   downloadingOptimizationId: string | null;
   retryProvider?: (runId: string, retryId: string) => Promise<void>;
+  retryingProviderId?: string | null;
   retryMessage: (id: string, question: string) => void;
   prepareAttachmentRetry: (question: string) => void;
   downloadGeneratedFiles: (id: string) => Promise<void>;
@@ -78,6 +79,7 @@ export function ChatTranscriptView({
   downloadingOptimizationId,
   retryMessage,
   retryProvider,
+  retryingProviderId,
   prepareAttachmentRetry,
   downloadGeneratedFiles,
   removeGeneratedFiles,
@@ -207,9 +209,10 @@ export function ChatTranscriptView({
               )}
               {message.providerRetry && message.status === 'pending' && isStreaming && message.runId && retryProvider && (
                 <div className="mx-auto mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                  <p>The run is waiting. Completed tools and files are kept until Stop, the run deadline, or a service restart.</p>
+                  <p>The run waits a limited time for a retry. Completed tools and files are kept until then, Stop, or a service restart.</p>
                   <button type="button" onClick={() => void retryProvider(message.runId!, message.providerRetry!.id)}
-                    className="mt-2 rounded border border-amber-400 px-3 py-1.5 font-medium">
+                    disabled={retryingProviderId === message.providerRetry.id}
+                    className="mt-2 rounded border border-amber-400 px-3 py-1.5 font-medium disabled:cursor-not-allowed disabled:opacity-50">
                     Retry provider request
                   </button>
                 </div>

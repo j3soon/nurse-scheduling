@@ -659,7 +659,11 @@ class AgentSession:
                 {"type": "provider_retry", "retry_id": run.retry_id, "message": error.user_message or PROVIDER_ERROR}
             )
             try:
-                await run.retry_ready.wait()
+                # The wait holds a shared run slot and a live sandbox, so an unanswered one fails as before.
+                async with asyncio.timeout(runtime.settings.provider_manual_retry_timeout_seconds):
+                    await run.retry_ready.wait()
+            except TimeoutError:
+                raise error
             finally:
                 run.retry_id = None
             events.emit(

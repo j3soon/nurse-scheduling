@@ -184,6 +184,8 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [removingUploadId, setRemovingUploadId] = useState<string | null>(null);
   const [removingDownloadId, setRemovingDownloadId] = useState<string | null>(null);
+  // Each wait has its own ID, so an accepted retry stays disabled until its notice clears it.
+  const [retryingProviderId, setRetryingProviderId] = useState<string | null>(null);
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
   const updateContextUsage = useCallback((usage: ContextUsage) => setContextUsage(previous => (
     usage.usedTokens === undefined && previous?.usedTokens !== undefined
@@ -987,11 +989,15 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   const retryProvider = async (runId: string, retryId: string) => {
     const ownsConversation = lifecycle.capture();
     const sessionId = sessionIdRef.current;
-    if (!sessionId) return;
+    if (!sessionId || retryingProviderId === retryId) return;
+    setRetryingProviderId(retryId);
     try {
       await retryProviderRequest(sessionId, runId, retryId, authToken, sessionEndpointRef.current ?? aiEndpoint);
     } catch (retryError) {
-      if (ownsConversation()) reportRequestError(retryError, 'The provider request could not be retried.');
+      if (ownsConversation()) {
+        setRetryingProviderId(null);
+        reportRequestError(retryError, 'The provider request could not be retried.');
+      }
     }
   };
 
@@ -1109,7 +1115,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     ownsConversation: lifecycle.capture(),
   });
   return {
-    messages, uploadedFiles, removingUploadId, removingDownloadId, contextUsage,
+    messages, uploadedFiles, removingUploadId, removingDownloadId, retryingProviderId, contextUsage,
     activeSessionId, sessionExpiresAt, sessionRetentionSeconds, conversationUnavailable,
     sessionNotice, trimmedHistoryCount, isStreaming, isStopping, isReconnecting,
     activeOptimization, queuedMessages, steeringAssistantId,

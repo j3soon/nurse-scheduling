@@ -1559,6 +1559,9 @@ describe('ExperimentalAiPage', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await user.click(await screen.findByRole('button', { name: 'Retry provider request' }));
     expect(mockRetryProviderRequest).toHaveBeenCalledWith('session-id', 'user-run-1', 'attempt-1', null, '/ai');
+    expect(screen.getByRole('button', { name: 'Retry provider request' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Retry provider request' }));
+    expect(mockRetryProviderRequest).toHaveBeenCalledTimes(1);
     expect(mockSendMessage).toHaveBeenCalledTimes(1);
     expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled();
     act(() => {
@@ -1568,6 +1571,24 @@ describe('ExperimentalAiPage', () => {
     expect(screen.queryByRole('button', { name: 'Retry provider request' })).not.toBeInTheDocument();
     expect(screen.getByText('Recovered output.')).toBeInTheDocument();
     expect(screen.getByText('Completed once')).toBeInTheDocument();
+    await act(async () => finish?.());
+  });
+
+  it('enables a provider retry again when the retry request fails', async () => {
+    const user = userEvent.setup();
+    let finish: (() => void) | undefined;
+    mockRetryProviderRequest.mockRejectedValueOnce(new Error('This provider request is no longer waiting for retry.'));
+    mockRunEvents.mockImplementation(async (_id: string, _question: string, stream: SessionStreamOptions) => {
+      stream.onEvent({ type: 'provider_retry', retryId: 'attempt-1', message: 'The provider timed out.' });
+      await new Promise<void>(resolve => { finish = resolve; });
+    });
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Build a schedule.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await user.click(await screen.findByRole('button', { name: 'Retry provider request' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry provider request' })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: 'Retry provider request' }));
+    expect(mockRetryProviderRequest).toHaveBeenCalledTimes(2);
     await act(async () => finish?.());
   });
 

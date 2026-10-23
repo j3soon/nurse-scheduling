@@ -109,8 +109,9 @@ If the model provider has a temporary failure, the run waits and offers
 tool results and files. It does not rerun completed commands or optimizer submissions.
 Partial text remains visible and is supplied as context for the continuation.
 The continuation can differ from what the interrupted request would have generated.
-**Stop**, the run deadline, or a service restart ends this wait. A service restart
-cannot restore the live sandbox. Other failures still end the run.
+**Stop**, the retry time limit (10 minutes by default), the run deadline, or a service
+restart ends this wait. When the limit passes, the turn fails with the provider error.
+A service restart cannot restore the live sandbox. Other failures still end the run.
 
 The assistant continues working if the browser loses its connection or the phone
 sleeps. The chat reconnects automatically and recovers the complete saved answer.
