@@ -716,8 +716,8 @@ describe('useSchedulingData', () => {
     act(() => {
       result.current.updateDateRange(
         {
-          startDate: new Date('2027-01-01'),
-          endDate: new Date('2027-01-31'),
+          startDate: new Date('2028-01-01'),
+          endDate: new Date('2028-01-31'),
         },
         { importTaiwanHolidays: true },
       );

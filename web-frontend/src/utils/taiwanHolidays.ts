@@ -28,7 +28,7 @@ import { dateStrToDate } from '@/utils/dateParsing';
 export const TAIWAN_WORKDAY_GROUP_ID = 'WORKDAY';
 export const TAIWAN_FREEDAY_GROUP_ID = 'FREEDAY';
 export const TAIWAN_HOLIDAY_SUPPORTED_START = '2023-01-01';
-export const TAIWAN_HOLIDAY_SUPPORTED_END = '2026-12-31';
+export const TAIWAN_HOLIDAY_SUPPORTED_END = '2027-12-31';
 
 type TaiwanSpecialDateInfo = [string, string, boolean];
 export interface TaiwanHolidayEntry {
@@ -124,6 +124,31 @@ const SPECIAL_DATE_INFO: TaiwanSpecialDateInfo[] = [
   ['2026-10-25', '臺灣光復暨金門古寧頭大捷紀念日', true],
   ['2026-10-26', '補假 (2026-10-25 臺灣光復暨金門古寧頭大捷紀念日)', true],
   ['2026-12-25', '行憲紀念日', true],
+  // 2027
+  ['2027-01-01', '開國紀念日', true],
+  ['2027-02-04', '小年夜', true],
+  ['2027-02-05', '農曆除夕', true],
+  ['2027-02-06', '春節 (2027-02-09 補假)', true],
+  ['2027-02-07', '春節 (2027-02-10 補假)', true],
+  ['2027-02-08', '春節', true],
+  ['2027-02-09', '補假 (2027-02-06 春節)', true],
+  ['2027-02-10', '補假 (2027-02-07 春節)', true],
+  ['2027-02-28', '和平紀念日', true],
+  ['2027-03-01', '補假 (2027-02-28 和平紀念日)', true],
+  ['2027-04-04', '兒童節', true],
+  ['2027-04-05', '清明節', true],
+  ['2027-04-06', '補假 (2027-04-04 兒童節)', true],
+  ['2027-04-30', '補假 (2027-05-01 勞動節)', true],
+  ['2027-05-01', '勞動節', true],
+  ['2027-06-09', '端午節', true],
+  ['2027-09-15', '中秋節', true],
+  ['2027-09-28', '孔子誕辰紀念日/教師節', true],
+  ['2027-10-10', '國慶日', true],
+  ['2027-10-11', '補假 (2027-10-10 國慶日)', true],
+  ['2027-10-25', '臺灣光復暨金門古寧頭大捷紀念日', true],
+  ['2027-12-24', '補假 (2027-12-25 行憲紀念日)', true],
+  ['2027-12-25', '行憲紀念日', true],
+  ['2027-12-31', '補假 (2027-12-25 行憲紀念日)', true],
 ];
 
 const SPECIAL_DATE_LOOKUP = new Map(

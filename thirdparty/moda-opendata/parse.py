@@ -238,6 +238,7 @@ def main():
         "113年中華民國政府行政機關辦公日曆表.csv",
         "114年中華民國政府行政機關辦公日曆表(1141020更新).csv",
         "115年中華民國政府行政機關辦公日曆表.csv",
+        "116年中華民國政府行政機關辦公日曆表_utf8bom.csv",
     ]
     for filename in filenames:
         # Get the directory of the current script

@@ -48,7 +48,7 @@ Automatic groups cannot be renamed or deleted.
 
 Holiday import can create or replace editable `WORKDAY` and `FREEDAY` groups.
 Use it only when these groups match the workplace calendar. It supports ranges
-within `2023-01-01` through `2026-12-31`. Follow the in-app warning for Labor
+within `2023-01-01` through `2027-12-31`. Follow the in-app warning for Labor
 Day in 2023 and 2024, then adjust May 1 when needed.
 
 The 87-person November example imports `WORKDAY` and `FREEDAY` from the
