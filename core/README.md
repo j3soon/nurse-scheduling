@@ -625,6 +625,15 @@ backend restarts. Model settings are separate from expanding returned reasoning
 text. Smaller context windows remain subject to the provider's input limits. The
 chat reports the selected model's context limit when available.
 
+The agent automatically summarizes older conversation context before requests
+approach that limit. It retains recent tool exchanges and native reasoning for
+compatible models. Summaries preserve goals, constraints, decisions, pending
+work, and file context. Current schedule and file status stay in each request.
+Summary calls use the selected model and appear in provider cost estimates.
+Without a reported context limit, the existing history limits still apply.
+A confirmed context overflow permits one compact-and-retry attempt. PostgreSQL
+recovery retains successful summaries across service restarts.
+
 ### Provider cost estimates
 
 Enable cost reporting in the LiteLLM gateway configuration:
@@ -644,7 +653,7 @@ float values returned by gateways. Configure prices for custom models so missing
 gateway pricing does not appear free.
 
 Each HTTP attempt has a stable local call ID and an optional LiteLLM call ID.
-The chat includes retries, tool follow-ups, and optimizer reviews in its totals.
+The chat includes retries, tool follow-ups, compaction summaries, and optimizer reviews in its totals.
 It keeps input, output, cached input, and reasoning token counts when supplied.
 Reasoning tokens are already included in output tokens and are not added again.
 Costs use decimal USD arithmetic on the server. The UI shows a turn total,

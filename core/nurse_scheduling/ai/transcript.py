@@ -66,6 +66,7 @@ class AssistantMessage:
     tool_calls: tuple[ToolCall, ...] = ()
     native_reasoning: dict[str, Any] = field(default_factory=dict)
     provider: ProviderIdentity | None = None
+    usage: dict[str, int | None] | None = None
 
 
 @dataclass(frozen=True)
@@ -94,7 +95,17 @@ class AppEventEntry:
     text: str
 
 
-AgentMessage = UserMessage | AssistantMessage | ToolResultMessage | AppEventEntry
+@dataclass(frozen=True)
+class CompactionEntry:
+    """A summary that replaces older model context while retaining a recent tail."""
+
+    summary: str
+    keep_messages: int
+    tokens_before: int
+    valid: bool = True
+
+
+AgentMessage = UserMessage | AssistantMessage | ToolResultMessage | AppEventEntry | CompactionEntry
 
 # Earlier versions stored the user's approval of each schedule change. A stored decision
 # restores as the app event the model received.
@@ -113,6 +124,7 @@ ENTRY_TYPES = {
     AssistantMessage: "assistant",
     ToolResultMessage: "tool_result",
     AppEventEntry: "app_event",
+    CompactionEntry: "compaction",
 }
 
 
@@ -134,22 +146,30 @@ def entry_from_record(entry_type: str, payload: dict[str, Any]) -> AgentMessage:
             tuple(ToolCall(**call) for call in payload.get("tool_calls", ())),
             payload.get("native_reasoning", {}),
             ProviderIdentity(**payload["provider"]) if payload.get("provider") else None,
+            payload.get("usage"),
         )
     if entry_type == "proposal_decision":
         return AppEventEntry(_LEGACY_DECISION_EVENTS[payload["decision"]])
-    types = {"user": UserMessage, "tool_result": ToolResultMessage, "app_event": AppEventEntry}
+    types = {
+        "user": UserMessage,
+        "tool_result": ToolResultMessage,
+        "app_event": AppEventEntry,
+        "compaction": CompactionEntry,
+    }
     return types[entry_type](**payload)
 
 
 def starts_exchange(entry: AgentMessage) -> bool:
     """Whether model context may start at this entry without an earlier answer it refers to."""
-    return isinstance(entry, UserMessage | AppEventEntry)
+    return isinstance(entry, UserMessage | AppEventEntry | CompactionEntry)
 
 
 def entry_text(entry: AgentMessage) -> str:
     """Return the text an entry holds, which bounds its share of session memory."""
     if isinstance(entry, UserMessage | ToolResultMessage | AppEventEntry):
         return entry.text
+    if isinstance(entry, CompactionEntry):
+        return entry.summary
     if isinstance(entry, AssistantMessage):
         return (
             entry.text

@@ -282,6 +282,54 @@ for operators. **Retry** resends the original text in a fresh sandbox. Uploaded
 files stay available for that retry. If an upload did not finish, **Prepare retry**
 restores the text and requires the files to be attached again before sending.
 
+## Automatic context compaction
+
+`ContextCompactor` follows [Pi v1.0.0 compaction][pi-compaction]. Before a model
+request and after the final answer, it checks the discovered model context
+window. It reserves up to 16,384 tokens for output, reduced to one quarter of a
+smaller window. It also checks 80 percent of the configured history character
+and message limits, so normal retention does not discard older state first.
+Without model metadata, ordinary requests retain the existing history limits.
+An explicit context-overflow rejection can still trigger compaction.
+
+The estimate uses the most recent completed same-model input and output usage,
+plus estimates for later messages. A characters/4 estimate covers missing usage,
+changed model settings, tool definitions, and current system and status content.
+Old usage is invalid after a summary replaces its original input. Cached tokens
+are already included in Chat Completions prompt usage.
+
+The cut point keeps up to 20,000 recent estimated tokens, reduced for smaller
+windows and history budgets. It can split a long turn before an assistant
+response, but never between a tool call and its results. Supplemental tool
+images stay with their exchange and do not count as durable messages. If a
+single tool batch fills the available input, its essential results enter the
+summary instead. The current system instructions and trusted request status
+remain outside the summary.
+
+Older messages are serialized as conversation data. Tool arguments retain file
+paths. Tool results are limited to 2,000 characters per result, as in Pi. Large
+inputs use bounded successive summary requests, updating the previous summary.
+Opaque reasoning is never converted to text for summarization. The separate
+manifest `ai/prompts/compaction.json` records the summary instructions and hash.
+Summaries preserve goals, constraints, decisions, progress, pending requests,
+and file and tool context. Recent responses retain their native replay metadata.
+
+Summary calls use the frozen run model and reasoning selection. They have no
+tools, and their text and reasoning do not enter the answer stream. Their
+provider call records include costs and usage. An empty, truncated, oversized,
+failed, or tool-requesting summary leaves the original context intact. Stop
+cancels summary generation through the existing run owner. A confirmed provider
+context overflow permits one compact-and-retry attempt before reporting failure.
+Tool execution is not repeated by that retry.
+
+A successful summary appends a `CompactionEntry`, leaving earlier audit entries
+intact. Context projection replays its summary plus the referenced recent tail.
+Retention keeps the summary and that tail together. Hard service memory limits
+can still remove an entire older context unit. Failed, cancelled, and stale
+runs cannot replay their summaries of discarded workspace work. Migration 009
+adds the compaction entry type. Back up the database before upgrading, and
+restore the backup when rolling back to a version that cannot read that type.
+
 ## Reasoning and tool activity
 
 Providers stream visible reasoning through `reasoning_content`, `reasoning`, or
@@ -680,7 +728,7 @@ It saves the following data:
 | --- | --- |
 | `chat_sessions` | Owner cookie hash, credential ID, creation time, expiry, and a `state` with the schedule and the number of conversation entries that retention trimmed. |
 | `chat_runs` | Run order, kind, client `message_id`, credential ID, model, status, error code, whether the run's messages joined the conversation (`committed`), the optional `schedule_change` application payload, attachment count, usage, and start and finish times. |
-| `chat_session_entries` | Conversation entries in session order, keyed by `(session_id, seq)`: run messages and app events such as uploads and schedule changes. Run messages name their run. Each row has a `type` and a JSON `payload` holding the fields of the matching `transcript.py` type. |
+| `chat_session_entries` | Conversation entries in session order, keyed by `(session_id, seq)`: run messages and app events such as uploads and schedule changes. Run messages name their run. Compaction entries hold a summary and the number of preceding recent model messages to retain. Each row has a `type` and a JSON `payload` holding the fields of the matching `transcript.py` type. |
 | `chat_session_events` | Replayable session events except optimizer progress. Adjacent text fragments of one run share a row covering `event_id` through `last_event_id`. |
 | `chat_run_stops` | Named Stop requests, including messages that have not arrived yet. |
 | `chat_files` | Session file bytes as `bytea`, with a stable archive ID, kind, source run/job/upload ID, filename, media type, creation time, and removal time. Detached versions remain until session expiry. Active upload metadata and retry fingerprints stay in the session state. |
@@ -1088,7 +1136,7 @@ Each row lists shared behavior first, then what only one side has.
 | Steering queue<br/>Pi: [steer / followUp][pi-agent] | Queued input reaches the model at a boundary without starting a new run. | One queue serves both roles. It drains every message, deduplicates retried POSTs by ID, and closes atomically with the answer. Optimizer wake-ups enter `SessionRuns` as fresh runs. | Separate steering and follow-up queues, each draining one message at a time or all at once. |
 | `WorkspaceTools` / `_LazySandboxTurn`<br/>Pi: [read, bash, edit, write][pi-coding-tools] | Pi's default `read`, `bash`, `edit`, and `write` contracts and output behavior, ported under `ai/pi`. | A lazy, disposable E2B VM per run with hydration, pause and resume, YAML validation after each change, and teardown before commit. A shorter `read` description, fixed image limits with a source-pixel bound, and server command timeouts. | Tools act on the user's local working directory, which persists across runs. Image resize options can follow the active model's limits. Built-in `powershell`, `find`, `grep`, and `ls` tools are available beyond the default active four. Nested calls through [`ctx.executeTool()`][pi-nested-tools] share validation and hooks and carry parent tool call IDs. |
 | `AgentSessionEvent` / `SessionEventStream`<br/>Pi: [AgentEvent][pi-events], [AgentSessionEvent][pi-session-events] | Typed text, reasoning, and tool events with call IDs and exactly one terminal outcome per run. | `AgentSession.subscribe` exposes one typed public event per publication to in-process listeners. `SessionEventStream` retains all run and job events for HTTP replay with `Last-Event-ID`. With PostgreSQL, replay continues after a restart. Disconnect detaches the reader. Explicit Stop cancels runs. | In-process subscribers receive agent, turn, message, and tool lifecycle events, including partial tool updates. Low-level `agent_end` marks the end of one loop run. `AgentSession` emits [`agent_settled`][pi-settled] after retries, compaction recovery, queued continuation work, and session boundary processing finish. |
-| `SessionRecovery` / `ChatHistory`<br/>Pi: [SessionManager][pi-session-manager], [durable storage][pi-durable] | Typed entries saved in session order, each message when it ends. A later process rebuilds the conversation from the saved entries. Client request IDs make a repeated submission return its existing run. | Optional PostgreSQL storage. Linear entries also hold app events. A run's messages join the conversation only when the run commits, so restore retains safe context from failed or interrupted runs and skips stale runs. The state holds the schedule and a count of entries that retention trimmed instead of compaction entries. Published events and named Stop requests are saved too, so a restart keeps the output that a browser saw. | Entries form a tree with branches, compaction summaries, model changes, and labels. The separate durable package stores generic tasks with explicit status. |
+| `SessionRecovery` / `ChatHistory`<br/>Pi: [SessionManager][pi-session-manager], [durable storage][pi-durable] | Typed entries saved in session order, each message when it ends. A later process rebuilds the conversation from the saved entries. Client request IDs make a repeated submission return its existing run. | Optional PostgreSQL storage. Linear entries also hold app events. A run's messages join the conversation only when the run commits, so restore retains safe context from failed or interrupted runs and skips stale runs. The state holds the schedule and a count of entries that retention trimmed. Ordered compaction entries hold summaries and the number of recent messages to retain. Published events and named Stop requests are saved too, so a restart keeps the output that a browser saw. | Entries form a tree with branches, compaction summaries, model changes, and labels. The separate durable package stores generic tasks with explicit status. |
 | `SessionOptimizer`<br/>Pi: no first-class built-in counterpart | Exposed to the model as one `AgentTool`. | Independent remote jobs, progress, anonymization, late-submission cleanup, and fresh review runs. | Similar behavior could be implemented through extensions. |
 | API routes / `SessionStore` / browser lifecycle<br/>Pi: nearest is [AgentSession][pi-session] | A session boundary that owns conversation lifetime. | HTTP authentication, cookie ownership, expiry, session text limits, shared SSE framing and recovery for GET and compatibility POST readers, a browser-owned schedule, and automatic application of validated changes. With PostgreSQL, a request restores a saved session for its owner cookie, and a full store unloads the least recently used idle session. | Local single-user sessions stored on disk that can be resumed and branched. |
 
@@ -1101,10 +1149,8 @@ The investigated alternatives below were not adopted, except where noted:
 - **Separate steering and follow-up queues.** The browser offers one queue
   action. Optimizer results start a fresh run because they can arrive after the
   run ends and must see the current schedule.
-- **Summary compaction.** The model receives the current schedule
-  summary on every run, so older exchanges carry less state than a coding
-  transcript. Trimming the oldest complete exchanges avoids an extra provider
-  call with its cost, latency, and failure mode.
+- **Summary compaction.** The agent now summarizes older context and retains recent
+  tool exchanges. Hard session retention limits still bound service memory.
 - **Central schema validation of tool arguments.** The ported Pi tools already
   validate with Pi's wording and accept the compatibility shapes Pi's
   `prepareArguments` accepts, such as a legacy single edit. A generic schema
@@ -1135,3 +1181,5 @@ The investigated alternatives below were not adopted, except where noted:
 [pi-coding-tools]: https://github.com/earendil-works/pi/tree/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/coding-agent/src/core/tools
 
 [pi-completions]: https://github.com/earendil-works/pi/blob/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/ai/src/api/openai-completions.ts
+
+[pi-compaction]: https://github.com/earendil-works/pi/blob/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/coding-agent/src/core/compaction/compaction.ts

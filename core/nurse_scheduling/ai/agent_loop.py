@@ -24,9 +24,11 @@ import logging
 import time
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import aclosing, asynccontextmanager
+from dataclasses import asdict
 from datetime import datetime
 
 from .agent_types import (
+    AgentCompaction,
     AgentEvent,
     AgentMessageEnd,
     AgentReasoning,
@@ -42,10 +44,12 @@ from .agent_types import (
     ToolBatchScope,
     ToolExecutor,
 )
-from .context import prepare_provider_request
+from .compaction import ContextCompactor
+from .context import compatible_provider_messages, prepare_provider_request
 from .provider import (
     ChatMessage,
     ProviderCall,
+    ProviderContextOverflowError,
     ReasoningDelta,
     ReasoningReplay,
     ResponseEnd,
@@ -82,6 +86,8 @@ async def agent_loop(
     max_tool_calls: int | None = None,
     run_messages: list[AgentMessage] | None = None,
     request_clock: Callable[[], datetime] | None = None,
+    history_limit: int = 200_000,
+    message_limit: int = 1000,
 ) -> AsyncIterator[AgentEvent]:
     """Run the model/tool loop shared by agent capability layers."""
     registered = {tool.name: tool for tool in tools}
@@ -96,9 +102,29 @@ async def agent_loop(
     tool_rounds = 0
     tool_calls = 0
     final_answer_only = False
+    compactor = ContextCompactor(provider, history_limit=history_limit, message_limit=message_limit)
+    await compactor.prepare()
+    overflow_recovered = False
+
+    def current_request():
+        return prepare_provider_request(
+            messages, conversation, now=request_clock() if request_clock else None, _preserve_native=True
+        )
+
+    async def compact_context(*, force=False):
+        events = compactor.compact(current_request(), [tool.definition for tool in tools], force=force)
+        async with aclosing(events):
+            async for event in events:
+                if isinstance(event, AgentCompaction):
+                    conversation.append(event.entry)
+                yield event
+
     while True:
-        # Every follow-up request must include steering accepted during the last response,
-        # including tool refusals that continue without an execution batch.
+        async with aclosing(compact_context()) as compaction_events:
+            async for event in compaction_events:
+                yield event
+        # Drain after compaction too, since it can receive steering while the
+        # summary streams. Every follow-up provider request must see queued input.
         if conversation and take_steering is not None:
             for message_id, text in take_steering(False):
                 conversation.append(UserMessage(text))
@@ -106,13 +132,9 @@ async def agent_loop(
         answer, reasoning, calls = [], [], ()
         finish_reason = None
         replay = None
+        usage = None
         provider_events = provider.stream_events(
-            prepare_provider_request(
-                messages,
-                conversation,
-                now=request_clock() if request_clock else None,
-                provider=getattr(provider, "identity", None),
-            ),
+            compatible_provider_messages(current_request(), getattr(provider, "identity", None)),
             [] if final_answer_only else [tool.definition for tool in tools],
         )
         try:
@@ -127,15 +149,30 @@ async def agent_loop(
                     elif isinstance(event, ReasoningReplay):
                         replay = event
                     elif isinstance(event, (TokenUsage, ProviderCall)):
+                        if isinstance(event, TokenUsage):
+                            usage = asdict(event)
                         yield event
                     elif isinstance(event, ToolCallRequest):
                         calls = event.calls
                     elif isinstance(event, ResponseEnd):
                         finish_reason = event.finish_reason
+        except ProviderContextOverflowError:
+            if overflow_recovered or answer or calls:
+                raise
+            compacted = False
+            async with aclosing(compact_context(force=True)) as compaction_events:
+                async for event in compaction_events:
+                    compacted = compacted or isinstance(event, AgentCompaction)
+                    yield event
+            if not compacted:
+                raise
+            overflow_recovered = True
+            continue
         except BaseException as exc:
             reason = "aborted" if isinstance(exc, (asyncio.CancelledError, GeneratorExit)) else "error"
             conversation.append(AssistantMessage("".join(answer), reason, "".join(reasoning), calls))
             raise
+        overflow_recovered = False
         stop_reason = "length" if finish_reason == "length" else "tool_use" if calls else "stop"
         response = AssistantMessage(
             "".join(answer),
@@ -144,10 +181,14 @@ async def agent_loop(
             calls,
             replay.native if replay else {},
             replay.provider if replay else getattr(provider, "identity", None),
+            usage,
         )
         conversation.append(response)
         yield AgentMessageEnd(response)
         if not calls:
+            async with aclosing(compact_context()) as compaction_events:
+                async for event in compaction_events:
+                    yield event
             steering = tuple(take_steering(True)) if take_steering is not None else ()
             if not steering:
                 break
@@ -236,6 +277,9 @@ async def agent_loop(
             conversation.append(closing)
             yield AgentText(end_turn_message)
             yield AgentMessageEnd(closing)
+            async with aclosing(compact_context()) as compaction_events:
+                async for event in compaction_events:
+                    yield event
             steering = tuple(take_steering(True)) if take_steering is not None else ()
             if not steering:
                 return

@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .provider import ProviderCall, TokenUsage, ToolResultImage
-from .transcript import AssistantMessage
+from .transcript import AssistantMessage, CompactionEntry
 
 
 @dataclass(frozen=True)
@@ -47,6 +47,13 @@ class AgentMessageEnd:
     """A completed model response, ready for a durable entry checkpoint."""
 
     message: AssistantMessage
+
+
+@dataclass(frozen=True)
+class AgentCompaction:
+    """A completed context summary ready for the ordered recovery checkpoint."""
+
+    entry: CompactionEntry
 
 
 @dataclass(frozen=True)
@@ -88,6 +95,7 @@ class AgentProposal:
 
 AgentEvent = (
     AgentMessageEnd
+    | AgentCompaction
     | AgentText
     | AgentReasoning
     | AgentToolStart

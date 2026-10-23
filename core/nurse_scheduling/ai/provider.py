@@ -92,6 +92,11 @@ class ChatMessage(TypedDict, total=False):
     reasoning_details: list[dict[str, Any]]
     thinking_blocks: list[dict[str, Any]]
     provider_specific_fields: dict[str, Any]
+    _provider: dict[str, Any]
+    _source_index: int
+    _usage: dict[str, int | None]
+    _current_status: bool
+    _tool_image: bool
 
 
 @dataclass(frozen=True)
@@ -251,6 +256,7 @@ def tool_result_image_message(call_id: str, image: ToolResultImage) -> ChatMessa
     """Pass a tool image through a user message after all tool replies."""
     return ChatMessage(
         role="user",
+        _tool_image=True,
         content=[
             {"type": "text", "text": f"Image returned by tool call {call_id}."},
             {
@@ -272,6 +278,10 @@ class ProviderError(RuntimeError):
     def for_user(cls, message: str) -> "ProviderError":
         """Mark a known explanation safe for the chat, without exposing SDK errors."""
         return cls(message, user_message=message)
+
+
+class ProviderContextOverflowError(ProviderError):
+    """The provider explicitly rejected the request for exceeding its context window."""
 
 
 class ProviderResponseLimitError(ProviderError):
@@ -343,6 +353,10 @@ class OpenAiCompatibleProvider:
                     if type(limit) is int and limit > 0:
                         self.context_tokens = limit
                         return
+
+    async def prepare_context(self) -> None:
+        """Discover model limits before choosing whether to compact the next request."""
+        await self._load_context_tokens()
 
     async def stream_chat(self, messages: Sequence[ChatMessage]) -> AsyncIterator[str]:
         """Translate provider SSE chunks into plain text deltas."""
@@ -502,7 +516,10 @@ class OpenAiCompatibleProvider:
                         response.status_code,
                         content_type,
                     )
-                raise ProviderError.for_user(
+                error_type = ProviderError
+                if response.status_code in {400, 413, 422} and _is_context_overflow(response_body):
+                    error_type = ProviderContextOverflowError
+                raise error_type.for_user(
                     f"The AI provider returned HTTP {response.status_code}. Error ID: {error_id}."
                 )
 
@@ -597,6 +614,30 @@ class OpenAiCompatibleProvider:
             yield ResponseEnd(finish_reason)
 
 
+def _is_context_overflow(body: str) -> bool:
+    try:
+        error = json.loads(body).get("error", {})
+        if not isinstance(error, dict):
+            return False
+    except (ValueError, AttributeError):
+        return False
+    code = error.get("code")
+    if isinstance(code, str) and code in {"context_length_exceeded", "context_window_exceeded", "prompt_too_long"}:
+        return True
+    message = str(error.get("message", "")).lower()
+    return any(
+        phrase in message
+        for phrase in (
+            "maximum context length",
+            "exceeds the context window",
+            "prompt is too long",
+            "input is too long",
+            "input token count exceeds",
+            "context window exceeded",
+        )
+    )
+
+
 def _merge_reasoning(target: dict[str, Any], delta: dict[str, Any]) -> int:
     """Collect native fields without deriving replay data from displayed text."""
     fields = ("reasoning_content", "reasoning", "reasoning_text", "reasoning_details", "thinking_blocks")
@@ -624,6 +665,8 @@ def _merge_reasoning(target: dict[str, Any], delta: dict[str, Any]) -> int:
         for block in value:
             last = blocks[-1] if blocks else None
             kind = block.get("type")
+            if not isinstance(kind, str):
+                raise ProviderError.for_user("The AI provider returned invalid reasoning metadata.")
             field = {"reasoning.text": "text", "reasoning.summary": "summary", "thinking": "thinking"}.get(kind)
             same = (
                 last is not None
@@ -633,6 +676,16 @@ def _merge_reasoning(target: dict[str, Any], delta: dict[str, Any]) -> int:
                     for name in ("id", "index")
                 )
             )
+            # A completed signed thinking block followed by more thinking is a
+            # separate native block. Keep it separate to preserve its signature.
+            if (
+                key == "thinking_blocks"
+                and same
+                and last.get("signature")
+                and block.get("thinking")
+                and ("index" not in block or "index" not in last)
+            ):
+                same = False
             if field and same:
                 for name, part in block.items():
                     if name == field or (key == "thinking_blocks" and name == "signature"):

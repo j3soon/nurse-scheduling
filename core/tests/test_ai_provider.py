@@ -855,3 +855,39 @@ def test_reasoning_metadata_is_bounded_and_rejected_after_completion(monkeypatch
     )
     with pytest.raises(ProviderError, match="after completion"):
         _events(_streaming_provider(monkeypatch, body))
+
+
+@pytest.mark.parametrize(
+    ("status", "error", "overflow"),
+    [
+        (400, {"code": "context_length_exceeded"}, True),
+        (413, {"message": "prompt is too long"}, True),
+        (422, {"message": "maximum context length is 8000 tokens"}, True),
+        (400, {"message": "invalid thinking signature"}, False),
+        (401, {"code": "context_length_exceeded"}, False),
+        (400, {"code": ["invalid"]}, False),
+    ],
+)
+def test_context_overflow_is_distinct_from_other_provider_errors(monkeypatch, status, error, overflow):
+    provider = _transport_provider(monkeypatch, lambda _request: httpx.Response(status, json={"error": error}))
+    with pytest.raises(ProviderError) as caught:
+        _events(provider)
+    assert isinstance(caught.value, provider_module.ProviderContextOverflowError) == overflow
+
+
+def test_preserves_separate_signed_thinking_blocks(monkeypatch):
+    blocks = [
+        {"type": "thinking", "thinking": "First decision", "signature": "signed-first"},
+        {"type": "thinking", "thinking": "Second decision", "signature": "signed-second"},
+        {"type": "redacted_thinking", "data": "opaque"},
+    ]
+    provider = _streaming_provider(monkeypatch, _sse_body(_delta_chunk({"thinking_blocks": blocks})))
+    (replay,) = [event for event in _events(provider) if isinstance(event, ReasoningReplay)]
+    assert replay.native["thinking_blocks"] == blocks
+
+
+@pytest.mark.parametrize("blocks", [[{}], [{"type": []}]])
+def test_malformed_reasoning_metadata_remains_a_provider_error(monkeypatch, blocks):
+    provider = _streaming_provider(monkeypatch, _sse_body(_delta_chunk({"thinking_blocks": blocks})))
+    with pytest.raises(ProviderError, match="invalid reasoning metadata"):
+        _events(provider)

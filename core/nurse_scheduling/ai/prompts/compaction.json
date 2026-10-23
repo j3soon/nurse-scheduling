@@ -1,0 +1,12 @@
+[
+  {
+    "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. SPDX-FileCopyrightText: 2026 Johnson Sun",
+    "_comment": "This file is mostly AI generated.",
+    "id": "context-compaction",
+    "file": "compaction.md",
+    "sha256": "c139445750280b7c12361e2fb877f803374ca3a93cdb6c808f38e5e4ec2ae2e6",
+    "cases": [
+      "unit:context-compaction-tool-continuation"
+    ]
+  }
+]

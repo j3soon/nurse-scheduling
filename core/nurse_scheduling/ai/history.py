@@ -37,7 +37,7 @@ from ..sentry import report_outage_recovery
 from ..server.retry import RepeatedFailure
 from .costs import CostTotals
 from .provider import ProviderCall, TokenUsage
-from .transcript import AgentMessage, AssistantMessage, UserMessage, entry_from_record, entry_record
+from .transcript import AgentMessage, AssistantMessage, CompactionEntry, UserMessage, entry_from_record, entry_record
 from .workspace import SandboxAttachment, attachment_path
 
 logger = logging.getLogger("nurse_scheduling.ai.history")
@@ -432,6 +432,8 @@ class ChatHistory:
                 replace(entry, stop_reason="aborted" if status == "cancelled" else "error")
                 if isinstance(entry := entry_from_record(entry_type, payload), AssistantMessage)
                 and status in {"failed", "cancelled", "stale"}
+                else replace(entry, valid=False)
+                if isinstance(entry, CompactionEntry) and status in {"failed", "cancelled", "stale"}
                 else entry
                 for entry_type, payload, status in entries
             ],

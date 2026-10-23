@@ -42,6 +42,7 @@ from .transcript import (
     AgentMessage,
     AppEventEntry,
     AssistantMessage,
+    CompactionEntry,
     ProviderIdentity,
     ToolCall,
     ToolResultMessage,
@@ -237,7 +238,7 @@ def build_provider_messages(
         ChatMessage(role="system", content=system_content),
         *retained,
         ChatMessage(role="user", content=question),
-        *([ChatMessage(role="user", content=status)] if status else []),
+        *([ChatMessage(role="user", content=status, _current_status=True)] if status else []),
     ]
 
 
@@ -286,7 +287,7 @@ def prepare_provider_request(
     """Project the agent's in-run messages at the provider boundary."""
     request = list(prefix)
     clock_status = None
-    if request and isinstance(request[-1]["content"], str) and request[-1]["content"].startswith(STATUS_PREFIX + "\n"):
+    if request and request[-1].get("_current_status"):
         lines = request[-1]["content"].splitlines()
         for index, line in enumerate(lines):
             if line.startswith(CURRENT_TIME_STATUS):
@@ -301,6 +302,11 @@ def prepare_provider_request(
         pending_images.clear()
 
     for entry in entries:
+        if isinstance(entry, CompactionEntry):
+            flush_images()
+            if entry.valid:
+                request = apply_compaction(request, entry)
+            continue
         if isinstance(entry, ToolResultMessage):
             request.append(tool_result_message(entry.tool_call_id, entry.text))
             if entry.image is not None:
@@ -325,6 +331,8 @@ def prepare_provider_request(
                 message["_provider"] = asdict(entry.provider)
                 if entry.stop_reason != "length":
                     message.update(entry.native_reasoning)
+            if entry.usage is not None:
+                message["_usage"] = entry.usage
             request.append(message)
         elif isinstance(entry, UserMessage | AppEventEntry):
             request.append(ChatMessage(role="user", content=entry.text))
@@ -332,8 +340,48 @@ def prepare_provider_request(
     if clock_status is not None:
         request.append(clock_status)
     return (
-        _repair_tool_pairs(request) if _preserve_native else _compatible_messages(_repair_tool_pairs(request), provider)
+        _repair_tool_pairs(request)
+        if _preserve_native
+        else compatible_provider_messages(_repair_tool_pairs(request), provider)
     )
+
+
+SUMMARY_PREFIX = "[Conversation summary]"
+
+
+def summary_message(summary: str) -> ChatMessage:
+    """Represent a compaction summary as conversation data."""
+    return ChatMessage(role="user", content=f"{SUMMARY_PREFIX}\n{summary}")
+
+
+def _recent_messages(projected: list[tuple[bool, ChatMessage]], count: int) -> list[tuple[bool, ChatMessage]]:
+    if count <= 0:
+        return []
+    start = len(projected)
+    while start > 0 and count > 0:
+        start -= 1
+        if not projected[start][1].get("_tool_image"):
+            count -= 1
+    tail = []
+    for prompt, original in projected[start:]:
+        message = dict(original)
+        message.pop("_usage", None)
+        tail.append((prompt, message))
+    return tail
+
+
+def apply_compaction(messages: Sequence[ChatMessage], entry: CompactionEntry) -> list[ChatMessage]:
+    """Replace old context while preserving fixed instructions and current status."""
+    system, status, conversation = [], [], []
+    for message in messages:
+        if message["role"] == "system":
+            system.append(message)
+        elif message.get("_current_status"):
+            status.append(message)
+        else:
+            conversation.append((False, message))
+    tail = [message for _, message in _recent_messages(conversation, entry.keep_messages)]
+    return [*system, summary_message(entry.summary), *tail, *status]
 
 
 def retained_entries(entries: Sequence[AgentMessage]) -> list[AgentMessage]:
@@ -341,7 +389,9 @@ def retained_entries(entries: Sequence[AgentMessage]) -> list[AgentMessage]:
     return [replace(entry, image=None) if isinstance(entry, ToolResultMessage) else entry for entry in entries]
 
 
-def _compatible_messages(messages: Sequence[ChatMessage], provider: ProviderIdentity | None) -> list[ChatMessage]:
+def compatible_provider_messages(
+    messages: Sequence[ChatMessage], provider: ProviderIdentity | None
+) -> list[ChatMessage]:
     """Replay opaque metadata only to its original API, endpoint, and model."""
     import hashlib
     import re
@@ -351,6 +401,9 @@ def _compatible_messages(messages: Sequence[ChatMessage], provider: ProviderIden
     for original in messages:
         message = dict(original)
         source = message.pop("_provider", None)
+        message.pop("_usage", None)
+        message.pop("_tool_image", None)
+        message.pop("_current_status", None)
         compatible = provider is not None and source == asdict(provider)
         if message["role"] == "assistant" and not compatible:
             for name in (
@@ -400,10 +453,13 @@ def _repair_tool_pairs(messages: Sequence[ChatMessage]) -> list[ChatMessage]:
     return result
 
 
-def _projected_messages(transcript: Sequence[AgentMessage]) -> list[tuple[bool, ChatMessage]]:
+def _projected_messages(
+    transcript: Sequence[AgentMessage], *, with_sources: bool = False
+) -> list[tuple[bool, ChatMessage]]:
     """Project complete exchanges, retaining each native response and tool result."""
     projected = []
     response = []
+    response_start = 0
 
     def close_answer() -> None:
         if not response:
@@ -411,21 +467,40 @@ def _projected_messages(transcript: Sequence[AgentMessage]) -> list[tuple[bool, 
         if any(isinstance(entry, AssistantMessage) and entry.stop_reason in {"aborted", "error"} for entry in response):
             messages = [ChatMessage(role="assistant", content=ABORTED_RESPONSE_HISTORY)]
         elif all(
-            isinstance(entry, AssistantMessage) and not entry.tool_calls and not entry.native_reasoning
+            isinstance(entry, AssistantMessage)
+            and not entry.tool_calls
+            and not entry.native_reasoning
+            and entry.usage is None
             for entry in response
         ):
             # Keep the historical text-only projection for legacy sessions.
             messages = [ChatMessage(role="assistant", content="".join(entry.text for entry in response))]
         else:
             messages = prepare_provider_request([], response, _preserve_native=True)
+        if with_sources:
+            for message in messages:
+                message["_source_index"] = response_start
         projected.extend((False, message) for message in messages)
         response.clear()
 
-    for entry in transcript:
-        if isinstance(entry, UserMessage | AppEventEntry):
+    for index, entry in enumerate(transcript):
+        if isinstance(entry, CompactionEntry):
+            if entry.valid:
+                close_answer()
+                tail = _recent_messages(projected, entry.keep_messages)
+                message = summary_message(entry.summary)
+                if with_sources:
+                    message["_source_index"] = index
+                projected[:] = [(True, message), *tail]
+        elif isinstance(entry, UserMessage | AppEventEntry):
             close_answer()
-            projected.append((True, ChatMessage(role="user", content=entry.text)))
+            message = ChatMessage(role="user", content=entry.text)
+            if with_sources:
+                message["_source_index"] = index
+            projected.append((True, message))
         else:
+            if not response:
+                response_start = index
             response.append(entry)
     close_answer()
     return projected
@@ -493,15 +568,47 @@ def entries_from_legacy_history(messages: Sequence[ChatMessage]) -> list[AgentMe
 
 def interrupted_entries(entries: Sequence[AgentMessage], reason) -> list[AgentMessage]:
     """Do not replay claims from a run whose temporary workspace was discarded."""
-    result = [replace(entry, stop_reason=reason) if isinstance(entry, AssistantMessage) else entry for entry in entries]
+    result = [
+        replace(entry, stop_reason=reason)
+        if isinstance(entry, AssistantMessage)
+        else replace(entry, valid=False)
+        if isinstance(entry, CompactionEntry)
+        else entry
+        for entry in entries
+    ]
     if not result or not isinstance(result[-1], AssistantMessage):
         result.append(AssistantMessage("", reason))
     return result
 
 
+def compaction_safe_drop_end(transcript: Sequence[AgentMessage], end: int | None) -> int | None:
+    """Retain a summary and the older messages it references as one retention unit."""
+    if end is None:
+        return None
+    for index, entry in enumerate(transcript):
+        if not isinstance(entry, CompactionEntry) or not entry.valid or entry.keep_messages <= 0:
+            continue
+        before = _projected_messages(transcript[:index], with_sources=True)
+        tail = _recent_messages(before, entry.keep_messages)
+        first = min((message["_source_index"] for _, message in tail), default=index)
+        if first < end <= index:
+            end = next(
+                (
+                    candidate
+                    for candidate in range(index + 1, len(transcript))
+                    if starts_exchange(transcript[candidate])
+                ),
+                None,
+            )
+            if end is None:
+                return None
+    return end
+
+
 def drop_oldest_exchange(transcript: list[AgentMessage], keep_entries: int = 0) -> list[AgentMessage]:
     """Remove one prompt with its answers and decisions, while preserving the newest exchange."""
     end = next((index for index in range(1, len(transcript)) if starts_exchange(transcript[index])), None)
+    end = compaction_safe_drop_end(transcript, end)
     if end is None or len(transcript) - end < keep_entries:
         return []
     removed = transcript[:end]

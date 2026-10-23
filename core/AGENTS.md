@@ -131,6 +131,12 @@ from the trust-based local harness.
   Replay opaque metadata only to its original endpoint, API, and model. Keep the
   stored metadata intact when switching models. Release tool images after session
   finalization and omit failed or incomplete native output from provider requests.
+- Keep compaction entries in the ordered transcript. Apply a summary only after
+  every summary request completes, and invalidate summaries from failed or
+  cancelled runs. Keep a summary and its referenced recent tool messages together
+  during retention. Reset older usage estimates at each compaction boundary.
+  Keep summary requests visible in provider cost records, but keep their text out
+  of the answer stream. Use `tests/test_ai_compaction.py` for these contracts.
 - Apply queued steering before each follow-up provider request, including requests
   after refused tool batches. Reject conflicting provider finish reasons and any
   further output after a completion signal.

@@ -181,7 +181,9 @@ def test_records_text_usage_and_sanitized_failure(recorded_history, failed):
     )
     assert run_messages(recorded_history, start["run_id"]) == [
         UserMessage("Question"),
-        AssistantMessage("Partial answer", "error" if failed else "stop"),
+        AssistantMessage(
+            "Partial answer", "error" if failed else "stop", usage=None if failed else asdict(TokenUsage(1, 1, 2))
+        ),
     ]
     if not failed:
         assert basic.parse_sse(response.text)[-1] == ("done", {"run_id": start["run_id"], "history_saved": True})
@@ -1159,7 +1161,7 @@ def test_postgres_duplicates_and_reconnection(postgres_history):
             *map(record, entries),
             record(app_event[2]),
         ]
-        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (8,)
+        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (9,)
     # Complete tool exchanges survive a process restart.
     assert restarted.load_session(session, owner)["entries"] == [
         UserMessage("What's next?"),
@@ -1381,7 +1383,7 @@ def test_postgres_upgrade_preserves_deployed_sessions_and_message_receipts(unini
     assert [(row[3], row[4].get("text")) for row in events] == [("delta", "Saved answer"), ("optimization", None)]
     assert events[0][4]["run_id"] == run_id
     with history._connect() as connection:
-        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (8,)
+        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (9,)
         assert connection.execute("SELECT auth_credential_id FROM chat_sessions").fetchone() == ("team-a",)
         assert connection.execute("SELECT model FROM chat_runs").fetchone() == ("saved-model",)
 
@@ -2239,3 +2241,24 @@ def test_postgres_upgrade_converts_old_trim_offsets(uninitialized_postgres_histo
     loaded = history.load_session(session, owner)
     assert loaded["state"]["dropped_entries"] == 4
     assert loaded["entries"] == [UserMessage("Keep"), AssistantMessage("Kept answer")]
+
+
+@pytest.mark.parametrize("status", ["completed", "cancelled", "failed"])
+def test_postgres_compaction_survives_restart_only_for_completed_runs(postgres_history, status):
+    from nurse_scheduling.ai.context import projected_history
+    from nurse_scheduling.ai.transcript import CompactionEntry
+
+    history = postgres_history
+    run, session, owner = str(uuid4()), str(uuid4()), str(uuid4())
+    state = session_state(owner)
+    history.save_session(session, state)
+    history.start_run(run, session, state, "Keep nights", 0, model="model", attachment_count=0)
+    entries = [AssistantMessage("old"), CompactionEntry("Goal: keep nights", 1, 9000), AssistantMessage("Done")]
+    history.append_entries(session, [(seq, run, entry) for seq, entry in enumerate(entries, 1)])
+    history.finish_run(run, status, None, None, True, session_id=session, state=state)
+    restarted = ChatHistory("test")
+    restarted.initialize()
+    restored = restarted.load_session(session, owner)["entries"]
+    summary = next(entry for entry in restored if isinstance(entry, CompactionEntry))
+    assert summary.valid == (status == "completed")
+    assert ("Goal: keep nights" in str(projected_history(restored))) == (status == "completed")
