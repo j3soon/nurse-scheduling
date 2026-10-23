@@ -149,11 +149,27 @@ class ModelInputEvent(RunFields):
     schedule_yaml: NotRequired[str]
 
 
+class CompactionFields(RunFields):
+    reason: Literal["threshold", "overflow"]
+    tokens_before: int
+
+
+class CompactionStartEvent(CompactionFields):
+    type: Literal["compaction_start"]
+
+
+class CompactionEndEvent(CompactionFields):
+    type: Literal["compaction_end"]
+    success: bool
+    aborted: bool
+    estimated_tokens_after: NotRequired[int]
+
+
 class ContextUsageEvent(RunFields):
     type: Literal["context_usage"]
     used_chars: int
     max_chars: int
-    # Tokens of the latest provider request. The limit is absent without model metadata.
+    # Latest request tokens, or an estimate after compaction. The limit needs model metadata.
     used_tokens: NotRequired[int]
     max_tokens: NotRequired[int]
 
@@ -212,6 +228,8 @@ AgentSessionRunEvent = (
     | WarningEvent
     | ModelInputEvent
     | ContextUsageEvent
+    | CompactionStartEvent
+    | CompactionEndEvent
     | HistoryTrimmedEvent
 )
 AgentSessionEvent = AgentSessionRunEvent | OptimizationEvent | OptimizationProgressEvent

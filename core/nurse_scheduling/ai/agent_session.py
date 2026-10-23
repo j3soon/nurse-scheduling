@@ -33,6 +33,7 @@ from ruamel.yaml.error import YAMLError
 
 from ..loader import _load_yaml
 from .agent import Agent
+from .agent_types import AgentCompactionEnd
 from .config import AiSettings
 from .context import (
     SCHEDULE_CHANGED_EVENT,
@@ -820,6 +821,19 @@ class AgentSession:
                         wire_event = output.consume(event)
                         if wire_event is not None:
                             events.emit(wire_event)
+                        if isinstance(event, AgentCompactionEnd) and event.success:
+                            context_chars = event.used_chars
+                            events.emit(
+                                {
+                                    "type": "context_usage",
+                                    **context_usage(
+                                        context_chars,
+                                        runtime.settings,
+                                        provider=runtime.provider,
+                                        estimated_tokens=event.estimated_tokens_after,
+                                    ),
+                                }
+                            )
                         elif isinstance(event, TokenUsage):
                             events.emit(
                                 {
@@ -888,7 +902,13 @@ class AgentSession:
         events.emit(
             {
                 "type": "context_usage",
-                **context_usage(completion.context_used_chars, runtime.settings, output.last_call, runtime.provider),
+                **context_usage(
+                    completion.context_used_chars,
+                    runtime.settings,
+                    output.last_call,
+                    runtime.provider,
+                    estimated_tokens=output.context_estimate,
+                ),
             }
         )
         events.emit(done)
@@ -928,6 +948,11 @@ class AgentSession:
             # a restart instead of a user Stop.
             events.finish()
             return
+        if output.compaction is not None:
+            event = output.consume(
+                AgentCompactionEnd(output.compaction.reason, False, output.compaction.tokens_before, aborted=stopped)
+            )
+            events.emit(event)
         if outcome.terminal is not None:
             events.emit(outcome.terminal)
         try:

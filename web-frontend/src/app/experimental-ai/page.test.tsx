@@ -494,7 +494,7 @@ describe('ExperimentalAiPage', () => {
     const usage = await screen.findByText(/Context 30\.0% used/);
     expect(usage).toHaveAttribute('title', expect.stringContaining('600 of 2,000 characters'));
     const tokens = screen.getByText(`Last: 4,321 / ${maxTokens ? '131,072' : 'unavailable'}`);
-    expect(tokens).toHaveAttribute('title', "Latest call's input + output tokens / model input limit. Not total conversation usage.");
+    expect(tokens).toHaveAttribute('title', "Latest call tokens or estimated context after summarization / model input limit. Not total conversation usage.");
   });
 
   it('restores the transcript and live session after navigating away', async () => {

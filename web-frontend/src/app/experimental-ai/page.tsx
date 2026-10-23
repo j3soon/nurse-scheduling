@@ -1448,7 +1448,7 @@ export default function ExperimentalAiPage() {
             </span>}
             {contextUsage?.usedTokens !== undefined && <>
               {' · '}
-              <span title="Latest call's input + output tokens / model input limit. Not total conversation usage.">
+              <span title="Latest call tokens or estimated context after summarization / model input limit. Not total conversation usage.">
                 Last: {contextUsage.usedTokens.toLocaleString('en-US')} / {contextUsage.maxTokens?.toLocaleString('en-US') ?? 'unavailable'}
               </span>
             </>}

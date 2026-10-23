@@ -131,13 +131,14 @@ export function ChatTranscriptView({
               {message.activity && (
                 <AssistantActivity
                   entries={message.activity.filter(entry => (
-                    entry.kind === 'response' || entry.kind === 'schedule-applied'
+                    entry.kind === 'response' || entry.kind === 'schedule-applied' || entry.kind === 'compaction'
                       || (entry.kind === 'reasoning' ? showReasoning : showTools)
                   ))}
                 />
               )}
               {message.role === 'assistant' && !message.content && message.status === 'pending' ? (
-                steeringAssistantId === message.id ? <p className="text-xs text-gray-500">Steering…</p> : <ThinkingIndicator />
+                message.activity?.some(entry => entry.kind === 'compaction' && entry.state === 'running') ? null
+                  : steeringAssistantId === message.id ? <p className="text-xs text-gray-500">Steering…</p> : <ThinkingIndicator />
               ) : message.role === 'system' ? (
                 <CollapsedText summary={`${message.content.length.toLocaleString('en-US')} characters`} text={message.content} />
               ) : message.source !== undefined ? (

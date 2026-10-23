@@ -36,6 +36,10 @@ export function formatResponseDuration(startedAt: number, completedAt: number): 
 }
 
 export function activitySummary(entry: Exclude<ActivityEntry, { kind: 'response' }>): string {
+  if (entry.kind === 'compaction') return {
+    running: 'Summarizing conversation', completed: 'Conversation summarized',
+    failed: 'Summarization failed', interrupted: 'Summarization interrupted',
+  }[entry.state];
   if (entry.kind === 'reasoning') return `Reasoning · ${formatCharacterCount(entry.text.length)} characters`;
   if (entry.kind === 'schedule-change') return 'schedule edit';
   if (entry.kind === 'schedule-check') return entry.ok ? 'Schedule check passed' : 'Schedule check failed';

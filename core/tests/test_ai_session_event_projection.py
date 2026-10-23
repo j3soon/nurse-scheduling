@@ -21,8 +21,34 @@
 
 import asyncio
 
-from nurse_scheduling.ai.session_event_projection import RunEvents
+from nurse_scheduling.ai.agent_types import AgentCompactionEnd, AgentCompactionStart
+from nurse_scheduling.ai.context import context_usage
+from nurse_scheduling.ai.provider import TokenUsage
+from nurse_scheduling.ai.session_event_projection import RunEvents, RunOutput
 from nurse_scheduling.ai.session_events import AgentSessionEvent
+
+
+def test_compaction_replaces_stale_usage_until_the_next_model_call():
+    from .test_ai_basic import make_settings
+
+    output = RunOutput()
+    output.consume(TokenUsage(24000, 1000, 25000))
+    start = AgentCompactionStart("threshold", 25000)
+    assert output.consume(start)["type"] == "compaction_start"
+    assert output.compaction is start
+    failed = AgentCompactionEnd("threshold", False, 25000)
+    output.consume(failed)
+    assert output.last_call == TokenUsage(24000, 1000, 25000)
+    assert output.context_estimate is None
+    output.consume(start)
+    assert output.consume(AgentCompactionEnd("threshold", True, 25000, 4000))["estimated_tokens_after"] == 4000
+    assert output.last_call is None and output.compaction is None
+    assert (
+        context_usage(16000, make_settings(), output.last_call, estimated_tokens=output.context_estimate)["used_tokens"]
+        == 4000
+    )
+    output.consume(TokenUsage(4200, 200, 4400))
+    assert output.last_call == TokenUsage(4200, 200, 4400) and output.context_estimate is None
 
 
 def test_batched_output_keeps_reasoning_text_tools_and_terminal_in_order() -> None:

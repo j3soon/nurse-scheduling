@@ -24,7 +24,7 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import aclosing
 from pathlib import Path
 
-from .agent_types import AgentCompaction
+from .agent_types import AgentCompaction, AgentCompactionEnd, AgentCompactionStart
 from .context import SUMMARY_PREFIX, apply_compaction, history_chars
 from .context_tokens import estimate_context_tokens, estimate_tokens
 from .provider import (
@@ -118,7 +118,7 @@ class ContextCompactor:
 
     async def compact(
         self, messages: Sequence[ChatMessage], tools: Sequence[dict], *, force: bool = False
-    ) -> AsyncIterator[ProviderCall | AgentCompaction]:
+    ) -> AsyncIterator[ProviderCall | AgentCompaction | AgentCompactionStart | AgentCompactionEnd]:
         if not force and not self.needed(messages, tools):
             return
         body = _conversation(messages)
@@ -166,6 +166,9 @@ class ContextCompactor:
             )
         history = older if turn_start is None else body[:turn_start]
         summary = previous_summary
+        reason = "overflow" if force else "threshold"
+        tokens_before = self.tokens(messages, tools)
+        yield AgentCompactionStart(reason, tokens_before)
         try:
             if history:
                 events = self._summarize(history, prompts, input_chars, max_summary_chars, summary)
@@ -197,8 +200,17 @@ class ContextCompactor:
         except ProviderError:
             self.failed = True
             logger.warning("AI context compaction failed. Original context retained.", exc_info=True)
+            yield AgentCompactionEnd(reason, False, tokens_before)
             return
         yield AgentCompaction(entry)
+        after = apply_compaction(messages, entry)
+        yield AgentCompactionEnd(
+            reason,
+            True,
+            tokens_before,
+            self.tokens(after, tools),
+            min(self.history_limit, history_chars(_conversation(after))),
+        )
 
     async def _summarize(
         self,

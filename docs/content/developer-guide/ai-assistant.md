@@ -318,6 +318,12 @@ changed model settings, tool definitions, and current system and status content.
 Old usage is invalid after a summary replaces its original input. Cached tokens
 are already included in Chat Completions prompt usage.
 
+Replayable `compaction_start` and `compaction_end` events report threshold or
+overflow recovery, success, and cancellation. The live transcript and saved
+exports show the same status. Successful compaction replaces the context meter
+with a fresh estimate until the next model call reports usage. Summary failures
+keep the original context. Stop closes the summary stream and finishes its status.
+
 The cut point keeps up to 20,000 recent estimated tokens, reduced for smaller
 windows and history budgets. It can split a long turn before an assistant
 response, but never between a tool call and its results. Supplemental tool

@@ -393,6 +393,35 @@ test('asks about the current schedule and renders a streamed answer', async ({ p
   await expect(page).toHaveURL(/\/dates$/);
 });
 
+test('shows compaction status and the reduced context before an answer', async ({ page }) => {
+  const captured = await mockAiBackend(page, [], false, undefined, [], true, [
+    { type: 'context_usage', data: { used_chars: 1800, max_chars: 2000, used_tokens: 25000, max_tokens: 32000 } },
+    { type: 'compaction_start', data: { reason: 'threshold', tokens_before: 25000 } },
+  ]);
+  captured.holdNextTurn();
+  await page.goto('/experimental-ai');
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Continue with the current constraints.');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('Summarizing conversation', { exact: true })).toBeVisible();
+  await expect(page.getByText('Thinking…', { exact: true })).toBeHidden();
+  await expect(page.getByText('Context 90.0% used')).toBeVisible();
+  await page.screenshot({ path: '../artifacts/compaction-running.png', fullPage: true });
+  captured.publishEvent('compaction_end', {
+    run_id: 'answer-1', reason: 'threshold', tokens_before: 25000,
+    success: true, aborted: false, estimated_tokens_after: 4000,
+  });
+  captured.publishEvent('context_usage', {
+    run_id: 'answer-1', used_chars: 400, max_chars: 2000, used_tokens: 4000, max_tokens: 32000,
+  });
+  await expect(page.getByText('Conversation summarized', { exact: true })).toBeVisible();
+  await expect(page.getByText('Context 20.0% used')).toBeVisible();
+  await expect(page.getByText('Last: 4,000 / 32,000')).toBeVisible();
+  captured.publishEvent('delta', { run_id: 'answer-1', text: 'The current constraints are preserved.' });
+  captured.finishTurn();
+  await expect(page.getByText('The current constraints are preserved.', { exact: true })).toBeVisible();
+  await page.screenshot({ path: '../artifacts/compaction-completed.png', fullPage: true });
+});
+
 test('explains unavailable context usage when the backend omits it', async ({ page }) => {
   await mockAiBackend(page, ['Done.'], false, undefined, [], false);
   await page.goto('/experimental-ai');

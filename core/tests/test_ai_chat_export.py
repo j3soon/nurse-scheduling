@@ -34,9 +34,39 @@ from nurse_scheduling.ai.chat_export import (
     build_saved_chat_export,
     render_markdown_html,
 )
+from nurse_scheduling.ai.chat_projection import project_saved_chat
 
 FIXTURES = Path(__file__).parent / "ai_fixtures"
 CASES = json.loads((FIXTURES / "chat-export-parity.json").read_text(encoding="utf-8"))["cases"]
+
+
+@pytest.mark.parametrize(
+    "success,aborted,state,label",
+    [
+        (True, False, "completed", "Conversation summarized"),
+        (False, False, "failed", "Summarization failed"),
+        (False, True, "interrupted", "Summarization interrupted"),
+    ],
+)
+def test_saved_compaction_status_matches_live_activity_and_exports(success, aborted, state, label):
+    snapshot = saved_case("saved-rich")
+    run = snapshot["runs"][0]
+    snapshot["runs"] = [run]
+    data = {"run_id": run["id"], "reason": "threshold", "tokens_before": 25000}
+    snapshot["events"] = [
+        {"type": "compaction_start", "data": data, "occurred_at": snapshot["snapshot_at"]},
+        {
+            "type": "compaction_end",
+            "data": {**data, "success": success, "aborted": aborted},
+            "occurred_at": snapshot["snapshot_at"],
+        },
+    ]
+    messages, _ = project_saved_chat(snapshot)
+    activity = messages[-1]["activity"]
+    assert len(activity) == 1 and activity[0]["kind"] == "compaction" and activity[0]["state"] == state
+    for format in ("html", "markdown"):
+        rendered = build_saved_chat_export(snapshot, format)
+        assert label in rendered and activity[0]["text"] in rendered
 
 
 def saved_case(variant):

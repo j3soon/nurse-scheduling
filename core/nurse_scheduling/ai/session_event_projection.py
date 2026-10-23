@@ -25,6 +25,8 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from .agent_types import (
+    AgentCompactionEnd,
+    AgentCompactionStart,
     AgentEvent,
     AgentMessageEnd,
     AgentProposal,
@@ -55,6 +57,8 @@ class RunOutput:
     usage: TokenUsage | None = None
     # The latest provider call holds the whole request, so it shows how full the context window is.
     last_call: TokenUsage | None = None
+    context_estimate: int | None = None
+    compaction: AgentCompactionStart | None = None
     calls: dict[str, ProviderCall] = field(default_factory=dict)
     costs: CostTotals = field(default_factory=CostTotals)
 
@@ -75,7 +79,26 @@ class RunOutput:
             self.pending_text.clear()
             self.pending_reasoning.clear()
             return {"type": "truncated"} if event.message.stop_reason == "length" else None
+        if isinstance(event, AgentCompactionStart):
+            self.compaction = event
+            return {"type": "compaction_start", "reason": event.reason, "tokens_before": event.tokens_before}
+        if isinstance(event, AgentCompactionEnd):
+            self.compaction = None
+            if event.success:
+                self.last_call = None
+                self.context_estimate = event.estimated_tokens_after
+            result = {
+                "type": "compaction_end",
+                "reason": event.reason,
+                "success": event.success,
+                "aborted": event.aborted,
+                "tokens_before": event.tokens_before,
+            }
+            if event.estimated_tokens_after is not None:
+                result["estimated_tokens_after"] = event.estimated_tokens_after
+            return result
         if isinstance(event, TokenUsage):
+            self.context_estimate = None
             self.usage = event if self.usage is None else self.usage + event
             self.last_call = event
         elif isinstance(event, AgentToolStart):

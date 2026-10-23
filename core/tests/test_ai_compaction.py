@@ -28,7 +28,14 @@ import pytest
 
 from nurse_scheduling.ai.agent import Agent
 from nurse_scheduling.ai.agent_loop import agent_loop
-from nurse_scheduling.ai.agent_types import AgentCompaction, AgentText, AgentTool, AgentToolOutcome
+from nurse_scheduling.ai.agent_types import (
+    AgentCompaction,
+    AgentCompactionEnd,
+    AgentCompactionStart,
+    AgentText,
+    AgentTool,
+    AgentToolOutcome,
+)
 from nurse_scheduling.ai.compaction import COMPACTION_MANIFEST, ContextCompactor, estimate_context_tokens
 from nurse_scheduling.ai.context import (
     apply_compaction,
@@ -119,6 +126,11 @@ def test_auto_compaction_preserves_current_request_and_persists_the_summary():
     assert all(tools == [] for _request, tools in provider.summaries)
     assert all(estimate_context_tokens(request, []) < 4500 for request, _tools in provider.summaries)
     assert any(isinstance(event, ProviderCall) for event in events)
+    assert isinstance(events[0], AgentCompactionStart)
+    end = next(event for event in events if isinstance(event, AgentCompactionEnd))
+    assert end.success and not end.aborted and end.reason == "threshold"
+    assert end.estimated_tokens_after < end.tokens_before
+    assert events.index(end) > next(i for i, event in enumerate(events) if isinstance(event, AgentCompaction))
     (entry,) = [event.entry for event in events if isinstance(event, AgentCompaction)]
     assert entry.keep_messages > 0
     assert provider.requests[0][0][0] == messages[0]
@@ -176,6 +188,8 @@ def test_failed_summary_keeps_original_context(failure):
     messages = history()
     events = asyncio.run(collect(agent_loop(provider, messages, [])))
     assert not any(isinstance(event, AgentCompaction) for event in events)
+    assert isinstance(events[0], AgentCompactionStart)
+    assert next(event for event in events if isinstance(event, AgentCompactionEnd)).success is False
     assert provider.requests[0][0] == messages
     assert len(provider.summaries) == 1
 
@@ -191,6 +205,43 @@ def test_stop_during_summary_discards_partial_summary_and_closes_the_agent():
             await task
         assert not agent.state.is_streaming
         assert not any(isinstance(entry, CompactionEntry) for entry in agent.state.messages)
+
+    asyncio.run(exercise())
+
+
+def test_session_stop_ends_compaction_before_the_terminal_event():
+    import httpx
+
+    from . import test_ai_basic as basic
+
+    async def exercise():
+        provider = CompactionProvider(fail_summary="cancel")
+        provider.context_tokens = 32000
+        app = basic.create_test_app(settings=basic.make_settings(), provider=provider)
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://testserver", headers=basic.AI_AUTH_HEADERS
+            ) as client,
+        ):
+            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            store = app.state.session_store
+            session = store._sessions[session_id]
+            snapshot = store.begin(session_id, session.owner_token)
+            store.finish(
+                session_id,
+                [UserMessage("Keep nights " + "x" * 100000), AssistantMessage("Old answer")],
+                snapshot=snapshot,
+            )
+            turn = asyncio.create_task(client.post(f"/sessions/{session_id}/messages", json={"message": "Continue"}))
+            await asyncio.wait_for(provider.summary_started.wait(), timeout=2)
+            assert (await client.post(f"/sessions/{session_id}/stop")).status_code == 202
+            response = await asyncio.wait_for(turn, timeout=2)
+            events = basic.parse_sse(response.text)
+            end_index = next(i for i, (kind, _) in enumerate(events) if kind == "compaction_end")
+            assert events[end_index][1]["aborted"] and not events[end_index][1]["success"]
+            assert end_index < next(i for i, (kind, _) in enumerate(events) if kind == "stopped")
+            assert not any(isinstance(entry, CompactionEntry) for entry in session.transcript)
 
     asyncio.run(exercise())
 
@@ -328,6 +379,14 @@ def test_session_api_checkpoints_compaction_and_accounts_for_summary_calls():
         events = basic.parse_sse(response.text)
         assert [data["text"] for kind, data in events if kind == "delta"] == ["Done."]
         assert any(kind == "provider_call" and data.get("cost_usd") == "0.01" for kind, data in events)
+        kinds = [kind for kind, _ in events]
+        assert kinds.index("compaction_start") < kinds.index("compaction_end") < kinds.index("delta")
+        end_index = kinds.index("compaction_end")
+        end = events[end_index][1]
+        assert end["success"] and not end["aborted"]
+        latest_context = [data for kind, data in events if kind == "context_usage"][-1]
+        assert latest_context["used_tokens"] == end["estimated_tokens_after"]
+        assert latest_context["used_tokens"] < end["tokens_before"]
         assert "x" * 1000 not in str(session.history)
 
 
@@ -379,6 +438,7 @@ def test_closing_after_a_summary_cost_event_closes_the_provider_before_returning
 
         agent = Agent()
         stream = agent.prompt(Provider(), history(), [])
+        assert isinstance(await anext(stream), AgentCompactionStart)
         assert isinstance(await anext(stream), ProviderCall)
         await stream.aclose()
         assert closed
