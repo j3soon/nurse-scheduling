@@ -133,9 +133,17 @@ async def agent_loop(
         finish_reason = None
         replay = None
         usage = None
-        provider_events = provider.stream_events(
-            compatible_provider_messages(current_request(), getattr(provider, "identity", None)),
-            [] if final_answer_only else [tool.definition for tool in tools],
+        request = current_request()
+        definitions = [] if final_answer_only else [tool.definition for tool in tools]
+        bind_limit = getattr(provider, "with_output_limit", None)
+        request_provider = (
+            bind_limit(None, context_used_tokens=compactor.tokens(request, definitions))
+            if bind_limit is not None
+            else provider
+        )
+        provider_events = request_provider.stream_events(
+            compatible_provider_messages(request, getattr(provider, "identity", None)),
+            definitions,
         )
         try:
             async with aclosing(provider_events):

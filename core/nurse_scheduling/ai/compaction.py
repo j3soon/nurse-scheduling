@@ -19,16 +19,14 @@
 
 # This file is mostly AI generated.
 
-import json
 import logging
-import math
 from collections.abc import AsyncIterator, Sequence
 from contextlib import aclosing
 from pathlib import Path
-from typing import Any
 
 from .agent_types import AgentCompaction
 from .context import SUMMARY_PREFIX, apply_compaction, history_chars
+from .context_tokens import estimate_context_tokens, estimate_tokens
 from .provider import (
     ChatMessage,
     ProviderCall,
@@ -43,46 +41,6 @@ from .transcript import CompactionEntry
 
 logger = logging.getLogger("nurse_scheduling.ai.compaction")
 COMPACTION_MANIFEST = Path(__file__).with_name("prompts") / "compaction.json"
-
-
-def estimate_tokens(message: dict[str, Any]) -> int:
-    """Use Pi's characters/4 fallback, with a fixed allowance for tool images."""
-    content = message.get("content")
-    if isinstance(content, list):
-        chars = sum(len(part.get("text", "")) if part.get("type") == "text" else 4800 for part in content)
-    else:
-        chars = len(content or "")
-    chars += len(json.dumps(message.get("tool_calls", []), ensure_ascii=False))
-    # Count opaque state conservatively when provider usage is unavailable.
-    chars += sum(
-        len(json.dumps(message[key], ensure_ascii=False))
-        for key in (
-            "reasoning_content",
-            "reasoning",
-            "reasoning_text",
-            "reasoning_details",
-            "thinking_blocks",
-            "provider_specific_fields",
-        )
-        if key in message
-    )
-    return math.ceil(chars / 4) + 4
-
-
-def estimate_context_tokens(messages: Sequence[ChatMessage], tools: Sequence[dict], identity=None) -> int:
-    """Prefer the latest same-model usage plus estimates for messages after it."""
-    estimate = sum(estimate_tokens(message) for message in messages) + math.ceil(len(json.dumps(tools)) / 4)
-    trailing = 0
-    for message in reversed(messages):
-        usage = message.get("_usage")
-        source = message.get("_provider")
-        if usage and source == identity and usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0) > 0:
-            return max(estimate, usage["prompt_tokens"] + usage["completion_tokens"] + trailing)
-        # A summary invalidates usage from the history it replaced.
-        if message.get("_compaction_summary"):
-            break
-        trailing += estimate_tokens(message)
-    return estimate
 
 
 def _conversation(messages: Sequence[ChatMessage]) -> list[ChatMessage]:
@@ -267,7 +225,10 @@ class ContextCompactor:
                 ChatMessage(role="user", content=content),
             ]
             text, finish, ended, text_chars = [], None, False, 0
-            events = self.provider.stream_events(request, [])
+            bind_limit = getattr(self.provider, "with_output_limit", None)
+            reserve = min(16384, (self.window or 32768) // 4)
+            summary_provider = bind_limit(max(1, int(0.8 * reserve))) if bind_limit is not None else self.provider
+            events = summary_provider.stream_events(request, [])
             async with aclosing(events):
                 async for event in events:
                     if isinstance(event, ProviderCall):

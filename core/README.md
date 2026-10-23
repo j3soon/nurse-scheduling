@@ -630,6 +630,13 @@ approach that limit. It retains recent tool exchanges and native reasoning for
 compatible models. Summaries preserve goals, constraints, decisions, pending
 work, and file context. Current schedule and file status stay in each request.
 Summary calls use the selected model and appear in provider cost estimates.
+Completion requests cap output against the model's advertised output limit and
+remaining context, with a 4,096-token safety margin. Summaries request up to
+80 percent of their reserved output space. Numeric reasoning budgets leave at
+least 1,024 tokens for the answer within the same completion limit. The gateway's
+supported parameters determine the token-limit field. Unknown model limits keep
+provider defaults unless the request supplies an explicit cap.
+
 Without a reported context limit, the existing history limits still apply.
 A confirmed context overflow permits one compact-and-retry attempt. PostgreSQL
 recovery retains successful summaries across service restarts.

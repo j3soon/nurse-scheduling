@@ -105,6 +105,8 @@ class AvailableModel:
     reasoning: tuple[ReasoningOption, ...] = ()
     context_tokens: int | None = None
     default_reasoning: str = "default"
+    output_tokens: int | None = None
+    output_token_parameter: str = "max_tokens"
 
     def public(self) -> dict[str, Any]:
         return {
@@ -232,6 +234,14 @@ class ModelCatalog:
                             choices,
                             limit,
                             default_reasoning,
+                            details.get("max_output_tokens")
+                            if type(details.get("max_output_tokens")) is int and details["max_output_tokens"] > 0
+                            else None,
+                            "max_completion_tokens"
+                            if isinstance(details.get("supported_openai_params"), list)
+                            and "max_completion_tokens" in details["supported_openai_params"]
+                            and "max_tokens" not in details["supported_openai_params"]
+                            else "max_tokens",
                         )
                     )
             except (ValueError, TypeError):
@@ -259,5 +269,7 @@ class ModelCatalog:
         settings = replace(self.settings, provider_api_key=profile.api_key.get_secret_value(), provider_model=model.id)
         provider = OpenAiCompatibleProvider(settings, include_usage=True, parameters=parameters, include_costs=True)
         provider.context_tokens = model.context_tokens
+        provider.output_tokens = model.output_tokens
+        provider.output_token_parameter = model.output_token_parameter
         provider._context_tokens_loaded = True
         return selection, settings, provider

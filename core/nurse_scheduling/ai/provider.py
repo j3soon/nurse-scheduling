@@ -36,6 +36,7 @@ import httpx
 from typing_extensions import Required
 
 from .config import AiSettings
+from .context_tokens import estimate_context_tokens, response_token_limit
 from .transcript import ProviderIdentity, ToolCall, ToolResultImage
 
 logger = logging.getLogger("nurse_scheduling.ai.provider")
@@ -326,6 +327,10 @@ class OpenAiCompatibleProvider:
         self._session_id: str | None = None
         self.identity = ProviderIdentity(settings.provider_base_url.rstrip("/"), settings.provider_model)
         self.context_tokens: int | None = None
+        self.output_tokens: int | None = None
+        self.output_token_parameter = "max_tokens"
+        self._max_output_tokens: int | None = None
+        self._context_used_tokens: int | None = None
         self._context_tokens_loaded = False
         self._context_tokens_lock = asyncio.Lock()
 
@@ -334,6 +339,54 @@ class OpenAiCompatibleProvider:
         provider = copy(self)
         provider._session_id = session_id
         return provider
+
+    def with_output_limit(
+        self, max_tokens: int | None, *, context_used_tokens: int | None = None
+    ) -> "OpenAiCompatibleProvider":
+        """Bind request-specific limits without changing model or session settings."""
+        provider = copy(self)
+        provider._max_output_tokens = max_tokens
+        provider._context_used_tokens = context_used_tokens
+        return provider
+
+    def _apply_output_limit(self, payload: dict[str, Any], used_tokens: int) -> None:
+        configured = next(
+            (
+                payload[key]
+                for key in ("max_completion_tokens", "max_tokens")
+                if type(payload.get(key)) is int and payload[key] > 0
+            ),
+            None,
+        )
+        requested = (
+            min(configured, self._max_output_tokens)
+            if configured and self._max_output_tokens
+            else configured or self._max_output_tokens
+        )
+        limit = response_token_limit(
+            used_tokens,
+            context_tokens=self.context_tokens,
+            output_tokens=self.output_tokens,
+            requested_tokens=requested,
+        )
+        if limit is None:
+            return
+        parameter = "max_completion_tokens" if "max_completion_tokens" in payload else self.output_token_parameter
+        payload.pop("max_tokens", None)
+        payload.pop("max_completion_tokens", None)
+        payload[parameter] = limit
+        thinking = payload.get("thinking")
+        if (
+            isinstance(thinking, dict)
+            and thinking.get("type") == "enabled"
+            and type(thinking.get("budget_tokens")) is int
+        ):
+            # Numeric thinking budgets share the completion ceiling. Preserve room
+            # for a visible answer, as Pi's clampThinkingBudgetToAnswerRoom does.
+            available = limit - 1024
+            if available < 1024:
+                raise ProviderContextOverflowError.for_user("The AI request has no room for reasoning and an answer.")
+            payload["thinking"] = {**thinking, "budget_tokens": min(thinking["budget_tokens"], available)}
 
     async def _load_context_tokens(self) -> None:
         """Read and cache the configured model's context limit when metadata is available."""
@@ -357,7 +410,17 @@ class OpenAiCompatibleProvider:
             for model in models:
                 if not isinstance(model, dict) or model.get("id") != self._settings.provider_model:
                     continue
-                for field in ("max_model_len", "context_length"):
+                output = model.get("max_output_tokens")
+                if type(output) is int and output > 0:
+                    self.output_tokens = output
+                supported = model.get("supported_openai_params")
+                if (
+                    isinstance(supported, list)
+                    and "max_completion_tokens" in supported
+                    and "max_tokens" not in supported
+                ):
+                    self.output_token_parameter = "max_completion_tokens"
+                for field in ("max_input_tokens", "max_model_len", "context_length", "max_tokens"):
                     limit = model.get(field)
                     if type(limit) is int and limit > 0:
                         self.context_tokens = limit
@@ -397,11 +460,15 @@ class OpenAiCompatibleProvider:
             payload["tools"] = list(tools)
             payload["tool_choice"] = "auto"
 
+        original_estimate = estimate_context_tokens(messages, tools or [])
         stream_started = False
         answer: list[str] = []
         text_chars = 0
         reasoning_chars = 0
         for attempt in range(1, self._settings.provider_max_attempts + 1):
+            estimate = estimate_context_tokens(payload["messages"], tools or [])
+            used_tokens = max(estimate, (self._context_used_tokens or 0) + max(0, estimate - original_estimate))
+            self._apply_output_limit(payload, used_tokens)
             call = ProviderCall(str(uuid4()), self._settings.provider_model)
             if self._include_costs:
                 yield call
