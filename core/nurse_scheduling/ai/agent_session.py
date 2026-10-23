@@ -502,12 +502,12 @@ class AgentSession:
     def active(self) -> bool:
         return self.snapshot is not None
 
-    def begin_run(self, *, accepting_steering: bool, run_id: str | None = None) -> RunSnapshot:
+    def begin_run(self, *, run_id: str | None = None) -> RunSnapshot:
         """Reserve this conversation version and open its steering queue."""
         if self.active:
             raise HTTPException(status_code=409, detail="This chat session already has an active response.")
         self.agent.reset()
-        self.agent.open_steering(accepting_steering)
+        self.agent.open_steering()
         self._saved_run_messages = 0
         self.snapshot = RunSnapshot(
             list(self.transcript),

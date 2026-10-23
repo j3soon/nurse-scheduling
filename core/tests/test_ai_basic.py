@@ -264,7 +264,7 @@ def test_chat_requests_report_the_frontend_build_after_session_creation(queued, 
         session_id = client.post("/sessions", json={"schedule_yaml": schedule_yaml()}).json()["id"]
         session = app.state.session_store.get(session_id)
         if queued:
-            session.begin_run(accepting_steering=True)
+            session.begin_run()
         response = client.post(
             f"/sessions/{session_id}/messages" + ("/queue" if queued else ""),
             json={"message": "Hello", "message_id": "version-message", "frontend_version": "v0.4.2"},
@@ -288,7 +288,7 @@ def test_chat_timezone_comes_from_the_frontend_and_updates_later_requests(queued
         session = app.state.session_store.get(session_id)
         assert session.frontend_timezone == "Asia/Taipei"
         if queued:
-            session.begin_run(accepting_steering=True)
+            session.begin_run()
         response = client.post(
             f"/sessions/{session_id}/messages" + ("/queue" if queued else ""),
             json={"message": "Hello", "message_id": "timezone-message", "frontend_timezone": "America/Los_Angeles"},

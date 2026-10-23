@@ -74,9 +74,9 @@ class Agent:
     def has_steered(self, message_id: str) -> bool:
         return message_id in self._steering_ids
 
-    def open_steering(self, accepting: bool) -> None:
+    def open_steering(self) -> None:
         self.close_steering()
-        self._accepting_steering = accepting
+        self._accepting_steering = True
 
     def close_steering(self) -> None:
         self._accepting_steering = False

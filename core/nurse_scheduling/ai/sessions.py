@@ -315,17 +315,17 @@ class SessionStore:
         session = self._get_owned(session_id, owner_token)
         if session.active:
             raise HTTPException(status_code=409, detail="This chat session already has an active response.")
-        return self._reserve(session, accepting_steering=True, run_id=run_id)
+        return self._reserve(session, run_id=run_id)
 
     def begin_background(self, session_id: str, *, run_id: str | None = None) -> RunSnapshot | None:
         self._prune_expired()
         session = self._sessions.get(session_id)
         if session is None or session.active:
             return None
-        return self._reserve(session, accepting_steering=True, run_id=run_id)
+        return self._reserve(session, run_id=run_id)
 
-    def _reserve(self, session: AgentSession, *, accepting_steering: bool, run_id: str | None) -> RunSnapshot:
-        snapshot = session.begin_run(accepting_steering=accepting_steering, run_id=run_id)
+    def _reserve(self, session: AgentSession, *, run_id: str | None) -> RunSnapshot:
+        snapshot = session.begin_run(run_id=run_id)
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
         return snapshot
 
