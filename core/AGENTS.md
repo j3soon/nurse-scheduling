@@ -265,8 +265,13 @@ skipped does not validate persistence.
   category or tag only when the changed behavior spans it or a selected case
   reveals a neighboring risk. A bare evaluation command exits without running
   cases. Use `--tuning` to opt into the default tuning set.
-- During commit review, defer validation of later unpublished commits. Report
-  pushed commits whose evaluation receipts need revalidation after helper changes.
+- When a helper, its catalog entry, a fixture or a grader changes, re-measure
+  each prompt receipt that it makes stale in the same commit. CI requires a
+  current receipt for every shipped clause, so a later repair leaves every commit
+  in between failing. List stale steps with `validate_prompt_evidence` on each
+  step separately, because the CI test stops at the first one. When the fresh
+  comparison shows no benefit, keep the old receipt stale and report the step.
+  Do not copy the new fingerprints into it.
 - Count exceeded model-output limits as behavior failures, not infrastructure
   outages. Count invalid or oversized generated downloads as behavior failures
   too. Keep the limit reason and partial trace. Keep provider connection and
