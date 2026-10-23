@@ -509,8 +509,8 @@ cleaned while the AI service is offline.
 | `AI_HISTORY_POSTGRES_URL` | Unset | PostgreSQL connection string for session recovery and turn metadata. Compose sets its internal URL directly. |
 | `AI_REQUEST_LOG_ENABLED` | `true` | Log a question preview for each incoming message, which records chat text. |
 | `AI_PROVIDER_TIMEOUT_SECONDS` | `180` | Provider request timeout. |
-| `AI_PROVIDER_MAX_ATTEMPTS` | `3` | Total attempts for a provider request that times out before streaming begins. |
-| `AI_PROVIDER_RETRY_BACKOFF_SECONDS` | `1` | Initial pre-stream timeout retry delay. The delay doubles after each failed attempt. |
+| `AI_PROVIDER_MAX_ATTEMPTS` | `3` | Total attempts per provider turn for transient HTTP, timeout, connection, or interrupted-stream failures. |
+| `AI_PROVIDER_RETRY_BACKOFF_SECONDS` | `1` | Initial retry delay, doubled up to 8 seconds with jitter. Valid server retry headers take precedence, with a 60-second maximum. |
 | `AI_OPTIMIZER_BASE_URL` | `http://localhost:8000` (`http://api:8000` in Docker Compose) | Optimizer API base URL. Use HTTPS for a credentialed remote endpoint. An unavailable API produces a tool error without disabling chat. |
 | `AI_OPTIMIZER_AUTH_TOKEN` | Unset (defaults to `API_AUTH_TOKEN` in Docker Compose) | Server-side optimizer API bearer token. Set it explicitly when the API uses identified keys. |
 | `AI_OPTIMIZER_POLL_INTERVAL_SECONDS` | `1` | Delay between background optimizer status checks. |

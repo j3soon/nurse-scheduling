@@ -302,6 +302,29 @@ check can compare `x-litellm-model-id` response headers for successive requests,
 as described in the [gateway example][litellm-session-affinity]. The header does
 not change the prompt or add model-specific request parameters.
 
+## Provider retries
+
+The adapter follows Pi v1.0.0's [HTTP retry policy][pi-provider-retry] and
+[account-limit exclusions][pi-retry-errors]. One shared attempt budget covers
+HTTP 408, 409, 429, server errors, timeouts, connection failures, and streams
+that end without completion. Provider retry hints refine transient status
+handling. Authentication, malformed requests, context overflow, account quota,
+and billing errors fail immediately, even with a retry hint. Invalid stream
+data and unsuccessful finish reasons also fail immediately.
+
+`AI_PROVIDER_MAX_ATTEMPTS` includes the first request. Exponential backoff uses
+`AI_PROVIDER_RETRY_BACKOFF_SECONDS`, an eight-second cap, and up to 25 percent
+jitter. Valid `Retry-After-ms` or `Retry-After` headers take precedence, including
+HTTP dates. A server delay above 60 seconds fails immediately. Stop interrupts
+backoff and streaming. Each attempt keeps its own cost record and the same
+session ID. The adapter uses one retry budget instead of stacking SDK retries
+with whole-agent retries.
+
+After interrupted output, the next request receives the visible answer text and
+an interruption note. Failed reasoning metadata and partial tool arguments are
+discarded. Tools are released only after a clean response completion. A retry
+after a completed tool exchange resends its result without executing it again.
+
 ## Automatic context compaction
 
 `ContextCompactor` follows [Pi v1.0.0 compaction][pi-compaction]. Before a model
@@ -357,8 +380,8 @@ completion also fits the model's advertised output cap and remaining context
 with a 4,096-token safety margin. Reported same-model usage informs the request
 estimate when available, including tool definitions and later messages. Numeric
 thinking budgets leave 1,024 tokens for answer text. Models without discovered
-limits retain provider defaults unless the caller supplies a cap. They have no
-tools, and their text and reasoning do not enter the answer stream. Their
+limits retain provider defaults unless the caller supplies a cap. Summary
+requests have no tools, and their text and reasoning do not enter the answer stream. Their
 provider call records include costs and usage. An empty, truncated, oversized,
 failed, or tool-requesting summary leaves the original context intact. Stop
 cancels summary generation through the existing run owner. A confirmed provider
@@ -1224,6 +1247,8 @@ The investigated alternatives below were not adopted, except where noted:
 [pi-coding-tools]: https://github.com/earendil-works/pi/tree/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/coding-agent/src/core/tools
 
 [pi-completions]: https://github.com/earendil-works/pi/blob/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/ai/src/api/openai-completions.ts
+[pi-provider-retry]: https://github.com/earendil-works/pi/blob/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/ai/src/utils/provider-retry.ts
+[pi-retry-errors]: https://github.com/earendil-works/pi/blob/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/ai/src/utils/retry.ts
 
 [pi-compaction]: https://github.com/earendil-works/pi/blob/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/coding-agent/src/core/compaction/compaction.ts
 

@@ -36,6 +36,7 @@ from nurse_scheduling.ai.provider import (
     ChatMessage,
     OpenAiCompatibleProvider,
     ProviderAttempt,
+    ProviderCall,
     ProviderError,
     ProviderResponseLimitError,
     ReasoningDelta,
@@ -92,6 +93,7 @@ def test_provider_http_error_logs_redacted_body_and_returns_error_id(
             provider_api_key="test-token",
             provider_model="test-model",
             auth_token="ai-shared-test-token",
+            provider_max_attempts=1,
         )
     )
     messages: list[ChatMessage] = [{"role": "user", "content": "Question"}]
@@ -131,6 +133,7 @@ def test_provider_http_error_bounds_untrusted_response_excerpt(
             provider_api_key="test-token",
             provider_model="test-model",
             auth_token="ai-shared-test-token",
+            provider_max_attempts=1,
         )
     )
     caplog.set_level(logging.ERROR, logger="nurse_scheduling.ai.provider")
@@ -224,7 +227,54 @@ def _events(provider: OpenAiCompatibleProvider, tools: list[dict] | None = None)
 TOOLS = [{"type": "function", "function": {"name": "schedule_patch", "parameters": {"type": "object"}}}]
 
 
+@pytest.mark.parametrize("status", [408, 409, 429, 500, 502, 503, 504, 524])
+def test_retries_transient_http_errors_with_stable_affinity_and_distinct_cost_records(monkeypatch, status):
+    requests = []
+
+    def handle(request):
+        requests.append(request)
+        if len(requests) == 1:
+            return httpx.Response(status, json={"error": {"message": "Temporary upstream failure"}})
+        return httpx.Response(200, text=_sse_body(_delta_chunk({"content": "Recovered"})))
+
+    provider = _transport_provider(monkeypatch, handle, provider_retry_backoff_seconds=0).with_session_id("chat-1")
+    provider._include_costs = True
+    events = _events(provider)
+    assert TextDelta("Recovered") in events
+    assert len(requests) == 2 and all(request.headers["x-session-id"] == "chat-1" for request in requests)
+    calls = [event for event in events if isinstance(event, ProviderCall)]
+    assert len({event.id for event in calls}) == 2
+    assert [event.status for event in calls] == ["pending", "unavailable", "pending", "unavailable"]
+
+
+@pytest.mark.parametrize(
+    "status,body,headers",
+    [
+        (401, "Unauthorized", {"x-should-retry": "true"}),
+        (403, "Forbidden", {}),
+        (400, "Invalid request", {}),
+        (429, '{"code":"insufficient_quota"}', {"x-should-retry": "true"}),
+        (429, "Monthly usage limit reached", {}),
+        (429, "Out of budget", {}),
+        (503, "Billing account disabled", {}),
+        (503, "Busy", {"x-should-retry": "false"}),
+    ],
+)
+def test_deterministic_provider_errors_fail_without_retry(monkeypatch, status, body, headers):
+    requests = []
+
+    def handle(request):
+        requests.append(request)
+        return httpx.Response(status, text=body, headers=headers)
+
+    provider = _transport_provider(monkeypatch, handle, provider_retry_backoff_seconds=0)
+    with pytest.raises(ProviderError, match=f"HTTP {status}"):
+        _events(provider)
+    assert len(requests) == 1
+
+
 def test_retries_pre_stream_timeouts_with_exponential_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("nurse_scheduling.ai.provider_retry.random.random", lambda: 0)
     attempts: list[httpx.Request] = []
     delays: list[float] = []
 
@@ -320,6 +370,7 @@ def test_reports_streaming_timeout_after_all_attempts(monkeypatch: pytest.Monkey
 
 
 def test_continues_partial_answer_with_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("nurse_scheduling.ai.provider_retry.random.random", lambda: 0)
     requests: list[dict] = []
     delays: list[float] = []
 
