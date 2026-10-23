@@ -2217,6 +2217,8 @@ def test_result_explanation_cases_check_cause_and_read_only_scope(conflict, muta
         ("One request was missed because stronger requests took precedence.", False),
         ("One request is unmet. Higher weights take precedence in the objective.", True),
         ("One request is unmet, but this does not prove higher weights took precedence.", True),
+        ("One request was not satisfied because higher-weight requests took precedence.", False),
+        ("One request was not satisfied, but this does not prove higher weights took precedence.", True),
     ],
 )
 @pytest.mark.parametrize(
