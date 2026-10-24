@@ -36,6 +36,14 @@
 - Distinguish a pre-run optimization configuration from a completed solve. Do
   not imply that a solver ran when only backend readiness or UI state was
   prepared for a screenshot.
+- Recapture the app screenshots with `bun run docs:screenshots` in
+  `web-frontend/`. It builds the app, serves the build as the production site
+  with mocked backends, and overwrites the PNG files under
+  `docs/content/assets/images/user-guide/`. Add or change captures in
+  `web-frontend/docs-screenshots/user-guide.spec.ts`. Render workbook images,
+  such as `09-workbook.png`, with `skills/screenshot-xlsx`.
+  A rerun can change a few shadow pixels by one color level. Commit only the
+  images whose content changed.
 - Introduce technical concepts in this order: schema or example, description,
   then runtime or optimization behavior.
 - Define notation once and use it consistently. Distinguish sets, selected
@@ -130,7 +138,8 @@
 - Make architecture and data-flow figures understandable without surrounding
   prose. Use bold titles and short descriptions inside nodes.
 - Give each diagram a numbered caption inside its figure. Label arrows with
-  their action or data. Verify owners, allocation, cleanup, and persistence
+  their action or data. Check payload field names against the emitted API or
+  event schema. Verify owners, allocation, cleanup, and persistence
   ordering against code before updating the diagram.
 - Keep stored states separate from derived phases. Distinguish preparing a
   resource adapter from allocating a resource when allocation is lazy.
@@ -141,6 +150,8 @@
 - Keep Mermaid source readable. Avoid invisible layout machinery unless a
   simple declaration cannot produce a clear result.
 - Use text or tables below a figure for detail.
+- Check diagram width against the article width. Mermaid scales inside its
+  figure, and a fit-content figure can shrink it to the caption width.
 
 ## Reproduce pages and links
 

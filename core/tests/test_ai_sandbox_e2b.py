@@ -658,6 +658,7 @@ def test_mutation_waits_for_active_reads():
         sandbox = FakeE2BSandbox()
         read_started = asyncio.Event()
         release_read = asyncio.Event()
+        write_started = asyncio.Event()
 
         async def read(*_args, **_kwargs):
             read_started.set()
@@ -666,14 +667,22 @@ def test_mutation_waits_for_active_reads():
 
         sandbox.files.read.side_effect = read
         e2b_backend = make_backend(sandbox)
+
+        async def write():
+            write_started.set()
+            await e2b_backend.write_file("/workspace/schedule.yaml", b"changed")
+
         read_task = asyncio.create_task(e2b_backend.read_file("/workspace/schedule.yaml"))
-        await read_started.wait()
-        write_task = asyncio.create_task(e2b_backend.write_file("/workspace/schedule.yaml", b"changed"))
-        await asyncio.sleep(0.01)
-        sandbox.files.write.assert_not_awaited()
-        release_read.set()
-        await asyncio.gather(read_task, write_task)
-        await e2b_backend.close()
+        await asyncio.wait_for(read_started.wait(), timeout=1)
+        write_task = asyncio.create_task(write())
+        try:
+            await asyncio.wait_for(write_started.wait(), timeout=1)
+            assert not write_task.done()
+            sandbox.files.write.assert_not_awaited()
+        finally:
+            release_read.set()
+            await asyncio.gather(read_task, write_task)
+            await e2b_backend.close()
         return sandbox
 
     sandbox = asyncio.run(exercise())
@@ -685,6 +694,7 @@ def test_close_waits_for_active_reads_before_destroying():
         sandbox = FakeE2BSandbox()
         read_started = asyncio.Event()
         release_read = asyncio.Event()
+        close_started = asyncio.Event()
 
         async def read(*_args, **_kwargs):
             read_started.set()
@@ -693,13 +703,21 @@ def test_close_waits_for_active_reads_before_destroying():
 
         sandbox.files.read.side_effect = read
         e2b_backend = make_backend(sandbox)
+
+        async def close():
+            close_started.set()
+            await e2b_backend.close()
+
         read_task = asyncio.create_task(e2b_backend.read_file("/workspace/schedule.yaml"))
-        await read_started.wait()
-        close_task = asyncio.create_task(e2b_backend.close())
-        await asyncio.sleep(0.01)
-        sandbox.kill.assert_not_awaited()
-        release_read.set()
-        await asyncio.gather(read_task, close_task)
+        await asyncio.wait_for(read_started.wait(), timeout=1)
+        close_task = asyncio.create_task(close())
+        try:
+            await asyncio.wait_for(close_started.wait(), timeout=1)
+            assert not close_task.done()
+            sandbox.kill.assert_not_awaited()
+        finally:
+            release_read.set()
+            await asyncio.gather(read_task, close_task)
         return sandbox
 
     sandbox = asyncio.run(exercise())

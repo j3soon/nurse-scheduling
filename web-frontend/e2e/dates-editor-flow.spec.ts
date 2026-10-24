@@ -22,6 +22,16 @@
 import { expect, test } from './test';
 import { disableModalDialogs, seedSchedulingState } from './helpers';
 
+test('labels the year-end substitute holiday with the next New Year', async ({ page }) => {
+  await disableModalDialogs(page);
+  await page.goto('/dates');
+  await page.getByRole('button', { name: 'Set Date Range' }).click();
+  await page.locator('#startDate').fill('2027-12-24');
+  await page.locator('#endDate').fill('2027-12-31');
+  await expect(page.getByText('補假 (2027-12-25 行憲紀念日)', { exact: true })).toBeVisible();
+  await expect(page.getByText('補假 (2028-01-01 開國紀念日)', { exact: true })).toBeVisible();
+});
+
 test('setting a real date range through the Dates page propagates downstream', async ({ page }) => {
   /*
    * Steps:

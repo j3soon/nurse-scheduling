@@ -22,6 +22,7 @@
 
 import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef } from 'react';
+import { FiRotateCcw, FiRotateCw } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { useUnsavedEditingState } from '@/utils/unsavedEditingState';
 
@@ -56,7 +57,7 @@ export default function Navigation() {
   const pathname = usePathname();
   const currentTabIndex = TABS.findIndex(tab => tab.path === pathname);
   const { hasTabSwitchWarningActive } = useUnsavedEditingState();
-  const { exportData } = useSchedulingData();
+  const { exportData, undo, redo, canUndo, canRedo } = useSchedulingData();
   const hasCustomExportLayout = exportData !== undefined;
 
   const navigateToTab = useCallback((index: number) => {
@@ -184,8 +185,8 @@ export default function Navigation() {
 
   return (
     <div className="relative">
-      <nav className="bg-white shadow-sm">
-        <div ref={tabStripRef} className="overflow-x-auto">
+      <nav className="flex bg-white shadow-sm">
+        <div ref={tabStripRef} className="min-w-0 flex-1 overflow-x-auto">
           <div className="flex justify-start px-4 sm:px-6 lg:px-8">
             {TABS.map((tab, index) => {
               const showCustomExportIndicator = Boolean(tab.exportLayout && hasCustomExportLayout);
@@ -213,6 +214,25 @@ export default function Navigation() {
               );
             })}
           </div>
+        </div>
+        {/* Keep Undo and Redo outside the scrolling strip, so phones without a keyboard can reach them. */}
+        <div className="flex shrink-0 items-center border-l border-gray-200 px-1 sm:px-2">
+          {[
+            { label: 'Undo', shortcut: 'Ctrl+Z or Cmd+Z', onClick: undo, enabled: canUndo, Icon: FiRotateCcw },
+            { label: 'Redo', shortcut: 'Ctrl+Y or Cmd+Y', onClick: redo, enabled: canRedo, Icon: FiRotateCw },
+          ].map(({ label, shortcut, onClick, enabled, Icon }) => (
+            <button
+              key={label}
+              type="button"
+              onClick={onClick}
+              disabled={!enabled}
+              aria-label={label}
+              title={`${label} (${shortcut})`}
+              className="rounded p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-700 disabled:cursor-not-allowed disabled:text-gray-300 disabled:hover:bg-transparent"
+            >
+              <Icon aria-hidden="true" className="h-4 w-4" />
+            </button>
+          ))}
         </div>
       </nav>
 

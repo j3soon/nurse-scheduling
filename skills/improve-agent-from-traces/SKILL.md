@@ -209,7 +209,8 @@ a wording change, record that difference rather than calling the comparison a
 pure code experiment.
 Record the exact prompt, hashes of the test cases and inputs, provider/model, tools,
 and environment. Use the repository's repetition and concurrency policy. Here,
-start with three runs per version and four concurrent case jobs. Extend to five
+start with three runs per version and let the runner discover concurrency. Keep
+concurrency equal across versions for performance comparisons. Extend to five
 when results are noisy. Larger samples require a requested deeper investigation.
 Use `--extend-report REPORT --repeat 5` to extend a completed evaluation.
 Reuse its original prompt selector. Add `--case ID` to extend only a noisy case.

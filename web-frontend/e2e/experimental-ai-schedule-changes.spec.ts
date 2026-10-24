@@ -19,7 +19,6 @@
 
 // This test is mostly AI generated.
 
-import { createHash } from 'node:crypto';
 import { expect, Page, test } from '@playwright/test';
 
 const APPLIED_YAML = `apiVersion: alpha
@@ -42,7 +41,6 @@ shiftTypes:
 preferences: []
 `;
 const CHECK = 'Trusted schedule check after this command:\nThe candidate passed trusted server-side validation.';
-const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 
 async function mockChangingBackend(page: Page, holdAnswer = false, retryNotice = false) {
   const state = { sessionSchedule: '', refreshed: [] as string[], finishAnswer: () => {}, messages: 0, stops: 0 };
@@ -140,8 +138,8 @@ async function mockChangingBackend(page: Page, holdAnswer = false, retryNotice =
     // The backend adopts the schedule when the run commits, just before it reports done.
     const finish = () => {
       publish('schedule_applied', {
-        schedule_yaml: APPLIED_YAML, base_sha256: sha256(state.sessionSchedule), sha256: sha256(APPLIED_YAML),
-        diff: '- people.items[0]: added {"id": "Proposed Nurse"}',
+        schedule_yaml: APPLIED_YAML, diff: '- people.items[0]: added {"id": "Proposed Nurse"}',
+        replaced_queued_schedule: false,
       });
       state.sessionSchedule = APPLIED_YAML;
       publish('done', {});
@@ -182,7 +180,7 @@ test('applies the schedule a response finishes with as one undoable step', async
   await mockChangingBackend(page);
 
   await page.goto('/experimental-ai');
-  await expect(page.getByText('Press Ctrl+Z to undo them.')).toBeVisible();
+  await expect(page.getByText('Use Undo in the tab bar or Ctrl+Z (Cmd+Z) to undo them.')).toBeVisible();
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Add a nurse.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 

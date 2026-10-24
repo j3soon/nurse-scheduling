@@ -92,6 +92,8 @@ export function applyModelInput(
   });
   let assistantIndex = result.findIndex(message => message.id === turn.assistantId);
   if (assistantIndex < 0) return messages;
+  // Follow-ups saved by the removed approval flow have no question entry.
+  // Keep their app events before the follow-up answer, not the original question.
   let questionIndex = turn.questionId === null || questionText === null
     ? -1 : result.findIndex(message => message.id === turn.questionId);
   if (questionIndex >= 0 && questionText !== null) {

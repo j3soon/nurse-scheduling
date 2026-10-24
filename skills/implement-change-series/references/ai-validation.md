@@ -79,13 +79,13 @@ requests, or conversation context. Choose cases for that behavior, including a
 contrasting control for ambiguity or scope changes. For example:
 
 ```sh
-AI_ENV_FILE=/absolute/checkout/docker/.env.staging ./scripts/run_ai_eval.sh --case ask-people-count --case approve-then-follow-up-edit --jobs 4
+AI_ENV_FILE=/absolute/checkout/docker/.env.staging ./scripts/run_ai_eval.sh --case ask-people-count --case approve-then-follow-up-edit
 ```
 
 Use an existing ignored credential file without printing its contents. Linked
-worktrees may need its absolute path. Four concurrent case jobs are the tested
-default. Follow `core/AGENTS.md` for repeated comparisons and broader evaluation
-criteria. One passing live run is a smoke check, not a performance measurement.
+worktrees may need its absolute path. The runner discovers provider capacity and
+caps concurrency at 20. Keep concurrency equal across performance comparisons.
+Follow `core/AGENTS.md` for repeated comparisons and broader evaluation criteria. One passing live run is a smoke check, not a performance measurement.
 
 ## Report the result
 

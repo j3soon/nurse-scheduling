@@ -44,6 +44,10 @@ archives out of browser Blobs.
 For row reorder tests, drop inside the intended half of the target row. Its
 midpoint separates insertion before and after, so center drops are ambiguous.
 
+For clipboard transformations, test a real browser paste and native text undo.
+Preserve table cell separators and preformatted indentation. Use the clipboard's
+plain text when the converter cannot preserve that structure.
+
 Filesystem failure tests must accept the supported platforms' error codes.
 Assert the failed operation and path as well as output preservation.
 
@@ -72,7 +76,10 @@ builds the current checkout, launches its own server on an OS-selected port,
 and shuts it down afterwards. Existing local servers are never reused.
 The full suite also starts a development server for the allowed-origin check.
 If an existing server or development lock blocks it, test the current changes
-in a separate checkout instead of stopping a user's server.
+in a separate checkout instead of stopping a user's server. For a temporary
+`git worktree`, copy `web-frontend/node_modules` as hard links with `cp -al`.
+Turbopack fails to build when `node_modules` is a symbolic link outside the
+project root.
 
 `next dev` can append a managed Next.js agent-rules block to this file. Browser
 tests that launch a dev server can also cause this edit. After those checks,

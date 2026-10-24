@@ -63,7 +63,7 @@ describe('assistant events', () => {
     });
     vi.stubGlobal('crypto', { getRandomValues });
     try {
-      expect(messageId()).toBe('000102030405060708090a0b0c0d0e0f');
+      expect(messageId()).toBe('00010203-0405-4607-8809-0a0b0c0d0e0f');
       expect(getRandomValues).toHaveBeenCalledOnce();
     } finally {
       vi.unstubAllGlobals();

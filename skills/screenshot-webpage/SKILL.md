@@ -14,10 +14,16 @@ Check `test -f /.dockerenv` and resolve repository paths with
 `/workspace`, and browser binaries and display availability differ from a
 host checkout.
 
+For this repository's user guide screenshots, use the capture command that
+`docs/AGENTS.md` describes instead of this script.
+
 ## Prepare the page
 
 1. Start the application with its documented local command. Do not replace the
-   user's running process or port without checking first.
+   user's running process or port without checking first. Prefer a production
+   build, such as a static export served for the capture. A long-running
+   development server can serve stale server markup after source changes, and
+   the page then shows a hydration error.
 2. Immediately before each capture, verify that the exact target URL responds.
    Repeat this preflight after restarting the application or changing its
    version. For example, use `curl --fail --silent --show-error URL >/dev/null`.
@@ -30,7 +36,10 @@ host checkout.
    loopback hosts by default. For any capture, list every non-loopback redirect,
    subresource, and WebSocket host with `--allow-host HOST`. For a remote
    capture, also list the page host and any loopback hosts. Link-local targets
-   are always blocked.
+   are always blocked. A request to an unlisted host fails the capture. Pass
+   `--block-other-hosts` to block those requests, such as analytics scripts,
+   and continue. The JSON output lists them under `blocked`. Check that the
+   image does not depend on them.
 5. Set up minimal test data and the exact UI state the documentation describes.
 6. Identify visible text and a ready selector that prove the intended state.
 7. Mask sensitive content with `--mask`. Never capture credentials, tokens, or

@@ -40,11 +40,9 @@ from pydantic import AfterValidator, BaseModel, Field, ValidationError
 from starlette._utils import get_route_path
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.formparsers import MultiPartException
 
 from ..sentry import SentryClientAddressMiddleware, init_sentry
 from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry, create_stream_token
-from ..server.request_limits import MULTIPART_OVERHEAD_BYTES
 from ..service_logging import configure_service_logging
 from ..version import get_app_version
 from .agent_session import AgentSession, SessionRuntime, schedule_data_changed
@@ -65,7 +63,7 @@ from .optimizer import (
 from .optimizer_http import HttpOptimizerBackend
 from .provider import OpenAiCompatibleProvider, ToolCapableChatProvider
 from .recovery import SessionRecovery
-from .request_limits import AiRequestLimitsMiddleware
+from .request_limits import BODY_TOO_LARGE_MESSAGE, AiRequestLimitsMiddleware
 from .sandbox import SandboxFactory, managed_sandbox_factory
 from .sandbox.factory import create_sandbox_factory
 from .session_event_stream import SessionEventStream, SessionResetData
@@ -270,30 +268,9 @@ async def _parse_upload_request(request: Request, settings: AiSettings) -> list[
     if not request.headers.get("content-type", "").lower().startswith("multipart/form-data"):
         raise HTTPException(status_code=415, detail="Upload files as multipart form data.")
 
-    content_length = request.headers.get("content-length")
-    max_body_bytes = settings.max_attachment_bytes + MULTIPART_OVERHEAD_BYTES
-    if content_length is not None:
-        try:
-            if int(content_length) > max_body_bytes:
-                raise HTTPException(status_code=413, detail="Attachment request is too large.")
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid Content-Length header.") from None
-
-    received_bytes = 0
-
-    async def bounded_receive():
-        nonlocal received_bytes
-        message = await request.receive()
-        if message["type"] == "http.request":
-            received_bytes += len(message.get("body", b""))
-            if received_bytes > max_body_bytes:
-                # Starlette closes spooled files when multipart parsing raises this.
-                raise MultiPartException("Attachment request is too large.")
-        return message
-
-    bounded_request = Request(request.scope, receive=bounded_receive)
     try:
-        async with bounded_request.form(max_files=settings.max_attachment_files, max_fields=0) as form:
+        # AiRequestLimitsMiddleware bounds the body to one file plus multipart framing.
+        async with request.form(max_files=settings.max_attachment_files, max_fields=0) as form:
             if any(key != "files" for key in form):
                 raise HTTPException(status_code=422, detail="Unexpected multipart field.")
             uploads: list[UploadFile] = []
@@ -305,7 +282,7 @@ async def _parse_upload_request(request: Request, settings: AiSettings) -> list[
                 raise HTTPException(status_code=422, detail="Upload at least one file.")
             return await _read_files(uploads, settings)
     except StarletteHTTPException as exc:
-        if exc.status_code == 400 and exc.detail == "Attachment request is too large.":
+        if exc.status_code == 400 and exc.detail == BODY_TOO_LARGE_MESSAGE:
             raise HTTPException(status_code=413, detail=exc.detail) from exc
         if exc.status_code == 400 and str(exc.detail).startswith("Too many files"):
             raise HTTPException(status_code=413, detail="Too many file attachments.") from exc

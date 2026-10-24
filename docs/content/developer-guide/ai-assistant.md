@@ -687,20 +687,24 @@ used checked assignments and exported workbooks, without HTTP optimizer jobs.
 ## Schedule change lifecycle
 
 A finished run that changed the schedule commits its validated schedule as the
-session schedule. The backend then emits `schedule_applied` with the YAML, the
-structural diff, and the SHA-256 of the run's starting schedule (`base_sha256`)
-and of the new schedule (`sha256`). The browser applies each run's result once
-through the normal YAML import path as one undo step. If the browser schedule
-changed during the response, it still replaces that schedule and shows a notice.
-Undo restores the exact schedule held before replacement. A saved receipt keyed
-by `run_id` prevents replay from applying the same result again after Undo or a
-reload. The browser keeps its normalized YAML alongside the backend revision so
-import formatting does not cause a conflict notice.
+session schedule. The backend then emits `schedule_applied` with the YAML and
+the structural diff. Its `replaced_queued_schedule` flag reports that the run's
+schedule replaced a browser update queued during the run. The browser applies
+each run's result once through the normal YAML import path as one undo step.
+It shows a notice when that flag is set or when the browser schedule changed
+after its last synchronization. Undo restores the exact schedule held before
+replacement. A saved receipt keyed by `run_id` prevents replay from applying the
+same result again after Undo or a reload. The browser compares its own
+normalized YAML, so import formatting does not cause a notice. The browser
+computes no hash, because `crypto.subtle` is missing on plain-HTTP LAN origins.
 
 AI runs belong to the server and continue without a browser connection. Browser
 edits, Undo, notices, and reconnects do not start, stop, or gate a run. Send
 synchronizes the current browser YAML through `PUT /sessions/{id}/schedule`
 before its next user-requested run, and records an app event for the agent.
+An update that arrives during a run does not change that run. The backend keeps
+only the latest such update and applies it after the run's entries, unless the
+run applied its own schedule, which then replaces it.
 Stop explicitly requests cancellation. Optimizer completion can start a server
 review without a client connection. This separation replaces the earlier
 approval and rejection flow, which tied server progress to browser decisions.
@@ -725,7 +729,7 @@ flowchart TB
     Keep["<b>Replay receipt</b><br/>Preserve the browser's current schedule"]
     Candidate -->|Read after model execution| Validation
     Validation -->|Valid changed schedule and current RunSnapshot| Session
-    Session -->|schedule_applied with run ID, YAML, diff, and hashes| Replay
+    Session -->|schedule_applied with run ID, YAML,<br/>diff, and replaced_queued_schedule| Replay
     Replay -->|No| Import
     Import --> Notice
     Replay -->|Yes| Keep
@@ -917,6 +921,31 @@ This aligns the storage and replay principles without importing Pi's runtime
 or changing the frontend protocol. A browser disconnect leaves the accepted
 agent running. A backend process crash recovers saved content and marks
 interrupted work failed. It does not rerun model calls or mutating tools.
+
+### Inspect recent user prompts
+
+Run these commands from the repository root:
+
+```sh
+./scripts/recent_ai_prompts.sh
+./scripts/recent_ai_prompts.sh --sessions 10 --prompts 3 --chars 160
+```
+
+The read-only command shows 15 recent sessions by default, with five user
+prompts per session and 300 characters per preview. Sessions sort by their
+latest user prompt, with prompts newest first. Output includes UTC timestamps,
+prompt counts, run status, and available run token totals. Steering messages
+are included. Automatic optimizer prompts and assistant text are excluded.
+Token totals include the whole run's context and tool exchanges, so steering
+messages in one run share them. `?` means usage is unavailable.
+
+The command prefers `docker/.env`. If it is missing, the command falls back
+to `docker/.env.staging` and prints a notice. The selected Compose environment
+file always appears on stderr. Set `AI_ENV_FILE` to select a file explicitly
+and disable fallback, or `AI_COMPOSE_FILE` to select
+`docker/compose.backend.memory.yml`. Set `AI_HISTORY_POSTGRES_URL`
+for native database access. The command does not migrate or prune the database.
+It shows retained rows, including expired sessions that have not been pruned.
 
 ### Inspect chat history with pgAdmin
 

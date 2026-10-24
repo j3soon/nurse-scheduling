@@ -21,6 +21,7 @@
 
 import type { SessionEvent, SessionStreamOptions } from './sessionEvents';
 import { isCostSummary, isProviderCallCost } from './costs';
+import { messageId as newMessageId } from './assistantEvents';
 import {
   buildAuthHeaders,
   parseAuthRequirement,
@@ -44,13 +45,13 @@ export interface ScheduleCheck {
   text: string;
 }
 
-// A run's validated schedule, which the backend adopted. The browser applies it only over its base revision.
+// A run's validated schedule, which the backend adopted. The browser applies each run once.
 export interface ScheduleApplied {
   runId: string;
   scheduleYaml: string;
-  baseSha256: string;
-  sha256: string;
   diff: string;
+  // The backend dropped a browser schedule update that arrived during the run.
+  replacedQueuedSchedule: boolean;
 }
 
 export type ToolStartActivity = Pick<ToolActivity, 'toolCallId' | 'name' | 'arguments'>;
@@ -263,8 +264,7 @@ interface SsePayload {
   incomplete?: unknown;
   active_run_id?: unknown;
   schedule_check?: unknown;
-  base_sha256?: unknown;
-  sha256?: unknown;
+  replaced_queued_schedule?: unknown;
 }
 
 // Older backends omit the ID, so callers fall back to matching by tool name.
@@ -630,12 +630,14 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
   } else if (eventType === 'download' && typeof payload.download_id === 'string') {
     emit({ type: 'download', downloadId: payload.download_id });
   } else if (eventType === 'schedule_applied') {
-    if (!runId || typeof payload.schedule_yaml !== 'string' || typeof payload.base_sha256 !== 'string'
-      || typeof payload.sha256 !== 'string' || typeof payload.diff !== 'string') {
+    // Runs saved before schedule updates were queued omit `replaced_queued_schedule`.
+    if (!runId || typeof payload.schedule_yaml !== 'string' || typeof payload.diff !== 'string'
+      || !['boolean', 'undefined'].includes(typeof payload.replaced_queued_schedule)) {
       throw new Error('The AI backend returned an invalid schedule change.');
     }
     emit({ type: 'schedule_applied', applied: {
-      runId, scheduleYaml: payload.schedule_yaml, baseSha256: payload.base_sha256, sha256: payload.sha256, diff: payload.diff,
+      runId, scheduleYaml: payload.schedule_yaml, diff: payload.diff,
+      replacedQueuedSchedule: payload.replaced_queued_schedule === true,
     } });
   } else if (
     eventType === 'optimization'
@@ -781,7 +783,7 @@ export async function sendMessage(
   signal: AbortSignal,
   authToken: string | null,
   endpoint = getAiBaseUrl(),
-  { messageId, shouldStop, onConnectionChange, selection }: SendMessageOptions = { messageId: crypto.randomUUID() },
+  { messageId, shouldStop, onConnectionChange, selection }: SendMessageOptions = { messageId: newMessageId() },
 ): Promise<string> {
   let retries = 0;
   let stopSaved = false;
@@ -1021,7 +1023,7 @@ export async function uploadFile(
   authToken: string | null,
   endpoint = getAiBaseUrl(),
 ): Promise<UploadedFile[]> {
-  const uploadId = crypto.randomUUID();
+  const uploadId = newMessageId();
   for (let attempt = 1; ; attempt++) {
     try {
       const uploaded = await uploadFiles(sessionId, [file], authToken, endpoint, signal, uploadId);
@@ -1071,13 +1073,6 @@ export async function removeGeneratedZip(sessionId: string, downloadId: string, 
     method: 'DELETE', credentials: 'include', headers: authorizedHeaders(authToken),
   });
   if (!response.ok) throw await responseError(response);
-}
-
-export async function scheduleRevision(scheduleYaml: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(scheduleYaml));
-  return Array.from(new Uint8Array(digest))
-    .map(byte => byte.toString(16).padStart(2, '0'))
-    .join('');
 }
 
 export async function updateSessionSchedule(

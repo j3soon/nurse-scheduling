@@ -41,6 +41,7 @@ import PageDocumentationLink from '@/components/PageDocumentationLink';
 import { DOCUMENTATION_URLS, FIREFOX_NIGHTLY_URL, FIREFOX_SPEECH_RECOGNITION_STATUS_URL, GITHUB_AI_BETA_ACCESS_URL, GITHUB_PRIVACY_URL, GITHUB_TAGS_URL } from '@/constants/urls';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { isImeCompositionKeyEvent } from '@/utils/keyboardEvents';
+import { clipboardHtmlToMarkdown } from '@/utils/clipboardMarkdown';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 import { CURRENT_APP_VERSION, hasAppVersionMismatch } from '@/utils/version';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
@@ -897,7 +898,7 @@ export default function ExperimentalAiPage() {
         </p>
         <p className="mt-2 max-w-3xl rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
           When a response finishes, the assistant&apos;s valid schedule changes replace the schedule in this browser.
-          Press Ctrl+Z to undo them. This beta is API-key gated by default.{' '}
+          Use Undo in the tab bar or Ctrl+Z (Cmd+Z) to undo them. This beta is API-key gated by default.{' '}
           <a
             className="font-medium underline"
             href={GITHUB_AI_BETA_ACCESS_URL}
@@ -1327,6 +1328,18 @@ export default function ExperimentalAiPage() {
             ref={draftInputRef}
             value={draft}
             onChange={event => setDraft(event.target.value)}
+            onPaste={event => {
+              const markdown = clipboardHtmlToMarkdown(event.clipboardData.getData('text/html'));
+              if (markdown === null) return;
+              event.preventDefault();
+              const input = event.currentTarget;
+              const { selectionStart: start, selectionEnd: end, value, maxLength } = input;
+              const pasted = markdown.slice(0, Math.max(0, maxLength - value.length + end - start));
+              // Keep converted paste in the browser's text undo history.
+              if (typeof document.execCommand === 'function' && document.execCommand('insertText', false, pasted)) return;
+              setDraft(value.slice(0, start) + pasted + value.slice(end));
+              requestAnimationFrame(() => input.setSelectionRange(start + pasted.length, start + pasted.length));
+            }}
             onKeyDown={event => {
               if (event.key === 'Enter' && !event.shiftKey && !isImeCompositionKeyEvent(event)
                 && !isTouchOnlyPointer()) {

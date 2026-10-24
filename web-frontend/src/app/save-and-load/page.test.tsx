@@ -209,7 +209,7 @@ describe('SaveAndLoadPage', () => {
     const summary = screen.getByRole('status', { name: 'YAML import summary' });
     expect(summary).toHaveTextContent('30 dates, 1 person, 1 shift type, 2 preferences');
     expect(summary).toHaveTextContent('Schedule uploaded: ward.yaml');
-    expect(summary).toHaveTextContent('Ctrl+Z or Cmd+Z to undo');
+    expect(summary).toHaveTextContent('Use Undo in the tab bar or Ctrl+Z (Cmd+Z) to undo.');
     expect(loadFromYaml).toHaveBeenCalledOnce();
     expect(confirm).not.toHaveBeenCalled();
     expect(alert).not.toHaveBeenCalled();

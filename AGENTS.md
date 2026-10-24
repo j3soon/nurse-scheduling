@@ -91,11 +91,13 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   finishes. Continue the same task from that notification instead of polling
   from model turns. Keep affected checks and selected evaluation cases in the
   foreground.
-- Run AI evaluations with four concurrent case jobs. Use sequential execution
-  only when the user explicitly requests it. Eight jobs caused provider and
-  E2B contention with lower reliability. Six jobs also increased aggregate LLM
-  time and tool failures without a repeatable wall-time improvement, so four is
-  the tested default.
+- Let the AI evaluation runner discover concurrency from provider deployment
+  limits and cached health, capped at 20 case jobs for E2B Hobby. Use `--jobs`
+  only to request a lower limit. Inspect `concurrency.json` for the chosen limit
+  and fallback reason. Reuse the AI provider URL and credentials for LiteLLM
+  model metadata and cached health checks.
+  Check capacity with `scripts/check_litellm_concurrency.sh` before comparing
+  performance across runs.
 - Check a suspected missing dependency or tool directly before rerunning a full
   suite to diagnose its failure.
 - Run security scans with `skills/security-scan` against an isolated loopback

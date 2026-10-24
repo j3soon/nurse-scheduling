@@ -38,12 +38,13 @@ def test_audit_plan_reproduces_declared_contexts_and_only_ladder_cases(tmp_path)
     plan = ladder_audit.build_plan(
         steps, {case.id: case for case in cases}, tmp_path, repeat=args.repeat, jobs=args.jobs
     )
-    assert args.repeat == 3 and args.jobs == 4
+    assert args.repeat == 3 and args.jobs is None
+    assert plan["jobs"] == "auto"
+    assert all("--jobs" not in cohort["args"] for cohort in plan["cohorts"])
     assert plan["attempts"] == 3 * (2 * sum(len(step.cases) for step in steps) + len(cases))
     for cohort, step in zip(plan["cohorts"], steps, strict=False):
         flag = "--prompt-ablate-step" if step.comparison_mode == "ablation" else "--prompt-compare-step"
         assert cohort["args"][0] == flag
-        assert cohort["args"][cohort["args"].index("--jobs") + 1] == "4"
         if any("cost_target" in receipt for receipt in step.evidence):
             assert "--cost-ratio" in cohort["args"]
     production = plan["cohorts"][-1]
@@ -197,3 +198,12 @@ def test_report_missing_a_planned_case_is_incomplete(tmp_path, mode):
     plan = {"attempts": 3, "cohorts": [cohort]}
     assert ladder_audit.run_audit(plan, root, execute=_executor(calls)) == 2
     assert json.loads((root / "audit.json").read_text())["results"][0]["status"] == "incomplete report"
+
+
+def test_explicit_audit_concurrency_is_passed_to_each_cohort(tmp_path):
+    args, cases = runner._selected_cases(["--ladder-audit", "--jobs", "2"])
+    plan = ladder_audit.build_plan(
+        load_prompt_steps(), {case.id: case for case in cases}, tmp_path, repeat=args.repeat, jobs=args.jobs
+    )
+    assert plan["jobs"] == 2
+    assert all(cohort["args"][cohort["args"].index("--jobs") + 1] == "2" for cohort in plan["cohorts"])

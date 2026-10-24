@@ -180,22 +180,20 @@ test('shows whole date lists, a collapsed copy panel, and a centered current tab
   await page.goto('/shift-type-requirements');
   const currentTab = page.getByRole('button', { name: '4. Shift Type Requirements', exact: true });
   await expect(currentTab).toHaveAttribute('aria-current', 'page');
-  await expect.poll(async () => {
-    const box = (await currentTab.boundingBox())!;
-    return Math.abs(box.x + box.width / 2 - 180);
-  }).toBeLessThanOrEqual(2);
+  // Undo and Redo sit outside the tab strip, so center the tab in the strip rather than the viewport.
+  const currentTabOffCenter = () => currentTab.evaluate(tab => {
+    const tabBox = tab.getBoundingClientRect();
+    const stripBox = tab.closest('.overflow-x-auto')!.getBoundingClientRect();
+    return Math.abs(tabBox.left + tabBox.width / 2 - (stripBox.left + stripBox.width / 2));
+  });
+  await expect.poll(currentTabOffCenter).toBeLessThanOrEqual(2);
+  await expect(page.getByRole('button', { name: 'Redo', exact: true })).toBeInViewport();
   // Rotating the phone keeps the current tab centered.
   await page.setViewportSize({ width: 740, height: 360 });
-  await expect.poll(async () => {
-    const box = (await currentTab.boundingBox())!;
-    return Math.abs(box.x + box.width / 2 - 370);
-  }).toBeLessThanOrEqual(2);
+  await expect.poll(currentTabOffCenter).toBeLessThanOrEqual(2);
   await page.setViewportSize({ width: 360, height: 740 });
   // A height-only resize, as when a phone toolbar collapses, keeps the user's swipe.
-  await expect.poll(async () => {
-    const box = (await currentTab.boundingBox())!;
-    return Math.abs(box.x + box.width / 2 - 180);
-  }).toBeLessThanOrEqual(2);
+  await expect.poll(currentTabOffCenter).toBeLessThanOrEqual(2);
   await currentTab.evaluate(tab => { tab.closest('.overflow-x-auto')!.scrollLeft = 0; });
   await page.setViewportSize({ width: 360, height: 680 });
   await page.waitForTimeout(200);

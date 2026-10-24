@@ -32,6 +32,7 @@ import time
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock
 from uuid import uuid4
 
@@ -40,14 +41,15 @@ import pytest
 import yaml
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from starlette import formparsers
 
 from nurse_scheduling.ai import agent_session as agent_session_module
+from nurse_scheduling.ai import sessions as sessions_module
 from nurse_scheduling.ai.agent_session import (
     CANDIDATE_VALIDATION_ERROR,
     PROVIDER_ERROR,
     SANDBOX_COMMAND_TIMEOUT_ERROR,
     SANDBOX_RUN_TIMEOUT_ERROR,
-    STALE_RUN_ERROR,
 )
 from nurse_scheduling.ai.app import (
     OWNER_COOKIE,
@@ -1137,7 +1139,9 @@ def test_capabilities_report_configured_attachment_limits(monkeypatch: pytest.Mo
 
 def test_session_status_reports_sliding_lifetime_without_refreshing_it(monkeypatch: pytest.MonkeyPatch) -> None:
     now = 100.0
-    monkeypatch.setattr("nurse_scheduling.ai.sessions.time.monotonic", lambda: now)
+    real_monotonic = time.monotonic
+    monkeypatch.setattr(sessions_module, "time", SimpleNamespace(monotonic=lambda: now, time=time.time))
+    assert time.monotonic is real_monotonic
     client = AuthenticatedTestClient(
         create_test_app(settings=make_settings(session_ttl_seconds=20), provider=FakeProvider())
     )
@@ -1165,7 +1169,7 @@ def test_session_status_reports_sliding_lifetime_without_refreshing_it(monkeypat
 
 def test_idle_and_expired_sessions_retain_no_turn_tasks(monkeypatch: pytest.MonkeyPatch) -> None:
     now = 100.0
-    monkeypatch.setattr("nurse_scheduling.ai.sessions.time.monotonic", lambda: now)
+    monkeypatch.setattr(sessions_module, "time", SimpleNamespace(monotonic=lambda: now, time=time.time))
     app = create_test_app(settings=make_settings(session_ttl_seconds=20), provider=FakeProvider())
     client = AuthenticatedTestClient(app)
     session_id = create_session(client)
@@ -1185,7 +1189,7 @@ def test_idle_and_expired_sessions_retain_no_turn_tasks(monkeypatch: pytest.Monk
 
 def test_finishing_a_turn_keeps_the_deadline_set_when_it_started(monkeypatch: pytest.MonkeyPatch) -> None:
     now = 100.0
-    monkeypatch.setattr("nurse_scheduling.ai.sessions.time.monotonic", lambda: now)
+    monkeypatch.setattr(sessions_module, "time", SimpleNamespace(monotonic=lambda: now, time=time.time))
     app = create_test_app(settings=make_settings(session_ttl_seconds=20), provider=FakeProvider())
     store = app.state.session_store
     owner = "b6d00cf8-1c7b-49b6-ab06-e162a54de489"
@@ -1202,7 +1206,7 @@ def test_finishing_a_turn_keeps_the_deadline_set_when_it_started(monkeypatch: py
 
 def test_unchanged_schedule_renews_session_with_owner_cookie(monkeypatch: pytest.MonkeyPatch) -> None:
     now = 100.0
-    monkeypatch.setattr("nurse_scheduling.ai.sessions.time.monotonic", lambda: now)
+    monkeypatch.setattr(sessions_module, "time", SimpleNamespace(monotonic=lambda: now, time=time.time))
     app = create_test_app(settings=make_settings(session_ttl_seconds=20), provider=FakeProvider())
     client = AuthenticatedTestClient(app)
     schedule = schedule_yaml()
@@ -1496,7 +1500,7 @@ def test_provider_failure_retains_safe_context_for_retry() -> None:
     assert "Provisional answer." not in recovered_prompt
 
 
-def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming(monkeypatch) -> None:
+def test_schedule_update_during_streaming_is_recorded_after_the_turn(monkeypatch) -> None:
     saved = []
     saved_entries = []
 
@@ -1518,7 +1522,7 @@ def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming(monke
                 yield event
             self.update_schedule()
 
-    provider = ScheduleUpdatingProvider([["Obsolete answer."]])
+    provider = ScheduleUpdatingProvider([["Current answer."]])
     app = create_test_app(settings=make_settings(history_postgres_url="test"), provider=provider)
     client = AuthenticatedTestClient(app)
     session_id = create_session(client)
@@ -1531,19 +1535,14 @@ def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming(monke
 
     response = client.post(f"/sessions/{session_id}/messages", json={"message": "Edit it"})
 
-    assert [entry for entry in parse_sse(response.text) if entry[0] != "context_usage"] == [
-        ("run_start", {"trigger": "user", "run_id": ANY}),
-        ("model_selection", {"model": "test-model", "reasoning": "default", "run_id": ANY}),
-        ("delta", {"text": "Obsolete answer.", "run_id": ANY}),
-        ("stale", {"message": STALE_RUN_ERROR, "run_id": ANY}),
+    assert [name for name, _ in parse_sse(response.text)][-1] == "done"
+    assert saved[0][1] == "completed" and saved[0][4] is True
+    # The answer joins the conversation, and the schedule change follows it.
+    assert [(run_id is not None, entry) for _seq, run_id, entry in sorted(saved_entries)][-2:] == [
+        (True, AssistantMessage("Current answer.")),
+        (False, AppEventEntry(SCHEDULE_CHANGED_EVENT)),
     ]
-    assert len(saved) == 1
-    assert saved[0][1] == "stale"
-    # The answer is saved for audit but never joins the conversation.
-    assert saved[0][4] is False
-    assert [entry for _seq, run_id, entry in saved_entries if run_id is not None] == [
-        AssistantMessage("Obsolete answer.")
-    ]
+    assert app.state.session_store.get(session_id).schedule_yaml == "description: updated concurrently"
 
 
 @pytest.mark.parametrize(
@@ -2672,9 +2671,8 @@ def test_a_tool_run_streams_its_schedule_check_and_applies_the_schedule() -> Non
     assert "description: Head" in schedule_change["schedule_yaml"]
     applied = next(data for name, data in events if name == "schedule_applied")
     assert applied["schedule_yaml"] == schedule_change["schedule_yaml"]
-    assert applied["base_sha256"] == hashlib.sha256(schedule_yaml().encode()).hexdigest()
-    assert applied["sha256"] == hashlib.sha256(applied["schedule_yaml"].encode()).hexdigest()
     assert "people.items[0].description" in applied["diff"]
+    assert applied["replaced_queued_schedule"] is False
     assert [name for name, _ in events].index("schedule_applied") < [name for name, _ in events].index("done")
 
 
@@ -3359,7 +3357,18 @@ def test_upload_request_id_rejects_different_file_identity(filename, content, me
     assert client.get(f"/sessions/{session_id}/uploads").json() == original.json()
 
 
-def test_chunked_upload_body_is_bounded_before_the_whole_file_is_spooled():
+def test_chunked_upload_body_is_bounded_before_the_whole_file_is_spooled(monkeypatch):
+    spooled_files = []
+    create_spooled_file = formparsers.SpooledTemporaryFile
+
+    def tracked_spooled_file(*args, **kwargs):
+        file = create_spooled_file(*args, **kwargs)
+        spooled_files.append(file)
+        return file
+
+    monkeypatch.setattr(formparsers, "SpooledTemporaryFile", tracked_spooled_file)
+    monkeypatch.setattr(formparsers.MultiPartParser, "spool_max_size", 1024)
+
     async def exercise():
         app = create_test_app(
             settings=make_settings(max_attachment_bytes=4),
@@ -3391,6 +3400,8 @@ def test_chunked_upload_body_is_bounded_before_the_whole_file_is_spooled():
             assert response.json()["detail"] == "AI request body is too large."
             assert len(consumed) < 10
             assert (await client.get(f"/sessions/{session_id}/uploads")).json() == accepted.json()
+            assert any(file._rolled for file in spooled_files)
+            assert all(file.closed for file in spooled_files)
 
     asyncio.run(exercise())
 

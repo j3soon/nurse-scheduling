@@ -4,7 +4,7 @@
   "id": "taiwan-calendar-unsupported-range",
   "fixture": "small-clinic",
   "expect_proposal": false,
-  "question": "Using only the app\u2019s bundled Taiwan holiday calendar, count workdays and freedays from January 1 through January 31, 2027 inclusive. Do not edit the schedule or optimize. If the range is unsupported, say so without estimating holidays. Reply only as JSON with supported (boolean), workdays and freedays (integer counts if supported, otherwise null).",
+  "question": "Using only the app\u2019s bundled Taiwan holiday calendar, count workdays and freedays from January 1 through January 31, 2028 inclusive. Do not edit the schedule or optimize. If the range is unsupported, say so without estimating holidays. Reply only as JSON with supported (boolean), workdays and freedays (integer counts if supported, otherwise null).",
   "answer_json": {
     "supported": false,
     "workdays": null,

@@ -30,8 +30,9 @@
 
 ## Keyboard shortcuts
 
-Number and arrow navigation shortcuts are ignored while typing in a field.
-Undo and redo remain global, so use care when editing text.
+Shortcuts are ignored while typing in a field. There, undo and redo shortcuts
+change only the text. The **Undo** and **Redo** buttons at the right end of the
+tab bar always change the schedule.
 
 | Key | Action |
 | --- | --- |

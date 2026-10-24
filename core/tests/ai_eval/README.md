@@ -1,5 +1,41 @@
 # AI evaluation case format
 
+The runner chooses case concurrency at startup from LiteLLM deployment limits
+and cached health. It sums `litellm_params.max_parallel_requests` for healthy
+unique deployment IDs of the selected model. It caps jobs at 20, the E2B Hobby
+sandbox limit, and the number of queued attempts. `--jobs N` requests a lower
+limit. Repetitions and prompt variants share one semaphore. Ladder audits let
+each cohort discover capacity independently.
+
+The evaluator and admin check reuse `AI_PROVIDER_BASE_URL` and
+`AI_PROVIDER_API_KEY` for model metadata and cached health. Model metadata is
+relative to the API base, such as `/v1/model/info`. Cached health uses the same
+origin at `/health/latest`, with the trailing `/v1` removed from the API base.
+The public gateway currently blocks this health route. Without health, the
+runner falls back to at most four jobs and respects smaller known
+deployment limits. Qwen uses four jobs for one confirmed healthy backend and
+eight for two. If all deployments are confirmed unhealthy, evaluation stops
+before sandbox provisioning. Health records older than two hours are unknown.
+LiteLLM persists unchanged probe results hourly. These limits describe capacity
+per proxy worker and do not measure free slots or reserve them for the evaluation.
+
+From the repository root, inspect the selected model without inference calls:
+
+```sh
+./scripts/check_litellm_concurrency.sh
+AI_ENV_FILE=docker/.env.staging ./scripts/check_litellm_concurrency.sh --model unsloth/Qwen3.8-27B-NVFP4
+```
+
+The script loads `docker/.env`, or `docker/.env.staging` if the first file is
+absent. An explicit `AI_ENV_FILE` must exist. It prints the selected file to
+stderr and JSON to stdout, including each deployment's limit and health, total
+configured capacity, the conservative provider limit, and the evaluation ceiling.
+`--base-url URL` overrides the provider API base and retains the selected provider
+key. The key is read from `AI_PROVIDER_API_KEY`, never a command argument. The
+script returns 1 when metadata is unavailable or all deployments are unhealthy.
+Reports save `concurrency.json` with the decision and include its reason in each
+summary. Keep the chosen concurrency equal across performance comparisons.
+
 Check prefix-cache reporting on demand, without provisioning a sandbox:
 
 ```bash
@@ -217,7 +253,7 @@ AI_ENV_FILE=docker/.env.staging ./scripts/run_ai_eval.sh \
 
 Use the original prompt selector, such as `--prompt-step`, `--prompt-compare-step` or
 `--prompt-ablate-step`. `--repeat` is the target total and defaults to five for an extension.
-Only missing repetitions run, with the same global four-job limit. Add `--case ID` to extend
+Only missing repetitions run, with one global concurrency limit selected for the new batch. Add `--case ID` to extend
 only a noisy case. The new report keeps the other cases at their original repetition counts.
 Single-prompt reports can also be extended. Omit the prompt selector when the original report
 used the current production prompt.
@@ -344,7 +380,7 @@ to check that the agent uses the current workbook instead.
 
 From the repository root, run `./scripts/run_ai_eval.sh --prompt-compare-step 5` to compare the first four sections
 against the first five using step 5's cases. `--case ID` overrides that default case set. A comparison defaults to
-three repeats per case and accepts up to `--repeat 10` for deeper investigations. It uses four concurrent case jobs by default and
+three repeats per case and accepts up to `--repeat 10` for deeper investigations. It discovers case concurrency at startup and
 alternates the before/after queue order across repetitions. Both variants receive the same tools, fixtures, and
 references. `--prompt-step 0 --case ID` runs without optional prompt text, while `--prompt-step N --case ID` runs a
 single prefix. The application-generated schedule summary still appears in both variants.

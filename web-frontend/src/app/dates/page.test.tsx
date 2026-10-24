@@ -149,8 +149,8 @@ describe('DatePage', () => {
     renderDatePage();
 
     await user.click(screen.getByRole('button', { name: /set date range/i }));
-    fireEvent.change(screen.getByLabelText('Start Date *'), { target: { value: '2027-01-01' } });
-    fireEvent.change(screen.getByLabelText('End Date *'), { target: { value: '2027-01-31' } });
+    fireEvent.change(screen.getByLabelText('Start Date *'), { target: { value: '2028-01-01' } });
+    fireEvent.change(screen.getByLabelText('End Date *'), { target: { value: '2028-01-31' } });
 
     const importCheckbox = screen.getByRole('checkbox', { name: /import taiwan holidays into date groups/i });
     expect(importCheckbox).toBeDisabled();
@@ -160,8 +160,8 @@ describe('DatePage', () => {
 
     expect(updateDateRange).toHaveBeenCalledWith(
       {
-        startDate: new Date('2027-01-01'),
-        endDate: new Date('2027-01-31'),
+        startDate: new Date('2028-01-01'),
+        endDate: new Date('2028-01-31'),
       },
       { importTaiwanHolidays: false },
     );

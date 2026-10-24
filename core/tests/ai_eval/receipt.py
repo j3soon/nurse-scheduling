@@ -57,6 +57,11 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
+def _every_run_passed(counts: dict[str, Any]) -> bool:
+    """A cost gain counts only when every attempt in both arms passes."""
+    return all(counts[arm]["passed"] == counts[arm]["runs"] for arm in ("before", "after"))
+
+
 def _entry(entries: tuple[dict[str, Any], ...], step_id: str) -> dict[str, Any]:
     entry = next((entry for entry in entries if entry["id"] == step_id), None)
     if entry is None:
@@ -120,10 +125,7 @@ def build_receipt(
                 raise ValueError(f"The {arm} testcase or fixture of {case_id} changed after the comparison")
         if counts["before"]["infrastructure_errors"] or counts["after"]["infrastructure_errors"]:
             raise ValueError(f"Infrastructure errors make {case_id} inconclusive. Rerun it")
-        if (
-            comparison["cost_metric"]
-            and counts["before"]["passed"] == counts["after"]["passed"] == counts["after"]["runs"]
-        ):
+        if comparison["cost_metric"] and _every_run_passed(counts):
             cost = counts["metrics"][COST_KEYS[comparison["cost_metric"]]]
             if cost["missing_pairs"] or not cost["before"]["mean"]:
                 raise ValueError(f"{case_id} has incomplete {comparison['cost_metric']} data")
@@ -144,8 +146,7 @@ def build_receipt(
     record = next(observation for observation in observations if observation["case"] == witness)
     record |= {"model": measured["after"]["provider_model"], "infrastructure_errors": 0, "comparison_passed": True}
     counts = comparison["cases"][witness]
-    # A cost gain counts only when every attempt in both arms passes.
-    if comparison["cost_metric"] and counts["before"]["passed"] == counts["after"]["passed"] == counts["after"]["runs"]:
+    if comparison["cost_metric"] and _every_run_passed(counts):
         cost = counts["metrics"][COST_KEYS[comparison["cost_metric"]]]
         if cost["missing_pairs"]:
             raise ValueError(f"{witness} has incomplete {comparison['cost_metric']} data")

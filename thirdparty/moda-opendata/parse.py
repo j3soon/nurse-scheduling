@@ -75,6 +75,9 @@ def _infer_comp_holiday_source(df, row_index):
         return None
 
     row_date = _row_date(row)
+    # A Friday year-end substitute day belongs to the next New Year, absent from this CSV.
+    if (row_date.month, row_date.day) == (12, 31) and row_date.weekday() == 4:
+        return f"補假 ({row_date.year + 1}-01-01 開國紀念日)"
     row_block_start = row_index
     while row_block_start > 0 and df.iloc[row_block_start - 1]["備註"] == "補假":
         row_block_start -= 1
@@ -238,6 +241,7 @@ def main():
         "113年中華民國政府行政機關辦公日曆表.csv",
         "114年中華民國政府行政機關辦公日曆表(1141020更新).csv",
         "115年中華民國政府行政機關辦公日曆表.csv",
+        "116年中華民國政府行政機關辦公日曆表_utf8bom.csv",
     ]
     for filename in filenames:
         # Get the directory of the current script

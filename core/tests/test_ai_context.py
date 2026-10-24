@@ -201,6 +201,7 @@ def test_legacy_recovery_preserves_the_next_provider_request_after_app_events_an
         "downloads",
         "uploads",
         "schedule_yaml",
+        "queued_schedule",
         "dropped_history_messages",
         "dropped_entries",
         "frontend_version",

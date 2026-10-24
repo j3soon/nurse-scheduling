@@ -28,6 +28,7 @@ from collections.abc import AsyncIterator, Sequence
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -35,6 +36,7 @@ from ruamel.yaml import YAML
 
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.downloads import WORKSPACE_DOWNLOAD
+from nurse_scheduling.ai.litellm_concurrency import ProviderCapacity
 from nurse_scheduling.ai.optimizer import WORKSPACE_OPTIMIZER_RESULT
 from nurse_scheduling.ai.optimizer_tool import optimizer_start_message
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
@@ -81,7 +83,6 @@ from .ai_eval.prompt_ladder import (
 )
 from .ai_eval.runner import (
     CASES,
-    DEFAULT_CASE_JOBS,
     FIXTURES,
     CaseRun,
     _evaluation_metadata,
@@ -107,8 +108,8 @@ FIXTURE_DIGESTS = {
 }
 
 
-def test_ai_eval_defaults_to_four_concurrent_cases():
-    assert DEFAULT_CASE_JOBS == 4
+def test_ai_eval_defaults_to_discovering_concurrency():
+    assert _parse_args(["--case", "ask-people-count"]).jobs is None
 
 
 def test_a_clause_can_be_omitted_for_comparison():
@@ -207,7 +208,7 @@ def test_optimizer_goal_and_background_start_have_separate_ladder_comparisons():
     for identifier, targeted_cases in expected.items():
         index = next(index for index, step in enumerate(steps, 1) if step.id == identifier)
         arguments, cases = _selected_cases(["--prompt-compare-step", str(index)])
-        assert arguments.repeat == 3 and arguments.jobs == 4
+        assert arguments.repeat == 3 and arguments.jobs is None
         assert steps[index - 1].comparison_mode == "adjacent"
         assert {case.id for case in cases} == targeted_cases
         assert prompt_at_step(index) == prompt_at_step(index - 1) + "\n\n" + sections[index - 1]
@@ -668,11 +669,34 @@ def test_missing_required_tool_does_not_stop_a_run_before_later_success():
     assert len(provider.messages) == 2
 
 
-def test_provider_wait_time_is_recorded_per_inference_turn():
-    run = asyncio.run(run_case(ConcurrentProvider(), settings(), CASE_BY_ID["ask-people-count"], _factory()))
+def test_provider_wait_time_is_recorded_per_inference_turn(monkeypatch):
+    from .ai_eval import runner
 
-    assert run.llm_inference_seconds >= 0.005
-    assert run.llm_turn_seconds == pytest.approx([run.llm_inference_seconds])
+    clock = [0.0]
+    monkeypatch.setattr(runner, "time", SimpleNamespace(perf_counter=lambda: clock[0]))
+
+    class TimedProvider(ScriptedProvider):
+        async def stream_events(self, messages, tools=None):
+            duration = 1.0 if not self.messages else 2.0
+            async for event in super().stream_events(messages, tools):
+                clock[0] += duration
+                yield event
+
+    def count_people(*_args):
+        clock[0] += 5.0
+        return CommandResult("87\n", "", 0)
+
+    provider = TimedProvider(
+        [ToolCallRequest((ToolCall("count", BASH_TOOL, '{"command":"echo 87"}'),))],
+        [TextDelta("There are 87 people.")],
+    )
+    run = asyncio.run(run_case(provider, settings(), CASE_BY_ID["ask-people-count"], _factory(count_people)))
+
+    assert run.passed
+    assert run.turns == 2
+    assert run.llm_inference_seconds == pytest.approx(3.0)
+    assert run.llm_turn_seconds == pytest.approx([1.0, 2.0])
+    assert run.seconds == pytest.approx(8.0)
 
 
 def test_provider_retries_are_reported_separately_from_logical_turns():
@@ -1286,6 +1310,20 @@ def test_completed_trace_is_saved_while_another_case_is_waiting_and_survives_can
     asyncio.run(exercise())
 
 
+def test_cli_rejects_an_unhealthy_provider_before_creating_sandboxes(tmp_path, monkeypatch):
+    from .ai_eval import runner
+
+    monkeypatch.setattr(runner.AiSettings, "from_env", settings)
+    monkeypatch.setattr(
+        runner,
+        "discover_capacity",
+        lambda *args: ProviderCapacity("test-model", (), 0, "all deployments are unhealthy"),
+    )
+    monkeypatch.setattr(runner, "create_sandbox_factory", lambda _: pytest.fail("sandbox factory requested"))
+    with pytest.raises(SystemExit, match="No healthy LiteLLM deployments"):
+        main(["--case", "ask-people-count", "--output-dir", str(tmp_path / "run")])
+
+
 def test_checkpoints_separate_variants_and_repetitions_and_refuse_existing_output(tmp_path):
     from .ai_eval import runner
 
@@ -1308,6 +1346,9 @@ def test_interrupted_cli_retains_completed_attempts_and_initial_metadata(tmp_pat
         raise RuntimeError("batch interrupted")
 
     monkeypatch.setattr(runner.AiSettings, "from_env", settings)
+    monkeypatch.setattr(
+        runner, "discover_capacity", lambda *args: ProviderCapacity("test-model", (), 8, "test capacity")
+    )
     monkeypatch.setattr(runner, "create_sandbox_factory", lambda _: FakeSandboxFactory())
     monkeypatch.setattr(runner, "run_all", interrupted)
     root = tmp_path / "run"
@@ -1315,6 +1356,9 @@ def test_interrupted_cli_retains_completed_attempts_and_initial_metadata(tmp_pat
         main(["--case", "ask-people-count", "--output-dir", str(root)])
     assert json.loads((root / "progress.json").read_text()) == {"status": "interrupted", "completed": 1, "expected": 1}
     assert json.loads((root / "metadata.json").read_text())["cases_sha256"]
+    concurrency = json.loads((root / "concurrency.json").read_text())
+    assert concurrency["jobs"] == 1 and concurrency["limit"] == 8
+    assert concurrency["reason"] == "test capacity"
     assert json.loads((root / "results.jsonl").read_text())["error"] == "provider unavailable"
     assert not (root / "summary.md").exists()
 
@@ -1611,14 +1655,19 @@ def test_prompt_comparison_cli_writes_first_class_metrics_without_a_cost_target(
     from .ai_eval import runner
 
     async def recorded_runs(*args, **kwargs):
+        assert args[3] == 6  # Two variants, each with three repetitions.
         return [replace(run, case_id="ask-people-count") for run in _token_comparison_runs()]
 
     monkeypatch.setattr(runner.AiSettings, "from_env", settings)
+    monkeypatch.setattr(
+        runner, "discover_capacity", lambda *args: ProviderCapacity("test-model", (), 8, "test capacity")
+    )
     monkeypatch.setattr(runner, "create_sandbox_factory", lambda _: FakeSandboxFactory())
     monkeypatch.setattr(runner, "run_all", recorded_runs)
     output = tmp_path / "comparison"
     exit_code = main(["--prompt-compare-step", "1", "--case", "ask-people-count", "--output-dir", str(output)])
     assert exit_code == 1
+    assert "Concurrency selection: test capacity" in (output / "after" / "summary.md").read_text()
     statistics = json.loads((output / "comparison.json").read_text())
     assert not statistics["improved"]
     assert statistics["cost_metric"] is None

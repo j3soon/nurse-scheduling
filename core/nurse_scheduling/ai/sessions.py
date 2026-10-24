@@ -23,6 +23,7 @@ import hashlib
 import json
 import math
 import time
+from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from typing import Any
@@ -65,6 +66,8 @@ def _receipt_bytes(receipt: AcceptedMessage) -> int:
 def _session_bytes(session: "AgentSession") -> int:
     """Return the text and file bytes one session retains."""
     total = _text_bytes(session.schedule_yaml)
+    if session.queued_schedule is not None:
+        total += _text_bytes(session.queued_schedule.schedule_yaml)
     total += sum(_text_bytes(entry_text(entry)) for entry in session.transcript)
     total += sum(_receipt_bytes(receipt) for receipt in session.accepted_messages.values())
     total += sum(_text_bytes(text) for text in session.queued_steering)
@@ -102,7 +105,8 @@ class SessionStore:
     def __init__(self, settings: AiSettings, *, event_stream: SessionEventStream | None = None) -> None:
         self._event_stream = event_stream
         self._settings = settings
-        self._sessions: dict[str, AgentSession] = {}
+        # Owner access moves a session to the end, independent of clock resolution.
+        self._sessions: OrderedDict[str, AgentSession] = OrderedDict()
         self._retained_bytes = 0
         self._session_bytes: dict[str, int] = {}
         self._on_retire: Callable[[str], None] | None = None
@@ -153,7 +157,7 @@ class SessionStore:
             return
         idle = [session for session in self._sessions.values() if not session.active and self._evictable(session.id)]
         if idle:
-            self._retire(min(idle, key=lambda session: session.last_used).id)
+            self._retire(idle[0].id)
 
     @property
     def retained_bytes(self) -> int:
@@ -319,6 +323,9 @@ class SessionStore:
         )
         self._require_capacity(_session_bytes(session))
         self._sessions[session_id] = session
+        # The restart ended the run that held a queued schedule update.
+        if session.apply_queued_schedule():
+            self._cap_history(session)
         self._recount(session)
         return session
 
@@ -426,12 +433,18 @@ class SessionStore:
         *,
         compared: tuple[str, bool] | None = None,
     ) -> None:
-        """Replace the schedule snapshot, which makes an in-flight run stale."""
+        """Replace the schedule snapshot, or queue the update until the active run ends."""
         session = self._get_owned(session_id, owner_token)
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
-        if session.schedule_yaml == schedule_yaml:
+        if session.active:
+            # The run keeps its schedule, and the latest update waits beside it.
+            replaced = session.queued_schedule.schedule_yaml if session.queued_schedule else ""
+            added = "" if schedule_yaml == session.schedule_yaml else schedule_yaml
+        elif session.schedule_yaml == schedule_yaml:
             return
-        additional_bytes = _text_bytes(schedule_yaml) - _text_bytes(session.schedule_yaml)
+        else:
+            replaced, added = session.schedule_yaml, schedule_yaml
+        additional_bytes = _text_bytes(added) - _text_bytes(replaced)
         if additional_bytes > 0:
             self._require_capacity(additional_bytes)
         session.update_schedule(schedule_yaml, compared)
@@ -612,6 +625,13 @@ class SessionStore:
             self._charge(session, -len(content or b""))
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
 
+    def apply_queued_schedule(self, session_id: str) -> None:
+        """Apply a schedule update that arrived during the session's finished run."""
+        session = self._sessions.get(session_id)
+        if session is not None and session.apply_queued_schedule():
+            self._cap_history(session)
+            self._recount(session)
+
     def abort(self, session_id: str, snapshot: RunSnapshot) -> None:
         """Release an owned reservation and its accounted steering messages."""
         session = self._sessions.get(session_id)
@@ -623,7 +643,7 @@ class SessionStore:
         session = self._sessions.get(session_id)
         if session is None or owner_token is None or session.owner_token != owner_token:
             raise HTTPException(status_code=404, detail="Chat session not found.")
-        session.last_used = time.monotonic()
+        self._sessions.move_to_end(session_id)
         return session
 
     def _retire(self, session_id: str) -> None:

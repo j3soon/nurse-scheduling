@@ -716,8 +716,8 @@ describe('useSchedulingData', () => {
     act(() => {
       result.current.updateDateRange(
         {
-          startDate: new Date('2027-01-01'),
-          endDate: new Date('2027-01-31'),
+          startDate: new Date('2028-01-01'),
+          endDate: new Date('2028-01-31'),
         },
         { importTaiwanHolidays: true },
       );
@@ -812,6 +812,38 @@ describe('useSchedulingData', () => {
       const person1 = result.current.peopleData.items.find(item => item.id === 'Person 1');
       expect(person1?.history?.[0]).toBe('D');
     });
+  });
+
+  it('leaves undo shortcuts in text fields to the browser and reports undo and redo availability', () => {
+    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    expect(result.current.canUndo).toBe(false);
+    act(() => {
+      result.current.addPersonHistory('Person 1', 'D');
+    });
+    expect(result.current.canUndo).toBe(true);
+    expect(result.current.canRedo).toBe(false);
+
+    const textField = document.createElement('input');
+    const checkbox = Object.assign(document.createElement('input'), { type: 'checkbox' });
+    document.body.append(textField, checkbox);
+    const pressUndo = (target: HTMLElement) => {
+      const event = new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true });
+      act(() => {
+        target.dispatchEvent(event);
+      });
+      return event;
+    };
+    try {
+      expect(pressUndo(textField).defaultPrevented).toBe(false);
+      expect(result.current.canUndo).toBe(true);
+
+      expect(pressUndo(checkbox).defaultPrevented).toBe(true);
+      expect(result.current.canUndo).toBe(false);
+      expect(result.current.canRedo).toBe(true);
+    } finally {
+      textField.remove();
+      checkbox.remove();
+    }
   });
 
   it('replaces the latest undo entry when replaceLatestHistoryEntry is true', async () => {

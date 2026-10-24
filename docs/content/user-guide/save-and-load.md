@@ -27,7 +27,8 @@ After loading, the YAML preview shows the November dates and groups.
   If the file's app version is missing, different, or from a development build,
   review the warning and confirm before replacement. Cancel to keep the current
   schedule. The notice confirms success and shows imported counts and warnings.
-  Press **Ctrl+Z** (or **Cmd+Z** on macOS) to undo the upload.
+  Select **Undo** in the tab bar or press **Ctrl+Z** (or **Cmd+Z** on macOS)
+  to undo the upload.
 - Optional **Copy** copies the same YAML to the clipboard.
 - Optional **Edit YAML** is only for users who understand the web app schema.
 

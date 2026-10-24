@@ -42,8 +42,8 @@ describe('taiwanHolidays', () => {
     })).toBe(false);
 
     expect(isTaiwanHolidayRangeSupported({
-      startDate: new Date('2026-12-01'),
-      endDate: new Date('2027-01-01'),
+      startDate: new Date('2027-12-01'),
+      endDate: new Date('2028-01-01'),
     })).toBe(false);
   });
 
@@ -77,8 +77,8 @@ describe('taiwanHolidays', () => {
     ]);
 
     expect(getTaiwanHolidayEntriesInRange({
-      startDate: new Date('2027-05-01'),
-      endDate: new Date('2027-05-31'),
+      startDate: new Date('2028-05-01'),
+      endDate: new Date('2028-05-31'),
     })).toEqual([]);
   });
 
@@ -131,15 +131,15 @@ describe('taiwanHolidays', () => {
     expect(getTaiwanDayType(new Date('2025-02-08'))).toBe('WORKDAY');
     expect(getTaiwanDayType(new Date('2025-02-09'))).toBe('FREEDAY');
     expect(getTaiwanDayType(new Date('2025-02-10'))).toBe('WORKDAY');
-    expect(getTaiwanDayType(new Date('2027-02-07'))).toBeUndefined();
+    expect(getTaiwanDayType(new Date('2028-02-07'))).toBeUndefined();
   });
 
   it('returns no Taiwan holiday groups for unsupported ranges', () => {
     expect(buildTaiwanHolidayGroups(
       [{ id: '01', description: '' }],
       {
-        startDate: new Date('2027-01-01'),
-        endDate: new Date('2027-01-31'),
+        startDate: new Date('2028-01-01'),
+        endDate: new Date('2028-01-31'),
       },
     )).toEqual([]);
   });

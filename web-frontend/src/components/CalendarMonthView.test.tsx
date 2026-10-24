@@ -68,9 +68,9 @@ describe('CalendarMonthView primitives', () => {
       .toContain('font-medium text-amber-800');
     expect(getCalendarDayCategoryClassName(new Date('2025-02-10')))
       .toContain('text-slate-700');
-    expect(getCalendarDayCategoryClassName(new Date('2027-02-07')))
+    expect(getCalendarDayCategoryClassName(new Date('2028-01-01')))
       .toContain('bg-amber-50/70');
-    expect(getCalendarDayCategoryClassName(new Date('2027-02-08')))
+    expect(getCalendarDayCategoryClassName(new Date('2028-01-03')))
       .toContain('bg-white');
   });
 });

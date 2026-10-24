@@ -60,6 +60,7 @@ def test_calendar_groups_include_holidays_and_makeup_workdays_without_mutating_i
     [
         ("2024-02-29", "2024-03-01", ["02-29", "03-01"]),
         ("2024-12-31", "2025-01-02", ["2024-12-31", "2025-01-02"]),
+        ("2026-12-31", "2027-01-04", ["2026-12-31", "2027-01-04"]),
     ],
 )
 def test_calendar_ids_match_frontend_month_and_year_boundaries(first, last, expected):
@@ -68,7 +69,7 @@ def test_calendar_ids_match_frontend_month_and_year_boundaries(first, last, expe
 
 
 @pytest.mark.parametrize(
-    "first,last", [("2027-01-01", "2027-01-02"), ("2024-02-20", "2024-02-01"), ("2024-02-01", None)]
+    "first,last", [("2028-01-01", "2028-01-02"), ("2024-02-20", "2024-02-01"), ("2024-02-01", None)]
 )
 def test_calendar_rejects_unsupported_reversed_and_incomplete_ranges(first, last):
     with pytest.raises(ValueError):
