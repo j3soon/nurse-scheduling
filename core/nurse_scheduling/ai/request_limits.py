@@ -43,9 +43,8 @@ class AiRequestLimitsMiddleware:
         self._json_max_bytes = (
             6 * settings.max_schedule_bytes + 12 * settings.max_message_chars + MULTIPART_OVERHEAD_BYTES
         )
-        self._upload_max_bytes = (
-            settings.max_attachment_files * settings.max_attachment_bytes + MULTIPART_OVERHEAD_BYTES
-        )
+        # The browser uploads one file per request.
+        self._upload_max_bytes = settings.max_attachment_bytes + MULTIPART_OVERHEAD_BYTES
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
