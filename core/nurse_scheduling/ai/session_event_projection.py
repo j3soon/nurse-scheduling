@@ -82,7 +82,7 @@ class RunOutput:
         if isinstance(event, AgentMessageEnd):
             self.pending_text.clear()
             self.pending_reasoning.clear()
-            return {"type": "truncated"} if event.message.stop_reason == "length" else None
+            return {"type": "response_end", "stop_reason": event.message.stop_reason}
         if isinstance(event, ProviderRetry):
             return {"type": "provider_retry", "message": event.message}
         if isinstance(event, AgentContextUsage):

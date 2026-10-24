@@ -35,9 +35,18 @@ from psycopg.types.json import Jsonb
 
 from ..sentry import report_outage_recovery
 from ..server.retry import RepeatedFailure
+from .context import ABORTED_RESPONSE_HISTORY
 from .costs import CostTotals
 from .provider import ProviderCall, TokenUsage
-from .transcript import AgentMessage, AssistantMessage, CompactionEntry, UserMessage, entry_from_record, entry_record
+from .transcript import (
+    AgentMessage,
+    AppEventEntry,
+    AssistantMessage,
+    CompactionEntry,
+    UserMessage,
+    entry_from_record,
+    entry_record,
+)
 from .workspace import SandboxAttachment, attachment_path
 
 logger = logging.getLogger("nurse_scheduling.ai.history")
@@ -345,7 +354,14 @@ class ChatHistory:
                 seq = connection.execute(
                     "SELECT coalesce(max(seq) + 1, 0) FROM chat_session_entries WHERE session_id = %s", (session_id,)
                 ).fetchone()[0]
-                _insert_entries(connection, session_id, [(seq, run_id, AssistantMessage("", "error"))])
+                _insert_entries(
+                    connection,
+                    session_id,
+                    [
+                        (seq, run_id, AssistantMessage("", "error")),
+                        (seq + 1, run_id, AppEventEntry(ABORTED_RESPONSE_HISTORY)),
+                    ],
+                )
             connection.execute(
                 "UPDATE chat_runs SET status = %s, error_code = %s, committed = %s, finished_at = now() WHERE id = %s",
                 (status, "service_restart" if kind is None else None, committed, run_id),
@@ -429,11 +445,9 @@ class ChatHistory:
             ],
             "expires_at": float(row[1]),
             "entries": [
-                replace(entry, stop_reason="aborted" if status == "cancelled" else "error")
-                if isinstance(entry := entry_from_record(entry_type, payload), AssistantMessage)
+                replace(entry, valid=False)
+                if isinstance(entry := entry_from_record(entry_type, payload), CompactionEntry)
                 and status in {"failed", "cancelled", "stale"}
-                else replace(entry, valid=False)
-                if isinstance(entry, CompactionEntry) and status in {"failed", "cancelled", "stale"}
                 else entry
                 for entry_type, payload, status in entries
             ],

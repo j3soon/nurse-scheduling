@@ -41,6 +41,7 @@ export type AssistantEvent =
   | { type: 'reasoning'; text: string }
   | Extract<SessionEvent, { type: 'compaction_start' | 'compaction_end' }>
   | { type: 'truncated' }
+  | Extract<SessionEvent, { type: 'response_end' }>
   | { type: 'provider_retry'; message: string }
   | { type: 'done' | 'stopped' }
   | { type: 'error' | 'stale'; message: string }
@@ -56,7 +57,7 @@ export function startsVisibleOutput(event: AssistantEvent): boolean {
 
 function appendResponseActivity(entries: ActivityEntry[], text: string): ActivityEntry[] {
   const last = entries[entries.length - 1];
-  if (last?.kind === 'response') {
+  if (last?.kind === 'response' && last.context === undefined) {
     return [...entries.slice(0, -1), { ...last, text: last.text + text }];
   }
   return [...entries, { kind: 'response', text }];
@@ -65,7 +66,7 @@ function appendResponseActivity(entries: ActivityEntry[], text: string): Activit
 function appendReasoningActivity(entries: ActivityEntry[], text: string): ActivityEntry[] {
   const last = entries[entries.length - 1];
   // Consecutive reasoning belongs to one entry, so the order of work stays readable.
-  if (last?.kind === 'reasoning') {
+  if (last?.kind === 'reasoning' && last.context === undefined) {
     return [...entries.slice(0, -1), { ...last, text: last.text + text }];
   }
   return [...entries, { kind: 'reasoning', text }];
@@ -91,6 +92,15 @@ function finishToolActivity(entries: ActivityEntry[], result: ToolActivity): Act
 export function applyAssistantEvent<T extends ChatMessageContent>(message: T, event: AssistantEvent, occurredAt = Date.now()): T {
   const activity = message.activity ?? [];
   switch (event.type) {
+    case 'response_end': {
+      const context = event.stopReason === 'error' || event.stopReason === 'aborted' ? 'omitted' : 'complete';
+      const ended = activity.map(entry => (
+        (entry.kind === 'response' || entry.kind === 'reasoning') && entry.context === undefined
+          ? { ...entry, context } : entry
+      )) as ActivityEntry[];
+      if (event.contextNote) ended.push({ kind: 'notice', text: `Sent in future model context: ${event.contextNote}` });
+      return { ...message, activity: ended, ...(event.stopReason === 'length' ? { truncated: true } : {}) };
+    }
     case 'provider_retry':
       return { ...message, activity: [...activity, { kind: 'notice', text: event.message }] };
     case 'delta':
@@ -192,7 +202,7 @@ export function toAssistantEvent(
   browserSchedule: { readonly current: string },
 ): AssistantEvent | null {
   switch (event.type) {
-    case 'provider_retry': case 'delta': case 'reasoning': case 'truncated': case 'tool_start': case 'tool':
+    case 'provider_retry': case 'delta': case 'reasoning': case 'truncated': case 'response_end': case 'tool_start': case 'tool':
     case 'compaction_start': case 'compaction_end':
       return event;
     case 'schedule_change': {

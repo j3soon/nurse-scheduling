@@ -87,6 +87,7 @@ interface StreamCallbacks {
   onReasoning?: (text: string) => void;
   onCompaction?: (event: Extract<SessionEvent, { type: 'compaction_start' | 'compaction_end' }>) => void;
   onTruncated?: () => void;
+  onResponseEnd?: (event: Extract<SessionEvent, { type: 'response_end' }>) => void;
   onProviderRetry?: (message: string) => void;
   onToolStart?: (activity: ToolStartActivity) => void;
   onTool?: (activity: ToolActivity) => void;
@@ -117,6 +118,7 @@ function dispatchPageEvent(event: SessionEvent, callbacks: StreamCallbacks): voi
     case 'provider_retry': callbacks.onProviderRetry?.(event.message); break;
     case 'compaction_start': case 'compaction_end': callbacks.onCompaction?.(event); break;
     case 'truncated': callbacks.onTruncated?.(); break;
+    case 'response_end': callbacks.onResponseEnd?.(event); break;
     case 'tool_start': callbacks.onToolStart?.(event.activity); break;
     case 'tool': callbacks.onTool?.(event.activity); break;
     case 'steering': callbacks.onSteering?.(event.messageId, event.message); break;
@@ -142,7 +144,7 @@ function assistantEventCallbacks(
   browserSchedule: { readonly current: string },
   applySchedule: (applied: ScheduleApplied) => string | null,
 ): Required<Pick<StreamCallbacks,
-  'onDelta' | 'onReasoning' | 'onCompaction' | 'onTruncated' | 'onProviderRetry' | 'onToolStart' | 'onTool' | 'onScheduleChange'
+  'onDelta' | 'onReasoning' | 'onCompaction' | 'onTruncated' | 'onResponseEnd' | 'onProviderRetry' | 'onToolStart' | 'onTool' | 'onScheduleChange'
   | 'onScheduleApplied'>> {
   return {
     onProviderRetry: message => apply({ type: 'provider_retry', message }),
@@ -150,6 +152,7 @@ function assistantEventCallbacks(
     onReasoning: text => apply({ type: 'reasoning', text }),
     onCompaction: event => apply(event),
     onTruncated: () => apply({ type: 'truncated' }),
+    onResponseEnd: event => apply(event),
     onToolStart: activity => apply({ type: 'tool_start', activity }),
     onTool: activity => apply({ type: 'tool', activity }),
     onScheduleChange: after => {

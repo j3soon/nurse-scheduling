@@ -93,21 +93,21 @@ def test_frontend_timezone_is_reserved_with_the_run_and_restored_with_the_sessio
 
 
 @pytest.mark.parametrize("reason", ["aborted", "error"])
-def test_interrupted_run_preserves_questions_and_steering_without_discarded_claims(reason):
+def test_interrupted_run_preserves_completed_exchanges_and_marks_discarded_workspace(reason):
     entries = interrupted_entries(
         [
             UserMessage("Edit P1"),
             AssistantMessage("Changed P1"),
             UserMessage("Also P2"),
-            AssistantMessage("Changed P2"),
+            AssistantMessage("Partial P2", reason),
         ],
         reason,
     )
     assert projected_history(retained_entries(entries)) == [
         {"role": "user", "content": "Edit P1"},
-        {"role": "assistant", "content": ABORTED_RESPONSE_HISTORY},
+        {"role": "assistant", "content": "Changed P1"},
         {"role": "user", "content": "Also P2"},
-        {"role": "assistant", "content": ABORTED_RESPONSE_HISTORY},
+        {"role": "user", "content": ABORTED_RESPONSE_HISTORY},
     ]
 
 
@@ -290,7 +290,7 @@ def test_retained_byte_budget_counts_partial_text_hidden_from_model_context():
         snapshot=snapshot,
     )
     assert store.retained_bytes == len(b"scheduleq") + len(("新" * 2000).encode())
-    assert session.history[-1]["content"] == ABORTED_RESPONSE_HISTORY
+    assert session.history == [{"role": "user", "content": "q"}]
     # A later exchange releases the oversized failed turn and its accounted bytes.
     store.finish(session.id, [UserMessage("next"), AssistantMessage("done")], snapshot=store.begin(session.id, "owner"))
     assert store.retained_bytes == len(b"schedulenextdone")

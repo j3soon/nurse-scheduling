@@ -989,6 +989,13 @@ class AgentSession:
                 committed = runtime.store.finish(self.id, retained_entries(entries), snapshot=snapshot).run_saved
             else:
                 runtime.store.abort(self.id, snapshot)
+            events.emit(
+                {
+                    "type": "response_end",
+                    "stop_reason": stop_reason,
+                    **({"context_note": entries[-1].text} if committed else {}),
+                }
+            )
         if history_started:
             # Messages the run loop has not saved yet, including an interrupted response.
             self._save_run_messages(run.id, entries[1:])

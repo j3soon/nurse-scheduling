@@ -29,11 +29,13 @@ import AssistantMarkdown from './AssistantMarkdown';
 export interface ResponseEntry {
   kind: 'response';
   text: string;
+  context?: 'complete' | 'omitted';
 }
 
 export interface ReasoningEntry {
   kind: 'reasoning';
   text: string;
+  context?: 'complete' | 'omitted';
 }
 
 export interface ToolEntry {
@@ -159,6 +161,9 @@ export function AssistantActivity({ entries }: { entries: ActivityEntry[] }) {
           )}
           {index > 0 && (entry.kind === 'response' || entries[index - 1].kind === 'response') && (
             <hr className="my-3 border-gray-200" />
+          )}
+          {(entry.kind === 'response' || entry.kind === 'reasoning') && entry.context === 'omitted' && (
+            <p className="my-1 text-xs text-amber-800">Incomplete response. Omitted from future model context.</p>
           )}
           {entry.kind === 'notice' ? (
             <p role="status" className="my-2 text-sm text-amber-800">{entry.text}</p>

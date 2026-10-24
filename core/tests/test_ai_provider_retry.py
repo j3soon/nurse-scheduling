@@ -121,7 +121,7 @@ def test_transport_failures_retry_before_output(monkeypatch, error_type):
     assert len(requests) == 2
 
 
-def test_premature_eof_continues_visible_text_without_replaying_failed_native_metadata(monkeypatch):
+def test_premature_eof_restarts_without_replaying_partial_output_or_native_metadata(monkeypatch):
     requests = []
 
     def handle(request):
@@ -140,7 +140,7 @@ def test_premature_eof_continues_visible_text_without_replaying_failed_native_me
     provider = _transport_provider(monkeypatch, handle, provider_retry_backoff_seconds=0)
     events = _events(provider)
     assert [event.text for event in events if isinstance(event, TextDelta)] == ["First. ", "Finished."]
-    assert requests[-1]["messages"][-2] == {"role": "assistant", "content": "First. "}
+    assert requests[-1]["messages"] == requests[0]["messages"]
     assert "Private" not in str(requests[-1]) and "opaque" not in str(requests[-1])
 
 

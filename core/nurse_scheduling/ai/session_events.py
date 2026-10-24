@@ -84,6 +84,12 @@ class ProviderRetryEvent(RunFields):
     message: str
 
 
+class ResponseEndEvent(RunFields):
+    type: Literal["response_end"]
+    stop_reason: Literal["stop", "tool_use", "length", "error", "aborted"]
+    context_note: NotRequired[str]
+
+
 class ToolFields(RunFields):
     tool_call_id: str
     name: str
@@ -227,6 +233,7 @@ AgentSessionRunEvent = (
     | ToolEndEvent
     | SteeringEvent
     | ProviderRetryEvent
+    | ResponseEndEvent
     | ScheduleChangeEvent
     | ScheduleAppliedEvent
     | DownloadEvent

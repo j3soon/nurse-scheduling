@@ -168,7 +168,17 @@ async def agent_loop(
                         )
                     elif isinstance(event, ReasoningReplay):
                         replay = event
-                    elif isinstance(event, (TokenUsage, ProviderCall, ProviderRetry)):
+                    elif isinstance(event, ProviderRetry):
+                        # Preserve the failed attempt for audit, but restart from the
+                        # original request. Incomplete native output is never replayed.
+                        failed = AssistantMessage("".join(answer), "error", "".join(reasoning))
+                        conversation.append(failed)
+                        yield AgentMessageEnd(failed)
+                        answer, reasoning, calls = [], [], ()
+                        replay = usage = None
+                        finish_reason = None
+                        yield event
+                    elif isinstance(event, (TokenUsage, ProviderCall)):
                         if isinstance(event, TokenUsage):
                             usage = asdict(event)
                             request_tokens = event.prompt_tokens + event.completion_tokens

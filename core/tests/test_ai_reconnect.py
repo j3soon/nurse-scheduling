@@ -27,7 +27,7 @@ import httpx
 
 from nurse_scheduling.ai.provider import TextDelta
 from nurse_scheduling.ai.session_event_stream import RESTORE_CURSOR_GAP, SessionEvent, SessionEventStream
-from nurse_scheduling.ai.transcript import AssistantMessage, UserMessage
+from nurse_scheduling.ai.transcript import AppEventEntry, AssistantMessage, UserMessage
 
 from . import test_ai_basic as basic
 
@@ -66,6 +66,7 @@ def test_stop_before_message_arrives_prevents_provider_execution():
         assert app.state.session_store._sessions[session].transcript == [
             UserMessage("Original question"),
             AssistantMessage("", "aborted"),
+            AppEventEntry(basic.ABORTED_RESPONSE_HISTORY),
         ]
 
 

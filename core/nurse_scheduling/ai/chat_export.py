@@ -208,6 +208,8 @@ def _activity_label(entry):
 
 def _activity_text(entry):
     kind = entry["kind"]
+    if kind in {"response", "reasoning"} and entry.get("context") == "omitted":
+        return "Incomplete response. Omitted from future model context.\n\n" + entry["text"]
     if kind == "schedule-applied" and entry.get("notice"):
         return entry["notice"] + "\n\n" + entry["text"]
     if kind == "schedule-change":
@@ -476,7 +478,7 @@ def build_markdown_chat(messages, metadata):
         else:
             for entry in _timeline(message):
                 if entry["kind"] == "response":
-                    lines += ["", entry["text"] or "[No message text]"]
+                    lines += ["", _activity_text(entry) or "[No message text]"]
                 else:
                     lines += ["", "### " + _activity_label(entry), "", "```text", _activity_text(entry), "```"]
         details = _model_cost_lines(message)
@@ -539,7 +541,7 @@ def build_html_chat(messages, metadata):
                     else ""
                 )
                 content = (
-                    '<div class="content">' + render_markdown_html(entry["text"]) + "</div>"
+                    '<div class="content">' + render_markdown_html(_activity_text(entry)) + "</div>"
                     if entry["kind"] == "response"
                     else _activity_html(entry)
                 )

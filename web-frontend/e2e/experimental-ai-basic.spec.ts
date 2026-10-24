@@ -318,6 +318,7 @@ async function mockAiBackend(
         ? [
           `event: tool_start\ndata: ${JSON.stringify({ name: 'bash', arguments: '{"command":"sleep 30"}' })}\n\n`,
           'event: delta\ndata: {"text":"Provisional response."}\n\n',
+          'event: response_end\ndata: {"stop_reason":"error","context_note":"[App event] The run workspace was discarded."}\n\n',
           'event: error\ndata: {"message":"The temporary AI sandbox failed."}\n\n',
         ].join('')
         : [
@@ -613,6 +614,8 @@ test('continues a failed text run with a new message and keeps its provisional a
   await expect(page.getByText('This response failed before completion. Send a new message to continue.')).toBeVisible();
   const failedResponse = page.locator('article').filter({ hasText: 'Provisional response.' });
   await expect(failedResponse).toContainText('The temporary AI sandbox failed.');
+  await expect(failedResponse).toContainText('Incomplete response. Omitted from future model context.');
+  await expect(failedResponse).toContainText('Sent in future model context: [App event] The run workspace was discarded.');
   await page.getByText('bash · interrupted').click();
   await expect(page.getByText('{"command":"sleep 30"}', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: /retry/i })).toHaveCount(0);

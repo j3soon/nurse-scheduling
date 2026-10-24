@@ -323,9 +323,10 @@ and attempt number. Stop interrupts backoff and streaming. Each attempt keeps
 its own cost record and the same session ID. The adapter uses one retry budget
 instead of stacking SDK retries with whole-agent retries.
 
-After interrupted output, the next request receives the visible answer text and
-an interruption note. Failed reasoning metadata and partial tool arguments are
-discarded. Tools are released only after a clean response completion. A retry
+After interrupted output, the adapter retries the original request. Failed attempts
+stay in the audit transcript but are omitted from model requests. The frontend
+labels their partial text and reasoning as omitted from future context. Failed
+reasoning metadata and partial tool arguments are discarded. Tools are released only after a clean response completion. A retry
 after a completed tool exchange resends its result without executing it again.
 
 ## Automatic context compaction
@@ -439,9 +440,10 @@ support the replay fields it returns, as described in the
 Unknown fields are not guessed from model names. Provider rejection remains a
 normal provider error rather than silently dropping signed state.
 
-Aborted and errored responses are excluded from model replay. The existing
-interruption note describes discarded workspace changes. Timeout retries retain
-visible answer text as continuation context but discard incomplete native state.
+Aborted and errored responses are excluded from model replay. Completed responses
+and tool exchanges remain. A separate app event explains when the run workspace
+was discarded and warns that earlier tool results describe that workspace.
+Timeout retries restart only the incomplete model call from the same request.
 Missing tool results receive an explicit failure placeholder before the next
 turn, so each replayed tool call has a result.
 

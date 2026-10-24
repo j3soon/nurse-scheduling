@@ -42,6 +42,7 @@ export type SessionEvent = (
   | { type: 'cost_summary'; conversation: CostSummary; run?: CostSummary }
   | { type: 'delta' | 'reasoning'; text: string }
   | { type: 'truncated' }
+  | { type: 'response_end'; stopReason: 'stop' | 'tool_use' | 'length' | 'error' | 'aborted'; contextNote?: string }
   | { type: 'compaction_start'; reason: 'threshold' | 'overflow'; tokensBefore: number }
   | { type: 'compaction_end'; reason: 'threshold' | 'overflow'; tokensBefore: number; success: boolean; aborted: boolean; estimatedTokensAfter?: number }
   | { type: 'tool_start'; activity: ToolStartActivity }

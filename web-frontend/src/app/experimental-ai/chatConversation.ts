@@ -59,6 +59,7 @@ function isActivityEntry(value: unknown): value is ActivityEntry {
   if (typeof value !== 'object' || value === null || !('kind' in value)) return false;
   if (value.kind === 'notice' || value.kind === 'response' || value.kind === 'reasoning' || value.kind === 'schedule-applied') {
     return 'text' in value && typeof value.text === 'string'
+      && (!('context' in value) || value.context === 'complete' || value.context === 'omitted')
       && (!('notice' in value) || typeof value.notice === 'string')
       && (!('runId' in value) || typeof value.runId === 'string');
   }

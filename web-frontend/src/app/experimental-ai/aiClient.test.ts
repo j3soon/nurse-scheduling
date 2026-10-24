@@ -48,6 +48,14 @@ import {
   uploadFiles,
 } from './aiClient';
 
+it('decodes response boundaries and rejects malformed omission notes', () => {
+  expect(decodeEvent('response_end', { stop_reason: 'error', context_note: 'Workspace discarded.' })).toEqual([
+    { type: 'response_end', stopReason: 'error', contextNote: 'Workspace discarded.' },
+  ]);
+  expect(() => decodeEvent('response_end', { stop_reason: 'other' })).toThrow('invalid response boundary');
+  expect(() => decodeEvent('response_end', { stop_reason: 'stop', context_note: 3 })).toThrow('invalid response boundary');
+});
+
 it('decodes compaction status and rejects malformed estimates', () => {
   expect(decodeEvent('compaction_start', { reason: 'threshold', tokens_before: 25000 })).toEqual([
     { type: 'compaction_start', reason: 'threshold', tokensBefore: 25000 },

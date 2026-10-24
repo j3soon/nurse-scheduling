@@ -136,8 +136,8 @@ stderr. Do not replace an explicitly selected file with a fallback.
   Keep HTTP routes thin.
 - Keep conversation entries independent of provider wire messages. Derive model
   requests and retained history through `context.py`. Count retained partial text
-  in session byte budgets even when model context replaces it with an interruption
-  note. Retain completed tool exchanges and native reasoning metadata across runs.
+  in session byte budgets even when model requests omit the failed response.
+  Preserve completed exchanges and append a note when the workspace is discarded. Retain completed tool exchanges and native reasoning metadata across runs.
   Replay opaque metadata only to its original endpoint, API, and model. Keep the
   stored metadata intact when switching models. Release tool images after session
   finalization and omit failed or incomplete native output from provider requests.
@@ -528,8 +528,8 @@ stderr. Do not replace an explicitly selected file with a fallback.
   ending mid-word does not prove a transport failure when the provider reports
   completion. Keep response content and credentials out of diagnostic logs.
 - Retry provider timeouts with bounded exponential backoff. After visible text,
-  continue with the partial answer as context instead of replaying the original
-  request. Discard incomplete tool calls and release tools only after confirmed
+  omit the failed attempt from model context and retry the original request.
+  Keep the partial output visible and label it as omitted from future context. Discard incomplete tool calls and release tools only after confirmed
   response completion. Keep output limits cumulative across attempts and use
   distinct errors for timeouts before and during streaming.
 

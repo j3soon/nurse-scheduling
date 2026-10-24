@@ -193,6 +193,7 @@ def test_records_text_usage_and_sanitized_failure(recorded_history, failed):
         AssistantMessage(
             "Partial answer", "error" if failed else "stop", usage=None if failed else asdict(TokenUsage(1, 1, 2))
         ),
+        *([AppEventEntry(basic.ABORTED_RESPONSE_HISTORY)] if failed else []),
     ]
     if not failed:
         assert basic.parse_sse(response.text)[-1] == ("done", {"run_id": start["run_id"], "history_saved": True})
@@ -1480,6 +1481,7 @@ def test_postgres_recovery_keeps_operational_metadata(postgres_history):
             record(answer),
             record(UserMessage("Second")),
             record(AssistantMessage("Partial", "error")),
+            record(AppEventEntry(basic.ABORTED_RESPONSE_HISTORY)),
         ]
         stored_types = {kind for (kind,) in connection.execute("SELECT DISTINCT type FROM chat_session_events")}
     assert rows[0][:5] == (
@@ -1508,6 +1510,7 @@ def test_postgres_recovery_keeps_operational_metadata(postgres_history):
         answer,
         UserMessage("Second"),
         AssistantMessage("Partial", "error"),
+        AppEventEntry(basic.ABORTED_RESPONSE_HISTORY),
     ]
     assert "private detail" not in repr(rows)
 
@@ -1639,7 +1642,7 @@ def test_postgres_recovers_question_and_partial_output_from_interrupted_run(post
             frames = await read_events(app, session, owner, 1, until="session_reset")
             assert app.state.session_store._sessions[session].history == [
                 {"role": "user", "content": "Keep working"},
-                {"role": "assistant", "content": basic.ABORTED_RESPONSE_HISTORY},
+                {"role": "user", "content": basic.ABORTED_RESPONSE_HISTORY},
             ]
             return frames
 
@@ -1777,7 +1780,7 @@ def test_postgres_restored_conversation_matches_the_live_conversation(postgres_h
         live = app.state.session_store._sessions[session_id]
         expected = (list(live.transcript), live.dropped_entries, live.dropped_history_messages)
     # Retention trimmed the first exchange, both app events, and the interrupted second exchange.
-    assert expected == ([UserMessage("Q3"), AssistantMessage("A3"), UserMessage("Q4"), AssistantMessage("A4")], 6, 6)
+    assert expected == ([UserMessage("Q3"), AssistantMessage("A3"), UserMessage("Q4"), AssistantMessage("A4")], 7, 6)
 
     async def restarted():
         app = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
@@ -1873,7 +1876,11 @@ def test_postgres_stop_before_message_arrival_survives_restart(postgres_history)
     frames, transcript = asyncio.run(exercise())
     assert frames[-1][1] == "stopped"
     assert provider.calls == []
-    assert transcript == [UserMessage("Original question"), AssistantMessage("", "aborted")]
+    assert transcript == [
+        UserMessage("Original question"),
+        AssistantMessage("", "aborted"),
+        AppEventEntry(basic.ABORTED_RESPONSE_HISTORY),
+    ]
 
     restored_provider = basic.FakeProvider()
     restored = basic.create_test_app(settings=settings, provider=restored_provider)
@@ -1883,7 +1890,7 @@ def test_postgres_stop_before_message_arrival_survives_restart(postgres_history)
         assert basic.parse_sse(response.text)[-1][0] == "done"
         assert restored_provider.calls[0][1:3] == [
             {"role": "user", "content": "Original question"},
-            {"role": "assistant", "content": basic.ABORTED_RESPONSE_HISTORY},
+            {"role": "user", "content": basic.ABORTED_RESPONSE_HISTORY},
         ]
 
 

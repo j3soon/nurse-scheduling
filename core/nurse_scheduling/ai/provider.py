@@ -499,7 +499,6 @@ class OpenAiCompatibleProvider:
 
         original_estimate = estimate_context_tokens(messages, tools or [])
         stream_started = False
-        answer: list[str] = []
         text_chars = 0
         reasoning_chars = 0
         max_attempts = self._settings.provider_max_attempts
@@ -551,7 +550,6 @@ class OpenAiCompatibleProvider:
                                 raise ProviderResponseLimitError.for_user(
                                     "The AI provider returned more text than one answer may contain."
                                 )
-                            answer.append(event.text)
                         elif isinstance(event, ReasoningDelta):
                             reasoning_chars += len(event.text)
                             if reasoning_chars > MAX_RESPONSE_REASONING_CHARS:
@@ -603,17 +601,6 @@ class OpenAiCompatibleProvider:
                         f"The AI provider requested a retry delay above {MAX_RETRY_DELAY_SECONDS:g} seconds. "
                         f"{failure.user_message}"
                     ) from exc
-                if answer:
-                    # A fresh completion cannot resume transport state. Keep visible
-                    # text as context, but never replay reasoning or partial tool JSON.
-                    payload["messages"] = [
-                        *messages,
-                        ChatMessage(role="assistant", content="".join(answer)),
-                        ChatMessage(
-                            role="user",
-                            content=f"[App event] The response was interrupted after {text_chars} text characters.",
-                        ),
-                    ]
                 logger.warning(
                     "AI provider transient failure stream_started=%s attempt=%s max_attempts=%s retry_in_seconds=%.3f",
                     stream_started,

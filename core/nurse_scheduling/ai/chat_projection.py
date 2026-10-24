@@ -119,6 +119,7 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
         "schedule_applied",
         "truncated",
         "provider_retry",
+        "response_end",
         "compaction_start",
         "compaction_end",
         "done",
@@ -280,11 +281,19 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
             entry_kind = "response" if kind == "delta" else "reasoning"
             if kind == "delta":
                 assistant["content"] += text
-            if activity and activity[-1]["kind"] == entry_kind:
+            if activity and activity[-1]["kind"] == entry_kind and "context" not in activity[-1]:
                 activity[-1]["text"] += text
             else:
                 activity.append({"kind": entry_kind, "text": text})
             turn["has_output"] |= bool(text)
+        elif kind == "response_end":
+            for entry in activity:
+                if entry["kind"] in {"response", "reasoning"} and "context" not in entry:
+                    entry["context"] = "omitted" if data["stop_reason"] in {"error", "aborted"} else "complete"
+            if data.get("context_note"):
+                activity.append({"kind": "notice", "text": f"Sent in future model context: {data['context_note']}"})
+            if data["stop_reason"] == "length":
+                assistant["truncated"] = True
         elif kind in {"tool_start", "tool"}:
             entry = {
                 "kind": "tool",

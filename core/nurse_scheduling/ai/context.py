@@ -474,10 +474,9 @@ def _projected_messages(
     def close_answer() -> None:
         if not response:
             return
-        if any(isinstance(entry, AssistantMessage) and entry.stop_reason in {"aborted", "error"} for entry in response):
-            messages = [ChatMessage(role="assistant", content=ABORTED_RESPONSE_HISTORY)]
-        elif all(
+        if all(
             isinstance(entry, AssistantMessage)
+            and entry.stop_reason not in {"aborted", "error"}
             and not entry.tool_calls
             and not entry.native_reasoning
             and entry.usage is None
@@ -560,7 +559,11 @@ def project_history(transcript: Sequence[AgentMessage], max_chars: int = DEFAULT
     )
 
 
-ABORTED_RESPONSE_HISTORY = "[This response was interrupted before completion. Its workspace changes were discarded.]"
+ABORTED_RESPONSE_HISTORY = (
+    "[App event] The response was interrupted. Its incomplete output is omitted from context. "
+    "The run's temporary workspace was discarded. Earlier tool results describe that discarded workspace. "
+    "Read current files before relying on earlier workspace changes."
+)
 
 
 def entries_from_legacy_history(messages: Sequence[ChatMessage]) -> list[AgentMessage]:
@@ -580,17 +583,11 @@ def entries_from_legacy_history(messages: Sequence[ChatMessage]) -> list[AgentMe
 
 
 def interrupted_entries(entries: Sequence[AgentMessage], reason) -> list[AgentMessage]:
-    """Do not replay claims from a run whose temporary workspace was discarded."""
-    result = [
-        replace(entry, stop_reason=reason)
-        if isinstance(entry, AssistantMessage)
-        else replace(entry, valid=False)
-        if isinstance(entry, CompactionEntry)
-        else entry
-        for entry in entries
-    ]
-    if not result or not isinstance(result[-1], AssistantMessage):
+    """Preserve completed exchanges and explain the discarded workspace separately."""
+    result = [replace(entry, valid=False) if isinstance(entry, CompactionEntry) else entry for entry in entries]
+    if not result or not isinstance(result[-1], AssistantMessage) or result[-1].stop_reason not in {"aborted", "error"}:
         result.append(AssistantMessage("", reason))
+    result.append(AppEventEntry(ABORTED_RESPONSE_HISTORY))
     return result
 
 

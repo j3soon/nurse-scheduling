@@ -504,7 +504,7 @@ def test_reports_streaming_timeout_after_all_attempts(monkeypatch: pytest.Monkey
     assert len(attempts) == 3
 
 
-def test_continues_partial_answer_with_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_restarts_partial_answer_with_unchanged_request_and_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("nurse_scheduling.ai.provider_retry.random.random", lambda: 0)
     requests: list[dict] = []
     delays: list[float] = []
@@ -530,13 +530,8 @@ def test_continues_partial_answer_with_backoff(monkeypatch: pytest.MonkeyPatch) 
     assert "".join(event.text for event in events if isinstance(event, TextDelta)) == "First. Second. Third."
     assert events[-1] == ResponseEnd(None)
     assert delays == [2, 4]
-    for request, partial in zip(requests[1:], ["First. ", "First. Second. "], strict=True):
-        assert request["messages"][:-2] == requests[0]["messages"]
-        assert request["messages"][-2] == {"role": "assistant", "content": partial}
-        assert request["messages"][-1] == {
-            "role": "user",
-            "content": f"[App event] The response was interrupted after {len(partial)} text characters.",
-        }
+    for request in requests[1:]:
+        assert request["messages"] == requests[0]["messages"]
         assert "Private reasoning" not in json.dumps(request)
         assert request["tools"] == TOOLS
 
@@ -627,10 +622,14 @@ def test_interrupted_tool_call_is_regenerated_and_executed_once(monkeypatch: pyt
 
     provider = _transport_provider(monkeypatch, handle, provider_retry_backoff_seconds=0)
     tools = bind_agent_tools(TOOLS, execute)
-    asyncio.run(_collect(agent_loop(provider, [{"role": "user", "content": "Edit"}], tools)))
+    entries = []
+    asyncio.run(_collect(agent_loop(provider, [{"role": "user", "content": "Edit"}], tools, run_messages=entries)))
     assert executed == [("schedule_patch", "{}")]
     assert len(requests) == 3
     assert '"lost"' not in json.dumps(requests[1:])
+    assert requests[1]["messages"] == requests[0]["messages"]
+    assert entries[0].text == "Checking. " and entries[0].stop_reason == "error"
+    assert "Checking. " not in json.dumps(requests[2]["messages"])
     assert requests[-1]["messages"][-1] == {"role": "tool", "tool_call_id": "retry", "content": "Applied"}
 
 

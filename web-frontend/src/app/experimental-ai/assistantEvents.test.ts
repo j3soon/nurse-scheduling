@@ -35,6 +35,37 @@ function reduce(events: AssistantEvent[]): ChatMessageContent {
 }
 
 describe('assistant events', () => {
+  it('keeps completed exchanges and marks only the failed attempt omitted', () => {
+    const message = reduce([
+      { type: 'delta', text: 'Checking.' },
+      { type: 'response_end', stopReason: 'tool_use' },
+      { type: 'tool', activity: { name: 'read', arguments: '{}', result: 'File contents', ok: true } },
+      { type: 'delta', text: 'Partial attempt' },
+      { type: 'response_end', stopReason: 'error' },
+      { type: 'provider_retry', message: 'Retrying.' },
+      { type: 'delta', text: 'Recovered answer' },
+      { type: 'response_end', stopReason: 'stop' },
+      { type: 'done' },
+    ]);
+    expect(message.activity?.filter(entry => entry.kind === 'response')).toEqual([
+      { kind: 'response', text: 'Checking.', context: 'complete' },
+      { kind: 'response', text: 'Partial attempt', context: 'omitted' },
+      { kind: 'response', text: 'Recovered answer', context: 'complete' },
+    ]);
+    expect(message.activity?.find(entry => entry.kind === 'tool')).toMatchObject({ result: 'File contents' });
+  });
+
+  it('shows the exact workspace interruption note separately from failed output', () => {
+    const message = reduce([
+      { type: 'delta', text: 'Partial' },
+      { type: 'response_end', stopReason: 'aborted', contextNote: '[App event] Workspace discarded.' },
+      { type: 'stopped' },
+    ]);
+    expect(message.activity).toEqual([
+      { kind: 'response', text: 'Partial', context: 'omitted' },
+      { kind: 'notice', text: 'Sent in future model context: [App event] Workspace discarded.' },
+    ]);
+  });
   it.each([true, false])('replaces running compaction with its outcome: success=%s', success => {
     const message = reduce([
       { type: 'compaction_start', reason: 'threshold', tokensBefore: 25000 },
