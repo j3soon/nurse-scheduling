@@ -33,6 +33,7 @@ import pytest
 
 from nurse_scheduling.ai.app import create_app
 from nurse_scheduling.ai.config import AiSettings
+from nurse_scheduling.ai.models import ModelCatalog
 from nurse_scheduling.ai.provider import OpenAiCompatibleProvider, TextDelta
 from nurse_scheduling.ai.sandbox.base import SandboxFileNotFoundError
 from nurse_scheduling.ai.sandbox.e2b import E2BSandboxFactory
@@ -306,6 +307,16 @@ def test_real_chat_runs_preserve_context_through_compaction(monkeypatch):
     )
 
     async def exercise():
+        models = {model.id: model for model in await ModelCatalog(settings).models(None)}
+        primary = settings.provider_model
+        secondary = os.getenv("AI_COMPACTION_SWITCH_MODEL", "azure/gpt-6-luna")
+        assert secondary != primary, "AI_COMPACTION_SWITCH_MODEL must select a different model"
+        for model in (primary, secondary):
+            assert model in models, f"Live compaction model is unavailable: {model}"
+            assert models[model].context_tokens is not None, (
+                f"Live compaction requires a reported context limit for {model}. "
+                "Select models with context metadata through AI_PROVIDER_MODEL and AI_COMPACTION_SWITCH_MODEL."
+            )
         return await asyncio.gather(
             *(
                 run_live_case(name, settings, controls, output)

@@ -145,6 +145,7 @@ from the trust-based local harness.
   For live cross-run checks, use `../scripts/test_ai_compaction_live.sh` with
   `AI_ENV_FILE`. It runs four concurrent scenarios through the real session API
   and prebuilt E2B sandboxes. A smaller history budget forces compaction.
+  Select two distinct available models that both report a context limit.
   Check remembered file context separately from file availability in the new VM.
 - Apply queued steering before each follow-up provider request, including requests
   after refused tool batches. Reject conflicting provider finish reasons and any

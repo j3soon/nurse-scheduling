@@ -818,7 +818,9 @@ The cancellation case pauses after receiving a real summary fragment.
 
 The command reads `docker/.env`, falling back to `docker/.env.staging`, unless
 `AI_ENV_FILE` is set. `AI_COMPACTION_SWITCH_MODEL` selects the second model and
-defaults to `azure/gpt-6-luna`. Traces go to `artifacts/compaction-live/`, or
+defaults to `azure/gpt-6-luna`. Both models must be available, distinct, and report
+a context limit. The command checks this before starting paid scenarios.
+Traces go to `artifacts/compaction-live/`, or
 `AI_COMPACTION_LIVE_OUTPUT_DIR`. The check uses no production database, does not
 rebuild the template, and remains skipped in ordinary pytest runs.
 

@@ -115,6 +115,49 @@ async def collect(stream):
     return [event async for event in stream]
 
 
+@pytest.mark.parametrize("invalid", ["primary", "secondary", "unavailable", "same", None])
+def test_live_compaction_validates_models_before_starting_paid_cases(monkeypatch, invalid):
+    from nurse_scheduling.ai.models import AvailableModel
+
+    from . import test_ai_compaction_live as live
+    from .test_ai_basic import make_settings
+
+    for key in ("AI_PROVIDER_BASE_URL", "AI_PROVIDER_API_KEY", "AI_PROVIDER_MODEL", "E2B_API_KEY"):
+        monkeypatch.setenv(key, "test-only")
+    settings = make_settings()
+    secondary = settings.provider_model if invalid == "same" else "secondary-model"
+    monkeypatch.setenv("AI_COMPACTION_SWITCH_MODEL", secondary)
+    monkeypatch.setattr(live.AiSettings, "from_env", lambda: settings)
+    started = []
+
+    async def models(_self, _credential):
+        return (
+            AvailableModel(settings.provider_model, "Primary", context_tokens=None if invalid == "primary" else 32000),
+            *(
+                [AvailableModel(secondary, "Secondary", context_tokens=None if invalid == "secondary" else 32000)]
+                if invalid != "unavailable"
+                else []
+            ),
+        )
+
+    async def run_case(name, *_args):
+        started.append(name)
+        return {"passed": True}
+
+    monkeypatch.setattr(live.ModelCatalog, "models", models)
+    monkeypatch.setattr(live, "run_live_case", run_case)
+    if invalid is None:
+        live.test_real_chat_runs_preserve_context_through_compaction(monkeypatch)
+        assert started == ["threshold", "repeated", "model-switch", "cancellation"]
+        return
+    expected = (
+        "different model" if invalid == "same" else "unavailable" if invalid == "unavailable" else "context limit"
+    )
+    with pytest.raises(AssertionError, match=expected):
+        live.test_real_chat_runs_preserve_context_through_compaction(monkeypatch)
+    assert started == []
+
+
 def test_auto_compaction_preserves_current_request_and_persists_the_summary():
     provider = CompactionProvider()
     messages = history()
