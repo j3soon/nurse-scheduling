@@ -86,6 +86,7 @@ interface StreamCallbacks {
   onRunContext?: (runId: string) => void;
   onDelta: (text: string) => void;
   onReasoning?: (text: string) => void;
+  onCompaction?: (event: Extract<SessionEvent, { type: 'compaction_start' | 'compaction_end' }>) => void;
   onTruncated?: () => void;
   onProviderRetry?: (message: string) => void;
   onToolStart?: (activity: ToolStartActivity) => void;
@@ -115,6 +116,7 @@ function dispatchPageEvent(event: SessionEvent, callbacks: StreamCallbacks): voi
     case 'delta': callbacks.onDelta(event.text); break;
     case 'reasoning': callbacks.onReasoning?.(event.text); break;
     case 'provider_retry': callbacks.onProviderRetry?.(event.message); break;
+    case 'compaction_start': case 'compaction_end': callbacks.onCompaction?.(event); break;
     case 'truncated': callbacks.onTruncated?.(); break;
     case 'tool_start': callbacks.onToolStart?.(event.activity); break;
     case 'tool': callbacks.onTool?.(event.activity); break;
@@ -141,11 +143,13 @@ function assistantEventCallbacks(
   browserSchedule: { readonly current: string },
   applySchedule: (applied: ScheduleApplied) => string | null,
 ): Required<Pick<StreamCallbacks,
-  'onDelta' | 'onReasoning' | 'onTruncated' | 'onProviderRetry' | 'onToolStart' | 'onTool' | 'onScheduleChange' | 'onScheduleApplied'>> {
+  'onDelta' | 'onReasoning' | 'onCompaction' | 'onTruncated' | 'onProviderRetry' | 'onToolStart' | 'onTool' | 'onScheduleChange'
+  | 'onScheduleApplied'>> {
   return {
     onProviderRetry: message => apply({ type: 'provider_retry', message }),
     onDelta: text => apply({ type: 'delta', text }),
     onReasoning: text => apply({ type: 'reasoning', text }),
+    onCompaction: event => apply(event),
     onTruncated: () => apply({ type: 'truncated' }),
     onToolStart: activity => apply({ type: 'tool_start', activity }),
     onTool: activity => apply({ type: 'tool', activity }),

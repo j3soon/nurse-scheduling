@@ -1,0 +1,58 @@
+[
+  {
+    "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. SPDX-FileCopyrightText: 2026 Johnson Sun",
+    "_comment": "This file is mostly AI generated.",
+    "id": "compaction-system",
+    "file": "compaction-system.md",
+    "sha256": "c464889dcfa60441e642f291445b49523f263e6fb2725d0c25075543a2ec3f8f",
+    "upstream_sha256": "c464889dcfa60441e642f291445b49523f263e6fb2725d0c25075543a2ec3f8f",
+    "upstream_revision": "a13d35a742c6ef8462812a28fbe1d8c8b7431c32",
+    "cases": [
+      "unit:pi-compaction-prompt-fidelity",
+      "unit:repeated-compaction-update",
+      "unit:split-turn-compaction"
+    ]
+  },
+  {
+    "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. SPDX-FileCopyrightText: 2026 Johnson Sun",
+    "_comment": "This file is mostly AI generated.",
+    "id": "context-compaction",
+    "file": "compaction.md",
+    "sha256": "9b00aa68df1a64279bc36e9093367f638701d48ec82e3d08436f65092a515f9b",
+    "upstream_sha256": "9b00aa68df1a64279bc36e9093367f638701d48ec82e3d08436f65092a515f9b",
+    "upstream_revision": "a13d35a742c6ef8462812a28fbe1d8c8b7431c32",
+    "cases": [
+      "unit:pi-compaction-prompt-fidelity",
+      "unit:repeated-compaction-update",
+      "unit:split-turn-compaction"
+    ]
+  },
+  {
+    "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. SPDX-FileCopyrightText: 2026 Johnson Sun",
+    "_comment": "This file is mostly AI generated.",
+    "id": "compaction-update",
+    "file": "compaction-update.md",
+    "sha256": "240c52982209146eae47d73c7172f6ba1dab60f44520bcb6a6ec1a883fef2ec7",
+    "upstream_sha256": "240c52982209146eae47d73c7172f6ba1dab60f44520bcb6a6ec1a883fef2ec7",
+    "upstream_revision": "a13d35a742c6ef8462812a28fbe1d8c8b7431c32",
+    "cases": [
+      "unit:pi-compaction-prompt-fidelity",
+      "unit:repeated-compaction-update",
+      "unit:split-turn-compaction"
+    ]
+  },
+  {
+    "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. SPDX-FileCopyrightText: 2026 Johnson Sun",
+    "_comment": "This file is mostly AI generated.",
+    "id": "compaction-turn-prefix",
+    "file": "compaction-turn-prefix.md",
+    "sha256": "7b0a15be5e0fdcce338ce7c1ef1fdd386faed258cc25d03915a05b05e7a6a183",
+    "upstream_sha256": "7b0a15be5e0fdcce338ce7c1ef1fdd386faed258cc25d03915a05b05e7a6a183",
+    "upstream_revision": "a13d35a742c6ef8462812a28fbe1d8c8b7431c32",
+    "cases": [
+      "unit:pi-compaction-prompt-fidelity",
+      "unit:repeated-compaction-update",
+      "unit:split-turn-compaction"
+    ]
+  }
+]

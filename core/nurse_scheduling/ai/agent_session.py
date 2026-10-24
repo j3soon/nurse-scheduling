@@ -33,6 +33,7 @@ from ruamel.yaml.error import YAMLError
 
 from ..loader import _load_yaml
 from .agent import Agent
+from .agent_types import AgentCompactionEnd, AgentContextUsage
 from .config import AiSettings
 from .context import (
     SCHEDULE_CHANGED_EVENT,
@@ -600,6 +601,7 @@ class AgentSession:
             uploads=tuple(self.uploads.values()),
             frontend_timezone=self.frontend_timezone,
             analysis=self.analysis,
+            transcript_offset=self.dropped_entries,
         )
         return self.snapshot
 
@@ -722,7 +724,9 @@ class AgentSession:
             {
                 "type": "model_input",
                 "schedule_yaml": snapshot.schedule_yaml,
-                **model_input(messages, len(history.messages), dropped_history, question_kind),
+                **model_input(
+                    messages, [snapshot.transcript_offset + index for index in history.source_indices], question_kind
+                ),
             }
         )
         events.emit({"type": "context_usage", **context_usage(history.used_chars, settings)})
@@ -828,6 +832,21 @@ class AgentSession:
                         wire_event = output.consume(event)
                         if wire_event is not None:
                             events.emit(wire_event)
+                        if isinstance(event, AgentContextUsage) or (
+                            isinstance(event, AgentCompactionEnd) and event.success
+                        ):
+                            context_chars = event.used_chars
+                            events.emit(
+                                {
+                                    "type": "context_usage",
+                                    **context_usage(
+                                        context_chars,
+                                        runtime.settings,
+                                        provider=runtime.provider,
+                                        estimated_tokens=output.context_estimate,
+                                    ),
+                                }
+                            )
                         elif isinstance(event, TokenUsage):
                             events.emit(
                                 {
@@ -898,7 +917,13 @@ class AgentSession:
         events.emit(
             {
                 "type": "context_usage",
-                **context_usage(completion.context_used_chars, runtime.settings, output.last_call, runtime.provider),
+                **context_usage(
+                    completion.context_used_chars,
+                    runtime.settings,
+                    output.last_call,
+                    runtime.provider,
+                    estimated_tokens=output.context_estimate,
+                ),
             }
         )
         events.emit(done)
@@ -938,6 +963,11 @@ class AgentSession:
             # a restart instead of a user Stop.
             events.finish()
             return
+        if output.compaction is not None:
+            event = output.consume(
+                AgentCompactionEnd(output.compaction.reason, False, output.compaction.tokens_before, aborted=stopped)
+            )
+            events.emit(event)
         if outcome.terminal is not None:
             events.emit(outcome.terminal)
         try:
@@ -1021,6 +1051,9 @@ class AgentSession:
                 except HTTPException as exc:
                     # Record the failed review before publishing its terminal error.
                     preparation_error = ProviderError.for_user(str(exc.detail))
+            bind_session = getattr(runtime.provider, "with_session_id", None)
+            if bind_session is not None:
+                runtime = replace(runtime, provider=bind_session(session_id))
             if recorder.enabled:
                 prompt_seq = self.next_entry_seq
                 self.next_entry_seq += 1

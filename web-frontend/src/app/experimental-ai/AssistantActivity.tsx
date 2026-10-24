@@ -67,8 +67,16 @@ export interface ScheduleAppliedEntry {
   notice?: string;
 }
 
+export interface CompactionActivity {
+  kind: 'compaction';
+  state: 'running' | 'completed' | 'failed' | 'interrupted';
+  reason: 'threshold' | 'overflow';
+  text: string;
+}
+
 export type ActivityEntry =
-  | { kind: 'notice'; text: string } | ResponseEntry | ReasoningEntry | ToolEntry | ScheduleChangeEntry | ScheduleCheckEntry | ScheduleAppliedEntry;
+  | { kind: 'notice'; text: string } | ResponseEntry | ReasoningEntry | ToolEntry | ScheduleChangeEntry | ScheduleCheckEntry | ScheduleAppliedEntry
+  | CompactionActivity;
 
 // Long output is revealed a chunk at a time, so an expanded row never floods the page.
 const CHUNK_CHARS = 2000;

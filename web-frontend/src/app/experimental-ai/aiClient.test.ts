@@ -48,6 +48,21 @@ import {
   uploadFiles,
 } from './aiClient';
 
+it('decodes compaction status and rejects malformed estimates', () => {
+  expect(decodeEvent('compaction_start', { reason: 'threshold', tokens_before: 25000 })).toEqual([
+    { type: 'compaction_start', reason: 'threshold', tokensBefore: 25000 },
+  ]);
+  expect(decodeEvent('compaction_end', {
+    reason: 'threshold', tokens_before: 25000, success: true, aborted: false, estimated_tokens_after: 4000,
+  })).toEqual([
+    { type: 'compaction_end', reason: 'threshold', tokensBefore: 25000, success: true, aborted: false, estimatedTokensAfter: 4000 },
+  ]);
+  expect(() => decodeEvent('compaction_start', { reason: 'other', tokens_before: 25000 })).toThrow('invalid compaction');
+  expect(() => decodeEvent('compaction_end', {
+    reason: 'overflow', tokens_before: 25000, success: true, aborted: false, estimated_tokens_after: -1,
+  })).toThrow('invalid compaction');
+});
+
 function streamedResponse(chunks: string[]): Response {
   const encoder = new TextEncoder();
   const stream = new ReadableStream({

@@ -46,6 +46,8 @@ class RunSnapshot:
     uploads: tuple[SandboxAttachment, ...] = ()
     frontend_timezone: str = "UTC"
     analysis: AgentAnalysis | None = None
+    # Freeze entry positions before retention can remove more of the transcript.
+    transcript_offset: int = 0
 
 
 @dataclass(eq=False)

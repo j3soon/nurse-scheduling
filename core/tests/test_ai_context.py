@@ -40,6 +40,7 @@ from nurse_scheduling.ai.sessions import SessionStore
 from nurse_scheduling.ai.transcript import (
     AppEventEntry,
     AssistantMessage,
+    ProviderIdentity,
     ToolCall,
     ToolResultImage,
     ToolResultMessage,
@@ -110,7 +111,7 @@ def test_interrupted_run_preserves_questions_and_steering_without_discarded_clai
     ]
 
 
-def test_later_context_joins_responses_and_excludes_reasoning_tools_and_images():
+def test_later_context_keeps_responses_and_tools_but_releases_images():
     call = ToolCall("read-1", "read", "{}")
     entries = [
         UserMessage("Read it"),
@@ -119,10 +120,16 @@ def test_later_context_joins_responses_and_excludes_reasoning_tools_and_images()
         AssistantMessage("Done."),
     ]
     retained = retained_entries(entries)
-    assert retained == [UserMessage("Read it"), AssistantMessage("Checking. ", "tool_use"), AssistantMessage("Done.")]
+    assert retained == [*entries[:2], ToolResultMessage(call.id, call.name, "large tool result", True), entries[-1]]
     assert projected_history(retained) == [
         {"role": "user", "content": "Read it"},
-        {"role": "assistant", "content": "Checking. Done."},
+        {
+            "role": "assistant",
+            "content": "Checking. ",
+            "tool_calls": [{"id": "read-1", "type": "function", "function": {"name": "read", "arguments": "{}"}}],
+        },
+        {"role": "tool", "tool_call_id": "read-1", "content": "large tool result"},
+        {"role": "assistant", "content": "Done."},
     ]
 
 
@@ -161,6 +168,7 @@ def test_history_budget_starts_at_an_app_event_and_counts_serialized_unicode():
     assert selected.messages == expected
     assert selected.used_chars == history_chars(expected)
     assert selected.dropped_messages == 2
+    assert selected.source_indices == [2, 3]
 
 
 def test_retention_keeps_the_whole_newest_run_including_steering():
@@ -285,3 +293,58 @@ def test_retained_byte_budget_counts_partial_text_hidden_from_model_context():
     # A later exchange releases the oversized failed turn and its accounted bytes.
     store.finish(session.id, [UserMessage("next"), AssistantMessage("done")], snapshot=store.begin(session.id, "owner"))
     assert store.retained_bytes == len(b"schedulenextdone")
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        ProviderIdentity("https://provider.example/v1", "other"),
+        ProviderIdentity("https://elsewhere.example/v1", "model"),
+        ProviderIdentity("https://provider.example/v1", "model", "other-api"),
+    ],
+)
+def test_model_switch_omits_native_metadata_and_normalizes_matching_tool_ids(target):
+    source = ProviderIdentity("https://provider.example/v1", "model")
+    call = ToolCall("call|" + "x" * 70, "read", "{}", {"extra_content": {"google": {"thought_signature": "opaque"}}})
+    native = {"reasoning_details": [{"type": "reasoning.encrypted", "data": "cipher"}]}
+    entries = [
+        UserMessage("Read"),
+        AssistantMessage("Checking", "tool_use", "reason", (call,), native, source),
+        ToolResultMessage(call.id, call.name, "result", True),
+        AssistantMessage("Done"),
+    ]
+    records = [entry_record(entry) for entry in entries]
+    history = projected_history(entries)
+    switched = prepare_provider_request(history, [], provider=target)
+    assert "opaque" not in str(switched) and "cipher" not in str(switched)
+    call_id = switched[1]["tool_calls"][0]["id"]
+    assert len(call_id) <= 40 and "|" not in call_id
+    assert switched[2]["tool_call_id"] == call_id
+    assert switched[1]["content"] == "Checking"
+    assert [entry_record(entry) for entry in entries] == records
+    replay = prepare_provider_request(history, [], provider=source)
+    assert replay[1]["reasoning_details"] == native["reasoning_details"]
+    assert replay[1]["tool_calls"][0]["extra_content"] == call.native["extra_content"]
+
+
+def test_orphaned_tool_calls_get_results_and_failed_native_output_is_excluded():
+    source = ProviderIdentity("https://provider.example/v1", "model")
+    call = ToolCall("read-1", "read", "{}")
+    entries = [AssistantMessage("Checking", "tool_use", tool_calls=(call,)), UserMessage("Continue")]
+    request = prepare_provider_request([], entries, provider=source)
+    assert [message["role"] for message in request] == ["assistant", "tool", "user"]
+    assert request[1]["tool_call_id"] == call.id
+    failed = [
+        UserMessage("Read"),
+        AssistantMessage(
+            "discarded",
+            "error",
+            "partial",
+            (call,),
+            {"reasoning_details": [{"type": "reasoning.encrypted", "data": "incomplete"}]},
+            source,
+        ),
+        ToolResultMessage(call.id, call.name, "discarded result", True),
+    ]
+    assert prepare_provider_request([], failed, provider=source) == [{"role": "user", "content": "Read"}]
+    assert "incomplete" not in str(projected_history(failed))

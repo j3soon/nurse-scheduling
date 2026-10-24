@@ -215,6 +215,11 @@ interface SessionStatusResponse {
 }
 
 interface SsePayload {
+  reason?: unknown;
+  tokens_before?: unknown;
+  success?: unknown;
+  aborted?: unknown;
+  estimated_tokens_after?: unknown;
   call_id?: unknown;
   status?: unknown;
   cost_usd?: unknown;
@@ -550,7 +555,18 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
   const emit = (event: SessionEvent) => events.push(runId === undefined ? event : { ...event, runId });
   if (runId) emit({ type: 'run_context', runId });
 
-  if (eventType === 'provider_call') {
+  if (eventType === 'compaction_start' || eventType === 'compaction_end') {
+    if (!['threshold', 'overflow'].includes(payload.reason as string)
+      || !Number.isSafeInteger(payload.tokens_before) || (payload.tokens_before as number) < 0
+      || (eventType === 'compaction_end' && (typeof payload.success !== 'boolean' || typeof payload.aborted !== 'boolean'
+        || (payload.estimated_tokens_after !== undefined && (!Number.isSafeInteger(payload.estimated_tokens_after) || (payload.estimated_tokens_after as number) < 0))))) {
+      throw new Error('The AI backend returned invalid compaction status.');
+    }
+    const common = { reason: payload.reason as 'threshold' | 'overflow', tokensBefore: payload.tokens_before as number };
+    if (eventType === 'compaction_start') emit({ type: 'compaction_start', ...common });
+    else emit({ type: 'compaction_end', ...common, success: payload.success as boolean, aborted: payload.aborted as boolean,
+      ...(payload.estimated_tokens_after === undefined ? {} : { estimatedTokensAfter: payload.estimated_tokens_after as number }) });
+  } else if (eventType === 'provider_call') {
     const call = { callId: payload.call_id, model: payload.model, reasoning: payload.reasoning,
       status: payload.status, costUsd: payload.cost_usd, usage: payload.usage,
       providerCallId: payload.provider_call_id, responseModel: payload.response_model };

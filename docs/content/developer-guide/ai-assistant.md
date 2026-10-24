@@ -161,8 +161,8 @@ The browser receives an HTTP-only owner cookie and an unguessable session UUID.
 Active sessions expire after 30 days of inactivity by default. Sending or
 queueing a message or synchronizing a changed schedule renews that window. The browser can retain the conversation within its current
 tab and verify the session without extending its lifetime.
-The session records typed questions, assistant responses, and app events. Tool results and reasoning belong to the current run and are released
-when it ends. Stop and failed runs retain their questions with an interruption
+The session records typed questions, assistant responses, app events, reasoning metadata,
+and tool exchanges. Tool images are released when a run ends. Stop and failed runs retain their questions with an interruption
 note. Later model context excludes claims from their discarded workspace.
 Recovery stores typed entries, including their origin and interruption state.
 Existing text history remains readable when the service restores older sessions.
@@ -282,13 +282,168 @@ for operators. The chat asks the user to send a new message and offers no retry
 button. Uploaded files stay available to that message. If an upload did not finish,
 the question was not sent, and the chat asks the user to attach the files again.
 
+## Provider session affinity
+
+Each run binds `AgentSession.id` to a provider copy through `with_session_id`.
+The copy preserves the selected model, reasoning parameters, credentials, and
+provider metadata. Session IDs and request limits stay on each copy, so
+concurrent chats cannot overwrite each other's settings. Direct-provider copies
+share cached model-limit discovery, including unavailable metadata. Optional
+session binding also keeps existing providers without this capability usable.
+
+The Chat Completions adapter sends `x-session-id` on every completion request.
+Tool follow-ups, timeout retries, compaction summaries, and optimizer reviews
+use the same bound provider. Later runs and restored sessions use the same chat
+UUID. Each billable attempt still has its own `ProviderCall.id`.
+
+This follows [Pi v1.0.0's provider session options][pi-completions], using its
+`x-session-id` header format for the LiteLLM gateway. Enable `session_affinity`
+in the gateway's `router_settings.optional_pre_call_checks`. A live routing
+check can compare `x-litellm-model-id` response headers for successive requests,
+as described in the [gateway example][litellm-session-affinity]. The header does
+not change the prompt or add model-specific request parameters.
+
+## Provider retries
+
+The adapter follows Pi v1.0.0's [HTTP retry policy][pi-provider-retry] and
+[account-limit exclusions][pi-retry-errors]. One shared attempt budget covers
+HTTP 408, 409, 429, server errors, timeouts, connection failures, and streams
+that end without completion. Provider retry hints refine transient status
+handling. Authentication, malformed requests, context overflow, account quota,
+and billing errors fail immediately, even with a retry hint. Invalid stream
+data and unsuccessful finish reasons also fail immediately.
+
+`AI_PROVIDER_MAX_ATTEMPTS` includes the first request. Exponential backoff uses
+`AI_PROVIDER_RETRY_BACKOFF_SECONDS`, an eight-second cap, and up to 25 percent
+jitter. Valid `Retry-After-ms` or `Retry-After` headers take precedence,
+including HTTP dates. A server delay above 60 seconds fails immediately. Retries
+also stop 120 seconds after the first failure, because a waiting run holds a
+shared run slot and its sandbox. Each retry adds a chat notice with its delay
+and attempt number. Stop interrupts backoff and streaming. Each attempt keeps
+its own cost record and the same session ID. The adapter uses one retry budget
+instead of stacking SDK retries with whole-agent retries.
+
+After interrupted output, the next request receives the visible answer text and
+an interruption note. Failed reasoning metadata and partial tool arguments are
+discarded. Tools are released only after a clean response completion. A retry
+after a completed tool exchange resends its result without executing it again.
+
+## Automatic context compaction
+
+`ContextCompactor` follows [Pi v1.0.0 compaction][pi-compaction]. Before a model
+request and after the final answer, it checks the discovered model context
+window. It reserves up to 16,384 tokens for output, reduced to one quarter of a
+smaller window. It also checks 80 percent of the configured history character
+and message limits, so normal retention does not discard older state first.
+Without model metadata, the history limits still trigger compaction. Summary
+requests use a 32,768-token fallback window. An explicit context-overflow
+rejection can also trigger compaction.
+
+The estimate uses the most recent completed same-model input and output usage,
+plus estimates for later messages. A characters/4 estimate covers missing usage,
+changed model settings, tool definitions, and current system and status content.
+Old usage is invalid after a summary replaces its original input. Cached tokens
+are already included in Chat Completions prompt usage.
+
+The composer footer shows Context, Tokens, and estimated cost during SSE streaming.
+`AgentContextUsage` estimates include the current request and streamed reasoning or
+answer text. `RunEvents` coalesces these reports with text batches. Provider usage
+replaces token estimates, and provider cost updates replace each call's previous
+cost contribution. Estimates do not enter billed usage or invent missing prices.
+
+Replayable `compaction_start` and `compaction_end` events report threshold or
+overflow recovery, success, and cancellation. The live transcript and saved
+exports show the same status. Successful compaction replaces the context meter
+with a fresh estimate until the next model call reports usage. Summary failures
+keep the original context. Stop closes the summary stream and finishes its status.
+
+The cut point keeps up to 20,000 recent estimated tokens, reduced for smaller
+windows and history budgets. It can split a long turn before an assistant
+response, but never between a tool call and its results. Supplemental tool
+images stay with their exchange and do not count as durable messages. If a
+single tool batch fills the available input, its essential results enter the
+summary instead. The current system instructions and trusted request status
+remain outside the summary.
+
+Older messages are serialized as conversation data. Tool arguments retain file
+paths. Tool results are limited to 2,000 characters per result, as in Pi. Large
+inputs use bounded successive summary requests, updating the previous summary.
+Opaque reasoning is never converted to text for summarization. The separate
+manifest `ai/prompts/compaction.json` records the initial, update, split-turn,
+and system prompts from Pi v1.0.0 at `a13d35a`. Each upstream string is unchanged.
+The manifest records matching upstream and model-input hashes. Project guidance
+about schedules and temporary sandbox files stays in the main system prompt.
+The prompt loader removes provenance comments before model requests.
+
+A later compaction passes the existing summary separately in `previous-summary`
+tags and uses Pi's update instructions. When a cut splits an active turn, older
+history and the active turn prefix receive separate summaries. The latter uses
+Pi's dedicated checkpoint format, and recent tool exchanges stay intact. Large
+inputs retain bounded chunking and use the update instructions after each chunk.
+Recent responses retain their native replay metadata. File paths still depend
+on the summary and recent messages. Pi's separate cumulative file-operation
+records are not implemented.
+
+Summary calls use the frozen run model and reasoning selection. Their provider
+output limit is at most 80 percent of the reserved tokens, following Pi. Every
+completion also fits the model's advertised output cap and remaining context
+with a safety margin of 4,096 tokens or half the context window, whichever is
+smaller. Summary chunks use the same margin. Reported same-model usage informs the request
+estimate when available, including tool definitions and later messages. Numeric
+thinking budgets leave 1,024 tokens for answer text. Models without discovered
+limits retain provider defaults unless the caller supplies a cap.
+An exhausted context budget triggers overflow recovery. An output cap too small
+for reasoning and answer text reports a provider error without compacting history.
+Summary chunks leave room for the full previous summary, output, and safety margin.
+Summary requests have no tools, and their text and reasoning do not enter the answer stream.
+Their provider call records include costs and usage. An empty, truncated, oversized,
+failed, or tool-requesting summary leaves the original context intact. Stop
+cancels summary generation through the existing run owner. A confirmed provider
+context overflow permits one compact-and-retry attempt before reporting failure.
+Tool execution is not repeated by that retry.
+
+A successful summary appends a `CompactionEntry`, leaving earlier audit entries
+intact. Context projection replays its summary plus the referenced recent tail.
+Retention keeps the summary and that tail together. Hard service memory limits
+can still remove an entire older context unit. Failed, cancelled, and stale
+runs cannot replay their summaries of discarded workspace work. Migration 009
+adds the compaction entry type. Back up the database before upgrading, and
+restore the backup when rolling back to a version that cannot read that type.
+
 ## Reasoning and tool activity
 
-Providers stream reasoning in a field of its own, either `reasoning_content` or
-`reasoning`, and the adapter forwards it as a separate event. It is never joined
-to the answer text, never stored in conversation history, and never sent back to
-the provider, so it cannot leak into an assistant message and costs nothing on
-later turns.
+Providers stream visible reasoning through `reasoning_content`, `reasoning`, or
+`reasoning_text`. The adapter forwards it as a separate display event. Completed
+responses also retain the original native fields, OpenRouter `reasoning_details`,
+and LiteLLM `thinking_blocks`, including signatures and encrypted or redacted
+blocks. The gateway can wrap thinking blocks in `provider_specific_fields`.
+Tool calls retain native `extra_content` and `provider_specific_fields` metadata.
+These fields survive session commits and PostgreSQL recovery. Migration 008
+converts older trim offsets to include tool results. Back up the database before
+upgrading. To roll back, restore that backup so older code reads its original
+trim offsets. Tool image bytes
+remain transient.
+
+The provider boundary replays native metadata only when the endpoint, API, and
+configured model match its source. Switching models omits incompatible metadata
+and normalizes tool call IDs with matching result IDs. Switching back can reuse
+the original metadata. Reasoning never becomes assistant answer text. Historical
+unsigned reasoning without source metadata remains display-only. Retained
+reasoning can increase later input token usage.
+
+This follows [Pi v1.0.0 message transformation][pi-replay] and its
+[Chat Completions adapter][pi-completions]. This service uses a Chat Completions
+gateway rather than native Anthropic or Responses transports. The gateway must
+support the replay fields it returns, as described in the
+[LiteLLM reasoning contract](https://docs.litellm.ai/docs/reasoning_content).
+Unknown fields are not guessed from model names. Provider rejection remains a
+normal provider error rather than silently dropping signed state.
+
+Aborted and errored responses are excluded from model replay. The existing
+interruption note describes discarded workspace changes. Timeout retries retain
+visible answer text as continuation context but discard incomplete native state.
+Missing tool results receive an explicit failure placeholder before the next
+turn, so each replayed tool call has a result.
 
 The `tool_start` event carries the tool name and arguments before execution, so
 the UI and evaluation artifact retain a command even if the sandbox fails. A
@@ -652,7 +807,7 @@ It saves the following data:
 | --- | --- |
 | `chat_sessions` | Owner cookie hash, credential ID, creation time, expiry, and a `state` with the schedule and the number of conversation entries that retention trimmed. |
 | `chat_runs` | Run order, kind, client `message_id`, credential ID, model, status, error code, whether the run's messages joined the conversation (`committed`), the optional `schedule_change` application payload, attachment count, usage, and start and finish times. |
-| `chat_session_entries` | Conversation entries in session order, keyed by `(session_id, seq)`: run messages and app events such as uploads and schedule changes. Run messages name their run. Each row has a `type` and a JSON `payload` holding the fields of the matching `transcript.py` type. |
+| `chat_session_entries` | Conversation entries in session order, keyed by `(session_id, seq)`: run messages and app events such as uploads and schedule changes. Run messages name their run. Compaction entries hold a summary and the number of preceding recent model messages to retain. Each row has a `type` and a JSON `payload` holding the fields of the matching `transcript.py` type. |
 | `chat_session_events` | Replayable session events except optimizer progress. Adjacent text fragments of one run share a row covering `event_id` through `last_event_id`. |
 | `chat_run_stops` | Named Stop requests, including messages that have not arrived yet. |
 | `chat_files` | Session file bytes as `bytea`, with a stable archive ID, kind, source run/job/upload ID, filename, media type, creation time, and removal time. Detached versions remain until session expiry. Active upload metadata and retry fingerprints stay in the session state. |
@@ -947,8 +1102,9 @@ Each assistant turn starts with a `model_input` event. Its `system` field
 contains the system message. Its `messages` field lists the request messages
 added since the last assistant reply, in order. Each entry has a `kind` of
 `app`, `question`, `optimizer`, or `status`. An `app` entry also has its
-absolute history `index`, so a client shows it once when a failed turn is
-retried. App events and status messages also have a short `title`, such as
+absolute transcript entry `index`, so a client shows it once when a failed turn
+is retried. Compaction and retention preserve this index. App events and status
+messages also have a short `title`, such as
 `Files Uploaded` or `Optimizer Result`. The chat shows it after the role
 label and keeps the exact text collapsed. A foreground turn sends this event first in the message stream. A
 background turn publishes it on the session event stream after `turn_start`.
@@ -1038,7 +1194,13 @@ See the [capability discovery instructions](reproduce/core.md#attachment-capabil
 
 ## Validate
 
-Follow the [AI test instructions](reproduce/core.md#ai-tests).
+Follow the [AI test instructions](reproduce/core.md#ai-tests). The opt-in
+`test_ai_compaction_live.sh` command exercises the real session API and E2B with
+four concurrent long-chat scenarios. It forces compaction with a smaller history
+budget and checks constraints, complete tool exchanges, model switching, Stop,
+reconnect replay, and fresh sandbox filesystems. Its traces are synthetic test
+conversations. It does not change the production prompts or connect to a
+production database.
 
 ## Mapping to Pi
 
@@ -1055,12 +1217,12 @@ Each row lists shared behavior first, then what only one side has.
 | `Agent` / `AgentState`<br/>Pi: [Agent][pi-agent], [AgentState][pi-state] | Streaming flag, pending tool call IDs, in-run messages, the steering queue, and refusal of a second concurrent prompt. | Context arrives per run, and the session commits its retained transcript after cleanup. `AgentRun`, not `Agent`, owns cancellation, so Stop also reaches queued runs and cannot interrupt cleanup. | State also holds the model, thinking level, tools, persistent transcript, and partial streaming message. The agent becomes idle only after awaited `agent_end` subscribers finish. |
 | `agent_loop`<br/>Pi: [agentLoop][pi-loop] | Repeats model responses and tool batches. Steering enters before each follow-up request, or continues the run when it arrives as the answer ends. Tool calls from a response cut off by the output limit fail without running. | A batch runs concurrently only when every call is read-only. Round and call budgets end with an answer-only request, and a refused truncated batch spends a round. Each request passes through one context projection. | Parallel execution by default. The whole batch runs sequentially if configured globally or required by any tool in it. Supports before and after tool-call hooks and context transform hooks. Tool-result early termination requires every finalized tool result in the batch to set `terminate: true`. |
 | `AgentTool` / `AgentToolOutcome`<br/>Pi: [AgentTool / AgentToolResult][pi-tools] | A model-facing definition bound to execution. Results carry model content, UI details, and explicit failure status. Start and end events correlate by tool call ID. | Tools receive raw JSON arguments, return text, an optional image, and an `ok` flag, and declare whether they are read-only. | Schema-validated parameters, the call ID, an abort signal, and partial-update callbacks. Tools throw or return `isError: true` on failure. `structuredContent` follows the tool's `outputSchema` for programmatic callers and is excluded from model input. |
-| `AgentSession` / `RunOutput` / `AgentMessage`<br/>Pi: [AgentSession][pi-session], [AgentMessage][pi-messages] | An application layer over `Agent`. Runs produce `UserMessage`, `AssistantMessage`, and `ToolResultMessage` records shaped like Pi's messages, with Pi's stop reasons, persisted in order. Later model input excludes aborted answer content. | Snapshot-versioned commits after sandbox cleanup, schedule revisions, and applied schedule entries. The in-memory session keeps prompts, assistant text and stop reasons, and schedule changes. A stopped run retains its prompt and aborted partial answer. Later model context replaces that answer with an interruption note. With PostgreSQL, a session continues after a restart or unload, but it cannot branch. | An append-only, branchable JSONL session with model and label entries, automatic compaction into summary entries, automatic retry of retryable errors, and extensions. Aborted and error assistant messages stay in session history, but [provider message transformation][pi-replay] omits them from later model replay. [Context-edit entries][pi-recovery] can omit recovery attempts and their tool results from subsequent context while retaining the raw history. |
+| `AgentSession` / `RunOutput` / `AgentMessage`<br/>Pi: [AgentSession][pi-session], [AgentMessage][pi-messages] | An application layer over `Agent`. Runs produce `UserMessage`, `AssistantMessage`, and `ToolResultMessage` records shaped like Pi's messages, with Pi's stop reasons, persisted in order. Later model input excludes aborted answer content. | Snapshot-versioned commits after sandbox cleanup, schedule revisions, and applied schedule entries. The in-memory session keeps prompts, native reasoning metadata, complete tool exchanges, assistant text and stop reasons, and schedule changes. A stopped run retains its prompt and aborted partial answer. Later model context replaces that answer with an interruption note. With PostgreSQL, a session continues after a restart or unload, but it cannot branch. | An append-only, branchable JSONL session with model and label entries, automatic compaction into summary entries, automatic retry of retryable errors, and extensions. Aborted and error assistant messages stay in session history, but [provider message transformation][pi-replay] omits them from later model replay. [Context-edit entries][pi-recovery] can omit recovery attempts and their tool results from subsequent context while retaining the raw history. |
 | `SessionRuns` / `AgentRun` / `RunSnapshot`<br/>Pi: [ActiveRun and run lifecycle][pi-agent] | One active run with a cancellation handle, finishing before the next run starts. | Per-session FIFO execution, queued background runs, Stop that also cancels queued runs, and a versioned commit capability. A Stop can name a client message. It cancels only that message's run and also stops the message if it arrives later. Service shutdown leaves runs unfinished, so the restarted service reports them as interrupted. | The agent's own `AbortController`, passed to tools, with a single-run guard instead of a queue. |
 | Steering queue<br/>Pi: [steer / followUp][pi-agent] | Queued input reaches the model at a boundary without starting a new run. | One queue serves both roles. It drains every message, deduplicates retried POSTs by ID, and closes atomically with the answer. Optimizer wake-ups enter `SessionRuns` as fresh runs. | Separate steering and follow-up queues, each draining one message at a time or all at once. |
 | `WorkspaceTools` / `_LazySandboxTurn`<br/>Pi: [read, bash, edit, write][pi-coding-tools] | Pi's default `read`, `bash`, `edit`, and `write` contracts and output behavior, ported under `ai/pi`. | A lazy, disposable E2B VM per run with hydration, pause and resume, YAML validation after each change, and teardown before commit. A shorter `read` description, fixed image limits with a source-pixel bound, and server command timeouts. | Tools act on the user's local working directory, which persists across runs. Image resize options can follow the active model's limits. Built-in `powershell`, `find`, `grep`, and `ls` tools are available beyond the default active four. Nested calls through [`ctx.executeTool()`][pi-nested-tools] share validation and hooks and carry parent tool call IDs. |
 | `AgentSessionEvent` / `SessionEventStream`<br/>Pi: [AgentEvent][pi-events], [AgentSessionEvent][pi-session-events] | Typed text, reasoning, and tool events with call IDs and exactly one terminal outcome per run. | `AgentSession.subscribe` exposes one typed public event per publication to in-process listeners. `SessionEventStream` retains all run and job events for HTTP replay with `Last-Event-ID`. With PostgreSQL, replay continues after a restart. Disconnect detaches the reader. Explicit Stop cancels runs. | In-process subscribers receive agent, turn, message, and tool lifecycle events, including partial tool updates. Low-level `agent_end` marks the end of one loop run. `AgentSession` emits [`agent_settled`][pi-settled] after retries, compaction recovery, queued continuation work, and session boundary processing finish. |
-| `SessionRecovery` / `ChatHistory`<br/>Pi: [SessionManager][pi-session-manager], [durable storage][pi-durable] | Typed entries saved in session order, each message when it ends. A later process rebuilds the conversation from the saved entries. Client request IDs make a repeated submission return its existing run. | Optional PostgreSQL storage. Linear entries also hold app events. A run's messages join the conversation only when the run commits, so restore retains safe context from failed or interrupted runs and skips stale runs. The state holds the schedule and a count of entries that retention trimmed instead of compaction entries. Published events and named Stop requests are saved too, so a restart keeps the output that a browser saw. | Entries form a tree with branches, compaction summaries, model changes, and labels. The separate durable package stores generic tasks with explicit status. |
+| `SessionRecovery` / `ChatHistory`<br/>Pi: [SessionManager][pi-session-manager], [durable storage][pi-durable] | Typed entries saved in session order, each message when it ends. A later process rebuilds the conversation from the saved entries. Client request IDs make a repeated submission return its existing run. | Optional PostgreSQL storage. Linear entries also hold app events. A run's messages join the conversation only when the run commits, so restore retains safe context from failed or interrupted runs and skips stale runs. The state holds the schedule and a count of entries that retention trimmed. Ordered compaction entries hold summaries and the number of recent messages to retain. Published events and named Stop requests are saved too, so a restart keeps the output that a browser saw. | Entries form a tree with branches, compaction summaries, model changes, and labels. The separate durable package stores generic tasks with explicit status. |
 | `SessionOptimizer`<br/>Pi: no first-class built-in counterpart | Exposed to the model as one `AgentTool`. | Independent remote jobs, progress, anonymization, late-submission cleanup, and fresh review runs. | Similar behavior could be implemented through extensions. |
 | API routes / `SessionStore` / browser lifecycle<br/>Pi: nearest is [AgentSession][pi-session] | A session boundary that owns conversation lifetime. | HTTP authentication, cookie ownership, expiry, session text limits, shared SSE framing and recovery for GET and compatibility POST readers, a browser-owned schedule, and automatic application of validated changes. With PostgreSQL, a request restores a saved session for its owner cookie, and a full store unloads the least recently used idle session. | Local single-user sessions stored on disk that can be resumed and branched. |
 
@@ -1073,10 +1235,8 @@ The investigated alternatives below were not adopted, except where noted:
 - **Separate steering and follow-up queues.** The browser offers one queue
   action. Optimizer results start a fresh run because they can arrive after the
   run ends and must see the current schedule.
-- **Summary compaction.** The model receives the current schedule
-  summary on every run, so older exchanges carry less state than a coding
-  transcript. Trimming the oldest complete exchanges avoids an extra provider
-  call with its cost, latency, and failure mode.
+- **Summary compaction.** The agent now summarizes older context and retains recent
+  tool exchanges. Hard session retention limits still bound service memory.
 - **Central schema validation of tool arguments.** The ported Pi tools already
   validate with Pi's wording and accept the compatibility shapes Pi's
   `prepareArguments` accepts, such as a legacy single edit. A generic schema
@@ -1105,3 +1265,11 @@ The investigated alternatives below were not adopted, except where noted:
 [pi-recovery]: https://github.com/earendil-works/pi/blob/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/coding-agent/src/core/agent-session.ts#L1208
 [pi-nested-tools]: https://github.com/earendil-works/pi/blob/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/coding-agent/src/core/agent-session.ts#L702
 [pi-coding-tools]: https://github.com/earendil-works/pi/tree/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/coding-agent/src/core/tools
+
+[pi-completions]: https://github.com/earendil-works/pi/blob/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/ai/src/api/openai-completions.ts
+[pi-provider-retry]: https://github.com/earendil-works/pi/blob/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/ai/src/utils/provider-retry.ts
+[pi-retry-errors]: https://github.com/earendil-works/pi/blob/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/ai/src/utils/retry.ts
+
+[pi-compaction]: https://github.com/earendil-works/pi/blob/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/coding-agent/src/core/compaction/compaction.ts
+
+[litellm-session-affinity]: https://github.com/j3soon/local-llm-notes/blob/main/examples/basic-secure-api/cloudflare/litellm/README.md#qwen-load-balancing

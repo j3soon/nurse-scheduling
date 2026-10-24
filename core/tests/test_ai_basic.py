@@ -149,7 +149,7 @@ def configured_sandbox_environment(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class FakeProvider:
-    """Record prompts and return deterministic streamed responses."""
+    """Record chat prompts and reject summaries to exercise retention fallback."""
 
     def __init__(self, responses: list[list[str | Exception] | Exception] | None = None) -> None:
         self.responses = responses or [["Hello", " from AI"]]
@@ -157,6 +157,8 @@ class FakeProvider:
         self.offered_tools: object = None
 
     async def stream_events(self, messages: Sequence[ChatMessage], tools=None) -> AsyncIterator[TextDelta]:
+        if messages and str(messages[0].get("content", "")).startswith("You are a context summarization assistant."):
+            raise ProviderError("Summary unavailable in this test provider")
         self.calls.append(list(messages))
         self.offered_tools = tools
         response = self.responses.pop(0)
@@ -740,7 +742,11 @@ def test_client_disconnect_leaves_the_run_active_until_explicit_stop(wait_stage:
         assert backend.close_calls == 1
     assert not session_active
     # The interrupted prompt stays for a follow-up. Its sandbox work does not.
-    responses = [AssistantMessage("", "tool_use")] if wait_stage == "command" else []
+    responses = (
+        [AssistantMessage("", "tool_use", tool_calls=(ToolCall("call-1", BASH_TOOL, '{"command":"sleep 30"}'),))]
+        if wait_stage == "command"
+        else []
+    )
     assert history == [
         UserMessage("Wait for me"),
         *[replace(response, stop_reason="aborted") for response in responses],
@@ -790,11 +796,12 @@ def test_stop_endpoint_cancels_an_active_assistant_turn() -> None:
 
     assert status_code == 202
     assert not session_active
+    assert any(name == "context_usage" for name, _ in events)
+    events = [entry for entry in events if entry[0] != "context_usage"]
     # Stop is a typed terminal outcome, not synthetic answer text.
     assert events[0][0] == "run_start"
-    assert events[1][0] == "context_usage"
-    assert events[2] == ("model_selection", {"model": "test-model", "reasoning": "default", "run_id": ANY})
-    assert events[3] == ("delta", {"text": "Partial answer.", "run_id": events[-1][1]["run_id"]})
+    assert events[1] == ("model_selection", {"model": "test-model", "reasoning": "default", "run_id": ANY})
+    assert events[2] == ("delta", {"text": "Partial answer.", "run_id": events[-1][1]["run_id"]})
     assert events[-1][0] == "stopped"
     assert [name for name, _ in events].count("stopped") == 1
 
@@ -1053,13 +1060,15 @@ def test_health_and_streamed_schedule_question() -> None:
     events = parse_sse(response.text)
     run_id = events[-1][1]["run_id"]
     assert isinstance(run_id, str) and run_id
-    assert events == [
+    assert [entry for entry in events if entry[0] != "context_usage"] == [
         ("run_start", {"trigger": "user", "run_id": run_id}),
         ("model_selection", {"model": "test-model", "reasoning": "default", "run_id": run_id}),
         ("delta", {"text": "Hello from AI", "run_id": run_id}),
-        ("context_usage", {"used_chars": 97, "max_chars": 200_000, "run_id": run_id}),
         ("done", {"run_id": run_id}),
     ]
+    usage = [data for name, data in events if name == "context_usage"][-1]
+    assert usage["used_chars"] == 97 and usage["max_chars"] == 200_000
+    assert usage["used_tokens"] > 0
     prompt = provider.calls[0]
     assert prompt[-2] == {"role": "user", "content": "Who works Monday?"}
     assert "Current date and time:" in prompt[-1]["content"]
@@ -1473,9 +1482,8 @@ def test_provider_failure_retains_safe_context_for_retry() -> None:
         json={"message": "Retry"},
     )
 
-    assert parse_sse(failed.text) == [
+    assert [entry for entry in parse_sse(failed.text) if entry[0] != "context_usage"] == [
         ("run_start", {"trigger": "user", "run_id": ANY}),
-        ("context_usage", {"used_chars": 0, "max_chars": 200_000, "run_id": ANY}),
         ("model_selection", {"model": "test-model", "reasoning": "default", "run_id": ANY}),
         ("delta", {"text": "Provisional answer.", "run_id": ANY}),
         ("error", {"message": PROVIDER_ERROR, "run_id": ANY}),
@@ -1523,9 +1531,8 @@ def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming(monke
 
     response = client.post(f"/sessions/{session_id}/messages", json={"message": "Edit it"})
 
-    assert parse_sse(response.text) == [
+    assert [entry for entry in parse_sse(response.text) if entry[0] != "context_usage"] == [
         ("run_start", {"trigger": "user", "run_id": ANY}),
-        ("context_usage", {"used_chars": 0, "max_chars": 200_000, "run_id": ANY}),
         ("model_selection", {"model": "test-model", "reasoning": "default", "run_id": ANY}),
         ("delta", {"text": "Obsolete answer.", "run_id": ANY}),
         ("stale", {"message": STALE_RUN_ERROR, "run_id": ANY}),
@@ -1554,9 +1561,8 @@ def test_sandbox_timeout_does_not_expose_exception_details(exception, message) -
 
     response = client.post(f"/sessions/{session_id}/messages", json={"message": "Wait"})
 
-    assert parse_sse(response.text) == [
+    assert [entry for entry in parse_sse(response.text) if entry[0] != "context_usage"] == [
         ("run_start", {"trigger": "user", "run_id": ANY}),
-        ("context_usage", {"used_chars": 0, "max_chars": 200_000, "run_id": ANY}),
         ("model_selection", {"model": "test-model", "reasoning": "default", "run_id": ANY}),
         ("error", {"message": message, "run_id": ANY}),
     ]
@@ -1915,7 +1921,9 @@ def test_context_usage_reports_the_latest_request_tokens_and_provider_limit(wind
     client.post(f"/sessions/{session_id}/messages", json={"message": "Question"})
 
     usage = [event for event in published if event["type"] == "context_usage"]
-    assert [payload.get("used_tokens") for payload in usage] == [None, 120, 180, 180]
+    assert usage[0].get("used_tokens") is None
+    assert any(payload.get("used_tokens", 0) > 0 for payload in usage[1:-1])
+    assert usage[-1]["used_tokens"] == 180
     assert usage[-1].get("max_tokens") == window_tokens
     assert usage[-1]["used_chars"] > usage[0]["used_chars"] == 0
 
@@ -1946,8 +1954,8 @@ def test_context_usage_reports_selected_history_before_and_after_each_run() -> N
     second_chars = len(json.dumps(ChatMessage(role="user", content="B" * 50), ensure_ascii=False)) + len(
         json.dumps(ChatMessage(role="assistant", content="Second answer."), ensure_ascii=False)
     )
-    assert first_usage[-1] == {"used_chars": first_chars, "max_chars": 140}
-    assert second_usage[-1] == {"used_chars": second_chars, "max_chars": 140}
+    assert first_usage[-1] == {"used_chars": first_chars, "max_chars": 140, "used_tokens": ANY}
+    assert second_usage[-1] == {"used_chars": second_chars, "max_chars": 140, "used_tokens": ANY}
 
 
 def test_session_budget_keeps_the_latest_exchange_and_reports_all_dropped_messages() -> None:
@@ -2703,9 +2711,8 @@ def test_sandbox_cleanup_failure_does_not_commit_provisional_turn_or_schedule() 
     failed = client.post(f"/sessions/{session_id}/messages", json={"message": "Failed edit"})
 
     events = parse_sse(failed.text)
-    assert [name for name, _ in events] == [
+    assert [name for name, _ in events if name != "context_usage"] == [
         "run_start",
-        "context_usage",
         "model_selection",
         "tool_start",
         "tool",
@@ -2744,8 +2751,13 @@ def test_sandbox_command_failure_still_streams_the_requested_command() -> None:
     failed = client.post(f"/sessions/{session_id}/messages", json={"message": "Run an edit"})
 
     events = parse_sse(failed.text)
-    assert [name for name, _ in events] == ["run_start", "context_usage", "model_selection", "tool_start", "error"]
-    assert events[3][1] == {
+    assert [name for name, _ in events if name != "context_usage"] == [
+        "run_start",
+        "model_selection",
+        "tool_start",
+        "error",
+    ]
+    assert next(data for name, data in events if name == "tool_start") == {
         "run_id": events[-1][1]["run_id"],
         "tool_call_id": "call_0",
         "name": BASH_TOOL,
@@ -2784,16 +2796,15 @@ def test_final_validation_failure_discards_edits_and_retains_safe_context(invali
     failed = client.post(f"/sessions/{session_id}/messages", json={"message": "Invalid edit"})
 
     events = parse_sse(failed.text)
-    assert [name for name, _ in events] == [
+    assert [name for name, _ in events if name != "context_usage"] == [
         "run_start",
-        "context_usage",
         "model_selection",
         "tool_start",
         "tool",
         "delta",
         "error",
     ]
-    assert events[4][1]["ok"] is False
+    assert next(data for name, data in events if name == "tool")["ok"] is False
     assert events[-1][1]["message"].startswith(CANDIDATE_VALIDATION_ERROR)
     assert "schedule.yaml introduces problems" in events[-1][1]["message"]
     assert ("not readable YAML" if invalid_kind == "yaml" else "people.items[0].history") in events[-1][1]["message"]
@@ -3120,7 +3131,6 @@ def test_background_review_delivers_steering_after_tool_before_next_model_reques
 
 def test_provider_failure_ends_the_run_and_a_new_message_continues():
     error = ProviderError.for_user("The AI provider timed out.")
-    error.retryable = True
     notice = "The AI provider timed out. Retrying in 2 s (attempt 2 of 5)."
     provider = ScriptedToolProvider(
         rename_call(), [ProviderRetry(notice), TextDelta("Partial answer. "), error], [TextDelta("Continued.")]

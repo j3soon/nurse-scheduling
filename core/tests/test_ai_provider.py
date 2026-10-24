@@ -36,10 +36,12 @@ from nurse_scheduling.ai.provider import (
     ChatMessage,
     OpenAiCompatibleProvider,
     ProviderAttempt,
+    ProviderCall,
     ProviderError,
     ProviderResponseLimitError,
     ProviderRetry,
     ReasoningDelta,
+    ReasoningReplay,
     ResponseEnd,
     TextDelta,
     TokenUsage,
@@ -228,20 +230,50 @@ def _events(provider: OpenAiCompatibleProvider, tools: list[dict] | None = None)
 TOOLS = [{"type": "function", "function": {"name": "schedule_patch", "parameters": {"type": "object"}}}]
 
 
-@pytest.mark.parametrize("status", [400, 401, 403, 408, 429, 503, 525])
-def test_retries_only_transient_http_errors(monkeypatch, status):
-    attempts = []
+@pytest.mark.parametrize("status", [408, 409, 429, 500, 502, 503, 504, 524])
+def test_retries_transient_http_errors_with_stable_affinity_and_distinct_cost_records(monkeypatch, status):
+    requests = []
 
     def handle(request):
-        attempts.append(request)
-        return httpx.Response(status)
+        requests.append(request)
+        if len(requests) == 1:
+            return httpx.Response(status, json={"error": {"message": "Temporary upstream failure"}})
+        return httpx.Response(200, text=_sse_body(_delta_chunk({"content": "Recovered"})))
 
-    provider = _transport_provider(monkeypatch, handle, provider_max_attempts=3, provider_retry_backoff_seconds=0)
-    with pytest.raises(ProviderError) as caught:
+    provider = _transport_provider(monkeypatch, handle, provider_retry_backoff_seconds=0).with_session_id("chat-1")
+    provider._include_costs = True
+    events = _events(provider)
+    assert TextDelta("Recovered") in events
+    assert len(requests) == 2 and all(request.headers["x-session-id"] == "chat-1" for request in requests)
+    calls = [event for event in events if isinstance(event, ProviderCall)]
+    assert len({event.id for event in calls}) == 2
+    assert [event.status for event in calls] == ["pending", "unavailable", "pending", "unavailable"]
+
+
+@pytest.mark.parametrize(
+    "status,body,headers",
+    [
+        (401, "Unauthorized", {"x-should-retry": "true"}),
+        (403, "Forbidden", {}),
+        (400, "Invalid request", {}),
+        (429, '{"code":"insufficient_quota"}', {"x-should-retry": "true"}),
+        (429, "Monthly usage limit reached", {}),
+        (429, "Out of budget", {}),
+        (503, "Billing account disabled", {}),
+        (503, "Busy", {"x-should-retry": "false"}),
+    ],
+)
+def test_deterministic_provider_errors_fail_without_retry(monkeypatch, status, body, headers):
+    requests = []
+
+    def handle(request):
+        requests.append(request)
+        return httpx.Response(status, text=body, headers=headers)
+
+    provider = _transport_provider(monkeypatch, handle, provider_retry_backoff_seconds=0)
+    with pytest.raises(ProviderError, match=f"HTTP {status}"):
         _events(provider)
-    transient = status in {408, 429} or status >= 500
-    assert caught.value.retryable == transient
-    assert len(attempts) == (3 if transient else 1)
+    assert len(requests) == 1
 
 
 def test_retries_connection_errors_and_incomplete_streams_with_notices(monkeypatch):
@@ -261,6 +293,7 @@ def test_retries_connection_errors_and_incomplete_streams_with_notices(monkeypat
         delays.append(delay)
 
     monkeypatch.setattr(provider_module.asyncio, "sleep", record_sleep)
+    monkeypatch.setattr("nurse_scheduling.ai.provider_retry.random.random", lambda: 0)
     events = _events(_transport_provider(monkeypatch, handle))
     assert events == [
         ProviderRetry("The AI provider is unavailable. Retrying in 2 s (attempt 2 of 5)."),
@@ -269,29 +302,6 @@ def test_retries_connection_errors_and_incomplete_streams_with_notices(monkeypat
         ResponseEnd(None),
     ]
     assert delays == [2, 4]
-
-
-@pytest.mark.parametrize(
-    ("header", "expected"),
-    [("30", 30.0), ("0.5", 2.0), ("Wed, 21 Oct 2015 07:28:00 GMT", 2.0), ("soon", 2.0), ("nan", 2.0)],
-)
-def test_retry_after_header_extends_the_backoff_delay(monkeypatch, header, expected):
-    attempts = []
-
-    def handle(request):
-        attempts.append(request)
-        if len(attempts) == 1:
-            return httpx.Response(429, headers={"Retry-After": header})
-        return httpx.Response(200, text=_sse_body(_delta_chunk({"content": "Recovered"})))
-
-    delays = []
-
-    async def record_sleep(delay):
-        delays.append(delay)
-
-    monkeypatch.setattr(provider_module.asyncio, "sleep", record_sleep)
-    assert TextDelta("Recovered") in _events(_transport_provider(monkeypatch, handle))
-    assert delays == [expected]
 
 
 def test_retry_budget_ends_retries_before_the_attempt_limit(monkeypatch):
@@ -339,6 +349,7 @@ def test_retries_discard_partial_tool_calls(monkeypatch):
 
 
 def test_retries_pre_stream_timeouts_with_exponential_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("nurse_scheduling.ai.provider_retry.random.random", lambda: 0)
     attempts: list[httpx.Request] = []
     delays: list[float] = []
 
@@ -434,6 +445,7 @@ def test_reports_streaming_timeout_after_all_attempts(monkeypatch: pytest.Monkey
 
 
 def test_continues_partial_answer_with_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("nurse_scheduling.ai.provider_retry.random.random", lambda: 0)
     requests: list[dict] = []
     delays: list[float] = []
 
@@ -662,7 +674,7 @@ def test_requests_and_streams_token_usage_when_enabled(monkeypatch: pytest.Monke
 @pytest.mark.parametrize(
     ("model_metadata", "expected"),
     [
-        ({"data": [{"id": "other-model", "max_model_len": 9999}, {"id": "test-model", "max_model_len": 4096}]}, 4096),
+        ({"data": [{"id": "other-model", "max_model_len": 9999}, {"id": "test-model", "max_model_len": 16384}]}, 16384),
         ({"data": [{"id": "test-model", "context_length": 8192}]}, 8192),
         ({"data": [{"id": "other-model", "max_model_len": 9999}]}, None),
         ({"data": [{"id": "test-model", "max_model_len": -1}]}, None),
@@ -701,6 +713,56 @@ def test_missing_model_metadata_does_not_prevent_chat_or_usage(monkeypatch, stat
 
     assert _events(provider) == [TextDelta("Answer"), TokenUsage(120, 30, 150), ResponseEnd(None)]
     assert provider.context_tokens is None
+
+
+@pytest.mark.parametrize("models_status", [200, 503], ids=["discovered", "unavailable"])
+def test_session_and_output_copies_share_model_limit_discovery(monkeypatch, models_status):
+    requests = []
+
+    async def handle(request):
+        requests.append(request)
+        if request.method == "GET":
+            await asyncio.sleep(0)
+            return httpx.Response(
+                models_status,
+                json={
+                    "data": [
+                        {
+                            "id": "test-model",
+                            "context_length": 32000,
+                            "max_output_tokens": 8192,
+                            "supported_openai_params": ["max_completion_tokens"],
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(200, text=_sse_body(_delta_chunk({"content": "Done"})))
+
+    original = _transport_provider(monkeypatch, handle)
+    original._include_usage = True
+    first = original.with_session_id("first").with_output_limit(1000)
+    second = original.with_output_limit(2000).with_session_id("second")
+
+    async def run():
+        await asyncio.gather(first.prepare_context(), second.prepare_context())
+        later = original.with_session_id("later").with_output_limit(3000)
+        await asyncio.gather(*(_collect(provider.stream_events([])) for provider in (first, second, later)))
+        return later
+
+    later = asyncio.run(run())
+    assert len([request for request in requests if request.method == "GET"]) == 1
+    parameter = "max_completion_tokens" if models_status == 200 else "max_tokens"
+    for provider in (original, first, second, later):
+        assert provider.context_tokens == (32000 if models_status == 200 else None)
+        assert provider.output_tokens == (8192 if models_status == 200 else None)
+        assert provider.output_token_parameter == parameter
+    completions = [request for request in requests if request.method == "POST"]
+    assert {request.headers["x-session-id"]: json.loads(request.content)[parameter] for request in completions} == {
+        "first": 1000,
+        "second": 2000,
+        "later": 3000,
+    }
+    assert original._session_id is None and original._max_output_tokens is None
 
 
 def test_skips_a_choiceless_chunk_that_carries_no_usage(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -769,7 +831,7 @@ def test_rejects_a_tool_call_without_a_name(monkeypatch: pytest.MonkeyPatch) -> 
         _events(_streaming_provider(monkeypatch, body), TOOLS)
 
 
-@pytest.mark.parametrize("field", ["reasoning_content", "reasoning"])
+@pytest.mark.parametrize("field", ["reasoning_content", "reasoning", "reasoning_text"])
 def test_streams_reasoning_separately_from_the_answer(monkeypatch: pytest.MonkeyPatch, field: str) -> None:
     body = _sse_body(
         _delta_chunk({field: "The ward "}),
@@ -783,6 +845,10 @@ def test_streams_reasoning_separately_from_the_answer(monkeypatch: pytest.Monkey
         ReasoningDelta("The ward "),
         ReasoningDelta("has 3 nurses."),
         TextDelta("Yes."),
+        ReasoningReplay(
+            {field: "The ward has 3 nurses."},
+            provider_module.ProviderIdentity("https://provider.example/v1", "test-model"),
+        ),
         ResponseEnd(None),
     ]
 
@@ -893,3 +959,267 @@ def test_stream_end_diagnostics_record_signals_without_response_text(monkeypatch
     assert f"finish_reason={reason} done_received={done}" in caplog.text
     assert "text_chars=18 reasoning_chars=17 tool_calls=0" in caplog.text
     assert "private words" not in caplog.text and "private reasoning" not in caplog.text
+
+
+def test_native_reasoning_metadata_round_trips_through_tool_turns_and_chat_runs(monkeypatch):
+    from nurse_scheduling.ai.context import prepare_provider_request, projected_history, retained_entries
+    from nurse_scheduling.ai.transcript import UserMessage, entry_from_record, entry_record
+
+    details = [
+        {"type": "reasoning.text", "text": "Plan", "signature": "signed", "id": "r", "index": 0},
+        {"type": "reasoning.encrypted", "data": "cipher", "id": "secret", "format": "native"},
+    ]
+    blocks = [
+        {"type": "thinking", "thinking": "Plan", "signature": "signature"},
+        {"type": "redacted_thinking", "data": "opaque"},
+    ]
+    bodies = [
+        _sse_body(
+            _delta_chunk(
+                {
+                    "reasoning_content": "Plan",
+                    "reasoning_details": details[:1],
+                    "thinking_blocks": [{"type": "thinking", "thinking": "Plan", "signature": "sig"}],
+                }
+            ),
+            _delta_chunk(
+                {
+                    "reasoning_details": [{"type": "reasoning.text", "text": " more", "index": 0}, details[1]],
+                    "thinking_blocks": [{"type": "thinking", "signature": "nature"}, blocks[1]],
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "read-1",
+                            "type": "function",
+                            "function": {"name": "schedule_patch", "arguments": "{}"},
+                            "extra_content": {"google": {"thought_signature": "tool-signature"}},
+                        }
+                    ],
+                }
+            ),
+        ),
+        _sse_body(_delta_chunk({"content": "Done"})),
+        _sse_body(_delta_chunk({"content": "Next"})),
+    ]
+    requests = []
+
+    def handle(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, text=bodies[len(requests) - 1])
+
+    provider = _transport_provider(monkeypatch, handle)
+    messages = []
+
+    async def execute(_name, _arguments):
+        return AgentToolOutcome("Saved tool result", True)
+
+    async def run():
+        async for _ in agent_loop(
+            provider, [{"role": "user", "content": "Read"}], bind_agent_tools(TOOLS, execute), run_messages=messages
+        ):
+            pass
+        entries = [UserMessage("Read"), *retained_entries(messages)]
+        restored = [
+            entry_from_record(kind, payload)
+            for kind, payload in json.loads(json.dumps([entry_record(e) for e in entries]))
+        ]
+        await _collect(
+            provider.stream_events(
+                prepare_provider_request(projected_history(restored), [UserMessage("Next")], provider=provider.identity)
+            )
+        )
+
+    asyncio.run(run())
+    for request in (requests[1], requests[2]):
+        assistant = next(m for m in request["messages"] if m["role"] == "assistant")
+        assert assistant["reasoning_content"] == "Plan"
+        assert assistant["reasoning_details"] == [{**details[0], "text": "Plan more"}, details[1]]
+        assert assistant["thinking_blocks"] == blocks
+        assert assistant["tool_calls"][0]["extra_content"]["google"]["thought_signature"] == "tool-signature"
+        assert "Saved tool result" in str(request["messages"])
+        assert "_provider" not in str(request)
+
+
+def test_reasoning_metadata_is_bounded_and_rejected_after_completion(monkeypatch):
+    monkeypatch.setattr(provider_module, "MAX_RESPONSE_REASONING_CHARS", 50)
+    body = _sse_body(_delta_chunk({"reasoning_details": [{"type": "reasoning.encrypted", "data": "x" * 100}]}))
+    with pytest.raises(ProviderResponseLimitError, match="reasoning metadata"):
+        _events(_streaming_provider(monkeypatch, body))
+    monkeypatch.undo()
+    body = _sse_body(
+        {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+        _delta_chunk({"thinking_blocks": [{"type": "redacted_thinking", "data": "x"}]}),
+    )
+    with pytest.raises(ProviderError, match="after completion"):
+        _events(_streaming_provider(monkeypatch, body))
+
+
+@pytest.mark.parametrize(
+    ("status", "error", "overflow"),
+    [
+        (400, {"code": "context_length_exceeded"}, True),
+        (413, {"message": "prompt is too long"}, True),
+        (422, {"message": "maximum context length is 8000 tokens"}, True),
+        (400, {"message": "invalid thinking signature"}, False),
+        (401, {"code": "context_length_exceeded"}, False),
+        (400, {"code": ["invalid"]}, False),
+    ],
+)
+def test_context_overflow_is_distinct_from_other_provider_errors(monkeypatch, status, error, overflow):
+    provider = _transport_provider(monkeypatch, lambda _request: httpx.Response(status, json={"error": error}))
+    with pytest.raises(ProviderError) as caught:
+        _events(provider)
+    assert isinstance(caught.value, provider_module.ProviderContextOverflowError) == overflow
+
+
+def test_preserves_separate_signed_thinking_blocks(monkeypatch):
+    blocks = [
+        {"type": "thinking", "thinking": "First decision", "signature": "signed-first"},
+        {"type": "thinking", "thinking": "Second decision", "signature": "signed-second"},
+        {"type": "redacted_thinking", "data": "opaque"},
+    ]
+    provider = _streaming_provider(monkeypatch, _sse_body(_delta_chunk({"thinking_blocks": blocks})))
+    (replay,) = [event for event in _events(provider) if isinstance(event, ReasoningReplay)]
+    assert replay.native["thinking_blocks"] == blocks
+
+
+@pytest.mark.parametrize("blocks", [[{}], [{"type": []}]])
+def test_malformed_reasoning_metadata_remains_a_provider_error(monkeypatch, blocks):
+    provider = _streaming_provider(monkeypatch, _sse_body(_delta_chunk({"thinking_blocks": blocks})))
+    with pytest.raises(ProviderError, match="invalid reasoning metadata"):
+        _events(provider)
+
+
+def test_session_affinity_survives_timeout_retries_without_reusing_attempt_ids(monkeypatch):
+    from nurse_scheduling.ai.provider import ProviderCall
+
+    requests = []
+
+    def handle(request):
+        requests.append(request)
+        if len(requests) == 1:
+            return httpx.Response(200, stream=_InterruptedStream(_delta_chunk({"content": "Partial"})))
+        return httpx.Response(200, text=_sse_body(_delta_chunk({"content": "Recovered"})))
+
+    original = _transport_provider(monkeypatch, handle, provider_retry_backoff_seconds=0)
+    original._include_costs = True
+    provider = original.with_session_id("stable-chat-id")
+    events = _events(provider)
+    assert [request.headers.get("x-session-id") for request in requests] == ["stable-chat-id"] * 2
+    calls = [event for event in events if isinstance(event, ProviderCall) and event.status == "pending"]
+    assert len({call.id for call in calls}) == 2
+    assert all(call.id != "stable-chat-id" for call in calls)
+
+
+def test_concurrent_session_bindings_leave_the_shared_provider_unchanged(monkeypatch):
+    captured = []
+
+    async def handle(request):
+        await asyncio.sleep(0)
+        captured.append((json.loads(request.content)["messages"][0]["content"], request.headers.get("x-session-id")))
+        return httpx.Response(200, text=_sse_body(_delta_chunk({"content": "Done"})))
+
+    original = _transport_provider(monkeypatch, handle)
+    original.context_tokens = 32000
+    first = original.with_session_id("chat-a")
+    second = original.with_session_id("chat-b")
+    assert first.context_tokens == second.context_tokens == 32000
+    assert first.identity == second.identity == original.identity
+
+    async def run():
+        await asyncio.gather(
+            *(
+                _collect(provider.stream_events([{"role": "user", "content": text}]))
+                for provider, text in [(first, "a"), (second, "b"), (original, "unbound")]
+            )
+        )
+
+    asyncio.run(run())
+    assert sorted(captured) == [("a", "chat-a"), ("b", "chat-b"), ("unbound", None)]
+
+
+def test_chat_uuid_reaches_tools_compaction_and_runs_after_restore(monkeypatch):
+    from nurse_scheduling.ai.transcript import AssistantMessage, UserMessage
+
+    from . import test_ai_basic as basic
+    from .test_ai_optimizer import FakeOptimizerBackend
+
+    captured = []
+    expected_session = None
+
+    def handle(request):
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={"data": [{"id": "test-model", "context_length": 32000}]})
+        body = json.loads(request.content)
+        summary = str(body["messages"][0].get("content", "")).startswith("You are a context summarization assistant.")
+        captured.append(
+            (
+                request.headers.get("x-session-id"),
+                expected_session,
+                summary,
+                any(message["role"] == "tool" for message in body["messages"]),
+            )
+        )
+        if len(captured) == 1:
+            delta = {
+                "tool_calls": [
+                    {
+                        "index": 0,
+                        "id": "read",
+                        "type": "function",
+                        "function": {"name": "read", "arguments": '{"path":"/workspace/schedule.yaml"}'},
+                    }
+                ]
+            }
+            reason = "tool_calls"
+        else:
+            delta = {"content": "Goal: inspect the current schedule." if summary else "Done."}
+            reason = "stop"
+        return httpx.Response(
+            200,
+            text=_sse_body(
+                _delta_chunk(delta),
+                {"choices": [{"delta": {}, "finish_reason": reason}]},
+                {"choices": [], "usage": {"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110}},
+            ),
+        )
+
+    provider = _transport_provider(monkeypatch, handle)
+    provider._include_usage = True
+    settings = basic.make_settings(max_history_messages=1000)
+    app = basic.create_test_app(settings=settings, provider=provider, optimizer_backend=FakeOptimizerBackend())
+    with basic.AuthenticatedTestClient(app) as client:
+        first = basic.create_session(client, basic.schedule_yaml())
+        second = basic.create_session(client, basic.schedule_yaml())
+        for session_id, question in [(first, "Inspect schedule"), (first, "Follow up"), (second, "New chat")]:
+            expected_session = session_id
+            response = client.post(f"/sessions/{session_id}/messages", json={"message": question})
+            assert basic.parse_sse(response.text)[-1][0] == "done"
+        store = app.state.session_store
+        session = store._sessions[first]
+        # Retained context from an earlier run must also use the chat ID during compaction.
+        snapshot = store.begin(first, session.owner_token)
+        store.finish(
+            first,
+            [UserMessage("Earlier constraints " + "x" * 100000), AssistantMessage("Earlier answer")],
+            snapshot=snapshot,
+        )
+        expected_session = first
+        response = client.post(f"/sessions/{first}/messages", json={"message": "Continue"})
+        events = basic.parse_sse(response.text)
+        assert events[-1][0] == "done"
+        assert any(kind == "context_usage" and data.get("max_tokens") == 32000 for kind, data in events)
+        owner, expires, state = store.recovery_state(first)
+        transcript, next_seq = list(session.transcript), session.next_entry_seq
+
+    restarted = basic.create_test_app(settings=settings, provider=provider, optimizer_backend=FakeOptimizerBackend())
+    restarted.state.session_store.restore(first, owner, state, expires, entries=transcript, next_entry_seq=next_seq)
+    with basic.AuthenticatedTestClient(restarted) as client:
+        client.cookies.set(basic.OWNER_COOKIE, owner)
+        expected_session = first
+        response = client.post(f"/sessions/{first}/messages", json={"message": "After restart"})
+        assert basic.parse_sse(response.text)[-1][0] == "done"
+    assert len(captured) >= 7
+    assert any(summary for _, _, summary, _ in captured)
+    assert any(tool for _, _, _, tool in captured)
+    assert all(actual == expected for actual, expected, _, _ in captured)

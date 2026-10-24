@@ -25,6 +25,9 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from .agent_types import (
+    AgentCompactionEnd,
+    AgentCompactionStart,
+    AgentContextUsage,
     AgentEvent,
     AgentMessageEnd,
     AgentProposal,
@@ -56,6 +59,8 @@ class RunOutput:
     usage: TokenUsage | None = None
     # The latest provider call holds the whole request, so it shows how full the context window is.
     last_call: TokenUsage | None = None
+    context_estimate: int | None = None
+    compaction: AgentCompactionStart | None = None
     calls: dict[str, ProviderCall] = field(default_factory=dict)
     costs: CostTotals = field(default_factory=CostTotals)
 
@@ -80,7 +85,29 @@ class RunOutput:
             return {"type": "truncated"} if event.message.stop_reason == "length" else None
         if isinstance(event, ProviderRetry):
             return {"type": "provider_retry", "message": event.message}
+        if isinstance(event, AgentContextUsage):
+            self.context_estimate = event.used_tokens
+            return None
+        if isinstance(event, AgentCompactionStart):
+            self.compaction = event
+            return {"type": "compaction_start", "reason": event.reason, "tokens_before": event.tokens_before}
+        if isinstance(event, AgentCompactionEnd):
+            self.compaction = None
+            if event.success:
+                self.last_call = None
+                self.context_estimate = event.estimated_tokens_after
+            result = {
+                "type": "compaction_end",
+                "reason": event.reason,
+                "success": event.success,
+                "aborted": event.aborted,
+                "tokens_before": event.tokens_before,
+            }
+            if event.estimated_tokens_after is not None:
+                result["estimated_tokens_after"] = event.estimated_tokens_after
+            return result
         if isinstance(event, TokenUsage):
+            self.context_estimate = None
             self.usage = event if self.usage is None else self.usage + event
             self.last_call = event
         elif isinstance(event, AgentToolStart):
@@ -122,6 +149,7 @@ class RunEvents:
         self.run_id = run_id
         self._publish = publish
         self._pending: TextEvent | None = None
+        self._pending_usage: AgentSessionRunEvent | None = None
         self._timer: asyncio.TimerHandle | None = None
         self._terminal: AgentSessionTerminalEvent | None = None
 
@@ -132,6 +160,9 @@ class RunEvents:
         if self._pending is not None:
             self._publish(self._pending)
             self._pending = None
+        if self._pending_usage is not None:
+            self._publish(self._pending_usage)
+            self._pending_usage = None
 
     def emit(self, event: AgentSessionRunEvent) -> SessionEvent | None:
         # Every replayable fragment identifies its run, even after run_start expires.
@@ -154,6 +185,9 @@ class RunEvents:
                 self.flush()
             elif self._timer is None:
                 self._timer = asyncio.get_running_loop().call_later(0.025, self.flush)
+        elif event["type"] == "context_usage" and self._pending is not None:
+            # Publish the latest estimate with the same batch as its streamed text.
+            self._pending_usage = event
         else:
             self.flush()
             return self._publish(event)

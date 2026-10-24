@@ -28,10 +28,9 @@ import re
 import time
 from collections.abc import AsyncIterator, Sequence
 from contextlib import aclosing
+from copy import copy
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
-from email.utils import parsedate_to_datetime
 from typing import Any, Literal, Protocol, TypedDict
 from uuid import uuid4
 
@@ -39,7 +38,9 @@ import httpx
 from typing_extensions import Required
 
 from .config import AiSettings
-from .transcript import ToolCall, ToolResultImage
+from .context_tokens import estimate_context_tokens, response_token_limit
+from .provider_retry import MAX_RETRY_DELAY_SECONDS, is_retryable_status, retry_delay
+from .transcript import ProviderIdentity, ToolCall, ToolResultImage
 
 logger = logging.getLogger("nurse_scheduling.ai.provider")
 BEARER_TOKEN_PATTERN = re.compile(r"(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]+")
@@ -92,6 +93,18 @@ class ChatMessage(TypedDict, total=False):
     content: ChatContent | None
     tool_calls: list[dict[str, Any]]
     tool_call_id: str
+    reasoning_content: str
+    reasoning: str
+    reasoning_text: str
+    reasoning_details: list[dict[str, Any]]
+    thinking_blocks: list[dict[str, Any]]
+    provider_specific_fields: dict[str, Any]
+    _provider: dict[str, Any]
+    _source_index: int
+    _usage: dict[str, int | None]
+    _current_status: bool
+    _compaction_summary: bool
+    _tool_image: bool
 
 
 @dataclass(frozen=True)
@@ -107,10 +120,18 @@ class ReasoningDelta:
 
     Reasoning arrives in its own field, so it is never mixed into the answer and
     cannot leak into the assistant message. It is shown to the user on request
-    and is never sent back to the provider.
+    separately from native metadata used for provider replay.
     """
 
     text: str
+
+
+@dataclass(frozen=True)
+class ReasoningReplay:
+    """Native reasoning from one successfully completed HTTP attempt."""
+
+    native: dict[str, Any]
+    provider: ProviderIdentity
 
 
 @dataclass(frozen=True)
@@ -194,6 +215,7 @@ class ProviderResponseMetadata:
 ChatStreamEvent = (
     TextDelta
     | ReasoningDelta
+    | ReasoningReplay
     | ToolCallRequest
     | ResponseEnd
     | TokenUsage
@@ -230,7 +252,12 @@ def assistant_tool_call_message(calls: Sequence[ToolCall], content: str | None =
         role="assistant",
         content=content or None,
         tool_calls=[
-            {"id": call.id, "type": "function", "function": {"name": call.name, "arguments": call.arguments}}
+            {
+                **call.native,
+                "id": call.id,
+                "type": "function",
+                "function": {"name": call.name, "arguments": call.arguments},
+            }
             for call in calls
         ],
     )
@@ -245,6 +272,7 @@ def tool_result_image_message(call_id: str, image: ToolResultImage) -> ChatMessa
     """Pass a tool image through a user message after all tool replies."""
     return ChatMessage(
         role="user",
+        _tool_image=True,
         content=[
             {"type": "text", "text": f"Image returned by tool call {call_id}."},
             {
@@ -258,55 +286,30 @@ def tool_result_image_message(call_id: str, image: ToolResultImage) -> ChatMessa
 class ProviderError(RuntimeError):
     """A provider or protocol failure reported to the AI service."""
 
-    def __init__(
-        self,
-        message: str,
-        *,
-        user_message: str | None = None,
-        retryable: bool = False,
-        retry_after: float | None = None,
-    ) -> None:
+    def __init__(self, message: str, *, user_message: str | None = None) -> None:
         super().__init__(message)
         self.user_message = user_message
-        self.retryable = retryable
-        self.retry_after = retry_after
 
     @classmethod
-    def for_user(cls, message: str, *, retryable: bool = False, retry_after: float | None = None) -> "ProviderError":
+    def for_user(cls, message: str) -> "ProviderError":
         """Mark a known explanation safe for the chat, without exposing SDK errors."""
-        return cls(message, user_message=message, retryable=retryable, retry_after=retry_after)
+        return cls(message, user_message=message)
 
 
-def _retry_after_seconds(value: str | None) -> float | None:
-    """Read a Retry-After header given as seconds or as an HTTP date."""
-    if not value:
-        return None
-    try:
-        seconds = float(value)
-    except ValueError:
-        try:
-            when = parsedate_to_datetime(value)
-        except (TypeError, ValueError):
-            return None
-        if when.tzinfo is None:
-            return None
-        seconds = (when - datetime.now(UTC)).total_seconds()
-    return max(0.0, seconds) if math.isfinite(seconds) else None
-
-
-def _continuation_messages(messages: Sequence[ChatMessage], answer: Sequence[str]) -> list[ChatMessage]:
-    text = "".join(answer)
-    return [
-        *messages,
-        ChatMessage(role="assistant", content=text),
-        ChatMessage(
-            role="user", content=f"[App event] The response was interrupted after {len(text)} text characters."
-        ),
-    ]
+class ProviderContextOverflowError(ProviderError):
+    """The provider explicitly rejected the request for exceeding its context window."""
 
 
 class ProviderResponseLimitError(ProviderError):
     """The model response exceeded an application limit."""
+
+
+class _RetryableProviderError(ProviderError):
+    """A transient HTTP rejection or interrupted stream with optional retry headers."""
+
+    def __init__(self, message: str, *, user_message: str | None = None, headers: httpx.Headers | None = None):
+        super().__init__(message, user_message=user_message)
+        self.headers = headers or httpx.Headers()
 
 
 def _redact_provider_error(response_body: str, provider_api_key: str) -> str:
@@ -342,12 +345,88 @@ class OpenAiCompatibleProvider:
         self._include_attempts = include_attempts
         self._parameters = parameters or {}
         self._include_costs = include_costs
+        self._session_id: str | None = None
+        self.identity = ProviderIdentity(settings.provider_base_url.rstrip("/"), settings.provider_model)
         self.context_tokens: int | None = None
+        self.output_tokens: int | None = None
+        self.output_token_parameter = "max_tokens"
+        self._max_output_tokens: int | None = None
+        self._context_used_tokens: int | None = None
         self._context_tokens_loaded = False
         self._context_tokens_lock = asyncio.Lock()
+        self._limits_owner = self
+
+    def with_session_id(self, session_id: str) -> "OpenAiCompatibleProvider":
+        """Bind a stable conversation ID without changing a shared provider."""
+        provider = copy(self)
+        provider._session_id = session_id
+        return provider
+
+    def with_output_limit(
+        self, max_tokens: int | None, *, context_used_tokens: int | None = None
+    ) -> "OpenAiCompatibleProvider":
+        """Bind request-specific limits without changing model or session settings."""
+        provider = copy(self)
+        provider._max_output_tokens = max_tokens
+        provider._context_used_tokens = context_used_tokens
+        return provider
+
+    def _apply_output_limit(self, payload: dict[str, Any], used_tokens: int) -> None:
+        configured = next(
+            (
+                payload[key]
+                for key in ("max_completion_tokens", "max_tokens")
+                if type(payload.get(key)) is int and payload[key] > 0
+            ),
+            None,
+        )
+        requested = (
+            min(configured, self._max_output_tokens)
+            if configured and self._max_output_tokens
+            else configured or self._max_output_tokens
+        )
+        limit = response_token_limit(
+            used_tokens,
+            context_tokens=self.context_tokens,
+            output_tokens=self.output_tokens,
+            requested_tokens=requested,
+        )
+        if limit is None:
+            return
+        if limit < 1:
+            raise ProviderContextOverflowError.for_user("The AI request leaves no room for a response.")
+        parameter = "max_completion_tokens" if "max_completion_tokens" in payload else self.output_token_parameter
+        payload.pop("max_tokens", None)
+        payload.pop("max_completion_tokens", None)
+        payload[parameter] = limit
+        thinking = payload.get("thinking")
+        if (
+            isinstance(thinking, dict)
+            and thinking.get("type") == "enabled"
+            and type(thinking.get("budget_tokens")) is int
+        ):
+            # Numeric thinking budgets share the completion ceiling. Preserve room
+            # for a visible answer, as Pi's clampThinkingBudgetToAnswerRoom does.
+            available = limit - 1024
+            if available < 1024:
+                output_limit = response_token_limit(
+                    0, context_tokens=None, output_tokens=self.output_tokens, requested_tokens=requested
+                )
+                if output_limit is not None and output_limit < 2048:
+                    raise ProviderError.for_user("The AI output token limit has no room for reasoning and an answer.")
+                raise ProviderContextOverflowError.for_user("The AI request has no room for reasoning and an answer.")
+            payload["thinking"] = {**thinking, "budget_tokens": min(thinking["budget_tokens"], available)}
 
     async def _load_context_tokens(self) -> None:
         """Read and cache the configured model's context limit when metadata is available."""
+        owner = self._limits_owner
+        if owner is not self:
+            await owner._load_context_tokens()
+            self.context_tokens = owner.context_tokens
+            self.output_tokens = owner.output_tokens
+            self.output_token_parameter = owner.output_token_parameter
+            self._context_tokens_loaded = owner._context_tokens_loaded
+            return
         async with self._context_tokens_lock:
             if self._context_tokens_loaded:
                 return
@@ -368,11 +447,25 @@ class OpenAiCompatibleProvider:
             for model in models:
                 if not isinstance(model, dict) or model.get("id") != self._settings.provider_model:
                     continue
-                for field in ("max_model_len", "context_length"):
+                output = model.get("max_output_tokens")
+                if type(output) is int and output > 0:
+                    self.output_tokens = output
+                supported = model.get("supported_openai_params")
+                if (
+                    isinstance(supported, list)
+                    and "max_completion_tokens" in supported
+                    and "max_tokens" not in supported
+                ):
+                    self.output_token_parameter = "max_completion_tokens"
+                for field in ("max_input_tokens", "max_model_len", "context_length", "max_tokens"):
                     limit = model.get(field)
                     if type(limit) is int and limit > 0:
                         self.context_tokens = limit
                         return
+
+    async def prepare_context(self) -> None:
+        """Discover model limits before choosing whether to compact the next request."""
+        await self._load_context_tokens()
 
     async def stream_chat(self, messages: Sequence[ChatMessage]) -> AsyncIterator[str]:
         """Translate provider SSE chunks into plain text deltas."""
@@ -385,11 +478,13 @@ class OpenAiCompatibleProvider:
         messages: Sequence[ChatMessage],
         tools: Sequence[dict[str, Any]] | None = None,
     ) -> AsyncIterator[ChatStreamEvent]:
-        """Translate SSE chunks and retry temporary failures with exponential backoff."""
+        """Translate SSE chunks and retry bounded transient provider failures."""
         if self._include_usage:
             await self._load_context_tokens()
         timeout = httpx.Timeout(self._settings.provider_timeout_seconds, connect=10.0)
         headers = {"Authorization": f"Bearer {self._settings.provider_api_key}"}
+        if self._session_id is not None:
+            headers["x-session-id"] = self._session_id
         payload: dict[str, Any] = {
             **self._parameters,
             "model": self._settings.provider_model,
@@ -402,6 +497,7 @@ class OpenAiCompatibleProvider:
             payload["tools"] = list(tools)
             payload["tool_choice"] = "auto"
 
+        original_estimate = estimate_context_tokens(messages, tools or [])
         stream_started = False
         answer: list[str] = []
         text_chars = 0
@@ -409,6 +505,9 @@ class OpenAiCompatibleProvider:
         max_attempts = self._settings.provider_max_attempts
         retry_deadline: float | None = None
         for attempt in range(1, max_attempts + 1):
+            estimate = estimate_context_tokens(payload["messages"], tools or [])
+            used_tokens = max(estimate, (self._context_used_tokens or 0) + max(0, estimate - original_estimate))
+            self._apply_output_limit(payload, used_tokens)
             call = ProviderCall(str(uuid4()), self._settings.provider_model)
             if self._include_costs:
                 yield call
@@ -416,7 +515,7 @@ class OpenAiCompatibleProvider:
                 yield ProviderAttempt(attempt)
             try:
                 # Keep tool calls private until the HTTP attempt also closes cleanly.
-                completed: list[ToolCallRequest | ResponseEnd] = []
+                completed: list[ToolCallRequest | ResponseEnd | ReasoningReplay] = []
                 async with aclosing(self._stream_attempt(timeout, headers, payload)) as events:
                     async for event in events:
                         if isinstance(event, ProviderResponseMetadata):
@@ -432,7 +531,7 @@ class OpenAiCompatibleProvider:
                             continue
                         if isinstance(event, TokenUsage):
                             call = replace(call, usage=event)
-                        if isinstance(event, (ToolCallRequest, ResponseEnd)):
+                        if isinstance(event, (ToolCallRequest, ResponseEnd, ReasoningReplay)):
                             completed.append(event)
                             continue
                         stream_started = True
@@ -455,45 +554,68 @@ class OpenAiCompatibleProvider:
                 if self._include_costs:
                     yield replace(call, status="reported" if call.cost_usd is not None else "unavailable")
                 return
-            except ProviderError as exc:
-                error, cause = exc, exc.__cause__
-            except httpx.TimeoutException as exc:
-                message = (
-                    "The AI provider timed out while streaming the response."
-                    if stream_started
-                    else "The AI provider timed out before starting the response."
+            except (ProviderError, httpx.HTTPError) as exc:
+                if self._include_costs:
+                    yield replace(call, status="reported" if call.cost_usd is not None else "unavailable")
+                if isinstance(exc, ProviderError) and not isinstance(exc, _RetryableProviderError):
+                    raise
+                if isinstance(exc, _RetryableProviderError):
+                    failure = exc
+                    retry_headers = exc.headers
+                else:
+                    message = "The AI provider is unavailable."
+                    if isinstance(exc, httpx.TimeoutException):
+                        message = (
+                            "The AI provider timed out while streaming the response."
+                            if stream_started
+                            else "The AI provider timed out before starting the response."
+                        )
+                    failure = ProviderError.for_user(message)
+                    if not isinstance(exc, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)):
+                        raise failure from exc
+                    retry_headers = httpx.Headers()
+                now = time.monotonic()
+                if retry_deadline is None:
+                    retry_deadline = now + PROVIDER_RETRY_BUDGET_SECONDS
+                delay = (
+                    retry_delay(retry_headers, attempt, self._settings.provider_retry_backoff_seconds)
+                    if attempt < max_attempts
+                    else 0.0
                 )
-                error, cause = ProviderError.for_user(message, retryable=True), exc
-            except httpx.HTTPError as exc:
-                error, cause = ProviderError.for_user("The AI provider is unavailable.", retryable=True), exc
-            if self._include_costs:
-                yield replace(call, status="reported" if call.cost_usd is not None else "unavailable")
-            now = time.monotonic()
-            if retry_deadline is None:
-                retry_deadline = now + PROVIDER_RETRY_BUDGET_SECONDS
-            delay = max(self._settings.provider_retry_backoff_seconds * (2 ** (attempt - 1)), error.retry_after or 0.0)
-            if not error.retryable or attempt == max_attempts or now + delay > retry_deadline:
-                raise error from cause
-            if answer:
-                # A fresh completion cannot resume transport state. Keep visible
-                # text as context, but never replay reasoning or partial tool JSON.
-                payload["messages"] = _continuation_messages(messages, answer)
-            logger.warning(
-                "AI provider attempt failed error=%s stream_started=%s attempt=%s max_attempts=%s "
-                "retry_in_seconds=%.3f",
-                error,
-                stream_started,
-                attempt,
-                max_attempts,
-                delay,
-                exc_info=cause or error,
-            )
-            yield ProviderRetry(
-                f"{error.user_message or 'The AI provider failed.'} Retrying in {math.ceil(delay)} s "
-                f"(attempt {attempt + 1} of {max_attempts})."
-            )
-            if delay > 0:
-                await asyncio.sleep(delay)
+                if attempt == max_attempts or (delay is not None and now + delay > retry_deadline):
+                    if failure is exc:
+                        raise
+                    raise failure from exc
+                if delay is None:
+                    raise ProviderError.for_user(
+                        f"The AI provider requested a retry delay above {MAX_RETRY_DELAY_SECONDS:g} seconds. "
+                        f"{failure.user_message}"
+                    ) from exc
+                if answer:
+                    # A fresh completion cannot resume transport state. Keep visible
+                    # text as context, but never replay reasoning or partial tool JSON.
+                    payload["messages"] = [
+                        *messages,
+                        ChatMessage(role="assistant", content="".join(answer)),
+                        ChatMessage(
+                            role="user",
+                            content=f"[App event] The response was interrupted after {text_chars} text characters.",
+                        ),
+                    ]
+                logger.warning(
+                    "AI provider transient failure stream_started=%s attempt=%s max_attempts=%s retry_in_seconds=%.3f",
+                    stream_started,
+                    attempt,
+                    max_attempts,
+                    delay,
+                    exc_info=True,
+                )
+                yield ProviderRetry(
+                    f"{failure.user_message or 'The AI provider failed.'} Retrying in {math.ceil(delay)} s "
+                    f"(attempt {attempt + 1} of {max_attempts})."
+                )
+                if delay > 0:
+                    await asyncio.sleep(delay)
 
     async def _stream_attempt(
         self,
@@ -533,13 +655,19 @@ class OpenAiCompatibleProvider:
                         response.status_code,
                         content_type,
                     )
-                raise ProviderError.for_user(
-                    f"The AI provider returned HTTP {response.status_code}. Error ID: {error_id}.",
-                    retryable=response.status_code in {408, 429} or response.status_code >= 500,
-                    retry_after=_retry_after_seconds(response.headers.get("retry-after")),
+                error_type = ProviderError
+                if response.status_code in {400, 413, 422} and _is_context_overflow(response_body):
+                    error_type = ProviderContextOverflowError
+                elif is_retryable_status(response.status_code, response.headers, response_body):
+                    message = f"The AI provider returned HTTP {response.status_code}. Error ID: {error_id}."
+                    raise _RetryableProviderError(message, user_message=message, headers=response.headers)
+                raise error_type.for_user(
+                    f"The AI provider returned HTTP {response.status_code}. Error ID: {error_id}."
                 )
 
             partial_calls: dict[int, _PartialToolCall] = {}
+            native_reasoning: dict[str, Any] = {}
+            native_chars = 0
             if self._include_costs:
                 yield ProviderResponseMetadata(provider_call_id=response.headers.get("x-litellm-call-id"))
             finish_reason: str | None = None
@@ -585,7 +713,17 @@ class OpenAiCompatibleProvider:
                         if reported_reason is not None and reported_reason != finish_reason:
                             raise ProviderError.for_user("The AI provider returned conflicting finish reasons.")
                         if any(
-                            delta.get(field) for field in ("content", "reasoning_content", "reasoning", "tool_calls")
+                            delta.get(field)
+                            for field in (
+                                "content",
+                                "reasoning_content",
+                                "reasoning",
+                                "reasoning_text",
+                                "reasoning_details",
+                                "thinking_blocks",
+                                "provider_specific_fields",
+                                "tool_calls",
+                            )
                         ):
                             raise ProviderError.for_user("The AI provider returned output after completion.")
                     if isinstance(reported_reason, str):
@@ -596,10 +734,15 @@ class OpenAiCompatibleProvider:
                     text_chars += len(content)
                     yield TextDelta(content)
                 # Providers name this field either way, and llama.cpp uses the first.
-                reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+                reasoning = delta.get("reasoning_content") or delta.get("reasoning") or delta.get("reasoning_text")
                 if isinstance(reasoning, str) and reasoning:
                     reasoning_chars += len(reasoning)
                     yield ReasoningDelta(reasoning)
+                native_chars += _merge_reasoning(native_reasoning, delta)
+                if native_chars > MAX_RESPONSE_REASONING_CHARS:
+                    raise ProviderResponseLimitError.for_user(
+                        "The AI provider returned more reasoning metadata than one answer may contain."
+                    )
                 _merge_tool_call_fragments(partial_calls, delta.get("tool_calls"))
             # Pi checks completion before releasing tools. Accept [DONE] for endpoints
             # that omit finish_reason, but never infer completion from HTTP EOF alone.
@@ -612,14 +755,101 @@ class OpenAiCompatibleProvider:
                 len(partial_calls),
             )
             if finish_reason is None and not done_received:
-                raise ProviderError.for_user("The AI provider stream ended before completion.", retryable=True)
+                raise _RetryableProviderError.for_user("The AI provider stream ended before completion.")
             if finish_reason is not None and finish_reason not in SUPPORTED_FINISH_REASONS:
                 raise ProviderError.for_user(
                     f"The AI provider returned an unsuccessful finish reason: {finish_reason}."
                 )
+            if native_reasoning:
+                yield ReasoningReplay(native_reasoning, self.identity)
             if partial_calls:
                 yield ToolCallRequest(tuple(partial.complete() for _, partial in sorted(partial_calls.items())))
             yield ResponseEnd(finish_reason)
+
+
+def _is_context_overflow(body: str) -> bool:
+    try:
+        error = json.loads(body).get("error", {})
+        if not isinstance(error, dict):
+            return False
+    except (ValueError, AttributeError):
+        return False
+    code = error.get("code")
+    if isinstance(code, str) and code in {"context_length_exceeded", "context_window_exceeded", "prompt_too_long"}:
+        return True
+    message = str(error.get("message", "")).lower()
+    return any(
+        phrase in message
+        for phrase in (
+            "maximum context length",
+            "exceeds the context window",
+            "prompt is too long",
+            "input is too long",
+            "input token count exceeds",
+            "context window exceeded",
+        )
+    )
+
+
+def _merge_reasoning(target: dict[str, Any], delta: dict[str, Any]) -> int:
+    """Collect native fields without deriving replay data from displayed text."""
+    fields = ("reasoning_content", "reasoning", "reasoning_text", "reasoning_details", "thinking_blocks")
+    size = 0
+    for key in (*fields, "provider_specific_fields"):
+        value = delta.get(key)
+        if value is None:
+            continue
+        if key == "provider_specific_fields":
+            if not isinstance(value, dict):
+                raise ProviderError.for_user("The AI provider returned invalid reasoning metadata.")
+            # Preserve the gateway wrapper, but only its documented reasoning fields.
+            nested = {name: value[name] for name in fields if name in value}
+            size += _merge_reasoning(target.setdefault(key, {}), nested)
+            continue
+        size += len(value) if isinstance(value, str) else len(json.dumps(value, ensure_ascii=False))
+        if key in fields[:3]:
+            if not isinstance(value, str):
+                raise ProviderError.for_user("The AI provider returned invalid reasoning metadata.")
+            target[key] = target.get(key, "") + value
+            continue
+        if not isinstance(value, list) or any(not isinstance(block, dict) for block in value):
+            raise ProviderError.for_user("The AI provider returned invalid reasoning metadata.")
+        blocks = target.setdefault(key, [])
+        for block in value:
+            last = blocks[-1] if blocks else None
+            kind = block.get("type")
+            if not isinstance(kind, str):
+                raise ProviderError.for_user("The AI provider returned invalid reasoning metadata.")
+            field = {"reasoning.text": "text", "reasoning.summary": "summary", "thinking": "thinking"}.get(kind)
+            same = (
+                last is not None
+                and last.get("type") == kind
+                and all(
+                    last.get(name) == block.get(name) or name not in last or name not in block
+                    for name in ("id", "index")
+                )
+            )
+            # A completed signed thinking block followed by more thinking is a
+            # separate native block. Keep it separate to preserve its signature.
+            if (
+                key == "thinking_blocks"
+                and same
+                and last.get("signature")
+                and block.get("thinking")
+                and ("index" not in block or "index" not in last)
+            ):
+                same = False
+            if field and same:
+                for name, part in block.items():
+                    if name == field or (key == "thinking_blocks" and name == "signature"):
+                        if not isinstance(part, str):
+                            raise ProviderError.for_user("The AI provider returned invalid reasoning metadata.")
+                        last[name] = last.get(name, "") + part
+                    elif name not in last or not last[name]:
+                        last[name] = part
+            else:
+                blocks.append(dict(block))
+    return size
 
 
 def _parse_token_usage(raw_usage: object) -> TokenUsage:
@@ -656,11 +886,12 @@ class _PartialToolCall:
     id: str = ""
     name: str = ""
     arguments: str = ""
+    native: dict[str, Any] | None = None
 
     def complete(self) -> ToolCall:
         if not self.name:
             raise ProviderError.for_user("The AI provider requested a tool without a name.")
-        return ToolCall(id=self.id or str(uuid4()), name=self.name, arguments=self.arguments)
+        return ToolCall(id=self.id or str(uuid4()), name=self.name, arguments=self.arguments, native=self.native or {})
 
 
 def _merge_tool_call_fragments(partial_calls: dict[int, _PartialToolCall], fragments: object) -> None:
@@ -678,6 +909,11 @@ def _merge_tool_call_fragments(partial_calls: dict[int, _PartialToolCall], fragm
             )
         if isinstance(fragment.get("id"), str):
             partial.id = fragment["id"]
+        for key in ("extra_content", "provider_specific_fields"):
+            if isinstance(fragment.get(key), dict):
+                partial.native = {**(partial.native or {}), key: fragment[key]}
+                if len(json.dumps(partial.native)) > MAX_RESPONSE_REASONING_CHARS:
+                    raise ProviderResponseLimitError.for_user("The AI provider returned too much tool metadata.")
         function = fragment.get("function")
         if not isinstance(function, dict):
             continue

@@ -38,7 +38,7 @@ def _finish(message: dict, kind: str, at: int, reason: str = "") -> None:
             message["failureReason"] = reason
     if kind != "done":
         for entry in message.get("activity", []):
-            if entry["kind"] == "tool" and entry.get("state") == "running":
+            if entry["kind"] in {"tool", "compaction"} and entry.get("state") == "running":
                 entry["state"] = "interrupted"
 
 
@@ -119,6 +119,8 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
         "schedule_applied",
         "truncated",
         "provider_retry",
+        "compaction_start",
+        "compaction_end",
         "done",
         "stopped",
         "error",
@@ -170,7 +172,41 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
         turn = turns[run_id]
         assistant = turn["assistant"]
         activity = assistant.setdefault("activity", [])
-        if kind == "model_selection":
+        if kind in {"compaction_start", "compaction_end"}:
+            state = (
+                "running"
+                if kind == "compaction_start"
+                else "completed"
+                if data["success"]
+                else "interrupted"
+                if data.get("aborted")
+                else "failed"
+            )
+            entry = {
+                "kind": "compaction",
+                "state": state,
+                "reason": data["reason"],
+                "text": "The conversation is being summarized."
+                if state == "running"
+                else "The conversation was summarized."
+                if state == "completed"
+                else "Summarization stopped. The original context was kept."
+                if state == "interrupted"
+                else "Summarization failed. The original context was kept.",
+            }
+            index = next(
+                (
+                    index
+                    for index in range(len(activity) - 1, -1, -1)
+                    if activity[index]["kind"] == "compaction" and activity[index].get("state") == "running"
+                ),
+                None,
+            )
+            if kind == "compaction_end" and index is not None:
+                activity[index] = entry
+            else:
+                activity.append(entry)
+        elif kind == "model_selection":
             selection = {key: data[key] for key in ("model", "reasoning")}
             turn["selection"] = selection
             assistant["modelSelection"] = selection

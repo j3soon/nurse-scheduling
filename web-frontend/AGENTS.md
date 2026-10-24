@@ -70,6 +70,9 @@ changed app source or public assets. Without explicit spec paths or `--full`,
 it fails rather than silently skipping those changes. Every Playwright run
 builds the current checkout, launches its own server on an OS-selected port,
 and shuts it down afterwards. Existing local servers are never reused.
+The full suite also starts a development server for the allowed-origin check.
+If an existing server or development lock blocks it, test the current changes
+in a separate checkout instead of stopping a user's server.
 
 `next dev` can append a managed Next.js agent-rules block to this file. Browser
 tests that launch a dev server can also cause this edit. After those checks,
@@ -180,6 +183,10 @@ offline emulation alone can leave an existing stream open. Assert that reconnect
 uses the same request ID and executes the accepted question only once. Mock
 `/capabilities` with the real authentication and attachment-limit contract so
 reload recovery follows the production path.
+When adding AI session events, update the SSE decoder, chat hook callback dispatch,
+assistant reducer, saved transcript projection, and exports together. Check the
+visible browser result because decoder and reducer tests do not cover dispatch.
+
 For session actions, check the action's full server event sequence through the
 client decoder and transcript. Include `model_input`, not only `run_start`, text,
 and `done`. Isolated server and UI mocks can both pass while their contracts differ.

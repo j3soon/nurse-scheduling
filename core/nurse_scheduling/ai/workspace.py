@@ -198,6 +198,8 @@ class WorkspaceLimits:
     max_tool_calls: int
     optimizer_default_timeout_seconds: int = 300
     max_download_bytes: int = 50_000_000
+    history_limit: int = 200_000
+    message_limit: int = 1000
 
     @classmethod
     def from_settings(cls, settings: AiSettings) -> "WorkspaceLimits":
@@ -205,6 +207,8 @@ class WorkspaceLimits:
         return cls(
             max_schedule_bytes=settings.max_schedule_bytes,
             max_download_bytes=settings.max_download_bytes,
+            history_limit=settings.max_history_chars,
+            message_limit=settings.max_history_messages,
             turn_timeout_seconds=settings.sandbox_turn_timeout_seconds,
             cleanup_timeout_seconds=settings.sandbox_cleanup_timeout_seconds,
             bash_command_timeout_seconds=settings.sandbox_command_timeout_seconds,

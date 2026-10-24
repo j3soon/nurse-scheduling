@@ -877,7 +877,7 @@ export default function ExperimentalAiPage() {
   const serverLocked = activeSessionId !== null || messages.length > 0;
 
   const contextDescription = contextUsage !== null
-    ? `${contextUsage.usedChars.toLocaleString()} of ${contextUsage.maxChars.toLocaleString()} characters in retained chat history. Excludes instructions, schedule, tools, and attachments.`
+    ? `${contextUsage.usedChars.toLocaleString()} of ${contextUsage.maxChars.toLocaleString()} characters in conversation context, including streamed output. Excludes fixed instructions and current status.`
     : 'The AI server has not reported context usage.';
 
   // The Session files panel is fixed on the right at xl, so the chat and composer reserve
@@ -1438,8 +1438,8 @@ export default function ExperimentalAiPage() {
             </span>}
             {contextUsage?.usedTokens !== undefined && <>
               {' · '}
-              <span title="Latest call's input + output tokens / model input limit. Not total conversation usage.">
-                Last: {contextUsage.usedTokens.toLocaleString('en-US')} / {contextUsage.maxTokens?.toLocaleString('en-US') ?? 'unavailable'}
+              <span title="Current context tokens, estimated while streaming and after summarization / model input limit.">
+                Tokens: {contextUsage.usedTokens.toLocaleString('en-US')} / {contextUsage.maxTokens?.toLocaleString('en-US') ?? 'unavailable'}
               </span>
             </>}
             {costSummary && <>
