@@ -138,6 +138,7 @@ from the trust-based local harness.
   every summary request completes, and invalidate summaries from failed or
   cancelled runs. Keep a summary and its referenced recent tool messages together
   during retention. Reset older usage estimates at each compaction boundary.
+  Keep app-event indices tied to transcript entries across compaction and retention.
   Keep summary requests visible in provider cost records, but keep their text out
   of the answer stream. Use `tests/test_ai_compaction.py` for these contracts.
   Test chunked summaries through the provider's token-limit calculation, including

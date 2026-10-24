@@ -258,17 +258,18 @@ def message_title(kind: str, content: str) -> str | None:
 
 
 def model_input(
-    messages: Sequence[ChatMessage], history_count: int, history_offset: int, question_kind: str
+    messages: Sequence[ChatMessage], history_indices: Sequence[int], question_kind: str
 ) -> dict[str, object]:
     """Describe a provider request for the chat: its system message and the messages added since the last reply.
 
-    History messages after the last assistant reply are app events. Each one carries its absolute history
-    index, so the chat shows it once even when a failed turn is retried.
+    History messages after the last assistant reply are app events. Each one carries its absolute
+    transcript entry index, so compaction and retries cannot reuse its identity.
     """
+    history_count = len(history_indices)
     history = messages[1 : 1 + history_count]
     last_reply = max((index for index, message in enumerate(history) if message["role"] == "assistant"), default=-1)
     added: list[dict[str, object]] = [
-        {"kind": "app", "index": history_offset + index, "content": message["content"]}
+        {"kind": "app", "index": history_indices[index], "content": message["content"]}
         for index, message in enumerate(history)
         if index > last_reply
     ]
@@ -518,11 +519,12 @@ def projected_history(transcript: Sequence[AgentMessage]) -> list[ChatMessage]:
 
 @dataclass(frozen=True)
 class HistoryContext:
-    """Selected prior-run messages and their serialized JSON character budget."""
+    """Selected prior-run messages, source entry indices, and serialized JSON character budget."""
 
     messages: list[ChatMessage]
     used_chars: int
     dropped_messages: int
+    source_indices: list[int]
 
 
 def project_history(transcript: Sequence[AgentMessage], max_chars: int = DEFAULT_MAX_HISTORY_CHARS) -> HistoryContext:
@@ -532,23 +534,25 @@ def project_history(transcript: Sequence[AgentMessage], max_chars: int = DEFAULT
     provider can accept. A long session would otherwise grow every later prompt past
     the model context window and fail the request outright.
     """
-    projected = _projected_messages(transcript)
-    kept: list[tuple[bool, ChatMessage, int]] = []
+    projected = _projected_messages(transcript, with_sources=True)
+    kept: list[tuple[bool, ChatMessage, int, int]] = []
     remaining = max_chars
     for prompt, message in reversed(projected):
+        source_index = message.pop("_source_index")
         size = len(json.dumps(message, ensure_ascii=False))
         remaining -= size
         if remaining < 0:
             break
-        kept.append((prompt, message, size))
+        kept.append((prompt, message, size, source_index))
     # Start at a prompt or app event. An answer whose prompt did not fit refers to
     # an exchange the model can no longer see.
     while kept and not kept[-1][0]:
         kept.pop()
     return HistoryContext(
-        messages=[message for _prompt, message, _size in reversed(kept)],
-        used_chars=sum(size for _prompt, _message, size in kept),
+        messages=[message for _prompt, message, _size, _source in reversed(kept)],
+        used_chars=sum(size for _prompt, _message, size, _source in kept),
         dropped_messages=len(projected) - len(kept),
+        source_indices=[source for _prompt, _message, _size, source in reversed(kept)],
     )
 
 

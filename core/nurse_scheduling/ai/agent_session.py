@@ -598,6 +598,7 @@ class AgentSession:
             run_id=run_id,
             uploads=tuple(self.uploads.values()),
             frontend_timezone=self.frontend_timezone,
+            transcript_offset=self.dropped_entries,
         )
         return self.snapshot
 
@@ -715,7 +716,9 @@ class AgentSession:
             {
                 "type": "model_input",
                 "schedule_yaml": snapshot.schedule_yaml,
-                **model_input(messages, len(history.messages), dropped_history, question_kind),
+                **model_input(
+                    messages, [snapshot.transcript_offset + index for index in history.source_indices], question_kind
+                ),
             }
         )
         events.emit({"type": "context_usage", **context_usage(history.used_chars, settings)})

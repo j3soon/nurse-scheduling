@@ -168,6 +168,7 @@ def test_history_budget_starts_at_an_app_event_and_counts_serialized_unicode():
     assert selected.messages == expected
     assert selected.used_chars == history_chars(expected)
     assert selected.dropped_messages == 2
+    assert selected.source_indices == [2, 3]
 
 
 def test_retention_keeps_the_whole_newest_run_including_steering():

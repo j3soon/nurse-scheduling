@@ -55,6 +55,7 @@ from nurse_scheduling.ai.provider import (
 )
 from nurse_scheduling.ai.system_prompt import load_system_prompt_entries, load_system_prompt_sections
 from nurse_scheduling.ai.transcript import (
+    AppEventEntry,
     AssistantMessage,
     CompactionEntry,
     ProviderIdentity,
@@ -113,6 +114,60 @@ def history(size=26000):
 
 async def collect(stream):
     return [event async for event in stream]
+
+
+def test_app_event_indices_survive_compaction_retention_and_restore():
+    from nurse_scheduling.ai.context import SCHEDULE_CHANGED_EVENT
+    from nurse_scheduling.ai.session_event_projection import RunEvents
+    from nurse_scheduling.ai.sessions import SessionStore
+
+    from .test_ai_basic import make_settings, schedule_yaml
+
+    async def exercise():
+        settings = make_settings()
+        store = SessionStore(settings)
+        session = store.create("owner", schedule_yaml())
+
+        def add(*entries):
+            for entry in entries:
+                session._add_entry(entry)
+
+        def prepare():
+            snapshot = store.begin(session.id, "owner")
+            published = []
+            events = RunEvents("run", lambda event: published.append(event))
+            messages, _, _ = session._prepare_run(snapshot, "Continue", None, settings, events, "question")
+            events.flush()
+            store.finish(session.id, [], snapshot=snapshot)
+            model_input = next(event for event in published if event["type"] == "model_input")
+            assert not any("_source_index" in message for message in messages)
+            return [entry for entry in model_input["messages"] if entry["content"] == SCHEDULE_CHANGED_EVENT]
+
+        add(AppEventEntry(SCHEDULE_CHANGED_EVENT), AppEventEntry(SCHEDULE_CHANGED_EVENT))
+        assert [entry["index"] for entry in prepare()] == [0, 1]
+        add(UserMessage("First"), AssistantMessage("First answer"), CompactionEntry("Earlier constraints", 0, 1000))
+        add(AppEventEntry(SCHEDULE_CHANGED_EVENT))
+        assert [entry["index"] for entry in prepare()] == [5]
+        # The same pending event must retain its ID when preparation is repeated.
+        assert [entry["index"] for entry in prepare()] == [5]
+        add(UserMessage("Second"), AssistantMessage("Second answer"), CompactionEntry("Updated constraints", 0, 1000))
+        add(AppEventEntry(SCHEDULE_CHANGED_EVENT))
+        assert [entry["index"] for entry in prepare()] == [9]
+        while SessionStore._drop_oldest_exchange(session):
+            pass
+        assert session.dropped_entries > 0
+        assert [entry["index"] for entry in prepare()] == [9]
+        owner, expires, state = store.recovery_state(session.id)
+        recovered = SessionStore(settings)
+        session = recovered.restore(
+            session.id, owner, state, expires, entries=session.transcript, next_entry_seq=session.next_entry_seq
+        )
+        store = recovered
+        assert [entry["index"] for entry in prepare()] == [9]
+        add(AppEventEntry(SCHEDULE_CHANGED_EVENT))
+        assert [entry["index"] for entry in prepare()] == [9, 10]
+
+    asyncio.run(exercise())
 
 
 @pytest.mark.parametrize("invalid", ["primary", "secondary", "unavailable", "same", None])
