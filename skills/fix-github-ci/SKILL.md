@@ -41,6 +41,12 @@ Sequential calls to a monotonic clock can return the same value. Reproduce ties
 with a frozen clock. Replace only the tested module's clock when an async test
 must keep the event loop's timers running.
 
+On Windows, `shutil.which("bash")` can find a WSL launcher without an installed
+distribution. Prefer Git for Windows' `bin/bash.exe` wrapper and check that the
+interpreter runs before using it. Keep shell help checks portable by reading
+UTF-8 text with normalized line endings and sending encoded bytes to Bash stdin.
+Text-mode subprocess input can translate LF back to CRLF on Windows.
+
 ## Repair
 
 Make the smallest change in the layer that owns the cause.

@@ -45,6 +45,33 @@ BASE_TIME = datetime(2026, 1, 1, tzinfo=UTC)
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "recent_ai_prompts.sh"
 
 
+def _bash_executable(*, windows: bool) -> str | None:
+    candidates = []
+    if windows and (git := shutil.which("git")):
+        # Git's wrapper configures MSYS and PATH. Windows' bash.exe can be a WSL launcher.
+        candidates.extend(parent / "bin" / "bash.exe" for parent in Path(git).resolve().parents)
+    if bash := shutil.which("bash"):
+        candidates.append(Path(bash))
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        try:
+            version = subprocess.run(
+                [str(candidate), "--version"],
+                capture_output=True,
+                check=False,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if version.returncode == 0 and version.stdout.startswith("GNU bash"):
+            return str(candidate)
+    return None
+
+
 def seed_session(history, position, *, kind="foreground", prompts=1, text=None):
     session_id, run_id, owner = (str(uuid4()) for _ in range(3))
     state = session_state(owner)
@@ -220,13 +247,45 @@ def test_cli_requires_database_url(monkeypatch, capsys):
     assert "AI_HISTORY_POSTGRES_URL is required" in capsys.readouterr().err
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="Bash is not installed")
-def test_shell_help_needs_no_database_or_docker():
-    result = subprocess.run(
-        ["bash", str(SCRIPT), "--help"], capture_output=True, check=False, text=True, encoding="utf-8", timeout=5
+def test_bash_discovery_prefers_git_bash_to_windows_launcher(tmp_path, monkeypatch):
+    git = tmp_path / "Git" / "cmd" / "git.exe"
+    bash = git.parents[1] / "bin" / "bash.exe"
+    bash.parent.mkdir(parents=True)
+    bash.touch()
+    monkeypatch.setattr(shutil, "which", lambda command: str(git) if command == "git" else "windows-bash.exe")
+    monkeypatch.setattr(
+        subprocess, "run", lambda command, **_kwargs: subprocess.CompletedProcess(command, 0, "GNU bash", "")
     )
-    assert result.returncode == 0
-    assert "15 sessions, 5 prompts" in result.stdout
+    assert _bash_executable(windows=True) == str(bash.resolve())
+
+
+def test_bash_discovery_rejects_unusable_windows_launcher(tmp_path, monkeypatch):
+    launcher = tmp_path / "bash.exe"
+    launcher.touch()
+    monkeypatch.setattr(shutil, "which", lambda command: str(launcher) if command == "bash" else None)
+    monkeypatch.setattr(
+        subprocess, "run", lambda command, **_kwargs: subprocess.CompletedProcess(command, 1, "W\0S\0L\0", "")
+    )
+    assert _bash_executable(windows=True) is None
+
+
+@pytest.mark.parametrize("line_ending", ["\n", "\r\n"], ids=["lf", "crlf"])
+def test_shell_help_needs_no_database_or_docker(tmp_path, line_ending):
+    bash = _bash_executable(windows=os.name == "nt")
+    if bash is None:
+        pytest.skip("A working Bash interpreter is not installed")
+    script = tmp_path / SCRIPT.name
+    script.write_bytes(SCRIPT.read_text(encoding="utf-8").replace("\n", line_ending).encode("utf-8"))
+    result = subprocess.run(
+        [bash, "-s", "--", "--help"],
+        # Read normalized text and send bytes so Windows does not translate LF back to CRLF.
+        input=script.read_text(encoding="utf-8").encode("utf-8"),
+        capture_output=True,
+        check=False,
+        timeout=5,
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert b"15 sessions, 5 prompts" in result.stdout
 
 
 @pytest.mark.skipif(os.name == "nt" or shutil.which("bash") is None, reason="Requires a POSIX shell")
