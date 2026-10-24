@@ -34,7 +34,6 @@ export interface StoredChatConversation {
   retentionSeconds: number;
   messages: ChatMessage[];
   syncedSchedule: string;
-  syncedRevision?: string;
   syncedBrowserSchedule?: string;
   // Run identity survives replacement replay and a later browser Undo.
   appliedScheduleRuns?: Record<string, string | null>;
@@ -157,7 +156,6 @@ export function readStoredConversation(): StoredChatConversation | null {
         ))
       ))
       || typeof value.syncedSchedule !== 'string'
-      || (value.syncedRevision !== undefined && typeof value.syncedRevision !== 'string')
       || (value.syncedBrowserSchedule !== undefined && typeof value.syncedBrowserSchedule !== 'string')
       || (value.appliedScheduleRuns !== undefined && (value.appliedScheduleRuns === null
         || typeof value.appliedScheduleRuns !== 'object' || Array.isArray(value.appliedScheduleRuns)

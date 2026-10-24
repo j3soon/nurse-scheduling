@@ -706,7 +706,7 @@ describe('AI client', () => {
       'event: schedule_change\ndata: {"schedule_yaml":"people:\\n  - id: Head\\n"}\n\n',
       'event: delta\ndata: {"text":"Renamed P1."}\n\n',
       'event: truncated\ndata: {}\n\n',
-      'event: schedule_applied\ndata: {"run_id":"change-run","schedule_yaml":"people: []\\n","base_sha256":"a","sha256":"b","diff":"- people.items[0].id"}\n\n',
+      'event: schedule_applied\ndata: {"run_id":"change-run","schedule_yaml":"people: []\\n","diff":"- people.items[0].id","replaced_queued_schedule":true}\n\n',
       'event: done\ndata: {"run_id":"1"}\n\n',
     ])));
     const events: SessionEvent[] = [];
@@ -731,7 +731,7 @@ describe('AI client', () => {
       { type: 'delta', text: 'Renamed P1.' },
       { type: 'truncated' },
       { type: 'run_context', runId: 'change-run' },
-      { type: 'schedule_applied', runId: 'change-run', applied: { runId: 'change-run', scheduleYaml: 'people: []\n', baseSha256: 'a', sha256: 'b', diff: '- people.items[0].id' } },
+      { type: 'schedule_applied', runId: 'change-run', applied: { runId: 'change-run', scheduleYaml: 'people: []\n', diff: '- people.items[0].id', replacedQueuedSchedule: true } },
       { type: 'run_context', runId: '1' },
       { type: 'done', runId: '1' },
     ]);
@@ -1123,6 +1123,21 @@ describe('AI client', () => {
       new AbortController().signal,
       null,
     )).rejects.toThrow('The AI backend returned an invalid schedule change.');
+  });
+
+  it('reads an applied schedule saved without the queued-update flag and rejects a malformed flag', async () => {
+    const applied = (flag: string) => streamedResponse([
+      `event: schedule_applied\ndata: {"run_id":"run","schedule_yaml":"people: []\\n","diff":""${flag}}\n\n`,
+    ]);
+    const events: SessionEvent[] = [];
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(applied('')).mockResolvedValueOnce(applied(',"replaced_queued_schedule":1')));
+
+    await streamMessage('session-id', 'Look.', { onEvent: event => events.push(event) }, new AbortController().signal, null);
+    expect(events).toContainEqual({ type: 'schedule_applied', runId: 'run', applied: {
+      runId: 'run', scheduleYaml: 'people: []\n', diff: '', replacedQueuedSchedule: false,
+    } });
+    await expect(streamMessage('session-id', 'Look.', { onEvent: vi.fn() }, new AbortController().signal, null))
+      .rejects.toThrow('The AI backend returned an invalid schedule change.');
   });
 
   it('recognizes the official AI endpoints regardless of spelling', () => {

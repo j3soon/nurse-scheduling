@@ -2013,9 +2013,8 @@ def test_postgres_restart_replays_a_committed_schedule_before_its_missing_termin
         "type": "schedule_applied",
         "run_id": run_id,
         "schedule_yaml": applied,
-        "base_sha256": hashlib.sha256(original.encode()).hexdigest(),
-        "sha256": hashlib.sha256(applied.encode()).hexdigest(),
         "diff": '- description: "" -> "Changed"',
+        "replaced_queued_schedule": False,
     }
     state = session_state(owner)
     postgres_history.save_session(session_id, state)

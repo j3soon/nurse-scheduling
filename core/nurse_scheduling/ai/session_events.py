@@ -121,10 +121,9 @@ class ScheduleChangeEvent(RunFields):
 class ScheduleAppliedEvent(RunFields):
     type: Literal["schedule_applied"]
     schedule_yaml: str
-    # Revisions of the run's starting schedule and of this schedule, so a browser applies it only once.
-    base_sha256: str
-    sha256: str
     diff: str
+    # The run's schedule replaced a browser update queued during the run.
+    replaced_queued_schedule: bool
 
 
 class DownloadEvent(RunFields):

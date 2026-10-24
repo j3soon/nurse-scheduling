@@ -2666,9 +2666,8 @@ def test_a_tool_run_streams_its_schedule_check_and_applies_the_schedule() -> Non
     assert "description: Head" in schedule_change["schedule_yaml"]
     applied = next(data for name, data in events if name == "schedule_applied")
     assert applied["schedule_yaml"] == schedule_change["schedule_yaml"]
-    assert applied["base_sha256"] == hashlib.sha256(schedule_yaml().encode()).hexdigest()
-    assert applied["sha256"] == hashlib.sha256(applied["schedule_yaml"].encode()).hexdigest()
     assert "people.items[0].description" in applied["diff"]
+    assert applied["replaced_queued_schedule"] is False
     assert [name for name, _ in events].index("schedule_applied") < [name for name, _ in events].index("done")
 
 

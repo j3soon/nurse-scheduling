@@ -21,7 +21,6 @@
 
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { createHash } from 'node:crypto';
 import ExperimentalAiPage from './page';
 import type { SessionEvent, SessionEventHandler, SessionStreamOptions } from './sessionEvents';
 
@@ -91,7 +90,6 @@ vi.mock('./aiClient', async importOriginal => {
     endpoint === '/ai' || mockNormalizeAiEndpoint(endpoint) === 'https://api.nursescheduling.org/ai'
   ),
   queueMessage: mockQueueMessage,
-  scheduleRevision: awaitClient.scheduleRevision,
   sendMessage: mockSendMessage,
   streamSessionEvents: mockStreamSessionEvents,
   stopSession: mockStopSession,
@@ -1621,7 +1619,7 @@ describe('ExperimentalAiPage', () => {
       background?.onEvent({ type: 'run_start', runId: 'old', trigger: 'optimizer' });
       background?.onEvent({ type: 'delta', text: 'Leaked old answer' });
       background?.onEvent({ type: 'schedule_applied', applied: {
-        runId: 'old', scheduleYaml: 'description: old\n', baseSha256: 'old', sha256: 'new', diff: 'Old change',
+        runId: 'old', scheduleYaml: 'description: old\n', diff: 'Old change', replacedQueuedSchedule: false,
       } });
       background?.onEventId?.(900);
     });
@@ -2903,9 +2901,8 @@ describe('ExperimentalAiPage', () => {
   });
 
   describe('applied schedule changes', () => {
-    const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
     const check = 'Trusted schedule check after this command:\nThe candidate passed trusted server-side validation.';
-    const changingStream = (baseSha256: string) => async (
+    const changingStream = (replacedQueuedSchedule = false) => async (
       _sessionId: string,
       _message: string,
       callbacks: SessionStreamOptions,
@@ -2917,8 +2914,8 @@ describe('ExperimentalAiPage', () => {
       callbacks.onEvent({ type: 'schedule_change', scheduleYaml: 'description: Head\n' });
       callbacks.onEvent({ type: 'delta', text: 'I set the description.' });
       callbacks.onEvent({ type: 'schedule_applied', applied: {
-        runId: 'change-run', scheduleYaml: 'description: Head\n', baseSha256, sha256: sha256('description: Head\n'),
-        diff: '- description: "current schedule" -> "Head"',
+        runId: 'change-run', scheduleYaml: 'description: Head\n',
+        diff: '- description: "current schedule" -> "Head"', replacedQueuedSchedule,
       } });
     };
 
@@ -2928,7 +2925,7 @@ describe('ExperimentalAiPage', () => {
     };
 
     it('applies the schedule a run finished with as one history entry and shows its check', async () => {
-      mockRunEvents.mockImplementationOnce(changingStream(sha256('description: current schedule\n')));
+      mockRunEvents.mockImplementationOnce(changingStream());
       const user = userEvent.setup();
       render(<ExperimentalAiPage />);
       await ask(user);
@@ -2941,8 +2938,8 @@ describe('ExperimentalAiPage', () => {
       expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
     });
 
-    it('replaces another schedule and shows a notice without controlling the agent', async () => {
-      mockRunEvents.mockImplementationOnce(changingStream(sha256('description: older schedule\n')));
+    it('shows a notice when the run replaced a queued browser update without controlling the agent', async () => {
+      mockRunEvents.mockImplementationOnce(changingStream(true));
       const user = userEvent.setup();
       render(<ExperimentalAiPage />);
       await ask(user);
@@ -2969,7 +2966,7 @@ describe('ExperimentalAiPage', () => {
       mockGenerateYaml.mockReturnValue('description: edited during response\n');
       view.rerender(<ExperimentalAiPage />);
       await act(async () => {
-        await changingStream(sha256('description: current schedule\n'))('', '', callbacks);
+        await changingStream()('', '', callbacks);
         finish();
       });
       expect(mockLoadFromYaml).toHaveBeenCalledTimes(1);
@@ -2977,7 +2974,7 @@ describe('ExperimentalAiPage', () => {
       // Undo is a browser action. A replacement replay must not overwrite it again.
       mockGenerateYaml.mockReturnValue('description: restored with Undo\n');
       view.rerender(<ExperimentalAiPage />);
-      await act(async () => changingStream(sha256('description: current schedule\n'))('', '', callbacks));
+      await act(async () => changingStream()('', '', callbacks));
       expect(mockLoadFromYaml).toHaveBeenCalledTimes(1);
       expect(mockUpdateSessionSchedule).not.toHaveBeenCalled();
       expect(mockStopSession).not.toHaveBeenCalled();
@@ -3002,14 +2999,14 @@ describe('ExperimentalAiPage', () => {
       window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
         sessionId: 'session-id', endpoint: '/ai', expiresAt: Date.now() + 300000,
         retentionSeconds: 300, messages: [], syncedSchedule: 'description: Head\n',
-        syncedRevision: sha256('description: Head\n'), syncedBrowserSchedule: 'description: Head\n',
+        syncedBrowserSchedule: 'description: Head\n',
         appliedScheduleRuns: { 'change-run': null },
       }));
       mockGenerateYaml.mockReturnValue('description: restored with Undo\n');
       render(<ExperimentalAiPage />);
       await waitFor(() => expect(mockStreamSessionEvents).toHaveBeenCalled());
       const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
-      await act(async () => changingStream(sha256('description: current schedule\n'))('', '', stream));
+      await act(async () => changingStream()('', '', stream));
       expect(mockLoadFromYaml).not.toHaveBeenCalled();
       expect(mockSendMessage).not.toHaveBeenCalled();
       expect(mockStopSession).not.toHaveBeenCalled();

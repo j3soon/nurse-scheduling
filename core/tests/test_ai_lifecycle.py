@@ -258,9 +258,8 @@ def test_a_run_schedule_replaces_an_update_queued_during_the_run():
     store.update_schedule(session.id, "owner", _edited_schedule("Browser"))
     applied = _edited_schedule("Assistant")
 
-    assert store.finish(
-        session.id, [UserMessage("question"), AssistantMessage("answer")], applied, snapshot=turn
-    ).run_saved
+    completion = store.finish(session.id, [UserMessage("question"), AssistantMessage("answer")], applied, snapshot=turn)
+    assert completion.run_saved and completion.replaced_queued_schedule
     store.apply_queued_schedule(session.id)
 
     assert session.schedule_yaml == applied and session.queued_schedule is None

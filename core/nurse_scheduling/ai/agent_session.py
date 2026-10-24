@@ -125,6 +125,8 @@ class RunCompletion:
     schedule_applied: bool
     history_trimmed_count: int = 0
     context_used_chars: int = 0
+    # The run's schedule replaced a browser update queued during the run.
+    replaced_queued_schedule: bool = False
 
 
 @dataclass(frozen=True)
@@ -636,13 +638,15 @@ class AgentSession:
             return RunCompletion(False, False)
         self.transcript.extend(entries)
         self.analysis = snapshot.analysis if snapshot.analysis and snapshot.analysis.content else None
+        replaced_queued_schedule = False
         if schedule_yaml is not None:
             # The run's schedule replaces an update queued during the run, as it replaces newer browser work.
+            replaced_queued_schedule = self.queued_schedule is not None
             self.queued_schedule = None
             self.analysis = None
             self.schedule_yaml = schedule_yaml
             self.revision = schedule_revision(schedule_yaml)
-        return RunCompletion(True, schedule_yaml is not None)
+        return RunCompletion(True, schedule_yaml is not None, replaced_queued_schedule=replaced_queued_schedule)
 
     def abort_run(self, snapshot: RunSnapshot) -> bool:
         """Only the owner of a reservation may release it."""
@@ -1013,9 +1017,8 @@ class AgentSession:
                     "type": "schedule_applied",
                     "run_id": run.id,
                     "schedule_yaml": output.proposal.text,
-                    "base_sha256": schedule_revision(snapshot.schedule_yaml),
-                    "sha256": schedule_revision(output.proposal.text),
                     "diff": output.proposal.diff,
+                    "replaced_queued_schedule": outcome.completion.replaced_queued_schedule,
                 }
             if history_started:
                 history_saved = await _complete(

@@ -687,15 +687,16 @@ used checked assignments and exported workbooks, without HTTP optimizer jobs.
 ## Schedule change lifecycle
 
 A finished run that changed the schedule commits its validated schedule as the
-session schedule. The backend then emits `schedule_applied` with the YAML, the
-structural diff, and the SHA-256 of the run's starting schedule (`base_sha256`)
-and of the new schedule (`sha256`). The browser applies each run's result once
-through the normal YAML import path as one undo step. If the browser schedule
-changed during the response, it still replaces that schedule and shows a notice.
-Undo restores the exact schedule held before replacement. A saved receipt keyed
-by `run_id` prevents replay from applying the same result again after Undo or a
-reload. The browser keeps its normalized YAML alongside the backend revision so
-import formatting does not cause a conflict notice.
+session schedule. The backend then emits `schedule_applied` with the YAML and
+the structural diff. Its `replaced_queued_schedule` flag reports that the run's
+schedule replaced a browser update queued during the run. The browser applies
+each run's result once through the normal YAML import path as one undo step.
+It shows a notice when that flag is set or when the browser schedule changed
+after its last synchronization. Undo restores the exact schedule held before
+replacement. A saved receipt keyed by `run_id` prevents replay from applying the
+same result again after Undo or a reload. The browser compares its own
+normalized YAML, so import formatting does not cause a notice. The browser
+computes no hash, because `crypto.subtle` is missing on plain-HTTP LAN origins.
 
 AI runs belong to the server and continue without a browser connection. Browser
 edits, Undo, notices, and reconnects do not start, stop, or gate a run. Send
