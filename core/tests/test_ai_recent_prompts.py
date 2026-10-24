@@ -72,8 +72,9 @@ def _bash_executable(*, windows: bool) -> str | None:
     return None
 
 
-def seed_session(history, position, *, kind="foreground", prompts=1, text=None):
-    session_id, run_id, owner = (str(uuid4()) for _ in range(3))
+def seed_session(history, position, *, kind="foreground", prompts=1, text=None, session_id=None):
+    session_id = session_id or str(uuid4())
+    run_id, owner = (str(uuid4()) for _ in range(2))
     state = session_state(owner)
     history.start_run(
         run_id,
@@ -143,6 +144,18 @@ def test_recent_prompts_order_ties_bounds_and_read_only(postgres_history):
     assert "run tokens in=123 out=45" in rendered
     assert "Steering 2: 字…" in rendered
     assert "UTC" in rendered
+
+
+def test_cli_session_limit_breaks_timestamp_ties_by_run_admission(postgres_history, monkeypatch, capsys):
+    older, _ = seed_session(postgres_history, 1, session_id="ffffffff-ffff-4fff-bfff-ffffffffffff")
+    newer, _ = seed_session(postgres_history, 1, session_id="00000000-0000-4000-8000-000000000001")
+    assert older > newer
+    monkeypatch.setenv("AI_HISTORY_POSTGRES_URL", database_url(postgres_history))
+    monkeypatch.setattr(sys, "argv", ["recent_prompts", "--sessions", "1"])
+    _main()
+    output = capsys.readouterr().out
+    assert output.startswith(newer)
+    assert older not in output
 
 
 def test_cli_defaults_overrides_and_select_only_role(postgres_history):
@@ -245,6 +258,23 @@ def test_cli_requires_database_url(monkeypatch, capsys):
         _main()
     assert result.value.code == 2
     assert "AI_HISTORY_POSTGRES_URL is required" in capsys.readouterr().err
+
+
+def test_cli_logs_database_failure_and_preserves_exit_message(monkeypatch, capsys, caplog):
+    monkeypatch.setenv("AI_HISTORY_POSTGRES_URL", "postgresql://localhost/test")
+    monkeypatch.setattr(sys, "argv", ["recent_prompts"])
+    error = psycopg.OperationalError("database unavailable")
+
+    def fail_connect(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(psycopg, "connect", fail_connect)
+    with pytest.raises(SystemExit) as result:
+        _main()
+    assert result.value.code == 1
+    assert capsys.readouterr().err == "Could not read saved user prompts: database unavailable\n"
+    record = next(record for record in caplog.records if record.message == "Could not read saved user prompts")
+    assert record.exc_info[1] is error
 
 
 def test_bash_discovery_prefers_git_bash_to_windows_launcher(tmp_path, monkeypatch):
