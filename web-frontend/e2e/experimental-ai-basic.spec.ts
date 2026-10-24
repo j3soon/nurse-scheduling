@@ -448,6 +448,10 @@ test('shows compaction status and the reduced context before an answer', async (
   captured.finishTurn();
   await expect(page.getByText('The current constraints are preserved.', { exact: true })).toBeVisible();
   await page.screenshot({ path: '../artifacts/compaction-completed.png', fullPage: true });
+  // The browser copy of the chat keeps the summary entry, so a reload restores the chat.
+  await page.reload();
+  await expect(page.getByText('The current constraints are preserved.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Conversation summarized', { exact: true })).toBeVisible();
 });
 
 test('explains unavailable context usage when the backend omits it', async ({ page }) => {

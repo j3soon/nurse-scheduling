@@ -70,6 +70,12 @@ function isActivityEntry(value: unknown): value is ActivityEntry {
     return 'before' in value && typeof value.before === 'string'
       && 'after' in value && typeof value.after === 'string';
   }
+  if (value.kind === 'compaction') {
+    return 'state' in value && typeof value.state === 'string'
+      && ['running', 'completed', 'failed', 'interrupted'].includes(value.state)
+      && 'reason' in value && (value.reason === 'threshold' || value.reason === 'overflow')
+      && 'text' in value && typeof value.text === 'string';
+  }
   return value.kind === 'tool'
     && 'name' in value && typeof value.name === 'string'
     && 'arguments' in value && typeof value.arguments === 'string'
