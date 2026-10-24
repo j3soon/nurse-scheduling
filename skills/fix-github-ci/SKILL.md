@@ -40,6 +40,9 @@ For timing failures, check clock resolution in the runner's Python version.
 Sequential calls to a monotonic clock can return the same value. Reproduce ties
 with a frozen clock. Replace only the tested module's clock when an async test
 must keep the event loop's timers running.
+An asyncio timer can expire before a coarse monotonic clock reaches its deadline.
+Check the timeout context's `expired()` state before treating its error as a
+retryable request timeout.
 
 On Windows, `shutil.which("bash")` can find a WSL launcher without an installed
 distribution. Prefer Git for Windows' `bin/bash.exe` wrapper and check that the

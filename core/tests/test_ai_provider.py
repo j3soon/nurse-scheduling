@@ -326,7 +326,8 @@ def test_retry_budget_ends_retries_before_the_attempt_limit(monkeypatch):
 
 
 @pytest.mark.parametrize("partial_text", [False, True], ids=["waiting-for-headers", "streaming"])
-def test_retry_budget_interrupts_a_stalled_request(monkeypatch, partial_text):
+@pytest.mark.parametrize("coarse_clock", [False, True], ids=["system-clock", "unchanged-clock-tick"])
+def test_retry_budget_interrupts_a_stalled_request(monkeypatch, partial_text, coarse_clock):
     attempts = []
     closed = []
 
@@ -350,6 +351,10 @@ def test_retry_budget_interrupts_a_stalled_request(monkeypatch, partial_text):
             closed.append(True)
 
     monkeypatch.setattr(provider_module, "PROVIDER_RETRY_BUDGET_SECONDS", 0.02)
+    if coarse_clock:
+        # A deadline timer can fire before a coarse clock reaches the deadline.
+        # Replace only the provider clock so asyncio's timers still advance.
+        monkeypatch.setattr(provider_module, "time", SimpleNamespace(monotonic=lambda: 0.0))
     provider = _transport_provider(monkeypatch, handle, provider_retry_backoff_seconds=0)
 
     async def run():
@@ -361,8 +366,10 @@ def test_retry_budget_interrupts_a_stalled_request(monkeypatch, partial_text):
     assert closed == [True]
 
 
-def test_expired_retry_budget_does_not_send_another_request(monkeypatch):
+@pytest.mark.parametrize("expired_by", [0, 1], ids=["at-deadline", "past-deadline"])
+def test_expired_retry_budget_does_not_send_another_request(monkeypatch, expired_by):
     attempts = []
+    retries = []
     clock = [0.0]
 
     def handle(request):
@@ -378,10 +385,12 @@ def test_expired_retry_budget_does_not_send_another_request(monkeypatch):
         with pytest.raises(ProviderError, match="timed out"):
             async for event in provider.stream_events([]):
                 if isinstance(event, ProviderRetry):
-                    clock[0] = provider_module.PROVIDER_RETRY_BUDGET_SECONDS + 1
+                    retries.append(event)
+                    clock[0] = provider_module.PROVIDER_RETRY_BUDGET_SECONDS + expired_by
 
     asyncio.run(run())
     assert len(attempts) == 1
+    assert len(retries) == 1
 
 
 def test_retries_discard_partial_tool_calls(monkeypatch):
