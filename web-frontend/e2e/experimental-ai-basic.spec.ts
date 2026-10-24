@@ -386,6 +386,16 @@ for (const { label, html, text } of [
     html: '<p><b>Keep this YAML:</b></p><pre>people:\n  - id: P1\n</pre>',
     text: 'Keep this YAML:\npeople:\n  - id: P1\n',
   },
+  {
+    label: 'CSS preformatted indentation',
+    html: '<div style="white-space: pre-wrap"><b>people:</b>\n  - id: P1\n</div>',
+    text: 'people:\n  - id: P1\n',
+  },
+  {
+    label: 'explicit rule numbers',
+    html: '<ol start="5"><li><b>Coverage</b></li><li value="9">Rest</li></ol>',
+    text: '5. Coverage\n9. Rest',
+  },
 ]) {
   test(`preserves pasted source text with ${label}`, async ({ page, context }) => {
     const captured = await mockAiBackend(page);
@@ -400,6 +410,10 @@ for (const { label, html, text } of [
       })]);
     }, { html, text });
     await input.press('ControlOrMeta+v');
+    await expect(input).toHaveValue(text);
+    await input.press('ControlOrMeta+z');
+    await expect(input).toHaveValue('');
+    await input.press('ControlOrMeta+Shift+z');
     await expect(input).toHaveValue(text);
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await expect(page.getByText('The image and schedule were received.')).toBeVisible();

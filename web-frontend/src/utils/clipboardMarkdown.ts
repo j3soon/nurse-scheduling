@@ -23,8 +23,10 @@
 export function clipboardHtmlToMarkdown(html: string): string | null {
   if (!html) return null;
   const document = new DOMParser().parseFromString(html, 'text/html');
-  // Keep clipboard tabs and indentation when this basic converter cannot preserve the structure.
-  if (document.querySelector('table, pre')) return null;
+  // Keep clipboard separators, indentation, and numbering when conversion cannot preserve them.
+  if (document.querySelector('table, pre, ol')) return null;
+  if (Array.from(document.querySelectorAll<HTMLElement>('[style]')).some(element =>
+    ['pre', 'pre-wrap', 'pre-line', 'break-spaces'].includes(element.style.whiteSpace))) return null;
   let formatted = false;
   const escape = (text: string) => text.replace(/[\\`*_[\]<>]/g, '\\$&');
   const wrap = (text: string, marker: string) => text.replace(/^(\s*)([\s\S]*?\S)(\s*)$/, `$1${marker}$2${marker}$3`);

@@ -118,6 +118,32 @@ def test_unavailable_model_metadata_uses_fallback():
     assert capacity.limit == 4 and not capacity.deployments
 
 
+@pytest.mark.parametrize("rows", [[], [deployment("other", model="other-model")]], ids=["empty", "other-model"])
+def test_confirmed_missing_model_prevents_evaluation_jobs(rows):
+    capacity = discover(rows)
+    assert capacity.limit == 0 and not capacity.deployments
+    assert "no deployments" in capacity.reason
+    with pytest.raises(ValueError, match="No healthy"):
+        capacity.select_jobs(None, 100)
+
+
+@pytest.mark.parametrize("failure", ["timeout", "status", "invalid-json"])
+def test_failed_discovery_logs_exception_and_preserves_fallback(failure, caplog):
+    def respond(request):
+        if failure == "timeout":
+            raise httpx.ReadTimeout("Timed out", request=request)
+        return httpx.Response(403 if failure == "status" else 200, text="PRIVATE_RESPONSE_BODY")
+
+    capacity = discover_capacity(
+        "https://gateway.example/v1", "secret-app-key", "qwen", transport=httpx.MockTransport(respond), now=NOW
+    )
+    assert capacity.limit == 4 and not capacity.deployments
+    record = next(record for record in caplog.records if "Could not read LiteLLM" in record.message)
+    assert record.exc_info is not None
+    assert "secret-app-key" not in caplog.text
+    assert "PRIVATE_RESPONSE_BODY" not in caplog.text
+
+
 @pytest.mark.parametrize("record", [{}, {"status": "healthy", "checked_at": "bad"}, health("healthy", -1)])
 def test_missing_invalid_or_future_health_times_are_unknown(record):
     capacity = discover([deployment("primary")], {"primary": record})

@@ -45,8 +45,36 @@ BASE_TIME = datetime(2026, 1, 1, tzinfo=UTC)
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "recent_ai_prompts.sh"
 
 
-def seed_session(history, position, *, kind="foreground", prompts=1, text=None):
-    session_id, run_id, owner = (str(uuid4()) for _ in range(3))
+def _bash_executable(*, windows: bool) -> str | None:
+    candidates = []
+    if windows and (git := shutil.which("git")):
+        # Git's wrapper configures MSYS and PATH. Windows' bash.exe can be a WSL launcher.
+        candidates.extend(parent / "bin" / "bash.exe" for parent in Path(git).resolve().parents)
+    if bash := shutil.which("bash"):
+        candidates.append(Path(bash))
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        try:
+            version = subprocess.run(
+                [str(candidate), "--version"],
+                capture_output=True,
+                check=False,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if version.returncode == 0 and version.stdout.startswith("GNU bash"):
+            return str(candidate)
+    return None
+
+
+def seed_session(history, position, *, kind="foreground", prompts=1, text=None, session_id=None):
+    session_id = session_id or str(uuid4())
+    run_id, owner = (str(uuid4()) for _ in range(2))
     state = session_state(owner)
     history.start_run(
         run_id,
@@ -116,6 +144,18 @@ def test_recent_prompts_order_ties_bounds_and_read_only(postgres_history):
     assert "run tokens in=123 out=45" in rendered
     assert "Steering 2: 字…" in rendered
     assert "UTC" in rendered
+
+
+def test_cli_session_limit_breaks_timestamp_ties_by_run_admission(postgres_history, monkeypatch, capsys):
+    older, _ = seed_session(postgres_history, 1, session_id="ffffffff-ffff-4fff-bfff-ffffffffffff")
+    newer, _ = seed_session(postgres_history, 1, session_id="00000000-0000-4000-8000-000000000001")
+    assert older > newer
+    monkeypatch.setenv("AI_HISTORY_POSTGRES_URL", database_url(postgres_history))
+    monkeypatch.setattr(sys, "argv", ["recent_prompts", "--sessions", "1"])
+    _main()
+    output = capsys.readouterr().out
+    assert output.startswith(newer)
+    assert older not in output
 
 
 def test_cli_defaults_overrides_and_select_only_role(postgres_history):
@@ -220,13 +260,62 @@ def test_cli_requires_database_url(monkeypatch, capsys):
     assert "AI_HISTORY_POSTGRES_URL is required" in capsys.readouterr().err
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="Bash is not installed")
-def test_shell_help_needs_no_database_or_docker():
-    result = subprocess.run(
-        ["bash", str(SCRIPT), "--help"], capture_output=True, check=False, text=True, encoding="utf-8", timeout=5
+def test_cli_logs_database_failure_and_preserves_exit_message(monkeypatch, capsys, caplog):
+    monkeypatch.setenv("AI_HISTORY_POSTGRES_URL", "postgresql://localhost/test")
+    monkeypatch.setattr(sys, "argv", ["recent_prompts"])
+    error = psycopg.OperationalError("database unavailable")
+
+    def fail_connect(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(psycopg, "connect", fail_connect)
+    with pytest.raises(SystemExit) as result:
+        _main()
+    assert result.value.code == 1
+    assert capsys.readouterr().err == "Could not read saved user prompts: database unavailable\n"
+    record = next(record for record in caplog.records if record.message == "Could not read saved user prompts")
+    assert record.exc_info[1] is error
+
+
+def test_bash_discovery_prefers_git_bash_to_windows_launcher(tmp_path, monkeypatch):
+    git = tmp_path / "Git" / "cmd" / "git.exe"
+    bash = git.parents[1] / "bin" / "bash.exe"
+    bash.parent.mkdir(parents=True)
+    bash.touch()
+    monkeypatch.setattr(shutil, "which", lambda command: str(git) if command == "git" else "windows-bash.exe")
+    monkeypatch.setattr(
+        subprocess, "run", lambda command, **_kwargs: subprocess.CompletedProcess(command, 0, "GNU bash", "")
     )
-    assert result.returncode == 0
-    assert "15 sessions, 5 prompts" in result.stdout
+    assert _bash_executable(windows=True) == str(bash.resolve())
+
+
+def test_bash_discovery_rejects_unusable_windows_launcher(tmp_path, monkeypatch):
+    launcher = tmp_path / "bash.exe"
+    launcher.touch()
+    monkeypatch.setattr(shutil, "which", lambda command: str(launcher) if command == "bash" else None)
+    monkeypatch.setattr(
+        subprocess, "run", lambda command, **_kwargs: subprocess.CompletedProcess(command, 1, "W\0S\0L\0", "")
+    )
+    assert _bash_executable(windows=True) is None
+
+
+@pytest.mark.parametrize("line_ending", ["\n", "\r\n"], ids=["lf", "crlf"])
+def test_shell_help_needs_no_database_or_docker(tmp_path, line_ending):
+    bash = _bash_executable(windows=os.name == "nt")
+    if bash is None:
+        pytest.skip("A working Bash interpreter is not installed")
+    script = tmp_path / SCRIPT.name
+    script.write_bytes(SCRIPT.read_text(encoding="utf-8").replace("\n", line_ending).encode("utf-8"))
+    result = subprocess.run(
+        [bash, "-s", "--", "--help"],
+        # Read normalized text and send bytes so Windows does not translate LF back to CRLF.
+        input=script.read_text(encoding="utf-8").encode("utf-8"),
+        capture_output=True,
+        check=False,
+        timeout=5,
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert b"15 sessions, 5 prompts" in result.stdout
 
 
 @pytest.mark.skipif(os.name == "nt" or shutil.which("bash") is None, reason="Requires a POSIX shell")

@@ -21,6 +21,7 @@
 
 import argparse
 import json
+import logging
 import os
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -35,6 +36,7 @@ FALLBACK_CONCURRENCY = 4
 MAX_EVAL_CONCURRENCY = 20
 # LiteLLM persists unchanged health results hourly, rather than after every probe.
 HEALTH_MAX_AGE_SECONDS = 7200
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -72,7 +74,8 @@ def _get_json(client: httpx.Client, url: str, key: str) -> dict | None:
         data = response.json()
         return data if isinstance(data, dict) else None
     except (httpx.HTTPError, httpx.InvalidURL, ValueError):
-        # Do not include response bodies, URLs, or credentials in admin output.
+        # Keep response bodies, URLs, and credentials out of the JSON capacity report.
+        logger.warning("Could not read LiteLLM deployment metadata or cached health", exc_info=True)
         return None
 
 
@@ -128,7 +131,9 @@ def discover_capacity(
         deployments[deployment_id] = deployment
     values = tuple(deployments.values())
     healthy = [item for item in values if item.health == "healthy" and item.limit is not None]
-    if healthy:
+    if not values:
+        limit, reason = 0, "no deployments configured for the selected model"
+    elif healthy:
         limit = sum(item.limit for item in healthy)
         reason = "sum of confirmed healthy deployment limits"
     elif values and all(item.health == "unhealthy" for item in values):

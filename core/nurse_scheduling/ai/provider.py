@@ -512,6 +512,7 @@ class OpenAiCompatibleProvider:
                 yield call
             if self._include_attempts:
                 yield ProviderAttempt(attempt)
+            budget_timeout = None
             try:
                 # Keep tool calls private until the HTTP attempt also closes cleanly.
                 completed: list[ToolCallRequest | ResponseEnd | ReasoningReplay] = []
@@ -523,7 +524,8 @@ class OpenAiCompatibleProvider:
                                 raise TimeoutError
                             # Scope cancellation to receiving an event. A yielded event's
                             # consumer must not inherit this provider deadline.
-                            async with asyncio.timeout(remaining):
+                            budget_timeout = asyncio.timeout(remaining)
+                            async with budget_timeout:
                                 event = await anext(events)
                         except StopAsyncIteration:
                             break
@@ -592,7 +594,12 @@ class OpenAiCompatibleProvider:
                     if attempt < max_attempts
                     else 0.0
                 )
-                if attempt == max_attempts or (delay is not None and now + delay > retry_deadline):
+                # Trust timer expiry even if a coarse clock still precedes the deadline.
+                if (
+                    attempt == max_attempts
+                    or (budget_timeout is not None and budget_timeout.expired())
+                    or (delay is not None and now + delay >= retry_deadline)
+                ):
                     if failure is exc:
                         raise
                     raise failure from exc

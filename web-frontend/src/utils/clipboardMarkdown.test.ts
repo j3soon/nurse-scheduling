@@ -41,6 +41,11 @@ it.each(['', '<div>Plain **Markdown**</div>', '<a href="javascript:alert(1)">lab
 it.each([
   '<table><tr><td><b>Person</b></td><td>Day</td></tr><tr><td>P1</td><td>2</td></tr></table>',
   '<b>Keep this YAML:</b><pre>people:\n  - id: P1\n</pre>',
+  ...['pre', 'pre-wrap', 'pre-line', 'break-spaces'].map(whiteSpace =>
+    `<div style="white-space: ${whiteSpace}"><b>people:</b>\n  - id: P1\n</div>`),
+  '<ol><li><b>Coverage</b></li><li>Rest</li></ol>',
+  '<ol start="5"><li><b>Coverage</b></li><li value="9">Rest</li></ol>',
+  '<ol reversed><li><b>Rest</b></li><li>Coverage</li></ol>',
 ])('uses plain text for clipboard structures that basic Markdown conversion cannot preserve: %s', html => {
   expect(clipboardHtmlToMarkdown(html)).toBeNull();
 });

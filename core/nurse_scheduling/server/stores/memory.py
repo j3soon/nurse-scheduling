@@ -82,6 +82,8 @@ class MemoryJobStore:
         """Opaque identity unique to this process-local store."""
         self._records: dict[str, _MemoryJobRecord] = {}
         """Job records indexed by job ID."""
+        self._finished_jobs: dict[str, None] = {}
+        """Terminal job IDs in the order their first terminal transitions were stored."""
         self._workers: dict[str, _MemoryWorkerLease] = {}
         """Worker leases indexed by worker ID."""
         self._max_events_per_job = max_events_per_job
@@ -128,13 +130,11 @@ class MemoryJobStore:
             )
 
             while len(self._records) >= limits.max_retained:
-                terminal = sorted(
-                    (record.job for record in self._records.values() if record.job.state.terminal),
-                    key=lambda candidate: candidate.finished_at or candidate.created_at,
-                )
-                if not terminal:
+                oldest_finished = next(iter(self._finished_jobs), None)
+                if oldest_finished is None:
                     raise JobCapacityError("Too many jobs are retained")
-                del self._records[terminal[0].id]
+                del self._records[oldest_finished]
+                del self._finished_jobs[oldest_finished]
 
             record = _MemoryJobRecord(job=replace(job, revision=1, queue_position=None), input_bytes=input_bytes)
             self._records[job.id] = record
@@ -203,10 +203,7 @@ class MemoryJobStore:
             worker = self._get_worker_for_live_lease_locked(lease, started_at)
             if worker is None or worker.active_job_id is not None:
                 return None
-            queued = sorted(
-                (record for record in self._records.values() if record.job.state == JobState.QUEUED),
-                key=lambda record: (record.job.created_at, record.job.id),
-            )
+            queued = [record for record in self._records.values() if record.job.state == JobState.QUEUED]
             if not queued:
                 return None
             record = queued[0]
@@ -321,6 +318,10 @@ class MemoryJobStore:
             was_queued = record.job.state == JobState.QUEUED
             updated_job = replace(job, revision=expected_revision + 1, queue_position=None)
             record.job = updated_job
+            if updated_job.state.terminal:
+                self._finished_jobs.setdefault(updated_job.id, None)
+            else:
+                self._finished_jobs.pop(updated_job.id, None)
             if updated_job.state.terminal and updated_job.worker_id is not None:
                 worker = self._workers.get(updated_job.worker_id)
                 if worker is not None and worker.active_job_id == updated_job.id:
@@ -397,6 +398,7 @@ class MemoryJobStore:
             if record.job.revision != expected_revision:
                 raise StoreWriteConflictError(f"Job revision changed: {job_id}")
             del self._records[job_id]
+            self._finished_jobs.pop(job_id, None)
 
     def _record(self, job_id: str) -> _MemoryJobRecord:
         """Return the internal record for a job.
@@ -413,13 +415,7 @@ class MemoryJobStore:
         """Return a job copy with its queue position derived from current state."""
         if job.state != JobState.QUEUED:
             return replace(job, queue_position=None)
-        queued_ids = [
-            candidate.id
-            for candidate in sorted(
-                (record.job for record in self._records.values() if record.job.state == JobState.QUEUED),
-                key=lambda candidate: (candidate.created_at, candidate.id),
-            )
-        ]
+        queued_ids = [record.job.id for record in self._records.values() if record.job.state == JobState.QUEUED]
         return replace(job, queue_position=queued_ids.index(job.id) + 1)
 
     def _append_events(self, record: _MemoryJobRecord, events: Sequence[JobEvent]) -> None:
@@ -450,10 +446,7 @@ class MemoryJobStore:
         exclude_job_id: str | None = None,
     ) -> None:
         """Append current position events for queued jobs except the excluded job."""
-        queued = sorted(
-            (record for record in self._records.values() if record.job.state == JobState.QUEUED),
-            key=lambda record: (record.job.created_at, record.job.id),
-        )
+        queued = [record for record in self._records.values() if record.job.state == JobState.QUEUED]
         for position, record in enumerate(queued, start=1):
             if record.job.id == exclude_job_id:
                 continue

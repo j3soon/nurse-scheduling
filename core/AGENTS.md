@@ -57,6 +57,28 @@ and truncate prompt previews in SQL before returning them to Python.
 When an admin command selects a deployment environment file, print its path to
 stderr. Do not replace an explicitly selected file with a fallback.
 
+## Windows CI Timing
+
+- Windows core CI uses Python 3.12. Its asyncio deadline timers can fire before
+  a coarse monotonic clock reaches the deadline. Include this condition in
+  deadline tests instead of relying only on Linux runs with real timers.
+- Treat `asyncio.Timeout.expired()` as final when it owns the overall retry
+  budget. Stop retries at `now >= deadline`. Keep individual request timeouts
+  retryable while the overall budget remains available.
+- Test elapsed-time accounting with a controlled performance clock. Advance it
+  during fake provider and tool work. Check exact per-turn totals and that tool
+  time is excluded from inference time. Do not infer a minimum measured duration
+  from a real `asyncio.sleep`.
+- Replace only the tested module's `time` object when controlling its clock.
+  Patching the global `time` module affects unrelated measurements. Patching
+  `time.monotonic` can freeze the event loop's timers.
+- After a Windows-only timing failure, inspect related tests for the same clock,
+  sleep, or ordering assumption. Run deterministic regressions and the complete
+  affected test modules locally before another CI attempt. Use events or
+  barriers when a test needs task ordering instead of an elapsed duration.
+- Bound polling by elapsed time or wait for a completion event with a timeout.
+  Do not derive a waiting budget from a fixed number of sleeps.
+
 ## Dependencies
 - `requirements.txt` is the minimal runtime set. Deployment images install only
   it, so a small file keeps those builds fast. Add a package there only when
@@ -616,6 +638,9 @@ stderr. Do not replace an explicitly selected file with a fallback.
 
 ## Testing
 - Normal tests live under `tests/`.
+- Test ordering with equal timestamps and IDs whose lexical order differs from
+  admission order. Windows clocks can give sequential operations the same time.
+  Track event order directly instead of adding sleeps or requiring distinct times.
 - When replacing a browser cookie in a test, delete the existing cookie first
   or match its domain and path. Setting only its name can add a duplicate.
   HTTP client versions can send those duplicates in different orders.

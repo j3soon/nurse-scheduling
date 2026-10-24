@@ -94,6 +94,15 @@ The controller owns job lifecycle policy. The worker owns execution
 orchestration. The process executor owns child process supervision. The runner
 owns one scheduler invocation and its output conversion.
 
+Stores claim jobs in successful admission order. Equal timestamps and clock
+adjustments do not change queue positions. Redis appends after the largest
+existing queue score, including timestamp scores written by older versions.
+
+Capacity pruning removes jobs in the order their first terminal transitions
+were stored. Updating terminal metadata does not change that order. Redis keeps
+this order across restarts. Jobs retained from older versions have no completion
+index, so Redis prunes them first, ordered by finish time and then job ID.
+
 ## Job Lifecycle
 
 <figure markdown="1">

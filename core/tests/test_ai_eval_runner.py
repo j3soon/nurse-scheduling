@@ -28,6 +28,7 @@ from collections.abc import AsyncIterator, Sequence
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -682,11 +683,34 @@ def test_missing_required_tool_does_not_stop_a_run_before_later_success():
     assert len(provider.messages) == 2
 
 
-def test_provider_wait_time_is_recorded_per_inference_turn():
-    run = asyncio.run(run_case(ConcurrentProvider(), settings(), CASE_BY_ID["ask-people-count"], _factory()))
+def test_provider_wait_time_is_recorded_per_inference_turn(monkeypatch):
+    from .ai_eval import runner
 
-    assert run.llm_inference_seconds >= 0.005
-    assert run.llm_turn_seconds == pytest.approx([run.llm_inference_seconds])
+    clock = [0.0]
+    monkeypatch.setattr(runner, "time", SimpleNamespace(perf_counter=lambda: clock[0]))
+
+    class TimedProvider(ScriptedProvider):
+        async def stream_events(self, messages, tools=None):
+            duration = 1.0 if not self.messages else 2.0
+            async for event in super().stream_events(messages, tools):
+                clock[0] += duration
+                yield event
+
+    def count_people(*_args):
+        clock[0] += 5.0
+        return CommandResult("87\n", "", 0)
+
+    provider = TimedProvider(
+        [ToolCallRequest((ToolCall("count", BASH_TOOL, '{"command":"echo 87"}'),))],
+        [TextDelta("There are 87 people.")],
+    )
+    run = asyncio.run(run_case(provider, settings(), CASE_BY_ID["ask-people-count"], _factory(count_people)))
+
+    assert run.passed
+    assert run.turns == 2
+    assert run.llm_inference_seconds == pytest.approx(3.0)
+    assert run.llm_turn_seconds == pytest.approx([1.0, 2.0])
+    assert run.seconds == pytest.approx(8.0)
 
 
 def test_provider_retries_are_reported_separately_from_logical_turns():

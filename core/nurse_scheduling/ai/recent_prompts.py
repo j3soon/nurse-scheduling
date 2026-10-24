@@ -20,6 +20,7 @@
 # This file is mostly AI generated.
 
 import argparse
+import logging
 import os
 import sys
 from datetime import UTC, datetime
@@ -32,6 +33,8 @@ from psycopg.rows import dict_row
 from ..sentry import flush_sentry, init_sentry
 from ..version import get_app_version
 
+logger = logging.getLogger(__name__)
+
 
 def read_recent_prompts(connection, *, sessions: int, prompts: int, chars: int) -> list[dict]:
     """Read bounded previews through a consistent, database-enforced read-only snapshot."""
@@ -39,10 +42,10 @@ def read_recent_prompts(connection, *, sessions: int, prompts: int, chars: int) 
     recent = connection.execute(
         "SELECT s.id::text, s.created_at, latest.created_at AS last_prompt_at "
         "FROM chat_sessions s JOIN LATERAL ("
-        "SELECT e.created_at FROM chat_session_entries e JOIN chat_runs r ON r.id = e.run_id "
+        "SELECT e.created_at, r.sequence FROM chat_session_entries e JOIN chat_runs r ON r.id = e.run_id "
         "WHERE e.session_id = s.id AND e.type = 'user' AND r.kind = 'foreground' "
         "ORDER BY e.created_at DESC, e.seq DESC LIMIT 1"
-        ") latest ON true ORDER BY latest.created_at DESC, s.created_at DESC, s.id DESC LIMIT %s",
+        ") latest ON true ORDER BY latest.created_at DESC, latest.sequence DESC LIMIT %s",
         (sessions,),
     ).fetchall()
     for session in recent:
@@ -118,6 +121,7 @@ def _main() -> None:
             recent = read_recent_prompts(connection, **vars(args))
         print_recent_prompts(recent, sys.stdout)
     except psycopg.Error as exc:
+        logger.exception("Could not read saved user prompts")
         parser.exit(1, f"Could not read saved user prompts: {exc}\n")
 
 

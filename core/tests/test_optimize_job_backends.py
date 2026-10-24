@@ -126,9 +126,11 @@ def store(store_factory):
     return store_factory()
 
 
-def _controller(store, *, max_pending=8, max_retained=32, max_pending_per_client=None, now=None, runtime_identity=None):
+def _controller(
+    store, *, max_pending=8, max_retained=32, max_pending_per_client=None, now=None, runtime_identity=None, job_ids=None
+):
     clock = (lambda: now) if now is not None else (lambda: datetime.now(timezone.utc))
-    sequence = iter(f"job_{index}" for index in range(100))
+    sequence = iter(job_ids if job_ids is not None else (f"job_{index}" for index in range(100)))
     return JobController(
         store,
         limits=StoreLimits(
@@ -430,6 +432,52 @@ def test_store_rejects_duplicate_ids_and_prunes_terminal_jobs(store):
         controller.get_job(first.id)
 
 
+@pytest.mark.parametrize("job_ids", [("job_a", "job_z"), ("job_z", "job_a")], ids=["ascending-ids", "descending-ids"])
+def test_store_prunes_jobs_in_completion_order_when_timestamps_tie(store, job_ids):
+    controller = _controller(
+        store, now=datetime.now(timezone.utc), max_retained=2, job_ids=[*job_ids, "job_replacement"]
+    )
+    first = _create(controller)
+    second = _create(controller)
+    controller.cancel_job(second.id)
+    controller.cancel_job(first.id)
+    # Updating terminal metadata does not make a completed job newer.
+    older = controller.get_job(second.id)
+    store.update_job(older, older.revision, [])
+
+    _create(controller)
+
+    assert controller.get_job(first.id).state == JobState.CANCELLED
+    with pytest.raises(JobNotFoundError):
+        controller.get_job(second.id)
+
+
+def test_redis_completion_order_survives_upgrade_and_restart(fake_redis_store_factory):
+    prefix = f"test:completion-order:{uuid.uuid4().hex}"
+    store = fake_redis_store_factory(key_prefix=prefix)
+    now = datetime.now(timezone.utc)
+    controller = _controller(store, now=now, max_retained=3, job_ids=["job_legacy", "job_a_recent", "job_z_older"])
+    legacy = _create(controller)
+    recent = _create(controller)
+    older = _create(controller)
+    controller.cancel_job(legacy.id)
+    # Older releases did not retain a completion index.
+    store._redis.delete(store._finished_key)
+    controller.cancel_job(older.id)
+    controller.cancel_job(recent.id)
+
+    restarted = _controller(
+        fake_redis_store_factory(key_prefix=prefix), now=now, max_retained=3, job_ids=["job_new0", "job_new1"]
+    )
+    _create(restarted)
+    with pytest.raises(JobNotFoundError):
+        restarted.get_job(legacy.id)
+    _create(restarted)
+    assert restarted.get_job(recent.id).state == JobState.CANCELLED
+    with pytest.raises(JobNotFoundError):
+        restarted.get_job(older.id)
+
+
 def test_store_rejects_stale_delete_and_missing_update(store):
     controller = _controller(store)
     created = _create(controller)
@@ -658,7 +706,7 @@ def test_store_rejects_events_from_stale_workers_and_terminal_jobs(store):
 
 
 def test_store_queue_positions_are_derived_from_queue_order(store):
-    controller = _controller(store)
+    controller = _controller(store, now=datetime.now(timezone.utc), job_ids=["job_z_first", "job_a_second"])
     first = _create(controller, "first.yaml")
     second = _create(controller, "second.yaml")
     assert controller.get_job(first.id).queue_position == 1
@@ -666,6 +714,21 @@ def test_store_queue_positions_are_derived_from_queue_order(store):
 
     _claim(controller)
     assert controller.get_job(second.id).queue_position == 1
+
+
+def test_redis_queue_appends_after_legacy_timestamp_scores(fake_redis_store_factory):
+    store = fake_redis_store_factory()
+    now = datetime.now(timezone.utc)
+    controller = _controller(store, now=now, job_ids=["job_z_first", "job_a_second"])
+    first = _create(controller)
+    store._redis.zadd(store._queue_key, {first.id: now.timestamp()})
+
+    second = _create(controller)
+
+    assert controller.get_job(first.id).queue_position == 1
+    assert controller.get_job(second.id).queue_position == 2
+    _lease, claimed = _claim(controller)
+    assert claimed.id == first.id
 
 
 def test_store_caps_replayable_events_per_job(store_factory):
@@ -1080,7 +1143,7 @@ def test_terminal_job_read_with_a_caught_up_cursor_is_empty_and_terminal(store):
 
 
 def test_queue_position_events_track_queue_reordering(store):
-    controller = _controller(store)
+    controller = _controller(store, now=datetime.now(timezone.utc), job_ids=["job_z_first", "job_a_second"])
     first = _create(controller, "first.yaml")
     second = _create(controller, "second.yaml")
 
