@@ -20,6 +20,11 @@ are synthetic reproductions of the reported behavior.
 | Inclusive senior staffing | `senior-included-in-day-total` | 2/3, then 5/5 | 5/5 | `senior-additional-day-slot`: 5/5, 5/5 |
 | Day group membership | `day-group-creation` | 1/5 | 5/5 | `day-group-adds-only-day-shifts`, `day-group-explicit-broadening-control`: 3/3 before, 5/5 after each |
 
+The historical frontend-timezone cases used injected server time. The current app
+sets the VM timezone and lets the agent query time with bash. Their replacements,
+`local-date-from-instant-taipei` and `local-date-from-instant-los-angeles`, use an
+explicit user-supplied instant. The earlier pass rates do not measure this VM workflow.
+
 The example comparison used the same production prompt and current-schedule
 fixture. The candidate adds sandbox hydration and advertises the reference path
 in the core schema. The delivered example matches the public YAML bytes. Both API

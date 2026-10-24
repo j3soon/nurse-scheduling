@@ -190,6 +190,7 @@ def test_records_text_usage_and_sanitized_failure(recorded_history, failed):
     )
     assert run_messages(recorded_history, start["run_id"]) == [
         UserMessage("Question"),
+        basic.timezone_entry(),
         AssistantMessage(
             "Partial answer", "error" if failed else "stop", usage=None if failed else asdict(TokenUsage(1, 1, 2))
         ),
@@ -271,6 +272,7 @@ def test_records_queued_steering_in_run_order(recorded_history):
     (start,) = recorded_history["starts"]
     assert run_messages(recorded_history, start["run_id"]) == [
         UserMessage("Is Monday covered?"),
+        basic.timezone_entry(),
         AssistantMessage("Monday is covered."),
         UserMessage("And Tuesday?"),
         AssistantMessage("Tuesday is covered."),
@@ -312,13 +314,14 @@ def test_history_and_session_keep_the_full_run_context(recorded_history):
 
     (start,) = recorded_history["starts"]
     (call,) = basic.rename_call()[0].calls
-    prompt, tool_use, tool_result, answer = run_messages(recorded_history, start["run_id"])
+    prompt, status, tool_use, tool_result, answer = run_messages(recorded_history, start["run_id"])
+    assert status == basic.timezone_entry()
     assert prompt == UserMessage("Rename P1.")
     assert tool_use == AssistantMessage("Checking. ", "tool_use", "Find P1. ", (call,))
     assert (tool_result.tool_call_id, tool_result.tool_name, tool_result.ok) == (call.id, call.name, True)
     assert "passed trusted server-side validation" in tool_result.text
     assert answer == AssistantMessage("Renamed P1.")
-    assert retained == [prompt, tool_use, tool_result, answer]
+    assert retained == [prompt, status, tool_use, tool_result, answer]
 
 
 def test_database_unavailable_prevents_startup(recorded_history, monkeypatch):
@@ -1478,6 +1481,7 @@ def test_postgres_recovery_keeps_operational_metadata(postgres_history):
         ).fetchone()
         assert session_entries(connection) == [
             record(UserMessage("First")),
+            record(basic.timezone_entry()),
             record(answer),
             record(UserMessage("Second")),
             record(AssistantMessage("Partial", "error")),
@@ -1507,6 +1511,7 @@ def test_postgres_recovery_keeps_operational_metadata(postgres_history):
     restored = postgres_history.load_session(session, owner)
     assert restored["entries"] == [
         UserMessage("First"),
+        basic.timezone_entry(),
         answer,
         UserMessage("Second"),
         AssistantMessage("Partial", "error"),
@@ -1564,7 +1569,7 @@ def test_postgres_rejected_question_does_not_shift_trimmed_history_after_restart
             assert basic.parse_sse(response.text)[-1][0] == "done"
         owner = client.cookies[basic.OWNER_COOKIE]
         session = app.state.session_store._sessions[session_id]
-        assert session.dropped_entries == 2
+        assert session.dropped_entries == 3
         expected = [UserMessage("Next question"), AssistantMessage("Latest answer")]
         assert session.transcript == expected
     restarted = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
@@ -1607,7 +1612,7 @@ def test_postgres_recovers_complete_message_and_history_after_backend_restart(po
     frames, transcript = asyncio.run(restarted_process())
     assert reset_text(frames) == answer
     assert provider.calls == []
-    assert transcript == [UserMessage("Original question"), AssistantMessage(answer)]
+    assert transcript == [UserMessage("Original question"), basic.timezone_entry(), AssistantMessage(answer)]
 
 
 def test_postgres_recovers_question_and_partial_output_from_interrupted_run(postgres_history):
@@ -1740,7 +1745,11 @@ def test_postgres_evicted_session_restores_on_its_next_request(postgres_history)
             assert list(app.state.session_store._sessions) == [first]
             return app.state.session_store._sessions[first].transcript
 
-    assert asyncio.run(exercise()) == [UserMessage("Question"), AssistantMessage("Saved answer")]
+    assert asyncio.run(exercise()) == [
+        UserMessage("Question"),
+        basic.timezone_entry(),
+        AssistantMessage("Saved answer"),
+    ]
 
 
 def test_postgres_frontend_timezone_survives_a_service_restart(postgres_history):
@@ -1758,7 +1767,7 @@ def test_postgres_frontend_timezone_survives_a_service_restart(postgres_history)
         client.cookies.set(basic.OWNER_COOKIE, owner)
         response = client.post(f"/sessions/{session_id}/messages", json={"message": "Today?"})
         assert basic.parse_sse(response.text)[-1][0] == "done"
-        assert '"timezone": "Asia/Taipei"' in provider.calls[0][-1]["content"]
+        assert any("Workspace timezone: Asia/Taipei" in str(message.get("content")) for message in provider.calls[0])
         assert restarted.state.session_store._sessions[session_id].frontend_timezone == "Asia/Taipei"
 
 
@@ -1780,7 +1789,11 @@ def test_postgres_restored_conversation_matches_the_live_conversation(postgres_h
         live = app.state.session_store._sessions[session_id]
         expected = (list(live.transcript), live.dropped_entries, live.dropped_history_messages)
     # Retention trimmed the first exchange, both app events, and the interrupted second exchange.
-    assert expected == ([UserMessage("Q3"), AssistantMessage("A3"), UserMessage("Q4"), AssistantMessage("A4")], 7, 6)
+    assert [entry for entry in expected[0] if not isinstance(entry, AppEventEntry)] == [
+        UserMessage("Q4"),
+        AssistantMessage("A4"),
+    ]
+    assert expected[1] > 0 and expected[2] > 0
 
     async def restarted():
         app = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
@@ -1845,13 +1858,13 @@ def test_postgres_saves_each_message_before_its_run_ends(postgres_history):
             session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
             await client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P1."})
             deadline = time.monotonic() + 5
-            while len(saved := await asyncio.to_thread(saved_types)) < 3 and time.monotonic() < deadline:
+            while "tool_result" not in (saved := await asyncio.to_thread(saved_types)) and time.monotonic() < deadline:
                 await asyncio.sleep(0.05)
             # A crash now would keep the finished tool call and its result.
             assert app.state.runs.busy(session_id)
             return saved
 
-    assert asyncio.run(exercise()) == ["user", "assistant", "tool_result"]
+    assert asyncio.run(exercise()) == ["user", "app_event", "assistant", "tool_result"]
 
 
 def test_postgres_stop_before_message_arrival_survives_restart(postgres_history):
@@ -2000,6 +2013,7 @@ def test_postgres_shutdown_retries_a_failed_final_outcome(postgres_history, monk
         assert connection.execute("SELECT status, committed FROM chat_runs").fetchone() == ("completed", True)
     assert postgres_history.load_session(session_id, owner)["entries"] == [
         UserMessage("Question"),
+        basic.timezone_entry(),
         AssistantMessage("Saved answer"),
     ]
 

@@ -223,11 +223,12 @@ class E2BSandboxFactory:
         """Stop this process's cleanup worker."""
         await self._cleanup_manager.stop()
 
-    async def create(self) -> "E2BSandboxBackend":
+    async def create(self, *, envs: dict[str, str] | None = None) -> "E2BSandboxBackend":
         started = time.perf_counter()
         creation = asyncio.create_task(
             self._create_sandbox(
                 template=self._template,
+                **({"envs": envs} if envs is not None else {}),
                 timeout=ACTIVE_TIMEOUT_SECONDS,
                 secure=True,
                 allow_internet_access=False,

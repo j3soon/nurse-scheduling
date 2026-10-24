@@ -761,7 +761,15 @@ class AgentSession:
                 "type": "model_input",
                 "schedule_yaml": snapshot.schedule_yaml,
                 **model_input(
-                    messages, [snapshot.transcript_offset + index for index in history.source_indices], question_kind
+                    messages,
+                    [snapshot.transcript_offset + index for index in history.source_indices],
+                    question_kind,
+                    app_indices={
+                        snapshot.transcript_offset + index
+                        for index, entry in enumerate(snapshot.transcript)
+                        if isinstance(entry, AppEventEntry)
+                    },
+                    status_index=snapshot.transcript_offset + len(snapshot.transcript) + 1,
                 ),
             }
         )
@@ -852,6 +860,7 @@ class AgentSession:
                     optimizer_result=artifact.content if artifact is not None else None,
                     optimizer_context=artifact.schedule_context if artifact is not None else None,
                     agent=self.agent,
+                    timezone=snapshot.frontend_timezone,
                 )
                 async with aclosing(agent_events):
                     async for event in agent_events:

@@ -878,7 +878,7 @@ export default function ExperimentalAiPage() {
   const serverLocked = activeSessionId !== null || messages.length > 0;
 
   const contextDescription = contextUsage !== null
-    ? `${contextUsage.usedChars.toLocaleString()} of ${contextUsage.maxChars.toLocaleString()} characters in conversation context, including streamed output. Excludes fixed instructions and current status.`
+    ? `${contextUsage.usedChars.toLocaleString()} of ${contextUsage.maxChars.toLocaleString()} characters in conversation context, including streamed output. Excludes fixed instructions.`
     : 'The AI server has not reported context usage.';
 
   // The Session files panel is fixed on the right at xl, so the chat and composer reserve

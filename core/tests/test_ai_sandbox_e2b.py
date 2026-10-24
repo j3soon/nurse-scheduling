@@ -133,7 +133,7 @@ def test_factory_creates_a_secure_internet_disabled_auto_pause_sandbox(run_secon
             command_timeout_seconds=3,
             create_sandbox=create_sandbox,
         )
-        return await factory.create(), captured
+        return await factory.create(envs={"TZ": "Asia/Taipei"}), captured
 
     backend, captured = asyncio.run(exercise())
     assert backend.sandbox_id == "sandbox-123"
@@ -142,6 +142,7 @@ def test_factory_creates_a_secure_internet_disabled_auto_pause_sandbox(run_secon
     assert float(metadata["nurse_scheduling_ai_hard_deadline"]) == 1000 + run_seconds
     assert captured == {
         "template": "template-name",
+        "envs": {"TZ": "Asia/Taipei"},
         "timeout": 3600,
         "secure": True,
         "allow_internet_access": False,
@@ -151,7 +152,7 @@ def test_factory_creates_a_secure_internet_disabled_auto_pause_sandbox(run_secon
         },
         "api_key": "secret-key",
     }
-    assert "envs" not in captured
+    assert captured["envs"] == {"TZ": "Asia/Taipei"}
 
 
 def test_factory_redacts_provider_creation_failures():

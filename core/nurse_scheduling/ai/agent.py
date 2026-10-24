@@ -20,10 +20,9 @@
 # This file is mostly AI generated.
 
 import asyncio
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass, field
-from datetime import datetime
 
 from .agent_loop import agent_loop
 from .agent_types import (
@@ -117,7 +116,6 @@ class Agent:
         take_steering: SteeringSource | None = None,
         max_tool_rounds: int | None = None,
         max_tool_calls: int | None = None,
-        request_clock: Callable[[], datetime] | None = None,
         history_limit: int = 200_000,
         message_limit: int = 1000,
     ) -> AsyncIterator[AgentEvent]:
@@ -135,7 +133,6 @@ class Agent:
             max_tool_rounds=max_tool_rounds,
             max_tool_calls=max_tool_calls,
             run_messages=self.state.messages,
-            request_clock=request_clock,
             history_limit=history_limit,
             message_limit=message_limit,
         )

@@ -1113,7 +1113,7 @@ request therefore keeps earlier content unchanged and puts changing state last:
 1. The system message. It does not change during a chat.
 2. The chat history. Each entry stays unchanged once it is stored.
 3. The user's question, exactly as typed.
-4. A status message, only when needed. History never keeps it.
+4. A status message with new workspace facts, only when needed. History retains it.
 
 The backend stores app events as separate `user` messages in history when they
 happen. Each event starts with `[App event]`. Events record uploads, removals,
@@ -1123,10 +1123,12 @@ each file. A schedule change is recorded only when the parsed schedule data
 changes. Filenames stay out of the system prompt because they are untrusted
 input.
 
-The status message starts with `[Current status]`. It reports the current time,
-the optimizer result path, and retained files whose upload event the
-request does not contain. That happens when history was trimmed or when a
-failed turn followed the upload.
+The status message starts with `[Current status]`. It reports the workspace
+timezone, the optimizer result path, and retained files whose upload event is
+missing from the selected history. The frontend keeps these messages visible.
+New facts are appended instead of rewriting previous context. Each VM receives
+`TZ` once at creation from the browser timezone. The agent uses bash `date` when
+it needs the current date or time. The backend does not inject clock values.
 
 When history passes `AI_MAX_HISTORY_CHARS`, the backend drops the oldest
 messages until about half the budget remains. It keeps the newest completed

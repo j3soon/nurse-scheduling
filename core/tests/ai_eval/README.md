@@ -70,6 +70,10 @@ tested prefix has no warm hits. Exit 2 means incomplete evidence.
 Missing cached-token details are recorded as `null` in evaluations, so uncached
 token comparisons remain unavailable rather than inventing cache misses.
 
+Use `frontend_timezone` to set the VM timezone. Put fixed reference instants in
+the user question, as the `local-date-from-instant-*` cases do. The runner rejects
+the historical `current_time` field because it no longer injects clock values.
+
 Store one JSON object per case under `cases/<dataset>/<category>/<id>.json`. Existing synthetic coverage lives under
 `cases/basics/`, mirroring the normal YAML testcase layout under `tests/testcases/basics/`. Reserve sibling dataset
 directories such as `cases/real/` for cases derived from real user scenarios. Every case names a fixture, one question or a

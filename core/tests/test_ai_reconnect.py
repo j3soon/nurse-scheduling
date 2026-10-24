@@ -97,22 +97,22 @@ def test_message_receipts_refuse_new_execution_when_the_text_budget_is_full():
         from .test_ai_history import serving
 
         provider = basic.FakeProvider([["A1"], ["A2"]])
-        settings = basic.make_settings(max_session_bytes=130, max_history_messages=2)
+        settings = basic.make_settings(max_session_bytes=155, max_history_messages=2)
         app = basic.create_test_app(settings=settings, provider=provider)
         async with serving(app) as client:
             session_id = (await client.post("/sessions", json={"schedule_yaml": "description: test"})).json()["id"]
             path = f"/sessions/{session_id}/messages"
             first = None
             for question in ("Q1", "Q2"):
-                response = await client.post(path, json={"message": question, "message_id": question})
+                response = await client.post(path, json={"message": question, "message_id": question * 4})
                 assert response.status_code == 202
                 if first is None:
                     first = response.json()
                 while app.state.runs.busy(session_id):
                     await asyncio.sleep(0.01)
-            refused = await client.post(path, json={"message": "Q3", "message_id": "Q3"})
+            refused = await client.post(path, json={"message": "Q3", "message_id": "Q3" * 4})
             assert refused.status_code == 429
-            repeated = await client.post(path, json={"message": "Q1", "message_id": "Q1"})
+            repeated = await client.post(path, json={"message": "Q1", "message_id": "Q1" * 4})
             assert repeated.json() == first
             assert len(provider.calls) == 2
 

@@ -286,7 +286,7 @@ stderr. Do not replace an explicitly selected file with a fallback.
 - Put fixed model instructions in a manifest-tracked prompt segment under
   `ai/prompts/`, so they get a hash, linked cases, and a benefit witness.
   `build_provider_messages` appends only request-specific values, such as a
-  configured limit or the current time.
+  configured limit or the workspace timezone.
 - Keep model-facing prompts and intermediate messages concise. Avoid repeated
   warnings about malicious uploads or prescribed workbook-inspection commands.
   Rely on sandbox and server controls for security, and give generated artifacts
@@ -453,9 +453,10 @@ stderr. Do not replace an explicitly selected file with a fallback.
   whether the agent knows its role, rather than guessing from available tools
   or asking the user to inspect the UI. Keep navigation advice valid for someone
   on another page.
-- Supply the current server time in the frontend timezone as request-specific
-  status. Keep it out of retained history and the static prompt. Cover local
-  midnight and timezone changes when testing calendar context.
+- Set the sandbox `TZ` environment once at creation from the browser timezone.
+  Let the agent use `date` for the current instant. Retain status messages and
+  append changed workspace facts instead of rewriting earlier context. Test that
+  separate provider requests preserve their shared prefix until compaction or trimming.
 - Keep reusable analysis in the single bounded `/workspace/analysis.md` file.
   Bind it to exact schedule and upload inputs, retain it only through the
   successful run commit, and count it in session memory. Invalidate it when

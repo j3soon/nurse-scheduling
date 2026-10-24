@@ -221,7 +221,6 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
             turn["cost_assistant"]["costSummary"] = data["run"]
         elif kind == "model_input":
             turn["schedule"] = data.get("schedule_yaml", turn["schedule"])
-            messages = [m for m in messages if m.get("source") != "status"]
             previous_system = next((m for m in reversed(messages) if m["role"] == "system"), None)
             before = (
                 []
@@ -247,6 +246,7 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
                         "source": "status",
                         "title": entry.get("title"),
                         "content": entry["content"],
+                        **({"historyIndex": entry["index"]} if "index" in entry else {}),
                     }
                 elif entry["kind"] == "question":
                     question_text = entry["content"]

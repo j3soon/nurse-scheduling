@@ -86,8 +86,8 @@ class TrackingFactory:
     def __getattr__(self, name):
         return getattr(self.factory, name)
 
-    async def create(self):
-        sandbox = await self.factory.create()
+    async def create(self, **kwargs):
+        sandbox = await self.factory.create(**kwargs)
         try:
             try:
                 await sandbox.read_file(NOTE)

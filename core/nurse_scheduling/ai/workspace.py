@@ -247,6 +247,7 @@ async def _measured_sandbox_run(
     optimizer_context: bytes | None,
     load_attachment: AttachmentLoader | None = None,
     analysis: AgentAnalysis | None = None,
+    timezone: str = "UTC",
 ) -> AsyncIterator[SandboxBackend]:
     """Create, hydrate, and measure a sandbox only when a tool needs it."""
     stack = AsyncExitStack()
@@ -261,6 +262,7 @@ async def _measured_sandbox_run(
         optimizer_context,
         load_attachment,
         analysis,
+        timezone,
     )
     try:
         async with stack:
@@ -287,8 +289,10 @@ class _LazySandboxRun:
         optimizer_context: bytes | None,
         load_attachment: AttachmentLoader | None = None,
         analysis: AgentAnalysis | None = None,
+        timezone: str = "UTC",
     ) -> None:
         self._factory = factory
+        self._timezone = timezone
         self._cleanup_timeout_seconds = cleanup_timeout_seconds
         self._metrics = metrics
         self._stack = stack
@@ -321,7 +325,11 @@ class _LazySandboxRun:
                 self._lifecycle_started = time.perf_counter()
                 try:
                     self._sandbox = await self._stack.enter_async_context(
-                        managed_sandbox(self._factory, cleanup_timeout_seconds=self._cleanup_timeout_seconds)
+                        managed_sandbox(
+                            self._factory,
+                            cleanup_timeout_seconds=self._cleanup_timeout_seconds,
+                            envs={"TZ": self._timezone},
+                        )
                     )
                 finally:
                     self._metrics.provisioning_seconds = time.perf_counter() - self._lifecycle_started

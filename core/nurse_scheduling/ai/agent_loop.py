@@ -22,10 +22,9 @@
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Sequence
 from contextlib import aclosing, asynccontextmanager
 from dataclasses import asdict
-from datetime import datetime
 from math import ceil
 
 from .agent_types import (
@@ -62,7 +61,7 @@ from .provider import (
     ToolCallRequest,
     ToolCapableChatProvider,
 )
-from .transcript import AgentMessage, AssistantMessage, ToolResultMessage, UserMessage
+from .transcript import AgentMessage, AppEventEntry, AssistantMessage, ToolResultMessage, UserMessage
 
 logger = logging.getLogger("nurse_scheduling.ai.agent")
 MAX_PARALLEL_TOOL_CALLS = 8
@@ -88,7 +87,6 @@ async def agent_loop(
     max_tool_rounds: int | None = None,
     max_tool_calls: int | None = None,
     run_messages: list[AgentMessage] | None = None,
-    request_clock: Callable[[], datetime] | None = None,
     history_limit: int = 200_000,
     message_limit: int = 1000,
 ) -> AsyncIterator[AgentEvent]:
@@ -102,6 +100,9 @@ async def agent_loop(
         return await tool.execute(arguments)
 
     conversation = [] if run_messages is None else run_messages
+    prefix = list(messages)
+    if prefix and prefix[-1].get("_current_status"):
+        conversation.append(AppEventEntry(prefix.pop()["content"]))
     tool_rounds = 0
     tool_calls = 0
     final_answer_only = False
@@ -110,9 +111,7 @@ async def agent_loop(
     overflow_recovered = False
 
     def current_request():
-        return prepare_provider_request(
-            messages, conversation, now=request_clock() if request_clock else None, _preserve_native=True
-        )
+        return prepare_provider_request(prefix, conversation, _preserve_native=True)
 
     async def compact_context(*, force=False):
         events = compactor.compact(current_request(), [tool.definition for tool in tools], force=force)
@@ -138,9 +137,7 @@ async def agent_loop(
         usage = None
         request = current_request()
         definitions = [] if final_answer_only else [tool.definition for tool in tools]
-        request_chars = history_chars(
-            [message for message in request if message["role"] != "system" and not message.get("_current_status")]
-        )
+        request_chars = history_chars([message for message in request if message["role"] != "system"])
         request_tokens = compactor.tokens(request, definitions)
         response_chars = 0
         reported_chars = 0

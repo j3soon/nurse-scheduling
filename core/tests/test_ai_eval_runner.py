@@ -516,16 +516,30 @@ def test_a_correct_answer_passes_and_records_its_cost():
     assert run.seconds >= 0
 
 
-@pytest.mark.parametrize("case_id", ["current-time-frontend-taipei", "current-time-frontend-los-angeles"])
-def test_clock_cases_use_the_frontend_timezone_and_frozen_server_instant(case_id):
-    provider = ScriptedProvider([TextDelta(json.dumps(CASE_BY_ID[case_id].answer_json))])
+def test_frozen_clock_context_cannot_silently_pass_without_being_supplied():
+    case = replace(CASE_BY_ID["ask-people-count"], current_time="2031-03-31T23:30:00+00:00")
+    with pytest.raises(ValueError, match="reference instant in the question"):
+        asyncio.run(run_case(ScriptedProvider(), settings(), case, _factory()))
+
+
+@pytest.mark.parametrize("case_id", ["local-date-from-instant-taipei", "local-date-from-instant-los-angeles"])
+def test_date_cases_use_the_vm_timezone_and_an_explicit_reference_instant(case_id):
+    provider = ScriptedProvider(
+        [
+            ToolCallRequest(
+                (ToolCall("date", "bash", json.dumps({"command": "date --date=2031-03-31T23:30:00+00:00"})),)
+            )
+        ],
+        [TextDelta(json.dumps(CASE_BY_ID[case_id].answer_json))],
+    )
     factory = _factory()
     run = _run(case_id, provider, factory)
     assert run.passed
     context = provider.messages[0][-1]["content"]
     assert CASE_BY_ID[case_id].frontend_timezone in context
-    assert "2031-" in context
-    assert factory.created == []
+    assert "2031-" not in context
+    assert "2031-" in provider.messages[0][-2]["content"]
+    assert factory.created[0].envs == {"TZ": CASE_BY_ID[case_id].frontend_timezone}
 
 
 def test_attachment_case_hydrates_generated_file_and_records_an_upload_event():
@@ -1001,8 +1015,8 @@ def test_a_multi_user_turn_case_preserves_the_conversation_history():
 
     assert run.passed
     assert len(provider.messages) == 2
-    assert provider.messages[1][-4:-1] == [
-        {"role": "user", "content": "Expand the range."},
+    assert provider.messages[1][: len(provider.messages[0])] == provider.messages[0]
+    assert provider.messages[1][-2:] == [
         {"role": "assistant", "content": "Renew Taiwan holidays?"},
         {"role": "user", "content": "No."},
     ]
@@ -1191,14 +1205,12 @@ def test_provider_timeout_case_checks_the_retried_request_and_complete_answer(mo
     provider = _transport_provider(monkeypatch, handle)
     run = asyncio.run(run_case(provider, replace(settings(), provider_retry_backoff_seconds=0), case, _factory()))
 
-    assert run.passed is (not repeats_prefix), run.failures
-    assert run.answer == case.provider_timeout_after_text + continuation
+    assert run.passed is repeats_prefix, run.failures
+    assert run.answer == continuation
     assert run.provider_attempts_per_turn == [2]
     assert len(requests) == 1
-    assert requests[0]["messages"][-2:] == [
-        {"role": "assistant", "content": case.provider_timeout_after_text},
-        {"role": "user", "content": "[App event] The response was interrupted after 6 text characters."},
-    ]
+    assert case.provider_timeout_after_text not in [message.get("content") for message in requests[0]["messages"]]
+    assert "[App event] The response was interrupted" not in str(requests[0]["messages"])
 
 
 def test_an_unknown_case_id_stops_the_run():

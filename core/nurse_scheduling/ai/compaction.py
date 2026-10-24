@@ -44,7 +44,7 @@ COMPACTION_MANIFEST = Path(__file__).with_name("prompts") / "compaction.json"
 
 
 def _conversation(messages: Sequence[ChatMessage]) -> list[ChatMessage]:
-    return [message for message in messages if message["role"] != "system" and not message.get("_current_status")]
+    return [message for message in messages if message["role"] != "system"]
 
 
 def _serialize(messages: Sequence[ChatMessage]) -> str:

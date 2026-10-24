@@ -974,12 +974,12 @@ describe('ExperimentalAiPage', () => {
     await screen.findByText('Answer to Second');
 
     const cards = Array.from(screen.getByLabelText('Chat messages').querySelectorAll('article'));
-    // History never keeps a status message, so only the latest request's status is shown.
+    // Earlier status messages remain visible because they stay in model context.
     expect(cards.map(card => card.querySelector('p')?.textContent)).toEqual([
-      'System', 'User · App - Files Uploaded', 'User', 'Assistant', 'User', 'User · Status - Current Time', 'Assistant',
+      'System', 'User · App - Files Uploaded', 'User', 'User · Status - Current Time', 'Assistant', 'User', 'User · Status - Current Time', 'Assistant',
     ]);
     // The label names the topic, so the exact text of app and status messages starts collapsed.
-    for (const [card, text] of [[cards[1], '[App event] The user uploaded files: ward.csv'], [cards[5], 'Turn 2']] as const) {
+    for (const [card, text] of [[cards[1], '[App event] The user uploaded files: ward.csv'], [cards[6], 'Turn 2']] as const) {
       expect(card.querySelector('details')).not.toHaveAttribute('open');
       expect(card.querySelector('details pre')).toHaveTextContent(text);
     }

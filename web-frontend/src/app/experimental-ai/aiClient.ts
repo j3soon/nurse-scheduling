@@ -205,7 +205,8 @@ function isModelInputMessage(value: unknown): value is ModelInputMessage {
   return typeof message.kind === 'string' && MODEL_INPUT_KINDS.has(message.kind)
     && typeof message.content === 'string'
     && (message.title === undefined || typeof message.title === 'string')
-    && (message.kind === 'app' ? Number.isSafeInteger(message.index) : message.index === undefined);
+    && (message.kind === 'app' ? Number.isSafeInteger(message.index)
+      : (message.kind === 'status' && message.index !== undefined ? Number.isSafeInteger(message.index) : message.index === undefined));
 }
 
 interface SessionResponse {
