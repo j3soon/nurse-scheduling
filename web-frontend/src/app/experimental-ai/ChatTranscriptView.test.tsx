@@ -31,6 +31,8 @@ function renderTranscript(messages: ChatMessage[]) {
     messages={messages}
     showReasoning={false}
     showTools={false}
+    showCosts={true}
+    showModels={true}
     steeringAssistantId={null}
     conversationUnavailable={false}
     removingDownloadId={null}

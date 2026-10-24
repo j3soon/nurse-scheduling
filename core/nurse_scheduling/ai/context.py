@@ -104,7 +104,7 @@ def _file_entry(attachment: SandboxAttachment, index: int) -> dict[str, str | in
         "filename": attachment.filename,
         "path": attachment_path(attachment, index),
         "media_type": attachment.media_type,
-        "bytes": len(attachment.data),
+        "bytes": attachment.byte_count,
     }
 
 

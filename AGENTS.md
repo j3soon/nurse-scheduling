@@ -9,14 +9,27 @@
 
 Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 
+## Environment
+- Detect the session location first:
+  `test -f /.dockerenv && echo container || echo host`.
+- Dev container (`/.dockerenv` exists, built from `docker/Dockerfile.dev*`):
+  the checkout mounts at `/workspace`, and module dependencies come
+  preinstalled system-wide. Do not run `./scripts/setup_env.sh`, install
+  `uv`, or create a virtual environment. Run `python`, `pytest`, and `ruff`
+  directly. In the cuOpt image, `python3` is the base 3.10 interpreter
+  without project packages, so use `python`, which is Python 3.14 while CI
+  uses 3.12.
+- Host checkout (no `/.dockerenv`): the repository lives wherever the user
+  cloned it. Run `./scripts/setup_env.sh` for the initial Linux setup and
+  follow each module's virtual-environment guidance.
+- Resolve the repository root with `git rev-parse --show-toplevel` instead of
+  assuming `/workspace` or a home-directory path. Never hardcode one
+  environment's absolute paths in scripts, skills, or documentation.
+- Host tools such as Docker, Compose, SSH keys, and browser profiles may be
+  absent or different inside a dev container. Check `command -v` before using
+  them, and remember that `127.0.0.1` differs between the two environments.
+
 ## Workflow
-- Linux setup: run `./scripts/setup_env.sh`.
-- Inside a dev container built from `docker/Dockerfile.dev*` (`/.dockerenv`
-  exists), Python dependencies are already installed system-wide. Do not run
-  the setup script, install `uv`, or create a virtual environment there. Run
-  `python`, `pytest`, and `ruff` directly. In the cuOpt image, `python3` is the
-  base 3.10 interpreter without project packages, so use `python`. That
-  interpreter is Python 3.14, while CI uses 3.12.
 - Dev containers have no SSH key, so `git fetch` and `git push` through an SSH
   `origin` fail. Fetch from the HTTPS URL, such as
   `git fetch https://github.com/j3soon/nurse-scheduling.git dev`, and compare
@@ -87,6 +100,9 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   suite to diagnose its failure.
 - Run security scans with `skills/security-scan` against an isolated loopback
   copy of the services. Never scan the public domain or the running deployment.
+- Diagnose hanging backend requests with `skills/debug-backend-hangs`. A browser
+  CORS error for the APIs can mean the origin never responded, so isolate the
+  hop before changing CORS or proxy configuration.
 
 ## Git
 - Commit validated implementation work as part of the task unless the user asks

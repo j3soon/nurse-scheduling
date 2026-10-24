@@ -19,14 +19,29 @@
 
 // This code is mostly AI generated.
 
-import type { ChatExportMessage } from './chatExport';
+import type { ActivityEntry } from './AssistantActivity';
 import type { ModelInput, OptimizationActivity } from './aiClient';
 import { messageId } from './assistantEvents';
 
-export interface ChatMessage extends ChatExportMessage {
+export interface ChatMessageContent {
+  role: 'system' | 'user' | 'assistant' | 'optimizer';
+  source?: 'app' | 'status' | 'optimizer';
+  // Topic of an app event or status message, shown after its role label.
+  title?: string;
+  content: string;
+  createdAt?: number;
+  activity?: ActivityEntry[];
+  status?: 'pending' | 'failed' | 'stopped';
+  failureReason?: string;
+  responseStartedAt?: number;
+  responseCompletedAt?: number;
+}
+
+export interface ChatMessage extends ChatMessageContent {
   id: string;
   requestId?: string;
   request?: {
+    selection?: import('./aiClient').ModelSelection;
     id: string; question: string; questionId: string; assistantId: string; activeAssistantId?: string; active: boolean;
     uploading?: boolean;
     // Names of attached files that the server has not confirmed yet, in upload order.
@@ -36,6 +51,9 @@ export interface ChatMessage extends ChatExportMessage {
   // Absolute history position of an app event, so a retried turn does not show it twice.
   historyIndex?: number;
   runId?: string;
+  modelSelection?: import('./aiClient').ModelSelection;
+  providerCalls?: import('./costs').ProviderCallCost[];
+  costSummary?: import('./costs').CostSummary;
   // These files did not finish uploading, so the question was not sent. Confirmed uploads stay in the chat.
   unsentFiles?: string[];
   optimizerJob?: Pick<OptimizationActivity, 'jobId' | 'downloadable'>;

@@ -48,12 +48,27 @@ def _should_enable_sentry() -> bool:
     return "PYTEST_CURRENT_TEST" not in os.environ and "pytest" not in sys.modules
 
 
-def init_sentry(app_version: str, *, app: str = "backend", api_version: str | None = None) -> None:
-    """Initialize Sentry for one named application process."""
+def init_sentry(
+    app_version: str, *, app: str = "backend", api_version: str | None = None, fastapi_integration: bool = True
+) -> None:
+    """Initialize Sentry for one named application process.
+
+    Set fastapi_integration=False when the service re-reads request bodies. The SDK's
+    FastApiIntegration wraps every route handler and calls request.json()/form() to
+    attach request info, which consumes the whole multipart stream before the handler
+    re-reads it and hangs the request. The StarletteIntegration still reports errors.
+    """
     if not _should_enable_sentry():
         return
 
     import sentry_sdk
+    from sentry_sdk.scrubber import DEFAULT_DENYLIST, EventScrubber
+
+    extra_kwargs: dict = {}
+    if not fastapi_integration:
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+
+        extra_kwargs["disabled_integrations"] = [FastApiIntegration()]
 
     sentry_sdk.init(
         dsn=os.getenv("SENTRY_DSN") or DEFAULT_SENTRY_DSN,
@@ -62,6 +77,9 @@ def init_sentry(app_version: str, *, app: str = "backend", api_version: str | No
         # Add data like request headers and IP for users, if applicable;
         # see https://docs.sentry.io/platforms/python/data-management/data-collected/ for more info
         send_default_pii=True,
+        # Logged exceptions carry stack frame variables. psycopg keeps the database URL,
+        # password included, in `conninfo` and in nested `password` keys.
+        event_scrubber=EventScrubber(denylist=[*DEFAULT_DENYLIST, "conninfo"], recursive=True, send_default_pii=True),
         # Set traces_sample_rate to 1.0 to capture 100%
         # of transactions for tracing.
         traces_sample_rate=1.0,
@@ -75,6 +93,7 @@ def init_sentry(app_version: str, *, app: str = "backend", api_version: str | No
         enable_logs=True,
         before_send=_redact_stream_token,
         before_send_transaction=_redact_stream_token,
+        **extra_kwargs,
     )
     sentry_sdk.set_tag("app", app)
     if api_version is not None:

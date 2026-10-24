@@ -20,6 +20,7 @@
 # This file is mostly AI generated.
 
 import asyncio
+import json
 import logging
 from collections import Counter
 from collections.abc import Callable, Sequence
@@ -32,10 +33,12 @@ from fastapi import HTTPException
 from ..server.retry import RepeatedFailure
 from .agent_session import STALE_RUN_ERROR, AgentSession
 from .history import ChatHistory, EntryRow, EventRow, RunKind, RunStatus
+from .optimizer import OptimizerArtifact, SessionOptimization
 from .provider import TokenUsage
 from .session_event_stream import SessionEvent, SessionEventStream, fold_recovery
 from .session_events import AgentSessionTerminalEvent
 from .sessions import SessionStore
+from .workspace import SandboxAttachment, SandboxAttachmentUnavailableError
 
 logger = logging.getLogger("nurse_scheduling.ai.recovery")
 RESTART_ERROR = (
@@ -173,9 +176,23 @@ class SessionRecovery:
         assert self.history is not None
         entries = list(self._pending_entries.get(session_id, ()))
         state = self._store.recovery_state(session_id)
-        saved = await self.history.write(operation, *args, state=state, entries=entries, **kwargs)
+        session = self._store.get(session_id)
+        assert session is not None
+        uploads = tuple(session.uploads.values())
+        removed = set(session.pending_upload_removals)
+        downloads = dict(session.downloads)
+        files = tuple(session.pending_archive_files.values())
+        removed_downloads = set(session.pending_download_removals)
+        saved = await self.history.write(
+            operation, *args, state=state, entries=entries, uploads=uploads, downloads=downloads, files=files, **kwargs
+        )
         if saved:
             self._entries_saved(session_id, len(entries))
+            session.pending_upload_removals.difference_update(removed)
+            self._store.release_saved_uploads(session_id, uploads)
+            session.pending_download_removals.difference_update(removed_downloads)
+            self._store.release_saved_downloads(session_id, downloads)
+            self._store.release_saved_archive_files(session_id, files)
         return saved
 
     def _entries_saved(self, session_id: str, count: int) -> None:
@@ -209,6 +226,89 @@ class SessionRecovery:
             if saved:
                 continue
             await asyncio.sleep(failures.delay_seconds())
+
+    async def read_upload(self, session_id: str, owner: str, upload: SandboxAttachment) -> bytes:
+        """Load one file only when sandbox hydration needs its bytes."""
+        if self.history is None:
+            raise SandboxAttachmentUnavailableError("Uploaded file storage is unavailable.")
+        try:
+            data = await self.history.read("load_upload", session_id, owner, upload.id, upload.byte_count)
+        except RuntimeError:
+            raise SandboxAttachmentUnavailableError("Uploaded file storage is temporarily unavailable.") from None
+        if data is None:
+            raise SandboxAttachmentUnavailableError(
+                "An uploaded file is missing or has expired. Upload the source file again."
+            )
+        return data
+
+    async def read_file(self, session_id: str, owner: str, kind: str, source_id: str) -> bytes:
+        assert self.history is not None
+        try:
+            data = await self.history.read("load_file", session_id, owner, kind, source_id)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from None
+        if data is None:
+            raise HTTPException(status_code=404, detail="The session file is no longer available.")
+        return data
+
+    async def save_optimizer_result(self, job: SessionOptimization, artifact: OptimizerArtifact | None) -> str | None:
+        """Store the job files and return the reason when they were not saved."""
+        files = []
+
+        def add(kind, filename, media_type, data):
+            files.append(
+                {"kind": kind, "source_id": job.id, "filename": filename, "media_type": media_type, "data": data}
+            )
+
+        status = {
+            # Event links carry stream tokens signed with this service's optimizer credential.
+            **job.payload.model_dump(mode="json", exclude={"id", "links"}),
+            "job_id": job.id,
+            "request": job.request,
+            "backend": job.backend,
+        }
+        add(
+            "optimizer-status",
+            "optimizer-result.json",
+            "application/json",
+            json.dumps(status, ensure_ascii=False).encode(),
+        )
+        add("optimizer-schedule", "schedule.yaml", "application/yaml", job.schedule_yaml.encode())
+        add("optimizer-input", "backend-input.yaml", "application/yaml", job.submitted_yaml.encode())
+        if artifact is not None:
+            add("optimizer-workbook", artifact.filename, artifact.media_type, artifact.content)
+            if artifact.schedule_context is not None:
+                add("optimizer-context", "schedule-context.json", "application/json", artifact.schedule_context)
+        try:
+            self._store.retain_archive_files(job.session_id, files)
+        except HTTPException as exc:
+            return str(exc.detail)
+        return None if await self.save(job.session_id) else "The optimizer files could not be saved."
+
+    async def load_optimizer_result(self, session_id: str, job_id: str | None) -> OptimizerArtifact | None:
+        assert self.history is not None
+        session = self._store.get(session_id)
+        if session is None:
+            return None
+        try:
+            if job_id is None:
+                job_id = await self.history.read("latest_optimizer", session_id, session.owner_token)
+                if job_id is None:
+                    return None
+            content = await self.history.read(
+                "load_file", session_id, session.owner_token, "optimizer-workbook", job_id
+            )
+            if content is None:
+                return None
+            context = await self.history.read("load_file", session_id, session.owner_token, "optimizer-context", job_id)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from None
+        return OptimizerArtifact(
+            content,
+            "optimized-schedule.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            context,
+        )
 
     async def save(self, session_id: str, credential_id: str | None = None) -> bool:
         if self.history is None:
@@ -350,7 +450,12 @@ class SessionRecovery:
                 record["expires_at"],
                 entries=record["entries"],
                 next_entry_seq=record["next_entry_seq"],
+                uploads=record.get("uploads", ()),
+                removed_upload_paths=record.get("removed_upload_paths", ()),
+                archive_bytes=record.get("archive_bytes", 0),
             )
+            if session.provider_credential_id is None:
+                session.provider_credential_id = record.get("credential_id")
             self._event_stream.restore(session_id, record["last_event_id"])
             release = self.pin(session_id)
             try:
@@ -427,6 +532,15 @@ class SessionRecovery:
             if writer is not None and not writer.done():
                 await asyncio.shield(writer)
 
+    async def save_provider_call(self, session_id: str, event: SessionEvent | None) -> bool:
+        """Checkpoint call metadata before publishing its cost totals or starting its HTTP attempt.
+
+        The normal event writer also retries this event. Event IDs make both writes idempotent.
+        """
+        if self.history is None or event is None:
+            return True
+        return await self.history.write("append_events", session_id, _event_rows([event]))
+
     async def _load_recovery(self, session_id: str, after_id: int) -> tuple[int, list[SessionEvent]] | None:
         """Build a complete reset from storage. None means storage lags, so the projection serves it."""
         assert self.history is not None
@@ -435,7 +549,7 @@ class SessionRecovery:
             await asyncio.wait_for(self.flush(session_id), FLUSH_TIMEOUT_SECONDS)
             rows = await self.history.read("load_events", session_id, after_id)
         except (TimeoutError, RuntimeError):
-            logger.error("AI recovery reset fell back to the replay projection session_id=%s", session_id)
+            logger.exception("AI recovery reset fell back to the replay projection session_id=%s", session_id)
             return None
         # Rows saved after the cursor capture are part of the reset, so the reader skips them later.
         covered = max([covered, *(last for _first, last, *_rest in rows)])

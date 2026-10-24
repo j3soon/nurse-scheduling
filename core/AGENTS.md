@@ -3,10 +3,12 @@
 The FastAPI backend entry point is `nurse_scheduling/serve.py`.
 
 ## Setup And Commands
-Run commands from `core/`:
-
-- Outside a dev container, `uv venv --python 3.12 && source .venv/bin/activate`.
-  Inside one, skip the virtual environment, as the root `AGENTS.md` describes.
+Check `test -f /.dockerenv` first, per the root `AGENTS.md` environment
+section. In a dev container the checkout mounts at `/workspace/core`, and
+project packages are installed system-wide, so run `python`, `pytest`, and
+`ruff` directly. On a host checkout, run commands below from your local
+`core/` clone and create the virtual environment once with
+`uv venv --python 3.12 && source .venv/bin/activate`.
 - `uv pip install -r requirements-optional.txt`: the development install. See
   the Dependencies section below.
 - `python -m nurse_scheduling.cli <input.yaml> [output.csv] --solver <selector>`: selectors are documented in `README.md`.
@@ -45,6 +47,10 @@ the [PostgreSQL wrapper guide](../skills/run-ci/references/postgresql.md) for to
 requirements. Confirm that database cases ran. A passing suite with those cases
 skipped does not validate persistence.
 
+`ConnectionInfo.dsn` omits passwords. Preserve `ConnectionInfo.password` when
+passing database URLs to subprocesses. Check password authentication separately
+from the trust-based local harness.
+
 ## Dependencies
 - `requirements.txt` is the minimal runtime set. Deployment images install only
   it, so a small file keeps those builds fast. Add a package there only when
@@ -75,8 +81,21 @@ skipped does not validate persistence.
 - Initialize Sentry with the application build version, not the API version.
   Standalone services use `version.get_app_version()` and keep a distinct `app`
   tag. API services also pass their API version for event tags and log attributes.
+- Services that re-read raw request bodies with a custom `Request` wrapper, such
+  as the AI upload endpoint, must initialize Sentry with
+  `fastapi_integration=False`. The SDK's FastApiIntegration reads
+  `request.json()`/`request.form()` before the handler, which drains the body
+  stream and hangs the re-read.
+- `_should_enable_sentry()` disables Sentry under pytest, so integration
+  wiring bugs only surface in deployed environments. After changing
+  `init_sentry` options or integration flags, smoke-test the affected
+  endpoints on a staging deploy.
   Use `configure_service_logging` for the shared service logging defaults.
   Short-lived services flush Sentry in a `finally` block before exit.
+- Log a caught failure with its exception through `logger.exception` or
+  `exc_info`. Do not drop the exception or keep only its type to keep data out
+  of logs, because sending that data to Sentry is acceptable. Keep credentials
+  out with the `event_scrubber` in `init_sentry` instead.
 
 ## Server Job Processes
 - `run_optimization_process` owns its optimization process tree through
@@ -123,19 +142,39 @@ skipped does not validate persistence.
   joins owners before closing the sandbox factory and optimizer transport.
   Commit and abort through the owning `RunSnapshot`. A conversation version
   rejects stale work even when the schedule changes back to its original text.
+- Include delayed model discovery in admission and cancellation tests. Injecting
+  a provider bypasses model selection and does not exercise this path.
 - Use provider metadata for model limits instead of duplicate environment
   settings. Verify the configured endpoint before adding a provider workaround.
   Check metadata discovery and streamed usage separately. For a protected route,
   verify that missing and invalid credentials are rejected. Keep reported usage
   visible when the provider omits its model limit.
+- Scope model discovery and provider credentials to the authenticated AI key.
+  Describe reasoning choices with exact gateway metadata instead of guessing
+  supported levels from model names. Match configured reasoning parameters to
+  advertised choices when selecting a default. Do not infer defaults from option
+  order. If the gateway omits reasoning choices, hide the selector and preserve
+  its defaults. Keep the session's current selection separate from each accepted
+  run's frozen selection. Changing session settings must not change an active run.
+- Track provider costs by HTTP attempt ID. Replace streamed updates instead of
+  adding them, preserve missing prices as unknown, and use decimal USD totals.
+  Restore totals from saved call records and test replay before acknowledgement.
+  Preserve reported subnormal costs and keep decimal summaries within the client
+  length limit. Test Stop while cost checkpoints are pending. Version cost
+  snapshots by their cost publication, because unrelated stream events can advance
+  while a checkpoint waits.
 - Keep attachment limits server-configured and report them through
   `/capabilities`. Attachments and the optimizer tool are always offered.
   Keep schedules and attachments separate from model instructions.
 - Put shared AI test data under `tests/ai_fixtures/`, so affected checks select
   AI suites without running unrelated scheduling tests.
-- Keep saved chat exports on the shared frontend formatter. Read a consistent
-  PostgreSQL snapshot and use stored timestamps in UTC. Verify downloaded browser
-  bytes against the command output with a rich saved-event fixture.
+- Keep browser and command chat exports on the shared Python ZIP writer. Read
+  one consistent PostgreSQL snapshot and use stored timestamps in UTC. When the
+  export output changes on purpose, first check that the previous output changes
+  only where intended. Then update the hashes in
+  `tests/ai_fixtures/chat-export-parity.json` and the golden archive in
+  `tests/ai_fixtures/chat-export-archive.json` together. Verify browser download
+  bytes and native download authorization with a rich saved-event fixture.
 - Retry temporary provider failures automatically inside the provider request,
   with exponential backoff and a bounded total time. Retry only the incomplete
   model request, never commands or optimizer submissions. Do not wait for the
@@ -163,6 +202,8 @@ skipped does not validate persistence.
   inside a combined entry and an entry crossing the replay tail boundary.
   Save execution status with terminal output and conversation context instead
   of inferring status from a bounded replay buffer.
+  Break saved-event timestamp ties with event IDs. A batch can share one
+  database transaction timestamp.
 - Keep execution metadata on recovery sessions and runs. Use one expiry policy
   for content and metadata instead of adding a second conversation log.
 - Test Stop before acceptance, during execution, and after completion but before
@@ -185,8 +226,19 @@ skipped does not validate persistence.
   the consumer asks for the next event. A network stream keeps arriving during
   that work. Treat such stream timings as an upper bound.
 - Bound uploads before provider calls and place them under fixed sandbox paths.
-  Retain uploaded source files only until the user removes them or the session expires.
-  Count retained files and generated downloads against the session memory budget.
+  Archive uploads, generated downloads, and optimizer files until the session
+  expires. Removing a file detaches it from active use without deleting its archive.
+  With recovery storage, keep upload metadata in sessions and run snapshots.
+  Release bytes only after a successful save, and load persisted files one at a
+  time during sandbox hydration. Count all pending file writes, memory-only uploads, and
+  generated downloads against the session memory budget. Count every stored file
+  version, including removed files, against `AI_MAX_ARCHIVE_BYTES` before accepting it.
+  Test removal during a storage outage. Keep unsaved file bytes in the pending
+  archive until a successful write, even after the user removes the active file.
+  Keep removed upload paths reserved through restart, so reused IDs cannot change
+  the file version referenced by an earlier transcript entry.
+  After rejecting optimizer files, check that a restart does not load an older
+  workbook as the latest result.
 - Bound sandbox file and command output bytes while receiving them. Truncating
   tool output after buffering does not bound the AI service's memory use.
 - Test file workflows across message boundaries and session expiry. Check the
@@ -237,6 +289,9 @@ skipped does not validate persistence.
 - Parse schedules through `loader._load_yaml`, including comparisons of draft
   schedules. It bounds nesting and alias expansion before constructing data.
   Direct `YAML.load` calls bypass those bounds.
+- Parse, validate, and compile schedules in worker threads, not on the event
+  loop. One large schedule can take most of a second, which stalls every
+  session's stream.
 - The assistant is reachable only from the web frontend, so its schedule tools
   target the frontend subset alone. Validate through
   `ai/validation.py`, and do not expose the full backend schedule format, which
@@ -401,6 +456,9 @@ skipped does not validate persistence.
   under test. Define structured answer fields and counting units explicitly. Do not
   let an undefined priority label or field name decide the grader's meaning. Keep original traces when correcting a grader, apply the correction
   to both variants, and rerun affected comparisons before claiming an improvement.
+- Drop link and token fields before saving or exporting a response from another
+  service. Optimizer job links carry stream tokens signed with this service's
+  credential.
 - Expose Pi's default `read`, `bash`, `edit`, and `write` model tools over
   the disposable sandbox. Always offer the server-side `optimizer` lifecycle
   tool. Keep optimizer execution and credentials outside
@@ -507,6 +565,9 @@ skipped does not validate persistence.
 
 ## Testing
 - Normal tests live under `tests/`.
+- When replacing a browser cookie in a test, delete the existing cookie first
+  or match its domain and path. Setting only its name can add a duplicate.
+  HTTP client versions can send those duplicates in different orders.
 - Derive a fixture timestamp from the current clock whenever the code under test
   compares it against real time, such as a Redis `EXPIREAT` or a retention
   window. A hardcoded date passes until that instant arrives and then fails for
@@ -550,9 +611,11 @@ skipped does not validate persistence.
   Windows can use a legacy default encoding. Compare text-loaded references with UTF-8 text
   because text reads normalize checkout line endings. Use byte comparisons
   only when exact bytes are required.
-- `tests/test_ai_eval_grading.py` simulates legacy Windows decoding for implicit
-  `Path.read_text` calls. Run it locally after changing evaluation fixtures or
-  grading tests, so encoding regressions fail before a push.
+- The `legacy_text_encoding` fixture in `tests/conftest.py` simulates legacy
+  Windows decoding for implicit `Path.read_text` calls.
+  `tests/test_ai_eval_grading.py` and `tests/test_ai_ladder_audit.py` use it.
+  Run them locally after changing evaluation fixtures, reports, or grading
+  tests, so encoding regressions fail before a push.
 - Write hash-bound fixture inputs as exact encoded bytes to avoid platform
   newline translation. Fix ZIP creator metadata as well as timestamps when
   generated archive bytes must match across platforms.

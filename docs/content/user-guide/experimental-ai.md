@@ -136,24 +136,32 @@ context.
 Recovery lasts until the session expires, normally after 30 days of inactivity.
 Hosted deployments use PostgreSQL to
 recover messages after a backend restart. A restart interrupts active responses,
-but the saved question and partial output remain available. Uploaded files and
-result downloads are held in memory. They can disappear without prior notice
-after a server restart or when a busy server unloads an idle chat. Keep your
-original files.
+but the saved question, partial output, uploaded source files, generated ZIPs,
+and optimizer files remain available. Removing an upload or ZIP hides it from
+active use but keeps it in the session archive. Removed files still count toward
+the chat's stored file limit, 1 GB by default. When a chat reaches it, start a
+new chat to save more files. All archived files expire with the chat. Without PostgreSQL, chats and files remain in memory only.
+Keep your original files.
 
 ## See what the assistant did
 
-**Chat history context** below the message box shows the portion of the server's
+You can change **Model** and **Reasoning** while an answer streams. The active
+turn keeps its original settings, including tool calls and steering. The session
+saves your new choice for later turns, including new optimizer reviews. Reloading
+the page restores that choice.
+
+**Context X% used** below the message box shows the portion of the server's
 conversation history budget selected for the next turn. It excludes instructions,
 schedule data, tools, and attachments. If the server does not report usage, the
 chat displays **unavailable**. Update the AI server to enable the percentage.
 
-When the provider reports token usage, the line also shows **Tokens:
-used / limit**. It counts the tokens of the latest model request, including
-instructions, tool output, and the reply. A turn with long tool output can
+When the provider reports token usage, the line also shows **Last: X / N**.
+X counts the latest model call’s input and output tokens, including instructions,
+tool output, and the reply. N is the model input limit. A turn with long tool output can
 therefore use many more tokens than its history percentage suggests.
 The server reads the limit from the provider's model metadata. If the provider
-does not report a limit, the chat shows **unavailable** for the limit.
+does not report a limit, the chat shows **unavailable** for the limit. Hover over
+**Context**, **Last**, or **Est. cost** for a short description of that value.
 
 Small grey rows under an answer record how it was produced. They stay collapsed
 until you select one.
@@ -172,7 +180,11 @@ reason an answer arrives without a schedule change.
 
 Long output is revealed a portion at a time with **Show more**. Clear
 **Show reasoning** or **Show tool activity** near the top of the page to hide
-either kind. The choice is remembered on this browser.
+either kind. **Show turn costs** controls each reply’s cost summary and call
+details. **Show models** controls each reply’s model and reasoning setting.
+These choices are remembered on this browser. Exports always include these
+details regardless of the display settings. The conversation cost appears as
+**Est. cost** beside context usage on one line that wraps when needed.
 
 If a turn fails, read the error beside its response. Chat exports retain that
 error with any partial answer. A provider error can include an HTTP status and
@@ -216,18 +228,21 @@ Raw HTML is ignored. Remote images written in an answer are not loaded.
 Uploaded file names and sizes appear beside their upload event in the chat and
 exports. The file panel shows the files currently retained by the session.
 
-Use **HTML** under **Export chat** for a styled, standalone transcript, or
-**Markdown** for a plain-text transcript. Export runs in the browser. The export
-also lists the uploaded files by name and size, and notes an optimization that is still running without
-its changing score.
+Use **Export Chat** to download one ZIP from the server. Extract it and open
+`chat.html` for a styled transcript or `chat.md` for Markdown. Both link to files
+under `attachments/`, including removed uploads, generated ZIPs, and optimizer
+files. The ZIP also contains the current `schedule.yaml`, structured `chat.json`,
+and `manifest.json` with file origins and hashes. Work still in progress is marked
+as unfinished. Export is unavailable on servers without saved chat history.
 
 When the assistant creates files for download, it puts them in one ZIP archive.
 Use **Download files (ZIP)** below its answer. The archive and its uncompressed
 contents are each limited to 50 MB by default. Downloads remain available while
-the chat session exists, subject to the service memory limit. A workspace path
+the chat session exists. Without PostgreSQL, the service memory limit also applies. A workspace path
 printed in an answer is not itself a download link.
 Use **Remove ZIP** after saving a file you no longer need in the chat. This frees
-session storage for new files and removes that ZIP's download button.
+active download storage and removes that ZIP's download button. With PostgreSQL,
+the archived ZIP remains until the chat expires.
 
 ## Ask how to use the app
 
@@ -257,9 +272,11 @@ and the page reports when a preserved chat has expired.
 The complete schedule YAML is sent to the configured AI service and placed in
 the assistant's temporary workspace. Relevant schedule content reaches the
 model when the assistant inspects it. Uploaded source files stay with the chat
-until removed or the session expires. The service loads them into each new
-workspace. The file count and per-file size limits apply to retained uploads,
-and their bytes share the service's session memory budget.
+for active use until removed or the session expires. Removed files stay in the
+archive until expiry. The service loads active files into each new
+workspace. File count and size limits apply to retained uploads. With PostgreSQL,
+the service loads saved file contents only when a response uses its workspace.
+Without PostgreSQL, their bytes share the service's session memory budget.
 
 Each message uses a fresh temporary virtual machine, not your computer or a
 persistent desktop. The service loads the current schedule, relevant references,

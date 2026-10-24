@@ -221,6 +221,7 @@ def test_deferred_cleanup_escalates_only_the_third_consecutive_failure(caplog):
     ]
     assert failures[2].sandbox_id == "sandbox-1"
     assert failures[2].cleanup_attempt == 3
+    assert all(isinstance(record.exc_info[1], TimeoutError) for record in failures)
 
 
 def test_cleanup_worker_survives_a_failure_the_client_reports_outside_sandbox_errors(caplog):

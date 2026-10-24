@@ -26,11 +26,11 @@ import {
   messageId,
   toAssistantEvent,
 } from './assistantEvents';
-import type { ChatExportMessage } from './chatExport';
+import type { ChatMessageContent } from './chatTranscript';
 
-const empty: ChatExportMessage = { role: 'assistant', content: '', status: 'pending' };
+const empty: ChatMessageContent = { role: 'assistant', content: '', status: 'pending' };
 
-function reduce(events: AssistantEvent[]): ChatExportMessage {
+function reduce(events: AssistantEvent[]): ChatMessageContent {
   return events.reduce((message, event) => applyAssistantEvent(message, event), empty);
 }
 

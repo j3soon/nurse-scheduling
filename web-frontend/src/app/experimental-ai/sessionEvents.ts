@@ -21,6 +21,7 @@
 
 import type {
   ContextUsage,
+  ModelSelection,
   ModelInput,
   ScheduleApplied,
   OptimizationActivity,
@@ -29,12 +30,16 @@ import type {
   ToolActivity,
   ToolStartActivity,
 } from './aiClient';
+import type { CostSummary, ProviderCallCost } from './costs';
 
 // Parsed events carry run identity. run_context is the client's replay adoption signal.
 export type SessionEvent = (
   | { type: 'session_reset'; reset: SessionReset }
   | { type: 'run_context'; runId: string }
   | { type: 'run_start'; runId: string; trigger: string }
+  | { type: 'model_selection'; selection: ModelSelection }
+  | { type: 'provider_call'; call: ProviderCallCost }
+  | { type: 'cost_summary'; conversation: CostSummary; run?: CostSummary }
   | { type: 'delta' | 'reasoning'; text: string }
   | { type: 'truncated' }
   | { type: 'tool_start'; activity: ToolStartActivity }

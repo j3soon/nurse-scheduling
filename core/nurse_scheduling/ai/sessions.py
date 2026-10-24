@@ -37,11 +37,12 @@ from .history import EntryRow
 from .lifecycle import RunSnapshot
 from .session_event_stream import SessionEventStream
 from .transcript import AgentMessage, entry_text, starts_exchange
-from .workspace import SandboxAttachment
+from .workspace import SandboxAttachment, attachment_path
 
 __all__ = ["SessionStore", "schedule_revision"]
 
 SESSION_RETENTION_LIMIT_MESSAGE = "The AI service has reached its session text and file retention limit."
+ARCHIVE_LIMIT_MESSAGE = "This chat has reached its stored file limit. Start a new chat to save more files."
 
 
 def _text_bytes(value: str) -> int:
@@ -52,6 +53,7 @@ def _text_bytes(value: str) -> int:
 def _upload_revision(upload: SandboxAttachment) -> str:
     """Identify the complete source file, including its original metadata."""
     digest = hashlib.sha256(json.dumps([upload.filename, upload.media_type]).encode())
+    assert upload.data is not None
     digest.update(upload.data)
     return digest.hexdigest()
 
@@ -66,10 +68,12 @@ def _session_bytes(session: "AgentSession") -> int:
     total += sum(_text_bytes(entry_text(entry)) for entry in session.transcript)
     total += sum(_receipt_bytes(receipt) for receipt in session.accepted_messages.values())
     total += sum(_text_bytes(text) for text in session.queued_steering)
-    total += sum(len(upload.data) for upload in session.uploads.values())
+    total += sum(len(upload.data or b"") for upload in session.uploads.values())
+    total += sum(_text_bytes(path) for path in session.removed_upload_paths)
+    total += sum(len(file["data"]) for file in session.pending_archive_files.values())
     if session.analysis is not None:
         total += len(session.analysis.content) + len(session.analysis.source_sha256)
-    return total + sum(map(len, session.downloads.values()))
+    return total + sum(len(content or b"") for content in session.downloads.values())
 
 
 def _unique_filename(filename: str, taken: set[str]) -> str:
@@ -83,6 +87,13 @@ def _unique_filename(filename: str, taken: set[str]) -> str:
     while f"{stem} ({counter}){dot}{extension}" in taken:
         counter += 1
     return f"{stem} ({counter}){dot}{extension}"
+
+
+def _archive_file_key(file: dict) -> tuple[str, str]:
+    if file["kind"] == "upload":
+        upload = SandboxAttachment(file["filename"], file["media_type"], None, id=file["source_id"])
+        return "upload", attachment_path(upload, 0)
+    return file["kind"], file["source_id"]
 
 
 class SessionStore:
@@ -136,8 +147,7 @@ class SessionStore:
         """Unload the least recently used idle session at the session limit.
 
         Sessions live for the whole recovery period, so without eviction a month of chats
-        would hold every slot. The unloaded session loses only its uploads, downloads, and
-        finished optimizer results, as after a restart.
+        would hold every slot. Persisted session files remain available on demand.
         """
         if self._evictable is None or len(self._sessions) < self._settings.max_sessions:
             return
@@ -277,6 +287,9 @@ class SessionStore:
         *,
         entries: Sequence[AgentMessage],
         next_entry_seq: int,
+        uploads: Sequence[SandboxAttachment] = (),
+        removed_upload_paths: Sequence[str] = (),
+        archive_bytes: int = 0,
     ) -> AgentSession:
         """Load a saved session and its rebuilt conversation with the stored expiry.
 
@@ -297,6 +310,9 @@ class SessionStore:
             state,
             entries=entries,
             next_entry_seq=next_entry_seq,
+            uploads=uploads,
+            removed_upload_paths=removed_upload_paths,
+            archive_bytes=archive_bytes,
             event_stream=self._event_stream,
             entry_log=self._on_entry,
         )
@@ -326,6 +342,8 @@ class SessionStore:
 
     def _reserve(self, session: AgentSession, *, run_id: str | None) -> RunSnapshot:
         snapshot = session.begin_run(run_id=run_id)
+        if self._settings.history_postgres_url:
+            snapshot.uploads = tuple(upload.reference() for upload in snapshot.uploads)
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
         return snapshot
 
@@ -399,7 +417,14 @@ class SessionStore:
         self._charge(session, -sum(_text_bytes(text) for _message_id, text in queued))
         return queued
 
-    def update_schedule(self, session_id: str, owner_token: str | None, schedule_yaml: str) -> None:
+    def update_schedule(
+        self,
+        session_id: str,
+        owner_token: str | None,
+        schedule_yaml: str,
+        *,
+        compared: tuple[str, bool] | None = None,
+    ) -> None:
         """Replace the schedule snapshot, which makes an in-flight run stale."""
         session = self._get_owned(session_id, owner_token)
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
@@ -408,7 +433,7 @@ class SessionStore:
         additional_bytes = _text_bytes(schedule_yaml) - _text_bytes(session.schedule_yaml)
         if additional_bytes > 0:
             self._require_capacity(additional_bytes)
-        session.update_schedule(schedule_yaml)
+        session.update_schedule(schedule_yaml, compared)
         self._cap_history(session)
         self._recount(session)
 
@@ -436,11 +461,17 @@ class SessionStore:
         session.require_idle("uploading files")
         if len(session.uploads) + len(uploads) > self._settings.max_attachment_files:
             raise HTTPException(status_code=413, detail="Too many retained files. Remove unused uploads first.")
-        total_bytes = sum(len(item.data) for item in session.uploads.values()) + sum(len(item.data) for item in uploads)
+        total_bytes = sum(item.byte_count for item in session.uploads.values()) + sum(
+            item.byte_count for item in uploads
+        )
         if total_bytes > self._settings.max_attachment_total_bytes:
             raise HTTPException(
                 status_code=413, detail="Session files exceed the total attachment limit. Remove unused uploads first."
             )
+        # Removing an upload keeps its stored copy, so removal does not free this limit.
+        new_bytes = sum(item.byte_count for item in uploads)
+        if not self._archive_fits(session, new_bytes):
+            raise HTTPException(status_code=413, detail=ARCHIVE_LIMIT_MESSAGE)
         filenames = {item.filename for item in session.uploads.values()}
         retained = []
         for upload in uploads:
@@ -449,9 +480,14 @@ class SessionStore:
             retained.append(
                 replace(upload, filename=filename, id=upload_id or str(uuid4()), request_sha256=request_sha256)
             )
+            if attachment_path(retained[-1], 0) in session.removed_upload_paths:
+                raise HTTPException(
+                    status_code=409, detail="The upload ID was already used for this path. Use a new ID."
+                )
         event = upload_event(retained, len(session.uploads) + 1)
-        self._require_capacity(sum(len(upload.data) for upload in retained) + _text_bytes(event))
+        self._require_capacity(sum(len(upload.data or b"") for upload in retained) + _text_bytes(event))
         session.add_uploads(retained, event)
+        session.archive_bytes += new_bytes
         self._cap_history(session)
         self._recount(session)
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
@@ -461,11 +497,33 @@ class SessionStore:
         """List the retained source files of an owned session."""
         return tuple(self._get_owned(session_id, owner_token).uploads.values())
 
+    def release_saved_uploads(self, session_id: str, uploads: Sequence[SandboxAttachment]) -> None:
+        """Release only the exact file versions that the database has accepted."""
+        session = self._sessions[session_id]
+        released_bytes = 0
+        for upload in uploads:
+            if upload.data is not None and session.uploads.get(upload.id) is upload:
+                released_bytes += len(upload.data)
+                session.uploads[upload.id] = upload.reference()
+        self._charge(session, -released_bytes)
+
     def remove_upload(self, session_id: str, owner_token: str | None, upload_id: str) -> None:
         """Remove an unused source file between runs and reclaim its bytes."""
         session = self._get_owned(session_id, owner_token)
         session.require_idle("removing files")
-        session.remove_upload(upload_id)
+        if upload_id not in session.uploads and upload_id in session.pending_upload_removals:
+            return
+        upload = session.remove_upload(upload_id)
+        if self._settings.history_postgres_url and upload.data is not None:
+            session.pending_archive_files["upload", attachment_path(upload, 0)] = {
+                "kind": "upload",
+                "source_id": upload_id,
+                "filename": upload.filename,
+                "media_type": upload.media_type,
+                "data": upload.data,
+            }
+        elif not self._settings.history_postgres_url:
+            session.pending_upload_removals.clear()
         self._cap_history(session)
         self._recount(session)
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
@@ -476,14 +534,52 @@ class SessionStore:
         session = self._sessions.get(session_id)
         if session is None or len(content) > self._settings.max_download_bytes:
             return False
-        delta = len(content) - len(session.downloads.get(download_id, b""))
-        if self._retained_bytes + delta > self._settings.max_session_bytes:
+        delta = len(content) - len(session.downloads.get(download_id) or b"")
+        if self._retained_bytes + delta > self._settings.max_session_bytes or not self._archive_fits(
+            session, len(content)
+        ):
             return False
         session.downloads[download_id] = content
+        session.archive_bytes += len(content)
         self._charge(session, delta)
         return True
 
-    def download(self, session_id: str, owner_token: str | None, download_id: str) -> bytes:
+    def retain_archive_files(self, session_id: str, files: Sequence[dict]) -> None:
+        """Keep failed file writes retryable within the shared memory budget."""
+        session = self._sessions[session_id]
+        delta = sum(
+            len(file["data"]) - len(session.pending_archive_files.get(_archive_file_key(file), {}).get("data", b""))
+            for file in files
+        )
+        if not self._archive_fits(session, delta):
+            raise HTTPException(status_code=413, detail=ARCHIVE_LIMIT_MESSAGE)
+        self._require_capacity(max(0, delta))
+        session.pending_archive_files.update((_archive_file_key(file), file) for file in files)
+        session.archive_bytes += delta
+        self._charge(session, delta)
+
+    def _archive_fits(self, session: AgentSession, size: int) -> bool:
+        """Report whether recovery storage may keep this many more file bytes for the session."""
+        return (
+            not self._settings.history_postgres_url or session.archive_bytes + size <= self._settings.max_archive_bytes
+        )
+
+    def release_saved_archive_files(self, session_id: str, files: Sequence[dict]) -> None:
+        session = self._sessions[session_id]
+        for file in files:
+            key = _archive_file_key(file)
+            if session.pending_archive_files.get(key) is file:
+                del session.pending_archive_files[key]
+                self._charge(session, -len(file["data"]))
+
+    def release_saved_downloads(self, session_id: str, downloads: dict[str, bytes | None]) -> None:
+        session = self._sessions[session_id]
+        for download_id, content in downloads.items():
+            if content is not None and session.downloads.get(download_id) is content:
+                session.downloads[download_id] = None
+                self._charge(session, -len(content))
+
+    def download(self, session_id: str, owner_token: str | None, download_id: str) -> bytes | None:
         """Read a generated ZIP only for its owning browser."""
         session = self._get_owned(session_id, owner_token)
         try:
@@ -494,11 +590,25 @@ class SessionStore:
     def remove_download(self, session_id: str, owner_token: str | None, download_id: str) -> None:
         """Remove an owned generated ZIP and reclaim its bytes."""
         session = self._get_owned(session_id, owner_token)
+        if download_id not in session.downloads and download_id in session.pending_download_removals:
+            return
         try:
             content = session.downloads.pop(download_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="This generated ZIP is no longer available.") from None
-        self._charge(session, -len(content))
+        if self._settings.history_postgres_url:
+            session.pending_download_removals.add(download_id)
+            if content is not None:
+                session.pending_archive_files["download", download_id] = {
+                    "kind": "download",
+                    "source_id": download_id,
+                    "run_id": download_id,
+                    "filename": "download.zip",
+                    "media_type": "application/zip",
+                    "data": content,
+                }
+        else:
+            self._charge(session, -len(content or b""))
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
 
     def abort(self, session_id: str, snapshot: RunSnapshot) -> None:

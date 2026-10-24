@@ -20,7 +20,7 @@
 # This code is mostly AI generated.
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal, cast
 
 from ..server.auth import AuthCredential, normalize_auth_credentials, parse_auth_credentials
@@ -114,6 +114,8 @@ class AiSettings:
     provider_base_url: str
     provider_api_key: str
     provider_model: str
+    # AI credential IDs map to LiteLLM keys. Never serialize this server configuration.
+    provider_profiles_json: str = field(default="", repr=False)
     auth_token: str | None = None
     auth_tokens: tuple[AuthCredential, ...] = ()
     auth_required: bool = False
@@ -148,6 +150,8 @@ class AiSettings:
     max_attachment_files: int = 32
     max_attachment_bytes: int = 25_000_000
     max_attachment_total_bytes: int = 200_000_000
+    max_archive_bytes: int = 1_000_000_000
+    """File bytes that recovery storage keeps per session, including removed files."""
     max_download_bytes: int = 50_000_000
     sandbox_backend: SandboxBackendName = "none"
     e2b_api_key: str = ""
@@ -173,7 +177,7 @@ class AiSettings:
             name=AI_AUTH_TOKENS_ENV_NAME,
         )
         provider_api_key = os.getenv("AI_PROVIDER_API_KEY", "").strip()
-        if not provider_api_key:
+        if not provider_api_key and not os.getenv("AI_PROVIDER_PROFILES", "").strip():
             raise ValueError("AI_PROVIDER_API_KEY is required")
 
         provider_base_url = os.getenv("AI_PROVIDER_BASE_URL", "").strip().rstrip("/")
@@ -197,6 +201,7 @@ class AiSettings:
             provider_base_url=provider_base_url,
             provider_api_key=provider_api_key,
             provider_model=provider_model,
+            provider_profiles_json=os.getenv("AI_PROVIDER_PROFILES", "").strip(),
             auth_token=auth_token,
             auth_tokens=auth_tokens,
             auth_required=_read_bool(AI_AUTH_REQUIRED_ENV_NAME, False),
@@ -224,6 +229,7 @@ class AiSettings:
             max_attachment_files=_read_positive_int("AI_MAX_ATTACHMENT_FILES", 32),
             max_attachment_bytes=_read_positive_int("AI_MAX_ATTACHMENT_BYTES", 25_000_000),
             max_attachment_total_bytes=_read_positive_int("AI_MAX_ATTACHMENT_TOTAL_BYTES", 200_000_000),
+            max_archive_bytes=_read_positive_int("AI_MAX_ARCHIVE_BYTES", 1_000_000_000),
             max_download_bytes=_read_positive_int("AI_MAX_DOWNLOAD_BYTES", 50_000_000),
             sandbox_backend=sandbox_backend,
             e2b_api_key=e2b_api_key,

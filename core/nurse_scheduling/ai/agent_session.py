@@ -25,7 +25,7 @@ import logging
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import aclosing
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Literal, Protocol, TypeVar
 
 from fastapi import HTTPException
@@ -43,11 +43,12 @@ from .context import (
     removal_event,
     retained_entries,
 )
+from .costs import CostTotals
 from .history import RECOVERY_UNAVAILABLE, EntryRow, RunKind, RunStatus
 from .lifecycle import AgentRun, RunSnapshot, SessionRuns
 from .optimizer import OptimizerArtifact, SessionOptimizer
 from .optimizer_tool import execute_optimizer_tool
-from .provider import ChatMessage, ProviderError, TokenUsage, ToolCapableChatProvider
+from .provider import ChatMessage, ProviderCall, ProviderError, TokenUsage, ToolCapableChatProvider
 from .sandbox import SandboxError, SandboxFactory
 from .session_event_projection import RunEvents, RunOutput
 from .session_event_stream import SessionEvent, SessionEventStream
@@ -67,11 +68,13 @@ from .transcript import (
 from .workspace import (
     AgentAnalysis,
     SandboxAttachment,
+    SandboxAttachmentUnavailableError,
     SandboxCandidateError,
     SandboxCommandTimeoutError,
     SandboxDownloadError,
     SandboxTurnTimeoutError,
     WorkspaceLimits,
+    attachment_path,
 )
 from .workspace_tools import run_workspace
 
@@ -83,7 +86,9 @@ PROVIDER_ERROR = "The AI provider failed. Please try again."
 SANDBOX_COMMAND_TIMEOUT_ERROR = (
     "An AI shell command timed out. The temporary workspace was discarded. Please try again."
 )
-DOWNLOAD_RETENTION_WARNING = "The generated ZIP could not be retained because the service memory limit was reached."
+DOWNLOAD_RETENTION_WARNING = (
+    "The generated ZIP could not be retained because a chat or service storage limit was reached."
+)
 SANDBOX_RUN_TIMEOUT_ERROR = "The AI response timed out. Please try again."
 STALE_RUN_ERROR = "The schedule changed while this response was generated, so the response was discarded."
 BACKGROUND_RECOVERY_ERROR = "AI message recovery is unavailable, so the optimizer result was not reviewed."
@@ -103,6 +108,11 @@ def _schedule_data(schedule_yaml: str) -> object:
         return _load_yaml(schedule_yaml.encode(), reject_aliases=True)
     except (ValueError, YAMLError):
         return schedule_yaml
+
+
+def schedule_data_changed(before: str, after: str) -> bool:
+    """Report whether a schedule change is more than formatting. Callers may run it off the event loop."""
+    return before != after and _schedule_data(before) != _schedule_data(after)
 
 
 @dataclass(frozen=True)
@@ -174,11 +184,17 @@ class RunRecorder(Protocol):
     @property
     def enabled(self) -> bool: ...
 
+    async def save_provider_call(self, session_id: str, event: SessionEvent | None) -> bool: ...
+
     async def find_message(self, session_id: str, message_id: str) -> tuple[str, str] | None: ...
 
     async def message_stopped(self, session_id: str, message_id: str) -> bool: ...
 
     async def stop_message(self, session_id: str, message_id: str) -> None: ...
+
+    async def read_upload(self, session_id: str, owner: str, upload: SandboxAttachment) -> bytes: ...
+
+    async def save(self, session_id: str, credential_id: str | None = None) -> bool: ...
 
     async def start_run(
         self,
@@ -218,6 +234,7 @@ class SessionRuntime:
     provider: ToolCapableChatProvider
     sandbox_factory: SandboxFactory
     session_optimizer: SessionOptimizer
+    selection: dict[str, str] | None = None
 
 
 async def _complete(write: Awaitable[_Result]) -> _Result:
@@ -253,7 +270,13 @@ class AgentSession:
     agent: Agent = field(default_factory=Agent)
     # Retained source files keyed by upload ID, in upload order, and generated ZIPs keyed by run ID.
     uploads: dict[str, SandboxAttachment] = field(default_factory=dict)
-    downloads: dict[str, bytes] = field(default_factory=dict)
+    pending_upload_removals: set[str] = field(default_factory=set)
+    removed_upload_paths: set[str] = field(default_factory=set)
+    downloads: dict[str, bytes | None] = field(default_factory=dict)
+    pending_download_removals: set[str] = field(default_factory=set)
+    pending_archive_files: dict[tuple[str, str], dict] = field(default_factory=dict)
+    # Bytes of every file version that recovery storage keeps for this session, including removed files.
+    archive_bytes: int = 0
     analysis: AgentAnalysis | None = None
     # Last owner access, which orders eviction. A restored session keeps its stored expiry.
     last_used: float = field(default_factory=time.monotonic)
@@ -264,6 +287,11 @@ class AgentSession:
     client_address: str | None = None
     reported_version_mismatch: bool = False
     export_metadata: dict[str, Any] = field(default_factory=dict)
+    model_selection: dict[str, str] | None = None
+    provider_credential_id: str | None = None
+    cost_totals: CostTotals = field(default_factory=CostTotals)
+    cost_totals_version: int = 0
+    pending_provider_calls: dict[str, ProviderCall] = field(default_factory=dict)
     accepted_messages: dict[str, AcceptedMessage] = field(default_factory=dict)
     # Named Stop requests, including those for messages that have not arrived yet.
     stopped_message_ids: set[str] = field(default_factory=set)
@@ -273,6 +301,7 @@ class AgentSession:
     _saved_run_messages: int = field(default=0, repr=False)
     _listeners: list[Callable[[AgentSessionEvent], None]] = field(default_factory=list, repr=False)
     _events_closed: bool = False
+    _admission_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
     def observe_frontend_version(self, version: str | None, backend_version: str) -> None:
         """Keep the browser build available and report a mismatch once per loaded session."""
@@ -306,12 +335,31 @@ class AgentSession:
         """
         return {
             "schedule_yaml": self.schedule_yaml,
+            "model_selection": self.model_selection,
+            "provider_credential_id": self.provider_credential_id,
+            "cost_totals": self.cost_totals.public(),
+            "cost_totals_version": self.cost_totals_version,
+            "pending_provider_calls": [
+                {"id": call.id, "model": call.model, "status": call.status, "cost_usd": call.cost_usd}
+                for call in self.pending_provider_calls.values()
+            ],
             "frontend_version": self.frontend_version,
             "frontend_timezone": self.frontend_timezone,
+            "downloads": list(self.downloads),
+            "uploads": [
+                {
+                    "id": upload.id,
+                    "filename": upload.filename,
+                    "media_type": upload.media_type,
+                    "size_bytes": upload.byte_count,
+                    "request_sha256": upload.request_sha256,
+                }
+                for upload in self.uploads.values()
+            ],
             "export_metadata": {
                 **self.export_metadata,
                 "uploaded_files": [
-                    {"filename": upload.filename, "bytes": len(upload.data)} for upload in self.uploads.values()
+                    {"filename": upload.filename, "bytes": upload.byte_count} for upload in self.uploads.values()
                 ],
             },
             "dropped_history_messages": self.dropped_history_messages,
@@ -328,12 +376,15 @@ class AgentSession:
         *,
         entries: Sequence[AgentMessage],
         next_entry_seq: int,
+        uploads: Sequence[SandboxAttachment] = (),
+        removed_upload_paths: Sequence[str] = (),
+        archive_bytes: int = 0,
         event_stream: SessionEventStream | None,
         entry_log: Callable[[str, EntryRow], None] | None,
     ) -> "AgentSession":
         """Rebuild a session from `recovery_state` and its saved conversation entries.
 
-        Uploads, downloads, optimizer results and analysis notes are not saved.
+        File bytes are loaded separately from their persisted references. Analysis notes are not saved.
         """
         return cls(
             id=session_id,
@@ -341,10 +392,21 @@ class AgentSession:
             expires_at=expires_at,
             schedule_yaml=state["schedule_yaml"],
             revision=schedule_revision(state["schedule_yaml"]),
+            model_selection=state.get("model_selection"),
+            provider_credential_id=state.get("provider_credential_id"),
+            cost_totals=CostTotals.restored(state.get("cost_totals")),
+            cost_totals_version=state.get("cost_totals_version", 0),
+            pending_provider_calls={
+                call["id"]: ProviderCall(**call) for call in state.get("pending_provider_calls", [])
+            },
             frontend_version=state.get("frontend_version"),
             frontend_timezone=state.get("frontend_timezone", "UTC"),
             export_metadata=state.get("export_metadata", {}),
             transcript=retained_entries(entries),
+            uploads={upload.id: upload for upload in uploads},
+            removed_upload_paths=set(removed_upload_paths),
+            archive_bytes=archive_bytes,
+            downloads=dict.fromkeys(state.get("downloads", [])),
             dropped_history_messages=state["dropped_history_messages"],
             dropped_entries=state["dropped_entries"],
             next_entry_seq=next_entry_seq,
@@ -383,13 +445,13 @@ class AgentSession:
 
         return unsubscribe
 
-    def publish(self, event: AgentSessionEvent) -> None:
+    def publish(self, event: AgentSessionEvent) -> SessionEvent | None:
         if self._events_closed:
             return
-        if self.event_stream is not None:
-            self.event_stream.publish(self.id, event)
+        publication = self.event_stream.publish(self.id, event) if self.event_stream is not None else None
         for listener in tuple(self._listeners):
             listener(event)
+        return publication
 
     async def events(self, after_id: int, *, force_reset: bool = False) -> AsyncGenerator[SessionEvent | None]:
         if self._events_closed:
@@ -415,6 +477,20 @@ class AgentSession:
         ready = accepted.run.ready
         return None if ready.done() and not ready.result() else accepted
 
+    async def select_model(
+        self, prepare_runtime: Callable[[], Awaitable[SessionRuntime]], *, runtime: SessionRuntime
+    ) -> dict[str, str]:
+        """Save the current choice without changing any accepted run's runtime."""
+        async with self._admission_lock:
+            selected = await prepare_runtime()
+            assert selected.selection is not None
+            previous = self.model_selection
+            self.model_selection = selected.selection
+            if not await _complete(runtime.recorder.save(self.id, self.provider_credential_id)):
+                self.model_selection = previous
+                raise HTTPException(503, "The model choice could not be saved yet. Please try again.")
+            return self.model_selection
+
     async def accept_message(
         self,
         question: str,
@@ -424,6 +500,7 @@ class AgentSession:
         runs: SessionRuns,
         owner: str | None,
         credential_id: str | None,
+        prepare_runtime: Callable[[], Awaitable[SessionRuntime]] | None = None,
     ) -> MessageReceipt:
         """Start a run for a client message, or return the run that already answers it.
 
@@ -435,37 +512,43 @@ class AgentSession:
             HTTPException: With status 409 when the message ID belongs to another question or
                 a run is active, or 503 when recovery storage is unavailable.
         """
-        if message_id is not None:
-            accepted = self._accepted_message(message_id)
-            if accepted is not None:
-                if accepted.question != question:
-                    raise HTTPException(status_code=409, detail="This message ID belongs to a different question.")
-                accepted_run = accepted.run
-                if accepted_run is None or await asyncio.shield(accepted_run.ready):
-                    return MessageReceipt(accepted.run_id)
-            found = None if accepted is not None else await runtime.recorder.find_message(self.id, message_id)
-            if found is not None:
-                run_id, accepted_question = found
-                if accepted_question != question:
-                    raise HTTPException(status_code=409, detail="This message ID belongs to a different question.")
-                return MessageReceipt(run_id)
-            if await runtime.recorder.message_stopped(self.id, message_id):
-                self.stopped_message_ids.add(message_id)
-        run = runs.start(
-            self.id,
-            lambda run: self.run(run, question, runtime=runtime, owner=owner, credential_id=credential_id),
-            message_id=message_id,
-        )
-        if message_id is not None:
-            accepted = AcceptedMessage(message_id, question, run, run.id)
-            if not runtime.recorder.enabled:
-                try:
-                    runtime.store.remember_message(self.id, accepted)
-                except HTTPException:
-                    run.cancel()
-                    await asyncio.shield(run.done)
-                    raise
-            self.latest_message = accepted
+        async with self._admission_lock:
+            if message_id is not None:
+                accepted = self._accepted_message(message_id)
+                if accepted is not None:
+                    if accepted.question != question:
+                        raise HTTPException(status_code=409, detail="This message ID belongs to a different question.")
+                    accepted_run = accepted.run
+                    if accepted_run is None or await asyncio.shield(accepted_run.ready):
+                        return MessageReceipt(accepted.run_id)
+                found = None if accepted is not None else await runtime.recorder.find_message(self.id, message_id)
+                if found is not None:
+                    run_id, accepted_question = found
+                    if accepted_question != question:
+                        raise HTTPException(status_code=409, detail="This message ID belongs to a different question.")
+                    return MessageReceipt(run_id)
+                if await runtime.recorder.message_stopped(self.id, message_id):
+                    self.stopped_message_ids.add(message_id)
+
+            async def execute(run: AgentRun) -> None:
+                selected_runtime = await prepare_runtime() if prepare_runtime is not None else runtime
+                await self.run(run, question, runtime=selected_runtime, owner=owner, credential_id=credential_id)
+
+            run = runs.start(
+                self.id,
+                execute,
+                message_id=message_id,
+            )
+            if message_id is not None:
+                accepted = AcceptedMessage(message_id, question, run, run.id)
+                if not runtime.recorder.enabled:
+                    try:
+                        runtime.store.remember_message(self.id, accepted)
+                    except HTTPException:
+                        run.cancel()
+                        await asyncio.shield(run.done)
+                        raise
+                self.latest_message = accepted
         if not await asyncio.shield(run.ready):
             if run.cancelled and not run.shutdown:
                 # A Stop arrived before the run reported its start. A run cancelled before
@@ -572,11 +655,18 @@ class AgentSession:
     def queued_steering(self) -> tuple[str, ...]:
         return self.agent.queued_steering if self.active else ()
 
-    def update_schedule(self, schedule_yaml: str) -> None:
-        """Replace the session schedule, invalidate in-flight results, and record the change."""
+    def update_schedule(self, schedule_yaml: str, compared: tuple[str, bool] | None = None) -> None:
+        """Replace the session schedule, invalidate in-flight results, and record the change.
+
+        `compared` holds a base schedule and its `schedule_data_changed` result. It is reused
+        only while that base is still the session schedule.
+        """
         if self.schedule_yaml == schedule_yaml:
             return
-        data_changed = _schedule_data(self.schedule_yaml) != _schedule_data(schedule_yaml)
+        if compared is not None and compared[0] == self.schedule_yaml:
+            data_changed = compared[1]
+        else:
+            data_changed = schedule_data_changed(self.schedule_yaml, schedule_yaml)
         self.version += 1
         self.analysis = None
         self.schedule_yaml = schedule_yaml
@@ -602,6 +692,8 @@ class AgentSession:
         index = list(self.uploads).index(upload_id) + 1
         upload = self.uploads.pop(upload_id)
         self.analysis = None
+        self.pending_upload_removals.add(upload_id)
+        self.removed_upload_paths.add(attachment_path(upload, index))
         self._add_entry(AppEventEntry(removal_event(upload, index)))
         return upload
 
@@ -638,6 +730,54 @@ class AgentSession:
             events.emit({"type": "history_trimmed", "dropped": dropped_history})
         return messages, dropped_history, history.used_chars
 
+    async def _report_provider_call(
+        self,
+        call: ProviderCall,
+        runtime: SessionRuntime,
+        output: RunOutput,
+        events: RunEvents,
+    ) -> None:
+        previous = output.calls.get(call.id)
+        if call == previous:
+            return
+        data = asdict(call)
+        data["call_id"] = data.pop("id")
+        publication = events.emit(
+            {"type": "provider_call", **data, "reasoning": (runtime.selection or {}).get("reasoning", "default")}
+        )
+        try:
+            saved = await runtime.recorder.save_provider_call(self.id, publication)
+        finally:
+            # A rejected attempt must not reappear in totals when its event is retried.
+            if publication is not None:
+                self.cost_totals_version = publication.id
+        if not saved:
+            events.emit(
+                {
+                    "type": "warning",
+                    "message": "Provider cost details could not be saved yet. Recovery storage will retry.",
+                }
+            )
+            if previous is None and call.status == "pending":
+                # Do not incur a new provider charge without a durable attempt record.
+                raise ProviderError.for_user(
+                    "Cost recovery storage is unavailable, so the provider request was not started. Please try again."
+                )
+        output.calls[call.id] = call
+        output.costs.update(call, previous)
+        self.cost_totals.update(call, previous)
+        if call.status == "pending":
+            self.pending_provider_calls[call.id] = call
+        else:
+            self.pending_provider_calls.pop(call.id, None)
+        events.emit(
+            {
+                "type": "cost_summary",
+                "conversation": {**self.cost_totals.public(), "version": publication.id if publication else 0},
+                "run": output.costs.public(),
+            }
+        )
+
     async def _execute_run(
         self,
         snapshot: RunSnapshot,
@@ -649,36 +789,57 @@ class AgentSession:
         context_chars: int,
     ) -> None:
         """Execute the agent and await workspace cleanup before returning."""
-        async with runtime.concurrency_limit:
-            agent_events = run_workspace(
-                runtime.provider,
-                runtime.sandbox_factory,
-                snapshot.schedule_yaml,
-                messages,
-                WorkspaceLimits.from_settings(runtime.settings),
-                take_steering=lambda close: runtime.store.take_steering(self.id, close),
-                execute_optimizer=lambda current_yaml, arguments: execute_optimizer_tool(
-                    runtime.session_optimizer, self.id, current_yaml, arguments, self.client_address
-                ),
-                attachments=snapshot.uploads,
-                analysis=snapshot.analysis,
-                optimizer_result=artifact.content if artifact is not None else None,
-                optimizer_context=artifact.schedule_context if artifact is not None else None,
-                agent=self.agent,
-            )
-            async with aclosing(agent_events):
-                async for event in agent_events:
-                    self._save_run_messages(snapshot.run_id, self.agent.state.messages)
-                    wire_event = output.consume(event)
-                    if wire_event is not None:
-                        events.emit(wire_event)
-                    elif isinstance(event, TokenUsage):
-                        events.emit(
-                            {
-                                "type": "context_usage",
-                                **context_usage(context_chars, runtime.settings, event, runtime.provider),
-                            }
-                        )
+        try:
+            async with runtime.concurrency_limit:
+                agent_events = run_workspace(
+                    runtime.provider,
+                    runtime.sandbox_factory,
+                    snapshot.schedule_yaml,
+                    messages,
+                    WorkspaceLimits.from_settings(runtime.settings),
+                    take_steering=lambda close: runtime.store.take_steering(self.id, close),
+                    execute_optimizer=lambda current_yaml, arguments: execute_optimizer_tool(
+                        runtime.session_optimizer,
+                        self.id,
+                        current_yaml,
+                        arguments,
+                        self.client_address,
+                        runtime.selection,
+                    ),
+                    attachments=snapshot.uploads,
+                    load_attachment=lambda upload: runtime.recorder.read_upload(self.id, self.owner_token, upload),
+                    analysis=snapshot.analysis,
+                    optimizer_result=artifact.content if artifact is not None else None,
+                    optimizer_context=artifact.schedule_context if artifact is not None else None,
+                    agent=self.agent,
+                )
+                async with aclosing(agent_events):
+                    async for event in agent_events:
+                        if isinstance(event, ProviderCall):
+                            report = self._report_provider_call(event, runtime, output, events)
+                            if event.status == "pending" and event.id not in output.calls:
+                                # Stop during admission must not count an unstarted HTTP request.
+                                await report
+                            else:
+                                # Retain received prices and totals before Stop finalizes the run.
+                                await _complete(report)
+                            continue
+                        self._save_run_messages(snapshot.run_id, self.agent.state.messages)
+                        wire_event = output.consume(event)
+                        if wire_event is not None:
+                            events.emit(wire_event)
+                        elif isinstance(event, TokenUsage):
+                            events.emit(
+                                {
+                                    "type": "context_usage",
+                                    **context_usage(context_chars, runtime.settings, event, runtime.provider),
+                                }
+                            )
+        finally:
+            for call in tuple(output.calls.values()):
+                if call.status == "pending":
+                    final = replace(call, status="reported" if call.cost_usd is not None else "unavailable")
+                    await _complete(self._report_provider_call(final, runtime, output, events))
 
     def _commit_run(
         self,
@@ -702,7 +863,7 @@ class AgentSession:
         )
         return completion
 
-    def _publish_completion(
+    async def _publish_completion(
         self,
         run: AgentRun,
         schedule_change: dict[str, Any] | None,
@@ -725,7 +886,10 @@ class AgentSession:
         if output.download is not None:
             # A ZIP that does not fit the session memory budget leaves the answer intact.
             if runtime.store.save_download(self.id, run.id, output.download.content):
+                saved = await runtime.recorder.save(self.id)
                 events.emit({"type": "download", "download_id": run.id})
+                if not saved:
+                    events.emit({"type": "warning", "message": RECOVERY_SAVE_WARNING})
             else:
                 events.emit({"type": "warning", "message": DOWNLOAD_RETENTION_WARNING})
         done: RunDoneEvent = {"type": "done"}
@@ -803,7 +967,7 @@ class AgentSession:
                 if not history_saved:
                     events.emit({"type": "warning", "message": RECOVERY_SAVE_WARNING})
             if outcome.completion is not None:
-                self._publish_completion(
+                await self._publish_completion(
                     run,
                     schedule_change,
                     outcome.completion,
@@ -827,6 +991,7 @@ class AgentSession:
         owner: str | None = None,
         credential_id: str | None = None,
         artifact: OptimizerArtifact | None = None,
+        prepare_runtime: Callable[[], Awaitable[SessionRuntime]] | None = None,
     ) -> None:
         """Own every run phase and finalize once, regardless of trigger or transport."""
         run.begun = True
@@ -848,6 +1013,14 @@ class AgentSession:
         events = RunEvents(run.id, self.publish)
 
         try:
+            preparation_error = None
+            if prepare_runtime is not None:
+                try:
+                    runtime = await prepare_runtime()
+                    settings = runtime.settings
+                except HTTPException as exc:
+                    # Record the failed review before publishing its terminal error.
+                    preparation_error = ProviderError.for_user(str(exc.detail))
             if recorder.enabled:
                 prompt_seq = self.next_entry_seq
                 self.next_entry_seq += 1
@@ -857,7 +1030,7 @@ class AgentSession:
                         run.id,
                         question,
                         prompt_seq,
-                        model=settings.provider_model,
+                        model=(runtime.selection or {}).get("model", settings.provider_model),
                         attachment_count=len(snapshot.uploads),
                         kind="background" if background else "foreground",
                         message_id=run.message_id,
@@ -875,6 +1048,8 @@ class AgentSession:
                     raise HTTPException(status_code=503, detail=RECOVERY_UNAVAILABLE)
             events.emit({"type": "run_start", "trigger": "optimizer" if background else "user"})
             run.ready.set_result(True)
+            if preparation_error is not None:
+                raise preparation_error
             if run.message_id is not None and run.message_id in self.stopped_message_ids:
                 # A Stop for this message arrived first, so its question never runs.
                 outcome = RunOutcome(terminal={"type": "stopped"})
@@ -889,6 +1064,8 @@ class AgentSession:
                 events,
                 "optimizer" if background else "question",
             )
+            if runtime.selection is not None:
+                events.emit({"type": "model_selection", **runtime.selection})
             await self._execute_run(snapshot, messages, artifact, runtime, output, events, context_chars)
             run_entries = [run_entries[0], *self.agent.state.messages]
             completion = self._commit_run(run, snapshot, run_entries, output, store)
@@ -909,6 +1086,8 @@ class AgentSession:
                 error_code, message = "provider_error", exc.user_message or PROVIDER_ERROR
             elif isinstance(exc, SandboxDownloadError):
                 error_code, message = "download_error", str(exc)
+            elif isinstance(exc, SandboxAttachmentUnavailableError):
+                error_code, message = "attachment_unavailable", str(exc)
             elif isinstance(exc, SandboxCommandTimeoutError):
                 error_code, message = "sandbox_command_timeout", SANDBOX_COMMAND_TIMEOUT_ERROR
             elif isinstance(exc, SandboxTurnTimeoutError):

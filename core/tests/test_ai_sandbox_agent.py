@@ -40,6 +40,7 @@ from nurse_scheduling.ai.agent_types import (
     AgentToolUse,
 )
 from nurse_scheduling.ai.attachment_tools.inspect_shift_requests import inspect_requests
+from nurse_scheduling.ai.candidate import review_schedule_candidate
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL, WORKSPACE_OPTIMIZER_RESULT
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
@@ -54,6 +55,7 @@ from nurse_scheduling.ai.provider import (
     ToolCall,
     ToolCallRequest,
 )
+from nurse_scheduling.ai.result_context import build_result_context
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
 from nurse_scheduling.ai.schema import load_schedule_example, load_taiwan_holidays_reference, load_user_guide_references
@@ -587,6 +589,32 @@ def test_hydration_places_untrusted_attachments_under_safe_paths():
     assert b"inspect_pdf" in backend.files["/reference/tools/inspect_pdf.py"]
 
 
+def test_hydration_loads_and_delivers_each_persisted_file_before_reading_the_next():
+    actions = []
+    payloads = {"one": b"first", "two": b"second"}
+
+    class Backend(FakeSandboxBackend):
+        async def write_file(self, path, content):
+            actions.append(("write", path, content))
+            await super().write_file(path, content)
+
+    async def load(upload):
+        actions.append(("load", upload.id))
+        return payloads[upload.id]
+
+    backend = Backend("hydration")
+    uploads = tuple(SandboxAttachment(name, "text/plain", data, id=name).reference() for name, data in payloads.items())
+    asyncio.run(hydrate_sandbox(backend, schedule_yaml(), uploads, load_attachment=load))
+
+    assert actions == [
+        ("load", "one"),
+        ("write", "/workspace/attachments/one-one", b"first"),
+        ("load", "two"),
+        ("write", "/workspace/attachments/two-two", b"second"),
+    ]
+    assert backend.write_files_calls == 1
+
+
 def test_hydration_keeps_optimizer_result_outside_user_attachments():
     factory = FakeSandboxFactory()
     provider = ScriptedProvider(
@@ -1080,7 +1108,7 @@ def test_inspection_context_builds_off_the_event_loop_and_tolerates_a_failed_wri
         tracker = _ScheduleCandidateTracker(backend, base, SCHEDULE_BYTE_LIMIT)
         build_threads = []
 
-        def build(source):
+        def build(source, workbook=None):
             build_threads.append(threading.current_thread())
             return {"source": source}
 
@@ -1101,6 +1129,57 @@ def test_inspection_context_builds_off_the_event_loop_and_tolerates_a_failed_wri
     asyncio.run(check())
 
 
+def test_run_validates_and_compiles_schedules_off_the_event_loop(monkeypatch):
+    calls: list[tuple[str, bool]] = []
+
+    def recorded(name, function):
+        def run(*args, **kwargs):
+            calls.append((name, threading.current_thread() is threading.main_thread()))
+            return function(*args, **kwargs)
+
+        return run
+
+    monkeypatch.setattr(
+        "nurse_scheduling.ai.workspace.review_schedule_candidate", recorded("edit check", review_schedule_candidate)
+    )
+    monkeypatch.setattr(
+        "nurse_scheduling.ai.workspace_tools.review_schedule_candidate",
+        recorded("optimizer or final check", review_schedule_candidate),
+    )
+    monkeypatch.setattr(
+        "nurse_scheduling.ai.workspace.build_result_context", recorded("inspection context", build_result_context)
+    )
+    optimizer_call = ToolCallRequest(
+        (ToolCall("call-2", OPTIMIZER_TOOL, json.dumps({"action": "start", "timeout_seconds": 30})),)
+    )
+    provider = ScriptedProvider(_run_call(), [optimizer_call])
+    factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=_rename_handler))
+
+    async def execute_optimizer(_current_schedule: str, _arguments: str):
+        return AgentToolOutcome("Started in the background.", True)
+
+    async def collect() -> list:
+        return [
+            event
+            async for event in run_workspace(
+                provider, factory, schedule_yaml(), MESSAGES, _limits(), execute_optimizer=execute_optimizer
+            )
+        ]
+
+    events = asyncio.run(collect())
+
+    assert any(isinstance(event, AgentProposal) for event in events)
+    # Hydration and the accepted edit compile contexts. The optimizer start and final review check the copy.
+    assert sorted(name for name, _ in calls) == [
+        "edit check",
+        "inspection context",
+        "inspection context",
+        "optimizer or final check",
+        "optimizer or final check",
+    ]
+    assert not any(on_event_loop for _, on_event_loop in calls)
+
+
 def test_unchanged_schedule_does_not_rebuild_inspection_context(monkeypatch):
     async def check():
         base = schedule_yaml()
@@ -1108,7 +1187,7 @@ def test_unchanged_schedule_does_not_rebuild_inspection_context(monkeypatch):
         await hydrate_sandbox(backend, base)
         tracker = _ScheduleCandidateTracker(backend, base, SCHEDULE_BYTE_LIMIT)
 
-        def unexpected_build(_source):
+        def unexpected_build(_source, workbook=None):
             pytest.fail("Unchanged YAML must not rebuild its compiled context")
 
         monkeypatch.setattr("nurse_scheduling.ai.workspace.build_result_context", unexpected_build)
@@ -1186,7 +1265,8 @@ def test_analysis_hydration_requires_the_same_source_inputs(change):
     from nurse_scheduling.ai.workspace import WORKSPACE_ANALYSIS, AgentAnalysis, analysis_source_sha256
 
     source = schedule_yaml()
-    uploads = (SandboxAttachment("source.csv", "text/csv", b"P1,D", id="source"),)
+    # Without a retained upload ID, the bytes identify the file.
+    uploads = (SandboxAttachment("source.csv", "text/csv", b"P1,D"),)
     notes = AgentAnalysis(analysis_source_sha256(source, uploads), b"P1 requests D. User confirmation pending.")
     if change == "schedule":
         source += "\n"
@@ -1201,6 +1281,21 @@ def test_analysis_hydration_requires_the_same_source_inputs(change):
     assert (WORKSPACE_ANALYSIS in backend.files) is (change is None)
     if change is None:
         assert backend.files[WORKSPACE_ANALYSIS] == notes.content
+
+
+def test_analysis_hydration_accepts_the_persisted_reference_of_a_retained_upload():
+    from nurse_scheduling.ai.workspace import WORKSPACE_ANALYSIS, AgentAnalysis, analysis_source_sha256
+
+    source = schedule_yaml()
+    upload = SandboxAttachment("source.csv", "text/csv", b"P1,D", id="source")
+    notes = AgentAnalysis(analysis_source_sha256(source, (upload,)), b"P1 requests D. User confirmation pending.")
+
+    async def load(_attachment):
+        return upload.data
+
+    backend = FakeSandboxBackend("new-workspace")
+    asyncio.run(hydrate_sandbox(backend, source, (upload.reference(),), load_attachment=load, analysis=notes))
+    assert backend.files[WORKSPACE_ANALYSIS] == notes.content
 
 
 @pytest.mark.parametrize(

@@ -24,7 +24,7 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import Any
 
-from .provider import ProviderRetry, TokenUsage, ToolResultImage
+from .provider import ProviderCall, ProviderRetry, TokenUsage, ToolResultImage
 from .transcript import AssistantMessage
 
 
@@ -95,6 +95,7 @@ AgentEvent = (
     | AgentSteering
     | AgentProposal
     | TokenUsage
+    | ProviderCall
     | ProviderRetry
 )
 ToolExecutor = Callable[[str, str], Awaitable["AgentToolOutcome"]]

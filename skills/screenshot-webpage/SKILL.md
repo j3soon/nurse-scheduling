@@ -9,6 +9,11 @@ Use `scripts/capture-webpage.mjs` for repeatable captures. Validate the page
 state before writing the image, then inspect the PNG rather than trusting the
 command alone.
 
+Check `test -f /.dockerenv` and resolve repository paths with
+`git rev-parse --show-toplevel`. A dev container mounts the checkout at
+`/workspace`, and browser binaries and display availability differ from a
+host checkout.
+
 ## Prepare the page
 
 1. Start the application with its documented local command. Do not replace the

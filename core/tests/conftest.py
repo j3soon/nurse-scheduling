@@ -21,10 +21,22 @@
 
 import importlib.util
 from functools import cache
+from pathlib import Path
 
 import pytest
 
 from nurse_scheduling.server.solver_options import SOLVER_RUNTIME_MODULES, solver_is_available
+
+
+@pytest.fixture
+def legacy_text_encoding(monkeypatch: pytest.MonkeyPatch):
+    """Expose implicit fixture decoding with a legacy Windows default on every platform."""
+    read_text = Path.read_text
+
+    def read_with_legacy_default(path, encoding=None, errors=None, **kwargs):
+        return read_text(path, encoding="cp1252" if encoding is None else encoding, errors=errors, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_with_legacy_default)
 
 
 def pytest_addoption(parser):

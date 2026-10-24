@@ -22,6 +22,7 @@
 import asyncio
 import json
 import logging
+import re
 import sys
 from collections.abc import AsyncIterator
 from contextlib import aclosing, asynccontextmanager
@@ -29,25 +30,30 @@ from dataclasses import replace
 from typing import Annotated, Literal, cast
 from uuid import UUID, uuid4
 
+import anyio
+import psycopg
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import AfterValidator, BaseModel, Field, ValidationError
+from starlette._utils import get_route_path
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.formparsers import MultiPartException
 
 from ..sentry import SentryClientAddressMiddleware, init_sentry
-from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry
+from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry, create_stream_token
 from ..server.request_limits import MULTIPART_OVERHEAD_BYTES
 from ..service_logging import configure_service_logging
 from ..version import get_app_version
-from .agent_session import AgentSession, SessionRuntime
+from .agent_session import AgentSession, SessionRuntime, schedule_data_changed
+from .chat_archive import ChatArchiveResponse, ChatSessionNotFoundError, create_chat_archive
 from .config import AiSettings, validate_ai_auth_credentials
 from .context import validate_frontend_timezone
 from .history import ChatHistory, stop_maintenance
 from .lifecycle import TERMINAL_EVENTS, AgentRun, SessionRuns
+from .models import ModelCatalog, ModelSelection
 from .optimizer import (
     OptimizerArtifact,
     OptimizerBackend,
@@ -133,6 +139,7 @@ class CreateSessionRequest(BaseModel):
     frontend_version: str | None = Field(default=None, min_length=1, max_length=200)
     ai_endpoint: str | None = Field(default=None, min_length=1, max_length=2048)
     frontend_timezone: FrontendTimezone = "UTC"
+    selection: ModelSelection | None = None
 
 
 class ChatRequest(BaseModel):
@@ -143,6 +150,7 @@ class ChatRequest(BaseModel):
     message_id: str | None = Field(default=None, min_length=1, max_length=100)
     frontend_version: str | None = Field(default=None, min_length=1, max_length=200)
     frontend_timezone: FrontendTimezone | None = None
+    selection: ModelSelection | None = None
 
 
 class StopChatRequest(BaseModel):
@@ -183,6 +191,7 @@ class CapabilitiesResponse(BaseModel):
     session_retention_seconds: int
     auth: dict[str, bool | str]
     saved_chat_export: bool
+    model_selection: bool = True
 
 
 def owner_cookie_token(owner: str | None) -> str:
@@ -207,7 +216,11 @@ async def _session_sse(
             data = event.data
             reset = cast(SessionResetData, data) if event.type == "session_reset" else None
             if reset is not None:
-                data = {**data, "active_run_id": session.snapshot.run_id if session.snapshot else None}
+                data = {
+                    **data,
+                    "active_run_id": session.snapshot.run_id if session.snapshot else None,
+                    "cost_summary": {**session.cost_totals.public(), "version": session.cost_totals_version},
+                }
             yield f"id: {event.id}\nevent: {event.type}\ndata: {json.dumps(data)}\n\n"
             if until_run is not None and (
                 (data.get("run_id") == until_run.id and event.type in TERMINAL_EVENTS)
@@ -303,7 +316,7 @@ async def _parse_upload_request(request: Request, settings: AiSettings) -> list[
 
 def _upload_metadata(upload: SandboxAttachment) -> dict[str, str | int]:
     """Describe one retained source file without its contents."""
-    return {"id": upload.id, "filename": upload.filename, "media_type": upload.media_type, "bytes": len(upload.data)}
+    return {"id": upload.id, "filename": upload.filename, "media_type": upload.media_type, "bytes": upload.byte_count}
 
 
 def create_app(
@@ -315,7 +328,9 @@ def create_app(
 ) -> FastAPI:
     """Construct the independently deployable AI application."""
     app_version = get_app_version()
-    init_sentry(app_version, app="ai-backend", api_version=API_VERSION)
+    # The AI API re-reads upload request bodies, which the FastApiIntegration breaks.
+    # Remove this opt-out after https://github.com/getsentry/sentry-python/issues/7285 is fixed.
+    init_sentry(app_version, app="ai-backend", api_version=API_VERSION, fastapi_integration=False)
     configure_service_logging(logger)
     settings = settings or AiSettings.from_env()
     auth_token, auth_tokens = validate_ai_auth_credentials(
@@ -325,6 +340,7 @@ def create_app(
     )
     settings = replace(settings, auth_token=auth_token, auth_tokens=auth_tokens)
     configure_request_logging(settings.request_log_enabled)
+    catalog = ModelCatalog(settings) if provider is None else None
     provider = provider or OpenAiCompatibleProvider(settings, include_usage=True)
     history_log = ChatHistory(settings.history_postgres_url) if settings.history_postgres_url else None
     if sandbox_factory is None:
@@ -337,12 +353,50 @@ def create_app(
     auth_registry = create_auth_registry(settings.auth_token, settings.auth_tokens)
     require_auth = create_auth_dependency(auth_registry)
 
+    def export_scope(session_id: str) -> str:
+        # Namespace the signing primitive so stream tokens cannot authorize an export.
+        # The link is a short-lived capability, like the events stream tokens: browsers
+        # send the owner cookie inconsistently between the minting fetch and the download
+        # navigation, so the redemption request cannot bind it.
+        return f"ai-chat-export:{session_id}"
+
+    def require_session_auth(request: Request) -> None:
+        # The body-limit middleware runs before router path parameters exist.
+        path = get_route_path(request.scope).rstrip("/")
+        match = re.fullmatch(r"/sessions/([^/]+)/export", path)
+        if auth_registry.enabled and request.method == "GET" and match is not None:
+            credential = auth_registry.authenticate_stream(
+                export_scope(match[1]),
+                request.query_params.get("token"),
+            )
+            if credential is not None:
+                request.state.auth_credential_id = credential.id
+                request.state.export_link = True
+                return
+            if request.query_params.get("token") is not None:
+                raise HTTPException(
+                    status_code=401,
+                    detail="The export download link is invalid or has expired.",
+                )
+        require_auth(request)
+
     async def restore_session(request: Request, owner: str | None = Cookie(default=None, alias=OWNER_COOKIE)) -> None:
         """Load a saved session that is not in memory after a restart or eviction."""
         session_id = request.path_params.get("session_id")
-        if session_id is None or not recovery.enabled or owner is None or store.get(session_id) is not None:
+        if session_id is None:
             return
-        await recovery.restore(session_id, owner)
+        if getattr(request.state, "export_link", False):
+            # The signed link replaces browser ownership, so another browser's cookie must not reject it.
+            return
+        if recovery.enabled and owner is not None and store.get(session_id) is None:
+            await recovery.restore(session_id, owner)
+        session = store.get(session_id)
+        if (
+            session is not None
+            and session.provider_credential_id is not None
+            and session.provider_credential_id != request.state.auth_credential_id
+        ):
+            raise HTTPException(status_code=404, detail="Chat session not found.")
 
     def refresh_owner_cookie(response: Response, owner: str | None) -> None:
         """Keep browser ownership available for the session's sliding lifetime."""
@@ -371,13 +425,25 @@ def create_app(
             settings.optimizer_max_result_bytes,
         )
 
-    async def optimizer_completed(session_id: str, prompt: str, artifact: OptimizerArtifact | None) -> None:
+    async def optimizer_completed(
+        session_id: str, prompt: str, artifact: OptimizerArtifact | None, selection: dict[str, str] | None = None
+    ) -> None:
         session = store.get(session_id)
         if session is None:
             return
         run = runs.start(
             session_id,
-            lambda run: session.run(run, prompt, runtime=runtime, background=True, artifact=artifact),
+            lambda run: session.run(
+                run,
+                prompt,
+                runtime=replace(runtime, selection=session.model_selection or selection),
+                background=True,
+                artifact=artifact,
+                credential_id=session.provider_credential_id,
+                prepare_runtime=lambda: runtime_for(
+                    session.provider_credential_id, session.model_selection or selection
+                ),
+            ),
             background=True,
         )
         run.task.add_done_callback(recovery.pin(session_id))
@@ -402,9 +468,23 @@ def create_app(
         max_result_bytes=settings.optimizer_max_result_bytes,
         max_cached_result_bytes=settings.optimizer_result_cache_bytes,
         max_schedule_bytes=settings.max_schedule_bytes,
+        save_result=recovery.save_optimizer_result if recovery.enabled else None,
+        load_artifact=recovery.load_optimizer_result if recovery.enabled else None,
     )
 
     runtime = SessionRuntime(settings, store, concurrency_limit, recovery, provider, sandbox_factory, session_optimizer)
+
+    async def runtime_for(credential_id: str | None, selection: dict | ModelSelection | None) -> SessionRuntime:
+        if isinstance(selection, dict):
+            selection = ModelSelection.model_validate(selection)
+        if catalog is None:
+            if selection is None:
+                return runtime
+            if selection.model != settings.provider_model or selection.reasoning != "default":
+                raise HTTPException(422, "The selected model settings are not available.")
+            return replace(runtime, selection=selection.model_dump())
+        selected, selected_settings, selected_provider = await catalog.resolve(credential_id, selection)
+        return replace(runtime, settings=selected_settings, provider=selected_provider, selection=selected.model_dump())
 
     def retire_session(session_id: str) -> None:
         """Release everything keyed by a session once the store drops it."""
@@ -455,7 +535,7 @@ def create_app(
         docs_url="/docs" if generated_docs_are_public else None,
         redoc_url="/redoc" if generated_docs_are_public else None,
     )
-    app.add_middleware(AiRequestLimitsMiddleware, settings=settings, require_auth=require_auth)
+    app.add_middleware(AiRequestLimitsMiddleware, settings=settings, require_auth=require_session_auth)
     app.add_middleware(
         CORSMiddleware,
         allow_origin_regex=ORIGIN_REGEX,
@@ -508,6 +588,28 @@ def create_app(
             auth={"required": auth_registry.enabled, "scheme": AUTH_SCHEME},
         )
 
+    @app.get("/models", dependencies=[Depends(require_auth)])
+    async def available_models(request: Request) -> dict:
+        if catalog is None:
+            return {
+                "default_model": settings.provider_model,
+                "models": [
+                    {
+                        "id": settings.provider_model,
+                        "name": settings.provider_model,
+                        "context_tokens": None,
+                        "default_reasoning": "default",
+                        "reasoning_options": [{"id": "default", "label": "Default"}],
+                    }
+                ],
+            }
+        credential_id = request.state.auth_credential_id
+        models = await catalog.models(credential_id)
+        return {
+            "default_model": catalog.profile(credential_id).default_model,
+            "models": [model.public() for model in models],
+        }
+
     @app.post(
         "/sessions",
         response_model=CreateSessionResponse,
@@ -523,9 +625,20 @@ def create_app(
         """Create a chat session for the calling browser."""
         if len(request.schedule_yaml.encode("utf-8")) > settings.max_schedule_bytes:
             raise HTTPException(status_code=413, detail="Schedule is too large.")
+        credential_id = http_request.state.auth_credential_id
+        if request.selection is not None:
+            selected_runtime = await runtime_for(credential_id, request.selection)
+            selection = selected_runtime.selection
+        else:
+            default_model = (
+                catalog.profile(credential_id).default_model if catalog is not None else settings.provider_model
+            )
+            selection = ModelSelection(model=default_model).model_dump()
         owner = owner_cookie_token(owner)
         refresh_owner_cookie(response, owner)
         session = store.create(owner, request.schedule_yaml)
+        session.provider_credential_id = http_request.state.auth_credential_id
+        session.model_selection = selection
         session.observe_frontend_version(request.frontend_version, app.state.app_version)
         session.frontend_timezone = request.frontend_timezone
         session.client_address = http_request.client.host if http_request.client else None
@@ -546,31 +659,68 @@ def create_app(
         )
         return CreateSessionResponse(id=session.id)
 
-    @app.get("/sessions/{session_id}/export", dependencies=[Depends(require_auth), Depends(restore_session)])
+    @app.post("/sessions/{session_id}/export", dependencies=[Depends(require_auth), Depends(restore_session)])
+    async def prepare_export(
+        session_id: str,
+        request: Request,
+        response: Response,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> dict[str, str | None]:
+        """Authorize a native download without putting a bearer credential in its URL."""
+        store.require_owned(session_id, owner)
+        if recovery.history is None:
+            raise HTTPException(status_code=409, detail="Chat export is unavailable on this server.")
+        credential = auth_registry.get(request.state.auth_credential_id)
+        token = (
+            None
+            if credential is None
+            else create_stream_token(
+                credential.token,
+                export_scope(session_id),
+                ttl_seconds=300,
+            )
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return {"download_token": token}
+
+    @app.get("/sessions/{session_id}/export", dependencies=[Depends(require_session_auth), Depends(restore_session)])
     async def export_session(
         session_id: str,
+        request: Request,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
-    ) -> dict:
-        """Return one saved snapshot for the browser and administrator export formatter."""
-        store.require_owned(session_id, owner)
+    ) -> Response:
+        """Stream the same complete ZIP that the administrator command writes."""
+        if getattr(request.state, "export_link", False):
+            # The signed link authorizes this session in place of browser ownership. The
+            # archive reads storage directly, so the session need not be loaded.
+            owner = None
+        else:
+            store.require_owned(session_id, owner)
         if recovery.history is None:
             raise HTTPException(status_code=409, detail="Saved chat export requires PostgreSQL history.")
         release = recovery.pin(session_id)
         try:
-            async with asyncio.timeout(5):
-                if not await recovery.save(session_id):
-                    raise HTTPException(status_code=503, detail="The chat snapshot could not be saved.")
-                await recovery.flush(session_id)
-                snapshot = await recovery.history.read("export_snapshot", session_id)
-        except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from None
-        except TimeoutError as exc:
-            raise HTTPException(status_code=503, detail="The chat snapshot is still being saved. Try again.") from exc
+            try:
+                async with asyncio.timeout(5):
+                    if not await recovery.save(session_id):
+                        raise HTTPException(status_code=503, detail="The chat snapshot could not be saved.")
+                    await recovery.flush(session_id)
+            except TimeoutError as exc:
+                raise HTTPException(
+                    status_code=503, detail="The chat snapshot is still being saved. Try again."
+                ) from exc
+            with anyio.CancelScope(shield=True):
+                archive = await anyio.to_thread.run_sync(
+                    lambda: create_chat_archive(recovery.history, session_id, owner=owner)
+                )
+        except ChatSessionNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Chat session not found.") from exc
+        except (psycopg.Error, OSError) as exc:
+            logger.exception("AI chat archive creation failed")
+            raise HTTPException(status_code=503, detail="The chat archive could not be created. Try again.") from exc
         finally:
             release()
-        if snapshot is None:
-            raise HTTPException(status_code=503, detail="The saved chat snapshot is unavailable.")
-        return snapshot
+        return ChatArchiveResponse(archive, f"schedule-ai-chat-{session_id}.zip")
 
     @app.get("/sessions/{session_id}/events", dependencies=[Depends(require_auth), Depends(restore_session)])
     async def stream_session_events(
@@ -626,10 +776,11 @@ def create_app(
         release = recovery.pin(session_id)
         try:
             uploads = await _parse_upload_request(request, settings)
+            retained = store.retain_uploads(session_id, owner, uploads, upload_id=str(upload_id) if upload_id else None)
+            if not await recovery.save(session_id):
+                raise HTTPException(status_code=503, detail="Uploaded files could not be saved. Retry the upload.")
         finally:
             release()
-        retained = store.retain_uploads(session_id, owner, uploads, upload_id=str(upload_id) if upload_id else None)
-        await recovery.save(session_id)
         refresh_owner_cookie(response, owner)
         return [_upload_metadata(item) for item in retained]
 
@@ -653,7 +804,8 @@ def create_app(
     ) -> Response:
         """Remove one retained source file from the session."""
         store.remove_upload(session_id, owner, upload_id)
-        await recovery.save(session_id)
+        if not await recovery.save(session_id):
+            raise HTTPException(status_code=503, detail="The file removal could not be saved.")
         response = Response(status_code=status.HTTP_204_NO_CONTENT)
         refresh_owner_cookie(response, owner)
         return response
@@ -667,8 +819,11 @@ def create_app(
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> Response:
         """Deliver one captured ZIP without exposing arbitrary sandbox paths."""
+        content = store.download(session_id, owner, download_id)
+        if content is None:
+            content = await recovery.read_file(session_id, owner, "download", download_id)
         return Response(
-            content=store.download(session_id, owner, download_id),
+            content=content,
             media_type="application/zip",
             headers={"Content-Disposition": 'attachment; filename="download.zip"'},
         )
@@ -685,6 +840,8 @@ def create_app(
     ) -> Response:
         """Remove one generated ZIP from the owning session."""
         store.remove_download(session_id, owner, download_id)
+        if not await recovery.save(session_id):
+            raise HTTPException(status_code=503, detail="The file removal could not be saved.")
         response = Response(status_code=status.HTTP_204_NO_CONTENT)
         refresh_owner_cookie(response, owner)
         return response
@@ -742,6 +899,45 @@ def create_app(
         """Report whether a stored browser session remains available without extending it."""
         return SessionStatusResponse(expires_in_seconds=store.status(session_id, owner))
 
+    @app.get(
+        "/sessions/{session_id}/model-selection",
+        response_model=ModelSelection,
+        dependencies=[Depends(require_auth), Depends(restore_session)],
+    )
+    async def current_model_selection(
+        session_id: str,
+        request: Request,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> ModelSelection:
+        session = store.require_owned(session_id, owner)
+        if session.model_selection is not None:
+            return ModelSelection.model_validate(session.model_selection)
+        default_model = (
+            catalog.profile(request.state.auth_credential_id).default_model
+            if catalog is not None
+            else settings.provider_model
+        )
+        return ModelSelection(model=default_model)
+
+    @app.put(
+        "/sessions/{session_id}/model-selection",
+        response_model=ModelSelection,
+        dependencies=[Depends(require_auth), Depends(restore_session)],
+    )
+    async def update_model_selection(
+        session_id: str,
+        body: ModelSelection,
+        request: Request,
+        response: Response,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> ModelSelection:
+        session = store.require_owned(session_id, owner)
+        selection = await session.select_model(
+            lambda: runtime_for(request.state.auth_credential_id, body), runtime=runtime
+        )
+        refresh_owner_cookie(response, owner)
+        return ModelSelection.model_validate(selection)
+
     @app.post(
         "/sessions/{session_id}/messages/queue",
         status_code=status.HTTP_202_ACCEPTED,
@@ -794,6 +990,9 @@ def create_app(
             runs=runs,
             owner=owner,
             credential_id=request.state.auth_credential_id,
+            prepare_runtime=lambda: runtime_for(
+                request.state.auth_credential_id, body.selection or session.model_selection
+            ),
         )
         run = receipt.run
         if run is not None:
@@ -831,7 +1030,10 @@ def create_app(
         """Point an existing session at the schedule the browser now holds."""
         if len(request.schedule_yaml.encode("utf-8")) > settings.max_schedule_bytes:
             raise HTTPException(status_code=413, detail="The schedule is too large for the AI service.")
-        store.update_schedule(session_id, owner, request.schedule_yaml)
+        base = store.require_owned(session_id, owner).schedule_yaml
+        # Parsing a large schedule on the event loop would stall every session's stream.
+        data_changed = await asyncio.to_thread(schedule_data_changed, base, request.schedule_yaml)
+        store.update_schedule(session_id, owner, request.schedule_yaml, compared=(base, data_changed))
         # A retry repeats the same update, so the browser can send it again until it is saved.
         if not await recovery.save(session_id):
             raise HTTPException(status_code=503, detail="AI message recovery is temporarily unavailable.")

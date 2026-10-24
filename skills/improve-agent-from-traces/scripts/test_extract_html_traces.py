@@ -215,7 +215,7 @@ class ExtractHtmlTracesTests(unittest.TestCase):
             self.assertEqual(
                 [Path(line["source"]).name for line in lines], ["a.html", "b.html"]
             )
-            inventory = json.loads((root / "reports/inventory.json").read_text())
+            inventory = json.loads((root / "reports/inventory.json").read_text(encoding="utf-8"))
             self.assertEqual(inventory, lines)
             self.assertEqual(len(list((root / "reports").glob("trace-*.json"))), 2)
             self.assertNotIn("Question.", output.getvalue())

@@ -11,6 +11,13 @@ each fix in its own commit with a regression test.
 
 ## Rules
 
+- Detect the session location with `test -f /.dockerenv` and resolve the
+  repository root with `git rev-parse --show-toplevel`. A dev container
+  mounts the checkout at `/workspace`; a host checkout uses the local clone
+  path. The isolated stack needs Docker and Compose on the daemon that serves
+  the user's shells, so confirm `command -v docker` and
+  `docker compose ps` from a dev container before starting. When that daemon
+  is unreachable, ask the user to run the scan from the host.
 - Never send scan traffic to `nursescheduling.org` or to a running deployment,
   including its containers through the host network. The deployment holds real
   chat history, bills model and E2B usage, and shares one job queue with users.

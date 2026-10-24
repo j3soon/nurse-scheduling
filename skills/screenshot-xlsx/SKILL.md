@@ -8,6 +8,10 @@ description: Render a real XLSX worksheet or selected range as a deterministic P
 Create a PNG from workbook data with `scripts/render-xlsx.mjs`. Treat the result
 as a rendered workbook preview, not a literal capture of Excel or LibreOffice.
 
+Check `test -f /.dockerenv` and resolve repository paths with
+`git rev-parse --show-toplevel`. A dev container mounts the checkout at
+`/workspace`; a host checkout uses the local clone path.
+
 ## Choose the capture method
 
 - Use the bundled renderer for cell-based schedules, reports, and tables.

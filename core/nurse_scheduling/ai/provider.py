@@ -28,8 +28,9 @@ import re
 import time
 from collections.abc import AsyncIterator, Sequence
 from contextlib import aclosing
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from email.utils import parsedate_to_datetime
 from typing import Any, Literal, Protocol, TypedDict
 from uuid import uuid4
@@ -170,8 +171,36 @@ class ProviderRetry:
     message: str
 
 
+@dataclass(frozen=True)
+class ProviderCall:
+    """One billable HTTP attempt, including attempts interrupted before usage arrives."""
+
+    id: str
+    model: str
+    status: Literal["pending", "reported", "unavailable"] = "pending"
+    cost_usd: str | None = None
+    usage: TokenUsage | None = None
+    provider_call_id: str | None = None
+    response_model: str | None = None
+
+
+@dataclass(frozen=True)
+class ProviderResponseMetadata:
+    provider_call_id: str | None = None
+    response_model: str | None = None
+    cost_usd: str | None = None
+
+
 ChatStreamEvent = (
-    TextDelta | ReasoningDelta | ToolCallRequest | ResponseEnd | TokenUsage | ProviderAttempt | ProviderRetry
+    TextDelta
+    | ReasoningDelta
+    | ToolCallRequest
+    | ResponseEnd
+    | TokenUsage
+    | ProviderAttempt
+    | ProviderRetry
+    | ProviderCall
+    | ProviderResponseMetadata
 )
 
 
@@ -305,10 +334,14 @@ class OpenAiCompatibleProvider:
         *,
         include_usage: bool = False,
         include_attempts: bool = False,
+        parameters: dict[str, Any] | None = None,
+        include_costs: bool = False,
     ) -> None:
         self._settings = settings
         self._include_usage = include_usage
         self._include_attempts = include_attempts
+        self._parameters = parameters or {}
+        self._include_costs = include_costs
         self.context_tokens: int | None = None
         self._context_tokens_loaded = False
         self._context_tokens_lock = asyncio.Lock()
@@ -358,6 +391,7 @@ class OpenAiCompatibleProvider:
         timeout = httpx.Timeout(self._settings.provider_timeout_seconds, connect=10.0)
         headers = {"Authorization": f"Bearer {self._settings.provider_api_key}"}
         payload: dict[str, Any] = {
+            **self._parameters,
             "model": self._settings.provider_model,
             "messages": list(messages),
             "stream": True,
@@ -375,6 +409,9 @@ class OpenAiCompatibleProvider:
         max_attempts = self._settings.provider_max_attempts
         retry_deadline: float | None = None
         for attempt in range(1, max_attempts + 1):
+            call = ProviderCall(str(uuid4()), self._settings.provider_model)
+            if self._include_costs:
+                yield call
             if self._include_attempts:
                 yield ProviderAttempt(attempt)
             try:
@@ -382,6 +419,19 @@ class OpenAiCompatibleProvider:
                 completed: list[ToolCallRequest | ResponseEnd] = []
                 async with aclosing(self._stream_attempt(timeout, headers, payload)) as events:
                     async for event in events:
+                        if isinstance(event, ProviderResponseMetadata):
+                            updated = replace(
+                                call,
+                                provider_call_id=event.provider_call_id or call.provider_call_id,
+                                response_model=event.response_model or call.response_model,
+                                cost_usd=event.cost_usd if event.cost_usd is not None else call.cost_usd,
+                            )
+                            if updated != call:
+                                call = updated
+                                yield call
+                            continue
+                        if isinstance(event, TokenUsage):
+                            call = replace(call, usage=event)
                         if isinstance(event, (ToolCallRequest, ResponseEnd)):
                             completed.append(event)
                             continue
@@ -402,6 +452,8 @@ class OpenAiCompatibleProvider:
                         yield event
                 for event in completed:
                     yield event
+                if self._include_costs:
+                    yield replace(call, status="reported" if call.cost_usd is not None else "unavailable")
                 return
             except ProviderError as exc:
                 error, cause = exc, exc.__cause__
@@ -414,6 +466,8 @@ class OpenAiCompatibleProvider:
                 error, cause = ProviderError.for_user(message, retryable=True), exc
             except httpx.HTTPError as exc:
                 error, cause = ProviderError.for_user("The AI provider is unavailable.", retryable=True), exc
+            if self._include_costs:
+                yield replace(call, status="reported" if call.cost_usd is not None else "unavailable")
             now = time.monotonic()
             if retry_deadline is None:
                 retry_deadline = now + PROVIDER_RETRY_BUDGET_SECONDS
@@ -432,6 +486,7 @@ class OpenAiCompatibleProvider:
                 attempt,
                 max_attempts,
                 delay,
+                exc_info=cause or error,
             )
             yield ProviderRetry(
                 f"{error.user_message or 'The AI provider failed.'} Retrying in {math.ceil(delay)} s "
@@ -485,6 +540,8 @@ class OpenAiCompatibleProvider:
                 )
 
             partial_calls: dict[int, _PartialToolCall] = {}
+            if self._include_costs:
+                yield ProviderResponseMetadata(provider_call_id=response.headers.get("x-litellm-call-id"))
             finish_reason: str | None = None
             done_received = False
             text_chars = reasoning_chars = 0
@@ -505,6 +562,11 @@ class OpenAiCompatibleProvider:
                     if not isinstance(choices, list):
                         raise TypeError
                     usage = event.get("usage")
+                    if self._include_costs:
+                        yield ProviderResponseMetadata(
+                            response_model=event.get("model") if isinstance(event.get("model"), str) else None,
+                            cost_usd=_parse_cost(usage.get("cost")) if isinstance(usage, dict) else None,
+                        )
                     if usage is not None:
                         yield _parse_token_usage(usage)
                     # A usage-only or filter-only chunk carries no choice, and some
@@ -642,3 +704,19 @@ def _fragment_index(partial_calls: dict[int, _PartialToolCall], fragment: dict[s
     if isinstance(fragment_id, str) and fragment_id and fragment_id != partial_calls[last_index].id:
         return last_index + 1
     return last_index
+
+
+def _parse_cost(value: object) -> str | None:
+    """Normalize LiteLLM's final usage cost. Missing or invalid pricing is unknown."""
+    if not isinstance(value, str | int | float) or isinstance(value, bool):
+        return None
+    try:
+        amount = Decimal(str(value))
+    except InvalidOperation:
+        return None
+    if not amount.is_finite() or amount < 0 or amount > Decimal("1e12"):
+        return None
+    if amount == 0:
+        return "0"
+    # Accept the full float range used by gateway JSON, while bounding decimal output.
+    return str(amount) if amount >= Decimal("5e-324") else None

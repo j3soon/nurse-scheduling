@@ -92,7 +92,7 @@ def _result(root: Path, cohort: dict[str, Any]) -> dict[str, Any]:
     expected_ids = {args[index + 1] for index, arg in enumerate(args) if arg == "--case"}
     repeat = int(args[args.index("--repeat") + 1]) if "--repeat" in args else 1
     if cohort["mode"] == "production":
-        runs = [json.loads(line) for line in (directory / "results.jsonl").read_text().splitlines()]
+        runs = [json.loads(line) for line in (directory / "results.jsonl").read_text(encoding="utf-8").splitlines()]
         if (
             not runs
             or expected_ids
@@ -115,7 +115,7 @@ def _result(root: Path, cohort: dict[str, Any]) -> dict[str, Any]:
             else "behavioral failure"
         )
         return {"status": status, "after": counts, "cases": runs}
-    comparison = json.loads((directory / "comparison.json").read_text())
+    comparison = json.loads((directory / "comparison.json").read_text(encoding="utf-8"))
     if (
         not comparison["cases"]
         or expected_ids
