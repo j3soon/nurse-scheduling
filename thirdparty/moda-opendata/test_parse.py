@@ -23,6 +23,16 @@ import subprocess
 import sys
 from pathlib import Path
 
+from parse import parse_special_date_info
+
+
+def test_2027_year_end_substitute_holiday_names_the_next_new_year():
+    calendar = Path(__file__).parent / "116年中華民國政府行政機關辦公日曆表_utf8bom.csv"
+    entries = {day: (reason, freeday) for day, reason, freeday in parse_special_date_info(calendar)}
+
+    assert entries["2027-12-24"] == ("補假 (2027-12-25 行憲紀念日)", True)
+    assert entries["2027-12-31"] == ("補假 (2028-01-01 開國紀念日)", True)
+
 
 def test_parse_script_output_matches_taiwan_holidays_ts_entries():
     script_dir = Path(__file__).resolve().parent

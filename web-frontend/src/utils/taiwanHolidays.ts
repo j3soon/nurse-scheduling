@@ -148,7 +148,7 @@ const SPECIAL_DATE_INFO: TaiwanSpecialDateInfo[] = [
   ['2027-10-25', '臺灣光復暨金門古寧頭大捷紀念日', true],
   ['2027-12-24', '補假 (2027-12-25 行憲紀念日)', true],
   ['2027-12-25', '行憲紀念日', true],
-  ['2027-12-31', '補假 (2027-12-25 行憲紀念日)', true],
+  ['2027-12-31', '補假 (2028-01-01 開國紀念日)', true],
 ];
 
 const SPECIAL_DATE_LOOKUP = new Map(
