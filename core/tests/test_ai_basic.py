@@ -148,7 +148,7 @@ def configured_sandbox_environment(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class FakeProvider:
-    """Record prompts and return deterministic streamed responses."""
+    """Record chat prompts and reject summaries to exercise retention fallback."""
 
     def __init__(self, responses: list[list[str | Exception] | Exception] | None = None) -> None:
         self.responses = responses or [["Hello", " from AI"]]
@@ -156,6 +156,8 @@ class FakeProvider:
         self.offered_tools: object = None
 
     async def stream_events(self, messages: Sequence[ChatMessage], tools=None) -> AsyncIterator[TextDelta]:
+        if messages and str(messages[0].get("content", "")).startswith("You are a context summarization assistant."):
+            raise ProviderError("Summary unavailable in this test provider")
         self.calls.append(list(messages))
         self.offered_tools = tools
         response = self.responses.pop(0)

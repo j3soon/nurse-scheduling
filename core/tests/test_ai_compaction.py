@@ -369,6 +369,37 @@ def test_unknown_model_limit_keeps_existing_request_behavior():
     assert not any(isinstance(event, AgentCompaction) for event in events)
 
 
+@pytest.mark.parametrize("history_limit,message_limit", [(20000, 1000), (200000, 3)], ids=["characters", "messages"])
+def test_unknown_model_limit_still_compacts_at_history_limits(history_limit, message_limit):
+    provider = CompactionProvider()
+    provider.context_tokens = None
+    messages = history()
+    events = asyncio.run(
+        collect(agent_loop(provider, messages, [], history_limit=history_limit, message_limit=message_limit))
+    )
+    assert provider.summaries
+    end = next(event for event in events if isinstance(event, AgentCompactionEnd))
+    assert end.success and end.reason == "threshold"
+    assert any(isinstance(event, AgentCompaction) for event in events)
+    assert "Goal: keep nights" in str(provider.requests[0][0])
+    assert provider.requests[0][0][-1] == messages[-1]
+
+
+def test_failed_compaction_does_not_retry_at_history_limits_without_model_metadata():
+    provider = CompactionProvider(fail_summary="error")
+    provider.context_tokens = None
+    compactor = ContextCompactor(provider, history_limit=20000)
+    messages = history()
+
+    async def run():
+        first = await collect(compactor.compact(messages, []))
+        assert any(isinstance(event, AgentCompactionEnd) and not event.success for event in first)
+        assert not await collect(compactor.compact(messages, []))
+
+    asyncio.run(run())
+    assert len(provider.summaries) == 1
+
+
 def test_retention_keeps_a_summary_and_its_referenced_tool_exchange_together():
     from nurse_scheduling.ai.context import drop_oldest_exchange
 

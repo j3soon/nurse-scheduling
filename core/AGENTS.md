@@ -142,6 +142,7 @@ from the trust-based local harness.
   of the answer stream. Use `tests/test_ai_compaction.py` for these contracts.
   Test chunked summaries through the provider's token-limit calculation, including
   updates with a previous split-turn summary.
+  Test history character and message thresholds without model context metadata.
   For live cross-run checks, use `../scripts/test_ai_compaction_live.sh` with
   `AI_ENV_FILE`. It runs four concurrent scenarios through the real session API
   and prebuilt E2B sandboxes. A smaller history budget forces compaction.

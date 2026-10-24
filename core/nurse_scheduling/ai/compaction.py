@@ -106,12 +106,13 @@ class ContextCompactor:
         return estimate_context_tokens(messages, tools, asdict(identity) if identity else None)
 
     def needed(self, messages, tools) -> bool:
-        if self.window is None or self.failed:
+        if self.failed:
             return False
         body = _conversation(messages)
-        reserve = min(16384, self.window // 4)
+        window = self.window
+        token_limit_reached = window is not None and self.tokens(messages, tools) > window - min(16384, window // 4)
         return (
-            self.tokens(messages, tools) > self.window - reserve
+            token_limit_reached
             or history_chars(body) > self.history_limit * 0.8
             or len(body) > max(2, self.message_limit * 0.8)
         )

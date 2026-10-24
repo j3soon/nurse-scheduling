@@ -332,8 +332,9 @@ request and after the final answer, it checks the discovered model context
 window. It reserves up to 16,384 tokens for output, reduced to one quarter of a
 smaller window. It also checks 80 percent of the configured history character
 and message limits, so normal retention does not discard older state first.
-Without model metadata, ordinary requests retain the existing history limits.
-An explicit context-overflow rejection can still trigger compaction.
+Without model metadata, the history limits still trigger compaction. Summary
+requests use a 32,768-token fallback window. An explicit context-overflow
+rejection can also trigger compaction.
 
 The estimate uses the most recent completed same-model input and output usage,
 plus estimates for later messages. A characters/4 estimate covers missing usage,
