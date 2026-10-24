@@ -107,9 +107,9 @@ was answering. Use <kbd>Ctrl</kbd>+<kbd>Z</kbd> to restore them.
 If the model provider has a temporary failure, the assistant retries the current
 model request automatically. A notice in the chat shows each retry and its delay.
 Retries keep completed tool results and files. They do not rerun completed commands
-or optimizer submissions. Partial text remains visible and is supplied as context
-for the continuation. The continuation can differ from what the interrupted request
-would have generated.
+or optimizer submissions. Partial text remains visible with a note that it is
+omitted from future model context. The retry starts a fresh answer to the same
+request.
 
 If the provider still fails after five attempts by default, or after two minutes,
 the response fails with the provider error. Earlier answers stay in the conversation,
@@ -130,8 +130,9 @@ A failed turn keeps its original question and provisional output visible. To
 continue, send a new message. If the files of a question did not finish uploading,
 the question was not sent. Attach the files again and send the question. Reconnecting
 an accepted request keeps the same message ID, so it does not send the question to
-the model twice. Failed and stopped output is excluded from the model's conversation
-context.
+the model twice. Incomplete responses are omitted from future model context.
+Completed tool exchanges remain, with a separate note when the temporary workspace
+was discarded.
 
 Recovery lasts until the session expires, normally after 30 days of inactivity.
 Hosted deployments use PostgreSQL to

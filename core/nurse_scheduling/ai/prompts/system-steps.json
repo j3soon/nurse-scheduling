@@ -1088,35 +1088,6 @@
     ]
   },
   {
-    "id": "provider-timeout-continuation",
-    "file": "steps/provider-timeout-continuation.md",
-    "cases": [
-      "provider-text-timeout-continuation",
-      "provider-uninterrupted-answer"
-    ],
-    "hypothesis": "Continues partial answers without replaying text while preserving ordinary complete answers.",
-    "sha256": "b8a58b3318487749a5235406ab045068d484147f9603952111fb220be7c57630",
-    "evidence": [
-      {
-        "case": "provider-text-timeout-continuation",
-        "input_sha256": "c16cd6fce997a51df9b60fab6fa186bbde6bd415e5b81cbd27a8f076b0cee05c",
-        "before": "0/3",
-        "after": "3/3",
-        "model": "unsloth/Qwen3.8-27B-NVFP4",
-        "infrastructure_errors": 0,
-        "controls": [
-          {
-            "case": "provider-uninterrupted-answer",
-            "input_sha256": "9dc317699b5085e6324731218aa4a6d3444dec1126c3be58c05a4c2fc3dd6e60",
-            "before": "2/3",
-            "after": "3/3"
-          }
-        ],
-        "note": "Three paired trials per case with four case jobs. The initial answer prefix and timeout are synthetic. Recovery uses the production retry policy and a live provider. Without this section, all three recovery answers repeat the first identifier. With it, all three continue without repetition. The uninterrupted control is 2/3 before and 3/3 after, with one empty baseline answer. No infrastructure errors or timing benefit are claimed. Earlier diagnostics used an overly strict whitespace contract and remain separate."
-      }
-    ]
-  },
-  {
     "id": "schedule-yaml-format",
     "file": "steps/schedule-yaml-format.md",
     "cases": [

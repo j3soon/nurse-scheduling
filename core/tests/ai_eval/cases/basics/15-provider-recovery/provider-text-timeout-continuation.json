@@ -15,5 +15,5 @@
   "tags": [
     "provider-recovery"
   ],
-  "note": "The provider fixture emits the first identifier and separator, then times out. The production retry policy must retain that prefix and get only the missing identifiers from the live provider. Whitespace does not affect identifier order or duplication."
+  "note": "The provider fixture emits a partial first identifier and then times out. The retry resends the original request without partial output or an interruption instruction. The successful attempt must return the complete answer exactly once. Whitespace does not affect identifier order or duplication."
 }
