@@ -366,7 +366,7 @@ def test_roster_statistics_include_only_history_runs_crossing_the_boundary(audit
     for person, history in zip(payload["people"]["items"], [["OFF", "OFF"], ["D", "N"], None]):
         person["history"] = history
     source = tmp_path / "source.yaml"
-    source.write_text(schedule_yaml(payload), encoding="utf-8")
+    source.write_bytes(schedule_yaml(payload).encode())
     context = build_result_context(source.read_text(encoding="utf-8"))
     result = summarize_roster(path, context, context["source_sha256"], include_history=True, source=source)
     alex, mira, kai = result["statistics"]
@@ -376,11 +376,25 @@ def test_roster_statistics_include_only_history_runs_crossing_the_boundary(audit
     assert kai["max_work_run_including_history"] is None
     assert kai["history_days"] is None
     # Changed source history must not be used with an earlier optimizer result.
-    source.write_text(source.read_text(encoding="utf-8") + "\n# changed", encoding="utf-8")
+    source.write_bytes(source.read_bytes() + b"\n# changed")
     alex = summarize_roster(path, context, context["source_sha256"], include_history=True, source=source)["statistics"][
         0
     ]
     assert alex["history_days"] is None
+
+
+@pytest.mark.parametrize("matching_source", [False, True], ids=["different-bytes", "matching-bytes"])
+def test_roster_history_checks_exact_source_bytes(audit, tmp_path, matching_source):
+    path, _ = audit
+    text = FIXTURE.read_text(encoding="utf-8")
+    windows_text = text.replace("\n", "\r\n")
+    source = tmp_path / "source.yaml"
+    source.write_bytes(windows_text.encode())
+    context = build_result_context(windows_text if matching_source else text)
+    row = summarize_roster(path, context, context["source_sha256"], source=source, include_history=True)["statistics"][
+        0
+    ]
+    assert row["history_days"] == (3 if matching_source else None)
 
 
 @pytest.mark.parametrize("options", [{"max_people": 0}, {"max_people": 1001}, {"people": ["missing"]}])
@@ -411,7 +425,7 @@ def test_standalone_roster_statistics_reuse_the_hydrated_readers(audit, tmp_path
     for source in REFERENCE_ATTACHMENT_TOOLS.values():
         (tmp_path / source.name).write_bytes(source.read_bytes())
     source = tmp_path / "source.yaml"
-    source.write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    source.write_bytes(FIXTURE.read_text(encoding="utf-8").encode())
     context_path = tmp_path / "context.json"
     context_path.write_text(json.dumps(context), encoding="utf-8")
     result = subprocess.run(
@@ -453,7 +467,7 @@ def test_history_only_streak_does_not_inflate_scheduled_work_run(audit, tmp_path
     payload = parse_schedule(FIXTURE.read_text(encoding="utf-8"))
     payload["people"]["items"][0]["history"] = ["N"] * 10
     source = tmp_path / "source.yaml"
-    source.write_text(schedule_yaml(payload), encoding="utf-8")
+    source.write_bytes(schedule_yaml(payload).encode())
     context = build_result_context(source.read_text(encoding="utf-8"))
     row = summarize_roster(path, context, context["source_sha256"], source=source, include_history=True)["statistics"][
         0

@@ -333,7 +333,9 @@ def validate_prompt_evidence(
                 from nurse_scheduling.ai.workspace import REFERENCE_ATTACHMENT_TOOLS
 
                 path = REFERENCE_ATTACHMENT_TOOLS.get(f"/reference/tools/{usage['helper']}")
-                if path is None or hashlib.sha256(path.read_bytes()).hexdigest() != usage.get("sha256"):
+                if path is None or hashlib.sha256(path.read_text(encoding="utf-8").encode()).hexdigest() != usage.get(
+                    "sha256"
+                ):
                     raise ValueError(f"{label} has stale helper inputs")
                 if not usage.get("cases") or not isinstance(usage.get("flags"), list):
                     raise ValueError(f"{label} needs helper-use cases and flags")

@@ -647,8 +647,10 @@ from the trust-based local harness.
   Run them locally after changing evaluation fixtures, reports, or grading
   tests, so encoding regressions fail before a push.
 - Write hash-bound fixture inputs as exact encoded bytes to avoid platform
-  newline translation. Fix ZIP creator metadata as well as timestamps when
-  generated archive bytes must match across platforms.
+  newline translation. Keep optimizer source hashes tied to exact bytes.
+  Hash helper evidence as UTF-8 text with normalized line endings. Fix ZIP
+  creator metadata as well as timestamps when generated archive bytes must
+  match across platforms.
 - Give `pytest.mark.parametrize` explicit `ids` when a parameter is a large
   binary or text payload. Pytest derives the node ID from the parameter value
   and exports it through `PYTEST_CURRENT_TEST`, which fails on Windows once the
