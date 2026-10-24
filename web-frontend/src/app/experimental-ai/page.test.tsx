@@ -220,6 +220,34 @@ describe('ExperimentalAiPage', () => {
     window.sessionStorage.clear();
   });
 
+  it('pastes Markdown over the selection and submits the converted message', async () => {
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    const input = screen.getByRole('textbox', { name: 'Ask about the current schedule' }) as HTMLTextAreaElement;
+    await waitFor(() => expect(input).toBeEnabled());
+    await user.type(input, 'Keep old ending');
+    input.setSelectionRange(5, 8);
+    fireEvent.paste(input, { clipboardData: { getData: (type: string) => type === 'text/html' ? '<b>new</b> <a href="https://example.com">link</a>' : 'new link' } });
+    expect(input).toHaveValue('Keep **new** [link](https://example.com/) ending');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    expect(mockSendMessage.mock.calls[0][1]).toBe('Keep **new** [link](https://example.com/) ending');
+  });
+
+  it('caps formatted paste at the message limit and preserves plain text paste', async () => {
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    const input = screen.getByRole('textbox', { name: 'Ask about the current schedule' }) as HTMLTextAreaElement;
+    await waitFor(() => expect(input).toBeEnabled());
+    input.focus();
+    await user.paste('Literal **Markdown**');
+    expect(input).toHaveValue('Literal **Markdown**');
+    fireEvent.change(input, { target: { value: 'x'.repeat(7998) } });
+    input.setSelectionRange(7998, 7998);
+    fireEvent.paste(input, { clipboardData: { getData: () => '<b>long paste</b>' } });
+    expect(input.value).toHaveLength(8000);
+    expect(input.value.endsWith('**')).toBe(true);
+  });
+
   it('renews a reconnected background run with the current retention period', async () => {
     let resolveCapabilities!: (value: typeof defaultCapabilities) => void;
     mockGetCapabilities.mockImplementation(() => new Promise(resolve => { resolveCapabilities = resolve; }));

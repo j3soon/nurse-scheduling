@@ -41,6 +41,7 @@ import PageDocumentationLink from '@/components/PageDocumentationLink';
 import { DOCUMENTATION_URLS, FIREFOX_NIGHTLY_URL, FIREFOX_SPEECH_RECOGNITION_STATUS_URL, GITHUB_AI_BETA_ACCESS_URL, GITHUB_PRIVACY_URL, GITHUB_TAGS_URL } from '@/constants/urls';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { isImeCompositionKeyEvent } from '@/utils/keyboardEvents';
+import { clipboardHtmlToMarkdown } from '@/utils/clipboardMarkdown';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 import { CURRENT_APP_VERSION, hasAppVersionMismatch } from '@/utils/version';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
@@ -1337,6 +1338,16 @@ export default function ExperimentalAiPage() {
             ref={draftInputRef}
             value={draft}
             onChange={event => setDraft(event.target.value)}
+            onPaste={event => {
+              const markdown = clipboardHtmlToMarkdown(event.clipboardData.getData('text/html'));
+              if (markdown === null) return;
+              event.preventDefault();
+              const input = event.currentTarget;
+              const { selectionStart: start, selectionEnd: end, value, maxLength } = input;
+              const pasted = markdown.slice(0, Math.max(0, maxLength - value.length + end - start));
+              setDraft(value.slice(0, start) + pasted + value.slice(end));
+              requestAnimationFrame(() => input.setSelectionRange(start + pasted.length, start + pasted.length));
+            }}
             onKeyDown={event => {
               if (event.key === 'Enter' && !event.shiftKey && !isImeCompositionKeyEvent(event)
                 && !isTouchOnlyPointer()) {

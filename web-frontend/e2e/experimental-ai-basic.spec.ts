@@ -349,6 +349,30 @@ async function mockAiBackend(
   });
 }
 
+test('converts rich clipboard text to Markdown before sending', async ({ page, context }) => {
+  const captured = await mockAiBackend(page);
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.goto('/experimental-ai');
+  const input = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+  await expect(input).toBeEnabled();
+  await input.fill('Please replace this.');
+  await input.evaluate((element: HTMLTextAreaElement) => element.setSelectionRange(7, 19));
+  await page.evaluate(async () => {
+    await navigator.clipboard.write([new ClipboardItem({
+      'text/html': new Blob(['<p><b>Read</b> <a href="https://example.com/ward">the ward rules</a></p>'], { type: 'text/html' }),
+      'text/plain': new Blob(['Read the ward rules'], { type: 'text/plain' }),
+    })]);
+  });
+  await input.press('ControlOrMeta+v');
+  const markdown = 'Please **Read** [the ward rules](https://example.com/ward).';
+  await expect(input).toHaveValue(markdown);
+  await expect.poll(() => input.evaluate((element: HTMLTextAreaElement) => element.selectionStart)).toBe(markdown.length - 1);
+  await page.screenshot({ path: '../artifacts/ai-formatted-paste.png' });
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('The image and schedule were received.')).toBeVisible();
+  expect(JSON.parse(captured.messageBody).message).toBe(markdown);
+});
+
 test('asks about the current schedule and renders a streamed answer', async ({ page }) => {
   const captured = await mockAiBackend(page);
 
