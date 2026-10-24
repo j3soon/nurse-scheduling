@@ -74,9 +74,13 @@ function isActivityEntry(value: unknown): value is ActivityEntry {
     return 'state' in value && typeof value.state === 'string'
       && ['running', 'completed', 'failed', 'interrupted'].includes(value.state)
       && 'reason' in value && (value.reason === 'threshold' || value.reason === 'overflow')
-      && 'text' in value && typeof value.text === 'string';
+      && 'text' in value && typeof value.text === 'string'
+      && (!('summary' in value) || typeof value.summary === 'string')
+      && (!('keepMessages' in value) || (Number.isSafeInteger(value.keepMessages) && (value.keepMessages as number) >= 0))
+      && (!('invalidated' in value) || typeof value.invalidated === 'boolean');
   }
   return value.kind === 'tool'
+    && (!('replayArguments' in value) || typeof value.replayArguments === 'string')
     && 'name' in value && typeof value.name === 'string'
     && 'arguments' in value && typeof value.arguments === 'string'
     && 'result' in value && typeof value.result === 'string'

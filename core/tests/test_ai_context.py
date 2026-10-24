@@ -119,6 +119,7 @@ def test_later_context_keeps_responses_and_tools_but_releases_images():
         ToolResultMessage(call.id, call.name, "large tool result", True, ToolResultImage("image/png", b"image")),
         AssistantMessage("Done."),
     ]
+
     retained = retained_entries(entries)
     assert retained == [*entries[:2], ToolResultMessage(call.id, call.name, "large tool result", True), entries[-1]]
     assert projected_history(retained) == [
@@ -131,6 +132,22 @@ def test_later_context_keeps_responses_and_tools_but_releases_images():
         {"role": "tool", "tool_call_id": "read-1", "content": "large tool result"},
         {"role": "assistant", "content": "Done."},
     ]
+
+
+def test_interruption_retains_the_synthetic_result_for_an_unfinished_tool():
+    call = ToolCall("unfinished", "bash", '{"command":"sleep 30"}')
+    failed = interrupted_entries(
+        [
+            UserMessage("Inspect"),
+            AssistantMessage("Checking", "tool_use", tool_calls=(call,)),
+            AssistantMessage("", "error"),
+        ],
+        "error",
+    )
+    result = next(entry for entry in failed if isinstance(entry, ToolResultMessage))
+    assert result.tool_call_id == call.id and not result.ok
+    assert result.text == "No result provided. The tool exchange was interrupted."
+    assert projected_history(failed)[2] == {"role": "tool", "tool_call_id": call.id, "content": result.text}
 
 
 def test_provider_receives_all_tool_replies_before_images_and_steering():

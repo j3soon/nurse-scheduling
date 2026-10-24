@@ -516,6 +516,7 @@ test('shows compaction status and the reduced context before an answer', async (
   captured.publishEvent('compaction_end', {
     run_id: 'answer-1', reason: 'threshold', tokens_before: 25000,
     success: true, aborted: false, estimated_tokens_after: 4000,
+    summary: 'Keep P1 off nights and confirm the next edit.', keep_messages: 4,
   });
   captured.publishEvent('context_usage', {
     run_id: 'answer-1', used_chars: 400, max_chars: 2000, used_tokens: 4000, max_tokens: 32000,
@@ -526,11 +527,15 @@ test('shows compaction status and the reduced context before an answer', async (
   captured.publishEvent('delta', { run_id: 'answer-1', text: 'The current constraints are preserved.' });
   captured.finishTurn();
   await expect(page.getByText('The current constraints are preserved.', { exact: true })).toBeVisible();
+  await page.getByText('Conversation summarized', { exact: true }).click();
+  await expect(page.getByText('[Conversation summary]\nKeep P1 off nights and confirm the next edit.', { exact: true })).toBeVisible();
+  await expect(page.getByText(/Retains 4 recent messages/)).toBeVisible();
   await page.screenshot({ path: '../artifacts/compaction-completed.png', fullPage: true });
   // The browser copy of the chat keeps the summary entry, so a reload restores the chat.
   await page.reload();
   await expect(page.getByText('The current constraints are preserved.', { exact: true })).toBeVisible();
-  await expect(page.getByText('Conversation summarized', { exact: true })).toBeVisible();
+  await page.getByText('Conversation summarized', { exact: true }).click();
+  await expect(page.getByText('[Conversation summary]\nKeep P1 off nights and confirm the next edit.', { exact: true })).toBeVisible();
 });
 
 test('explains unavailable context usage when the backend omits it', async ({ page }) => {

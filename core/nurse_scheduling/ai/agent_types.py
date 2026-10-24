@@ -82,6 +82,8 @@ class AgentCompactionEnd:
     estimated_tokens_after: int | None = None
     used_chars: int | None = None
     aborted: bool = False
+    summary: str | None = None
+    keep_messages: int = 0
 
 
 @dataclass(frozen=True)

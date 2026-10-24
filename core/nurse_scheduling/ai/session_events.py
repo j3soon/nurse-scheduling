@@ -109,6 +109,7 @@ class ToolEndEvent(ToolFields):
     type: Literal["tool"]
     result: str
     ok: bool
+    replay_arguments: NotRequired[str]
     # The trusted schedule check included in `result`, when the tool changed the working copy.
     schedule_check: NotRequired[ScheduleCheck]
 
@@ -173,6 +174,8 @@ class CompactionEndEvent(CompactionFields):
     success: bool
     aborted: bool
     estimated_tokens_after: NotRequired[int]
+    summary: NotRequired[str]
+    keep_messages: NotRequired[int]
 
 
 class ContextUsageEvent(RunFields):

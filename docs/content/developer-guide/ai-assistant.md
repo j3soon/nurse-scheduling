@@ -404,7 +404,8 @@ context overflow permits one compact-and-retry attempt before reporting failure.
 Tool execution is not repeated by that retry.
 
 A successful summary appends a `CompactionEntry`, leaving earlier audit entries
-intact. Context projection replays its summary plus the referenced recent tail.
+intact. Its completion event includes the exact summary and retained-message count.
+The frontend displays the summary separately and marks it discarded if its run fails. Context projection replays its summary plus the referenced recent tail.
 Retention keeps the summary and that tail together. Hard service memory limits
 can still remove an entire older context unit. Failed, cancelled, and stale
 runs cannot replay their summaries of discarded workspace work. Migration 009
@@ -444,7 +445,9 @@ Aborted and errored responses are excluded from model replay. Completed response
 and tool exchanges remain. A separate app event explains when the run workspace
 was discarded and warns that earlier tool results describe that workspace.
 Timeout retries restart only the incomplete model call from the same request.
-Missing tool results receive an explicit failure placeholder before the next
+Missing tool results receive an explicit failure placeholder that is also shown in
+the frontend. Truncated calls expose their original arguments and the empty
+arguments used for model replay. Tool pairs are repaired before the next
 turn, so each replayed tool call has a result.
 
 The `tool_start` event carries the tool name and arguments before execution, so

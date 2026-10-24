@@ -31,6 +31,7 @@ import type { OptimizationProgressPoint } from '@/components/OptimizationProgres
 import { CURRENT_APP_VERSION } from '@/utils/version';
 
 export interface ToolActivity {
+  replayArguments?: string;
   toolCallId?: string;
   name: string;
   arguments: string;
@@ -216,6 +217,9 @@ interface SessionStatusResponse {
 }
 
 interface SsePayload {
+  summary?: unknown;
+  keep_messages?: unknown;
+  replay_arguments?: unknown;
   stop_reason?: unknown;
   context_note?: unknown;
   reason?: unknown;
@@ -561,12 +565,16 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
     if (!['threshold', 'overflow'].includes(payload.reason as string)
       || !Number.isSafeInteger(payload.tokens_before) || (payload.tokens_before as number) < 0
       || (eventType === 'compaction_end' && (typeof payload.success !== 'boolean' || typeof payload.aborted !== 'boolean'
-        || (payload.estimated_tokens_after !== undefined && (!Number.isSafeInteger(payload.estimated_tokens_after) || (payload.estimated_tokens_after as number) < 0))))) {
+        || (payload.estimated_tokens_after !== undefined && (!Number.isSafeInteger(payload.estimated_tokens_after) || (payload.estimated_tokens_after as number) < 0))
+        || (payload.summary !== undefined && typeof payload.summary !== 'string')
+        || (payload.keep_messages !== undefined && (!Number.isSafeInteger(payload.keep_messages) || (payload.keep_messages as number) < 0))))) {
       throw new Error('The AI backend returned invalid compaction status.');
     }
     const common = { reason: payload.reason as 'threshold' | 'overflow', tokensBefore: payload.tokens_before as number };
     if (eventType === 'compaction_start') emit({ type: 'compaction_start', ...common });
     else emit({ type: 'compaction_end', ...common, success: payload.success as boolean, aborted: payload.aborted as boolean,
+      ...(payload.summary === undefined ? {} : { summary: payload.summary as string }),
+      ...(payload.keep_messages === undefined ? {} : { keepMessages: payload.keep_messages as number }),
       ...(payload.estimated_tokens_after === undefined ? {} : { estimatedTokensAfter: payload.estimated_tokens_after as number }) });
   } else if (eventType === 'provider_call') {
     const call = { callId: payload.call_id, model: payload.model, reasoning: payload.reasoning,
@@ -612,6 +620,9 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
       },
     });
   } else if (eventType === 'tool' && typeof payload.name === 'string') {
+    if (payload.replay_arguments !== undefined && typeof payload.replay_arguments !== 'string') {
+      throw new Error('The AI backend returned invalid tool replay arguments.');
+    }
     emit({
       type: 'tool',
       activity: {
@@ -619,6 +630,7 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
         name: payload.name,
         arguments: typeof payload.arguments === 'string' ? payload.arguments : '',
         result: typeof payload.result === 'string' ? payload.result : '',
+        ...(typeof payload.replay_arguments === 'string' ? { replayArguments: payload.replay_arguments } : {}),
         ok: payload.ok !== false,
         ...(isRecord(payload.schedule_check) && typeof payload.schedule_check.ok === 'boolean'
           && typeof payload.schedule_check.text === 'string'

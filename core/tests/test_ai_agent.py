@@ -566,6 +566,7 @@ def test_output_limit_refuses_tool_calls_and_reissues_with_safe_arguments(argume
     refused = next(event for event in events if isinstance(event, AgentToolUse))
     assert not refused.ok
     assert "output token limit" in refused.result
+    assert refused.details == {"replay_arguments": "{}"}
     replay = provider.requests[1][0]
     assert replay[-2]["tool_calls"][0]["function"]["arguments"] == "{}"
     assert replay[-1]["tool_call_id"] == "cut"

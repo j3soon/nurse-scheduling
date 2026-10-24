@@ -178,6 +178,8 @@ def _summary(entry):
     if kind == "schedule-change":
         return "schedule edit"
     if kind == "compaction":
+        if entry.get("invalidated"):
+            return "Conversation summary discarded"
         return {
             "running": "Summarizing conversation",
             "completed": "Conversation summarized",
@@ -208,6 +210,13 @@ def _activity_label(entry):
 
 def _activity_text(entry):
     kind = entry["kind"]
+    if kind == "compaction" and "summary" in entry:
+        status = (
+            "Omitted from future model context because this run failed."
+            if entry.get("invalidated")
+            else f"Sent to AI as a user-role summary. Retains {entry.get('keepMessages', 0)} recent messages after the summary."
+        )
+        return f"{entry['text']}\n{status}\n\n[Conversation summary]\n{entry['summary']}"
     if kind in {"response", "reasoning"} and entry.get("context") == "omitted":
         return "Incomplete response. Omitted from future model context.\n\n" + entry["text"]
     if kind == "schedule-applied" and entry.get("notice"):
@@ -215,11 +224,14 @@ def _activity_text(entry):
     if kind == "schedule-change":
         return f"Before:\n{entry['before']}\n\nAfter:\n{entry['after']}"
     if kind == "tool":
-        return "\n\n".join(
+        text = "\n\n".join(
             label + ":\n" + entry[key]
             for label, key in (("Arguments", "arguments"), ("Result", "result"))
             if entry.get(key)
         )
+        if "replayArguments" in entry:
+            text += "\n\nNot executed. Arguments sent in later model context:\n" + entry["replayArguments"]
+        return text
     return entry["text"]
 
 
@@ -268,7 +280,14 @@ def _activity_html(entry):
             if entry.get("state") == "interrupted" and not entry.get("result")
             else ""
         )
-        body = '<div class="tool-body">' + arguments + result + interrupted + "</div>"
+        replay = (
+            '<p>Not executed. Arguments sent in later model context:</p><pre class="activity-output">'
+            + escape_html(entry["replayArguments"])
+            + "</pre>"
+            if "replayArguments" in entry
+            else ""
+        )
+        body = '<div class="tool-body">' + arguments + result + interrupted + replay + "</div>"
     audience = (
         '<p class="activity-status">Validation result sent to AI.</p>'
         if kind == "schedule-check"

@@ -204,6 +204,9 @@ export function ChatTranscriptView({
               {message.role === 'assistant' && message.status === 'stopped' && (
                 <p className="mt-2 text-sm text-gray-500">Stopped before completion.</p>
               )}
+              {message.truncated && <p className="mt-2 text-sm text-amber-800">
+                A response reached the output token limit. Tool calls in that response were not executed.
+              </p>}
               {message.status === 'failed' && message.failureReason && !message.activity?.some(entry => (
                 entry.kind === 'response' && entry.text === message.failureReason
               )) && (

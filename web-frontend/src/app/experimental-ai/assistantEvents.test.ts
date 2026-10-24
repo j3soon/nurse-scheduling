@@ -35,6 +35,15 @@ function reduce(events: AssistantEvent[]): ChatMessageContent {
 }
 
 describe('assistant events', () => {
+  it('preserves the exact compaction summary and marks it discarded after a failed run', () => {
+    const compacted = reduce([
+      { type: 'compaction_end', reason: 'threshold', tokensBefore: 25000, success: true, aborted: false,
+        summary: 'Keep P1 off nights.', keepMessages: 4 },
+    ]);
+    const failed = applyAssistantEvent(compacted, { type: 'response_end', stopReason: 'error', contextNote: 'Workspace discarded.' });
+    expect(failed.activity?.[0]).toMatchObject({ summary: 'Keep P1 off nights.', keepMessages: 4, invalidated: true });
+    expect(compacted.activity?.[0]).not.toHaveProperty('invalidated');
+  });
   it('keeps completed exchanges and marks only the failed attempt omitted', () => {
     const message = reduce([
       { type: 'delta', text: 'Checking.' },

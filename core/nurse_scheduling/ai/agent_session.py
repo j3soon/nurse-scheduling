@@ -64,6 +64,8 @@ from .session_events import (
 from .transcript import (
     AgentMessage,
     AppEventEntry,
+    AssistantMessage,
+    ToolResultMessage,
     UserMessage,
 )
 from .workspace import (
@@ -979,9 +981,31 @@ class AgentSession:
         run.finishing = True
         stopped = outcome.terminal is not None and outcome.terminal["type"] == "stopped"
         committed = outcome.status == "completed"
+        if outcome.completion is not None:
+            final = next((entry for entry in reversed(entries) if isinstance(entry, AssistantMessage)), None)
+            if final is not None:
+                events.emit({"type": "response_end", "stop_reason": final.stop_reason})
         if outcome.completion is None:
             stop_reason = "aborted" if outcome.status == "cancelled" else "error"
             entries = output.interrupted_entries([entries[0], *self.agent.state.messages], stop_reason)
+            completed_tools = {
+                entry.tool_call_id for entry in self.agent.state.messages if isinstance(entry, ToolResultMessage)
+            }
+            calls = {
+                call.id: call for entry in entries if isinstance(entry, AssistantMessage) for call in entry.tool_calls
+            }
+            for entry in entries:
+                if isinstance(entry, ToolResultMessage) and entry.tool_call_id not in completed_tools:
+                    events.emit(
+                        {
+                            "type": "tool",
+                            "tool_call_id": entry.tool_call_id,
+                            "name": entry.tool_name,
+                            "arguments": calls[entry.tool_call_id].arguments,
+                            "result": entry.text,
+                            "ok": False,
+                        }
+                    )
             history_unavailable = runtime.recorder.enabled and not history_started
             if not run.shutdown and not history_unavailable and outcome.status in {"cancelled", "failed"}:
                 # Keep the prompt so a follow-up can refer to it. Workspace changes were

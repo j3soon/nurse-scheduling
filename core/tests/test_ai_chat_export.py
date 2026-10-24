@@ -69,6 +69,49 @@ def test_saved_compaction_status_matches_live_activity_and_exports(success, abor
         assert label in rendered and activity[0]["text"] in rendered
 
 
+def test_saved_summary_and_tool_repair_match_model_context_in_both_exports():
+    snapshot = saved_case("saved-rich")
+    run = snapshot["runs"][0]
+    snapshot["runs"] = [run]
+    data = {"run_id": run["id"]}
+    snapshot["events"] = [
+        {
+            "type": "compaction_end",
+            "data": {
+                **data,
+                "reason": "threshold",
+                "tokens_before": 25000,
+                "success": True,
+                "aborted": False,
+                "summary": "Keep P1 off nights.",
+                "keep_messages": 4,
+            },
+        },
+        {
+            "type": "tool",
+            "data": {
+                **data,
+                "name": "bash",
+                "arguments": '{"command":',
+                "result": "Not executed",
+                "ok": False,
+                "replay_arguments": "{}",
+            },
+        },
+        {"type": "response_end", "data": {**data, "stop_reason": "error", "context_note": "Workspace discarded."}},
+    ]
+    for event in snapshot["events"]:
+        event["occurred_at"] = snapshot["snapshot_at"]
+    messages, _ = project_saved_chat(snapshot)
+    assert messages[-1]["activity"][0]["invalidated"]
+    assert messages[-1]["activity"][1]["replayArguments"] == "{}"
+    for format in ("html", "markdown"):
+        rendered = build_saved_chat_export(snapshot, format)
+        assert "[Conversation summary]" in rendered and "Keep P1 off nights." in rendered
+        assert "Omitted from future model context" in rendered
+        assert "Arguments sent in later model context" in rendered
+
+
 def saved_case(variant):
     snapshot = copy.deepcopy(json.loads((FIXTURES / "chat-export.json").read_text(encoding="utf-8")))
     if variant == "missing-terminal":

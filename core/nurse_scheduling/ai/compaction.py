@@ -217,6 +217,8 @@ class ContextCompactor:
             tokens_before,
             self.tokens(after, tools),
             min(self.history_limit, history_chars(_conversation(after))),
+            summary=entry.summary,
+            keep_messages=entry.keep_messages,
         )
 
     async def _summarize(

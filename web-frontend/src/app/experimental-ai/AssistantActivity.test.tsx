@@ -38,6 +38,19 @@ const scheduleChangeEntry: ActivityEntry = {
 };
 
 describe('AssistantActivity', () => {
+  it('shows the exact user-role compaction summary and tool replay arguments', async () => {
+    const user = userEvent.setup();
+    render(<AssistantActivity entries={[
+      { kind: 'compaction', state: 'completed', reason: 'threshold', text: 'The conversation was summarized.',
+        summary: 'Keep P1 off nights.', keepMessages: 4 },
+      { ...bashEntry, result: 'Not executed because the response was truncated.', ok: false, replayArguments: '{}' },
+    ]} />);
+    await user.click(screen.getByText('Conversation summarized'));
+    expect(screen.getByText(/\[Conversation summary\]\s+Keep P1 off nights\./)).toBeVisible();
+    expect(screen.getByText(/Retains 4 recent messages/)).toBeVisible();
+    await user.click(screen.getByText('bash · failed'));
+    expect(screen.getByLabelText('Arguments sent in model context')).toHaveTextContent('{}');
+  });
   it('renders nothing when there is no activity', () => {
     const { container } = render(<AssistantActivity entries={[]} />);
 

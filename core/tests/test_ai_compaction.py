@@ -230,6 +230,8 @@ def test_auto_compaction_preserves_current_request_and_persists_the_summary():
     assert end.estimated_tokens_after < end.tokens_before
     assert events.index(end) > next(i for i, event in enumerate(events) if isinstance(event, AgentCompaction))
     (entry,) = [event.entry for event in events if isinstance(event, AgentCompaction)]
+    assert end.summary == entry.summary
+    assert end.keep_messages == entry.keep_messages
     assert entry.keep_messages > 0
     assert provider.requests[0][0][0] == messages[0]
     assert provider.requests[0][0][-1] == messages[-1]

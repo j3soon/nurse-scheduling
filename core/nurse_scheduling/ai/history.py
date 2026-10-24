@@ -406,7 +406,7 @@ class ChatHistory:
                 row[0]["cost_totals_version"] = max(version, 0)
                 row[0]["pending_provider_calls"] = []
             entries = connection.execute(
-                "SELECT e.type, e.payload, r.status FROM chat_session_entries e LEFT JOIN chat_runs r ON r.id = e.run_id "
+                "SELECT e.type, e.payload, r.status, e.run_id FROM chat_session_entries e LEFT JOIN chat_runs r ON r.id = e.run_id "
                 "WHERE e.session_id = %s "
                 "AND (e.run_id IS NULL OR e.type IN ('app_event', 'proposal_decision') OR r.committed) ORDER BY e.seq OFFSET %s",
                 (session_id, row[0]["dropped_entries"]),
@@ -435,6 +435,20 @@ class ChatHistory:
                 "AND e.type IN ('done', 'stopped', 'stale', 'error'))) ORDER BY r.sequence",
                 (session_id,),
             ).fetchall()
+        parsed = [(entry_from_record(kind, payload), status, run_id) for kind, payload, status, run_id in entries]
+        last_assistant = {
+            run_id: index
+            for index, (entry, _status, run_id) in enumerate(parsed)
+            if isinstance(entry, AssistantMessage)
+        }
+        restored = []
+        for index, (entry, status, run_id) in enumerate(parsed):
+            if status in {"failed", "cancelled", "stale"}:
+                if isinstance(entry, AssistantMessage) and index == last_assistant[run_id] and not entry.tool_calls:
+                    entry = replace(entry, stop_reason="aborted" if status == "cancelled" else "error")
+                elif isinstance(entry, CompactionEntry):
+                    entry = replace(entry, valid=False)
+            restored.append(entry)
         return {
             "state": row[0],
             "credential_id": row[2],
@@ -444,13 +458,7 @@ class ChatHistory:
                 for upload_id, filename in removed_uploads
             ],
             "expires_at": float(row[1]),
-            "entries": [
-                replace(entry, valid=False)
-                if isinstance(entry := entry_from_record(entry_type, payload), CompactionEntry)
-                and status in {"failed", "cancelled", "stale"}
-                else entry
-                for entry_type, payload, status in entries
-            ],
+            "entries": restored,
             "next_entry_seq": int(next_entry_seq),
             "last_event_id": int(last_event_id),
             "archive_bytes": int(archive_bytes),

@@ -33,6 +33,7 @@ export interface ChatMessageContent {
   activity?: ActivityEntry[];
   status?: 'pending' | 'failed' | 'stopped';
   failureReason?: string;
+  truncated?: boolean;
   responseStartedAt?: number;
   responseCompletedAt?: number;
 }

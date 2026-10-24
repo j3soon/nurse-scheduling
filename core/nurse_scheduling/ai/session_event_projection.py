@@ -82,6 +82,9 @@ class RunOutput:
         if isinstance(event, AgentMessageEnd):
             self.pending_text.clear()
             self.pending_reasoning.clear()
+            if not event.message.tool_calls and event.message.stop_reason in {"stop", "length"}:
+                # Validation and workspace cleanup can still reject the final answer.
+                return {"type": "truncated"} if event.message.stop_reason == "length" else None
             return {"type": "response_end", "stop_reason": event.message.stop_reason}
         if isinstance(event, ProviderRetry):
             return {"type": "provider_retry", "message": event.message}
@@ -105,6 +108,9 @@ class RunOutput:
             }
             if event.estimated_tokens_after is not None:
                 result["estimated_tokens_after"] = event.estimated_tokens_after
+            if event.success and event.summary is not None:
+                result["summary"] = event.summary
+                result["keep_messages"] = event.keep_messages
             return result
         if isinstance(event, TokenUsage):
             self.context_estimate = None
@@ -128,6 +134,8 @@ class RunOutput:
             }
             if event.details and "schedule_check" in event.details:
                 tool_event["schedule_check"] = event.details["schedule_check"]
+            if event.details and "replay_arguments" in event.details:
+                tool_event["replay_arguments"] = event.details["replay_arguments"]
             return tool_event
         elif isinstance(event, AgentSteering):
             return {"type": "steering", "message_id": event.message_id, "message": event.text}

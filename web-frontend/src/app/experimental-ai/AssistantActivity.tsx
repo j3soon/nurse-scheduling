@@ -39,6 +39,7 @@ export interface ReasoningEntry {
 }
 
 export interface ToolEntry {
+  replayArguments?: string;
   kind: 'tool';
   toolCallId?: string;
   name: string;
@@ -74,6 +75,9 @@ export interface CompactionActivity {
   state: 'running' | 'completed' | 'failed' | 'interrupted';
   reason: 'threshold' | 'overflow';
   text: string;
+  summary?: string;
+  keepMessages?: number;
+  invalidated?: boolean;
 }
 
 export type ActivityEntry =
@@ -122,6 +126,12 @@ function ToolBody({ entry }: { entry: ToolEntry }) {
       )}
       {entry.state === 'interrupted' && !entry.result && (
         <p className="text-xs text-red-700">The command did not return before the turn ended.</p>
+      )}
+      {entry.replayArguments !== undefined && (
+        <section aria-label="Arguments sent in model context" className="rounded border border-amber-200 p-2">
+          <p>Not executed. The original arguments above were truncated. Arguments sent in later model context:</p>
+          <pre>{entry.replayArguments}</pre>
+        </section>
       )}
     </div>
   );
@@ -177,6 +187,15 @@ export function AssistantActivity({ entries }: { entries: ActivityEntry[] }) {
               <div className="mt-1 rounded bg-gray-50 p-2">
                 {entry.kind === 'tool'
                   ? <ToolBody entry={entry} />
+                  : entry.kind === 'compaction'
+                    ? <>
+                      <p>{entry.text}</p>
+                      {entry.summary !== undefined && <>
+                        <p className="my-1">{entry.invalidated ? 'Omitted from future model context because this run failed.'
+                          : `Sent to AI as a user-role summary. Retains ${entry.keepMessages ?? 0} recent messages after the summary.`}</p>
+                        <ChunkedText text={`[Conversation summary]\n${entry.summary}`} label="summary" />
+                      </>}
+                    </>
                   : entry.kind === 'schedule-change'
                     ? <ScheduleChangePreview entry={entry} />
                     : <ChunkedText text={entry.text} label={entry.kind === 'reasoning' ? 'reasoning' : 'details'} />}

@@ -250,7 +250,11 @@ async def agent_loop(
             # Even valid JSON can describe a different operation when cut short.
             for call in calls:
                 yield AgentToolStart(call.name, call.arguments, call.id)
-                yield _record_tool_result(conversation, call, AgentToolOutcome(TRUNCATED_TOOL_CALL_RESULT, False))
+                yield _record_tool_result(
+                    conversation,
+                    call,
+                    AgentToolOutcome(TRUNCATED_TOOL_CALL_RESULT, False, details={"replay_arguments": "{}"}),
+                )
             final_answer_only = (max_tool_rounds is not None and tool_rounds >= max_tool_rounds) or (
                 max_tool_calls is not None and tool_calls >= max_tool_calls
             )

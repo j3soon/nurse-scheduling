@@ -77,6 +77,7 @@ def recent_history(history: list[ChatMessage], max_chars: int) -> list[ChatMessa
 APP_EVENT_PREFIX = "[App event]"
 STATUS_PREFIX = "[Current status]"
 CURRENT_TIME_STATUS = "Current date and time: "
+INTERRUPTED_TOOL_RESULT = "No result provided. The tool exchange was interrupted."
 SCHEDULE_CHANGED_EVENT = (
     f"{APP_EVENT_PREFIX} The schedule changed in the app. /workspace/schedule.yaml contains the current version."
 )
@@ -454,12 +455,10 @@ def _repair_tool_pairs(messages: Sequence[ChatMessage]) -> list[ChatMessage]:
                 result.append(message)
             continue
         for call_id in pending:
-            result.append(tool_result_message(call_id, "No result provided. The tool exchange was interrupted."))
+            result.append(tool_result_message(call_id, INTERRUPTED_TOOL_RESULT))
         pending = {call["id"]: call for call in message.get("tool_calls", [])}
         result.append(message)
-    result.extend(
-        tool_result_message(call_id, "No result provided. The tool exchange was interrupted.") for call_id in pending
-    )
+    result.extend(tool_result_message(call_id, INTERRUPTED_TOOL_RESULT) for call_id in pending)
     return result
 
 
@@ -584,8 +583,26 @@ def entries_from_legacy_history(messages: Sequence[ChatMessage]) -> list[AgentMe
 
 def interrupted_entries(entries: Sequence[AgentMessage], reason) -> list[AgentMessage]:
     """Preserve completed exchanges and explain the discarded workspace separately."""
-    result = [replace(entry, valid=False) if isinstance(entry, CompactionEntry) else entry for entry in entries]
-    if not result or not isinstance(result[-1], AssistantMessage) or result[-1].stop_reason not in {"aborted", "error"}:
+    result = []
+    pending: dict[str, ToolCall] = {}
+    for entry in entries:
+        if isinstance(entry, ToolResultMessage):
+            pending.pop(entry.tool_call_id, None)
+        elif isinstance(entry, AssistantMessage | UserMessage | AppEventEntry):
+            result.extend(
+                ToolResultMessage(call.id, call.name, INTERRUPTED_TOOL_RESULT, False) for call in pending.values()
+            )
+            pending.clear()
+            if isinstance(entry, AssistantMessage) and entry.stop_reason not in {"aborted", "error"}:
+                pending.update((call.id, call) for call in entry.tool_calls)
+        result.append(replace(entry, valid=False) if isinstance(entry, CompactionEntry) else entry)
+    result.extend(ToolResultMessage(call.id, call.name, INTERRUPTED_TOOL_RESULT, False) for call in pending.values())
+    last = next(
+        (index for index in range(len(result) - 1, -1, -1) if not isinstance(result[index], CompactionEntry)), None
+    )
+    if last is not None and isinstance(result[last], AssistantMessage) and not result[last].tool_calls:
+        result[last] = replace(result[last], stop_reason=reason)
+    else:
         result.append(AssistantMessage("", reason))
     result.append(AppEventEntry(ABORTED_RESPONSE_HISTORY))
     return result

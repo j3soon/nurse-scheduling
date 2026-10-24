@@ -38,6 +38,8 @@ def _finish(message: dict, kind: str, at: int, reason: str = "") -> None:
             message["failureReason"] = reason
     if kind != "done":
         for entry in message.get("activity", []):
+            if entry["kind"] == "compaction" and entry.get("state") == "completed":
+                entry["invalidated"] = True
             if entry["kind"] in {"tool", "compaction"} and entry.get("state") == "running":
                 entry["state"] = "interrupted"
 
@@ -195,6 +197,8 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
                 if state == "interrupted"
                 else "Summarization failed. The original context was kept.",
             }
+            if "summary" in data:
+                entry.update(summary=data["summary"], keepMessages=data.get("keep_messages", 0))
             index = next(
                 (
                     index
@@ -291,6 +295,9 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
                 if entry["kind"] in {"response", "reasoning"} and "context" not in entry:
                     entry["context"] = "omitted" if data["stop_reason"] in {"error", "aborted"} else "complete"
             if data.get("context_note"):
+                for entry in activity:
+                    if entry["kind"] == "compaction" and entry.get("state") == "completed":
+                        entry["invalidated"] = True
                 activity.append({"kind": "notice", "text": f"Sent in future model context: {data['context_note']}"})
             if data["stop_reason"] == "length":
                 assistant["truncated"] = True
@@ -302,6 +309,8 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
                 "result": data.get("result", ""),
                 "ok": data.get("ok") is not False,
             }
+            if "replay_arguments" in data:
+                entry["replayArguments"] = data["replay_arguments"]
             if "tool_call_id" in data:
                 entry["toolCallId"] = data["tool_call_id"]
             if kind == "tool_start":

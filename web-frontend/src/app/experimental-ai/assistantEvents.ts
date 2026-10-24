@@ -95,10 +95,14 @@ export function applyAssistantEvent<T extends ChatMessageContent>(message: T, ev
     case 'response_end': {
       const context = event.stopReason === 'error' || event.stopReason === 'aborted' ? 'omitted' : 'complete';
       const ended = activity.map(entry => (
-        (entry.kind === 'response' || entry.kind === 'reasoning') && entry.context === undefined
+        event.contextNote && entry.kind === 'compaction' && entry.state === 'completed'
+          ? { ...entry, invalidated: true }
+          : (entry.kind === 'response' || entry.kind === 'reasoning') && entry.context === undefined
           ? { ...entry, context } : entry
       )) as ActivityEntry[];
-      if (event.contextNote) ended.push({ kind: 'notice', text: `Sent in future model context: ${event.contextNote}` });
+      if (event.contextNote) {
+        ended.push({ kind: 'notice', text: `Sent in future model context: ${event.contextNote}` });
+      }
       return { ...message, activity: ended, ...(event.stopReason === 'length' ? { truncated: true } : {}) };
     }
     case 'provider_retry':
@@ -117,6 +121,8 @@ export function applyAssistantEvent<T extends ChatMessageContent>(message: T, ev
     case 'compaction_end': {
       const state = event.success ? 'completed' : event.aborted ? 'interrupted' : 'failed';
       const entry: ActivityEntry = { kind: 'compaction', state, reason: event.reason,
+        ...(event.summary === undefined ? {} : { summary: event.summary }),
+        ...(event.keepMessages === undefined ? {} : { keepMessages: event.keepMessages }),
         text: event.success ? 'The conversation was summarized.' : event.aborted
           ? 'Summarization stopped. The original context was kept.' : 'Summarization failed. The original context was kept.' };
       const index = activity.findLastIndex(item => item.kind === 'compaction' && item.state === 'running');

@@ -30,7 +30,6 @@ import subprocess
 import threading
 import time
 from collections.abc import AsyncIterator, Sequence
-from dataclasses import replace
 from pathlib import Path
 from unittest.mock import ANY, AsyncMock
 from uuid import uuid4
@@ -87,6 +86,7 @@ from nurse_scheduling.ai.transcript import (
     AppEventEntry,
     AssistantMessage,
     ToolCall,
+    ToolResultMessage,
     UserMessage,
 )
 from nurse_scheduling.ai.workspace import (
@@ -607,10 +607,12 @@ def exchange(question: str, answer: str) -> list[AgentMessage]:
     return [UserMessage(question), AssistantMessage(answer)]
 
 
-def parse_sse(response_text: str, *, include_model_input: bool = False) -> list[tuple[str, dict[str, str]]]:
+def parse_sse(
+    response_text: str, *, include_model_input: bool = False, include_response_end: bool = False
+) -> list[tuple[str, dict[str, str]]]:
     """Parse the small SSE subset emitted by the service.
 
-    Every run reports `model_input` right after `run_start`. It is checked and dropped unless a test asks for it.
+    Model inputs and response boundaries are checked and omitted unless the test requests them.
     """
     events: list[tuple[str, dict[str, str]]] = []
     for block in response_text.strip().split("\n\n"):
@@ -620,12 +622,17 @@ def parse_sse(response_text: str, *, include_model_input: bool = False) -> list[
         event_type = next(line.removeprefix("event: ") for line in lines if line.startswith("event: "))
         data = next(json.loads(line.removeprefix("data: ")) for line in lines if line.startswith("data: "))
         events.append((event_type, data))
-    if include_model_input:
-        return events
-    for index, (event_type, _data) in enumerate(events):
+    for index, (event_type, data) in enumerate(events):
         if event_type == "model_input":
             assert index > 0 and events[index - 1][0] == "run_start"
-    return [event for event in events if event[0] != "model_input"]
+        if event_type == "response_end":
+            assert data["stop_reason"] in {"stop", "tool_use", "length", "error", "aborted"}
+            assert "context_note" not in data or isinstance(data["context_note"], str)
+    return [
+        event
+        for event in events
+        if (include_model_input or event[0] != "model_input") and (include_response_end or event[0] != "response_end")
+    ]
 
 
 def test_compatibility_reader_recovers_after_a_replay_gap():
@@ -749,8 +756,14 @@ def test_client_disconnect_leaves_the_run_active_until_explicit_stop(wait_stage:
     )
     assert history == [
         UserMessage("Wait for me"),
-        *[replace(response, stop_reason="aborted") for response in responses],
+        *responses,
+        *(
+            [ToolResultMessage("call-1", BASH_TOOL, "No result provided. The tool exchange was interrupted.", False)]
+            if responses
+            else []
+        ),
         AssistantMessage("", "aborted"),
+        AppEventEntry(ABORTED_RESPONSE_HISTORY),
     ]
     assert len(saved) == 1
     assert saved[0][1] == "cancelled"
@@ -844,10 +857,14 @@ def test_a_stopped_prompt_stays_in_context_for_the_next_run() -> None:
 
     transcript, follow_up_prompt = asyncio.run(exercise())
 
-    assert transcript == [UserMessage("Rename P1."), AssistantMessage("I renamed P1 to", "aborted")]
+    assert transcript == [
+        UserMessage("Rename P1."),
+        AssistantMessage("I renamed P1 to", "aborted"),
+        AppEventEntry(ABORTED_RESPONSE_HISTORY),
+    ]
     assert follow_up_prompt[1:-1] == [
         ChatMessage(role="user", content="Rename P1."),
-        ChatMessage(role="assistant", content=ABORTED_RESPONSE_HISTORY),
+        ChatMessage(role="user", content=ABORTED_RESPONSE_HISTORY),
         ChatMessage(role="user", content="Rename P2 instead."),
     ]
 
@@ -862,13 +879,16 @@ def test_an_answer_cut_off_by_the_output_limit_is_saved_with_its_stop_reason() -
     client = AuthenticatedTestClient(app)
     session_id = create_session(client)
 
-    events = parse_sse(client.post(f"/sessions/{session_id}/messages", json={"message": "Explain."}).text)
+    events = parse_sse(
+        client.post(f"/sessions/{session_id}/messages", json={"message": "Explain."}).text, include_response_end=True
+    )
 
     assert [name for name, _ in events] == [
         "run_start",
         "model_selection",
         "delta",
         "truncated",
+        "response_end",
         "context_usage",
         "done",
     ]
@@ -973,13 +993,17 @@ def test_stop_before_stream_registration_cancels_the_reserved_turn(monkeypatch: 
             assert stopped.status_code == 202
             assert not session.active
             assert provider.calls == []
-            assert session.transcript == [UserMessage("Stop now"), AssistantMessage("", "aborted")]
+            assert session.transcript == [
+                UserMessage("Stop now"),
+                AssistantMessage("", "aborted"),
+                AppEventEntry(ABORTED_RESPONSE_HISTORY),
+            ]
             monkeypatch.setattr(app.state.session_optimizer, "latest_result_artifact", original_artifact)
             retried = await client.post(f"/sessions/{session_id}/messages", json={"message": "Retry"})
             assert parse_sse(retried.text)[-1][0] == "done"
             assert provider.calls[0][1:3] == [
                 {"role": "user", "content": "Stop now"},
-                {"role": "assistant", "content": ABORTED_RESPONSE_HISTORY},
+                {"role": "user", "content": ABORTED_RESPONSE_HISTORY},
             ]
 
     asyncio.run(exercise())
@@ -2029,7 +2053,7 @@ def test_context_merges_one_exchange_into_the_answer_the_user_saw() -> None:
         ChatMessage(role="user", content="Rename P1."),
         ChatMessage(role="assistant", content="Checking. Renamed P1."),
         ChatMessage(role="user", content="Now P2."),
-        ChatMessage(role="assistant", content=ABORTED_RESPONSE_HISTORY),
+        ChatMessage(role="assistant", content="Checking. "),
     ]
 
 
@@ -2044,7 +2068,6 @@ def test_context_projects_typed_entries_without_replaying_aborted_output() -> No
 
     assert messages[1:-1] == [
         ChatMessage(role="user", content="Rename P1."),
-        ChatMessage(role="assistant", content=ABORTED_RESPONSE_HISTORY),
         ChatMessage(role="user", content=SCHEDULE_CHANGED_EVENT),
     ]
 
@@ -2464,9 +2487,11 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
             "run_start",
             "model_input",
             "model_selection",
+            "response_end",
             "tool_start",
             "tool",
             "delta",
+            "response_end",
             "context_usage",
             "done",
         ]
@@ -2494,9 +2519,9 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         }
         assert provider.calls[2][0] == provider.calls[0][0]
         assert events[5].data == {"model": "test-model", "reasoning": "default", "run_id": run_id}
-        assert events[8].data == {"text": "The optimizer returned score 23.", "run_id": run_id}
-        assert events[9].data["max_chars"] == 200_000
-        assert events[9].data["used_chars"] > 0
+        assert events[9].data == {"text": "The optimizer returned score 23.", "run_id": run_id}
+        assert events[11].data["max_chars"] == 200_000
+        assert events[11].data["used_chars"] > 0
         if history_enabled:
             assert len(history_starts) == 3
             assert history_starts[-1][1] == session_id
@@ -2745,10 +2770,14 @@ def test_sandbox_command_failure_still_streams_the_requested_command() -> None:
     failed = client.post(f"/sessions/{session_id}/messages", json={"message": "Run an edit"})
 
     events = parse_sse(failed.text)
+    assert next(data for name, data in events if name == "tool")["result"] == (
+        "No result provided. The tool exchange was interrupted."
+    )
     assert [name for name, _ in events if name != "context_usage"] == [
         "run_start",
         "model_selection",
         "tool_start",
+        "tool",
         "error",
     ]
     assert next(data for name, data in events if name == "tool_start") == {
@@ -3153,7 +3182,7 @@ def test_provider_failure_ends_the_run_and_a_new_message_continues():
         request = [message.get("content") for message in provider.calls[-1]]
         assert request.index("Rename P1") < request.index(ABORTED_RESPONSE_HISTORY) < request.index("Continue")
         assert "Partial answer. " not in request
-        assert not any(message.get("role") == "tool" for message in provider.calls[-1])
+        assert any(message.get("role") == "tool" for message in provider.calls[-1])
 
 
 def test_background_command_timeout_preserves_tool_result_and_reports_the_actual_cause():
