@@ -24,6 +24,7 @@ import json
 import logging
 import re
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -322,6 +323,65 @@ def test_retry_budget_ends_retries_before_the_attempt_limit(monkeypatch):
     # Failures at 0 and 50 seconds retry. A third wait would end after the 120-second budget.
     assert len(attempts) == 3
     assert clock[0] == 100
+
+
+@pytest.mark.parametrize("partial_text", [False, True], ids=["waiting-for-headers", "streaming"])
+def test_retry_budget_interrupts_a_stalled_request(monkeypatch, partial_text):
+    attempts = []
+    closed = []
+
+    class StalledStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield f"data: {json.dumps(_delta_chunk({'content': 'Partial'}))}\n\n".encode()
+            await asyncio.Event().wait()
+
+        async def aclose(self):
+            closed.append(True)
+
+    async def handle(request):
+        attempts.append(request)
+        if len(attempts) == 1:
+            return httpx.Response(503)
+        if partial_text:
+            return httpx.Response(200, stream=StalledStream())
+        try:
+            await asyncio.Event().wait()
+        finally:
+            closed.append(True)
+
+    monkeypatch.setattr(provider_module, "PROVIDER_RETRY_BUDGET_SECONDS", 0.02)
+    provider = _transport_provider(monkeypatch, handle, provider_retry_backoff_seconds=0)
+
+    async def run():
+        with pytest.raises(ProviderError, match="timed out"):
+            await asyncio.wait_for(_collect(provider.stream_events([])), timeout=0.5)
+
+    asyncio.run(run())
+    assert len(attempts) == 2
+    assert closed == [True]
+
+
+def test_expired_retry_budget_does_not_send_another_request(monkeypatch):
+    attempts = []
+    clock = [0.0]
+
+    def handle(request):
+        attempts.append(request)
+        if len(attempts) == 1:
+            return httpx.Response(503)
+        return httpx.Response(200, text=_sse_body(_delta_chunk({"content": "Too late"})))
+
+    monkeypatch.setattr(provider_module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    provider = _transport_provider(monkeypatch, handle, provider_retry_backoff_seconds=0)
+
+    async def run():
+        with pytest.raises(ProviderError, match="timed out"):
+            async for event in provider.stream_events([]):
+                if isinstance(event, ProviderRetry):
+                    clock[0] = provider_module.PROVIDER_RETRY_BUDGET_SECONDS + 1
+
+    asyncio.run(run())
+    assert len(attempts) == 1
 
 
 def test_retries_discard_partial_tool_calls(monkeypatch):

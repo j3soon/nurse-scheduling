@@ -517,7 +517,17 @@ class OpenAiCompatibleProvider:
                 # Keep tool calls private until the HTTP attempt also closes cleanly.
                 completed: list[ToolCallRequest | ResponseEnd | ReasoningReplay] = []
                 async with aclosing(self._stream_attempt(timeout, headers, payload)) as events:
-                    async for event in events:
+                    while True:
+                        try:
+                            remaining = None if retry_deadline is None else retry_deadline - time.monotonic()
+                            if remaining is not None and remaining <= 0:
+                                raise TimeoutError
+                            # Scope cancellation to receiving an event. A yielded event's
+                            # consumer must not inherit this provider deadline.
+                            async with asyncio.timeout(remaining):
+                                event = await anext(events)
+                        except StopAsyncIteration:
+                            break
                         if isinstance(event, ProviderResponseMetadata):
                             updated = replace(
                                 call,
@@ -554,7 +564,7 @@ class OpenAiCompatibleProvider:
                 if self._include_costs:
                     yield replace(call, status="reported" if call.cost_usd is not None else "unavailable")
                 return
-            except (ProviderError, httpx.HTTPError) as exc:
+            except (ProviderError, httpx.HTTPError, TimeoutError) as exc:
                 if self._include_costs:
                     yield replace(call, status="reported" if call.cost_usd is not None else "unavailable")
                 if isinstance(exc, ProviderError) and not isinstance(exc, _RetryableProviderError):
@@ -564,14 +574,16 @@ class OpenAiCompatibleProvider:
                     retry_headers = exc.headers
                 else:
                     message = "The AI provider is unavailable."
-                    if isinstance(exc, httpx.TimeoutException):
+                    if isinstance(exc, (httpx.TimeoutException, TimeoutError)):
                         message = (
                             "The AI provider timed out while streaming the response."
                             if stream_started
                             else "The AI provider timed out before starting the response."
                         )
                     failure = ProviderError.for_user(message)
-                    if not isinstance(exc, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)):
+                    if not isinstance(
+                        exc, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError, TimeoutError)
+                    ):
                         raise failure from exc
                     retry_headers = httpx.Headers()
                 now = time.monotonic()
