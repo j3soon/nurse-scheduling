@@ -57,7 +57,6 @@ class RunErrorEvent(RunFields):
 
 class ProviderRetryEvent(RunFields):
     type: Literal["provider_retry"]
-    retry_id: str | None
     message: str
 
 

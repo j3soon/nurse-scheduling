@@ -44,8 +44,8 @@ preferences: []
 const CHECK = 'Trusted schedule check after this command:\nThe candidate passed trusted server-side validation.';
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 
-async function mockChangingBackend(page: Page, holdAnswer = false, waitForRetry = false) {
-  const state = { sessionSchedule: '', refreshed: [] as string[], finishAnswer: () => {}, messages: 0, stops: 0, retries: 0 };
+async function mockChangingBackend(page: Page, holdAnswer = false, retryNotice = false) {
+  const state = { sessionSchedule: '', refreshed: [] as string[], finishAnswer: () => {}, messages: 0, stops: 0 };
   const baseURL = test.info().project.use.baseURL;
   if (!baseURL) throw new Error('Playwright baseURL is required for the AI backend mock.');
   const allowedOrigin = new URL(baseURL).origin;
@@ -106,12 +106,6 @@ async function mockChangingBackend(page: Page, holdAnswer = false, waitForRetry 
       await route.fulfill({ status: 202, headers: corsHeaders });
       return;
     }
-    if (new URL(request.url()).pathname.includes('/retry/')) {
-      state.retries++;
-      state.finishAnswer();
-      await route.fulfill({ status: 202, headers: corsHeaders });
-      return;
-    }
     if (request.url().endsWith('/schedule')) {
       state.sessionSchedule = (request.postDataJSON() as { schedule_yaml: string }).schedule_yaml;
       state.refreshed.push(state.sessionSchedule);
@@ -135,7 +129,7 @@ async function mockChangingBackend(page: Page, holdAnswer = false, waitForRetry 
       journal.push(`id: ${journal.length + 1}\nevent: ${type}\ndata: ${JSON.stringify({ ...data, run_id: runId })}\n\n`);
     };
     publish('run_start', { trigger: 'user' });
-    if (waitForRetry) publish('model_input', { system: 'Synthetic chat instructions', messages: [{ kind: 'question', content: 'Add a nurse.' }] });
+    if (retryNotice) publish('model_input', { system: 'Synthetic chat instructions', messages: [{ kind: 'question', content: 'Add a nurse.' }] });
     publish('reasoning', { text: 'The ward has one nurse, so I will add another.' });
     publish('tool', {
       name: 'bash', arguments: '{"command":"python3 /tmp/edit.py"}', result: `exit_code: 0\n\n${CHECK}`, ok: true,
@@ -153,12 +147,9 @@ async function mockChangingBackend(page: Page, holdAnswer = false, waitForRetry 
       publish('done', {});
       wake();
     };
-    if (waitForRetry) {
-      publish('provider_retry', { retry_id: 'provider-attempt', message: 'The AI provider timed out.' });
-      state.finishAnswer = () => {
-        publish('provider_retry', { retry_id: null, message: 'Retrying the current provider request.' });
-        finish();
-      };
+    if (retryNotice) {
+      publish('provider_retry', { message: 'The AI provider timed out. Retrying in 2 s (attempt 2 of 5).' });
+      state.finishAnswer = finish;
     } else if (holdAnswer) state.finishAnswer = finish;
     else finish();
     await route.fulfill({ status: 202, contentType: 'application/json', headers: corsHeaders, body: JSON.stringify({ run_id: runId }) });
@@ -168,19 +159,19 @@ async function mockChangingBackend(page: Page, holdAnswer = false, waitForRetry 
   return state;
 }
 
-test('keeps the same run across reload and manual provider retry', async ({ page }) => {
+test('keeps an automatic provider retry notice in the same run across reload', async ({ page }) => {
   const state = await mockChangingBackend(page, false, true);
   await page.goto('/experimental-ai');
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Add a nurse.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Retry provider request' })).toBeVisible();
-  await expect(page.getByText('The AI provider timed out.')).toBeVisible();
+  const notice = page.getByText('The AI provider timed out. Retrying in 2 s (attempt 2 of 5).');
+  await expect(notice).toBeVisible();
   await page.reload();
-  await page.getByRole('button', { name: 'Retry provider request' }).click();
+  await expect(notice).toBeVisible();
+  await expect(page.getByRole('button', { name: /retry/i })).toHaveCount(0);
+  state.finishAnswer();
   await expect(page.getByText('Applied to your schedule')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Retry provider request' })).toBeHidden();
   expect(state.messages).toBe(1);
-  expect(state.retries).toBe(1);
   await page.goto('/people');
   await expect(page.getByText('1. Proposed Nurse')).toBeVisible();
   await page.keyboard.press('Control+z');

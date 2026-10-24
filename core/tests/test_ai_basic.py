@@ -73,6 +73,7 @@ from nurse_scheduling.ai.pi.read import READ_TOOL
 from nurse_scheduling.ai.provider import (
     ChatMessage,
     ProviderError,
+    ProviderRetry,
     ResponseEnd,
     TextDelta,
     TokenUsage,
@@ -1696,29 +1697,25 @@ def test_environment_configuration_reads_provider_retry_settings(monkeypatch: py
     monkeypatch.setenv("E2B_API_KEY", "e2b-key")
     monkeypatch.setenv("AI_PROVIDER_MAX_ATTEMPTS", "4")
     monkeypatch.setenv("AI_PROVIDER_RETRY_BACKOFF_SECONDS", "0.25")
-    monkeypatch.setenv("AI_PROVIDER_MANUAL_RETRY_TIMEOUT_SECONDS", "30")
 
     settings = AiSettings.from_env()
 
     assert settings.provider_max_attempts == 4
     assert settings.provider_retry_backoff_seconds == 0.25
-    assert settings.provider_manual_retry_timeout_seconds == 30
 
 
-def test_environment_configuration_defaults_to_three_provider_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_environment_configuration_defaults_to_five_provider_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
     monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
     monkeypatch.setenv("AI_SANDBOX_BACKEND", "e2b")
     monkeypatch.setenv("E2B_API_KEY", "e2b-key")
     monkeypatch.delenv("AI_PROVIDER_MAX_ATTEMPTS", raising=False)
     monkeypatch.delenv("AI_PROVIDER_RETRY_BACKOFF_SECONDS", raising=False)
-    monkeypatch.delenv("AI_PROVIDER_MANUAL_RETRY_TIMEOUT_SECONDS", raising=False)
 
     settings = AiSettings.from_env()
 
-    assert settings.provider_max_attempts == 3
-    assert settings.provider_retry_backoff_seconds == 1.0
-    assert settings.provider_manual_retry_timeout_seconds == 600
+    assert settings.provider_max_attempts == 5
+    assert settings.provider_retry_backoff_seconds == 2.0
 
 
 def test_environment_configuration_defaults_to_thirty_day_session_retention(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3025,73 +3022,38 @@ def test_background_review_delivers_steering_after_tool_before_next_model_reques
         assert sum(entry == UserMessage("Check night coverage first.") for entry in session.transcript) == 1
 
 
-@pytest.mark.parametrize("outcome", ["retry", "stop", "deadline", "timeout"])
-def test_provider_retry_preserves_completed_tools_and_run_identity(outcome):
+def test_provider_failure_ends_the_run_and_a_new_message_continues():
     error = ProviderError.for_user("The AI provider timed out.")
     error.retryable = True
-    provider = ScriptedToolProvider(rename_call(), [TextDelta("Partial answer. "), error], [TextDelta("Recovered.")])
+    notice = "The AI provider timed out. Retrying in 2 s (attempt 2 of 5)."
+    provider = ScriptedToolProvider(
+        rename_call(), [ProviderRetry(notice), TextDelta("Partial answer. "), error], [TextDelta("Continued.")]
+    )
     factory = rename_factory()
     app = create_test_app(
-        settings=make_settings(
-            max_schedule_bytes=SCHEDULE_BYTE_LIMIT,
-            sandbox_turn_timeout_seconds=0.5 if outcome == "deadline" else 10,
-            provider_manual_retry_timeout_seconds=0.05 if outcome == "timeout" else 10,
-        ),
+        settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT),
         provider=provider,
         sandbox_factory=factory,
     )
     with AuthenticatedTestClient(app) as client:
         session_id = create_session(client, schedule_yaml())
-        accepted = client.post(
-            f"/sessions/{session_id}/messages",
-            json={"message": "Rename P1", "message_id": "retry-test"},
-            headers={"Accept": "application/json"},
-        )
-        assert accepted.status_code == 202
-        run_id = accepted.json()["run_id"]
-        deadline = time.monotonic() + 2
-        while time.monotonic() < deadline:
-            events = app.state.session_event_stream.events_after(session_id)
-            waiting = next((event for event in events if event.type == "provider_retry"), None)
-            if waiting is not None or any(event.type == "error" for event in events):
-                break
-            time.sleep(0.001)
-        assert waiting is not None
-        assert waiting.data["run_id"] == run_id
-        assert waiting.data["message"] == "The AI provider timed out."
-        retry_url = f"/sessions/{session_id}/runs/{run_id}/retry/{waiting.data['retry_id']}"
-        if outcome == "retry":
-            other = AuthenticatedTestClient(app)
-            assert other.post(retry_url).status_code == 404
-            assert client.post(retry_url + "-stale").status_code == 409
-            assert client.post(retry_url).status_code == 202
-        elif outcome == "stop":
-            assert client.post(f"/sessions/{session_id}/stop").status_code == 202
-        deadline = time.monotonic() + 2
-        while app.state.runs.busy(session_id) and time.monotonic() < deadline:
-            time.sleep(0.001)
+        failed = client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P1"})
+        events = parse_sse(failed.text)
+        # The run fails without waiting for the user, so it holds no run slot or sandbox.
         assert not app.state.runs.busy(session_id)
-        events = app.state.session_event_stream.events_after(session_id)
-        assert events[-1].type == {"retry": "done", "stop": "stopped", "deadline": "error", "timeout": "error"}[outcome]
-        if outcome == "timeout":
-            # An unanswered wait fails with the provider reason, as a failure without manual retry does.
-            assert events[-1].data["message"] == "The AI provider timed out."
-        assert sum(event.type == "run_start" for event in events) == 1
-        assert sum(event.type == "tool" for event in events) == 1
-        assert client.post(retry_url).status_code == 409
-        session = app.state.session_store._sessions[session_id]
-        if outcome == "retry":
-            assert len(provider.calls) == 3
-            assert any(message.get("role") == "tool" for message in provider.calls[2])
-            assert provider.calls[2][-2]["content"] == "Partial answer. "
-            assert "interrupted" in provider.calls[2][-1]["content"]
-            assert "description: Head" in session.schedule_yaml
-            assert sum(event.type == "schedule_applied" for event in events) == 1
-        else:
-            assert len(provider.calls) == 2
-            assert session.schedule_yaml == schedule_yaml()
-        assert len(factory.created) == 1
         assert factory.created[0].closed
+        assert [data["message"] for kind, data in events if kind == "provider_retry"] == [notice]
+        assert events[-1][0] == "error"
+        assert events[-1][1]["message"] == "The AI provider timed out."
+        session = app.state.session_store._sessions[session_id]
+        assert session.schedule_yaml == schedule_yaml()
+
+        continued = client.post(f"/sessions/{session_id}/messages", json={"message": "Continue"})
+        assert parse_sse(continued.text)[-1][0] == "done"
+        request = [message.get("content") for message in provider.calls[-1]]
+        assert request.index("Rename P1") < request.index(ABORTED_RESPONSE_HISTORY) < request.index("Continue")
+        assert "Partial answer. " not in request
+        assert not any(message.get("role") == "tool" for message in provider.calls[-1])
 
 
 def test_background_command_timeout_preserves_tool_result_and_reports_the_actual_cause():

@@ -44,6 +44,7 @@ from .agent_types import (
 from .context import prepare_provider_request
 from .provider import (
     ChatMessage,
+    ProviderRetry,
     ReasoningDelta,
     ResponseEnd,
     TextDelta,
@@ -115,7 +116,7 @@ async def agent_loop(
                     elif isinstance(event, ReasoningDelta):
                         reasoning.append(event.text)
                         yield AgentReasoning(event.text)
-                    elif isinstance(event, TokenUsage):
+                    elif isinstance(event, (TokenUsage, ProviderRetry)):
                         yield event
                     elif isinstance(event, ToolCallRequest):
                         calls = event.calls

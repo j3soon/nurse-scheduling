@@ -35,7 +35,7 @@ from .agent_types import (
     AgentToolUse,
 )
 from .context import interrupted_entries
-from .provider import TokenUsage
+from .provider import ProviderRetry, TokenUsage
 from .session_events import AgentSessionEvent, AgentSessionRunEvent, AgentSessionTerminalEvent, TextEvent, ToolEndEvent
 from .transcript import AgentMessage
 from .workspace import AgentAnalysis, AgentDownload, AgentScheduleChange
@@ -74,6 +74,8 @@ class RunOutput:
             self.pending_text.clear()
             self.pending_reasoning.clear()
             return {"type": "truncated"} if event.message.stop_reason == "length" else None
+        if isinstance(event, ProviderRetry):
+            return {"type": "provider_retry", "message": event.message}
         if isinstance(event, TokenUsage):
             self.usage = event if self.usage is None else self.usage + event
             self.last_call = event

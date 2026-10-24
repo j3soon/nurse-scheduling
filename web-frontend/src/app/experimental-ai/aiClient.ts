@@ -150,7 +150,6 @@ interface SessionStatusResponse {
 }
 
 interface SsePayload {
-  retry_id?: unknown;
   text?: unknown;
   message?: unknown;
   name?: unknown;
@@ -597,8 +596,8 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
     if (typeof dropped === 'number' && Number.isInteger(dropped) && dropped > 0) {
       emit({ type: 'history_trimmed', dropped });
     }
-  } else if (eventType === 'provider_retry' && (payload.retry_id === null || typeof payload.retry_id === 'string') && typeof payload.message === 'string') {
-    emit({ type: 'provider_retry', retryId: payload.retry_id, message: payload.message });
+  } else if (eventType === 'provider_retry' && typeof payload.message === 'string') {
+    emit({ type: 'provider_retry', message: payload.message });
   } else if (eventType === 'warning' && typeof payload.message === 'string') {
     emit({ type: 'warning', message: payload.message });
   } else if (eventType === 'error') {
@@ -606,13 +605,6 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
     emit({ type: 'error', message });
   }
   return events;
-}
-
-export async function retryProviderRequest(sessionId: string, runId: string, retryId: string, authToken: string | null, endpoint: string): Promise<void> {
-  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/retry/${encodeURIComponent(retryId)}`, {
-    method: 'POST', credentials: 'include', headers: authorizedHeaders(authToken),
-  });
-  if (!response.ok) throw await responseError(response);
 }
 
 async function postMessage(

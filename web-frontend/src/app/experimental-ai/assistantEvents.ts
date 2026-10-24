@@ -38,7 +38,7 @@ export type AssistantEvent =
   | { type: 'delta'; text: string }
   | { type: 'reasoning'; text: string }
   | { type: 'truncated' }
-  | { type: 'provider_retry'; retryId: string | null; message: string }
+  | { type: 'provider_retry'; message: string }
   | { type: 'done' | 'stopped' }
   | { type: 'error' | 'stale'; message: string }
   | { type: 'tool_start'; activity: ToolStartActivity }
@@ -89,7 +89,7 @@ export function applyAssistantEvent<T extends ChatExportMessage>(message: T, eve
   const activity = message.activity ?? [];
   switch (event.type) {
     case 'provider_retry':
-      return { ...message, providerRetry: event.retryId ? { id: event.retryId, message: event.message } : undefined, activity: [...activity, { kind: 'notice', text: event.message }] };
+      return { ...message, activity: [...activity, { kind: 'notice', text: event.message }] };
     case 'delta':
       return {
         ...message,

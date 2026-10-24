@@ -66,9 +66,6 @@ class AgentRun:
     shutdown: bool = False
     ready_to_start: asyncio.Event = field(default_factory=asyncio.Event)
 
-    retry_id: str | None = None
-    retry_ready: asyncio.Event = field(default_factory=asyncio.Event)
-
     def cancel(self) -> None:
         # Cancellation is an edge, not a repeated interrupt of resource cleanup.
         if not self.cancelled and not self.finishing:
@@ -135,13 +132,6 @@ class SessionRuns:
         run.task = asyncio.create_task(execute(), name=f"ai-run-{run.id}")
         run.task.add_done_callback(finished)
         return run
-
-    def retry_provider(self, session_id: str, run_id: str, retry_id: str) -> None:
-        for run in self._runs.get(session_id, ()):
-            if run.id == run_id and run.retry_id == retry_id and not run.cancelled:
-                run.retry_ready.set()
-                return
-        raise HTTPException(status_code=409, detail="This provider request is no longer waiting for retry.")
 
     def stop(self, session_id: str, message_id: str | None = None) -> None:
         for run in tuple(self._runs.get(session_id, ())):

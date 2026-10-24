@@ -50,7 +50,6 @@ import {
   type UploadedFile,
   getSessionStatus,
   queueMessage,
-  retryProviderRequest,
   scheduleRevision,
   sendMessage,
   stopSession,
@@ -83,7 +82,7 @@ interface StreamCallbacks {
   onDelta: (text: string) => void;
   onReasoning?: (text: string) => void;
   onTruncated?: () => void;
-  onProviderRetry?: (retryId: string | null, message: string) => void;
+  onProviderRetry?: (message: string) => void;
   onToolStart?: (activity: ToolStartActivity) => void;
   onTool?: (activity: ToolActivity) => void;
   onSteering?: (messageId: string, message: string) => void;
@@ -107,7 +106,7 @@ function dispatchPageEvent(event: SessionEvent, callbacks: StreamCallbacks): voi
     case 'run_start': callbacks.onRunStart?.(event.runId, event.trigger); break;
     case 'delta': callbacks.onDelta(event.text); break;
     case 'reasoning': callbacks.onReasoning?.(event.text); break;
-    case 'provider_retry': callbacks.onProviderRetry?.(event.retryId, event.message); break;
+    case 'provider_retry': callbacks.onProviderRetry?.(event.message); break;
     case 'truncated': callbacks.onTruncated?.(); break;
     case 'tool_start': callbacks.onToolStart?.(event.activity); break;
     case 'tool': callbacks.onTool?.(event.activity); break;
@@ -136,7 +135,7 @@ function assistantEventCallbacks(
 ): Required<Pick<StreamCallbacks,
   'onDelta' | 'onReasoning' | 'onTruncated' | 'onProviderRetry' | 'onToolStart' | 'onTool' | 'onScheduleChange' | 'onScheduleApplied'>> {
   return {
-    onProviderRetry: (retryId, message) => apply({ type: 'provider_retry', retryId, message }),
+    onProviderRetry: message => apply({ type: 'provider_retry', message }),
     onDelta: text => apply({ type: 'delta', text }),
     onReasoning: text => apply({ type: 'reasoning', text }),
     onTruncated: () => apply({ type: 'truncated' }),
@@ -185,7 +184,6 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   const [removingUploadId, setRemovingUploadId] = useState<string | null>(null);
   const [removingDownloadId, setRemovingDownloadId] = useState<string | null>(null);
   // Each wait has its own ID, so an accepted retry stays disabled until its notice clears it.
-  const [retryingProviderId, setRetryingProviderId] = useState<string | null>(null);
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
   const updateContextUsage = useCallback((usage: ContextUsage) => setContextUsage(previous => (
     usage.usedTokens === undefined && previous?.usedTokens !== undefined
@@ -665,7 +663,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
           id: assistantId, role: 'assistant', content: '', status: 'pending',
           responseStartedAt: original?.responseStartedAt ?? responseStartedAt, requestId: request.id,
           request: { ...request, activeAssistantId: assistantId },
-          ...(resume?.recover && original ? { content: original.content, activity: original.activity, runId: original.runId, providerRetry: original.providerRetry } : {}),
+          ...(resume?.recover && original ? { content: original.content, activity: original.activity, runId: original.runId } : {}),
         };
         const retained = previous.filter(message => message.id !== `status-${assistantId}`
           && (resume?.recover || message.requestId !== request.id || message.id === userMessage.id || message.id === assistantId))
@@ -986,21 +984,6 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     await sendRequest(question, attachments, true);
   };
 
-  const retryProvider = async (runId: string, retryId: string) => {
-    const ownsConversation = lifecycle.capture();
-    const sessionId = sessionIdRef.current;
-    if (!sessionId || retryingProviderId === retryId) return;
-    setRetryingProviderId(retryId);
-    try {
-      await retryProviderRequest(sessionId, runId, retryId, authToken, sessionEndpointRef.current ?? aiEndpoint);
-    } catch (retryError) {
-      if (ownsConversation()) {
-        setRetryingProviderId(null);
-        reportRequestError(retryError, 'The provider request could not be retried.');
-      }
-    }
-  };
-
   const retryMessage = (failedId: string, question: string) => {
     if (!question || isStreaming || (authRequired && authToken === null)) return;
     const failedIndex = messages.findIndex(message => message.id === failedId);
@@ -1115,12 +1098,12 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     ownsConversation: lifecycle.capture(),
   });
   return {
-    messages, uploadedFiles, removingUploadId, removingDownloadId, retryingProviderId, contextUsage,
+    messages, uploadedFiles, removingUploadId, removingDownloadId, contextUsage,
     activeSessionId, sessionExpiresAt, sessionRetentionSeconds, conversationUnavailable,
     sessionNotice, trimmedHistoryCount, isStreaming, isStopping, isReconnecting,
     activeOptimization, queuedMessages, steeringAssistantId,
     setSessionRetentionSeconds, restoreConversation, captureSession,
-    newConversation, submitMessage, retryMessage, retryProvider, stop, removeUploadedFile,
+    newConversation, submitMessage, retryMessage, stop, removeUploadedFile,
     removeGeneratedFiles,
     sessionEndpoint: sessionEndpoint ?? aiEndpoint,
   };

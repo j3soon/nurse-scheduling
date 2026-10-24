@@ -118,9 +118,8 @@ class AiSettings:
     auth_tokens: tuple[AuthCredential, ...] = ()
     auth_required: bool = False
     provider_timeout_seconds: float = 180.0
-    provider_max_attempts: int = 3
-    provider_retry_backoff_seconds: float = 1.0
-    provider_manual_retry_timeout_seconds: float = 600.0
+    provider_max_attempts: int = 5
+    provider_retry_backoff_seconds: float = 2.0
     optimizer_base_url: str = "http://localhost:8000"
     optimizer_auth_token: str = ""
     optimizer_poll_interval_seconds: float = 1.0
@@ -202,11 +201,8 @@ class AiSettings:
             auth_tokens=auth_tokens,
             auth_required=_read_bool(AI_AUTH_REQUIRED_ENV_NAME, False),
             provider_timeout_seconds=_read_positive_float("AI_PROVIDER_TIMEOUT_SECONDS", 180.0),
-            provider_max_attempts=_read_positive_int("AI_PROVIDER_MAX_ATTEMPTS", 3),
-            provider_retry_backoff_seconds=_read_non_negative_float("AI_PROVIDER_RETRY_BACKOFF_SECONDS", 1.0),
-            provider_manual_retry_timeout_seconds=_read_positive_float(
-                "AI_PROVIDER_MANUAL_RETRY_TIMEOUT_SECONDS", 600.0
-            ),
+            provider_max_attempts=_read_positive_int("AI_PROVIDER_MAX_ATTEMPTS", 5),
+            provider_retry_backoff_seconds=_read_non_negative_float("AI_PROVIDER_RETRY_BACKOFF_SECONDS", 2.0),
             optimizer_base_url=os.getenv("AI_OPTIMIZER_BASE_URL", "").strip().rstrip("/") or "http://localhost:8000",
             optimizer_auth_token=os.getenv("AI_OPTIMIZER_AUTH_TOKEN", "").strip(),
             optimizer_poll_interval_seconds=_read_positive_float("AI_OPTIMIZER_POLL_INTERVAL_SECONDS", 1.0),

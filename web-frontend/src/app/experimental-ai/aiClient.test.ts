@@ -34,7 +34,6 @@ import {
   getUploads,
   isOfficialAiEndpoint,
   queueMessage,
-  retryProviderRequest,
   removeGeneratedZip,
   removeUpload,
   streamMessage,
@@ -986,18 +985,13 @@ describe('AI client', () => {
     });
   });
 
-  it('decodes provider retry events and authorizes retry of one run boundary', async () => {
+  it('decodes provider retry notices', async () => {
     const { decodeEvent } = await import('./aiClient');
-    expect(decodeEvent('provider_retry', { run_id: 'run-1', retry_id: 'retry-1', message: 'Timed out.' })).toEqual([
+    expect(decodeEvent('provider_retry', { run_id: 'run-1', message: 'Timed out. Retrying in 2 s.' })).toEqual([
       { type: 'run_context', runId: 'run-1' },
-      { type: 'provider_retry', runId: 'run-1', retryId: 'retry-1', message: 'Timed out.' },
+      { type: 'provider_retry', runId: 'run-1', message: 'Timed out. Retrying in 2 s.' },
     ]);
-    expect(decodeEvent('provider_retry', { retry_id: 42, message: 'Malformed' })).toEqual([]);
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 202 }));
-    await retryProviderRequest('session/id', 'run/id', 'retry/id', 'private-token', '/ai');
-    expect(fetchMock).toHaveBeenCalledWith('/ai/sessions/session%2Fid/runs/run%2Fid/retry/retry%2Fid', {
-      method: 'POST', credentials: 'include', headers: { Authorization: 'Bearer private-token' },
-    });
+    expect(decodeEvent('provider_retry', { message: 42 })).toEqual([]);
   });
 
   it('queues a steering message without cancelling the active stream', async () => {

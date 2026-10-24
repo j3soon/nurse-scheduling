@@ -23,10 +23,14 @@ import asyncio
 import base64
 import json
 import logging
+import math
 import re
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+import time
+from collections.abc import AsyncIterator, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any, Literal, Protocol, TypedDict
 from uuid import uuid4
 
@@ -50,6 +54,8 @@ MAX_PROVIDER_ERROR_EXCERPT_CHARS = 1_000
 MAX_PROVIDER_CONTENT_TYPE_CHARS = 100
 PROVIDER_ERROR_TRUNCATION_MARKER = "...[truncated]"
 SUPPORTED_FINISH_REASONS = frozenset({"stop", "end", "length", "tool_calls", "function_call"})
+# A retry holds a shared run slot and a live sandbox, so an outage ends the run after this time.
+PROVIDER_RETRY_BUDGET_SECONDS = 120.0
 
 
 class TextContentPart(TypedDict):
@@ -157,7 +163,16 @@ class ProviderAttempt:
     number: int
 
 
-ChatStreamEvent = TextDelta | ReasoningDelta | ToolCallRequest | ResponseEnd | TokenUsage | ProviderAttempt
+@dataclass(frozen=True)
+class ProviderRetry:
+    """A failed attempt that the provider retries automatically after a delay."""
+
+    message: str
+
+
+ChatStreamEvent = (
+    TextDelta | ReasoningDelta | ToolCallRequest | ResponseEnd | TokenUsage | ProviderAttempt | ProviderRetry
+)
 
 
 class ChatProvider(Protocol):
@@ -214,15 +229,40 @@ def tool_result_image_message(call_id: str, image: ToolResultImage) -> ChatMessa
 class ProviderError(RuntimeError):
     """A provider or protocol failure reported to the AI service."""
 
-    def __init__(self, message: str, *, user_message: str | None = None, retryable: bool = False) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        user_message: str | None = None,
+        retryable: bool = False,
+        retry_after: float | None = None,
+    ) -> None:
         super().__init__(message)
         self.user_message = user_message
         self.retryable = retryable
+        self.retry_after = retry_after
 
     @classmethod
-    def for_user(cls, message: str, *, retryable: bool = False) -> "ProviderError":
+    def for_user(cls, message: str, *, retryable: bool = False, retry_after: float | None = None) -> "ProviderError":
         """Mark a known explanation safe for the chat, without exposing SDK errors."""
-        return cls(message, user_message=message, retryable=retryable)
+        return cls(message, user_message=message, retryable=retryable, retry_after=retry_after)
+
+
+def _retry_after_seconds(value: str | None) -> float | None:
+    """Read a Retry-After header given as seconds or as an HTTP date."""
+    if not value:
+        return None
+    try:
+        seconds = float(value)
+    except ValueError:
+        try:
+            when = parsedate_to_datetime(value)
+        except (TypeError, ValueError):
+            return None
+        if when.tzinfo is None:
+            return None
+        seconds = (when - datetime.now(UTC)).total_seconds()
+    return max(0.0, seconds) if math.isfinite(seconds) else None
 
 
 def _continuation_messages(messages: Sequence[ChatMessage], answer: Sequence[str]) -> list[ChatMessage]:
@@ -234,51 +274,6 @@ def _continuation_messages(messages: Sequence[ChatMessage], answer: Sequence[str
             role="user", content=f"[App event] The response was interrupted after {len(text)} text characters."
         ),
     ]
-
-
-class ResumableProvider:
-    """Keep one model request open for manual retry without replaying completed tools."""
-
-    def __init__(
-        self, provider: ToolCapableChatProvider, wait_for_retry: Callable[[ProviderError], Awaitable[None]]
-    ) -> None:
-        self._provider = provider
-        self._wait_for_retry = wait_for_retry
-
-    async def stream_events(
-        self, messages: Sequence[ChatMessage], tools: Sequence[dict[str, Any]] | None = None
-    ) -> AsyncIterator[ChatStreamEvent]:
-        answer: list[str] = []
-        text_chars = reasoning_chars = 0
-        request = messages
-        while True:
-            completed = []
-            try:
-                async with aclosing(self._provider.stream_events(request, tools)) as events:
-                    async for event in events:
-                        if isinstance(event, (ToolCallRequest, ResponseEnd)):
-                            completed.append(event)
-                        else:
-                            if isinstance(event, TextDelta):
-                                answer.append(event.text)
-                                text_chars += len(event.text)
-                            elif isinstance(event, ReasoningDelta):
-                                reasoning_chars += len(event.text)
-                            if text_chars > MAX_RESPONSE_TEXT_CHARS or reasoning_chars > MAX_RESPONSE_REASONING_CHARS:
-                                raise ProviderResponseLimitError.for_user(
-                                    "The AI provider exceeded the response limit across retries."
-                                )
-                            yield event
-            except ProviderError as error:
-                if not error.retryable:
-                    raise
-                await self._wait_for_retry(error)
-                if answer:
-                    request = _continuation_messages(messages, answer)
-                continue
-            for event in completed:
-                yield event
-            return
 
 
 class ProviderResponseLimitError(ProviderError):
@@ -357,7 +352,7 @@ class OpenAiCompatibleProvider:
         messages: Sequence[ChatMessage],
         tools: Sequence[dict[str, Any]] | None = None,
     ) -> AsyncIterator[ChatStreamEvent]:
-        """Translate SSE chunks and continue interrupted responses after timeouts."""
+        """Translate SSE chunks and retry temporary failures with exponential backoff."""
         if self._include_usage:
             await self._load_context_tokens()
         timeout = httpx.Timeout(self._settings.provider_timeout_seconds, connect=10.0)
@@ -377,7 +372,9 @@ class OpenAiCompatibleProvider:
         answer: list[str] = []
         text_chars = 0
         reasoning_chars = 0
-        for attempt in range(1, self._settings.provider_max_attempts + 1):
+        max_attempts = self._settings.provider_max_attempts
+        retry_deadline: float | None = None
+        for attempt in range(1, max_attempts + 1):
             if self._include_attempts:
                 yield ProviderAttempt(attempt)
             try:
@@ -406,32 +403,42 @@ class OpenAiCompatibleProvider:
                 for event in completed:
                     yield event
                 return
-            except ProviderError:
-                raise
+            except ProviderError as exc:
+                error, cause = exc, exc.__cause__
             except httpx.TimeoutException as exc:
-                if attempt == self._settings.provider_max_attempts:
-                    message = (
-                        "The AI provider timed out while streaming the response."
-                        if stream_started
-                        else "The AI provider timed out before starting the response."
-                    )
-                    raise ProviderError.for_user(message, retryable=True) from exc
-                if answer:
-                    # A fresh completion cannot resume transport state. Keep visible
-                    # text as context, but never replay reasoning or partial tool JSON.
-                    payload["messages"] = _continuation_messages(messages, answer)
-                delay = self._settings.provider_retry_backoff_seconds * (2 ** (attempt - 1))
-                logger.warning(
-                    "AI provider timed out stream_started=%s attempt=%s max_attempts=%s retry_in_seconds=%.3f",
-                    stream_started,
-                    attempt,
-                    self._settings.provider_max_attempts,
-                    delay,
+                message = (
+                    "The AI provider timed out while streaming the response."
+                    if stream_started
+                    else "The AI provider timed out before starting the response."
                 )
-                if delay > 0:
-                    await asyncio.sleep(delay)
+                error, cause = ProviderError.for_user(message, retryable=True), exc
             except httpx.HTTPError as exc:
-                raise ProviderError.for_user("The AI provider is unavailable.", retryable=True) from exc
+                error, cause = ProviderError.for_user("The AI provider is unavailable.", retryable=True), exc
+            now = time.monotonic()
+            if retry_deadline is None:
+                retry_deadline = now + PROVIDER_RETRY_BUDGET_SECONDS
+            delay = max(self._settings.provider_retry_backoff_seconds * (2 ** (attempt - 1)), error.retry_after or 0.0)
+            if not error.retryable or attempt == max_attempts or now + delay > retry_deadline:
+                raise error from cause
+            if answer:
+                # A fresh completion cannot resume transport state. Keep visible
+                # text as context, but never replay reasoning or partial tool JSON.
+                payload["messages"] = _continuation_messages(messages, answer)
+            logger.warning(
+                "AI provider attempt failed error=%s stream_started=%s attempt=%s max_attempts=%s "
+                "retry_in_seconds=%.3f",
+                error,
+                stream_started,
+                attempt,
+                max_attempts,
+                delay,
+            )
+            yield ProviderRetry(
+                f"{error.user_message or 'The AI provider failed.'} Retrying in {math.ceil(delay)} s "
+                f"(attempt {attempt + 1} of {max_attempts})."
+            )
+            if delay > 0:
+                await asyncio.sleep(delay)
 
     async def _stream_attempt(
         self,
@@ -474,6 +481,7 @@ class OpenAiCompatibleProvider:
                 raise ProviderError.for_user(
                     f"The AI provider returned HTTP {response.status_code}. Error ID: {error_id}.",
                     retryable=response.status_code in {408, 429} or response.status_code >= 500,
+                    retry_after=_retry_after_seconds(response.headers.get("retry-after")),
                 )
 
             partial_calls: dict[int, _PartialToolCall] = {}

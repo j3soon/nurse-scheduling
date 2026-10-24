@@ -27,7 +27,6 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, TypeVar
-from uuid import uuid4
 
 from fastapi import HTTPException
 from ruamel.yaml.error import YAMLError
@@ -48,7 +47,7 @@ from .history import RECOVERY_UNAVAILABLE, EntryRow, RunKind, RunStatus
 from .lifecycle import AgentRun, RunSnapshot, SessionRuns
 from .optimizer import OptimizerArtifact, SessionOptimizer
 from .optimizer_tool import execute_optimizer_tool
-from .provider import ChatMessage, ProviderError, ResumableProvider, TokenUsage, ToolCapableChatProvider
+from .provider import ChatMessage, ProviderError, TokenUsage, ToolCapableChatProvider
 from .sandbox import SandboxError, SandboxFactory
 from .session_event_projection import RunEvents, RunOutput
 from .session_event_stream import SessionEvent, SessionEventStream
@@ -645,34 +644,14 @@ class AgentSession:
         messages: Sequence[ChatMessage],
         artifact: OptimizerArtifact | None,
         runtime: SessionRuntime,
-        run: AgentRun,
         output: RunOutput,
         events: RunEvents,
         context_chars: int,
     ) -> None:
         """Execute the agent and await workspace cleanup before returning."""
-
-        async def wait_for_retry(error: ProviderError) -> None:
-            run.retry_id = str(uuid4())
-            run.retry_ready.clear()
-            events.emit(
-                {"type": "provider_retry", "retry_id": run.retry_id, "message": error.user_message or PROVIDER_ERROR}
-            )
-            try:
-                # The wait holds a shared run slot and a live sandbox, so an unanswered one fails as before.
-                async with asyncio.timeout(runtime.settings.provider_manual_retry_timeout_seconds):
-                    await run.retry_ready.wait()
-            except TimeoutError:
-                raise error
-            finally:
-                run.retry_id = None
-            events.emit(
-                {"type": "provider_retry", "retry_id": None, "message": "Retrying the current provider request."}
-            )
-
         async with runtime.concurrency_limit:
             agent_events = run_workspace(
-                ResumableProvider(runtime.provider, wait_for_retry),
+                runtime.provider,
                 runtime.sandbox_factory,
                 snapshot.schedule_yaml,
                 messages,
@@ -910,7 +889,7 @@ class AgentSession:
                 events,
                 "optimizer" if background else "question",
             )
-            await self._execute_run(snapshot, messages, artifact, runtime, run, output, events, context_chars)
+            await self._execute_run(snapshot, messages, artifact, runtime, output, events, context_chars)
             run_entries = [run_entries[0], *self.agent.state.messages]
             completion = self._commit_run(run, snapshot, run_entries, output, store)
             outcome = RunOutcome("completed" if completion.run_saved else "stale", completion=completion)

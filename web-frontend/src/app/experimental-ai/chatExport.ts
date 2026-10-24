@@ -43,7 +43,6 @@ export interface ChatExportMessage {
   activity?: ActivityEntry[];
   status?: 'pending' | 'failed' | 'stopped';
   failureReason?: string;
-  providerRetry?: { id: string; message: string };
   responseStartedAt?: number;
   responseCompletedAt?: number;
 }

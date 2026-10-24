@@ -104,14 +104,17 @@ was answering. Use <kbd>Ctrl</kbd>+<kbd>Z</kbd> to restore them.
 
 ## Reconnect or retry
 
-If the model provider has a temporary failure, the run waits and offers
-**Retry provider request**. This retries the current model request and keeps completed
-tool results and files. It does not rerun completed commands or optimizer submissions.
-Partial text remains visible and is supplied as context for the continuation.
-The continuation can differ from what the interrupted request would have generated.
-**Stop**, the retry time limit (10 minutes by default), the run deadline, or a service
-restart ends this wait. When the limit passes, the turn fails with the provider error.
-A service restart cannot restore the live sandbox. Other failures still end the run.
+If the model provider has a temporary failure, the assistant retries the current
+model request automatically. A notice in the chat shows each retry and its delay.
+Retries keep completed tool results and files. They do not rerun completed commands
+or optimizer submissions. Partial text remains visible and is supplied as context
+for the continuation. The continuation can differ from what the interrupted request
+would have generated.
+
+If the provider still fails after five attempts by default, or after two minutes,
+the response fails with the provider error. Earlier answers stay in the conversation,
+and the AI sees that this response did not finish. To continue, send a new message,
+such as "Continue". Files from the failed response are not kept.
 
 The assistant continues working if the browser loses its connection or the phone
 sleeps. The chat reconnects automatically and recovers the complete saved answer.

@@ -41,7 +41,7 @@ from nurse_scheduling.ai import recovery as recovery_module
 from nurse_scheduling.ai.agent_session import BACKGROUND_RECOVERY_ERROR, RECOVERY_SAVE_WARNING
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.history import ChatHistory, _insert_entries
-from nurse_scheduling.ai.provider import ProviderError, ReasoningDelta, TextDelta, TokenUsage
+from nurse_scheduling.ai.provider import ProviderError, ProviderRetry, ReasoningDelta, TextDelta, TokenUsage
 from nurse_scheduling.ai.recovery import SessionRecovery, _event_rows
 from nurse_scheduling.ai.session_event_stream import SessionEvent, SessionEventStream, fold_recovery
 from nurse_scheduling.ai.sessions import SessionStore
@@ -1406,54 +1406,25 @@ def test_postgres_restored_conversation_matches_the_live_conversation(postgres_h
     assert asyncio.run(restarted()) == expected
 
 
-@pytest.mark.parametrize("restart", [False, True])
-def test_postgres_provider_retry_replays_its_boundary_and_preserves_outcome(postgres_history, restart):
+def test_postgres_saves_provider_retry_notices_and_the_failed_run(postgres_history):
+    notice = "The AI provider timed out. Retrying in 2 s (attempt 2 of 5)."
     error = ProviderError.for_user("The AI provider timed out.", retryable=True)
-    provider = basic.ScriptedToolProvider(basic.rename_call(), [TextDelta("Partial. "), error], [TextDelta("Done.")])
+    provider = basic.ScriptedToolProvider(basic.rename_call(), [ProviderRetry(notice), TextDelta("Partial. "), error])
     settings = basic.make_settings(history_postgres_url="test", max_schedule_bytes=basic.SCHEDULE_BYTE_LIMIT)
 
     async def exercise():
         app = basic.create_test_app(settings=settings, provider=provider, sandbox_factory=basic.rename_factory())
         async with serving(app) as client:
             session = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
-            run = (
-                await client.post(
-                    f"/sessions/{session}/messages", json={"message": "Rename P1.", "message_id": "retry-question"}
-                )
-            ).json()["run_id"]
-            owner = client.cookies[basic.OWNER_COOKIE]
-            frames = await read_events(app, session, owner, until="provider_retry")
-            retry_id = frames[-1][2]["retry_id"]
+            await client.post(f"/sessions/{session}/messages", json={"message": "Rename P1."})
             await app.state.recovery.flush(session)
-            saved = await asyncio.to_thread(postgres_history.export_snapshot, session)
-            assert any(
-                event["type"] == "provider_retry" and event["data"]["retry_id"] == retry_id for event in saved["events"]
-            )
-            if not restart:
-                assert (await client.post(f"/sessions/{session}/runs/{run}/retry/{retry_id}")).status_code == 202
-                await read_events(app, session, owner, cursor=frames[-1][0])
-                async with asyncio.timeout(5):
-                    while app.state.runs.busy(session):
-                        await asyncio.sleep(0)
-            return session, run, retry_id, owner
+            return session
 
-    session, run, retry_id, owner = asyncio.run(exercise())
-    if restart:
-
-        async def restore():
-            app = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
-            async with serving(app, owner) as client:
-                assert (await client.get(f"/sessions/{session}")).status_code == 200
-                assert (await client.post(f"/sessions/{session}/runs/{run}/retry/{retry_id}")).status_code == 409
-                frames = await read_events(app, session, owner, until="session_reset")
-                assert frames[-1][2]["events"][-1]["type"] == "error"
-
-        asyncio.run(restore())
-    saved = postgres_history.export_snapshot(session)
-    assert len(saved["runs"]) == 1
-    assert saved["runs"][0]["status"] == ("failed" if restart else "completed")
+    saved = postgres_history.export_snapshot(asyncio.run(exercise()))
+    assert [run["status"] for run in saved["runs"]] == ["failed"]
+    assert [event["data"]["message"] for event in saved["events"] if event["type"] == "provider_retry"] == [notice]
+    assert saved["events"][-1]["type"] == "error"
     assert sum(event["type"] == "tool" for event in saved["events"]) == 1
-    assert len(provider.calls) == (2 if restart else 3)
 
 
 def test_postgres_saves_each_message_before_its_run_ends(postgres_history):
