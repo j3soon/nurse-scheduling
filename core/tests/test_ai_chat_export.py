@@ -121,6 +121,25 @@ def test_optimizer_error_continuations_cannot_add_export_fields(format):
         assert "- **Outcome:**" not in rendered and "- **Backend version:**" not in rendered
 
 
+def test_saved_activity_keeps_the_live_view_model_input_and_app_notice_labels():
+    snapshot = saved_case("default")
+    run_id = next(event for event in snapshot["events"] if event["type"] == "run_start")["data"]["run_id"]
+    index = next(i for i, event in enumerate(snapshot["events"]) if event["type"] == "tool")
+    retry = {**snapshot["events"][index], "type": "provider_retry", "data": {"run_id": run_id, "message": "Retrying."}}
+    snapshot["events"].insert(index, retry)
+    html = build_saved_chat_export(snapshot, "html")
+    markdown = build_saved_chat_export(snapshot, "markdown")
+    # A provider retry notice is an app notice in both formats.
+    assert (
+        '<div class="activity-entry app-notice"><details class="activity-details">\n            <summary>App notice</summary>'
+        in html
+    )
+    assert "### App notice\n\n```text\nRetrying.\n```" in markdown
+    assert '<div class="activity-entry model-input">' in html
+    assert '<p class="activity-status">Validation result sent to AI.</p>' in html
+    assert '<p class="activity-status">App notice. Not sent to AI.</p>' in html
+
+
 def test_response_renderer_links_urls_but_not_filenames_or_references():
     html = render_markdown_html(
         "Type read_file('/workspace/results/icon128.png'), compare /reference/schema-core.md and "

@@ -44,12 +44,13 @@ preferences: []
 const CHECK = 'Trusted schedule check after this command:\nThe candidate passed trusted server-side validation.';
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 
-async function mockChangingBackend(page: Page, holdAnswer = false) {
+async function mockChangingBackend(page: Page, holdAnswer = false, retryNotice = false) {
   const state = { sessionSchedule: '', refreshed: [] as string[], finishAnswer: () => {}, messages: 0, stops: 0 };
   const baseURL = test.info().project.use.baseURL;
   if (!baseURL) throw new Error('Playwright baseURL is required for the AI backend mock.');
   const allowedOrigin = new URL(baseURL).origin;
   const journal: string[] = [];
+  const accepted = new Map<string, string>();
   let wakeReader: (() => void) | undefined;
   const wake = () => {
     wakeReader?.();
@@ -111,12 +112,24 @@ async function mockChangingBackend(page: Page, holdAnswer = false) {
       await route.fulfill({ status: 204, headers: corsHeaders });
       return;
     }
+    if (request.url().endsWith('/uploads')) {
+      await route.fulfill({ json: [], headers: corsHeaders });
+      return;
+    }
+    const messageId = (request.postDataJSON() as { message_id: string }).message_id;
+    const previous = accepted.get(messageId);
+    if (previous) {
+      await route.fulfill({ status: 202, json: { run_id: previous }, headers: corsHeaders });
+      return;
+    }
     state.messages++;
     const runId = `answer-${journal.length}`;
+    accepted.set(messageId, runId);
     const publish = (type: string, data: Record<string, unknown>) => {
       journal.push(`id: ${journal.length + 1}\nevent: ${type}\ndata: ${JSON.stringify({ ...data, run_id: runId })}\n\n`);
     };
     publish('run_start', { trigger: 'user' });
+    if (retryNotice) publish('model_input', { system: 'Synthetic chat instructions', messages: [{ kind: 'question', content: 'Add a nurse.' }] });
     publish('reasoning', { text: 'The ward has one nurse, so I will add another.' });
     publish('tool', {
       name: 'bash', arguments: '{"command":"python3 /tmp/edit.py"}', result: `exit_code: 0\n\n${CHECK}`, ok: true,
@@ -134,7 +147,10 @@ async function mockChangingBackend(page: Page, holdAnswer = false) {
       publish('done', {});
       wake();
     };
-    if (holdAnswer) state.finishAnswer = finish;
+    if (retryNotice) {
+      publish('provider_retry', { message: 'The AI provider timed out. Retrying in 2 s (attempt 2 of 5).' });
+      state.finishAnswer = finish;
+    } else if (holdAnswer) state.finishAnswer = finish;
     else finish();
     await route.fulfill({ status: 202, contentType: 'application/json', headers: corsHeaders, body: JSON.stringify({ run_id: runId }) });
     wake();
@@ -142,6 +158,25 @@ async function mockChangingBackend(page: Page, holdAnswer = false) {
 
   return state;
 }
+
+test('keeps an automatic provider retry notice in the same run across reload', async ({ page }) => {
+  const state = await mockChangingBackend(page, false, true);
+  await page.goto('/experimental-ai');
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Add a nurse.');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  const notice = page.getByText('The AI provider timed out. Retrying in 2 s (attempt 2 of 5).');
+  await expect(notice).toBeVisible();
+  await page.reload();
+  await expect(notice).toBeVisible();
+  await expect(page.getByRole('button', { name: /retry/i })).toHaveCount(0);
+  state.finishAnswer();
+  await expect(page.getByText('Applied to your schedule')).toBeVisible();
+  expect(state.messages).toBe(1);
+  await page.goto('/people');
+  await expect(page.getByText('1. Proposed Nurse')).toBeVisible();
+  await page.keyboard.press('Control+z');
+  await expect(page.getByText('1. Proposed Nurse')).toBeHidden();
+});
 
 test('applies the schedule a response finishes with as one undoable step', async ({ page }) => {
   await mockChangingBackend(page);
@@ -155,6 +190,10 @@ test('applies the schedule a response finishes with as one undoable step', async
   await page.getByText('Schedule check passed').click();
   await expect(page.getByText('The candidate passed trusted server-side validation.').last()).toBeVisible();
   await expect(page.getByText('schedule edit')).toBeVisible();
+  await page.getByText('bash', { exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Tool arguments' }).getByRole('heading', { name: 'Command' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Tool result' }).getByRole('heading', { name: 'Result' })).toBeVisible();
+  await page.getByLabel('Chat messages').screenshot({ path: '../artifacts/tool-command-result.png' });
   await expect(page.getByRole('button', { name: 'Approve' })).toBeHidden();
 
   await page.goto('/people');
@@ -256,7 +295,7 @@ test('keeps reasoning and tool detail out of the way until asked for', async ({ 
   await page.getByRole('checkbox', { name: 'Show reasoning' }).uncheck();
   await page.getByRole('checkbox', { name: 'Show tool activity' }).uncheck();
   await expect(page.getByText(/^Reasoning ·/)).toBeHidden();
-  await expect(page.getByText('Schedule check passed')).toBeHidden();
+  await expect(page.getByText('Schedule check passed')).toBeVisible();
   // The applied change stays visible, because it changed the user's schedule.
   await expect(page.getByText('Applied to your schedule')).toBeVisible();
   await page.reload();

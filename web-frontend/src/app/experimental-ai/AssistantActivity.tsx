@@ -75,7 +75,8 @@ export interface CompactionActivity {
 }
 
 export type ActivityEntry =
-  | ResponseEntry | ReasoningEntry | ToolEntry | ScheduleChangeEntry | ScheduleCheckEntry | ScheduleAppliedEntry | CompactionActivity;
+  | { kind: 'notice'; text: string } | ResponseEntry | ReasoningEntry | ToolEntry | ScheduleChangeEntry | ScheduleCheckEntry | ScheduleAppliedEntry
+  | CompactionActivity;
 
 // Long output is revealed a chunk at a time, so an expanded row never floods the page.
 const CHUNK_CHARS = 2000;
@@ -105,8 +106,18 @@ function ChunkedText({ text, label }: { text: string; label: string }) {
 function ToolBody({ entry }: { entry: ToolEntry }) {
   return (
     <div className="space-y-2">
-      {entry.arguments && entry.arguments !== '{}' && <ChunkedText text={entry.arguments} label="arguments" />}
-      {entry.result && <ChunkedText text={entry.result} label="output" />}
+      {entry.arguments && entry.arguments !== '{}' && (
+        <section aria-label="Tool arguments" className="rounded border border-gray-200 bg-white p-2">
+          <h3 className="mb-1 font-semibold text-gray-700">{entry.name === 'bash' ? 'Command' : 'Arguments'}</h3>
+          <ChunkedText text={entry.arguments} label="arguments" />
+        </section>
+      )}
+      {entry.result && (
+        <section aria-label="Tool result" className="rounded border border-gray-200 bg-white p-2">
+          <h3 className="mb-1 font-semibold text-gray-700">Result</h3>
+          <ChunkedText text={entry.result} label="output" />
+        </section>
+      )}
       {entry.state === 'interrupted' && !entry.result && (
         <p className="text-xs text-red-700">The command did not return before the turn ended.</p>
       )}
@@ -140,7 +151,7 @@ export function AssistantActivity({ entries }: { entries: ActivityEntry[] }) {
   return (
     <div aria-label="Assistant activity">
       {entries.map((entry, index) => (
-        <div key={index}>
+        <div key={index} className={entry.kind === 'schedule-check' ? 'ml-auto max-w-[95%]' : entry.kind === 'schedule-applied' || entry.kind === 'notice' ? 'mx-auto max-w-[95%]' : undefined}>
           {entry.kind === 'schedule-applied' && entry.notice && (
             <p role="status" className="my-2 rounded border border-amber-200 bg-amber-50 p-2 text-sm text-amber-900">
               {entry.notice}
@@ -149,11 +160,15 @@ export function AssistantActivity({ entries }: { entries: ActivityEntry[] }) {
           {index > 0 && (entry.kind === 'response' || entries[index - 1].kind === 'response') && (
             <hr className="my-3 border-gray-200" />
           )}
-          {entry.kind === 'response' ? (
+          {entry.kind === 'notice' ? (
+            <p role="status" className="my-2 text-sm text-amber-800">{entry.text}</p>
+          ) : entry.kind === 'response' ? (
             <AssistantMarkdown content={entry.text} />
           ) : (
-            <details className={`text-xs ${activityColor(entry)}`}>
+            <details open={entry.kind === 'schedule-check' && !entry.ok ? true : undefined} className={`text-xs ${activityColor(entry)}`}>
               <summary className="cursor-pointer select-none py-0.5 hover:text-gray-700">{activitySummary(entry)}</summary>
+              {entry.kind === 'schedule-check' && <p>Validation result sent to AI.</p>}
+              {entry.kind === 'schedule-applied' && <p>App notice. Not sent to AI.</p>}
               <div className="mt-1 rounded bg-gray-50 p-2">
                 {entry.kind === 'tool'
                   ? <ToolBody entry={entry} />

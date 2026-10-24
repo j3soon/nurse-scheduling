@@ -121,6 +121,7 @@ def case_digest(case: EvalCase) -> str:
         "optimizer_download_file",
         "staffing_contract",
         "provider_timeout_after_text",
+        "rejected_write_turn",
     ):
         if not fields[optional]:
             fields.pop(optional)
@@ -140,6 +141,12 @@ def case_digest(case: EvalCase) -> str:
 
         fields["provider_timeout_fixture_sha256"] = hashlib.sha256(
             inspect.getsource(TimeoutOnceProvider).encode()
+        ).hexdigest()
+    if case.rejected_write_turn:
+        from .provider_fixtures import RejectedWriteOnceProvider
+
+        fields["rejected_write_fixture_sha256"] = hashlib.sha256(
+            inspect.getsource(RejectedWriteOnceProvider).encode()
         ).hexdigest()
     if case.optimizer_completion:
         from nurse_scheduling.ai.result_context import _project_context
@@ -204,6 +211,10 @@ def case_digest(case: EvalCase) -> str:
         from .grading import _check_vm_clock_queries
 
         fields["clock_query_oracle_sha256"] = oracle_sha256(_check_vm_clock_queries)
+    if case.semantic_check == "retained-analysis":
+        from .grading import _check_retained_analysis
+
+        fields["retained_analysis_oracle_sha256"] = oracle_sha256(_check_retained_analysis)
     if case.semantic_check == "qualified-staffing":
         from nurse_scheduling.preference_types import staffing_expression
 
@@ -226,7 +237,9 @@ def case_digest(case: EvalCase) -> str:
                 helper_names.add("inspect_pdf.py")
             elif attachment.media_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
                 helper_names.add("inspect_xlsx.py")
-    if "xlsx-overview" in case.tags:
+    if {"xlsx-overview", "xlsx-summary"} & set(case.tags):
+        helper_names.add("inspect_xlsx.py")
+    if "xlsx-comments" in case.tags:
         helper_names.add("inspect_xlsx.py")
     if "pdf-find" in case.tags:
         helper_names.add("inspect_pdf.py")
@@ -279,6 +292,8 @@ def validate_prompt_evidence(
             raise ValueError(f"Prompt step {step.id} has no benefit witness")
         for record in step.evidence:
             label = f"Prompt step {step.id} evidence"
+            if record.get("comparison_passed") is False:
+                raise ValueError(f"{label} comparison did not demonstrate a benefit")
             if record.get("infrastructure_errors") != 0:
                 raise ValueError(f"{label} is inconclusive due to infrastructure errors")
             if not isinstance(record.get("model"), str) or not record["model"]:
@@ -312,6 +327,25 @@ def validate_prompt_evidence(
                 # A targeted extension need not rerun controls already verified in
                 # a smaller paired batch. Each observation still needs 3–10 trials.
                 _receipt_counts(observation, label)
+                if observation is not record and observation.get("cost_ratio", 1) > 1:
+                    raise ValueError(f"{label} control has a cost regression")
+            if usage := record.get("helper_usage"):
+                from nurse_scheduling.ai.workspace import REFERENCE_ATTACHMENT_TOOLS
+
+                path = REFERENCE_ATTACHMENT_TOOLS.get(f"/reference/tools/{usage['helper']}")
+                if path is None or hashlib.sha256(path.read_text(encoding="utf-8").encode()).hexdigest() != usage.get(
+                    "sha256"
+                ):
+                    raise ValueError(f"{label} has stale helper inputs")
+                if not usage.get("cases") or not isinstance(usage.get("flags"), list):
+                    raise ValueError(f"{label} needs helper-use cases and flags")
+                observations = {item["case"]: item for item in (record, *record.get("controls", []))}
+                for item in usage["cases"]:
+                    if item.get("case") not in observations:
+                        raise ValueError(f"{label} names an unlinked helper-use testcase")
+                    _, _, total = _receipt_counts(item, label)
+                    if total != _receipt_counts(observations[item["case"]], label)[2]:
+                        raise ValueError(f"{label} has mismatched helper-use repetitions")
 
 
 def _receipt_counts(record: dict[str, Any], label: str) -> tuple[int, int, int]:

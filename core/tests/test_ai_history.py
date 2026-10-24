@@ -46,7 +46,14 @@ from nurse_scheduling.ai.agent_session import BACKGROUND_RECOVERY_ERROR, RECOVER
 from nurse_scheduling.ai.chat_export import build_saved_chat_export
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.history import ChatHistory, _insert_entries
-from nurse_scheduling.ai.provider import ProviderError, ReasoningDelta, TextDelta, TokenUsage, ToolCallRequest
+from nurse_scheduling.ai.provider import (
+    ProviderError,
+    ProviderRetry,
+    ReasoningDelta,
+    TextDelta,
+    TokenUsage,
+    ToolCallRequest,
+)
 from nurse_scheduling.ai.recovery import SessionRecovery, _event_rows
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxFactory
 from nurse_scheduling.ai.session_event_stream import SessionEvent, SessionEventStream, fold_recovery
@@ -1757,6 +1764,31 @@ def test_postgres_restored_conversation_matches_the_live_conversation(postgres_h
             return list(restored.transcript), restored.dropped_entries, restored.dropped_history_messages
 
     assert asyncio.run(restarted()) == expected
+
+
+def test_postgres_saves_provider_retry_notices_and_the_failed_run(postgres_history):
+    notice = "The AI provider timed out. Retrying in 2 s (attempt 2 of 5)."
+    error = ProviderError.for_user("The AI provider timed out.")
+    provider = basic.ScriptedToolProvider(basic.rename_call(), [ProviderRetry(notice), TextDelta("Partial. "), error])
+    settings = basic.make_settings(history_postgres_url="test", max_schedule_bytes=basic.SCHEDULE_BYTE_LIMIT)
+
+    async def exercise():
+        app = basic.create_test_app(settings=settings, provider=provider, sandbox_factory=basic.rename_factory())
+        async with serving(app) as client:
+            session = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            await client.post(f"/sessions/{session}/messages", json={"message": "Rename P1."})
+            while app.state.runs.busy(session):
+                await asyncio.sleep(0.01)
+            await app.state.recovery.flush(session)
+            return session
+
+    session_id = asyncio.run(exercise())
+    with postgres_history._connect() as connection:
+        saved = postgres_history.export_snapshot(connection, session_id)
+    assert [run["status"] for run in saved["runs"]] == ["failed"]
+    assert [event["data"]["message"] for event in saved["events"] if event["type"] == "provider_retry"] == [notice]
+    assert saved["events"][-1]["type"] == "error"
+    assert sum(event["type"] == "tool" for event in saved["events"]) == 1
 
 
 def test_postgres_saves_each_message_before_its_run_ends(postgres_history):

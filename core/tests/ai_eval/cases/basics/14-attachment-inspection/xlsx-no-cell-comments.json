@@ -1,0 +1,23 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "id": "xlsx-no-cell-comments",
+  "fixture": "small-clinic",
+  "attachments": [
+    "workbook-intake-xlsx"
+  ],
+  "expect_proposal": false,
+  "question": "Read the stored cell comments in Roster!A1:F5 of the attached XLSX workbook, including comments on blank cells. Do not edit the schedule or optimize. Reply only as a JSON object with a notes array. Each array item must be an object with string fields cell and text. Use the exact stored comment text and keep cell order. Include only comments inside the requested range.",
+  "answer_json": {
+    "notes": []
+  },
+  "tool_usage": {
+    "forbidden": [
+      "optimizer"
+    ]
+  },
+  "tags": [
+    "xlsx-comments"
+  ],
+  "note": "Synthetic legacy comments. Blank cells can carry comments. The witness also has a note outside the requested range; the control has no comments."
+}

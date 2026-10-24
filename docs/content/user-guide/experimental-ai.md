@@ -104,6 +104,18 @@ was answering. Use <kbd>Ctrl</kbd>+<kbd>Z</kbd> to restore them.
 
 ## Reconnect or retry
 
+If the model provider has a temporary failure, the assistant retries the current
+model request automatically. A notice in the chat shows each retry and its delay.
+Retries keep completed tool results and files. They do not rerun completed commands
+or optimizer submissions. Partial text remains visible and is supplied as context
+for the continuation. The continuation can differ from what the interrupted request
+would have generated.
+
+If the provider still fails after five attempts by default, or after two minutes,
+the response fails with the provider error. Earlier answers stay in the conversation,
+and the AI sees that this response did not finish. To continue, send a new message,
+such as "Continue". Files from the failed response are not kept.
+
 The assistant continues working if the browser loses its connection or the phone
 sleeps. The chat reconnects automatically and recovers the complete saved answer.
 Reloading the same tab also resumes an unfinished request. **Stop** requests
@@ -114,10 +126,12 @@ You can switch to another app page while the assistant answers. Returning to
 chat resumes the conversation. The app still warns before leaving with unsent
 text or selected files.
 
-A failed turn keeps its original question and provisional output visible. **Retry**
-starts a new attempt. Reconnecting an accepted request keeps the same message ID,
-so it does not send the question to the model twice. Failed and stopped output is
-excluded from the model's conversation context.
+A failed turn keeps its original question and provisional output visible. To
+continue, send a new message. If the files of a question did not finish uploading,
+the question was not sent. Attach the files again and send the question. Reconnecting
+an accepted request keeps the same message ID, so it does not send the question to
+the model twice. Failed and stopped output is excluded from the model's conversation
+context.
 
 Recovery lasts until the session expires, normally after 30 days of inactivity.
 Hosted deployments use PostgreSQL to

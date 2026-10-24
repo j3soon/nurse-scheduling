@@ -52,6 +52,7 @@ from .provider import (
     ChatMessage,
     ProviderCall,
     ProviderContextOverflowError,
+    ProviderRetry,
     ReasoningDelta,
     ReasoningReplay,
     ResponseEnd,
@@ -167,7 +168,7 @@ async def agent_loop(
                         )
                     elif isinstance(event, ReasoningReplay):
                         replay = event
-                    elif isinstance(event, (TokenUsage, ProviderCall)):
+                    elif isinstance(event, (TokenUsage, ProviderCall, ProviderRetry)):
                         if isinstance(event, TokenUsage):
                             usage = asdict(event)
                             request_tokens = event.prompt_tokens + event.completion_tokens

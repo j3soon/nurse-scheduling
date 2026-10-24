@@ -1,0 +1,30 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "fixture": "new-schedule",
+  "attachments": [
+    "completed-roster-xlsx"
+  ],
+  "expect_proposal": false,
+  "tool_usage": {
+    "forbidden": [
+      "optimizer"
+    ],
+    "required": [
+      "bash"
+    ]
+  },
+  "tags": [
+    "workbook-policy-evidence"
+  ],
+  "id": "completed-roster-unknown-policy",
+  "question": "I want a new schedule similar to this completed roster. What hard limit on consecutive working days and what shift eligibility rules does the workbook establish? Explain what we know before building anything. Do not change the schedule yet. Reply only as JSON with maxConsecutiveWorkingDays, eligibility and explanation (one short sentence). Use null for each policy the workbook does not establish.",
+  "note": "This testcase is mostly AI generated. Each person works one shift code and at most two consecutive days in this example. These observations do not establish a hard two-day limit or exclusive eligibility pools. Inspect and clarify rather than inventing policy.",
+  "answer_json": {
+    "maxConsecutiveWorkingDays": null,
+    "eligibility": null
+  },
+  "answer_matches": [
+    "\"explanation\"\\s*:\\s*\"[^\"\\n]+\""
+  ]
+}

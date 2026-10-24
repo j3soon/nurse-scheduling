@@ -23,7 +23,9 @@ import asyncio
 import base64
 import json
 import logging
+import math
 import re
+import time
 from collections.abc import AsyncIterator, Sequence
 from contextlib import aclosing
 from copy import copy
@@ -54,6 +56,8 @@ MAX_PROVIDER_ERROR_EXCERPT_CHARS = 1_000
 MAX_PROVIDER_CONTENT_TYPE_CHARS = 100
 PROVIDER_ERROR_TRUNCATION_MARKER = "...[truncated]"
 SUPPORTED_FINISH_REASONS = frozenset({"stop", "end", "length", "tool_calls", "function_call"})
+# A retry holds a shared run slot and a live sandbox, so an outage ends the run after this time.
+PROVIDER_RETRY_BUDGET_SECONDS = 120.0
 
 
 class TextContentPart(TypedDict):
@@ -182,6 +186,13 @@ class ProviderAttempt:
 
 
 @dataclass(frozen=True)
+class ProviderRetry:
+    """A failed attempt that the provider retries automatically after a delay."""
+
+    message: str
+
+
+@dataclass(frozen=True)
 class ProviderCall:
     """One billable HTTP attempt, including attempts interrupted before usage arrives."""
 
@@ -209,6 +220,7 @@ ChatStreamEvent = (
     | ResponseEnd
     | TokenUsage
     | ProviderAttempt
+    | ProviderRetry
     | ProviderCall
     | ProviderResponseMetadata
 )
@@ -490,7 +502,9 @@ class OpenAiCompatibleProvider:
         answer: list[str] = []
         text_chars = 0
         reasoning_chars = 0
-        for attempt in range(1, self._settings.provider_max_attempts + 1):
+        max_attempts = self._settings.provider_max_attempts
+        retry_deadline: float | None = None
+        for attempt in range(1, max_attempts + 1):
             estimate = estimate_context_tokens(payload["messages"], tools or [])
             used_tokens = max(estimate, (self._context_used_tokens or 0) + max(0, estimate - original_estimate))
             self._apply_output_limit(payload, used_tokens)
@@ -503,7 +517,17 @@ class OpenAiCompatibleProvider:
                 # Keep tool calls private until the HTTP attempt also closes cleanly.
                 completed: list[ToolCallRequest | ResponseEnd | ReasoningReplay] = []
                 async with aclosing(self._stream_attempt(timeout, headers, payload)) as events:
-                    async for event in events:
+                    while True:
+                        try:
+                            remaining = None if retry_deadline is None else retry_deadline - time.monotonic()
+                            if remaining is not None and remaining <= 0:
+                                raise TimeoutError
+                            # Scope cancellation to receiving an event. A yielded event's
+                            # consumer must not inherit this provider deadline.
+                            async with asyncio.timeout(remaining):
+                                event = await anext(events)
+                        except StopAsyncIteration:
+                            break
                         if isinstance(event, ProviderResponseMetadata):
                             updated = replace(
                                 call,
@@ -540,7 +564,7 @@ class OpenAiCompatibleProvider:
                 if self._include_costs:
                     yield replace(call, status="reported" if call.cost_usd is not None else "unavailable")
                 return
-            except (ProviderError, httpx.HTTPError) as exc:
+            except (ProviderError, httpx.HTTPError, TimeoutError) as exc:
                 if self._include_costs:
                     yield replace(call, status="reported" if call.cost_usd is not None else "unavailable")
                 if isinstance(exc, ProviderError) and not isinstance(exc, _RetryableProviderError):
@@ -550,21 +574,30 @@ class OpenAiCompatibleProvider:
                     retry_headers = exc.headers
                 else:
                     message = "The AI provider is unavailable."
-                    if isinstance(exc, httpx.TimeoutException):
+                    if isinstance(exc, (httpx.TimeoutException, TimeoutError)):
                         message = (
                             "The AI provider timed out while streaming the response."
                             if stream_started
                             else "The AI provider timed out before starting the response."
                         )
                     failure = ProviderError.for_user(message)
-                    if not isinstance(exc, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)):
+                    if not isinstance(
+                        exc, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError, TimeoutError)
+                    ):
                         raise failure from exc
                     retry_headers = httpx.Headers()
-                if attempt == self._settings.provider_max_attempts:
+                now = time.monotonic()
+                if retry_deadline is None:
+                    retry_deadline = now + PROVIDER_RETRY_BUDGET_SECONDS
+                delay = (
+                    retry_delay(retry_headers, attempt, self._settings.provider_retry_backoff_seconds)
+                    if attempt < max_attempts
+                    else 0.0
+                )
+                if attempt == max_attempts or (delay is not None and now + delay > retry_deadline):
                     if failure is exc:
                         raise
                     raise failure from exc
-                delay = retry_delay(retry_headers, attempt, self._settings.provider_retry_backoff_seconds)
                 if delay is None:
                     raise ProviderError.for_user(
                         f"The AI provider requested a retry delay above {MAX_RETRY_DELAY_SECONDS:g} seconds. "
@@ -585,9 +618,13 @@ class OpenAiCompatibleProvider:
                     "AI provider transient failure stream_started=%s attempt=%s max_attempts=%s retry_in_seconds=%.3f",
                     stream_started,
                     attempt,
-                    self._settings.provider_max_attempts,
+                    max_attempts,
                     delay,
                     exc_info=True,
+                )
+                yield ProviderRetry(
+                    f"{failure.user_message or 'The AI provider failed.'} Retrying in {math.ceil(delay)} s "
+                    f"(attempt {attempt + 1} of {max_attempts})."
                 )
                 if delay > 0:
                     await asyncio.sleep(delay)
@@ -647,6 +684,7 @@ class OpenAiCompatibleProvider:
                 yield ProviderResponseMetadata(provider_call_id=response.headers.get("x-litellm-call-id"))
             finish_reason: str | None = None
             done_received = False
+            text_chars = reasoning_chars = 0
             async for line in response.aiter_lines():
                 if not line.startswith("data:"):
                     continue
@@ -705,10 +743,12 @@ class OpenAiCompatibleProvider:
                 except (json.JSONDecodeError, KeyError, TypeError) as exc:
                     raise ProviderError.for_user("The AI provider returned an invalid stream.") from exc
                 if isinstance(content, str) and content:
+                    text_chars += len(content)
                     yield TextDelta(content)
                 # Providers name this field either way, and llama.cpp uses the first.
                 reasoning = delta.get("reasoning_content") or delta.get("reasoning") or delta.get("reasoning_text")
                 if isinstance(reasoning, str) and reasoning:
+                    reasoning_chars += len(reasoning)
                     yield ReasoningDelta(reasoning)
                 native_chars += _merge_reasoning(native_reasoning, delta)
                 if native_chars > MAX_RESPONSE_REASONING_CHARS:
@@ -718,6 +758,14 @@ class OpenAiCompatibleProvider:
                 _merge_tool_call_fragments(partial_calls, delta.get("tool_calls"))
             # Pi checks completion before releasing tools. Accept [DONE] for endpoints
             # that omit finish_reason, but never infer completion from HTTP EOF alone.
+            logger.info(
+                "AI provider stream ended finish_reason=%s done_received=%s text_chars=%s reasoning_chars=%s tool_calls=%s",
+                finish_reason,
+                done_received,
+                text_chars,
+                reasoning_chars,
+                len(partial_calls),
+            )
             if finish_reason is None and not done_received:
                 raise _RetryableProviderError.for_user("The AI provider stream ended before completion.")
             if finish_reason is not None and finish_reason not in SUPPORTED_FINISH_REASONS:

@@ -19,24 +19,31 @@
 
 # This test is mostly AI generated.
 
+import json
 from io import BytesIO
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 from openpyxl import Workbook
+from openpyxl.comments import Comment
 from PIL import Image
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from nurse_scheduling.ai.attachment_tools.inspect_pdf import inspect_pdf
-from nurse_scheduling.ai.attachment_tools.inspect_xlsx import inspect_workbook
+from nurse_scheduling.ai.attachment_tools.inspect_xlsx import (
+    MAX_COMMENTS,
+    MAX_TEXT_CHARS,
+    inspect_comments,
+    inspect_workbook,
+)
 
 from .ai_eval.attachment_fixtures import load_attachment_fixtures
 
 
 def test_evaluation_workbooks_preserve_stale_caches_colors_and_reproducible_bytes(tmp_path: Path):
-    names = ("formula-xlsx", "colored-xlsx")
+    names = ("formula-xlsx", "colored-xlsx", "multi-sheet-xlsx", "comment-notes-xlsx")
     attachments = load_attachment_fixtures(names)
     assert [attachment.data for attachment in attachments] == [
         attachment.data for attachment in load_attachment_fixtures(names)
@@ -246,6 +253,13 @@ def test_workbook_inspector_cli_preserves_existing_window_defaults(tmp_path, mon
         (["--range", "A1", "--max-columns", "2"], "cannot be combined"),
         (["--range", "A1", "--overview"], "cannot be combined"),
         (["--range", "First!A1", "--sheet", "Second"], "conflicts"),
+        (["--summary"], "requires --range"),
+        (["--axis", "row"], "require --summary"),
+        (["--max-groups", "1"], "require --summary"),
+        (["--summary", "--overview"], "not allowed"),
+        (["--summary", "--range", "A1", "--max-rows", "1"], "cannot be combined"),
+        (["--summary", "--range", "A1", "--max-groups", "0"], "between 1 and 1,000"),
+        (["--summary", "--range", "A1", "--max-groups", "1001"], "between 1 and 1,000"),
     ],
 )
 def test_workbook_inspector_cli_rejects_invalid_or_conflicting_ranges(monkeypatch, capsys, options, error):
@@ -527,3 +541,315 @@ def test_workbook_intake_fixture_preserves_ambiguous_codes_and_cell_colors():
     assert sheet["C4"].fill.fgColor.rgb == "00FFFF00"
     assert sheet["D2"].fill.fgColor.rgb == "009FC5E8"
     workbook.close()
+
+
+@pytest.mark.parametrize("axis", ["all", "row", "column"])
+def test_workbook_summary_counts_styles_rows_columns_and_blanks(tmp_path: Path, axis):
+    from nurse_scheduling.ai.attachment_tools.inspect_xlsx import summarize_workbook
+
+    attachment = load_attachment_fixtures(("counting-xlsx",))[0]
+    path = tmp_path / attachment.filename
+    path.write_bytes(attachment.data)
+    result = summarize_workbook(path, cell_range="Requests!B2:AC61", axis=axis, styles=True)
+    sheet = result["sheets"][0]
+
+    def counts(summary):
+        totals = {"red": 0, "black": 0, "blank": summary["blank_cells"]}
+        for group in summary["groups"]:
+            if group["value"] is None:
+                continue
+            rgb = result["styles"][group["style"]]["font"]["color"]["value"]
+            totals["red" if rgb == "FFFF0000" else "black"] += group["count"]
+        return totals
+
+    assert counts(sheet["summary"]) == {"red": 448, "black": 896, "blank": 336}
+    assert sheet["summary"]["cells"] == 1680
+    assert sheet["summary"]["group_count"] == 5  # Two fonts crossed with two fills, plus blanks.
+    assert not sheet["summary"]["groups_truncated"]
+    if axis == "row":
+        assert sheet["by_row"][0]["row"] == 2
+        assert counts(sheet["by_row"][0]) == {"red": 8, "black": 14, "blank": 6}
+        assert len(sheet["by_row"]) == 60
+    elif axis == "column":
+        assert sheet["by_column"][0]["column"] == "B"
+        assert counts(sheet["by_column"][0]) == {"red": 16, "black": 32, "blank": 12}
+        assert len(sheet["by_column"]) == 28
+    else:
+        plain = summarize_workbook(path, cell_range="Requests!B2:AC61")["sheets"][0]["summary"]
+        assert plain["groups"] == [
+            {"type": "int", "value": 1, "count": 1344, "first_cell": "C2"},
+            {"type": "NoneType", "value": None, "count": 336, "first_cell": "B2"},
+        ]
+
+
+def test_workbook_summary_preserves_formulas_missing_caches_and_truncation(tmp_path: Path):
+    from nurse_scheduling.ai.attachment_tools.inspect_xlsx import summarize_workbook
+
+    path = tmp_path / "formula.xlsx"
+    path.write_bytes(load_attachment_fixtures(("formula-xlsx",))[0].data)
+    result = summarize_workbook(path, cell_range="'Staffing checks'!C3:C5")
+    summary = result["sheets"][0]["summary"]
+    assert summary["formula_cells"] == 3
+    assert summary["blank_cells"] == 0
+    assert [group["cached_value"] for group in summary["groups"]] == [11, 10, None]
+    assert all(group["type"] == "formula" and group["formula"].startswith("=") for group in summary["groups"])
+    limited = summarize_workbook(path, cell_range="'Staffing checks'!C3:C5", max_groups=1)["sheets"][0]["summary"]
+    assert limited["groups"] == summary["groups"][:1]
+    assert limited["groups_truncated"] and limited["group_count"] == 3
+    assert limited["cells"] == limited["formula_cells"] == 3
+
+
+def test_workbook_summary_keeps_value_types_and_empty_padding(tmp_path: Path):
+    from nurse_scheduling.ai.attachment_tools.inspect_xlsx import summarize_workbook
+
+    path = tmp_path / "types.xlsx"
+    workbook = Workbook()
+    workbook.active.append([True, 1, "1"])
+    workbook.save(path)
+    workbook.close()
+    summary = summarize_workbook(path, cell_range="A1:D2", axis="row")["sheets"][0]
+    assert [(g["type"], g["value"], g["count"]) for g in summary["summary"]["groups"] if g["value"] is not None] == [
+        ("bool", True, 1),
+        ("int", 1, 1),
+        ("str", "1", 1),
+    ]
+    assert summary["summary"]["blank_cells"] == 5
+    assert summary["by_row"][1]["cells"] == summary["by_row"][1]["blank_cells"] == 4
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"cell_range": "A1:XFD1048576"},
+        {"cell_range": "A:A"},
+        {"cell_range": "A1", "axis": "diagonal"},
+        {"cell_range": "A1", "max_groups": 0},
+        {"cell_range": "A1", "max_groups": 1001},
+        {"cell_range": "First!A1", "sheet_name": "Other"},
+    ],
+)
+def test_workbook_summary_rejects_invalid_limits_before_loading(tmp_path: Path, options):
+    from nurse_scheduling.ai.attachment_tools.inspect_xlsx import summarize_workbook
+
+    with pytest.raises(ValueError):
+        summarize_workbook(tmp_path / "absent.xlsx", **options)
+
+
+@pytest.mark.parametrize("styles", [False, True])
+def test_workbook_summary_runs_as_a_standalone_sandbox_script(tmp_path: Path, styles):
+    import json
+    import subprocess
+    import sys
+
+    from nurse_scheduling.ai.attachment_tools import inspect_xlsx
+
+    path = tmp_path / "source.xlsx"
+    path.write_bytes(load_attachment_fixtures(("counting-xlsx",))[0].data)
+    script = tmp_path / "inspect_xlsx.py"
+    script.write_bytes(Path(inspect_xlsx.__file__).read_bytes())
+    run = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            str(path),
+            "--summary",
+            "--range",
+            "Requests!B2:AC61",
+            "--axis",
+            "row",
+            "--max-groups",
+            "1",
+            *(["--styles"] if styles else []),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    result = json.loads(run.stdout)
+    assert result["sheets"][0]["by_row"][0]["blank_cells"] == 6
+    summary = result["sheets"][0]["summary"]
+    assert summary["cells"] == 1680 and summary["blank_cells"] == 336
+    assert summary["groups"][0]["count"] == (768 if styles else 1344)
+    assert summary["groups_truncated"]
+    assert ("styles" in result) is styles
+
+
+def test_workbook_summary_preserves_styles_on_blank_cells(tmp_path: Path):
+    from openpyxl.styles import Font, PatternFill
+
+    from nurse_scheduling.ai.attachment_tools.inspect_xlsx import summarize_workbook
+
+    path = tmp_path / "blank-styles.xlsx"
+    workbook = Workbook()
+    workbook.active["A1"].fill = PatternFill("solid", fgColor="FFFF0000")
+    workbook.active["B1"].font = Font(color="FF0000FF")
+    workbook.save(path)
+    workbook.close()
+    result = summarize_workbook(path, cell_range="A1:C1", styles=True)
+    summary = result["sheets"][0]["summary"]
+    assert summary["blank_cells"] == summary["cells"] == 3
+    assert [(g["value"], g["count"], g["first_cell"]) for g in summary["groups"]] == [
+        (None, 1, "A1"),
+        (None, 1, "B1"),
+        (None, 1, "C1"),
+    ]
+    assert len({g["style"] for g in summary["groups"]}) == 3
+    assert result["styles"][summary["groups"][0]["style"]]["fill"]["foreground"]["value"] == "FFFF0000"
+    assert result["styles"][summary["groups"][1]["style"]]["font"]["color"]["value"] == "FF0000FF"
+
+
+def test_comment_inspection_includes_blank_cells_and_respects_the_window(tmp_path):
+    (attachment,) = load_attachment_fixtures(("comment-notes-xlsx",))
+    path = tmp_path / "notes.xlsx"
+    path.write_bytes(attachment.data)
+    result = inspect_comments(path, cell_range="Notes!A1:H10")
+    assert result["sheets"] == [
+        {
+            "name": "Notes",
+            "comment_part": "xl/comments/comment1.xml",
+            "threaded_comment_part": None,
+            "comments_truncated": False,
+            "comments": [
+                {"cell": "B3", "text": "Handoff code LARCH 2841", "text_truncated": False},
+                {"cell": "D5", "text": "Training slot AMBER 6032", "text_truncated": False},
+                {"cell": "F7", "text": "Rest note CEDAR 9156", "text_truncated": False},
+            ],
+        }
+    ]
+    assert inspect_comments(path, cell_range="Notes!H11:H12")["sheets"][0]["comments"][0]["cell"] == "H12"
+    assert inspect_comments(path, cell_range="Notes!A1:A2")["sheets"][0]["comments"] == []
+    with pytest.raises(ValueError, match="conflicts"):
+        inspect_comments(path, sheet_name="Other", cell_range="Notes!A1:H10")
+    with pytest.raises(ValueError, match="Unknown worksheet"):
+        inspect_comments(path, sheet_name="Other")
+
+
+def test_comment_inspection_reports_text_and_record_truncation(tmp_path):
+    book = Workbook()
+    sheet = book.active
+    for row in range(1, MAX_COMMENTS + 2):
+        sheet.cell(row, 1).comment = Comment("z" * (MAX_TEXT_CHARS + 1), "Fixture")
+    path = tmp_path / "notes.xlsx"
+    book.save(path)
+    result = inspect_comments(path)["sheets"][0]
+    assert len(result["comments"]) == MAX_COMMENTS
+    assert result["comments_truncated"]
+    assert all(len(note["text"]) == MAX_TEXT_CHARS and note["text_truncated"] for note in result["comments"])
+
+
+def test_comment_inspection_runs_from_standalone_hydrated_helpers(tmp_path):
+    import subprocess
+    import sys
+
+    from nurse_scheduling.ai.workspace import REFERENCE_ATTACHMENT_TOOLS
+
+    (attachment,) = load_attachment_fixtures(("comment-notes-xlsx",))
+    path = tmp_path / "notes.xlsx"
+    path.write_bytes(attachment.data)
+    for source in REFERENCE_ATTACHMENT_TOOLS.values():
+        (tmp_path / source.name).write_bytes(source.read_bytes())
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(tmp_path / "inspect_xlsx.py"),
+            "--comments",
+            str(path),
+            "--range",
+            "Notes!B3:B3",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert json.loads(result.stdout)["sheets"][0]["comments"][0]["text"] == "Handoff code LARCH 2841"
+
+
+def test_comment_inspection_handles_rich_text_and_relative_relationships(tmp_path):
+    (attachment,) = load_attachment_fixtures(("comment-notes-xlsx",))
+    path = tmp_path / "notes.xlsx"
+    with ZipFile(BytesIO(attachment.data)) as source, ZipFile(path, "w") as target:
+        for item in source.infolist():
+            payload = source.read(item.filename)
+            if item.filename.endswith(".rels"):
+                payload = payload.replace(b'Target="/xl/comments/', b'Target="../comments/')
+            if item.filename.startswith("xl/comments/") and item.filename.endswith(".xml"):
+                payload = payload.replace(
+                    b"<text><t>Handoff code LARCH 2841</t></text>",
+                    b"<text><r><t>Handoff code </t></r><r><t>LARCH 2841</t></r></text>",
+                )
+            target.writestr(item, payload)
+    result = inspect_comments(path, cell_range="Notes!B3:B3")
+    assert result["sheets"][0]["comments"][0]["text"] == "Handoff code LARCH 2841"
+
+
+def test_comment_inspection_does_not_traverse_worksheet_cells(tmp_path, monkeypatch):
+    from openpyxl.worksheet._read_only import ReadOnlyWorksheet
+
+    (attachment,) = load_attachment_fixtures(("comment-notes-xlsx",))
+    path = tmp_path / "notes.xlsx"
+    path.write_bytes(attachment.data)
+
+    def unexpected_cells(*_, **__):
+        pytest.fail("Comment inspection must not read worksheet cells")
+
+    monkeypatch.setattr(ReadOnlyWorksheet, "iter_rows", unexpected_cells)
+    assert len(inspect_comments(path)["sheets"][0]["comments"]) == 4
+
+
+def test_comment_inspection_distinguishes_an_absent_part_from_an_empty_window(tmp_path):
+    (attachment,) = load_attachment_fixtures(("workbook-intake-xlsx",))
+    path = tmp_path / "roster.xlsx"
+    path.write_bytes(attachment.data)
+    sheet = inspect_comments(path)["sheets"][0]
+    assert sheet["comment_part"] is None
+    assert sheet["threaded_comment_part"] is None
+    assert sheet["comments"] == []
+    assert sheet["comments_truncated"] is False
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["--styles"],
+        ["--start-row", "2"],
+        ["--max-columns", "4"],
+        ["--axis", "row"],
+        ["--max-groups", "1"],
+        ["--summary"],
+        ["--overview"],
+    ],
+)
+def test_comment_mode_rejects_incompatible_cell_options(monkeypatch, options):
+    import sys
+
+    from nurse_scheduling.ai.attachment_tools.inspect_xlsx import main
+
+    monkeypatch.setattr(sys, "argv", ["inspect_xlsx.py", "unused.xlsx", "--comments", *options])
+    with pytest.raises(SystemExit) as error:
+        main()
+    assert error.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "target", ["../threadedComments/threadedComment1.xml", "/xl/threadedComments/threadedComment1.xml"]
+)
+def test_comment_inspection_reports_unsupported_threaded_parts_without_parsing_them(tmp_path, target):
+    (attachment,) = load_attachment_fixtures(("comment-notes-xlsx",))
+    path = tmp_path / "threaded.xlsx"
+    part = "xl/threadedComments/threadedComment1.xml"
+    with ZipFile(BytesIO(attachment.data)) as source, ZipFile(path, "w") as archive:
+        for item in source.infolist():
+            payload = source.read(item.filename)
+            if item.filename == "xl/worksheets/_rels/sheet1.xml.rels":
+                relationship = (
+                    '<Relationship Id="threaded" '
+                    'Type="http://schemas.microsoft.com/office/2017/10/relationships/threadedComment" '
+                    f'Target="{target}"/>'
+                )
+                payload = payload.replace(b"</Relationships>", relationship.encode() + b"</Relationships>")
+            archive.writestr(item, payload)
+        # Detection must not read or claim to parse unsupported comment text.
+        archive.writestr(part, b"not parsed")
+    result = inspect_comments(path, cell_range="Notes!A1:A2")["sheets"][0]
+    assert result["threaded_comment_part"] == part
+    assert result["comments"] == []

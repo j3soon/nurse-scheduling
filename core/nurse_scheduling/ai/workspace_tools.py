@@ -39,7 +39,10 @@ from .provider import ChatMessage, ToolCapableChatProvider
 from .sandbox import SandboxError, SandboxFactory, SandboxFileNotFoundError, SandboxFileSizeError
 from .sandbox_tools import SandboxPiTools
 from .workspace import (
+    MAX_ANALYSIS_BYTES,
+    WORKSPACE_ANALYSIS,
     WORKSPACE_SCHEDULE,
+    AgentAnalysis,
     AgentDownload,
     AgentScheduleChange,
     AttachmentLoader,
@@ -55,6 +58,7 @@ from .workspace import (
     _measured_sandbox_run,
     _read_candidate,
     _ScheduleCandidateTracker,
+    analysis_source_sha256,
 )
 
 logger = logging.getLogger("nurse_scheduling.ai.sandbox_agent")
@@ -97,6 +101,8 @@ class WorkspaceTools:
                 optimizer_arguments = None
             if isinstance(optimizer_arguments, dict) and optimizer_arguments.get("action") in {"status", "finish_now"}:
                 return await self.execute_optimizer("", arguments)
+            if self.candidate_tracker.rejection is not None:
+                return AgentToolOutcome(self.candidate_tracker.rejection, False)
             try:
                 current_schedule = (
                     await self.sandbox.read_file(WORKSPACE_SCHEDULE, max_bytes=self.limits.max_schedule_bytes)
@@ -109,6 +115,9 @@ class WorkspaceTools:
             if not review.outcome.ok:
                 check = f"Trusted schedule check before optimizer:\n{review.outcome.text}"
                 return AgentToolOutcome(check, False, details={"schedule_check": {"ok": False, "text": check}})
+            if review.proposal is not None and review.proposal.text != current_schedule:
+                current_schedule = review.proposal.text
+                await self.sandbox.write_file(WORKSPACE_SCHEDULE, current_schedule)
             outcome = await self.execute_optimizer(current_schedule, arguments)
             if outcome.ok:
                 return replace(outcome, end_turn_message=OPTIMIZER_RUNNING_MESSAGE)
@@ -117,16 +126,17 @@ class WorkspaceTools:
         if outcome.terminal:
             self.command_timeout = outcome.text
             return outcome
-        if name == READ_TOOL:
-            return outcome
-        candidate_status = await self.candidate_tracker.review_if_changed()
+        candidate_status = None if name == READ_TOOL else await self.candidate_tracker.review_if_changed()
         if candidate_status is None:
-            return outcome
-        validation, schedule_change = candidate_status
+            if self.candidate_tracker.rejection is None:
+                return outcome
+            validation, schedule_change = AgentToolOutcome(self.candidate_tracker.rejection, False), None
+        else:
+            validation, schedule_change = candidate_status
         return replace(
             outcome,
             text=f"{outcome.text}\n\n{validation.text}",
-            ok=outcome.ok and validation.ok,
+            ok=outcome.ok and (candidate_status is None or validation.ok),
             # The browser shows the check the model received and previews a valid working copy.
             details={
                 "schedule_check": {"ok": validation.ok, "text": validation.text},
@@ -151,7 +161,8 @@ async def run_workspace(
     agent: Agent | None = None,
     request_clock: Callable[[], datetime] | None = None,
     load_attachment: AttachmentLoader | None = None,
-) -> AsyncIterator[AgentEvent | AgentScheduleChange | AgentDownload]:
+    analysis: AgentAnalysis | None = None,
+) -> AsyncIterator[AgentEvent | AgentScheduleChange | AgentDownload | AgentAnalysis]:
     """Hydrate, run, read, validate, and destroy one fresh sandbox run."""
     agent = agent or Agent()
     metrics = metrics or WorkspaceMetrics()
@@ -166,6 +177,7 @@ async def run_workspace(
                 optimizer_result,
                 optimizer_context,
                 load_attachment,
+                analysis,
             ) as sandbox:
                 toolset = WorkspaceTools(sandbox, schedule_yaml, limits, execute_optimizer)
                 events = agent.prompt(
@@ -191,6 +203,11 @@ async def run_workspace(
                     raise SandboxCommandTimeoutError(f"{toolset.command_timeout}. The sandbox was terminated.")
                 if not sandbox.started:
                     return
+                if toolset.candidate_tracker.rejection is not None:
+                    raise SandboxCandidateError(
+                        "The sandbox candidate failed trusted schedule validation.",
+                        user_message=toolset.candidate_tracker.rejection,
+                    )
                 candidate = await _read_candidate(sandbox, limits.max_schedule_bytes)
                 review = await asyncio.to_thread(
                     review_schedule_candidate, schedule_yaml, candidate, limits.max_schedule_bytes
@@ -219,6 +236,16 @@ async def run_workspace(
                     except ValueError as exc:
                         raise SandboxDownloadValidationError(str(exc)) from exc
                     yield AgentDownload(download)
+                try:
+                    notes = await sandbox.read_file(WORKSPACE_ANALYSIS, max_bytes=MAX_ANALYSIS_BYTES)
+                    notes.decode("utf-8")
+                    if len(notes) > MAX_ANALYSIS_BYTES:
+                        notes = b""
+                except (SandboxError, UnicodeDecodeError):
+                    # Notes are an optional cache. Never fail an otherwise valid run for it.
+                    notes = b""
+                if notes or analysis is not None:
+                    yield AgentAnalysis(analysis_source_sha256(schedule_yaml, attachments), notes)
                 if review.proposal is not None:
                     yield AgentProposal(review.proposal.text, review.proposal.diff.render())
     except TimeoutError as exc:

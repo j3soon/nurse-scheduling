@@ -1,0 +1,25 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "expect_proposal": false,
+  "id": "taiwan-calendar-cross-year-summary",
+  "fixture": "small-clinic",
+  "question": "For the Taiwan holiday calendar from December 20, 2023 through February 29, 2024 inclusive, count workdays and freedays. Use the app's bundled Taiwan calendar, including makeup workdays. Do not edit the schedule or optimize. Reply only as JSON with workdays and freedays (integer counts), newYear (whether January 1, 2024 is a freeday), lunarNewYear (whether February 10, 2024 is a freeday), and makeupSaturday (whether February 17, 2024 is a workday).",
+  "answer_json": {
+    "workdays": 46,
+    "freedays": 26,
+    "newYear": true,
+    "lunarNewYear": true,
+    "makeupSaturday": true
+  },
+  "tool_usage": {
+    "forbidden": [
+      "optimizer"
+    ]
+  },
+  "tags": [
+    "calendar",
+    "calendar-summary"
+  ],
+  "note": "Cross-year range with holidays and a Saturday makeup workday. Counts were independently computed with the existing frontend calendar function. The schedule is read-only and need not share the queried range."
+}

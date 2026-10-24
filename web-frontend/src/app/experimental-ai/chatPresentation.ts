@@ -36,6 +36,7 @@ export function formatResponseDuration(startedAt: number, completedAt: number): 
 }
 
 export function activitySummary(entry: Exclude<ActivityEntry, { kind: 'response' }>): string {
+  if (entry.kind === 'notice') return 'App notice';
   if (entry.kind === 'compaction') return {
     running: 'Summarizing conversation', completed: 'Conversation summarized',
     failed: 'Summarization failed', interrupted: 'Summarization interrupted',

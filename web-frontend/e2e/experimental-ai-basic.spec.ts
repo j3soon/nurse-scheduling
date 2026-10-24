@@ -448,6 +448,10 @@ test('shows compaction status and the reduced context before an answer', async (
   captured.finishTurn();
   await expect(page.getByText('The current constraints are preserved.', { exact: true })).toBeVisible();
   await page.screenshot({ path: '../artifacts/compaction-completed.png', fullPage: true });
+  // The browser copy of the chat keeps the summary entry, so a reload restores the chat.
+  await page.reload();
+  await expect(page.getByText('The current constraints are preserved.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Conversation summarized', { exact: true })).toBeVisible();
 });
 
 test('explains unavailable context usage when the backend omits it', async ({ page }) => {
@@ -516,7 +520,7 @@ test('authenticates AI session requests with an explicitly remembered token', as
   );
 });
 
-test('retries a failed text run without hiding its provisional activity', async ({ page }) => {
+test('continues a failed text run with a new message and keeps its provisional activity', async ({ page }) => {
   const captured = await mockAiBackend(
     page,
     ['Recovered response.'],
@@ -528,20 +532,22 @@ test('retries a failed text run without hiding its provisional activity', async 
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   await expect(page.getByText('Provisional response.')).toBeVisible();
-  await expect(page.getByText('This response failed before completion.')).toBeVisible();
+  await expect(page.getByText('This response failed before completion. Send a new message to continue.')).toBeVisible();
   const failedResponse = page.locator('article').filter({ hasText: 'Provisional response.' });
   await expect(failedResponse).toContainText('The temporary AI sandbox failed.');
   await page.getByText('bash · interrupted').click();
   await expect(page.getByText('{"command":"sleep 30"}', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Retry' }).click();
+  await expect(page.getByRole('button', { name: /retry/i })).toHaveCount(0);
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Continue');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   await expect(page.getByText('Recovered response.')).toBeVisible();
+  await expect(failedResponse).toContainText('Provisional response.');
   const bodies = captured.messageBodies.map(body => JSON.parse(body));
   expect(bodies).toEqual([
     { message: 'Who works first?', message_id: expect.any(String), frontend_version: expect.any(String), frontend_timezone: FRONTEND_TIMEZONE },
-    { message: 'Who works first?', message_id: expect.any(String), frontend_version: expect.any(String), frontend_timezone: FRONTEND_TIMEZONE },
+    { message: 'Continue', message_id: expect.any(String), frontend_version: expect.any(String), frontend_timezone: FRONTEND_TIMEZONE },
   ]);
-  // A retry asks again, so it is a new message rather than a reconnect to the failed run.
   expect(bodies[0].message_id).not.toBe(bodies[1].message_id);
 });
 

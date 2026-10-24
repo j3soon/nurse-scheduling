@@ -19,7 +19,7 @@ without deep integration with an existing hospital information system. The
 system is therefore deliberately decoupled and lightweight.
 
 The current schedule is kept in the browser. The frontend sends
-scheduling data to backend services when the user explicitly invokes
+schedule data to backend services when the user explicitly invokes
 features such as optimization or the experimental AI chat. See the [privacy
 policy](https://github.com/j3soon/nurse-scheduling/blob/dev/PRIVACY.md) for the exact data-handling behavior.
 
@@ -48,7 +48,7 @@ comparable formulations have not been investigated in depth.
 
 ## Domain-Specific Language (DSL)
 
-The schedule is described using a domain-specific language (DSL),
+The schedule data is described using a domain-specific language (DSL),
 serialized as YAML. The YAML file is the serialization format, while the
 schema and semantics defined by the project form the nurse-scheduling DSL.
 In user-facing documentation and normal usage, it is referred to simply as

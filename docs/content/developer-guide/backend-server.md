@@ -180,7 +180,7 @@ checkpointing it outside the child process.
 | `GET` | `/optimize/{job_id}/events` | Replay and stream job events over SSE. |
 | `POST` | `/optimize/{job_id}/cancel` | Cancel a queued or running job. |
 | `POST` | `/optimize/{job_id}/finish-now` | Request the current feasible result when supported. |
-| `GET` | `/optimize/{job_id}/xlsx` | Download a completed schedule artifact. |
+| `GET` | `/optimize/{job_id}/xlsx` | Download the optimized schedule XLSX artifact. |
 | `DELETE` | `/optimize/{job_id}` | Delete a terminal job and its retained data. |
 
 The `POST /optimize` response includes `backend` with the accepting API

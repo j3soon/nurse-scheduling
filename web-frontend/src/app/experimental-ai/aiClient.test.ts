@@ -1031,6 +1031,15 @@ describe('AI client', () => {
     });
   });
 
+  it('decodes provider retry notices', async () => {
+    const { decodeEvent } = await import('./aiClient');
+    expect(decodeEvent('provider_retry', { run_id: 'run-1', message: 'Timed out. Retrying in 2 s.' })).toEqual([
+      { type: 'run_context', runId: 'run-1' },
+      { type: 'provider_retry', runId: 'run-1', message: 'Timed out. Retrying in 2 s.' },
+    ]);
+    expect(decodeEvent('provider_retry', { message: 42 })).toEqual([]);
+  });
+
   it.each([{}, { download_token: 'bearer-secret' }, null])('rejects an invalid export link (%j)', async value => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(value))));
     await expect(getChatExportUrl('session', 'token')).rejects.toThrow('invalid chat download link');

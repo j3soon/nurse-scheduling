@@ -1,0 +1,30 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "fixture": "new-schedule",
+  "attachments": [
+    "completed-roster-xlsx"
+  ],
+  "tags": [
+    "workbook-policy-evidence"
+  ],
+  "id": "completed-schedule-infer-rules",
+  "question": "I am new to this app. I have only this completed schedule and do not remember all our rules. Help me prepare next month from this example without making me recall everything from scratch. D, E and N mean day, evening and night. I have no original YAML or rule sheet. Focus on possible rest limits and whether nurses are restricted to particular shift types. Do not discuss staffing counts, build YAML or optimize yet. Reply as JSON with suggestedRules (a nonempty list of strings, each giving a short suggestion and its supporting observation), confirmationQuestion (one question about the suggested rules), and confirmedRules (null until I confirm).",
+  "expect_proposal": false,
+  "answer_json": {
+    "confirmedRules": null
+  },
+  "answer_matches": [
+    "\"suggestedRules\"\\s*:\\s*\\[\\s*\"[^\"\\n]+\"",
+    "\"confirmationQuestion\"\\s*:\\s*\"[^\"\\n]*\\?[^\"\\n]*\""
+  ],
+  "tool_usage": {
+    "required": [
+      "bash"
+    ],
+    "forbidden": [
+      "optimizer"
+    ]
+  },
+  "note": "This testcase is mostly AI generated. Inspect the real synthetic XLSX. Offer plausible rest or shift-eligibility rules as unconfirmed candidates and ask for confirmation. Do not require the user to recall every rule. Grade this onboarding policy separately from staffing calculations. Review the proposed interpretations and source observations manually; the workbook does not prove original hard limits or exclusive eligibility."
+}

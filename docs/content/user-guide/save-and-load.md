@@ -2,7 +2,7 @@
 
 [Open Save and Load](https://nursescheduling.org/save-and-load){ .md-button .md-button--primary }
 
-The app stores the schedule and up to 50 recent states in this browser. Browser
+The app stores the schedule data and up to 50 recent states in this browser. Browser
 cleanup, private browsing, another device, or **New Schedule** can make that
 data unavailable. This page is optional for a first test, but downloading a
 backup is strongly recommended for useful work.
@@ -22,7 +22,7 @@ After loading, the YAML preview shows the November dates and groups.
 
 ## Back up and restore
 
-- **Download** saves the current schedule as YAML.
+- **Download** saves the current schedule data as YAML.
 - Optional **Upload** replaces the current schedule with the selected YAML.
   If the file's app version is missing, different, or from a development build,
   review the warning and confirm before replacement. Cancel to keep the current
@@ -48,4 +48,4 @@ configuration can remain sensitive.
 
 The hosted app also uses analytics and error reporting. Read the full [privacy
 policy](https://github.com/j3soon/nurse-scheduling/blob/dev/PRIVACY.md) before
-using real scheduling data.
+using real schedule data.

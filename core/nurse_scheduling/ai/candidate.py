@@ -21,13 +21,17 @@
 
 from dataclasses import dataclass
 
+from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
+from ruamel.yaml.nodes import MappingNode, SequenceNode
 
 from ..loader import _load_yaml
+from ..models import AT_MOST_ONE_SHIFT_PER_DAY
 from .diff import ScheduleDiff, diff_schedules
 from .validation import ScheduleIssue, ScheduleValidationResult, new_schedule_issues, validate_frontend_schedule_yaml
 
 SCHEDULE_FILENAME = "schedule.yaml"
+REQUIRED_RULE_NOTICE = "The server restored the required 'at most one shift per day' rule."
 
 
 @dataclass(frozen=True)
@@ -71,6 +75,13 @@ def review_schedule_candidate(base_text: str, candidate: str, max_bytes: int) ->
         return ScheduleCandidateReview(CandidateOutcome(f"{SCHEDULE_FILENAME} is unchanged.", True), None)
 
     validation, introduced = validate_schedule_change(base_text, candidate, max_bytes)
+    notice = ""
+    if not validation.valid:
+        completed = _restore_required_rule(candidate, max_bytes)
+        if completed != candidate:
+            candidate = completed
+            validation, introduced = validate_schedule_change(base_text, candidate, max_bytes)
+            notice = REQUIRED_RULE_NOTICE + "\n"
     if introduced:
         problems = "\n".join(f"- {issue.location}: {issue.message}" for issue in introduced)
         return ScheduleCandidateReview(
@@ -93,7 +104,7 @@ def review_schedule_candidate(base_text: str, candidate: str, max_bytes: int) ->
     diff = diff_schedules(before, after)
     proposal = ScheduleProposal(text=candidate, diff=diff)
     if validation.valid:
-        outcome = CandidateOutcome(f"{SCHEDULE_FILENAME} is valid. Changes so far:\n{diff.render()}", True)
+        outcome = CandidateOutcome(f"{notice}{SCHEDULE_FILENAME} is valid. Changes so far:\n{diff.render()}", True)
     else:
         outcome = CandidateOutcome(
             f"{SCHEDULE_FILENAME} still has problems that were already there, and this edit added none.\n"
@@ -101,3 +112,45 @@ def review_schedule_candidate(base_text: str, candidate: str, max_bytes: int) ->
             True,
         )
     return ScheduleCandidateReview(outcome, proposal)
+
+
+def _restore_required_rule(candidate: str, max_bytes: int) -> str:
+    """Complete the mandatory app rule only when the whole result validates."""
+    content = candidate.encode("utf-8")
+    if len(content) > max_bytes:
+        return candidate
+    try:
+        data = _load_yaml(content, reject_aliases=True)
+        preferences = data.get("preferences")
+        if not isinstance(preferences, list) or any(
+            not isinstance(pref, dict) or pref.get("type") == AT_MOST_ONE_SHIFT_PER_DAY for pref in preferences
+        ):
+            return candidate
+        completed = _insert_first_preference(candidate)
+        # Accept the text edit only when it adds exactly the rule and changes nothing else.
+        expected = {**data, "preferences": [{"type": AT_MOST_ONE_SHIFT_PER_DAY}, *preferences]}
+        if completed is None or _load_yaml(completed.encode("utf-8"), reject_aliases=True) != expected:
+            return candidate
+        return completed if validate_frontend_schedule_yaml(completed, max_bytes).valid else candidate
+    except (YAMLError, TypeError, ValueError):
+        return candidate
+
+
+def _insert_first_preference(text: str) -> str | None:
+    """Insert the rule as text, so comments, key order and formatting stay as the model wrote them."""
+    # The bounded loader already accepted this text, so composing it is safe.
+    root = YAML(typ="safe").compose(text)
+    if not isinstance(root, MappingNode):
+        return None
+    node = next((value for key, value in root.value if key.value == "preferences"), None)
+    if not isinstance(node, SequenceNode):
+        return None
+    rule = f"type: {AT_MOST_ONE_SHIFT_PER_DAY}"
+    start = node.start_mark.index
+    if node.flow_style:
+        return f"{text[: start + 1]}{{{rule}}}{', ' if node.value else ''}{text[start + 1 :]}"
+    line_start = text.rfind("\n", 0, start) + 1
+    indent = text[line_start:start]
+    if indent.strip():
+        return None
+    return f"{text[:line_start]}{indent}- {rule}\n{text[line_start:]}"

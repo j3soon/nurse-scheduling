@@ -22,6 +22,7 @@
 import copy
 import hashlib
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -53,6 +54,10 @@ CROSS_YEAR_UNIT_PATH = Path(__file__).parent / "ai_eval" / "fixtures" / "cross-y
 WARD_PATH = Path(__file__).parent / "testcases" / "real" / "large-ward-with-87-people-2025-11.yaml"
 
 FIXTURE_SCHEDULES = {
+    "monthly-roster-statistics": _load_yaml(
+        (CASES_PATH.parent / "fixtures" / "monthly-roster-statistics.yaml").read_bytes()
+    ),
+    "calendar-makeup": _load_yaml((CASES_PATH.parent / "fixtures" / "calendar-makeup.yaml").read_bytes()),
     "shift-groups": _load_yaml((CASES_PATH.parent / "fixtures" / "shift-groups.yaml").read_bytes()),
     "policy-audit": _load_yaml((CASES_PATH.parent / "fixtures" / "policy-audit.yaml").read_bytes()),
     "request-audit-groups": _load_yaml((CASES_PATH.parent / "fixtures" / "request-audit-groups.yaml").read_bytes()),
@@ -140,16 +145,38 @@ def test_xlsx_range_case_requires_successful_range_use_and_saved_caches(
     assert grade(case, outcome).passed is passed
 
 
-@pytest.mark.parametrize("defect", [None, "wrong-weight", "missing-rule", "repaired-invalid-write"])
-def test_workbook_import_requires_correct_weights_and_a_valid_first_proposal(defect):
-    case = next(c for c in load_cases(CASES_PATH) if c.id == "workbook-import-first-valid-proposal")
+@pytest.mark.parametrize(
+    "case_id",
+    [
+        "workbook-import-first-valid-proposal",
+        "workbook-build-after-confirmation",
+        "workbook-build-corrected-mapping",
+        "workbook-build-rejected-write-recovery",
+    ],
+)
+@pytest.mark.parametrize(
+    "defect",
+    [
+        None,
+        "wrong-weight",
+        "wrong-history",
+        "missing-request",
+        "wrong-shift",
+        "wrong-range",
+        "missing-rule",
+        "repaired-invalid-write",
+    ],
+)
+def test_workbook_import_checks_source_values_and_rejection_policy(case_id, defect):
+    case = next(c for c in load_cases(CASES_PATH) if c.id == case_id)
+    black_weight = 22000000 if case_id == "workbook-build-corrected-mapping" else 11000000
     proposed = copy.deepcopy(FIXTURE_SCHEDULES["new-schedule"])
     proposed["dates"]["range"] = {"startDate": "2025-11-01", "endDate": "2025-11-03"}
     proposed["people"]["items"] = [
-        {"id": "Ada", "history": ["OFF"]},
-        {"id": "Bela", "history": ["E", "E"]},
+        {"id": "Ada", "description": "", "history": ["OFF"]},
+        {"id": "Bela", "description": "", "history": ["E", "E"]},
     ]
-    proposed["shiftTypes"]["items"] = [{"id": shift} for shift in ("D", "E")]
+    proposed["shiftTypes"]["items"] = [{"id": shift, "description": ""} for shift in ("D", "E")]
     proposed["preferences"] = [
         {"type": "at most one shift per day"},
         *[
@@ -157,16 +184,49 @@ def test_workbook_import_requires_correct_weights_and_a_valid_first_proposal(def
             for person, date, shift, weight in (
                 ("Ada", "01", "OFF", 11000000000),
                 ("Ada", "03", "D", 11000000000),
-                ("Bela", "01", "OFF", 11000000),
+                ("Bela", "01", "OFF", black_weight),
                 ("Bela", "02", "E", 11000000000),
             )
         ],
     ]
+    if len(case.user_turns) == 2:
+        proposed["people"]["items"][0]["description"] = "HN, senior"
+        proposed["people"]["items"][1]["description"] = "N"
+        proposed["dates"]["groups"] = [{"id": "Freeday", "description": "Blue headers", "members": ["01", "02"]}]
+    from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
+
+    from .ai_test_helper import schedule_yaml
+
+    assert validate_frontend_schedule_yaml(schedule_yaml(proposed), 1_000_000).valid
+    if defect == "wrong-history":
+        proposed["people"]["items"][1]["history"] = ["E"]
+    if defect == "missing-request":
+        proposed["preferences"].pop()
+    if defect == "wrong-shift":
+        proposed["preferences"][2]["shiftType"] = ["E"]
+    if defect == "wrong-range":
+        proposed["dates"]["range"]["endDate"] = "2025-11-02"
     if defect == "wrong-weight":
-        proposed["preferences"][3]["weight"] = 11000000000
+        proposed["preferences"][3]["weight"] = 11000000 if black_weight == 22000000 else 11000000000
     if defect == "missing-rule":
         proposed = None
     activity = []
+    for turn in range(1, len(case.user_turns) + 1):
+        activity.extend(
+            [
+                {"kind": "user", "turn": turn},
+                {"kind": "tool", "name": "bash" if turn == 1 else "write", "ok": True},
+            ]
+        )
+    if case.rejected_write_turn:
+        activity.append(
+            {
+                "kind": "tool",
+                "name": "write",
+                "ok": False,
+                "result": "Your edits are kept. Last accepted schedule: /workspace/last-accepted-schedule.yaml\nTrusted schedule check after this command:\nInvalid YAML",
+            }
+        )
     if defect in {"missing-rule", "repaired-invalid-write"}:
         activity.append(
             {
@@ -176,8 +236,15 @@ def test_workbook_import_requires_correct_weights_and_a_valid_first_proposal(def
                 "result": "Trusted schedule check after this command:\nMissing required preferences: {'at most one shift per day'}",
             }
         )
-    outcome = RunOutcome(initial=FIXTURE_SCHEDULES[case.fixture], proposed=proposed, activity=activity)
-    assert grade(case, outcome).passed is (defect is None)
+    outcome = RunOutcome(
+        initial=FIXTURE_SCHEDULES[case.fixture],
+        proposed=proposed,
+        activity=activity,
+        intermediate_answers=["Ada and Bela"],
+        proposal_turns=[False, proposed is not None] if len(case.user_turns) == 2 else [proposed is not None],
+    )
+    expected = defect is None or (bool(case.rejected_write_turn) and defect == "repaired-invalid-write")
+    assert grade(case, outcome).passed is expected
 
 
 def qualified_staffing_proposal(general_count=1, qualified=("S1", "S2")):
@@ -367,6 +434,55 @@ def test_qualified_explanation_grades_counts_instead_of_a_night_suffix(night, pa
         assert not grade(case, RunOutcome(answer=invalid, activity=activity)).passed
 
 
+@pytest.mark.parametrize("shared", [True, False], ids=["shared-policy", "senior-exception"])
+@pytest.mark.parametrize("defect", [None, "group-coverage", "reversed", "person-scope", "soft-weight"])
+def test_qualified_rest_cases_check_groups_and_the_actual_rule(shared, defect):
+    from io import StringIO
+
+    from ruamel.yaml import YAML
+
+    from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
+    from nurse_scheduling.frontend_validation import load_frontend_data
+
+    case_id = "new-schedule-qualified-rest-coverage" if shared else "new-schedule-qualified-rest-exception"
+    case = next(c for c in load_cases(CASES_PATH) if c.id == case_id)
+    proposed = copy.deepcopy(FIXTURE_SCHEDULES[case.fixture])
+    proposed["dates"]["range"] = {"startDate": "2026-11-01", "endDate": "2026-11-03"}
+    proposed["people"]["items"] = [{"id": person, "description": ""} for person in ("P1", "P2")]
+    proposed["shiftTypes"]["items"] = [{"id": shift, "description": ""} for shift in ("D", "D+", "N", "N+")]
+    proposed["shiftTypes"]["groups"] = [
+        {"id": "Day", "description": "", "members": ["D", "D+"] if shared else ["D"]},
+        {"id": "Night", "description": "", "members": ["N", "N+"] if shared else ["N"]},
+    ]
+    rule = {
+        "type": "shift type successions",
+        "person": ["ALL"],
+        "date": ["ALL"],
+        "pattern": ["Night", "Day"],
+        "weight": float("-inf"),
+    }
+    proposed["preferences"] = [{"type": "at most one shift per day"}, rule]
+    if defect == "group-coverage":
+        proposed["shiftTypes"]["groups"][0]["members"] = ["D"] if shared else ["D", "D+"]
+    elif defect == "reversed":
+        rule["pattern"].reverse()
+    elif defect == "person-scope":
+        rule["person"] = ["P1"]
+    elif defect == "soft-weight":
+        rule["weight"] = -1
+    source = StringIO()
+    YAML(typ="safe").dump(proposed, source)
+    assert validate_frontend_schedule_yaml(source.getvalue(), max_bytes=50_000).valid
+    if defect is None:
+        compiled = load_frontend_data(source.getvalue().encode()).compiled_schedule.preferences[1]
+        assert compiled.people == (0, 1)
+        assert compiled.pattern[0].shift_types == ((2, 3) if shared else (2,))
+        assert compiled.pattern[1].shift_types == ((0, 1) if shared else (0,))
+    assert grade(case, RunOutcome(initial=FIXTURE_SCHEDULES[case.fixture], proposed=proposed)).passed is (
+        defect is None
+    )
+
+
 @pytest.mark.parametrize("members,passes", [(["D"], True), (["D", "E"], False)])
 def test_day_group_creation_grades_the_actual_members(members, passes):
     from io import StringIO
@@ -536,6 +652,117 @@ def test_invalid_turn_tool_limits_are_rejected(tmp_path: Path, raw):
 def test_invalid_answer_patterns_are_rejected(tmp_path: Path, field_name, raw):
     with pytest.raises(EvalCaseError, match=field_name):
         load_cases(_write(tmp_path, _case(expect_proposal=False, **{field_name: raw})))
+
+
+@pytest.mark.parametrize(
+    "answer, passed",
+    [
+        (
+            "Which transitions should we forbid? What fairness balance do you want? Maximum consecutive working days?",
+            True,
+        ),
+        (
+            "Forbidden transitions: which shift changes should be banned?\nConsecutive workdays: what limit?\nFairness: balance total working days, shift types, or neither?",
+            True,
+        ),
+        ("I will forbid transitions and balance fairness. Consecutive days will be limited.", False),
+    ],
+)
+def test_intake_questions_allow_topic_before_question_words(answer, passed):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "new-schedule-policy-intake")
+    read = {
+        "kind": "tool",
+        "name": "read",
+        "arguments": json.dumps({"path": "/reference/user-guide/build-a-real-schedule.md"}),
+        "ok": True,
+    }
+    assert grade(case, RunOutcome(answer=answer, activity=[read])).passed is passed
+
+
+@pytest.mark.parametrize(
+    "case_id,answer,passed",
+    [
+        ("new-schedule-rest-intake", "Which transitions should we forbid? Maximum consecutive working days?", True),
+        (
+            "new-schedule-rest-intake",
+            "Which transitions should we forbid? What consecutive work limit do you use?",
+            True,
+        ),
+        (
+            "new-schedule-rest-intake",
+            "Which transitions should we forbid? Do you have a limit on consecutive days?",
+            True,
+        ),
+        (
+            "new-schedule-rest-intake",
+            "Which transitions should we forbid? How many consecutive days can nurses work?",
+            True,
+        ),
+        ("new-schedule-rest-intake", "Which transitions should we forbid? Consecutive workdays: what limit?", True),
+        (
+            "new-schedule-rest-intake",
+            "Which transitions should we forbid? A common limit is five consecutive days.",
+            False,
+        ),
+        ("new-schedule-rest-intake", "Should I forbid Night to Day and cap consecutive working days at five?", False),
+        ("new-schedule-rest-intake", "Do you want balanced workloads?", False),
+        ("new-schedule-rest-intake", "I will forbid transitions and limit consecutive working days.", False),
+        ("new-schedule-fairness-intake", "Do you want to balance working days or shift types?", True),
+        ("new-schedule-fairness-intake", "Which transitions should we forbid? Maximum consecutive days?", False),
+        ("new-schedule-fairness-intake", "I will balance everyone's working days.", False),
+    ],
+)
+def test_separate_intake_cases_grade_only_their_policy(case_id, answer, passed):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == case_id)
+    read = {
+        "kind": "tool",
+        "name": "read",
+        "arguments": json.dumps({"path": "/reference/user-guide/build-a-real-schedule.md"}),
+        "ok": True,
+    }
+    assert grade(case, RunOutcome(answer=answer, activity=[read])).passed is passed
+
+
+@pytest.mark.parametrize(
+    "answer, passed",
+    [
+        ("Which transitions should we forbid? What consecutive-day limit and fairness rules do you want?", False),
+        ("We can group the nurses by seniority. D needs two people, E two, and N one.", False),
+        (
+            "Would you like optional Day, Evening and Night people groups for nurses with a primary shift? We can apply their shift preferences together.",
+            True,
+        ),
+        (
+            "I can create optional groups for D day, E evening and N night shift eligibility. Are any nurses limited to one of these shifts?",
+            True,
+        ),
+    ],
+)
+def test_primary_shift_group_case_requires_an_optional_shift_group_offer(answer, passed):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "new-schedule-primary-shift-groups")
+    read = {
+        "kind": "tool",
+        "name": "read",
+        "arguments": json.dumps({"path": "/reference/user-guide/build-a-real-schedule.md"}),
+        "ok": True,
+    }
+    assert grade(case, RunOutcome(answer=answer, activity=[read])).passed is passed
+
+
+@pytest.mark.parametrize(
+    "answer, passed",
+    [
+        ("Should I renew Taiwan holiday date groups?", False),
+        ("Import Taiwan public holidays and make-up working days?", False),
+        (
+            "Would you like to update the Taiwan holiday calendar? This imports official public holidays and make-up working days, so rules can use workdays and days off instead of only weekdays and weekends.",
+            True,
+        ),
+    ],
+)
+def test_holiday_question_requires_a_useful_explanation(answer, passed):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "holiday-question-explains-workdays")
+    assert grade(case, RunOutcome(answer=answer)).passed is passed
 
 
 @pytest.mark.parametrize("answer", ["There is no shift type S in the schedule.", "S is absent.", "S was not found."])
@@ -984,6 +1211,151 @@ def test_a_failed_required_tool_does_not_count_as_successful_use(tmp_path: Path)
     assert result.failures()[0].description == "uses successful read tool"
 
 
+@pytest.mark.parametrize("mutation", [None, "description", "boolean-history", "numeric-day", "weight"])
+def test_yaml_roundtrip_case_allows_formatting_but_preserves_all_data(mutation):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "schedule-yaml-roundtrip-scalars")
+    initial = FIXTURE_SCHEDULES[case.fixture]
+    proposed = copy.deepcopy(initial)
+    if mutation == "description":
+        proposed["description"] = "Changed"
+    elif mutation == "boolean-history":
+        proposed["people"]["items"][1]["history"][0] = False
+    elif mutation == "numeric-day":
+        proposed["dates"]["groups"][0]["members"][0] = 5
+    elif mutation == "weight":
+        proposed["preferences"][1]["weight"] = 100
+    outcome = RunOutcome(
+        initial=initial,
+        proposed=proposed,
+        activity=[{"kind": "tool", "name": "bash", "ok": True}],
+    )
+    assert grade(case, outcome).passed is (mutation is None)
+
+
+@pytest.mark.parametrize(
+    "limit,eligibility,passed",
+    [
+        (None, None, True),
+        (2, None, False),
+        (None, "fixed-pools", False),
+        (2, "fixed-pools", False),
+    ],
+)
+def test_completed_roster_case_distinguishes_observations_from_policy(limit, eligibility, passed):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "completed-roster-unknown-policy")
+    answer = json.dumps(
+        {
+            "maxConsecutiveWorkingDays": limit,
+            "eligibility": eligibility,
+            "explanation": "The original rules are unknown.",
+        }
+    )
+    outcome = RunOutcome(answer=answer, activity=[{"kind": "tool", "name": "bash", "ok": True}])
+    assert grade(case, outcome).passed is passed
+
+
+@pytest.mark.parametrize("defect", [None, "no-suggestions", "no-question", "no-inspection", "premature-proposal"])
+def test_completed_schedule_onboarding_requires_proactive_suggestions(defect):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "completed-schedule-onboarding")
+    answer = (
+        "The example shows short work stretches and a fixed shift type per nurse. "
+        "A candidate is a two-day consecutive-work limit and fixed shift eligibility. "
+        "Would you confirm or correct these suggestions before I build YAML?"
+    )
+    if defect == "no-suggestions":
+        answer = "The rules are unknown. What are your rest limits and shift eligibility rules?"
+    elif defect == "no-question":
+        answer = answer.replace("?", ".")
+    outcome = RunOutcome(
+        answer=answer,
+        proposed={} if defect == "premature-proposal" else None,
+        activity=[] if defect == "no-inspection" else [{"kind": "tool", "name": "bash", "ok": True}],
+    )
+    assert grade(case, outcome).passed is (defect is None)
+
+
+@pytest.mark.parametrize("defect", [None, "question-with-followup", "assumed", "no-suggestions", "no-confirmation"])
+def test_completed_schedule_inference_requires_suggestions_and_confirmation(defect):
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "completed-schedule-infer-rules")
+    answer = {
+        "suggestedRules": ["The longest observed work stretch is two days. Consider a two-day limit."],
+        "confirmationQuestion": "Is that a strict limit or are longer stretches allowed?",
+        "confirmedRules": None,
+    }
+    if defect == "question-with-followup":
+        answer["confirmationQuestion"] += " Tell me what to change."
+    elif defect == "assumed":
+        answer["confirmedRules"] = {"maxConsecutiveWorkingDays": 2}
+    elif defect == "no-suggestions":
+        answer["suggestedRules"] = []
+    elif defect == "no-confirmation":
+        answer["confirmationQuestion"] = "I will use two days."
+    outcome = RunOutcome(answer=json.dumps(answer), activity=[{"kind": "tool", "name": "bash", "ok": True}])
+    assert grade(case, outcome).passed is (defect in {None, "question-with-followup"})
+
+
+@pytest.mark.parametrize(
+    "defect",
+    [
+        None,
+        "omitted-history",
+        "reordered-group",
+        "wrong-history",
+        "observed-limit",
+        "copied-assignments",
+        "no-proposal",
+    ],
+)
+def test_completed_schedule_correction_builds_only_confirmed_rules(defect):
+    from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
+
+    from .ai_test_helper import parse_schedule, schedule_yaml
+
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "completed-schedule-confirmed-rules")
+    original = parse_schedule(NEW_SCHEDULE_PATH.read_text(encoding="utf-8"))
+    proposed = copy.deepcopy(original)
+    proposed["dates"]["range"] = {"startDate": "2026-12-01", "endDate": "2026-12-06"}
+    proposed["people"]["items"] = [{"id": p, "description": "", "history": []} for p in ("P1", "P2", "P3")]
+    proposed["shiftTypes"]["items"] = [{"id": shift, "description": ""} for shift in ("D", "E", "N")]
+    proposed["shiftTypes"]["groups"] = [{"id": "WORKING", "description": "", "members": ["D", "E", "N"]}]
+    proposed["preferences"] = [
+        {"type": "at most one shift per day"},
+        {
+            "type": "shift type successions",
+            "person": ["ALL"],
+            "date": ["ALL"],
+            "pattern": ["WORKING"] * 6,
+            "weight": float("-inf"),
+        },
+    ]
+    assert validate_frontend_schedule_yaml(schedule_yaml(proposed), 50_000).valid
+    if defect == "omitted-history":
+        for person in proposed["people"]["items"]:
+            person.pop("history")
+    elif defect == "reordered-group":
+        proposed["shiftTypes"]["groups"][0]["members"] = ["N", "E", "D"]
+    elif defect == "wrong-history":
+        proposed["people"]["items"][0]["history"] = ["D"]
+    elif defect == "observed-limit":
+        proposed["preferences"][1]["pattern"] = ["WORKING"] * 3
+    elif defect == "copied-assignments":
+        proposed["preferences"].append(
+            {"type": "shift request", "person": ["P1"], "date": ["01"], "shiftType": ["D"], "weight": float("inf")}
+        )
+    outcome = RunOutcome(
+        initial=original,
+        proposed=None if defect == "no-proposal" else proposed,
+        intermediate_answers=["P1, P2 and P3 show short work stretches. Confirm a two-day limit?"],
+        proposal_turns=[False, defect != "no-proposal"],
+        activity=[
+            {"kind": "user", "turn": 1},
+            {"kind": "tool", "name": "bash", "ok": True},
+            {"kind": "user", "turn": 2},
+        ],
+    )
+    assert grade(case, outcome).passed is (defect in {None, "omitted-history", "reordered-group"})
+
+
 def test_validation_error_limit_distinguishes_repair_from_other_tool_errors(tmp_path: Path):
     case = load_cases(_write(tmp_path, _case(expect_proposal=False, tool_usage={"max_validation_errors": 0})))[0]
     prefix = "Trusted schedule check after this command:"
@@ -1416,6 +1788,9 @@ def test_every_membership_check_also_pins_the_collection_size():
         for assertion in case.assertions:
             if assertion.kind != "contains" or assertion.path in sized:
                 continue
+            if assertion.path.split(".")[-1] == "description":
+                # Imported entities can be absent initially, but descriptions are always text.
+                continue
             found = resolve(schedule, assertion.path)
             # Text fields are exempt, because `contains` means substring there.
             assert found and not isinstance(found[0], list), (
@@ -1830,12 +2205,210 @@ def test_result_explanation_cases_check_cause_and_read_only_scope(conflict, muta
         ("One request is unmet. This does not prove it was traded for stronger requests.", True),
         ("One request is unmet. It might have been traded for stronger requests.", True),
         ("One request is unmet. A feasible timed-out result need not be optimal.", True),
+        ("One request is unmet, as the higher-weight constraints took precedence.", False),
+        ("One request was missed because stronger requests took precedence.", False),
+        ("One request is unmet. Higher weights take precedence in the objective.", True),
+        ("One request is unmet, but this does not prove higher weights took precedence.", True),
+        ("One request was not satisfied because higher-weight requests took precedence.", False),
+        ("One request was not satisfied, but this does not prove higher weights took precedence.", True),
     ],
 )
-def test_summary_cause_oracle_distinguishes_affirmative_claims_from_uncertainty(answer, passed):
-    case = load_cases(CASES_PATH / "basics/12-optimizer-results/result-summary-without-proven-tradeoff.json")[0]
+@pytest.mark.parametrize(
+    "case_id", ["result-summary-without-proven-tradeoff", "result-retry-summary-without-proven-tradeoff"]
+)
+def test_summary_cause_oracle_distinguishes_affirmative_claims_from_uncertainty(answer, passed, case_id):
+    case = load_cases(CASES_PATH / f"basics/12-optimizer-results/{case_id}.json")[0]
+    case = replace(case, semantic_check="", tool_usage=None, turn_tool_usage=(), intermediate_answer_contains=())
     activity = [
         {"kind": "tool", "name": "optimizer", "ok": True, "arguments": '{"action":"start"}'},
         {"kind": "optimizer", "turn": 2},
     ]
     assert grade(case, RunOutcome(answer=answer, activity=activity)).passed is passed
+
+
+@pytest.mark.parametrize("corrected", [False, True])
+@pytest.mark.parametrize("method", ["read", "bash"])
+@pytest.mark.parametrize("defect", [None, "missing-read", "failed-read", "wrong-weight", "existence-only"])
+def test_retained_analysis_cases_require_real_reuse_and_current_mapping(corrected, method, defect):
+    case_id = "workbook-retained-analysis-correction" if corrected else "workbook-retained-analysis"
+    case = next(c for c in load_cases(CASES_PATH) if c.id == case_id)
+    prefix = "Source mapping: Ada history OFF, Bela history E,E."
+    activity = [
+        {"kind": "user", "turn": 1},
+        {"kind": "tool", "name": "bash", "ok": True},
+        {"kind": "analysis", "prefix": prefix},
+        {"kind": "user", "turn": 2},
+    ]
+    if defect != "missing-read":
+        activity.append(
+            {
+                "kind": "tool",
+                "name": method,
+                "ok": defect != "failed-read",
+                "result": "file exists" if defect == "existence-only" else prefix,
+            }
+        )
+    weight = 22000000 if corrected else 11000000
+    if defect == "wrong-weight":
+        weight = 11000000 if corrected else 22000000
+    answer = json.dumps({"adaHistory": ["OFF"], "belaHistory": ["E", "E"], "belaOffWeight": weight})
+    outcome = RunOutcome(
+        answer=answer, activity=activity, intermediate_answers=["Inspection complete. Awaiting confirmation."]
+    )
+    assert grade(case, outcome).passed is (defect is None)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [None, "weekend-only", "missing-custom"],
+    ids=["correct", "wrong-makeup-workday", "dropped-custom-group"],
+)
+def test_calendar_makeup_case_checks_real_calendar_members_and_custom_groups(mutation):
+    from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
+
+    from .ai_test_helper import schedule_yaml
+
+    case = next(c for c in load_cases(CASES_PATH) if c.id == "dates-range-renew-makeup")
+    initial = FIXTURE_SCHEDULES[case.fixture]
+    proposed = copy.deepcopy(initial)
+    proposed["dates"]["range"] = {"startDate": "2024-02-01", "endDate": "2024-02-18"}
+    proposed["dates"]["groups"].extend(
+        [
+            {
+                "id": "WORKDAY",
+                "description": "Taiwan workdays imported from the current holiday calendar",
+                "members": ["01", "02", "05", "06", "07", "15", "16", "17"],
+            },
+            {
+                "id": "FREEDAY",
+                "description": "Taiwan freedays imported from the current holiday calendar",
+                "members": ["03", "04", "08", "09", "10", "11", "12", "13", "14", "18"],
+            },
+        ]
+    )
+    assert validate_frontend_schedule_yaml(schedule_yaml(proposed), 50_000).valid
+    if mutation == "weekend-only":
+        proposed["dates"]["groups"][-2]["members"].remove("17")
+        proposed["dates"]["groups"][-1]["members"].append("17")
+    elif mutation == "missing-custom":
+        proposed["dates"]["groups"].pop(0)
+    outcome = RunOutcome(
+        initial=initial,
+        proposed=proposed,
+        intermediate_answers=["Import the Taiwan holiday calendar?"],
+        proposal_turns=[False, True],
+    )
+    assert grade(case, outcome).passed == (mutation is None)
+
+
+@pytest.mark.parametrize(
+    "answer,passed",
+    [
+        (
+            "Do you have a saved schedule data file from this app? It preserves rules and settings. If not, we can confirm missing rules together.",
+            True,
+        ),
+        ("What is the maximum consecutive working days?", False),
+        ("Upload the saved schedule file before I can continue. It contains the original rules.", False),
+    ],
+)
+def test_editable_source_question_is_optional_and_explains_its_value(answer, passed):
+    case = next(c for c in load_cases(CASES_PATH) if c.id == "completed-roster-source-question")
+    assert grade(case, RunOutcome(answer=answer)).passed == passed
+
+
+@pytest.mark.parametrize("turn", [True, -1, 2, "1", None])
+def test_invalid_rejected_write_turn_is_rejected(tmp_path, turn):
+    with pytest.raises(EvalCaseError, match="rejected_write_turn must be zero or a user turn number"):
+        load_cases(_write(tmp_path, _case(expect_proposal=False, rejected_write_turn=turn)))
+
+
+@pytest.mark.parametrize(
+    "feedback,passed",
+    [
+        ("", False),
+        ("Your edits are kept.", False),
+        ("/workspace/last-accepted-schedule.yaml", False),
+        ("Your edits are kept. Last accepted schedule: /workspace/last-accepted-schedule.yaml", True),
+    ],
+)
+def test_recovery_case_requires_draft_and_recovery_copy_feedback(feedback, passed):
+    case = EvalCase(
+        id="recovery",
+        fixture="small-clinic",
+        question="Check the schedule",
+        expect_proposal=False,
+        rejected_write_turn=1,
+    )
+    outcome = RunOutcome(
+        initial=FIXTURE_SCHEDULES["small-clinic"],
+        proposed=None,
+        activity=[
+            {
+                "kind": "tool",
+                "name": "write",
+                "ok": False,
+                "result": f"Trusted schedule check after this command:\nInvalid YAML\n{feedback}",
+            }
+        ],
+    )
+    assert grade(case, outcome).passed is passed
+
+
+@pytest.mark.parametrize("suffix", ["partial-edit", "restore-last-accepted", "valid-edit-control"])
+@pytest.mark.parametrize("defect", [None, "lost-accepted-edit", "unrelated-change", "missing-tool"])
+def test_schedule_recovery_cases_require_the_saved_edit_and_preserve_other_data(suffix, defect):
+    from copy import deepcopy
+
+    from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
+
+    from .ai_test_helper import schedule_yaml
+
+    case = next(case for case in load_cases(CASES_PATH) if case.id == f"schedule-recovery-{suffix}")
+    initial = FIXTURE_SCHEDULES[case.fixture]
+    proposed = deepcopy(initial)
+    proposed["description"] = "Accepted clinic edit"
+    if suffix == "partial-edit":
+        proposed["shiftTypes"]["groups"][0]["id"] = "Overnight"
+        proposed["preferences"][2]["shiftType"] = ["Overnight"]
+    assert validate_frontend_schedule_yaml(schedule_yaml(proposed), 1_000_000).valid
+    if defect == "lost-accepted-edit":
+        proposed["description"] = initial["description"]
+    if defect == "unrelated-change":
+        proposed["people"]["items"].pop()
+    activity = [
+        {"kind": "tool", "name": name, "arguments": json.dumps(arguments), "ok": True}
+        for name, arguments in case.tool_usage.required_calls
+    ]
+    activity.extend({"kind": "tool", "name": name, "ok": True} for name in case.tool_usage.required)
+    activity.append({"kind": "tool", "name": "bash", "ok": False, "result": "Expected fixture failure"})
+    if defect == "missing-tool":
+        activity.pop(0)
+    outcome = RunOutcome(initial=initial, proposed=proposed, activity=activity)
+    assert grade(case, outcome).passed is (defect is None)
+
+
+def test_schedule_recovery_requires_reading_the_accepted_copy_itself():
+    from copy import deepcopy
+
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "schedule-recovery-restore-last-accepted")
+    initial = FIXTURE_SCHEDULES[case.fixture]
+    proposed = deepcopy(initial)
+    proposed["description"] = "Accepted clinic edit"
+    activity = [
+        {"kind": "tool", "name": name, "arguments": json.dumps(arguments), "ok": True}
+        for name, arguments in case.tool_usage.required_calls
+        if name != "read"
+    ]
+    activity.extend(
+        [
+            {
+                "kind": "tool",
+                "name": "read",
+                "ok": True,
+                "arguments": json.dumps({"path": "/workspace/attachments/01-schedule-edit-checkpoint.txt"}),
+            },
+            {"kind": "tool", "name": "bash", "ok": False},
+        ]
+    )
+    assert not grade(case, RunOutcome(initial=initial, proposed=proposed, activity=activity)).passed

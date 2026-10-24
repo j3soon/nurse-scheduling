@@ -27,6 +27,7 @@ from xml.etree import ElementTree
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from openpyxl import Workbook
+from openpyxl.comments import Comment
 from openpyxl.styles import Font, PatternFill
 from PIL import Image, ImageDraw, ImageFont
 from pypdf import PdfWriter
@@ -62,10 +63,7 @@ def _xlsx() -> bytes:
     hidden = workbook.create_sheet("Night assignment")
     hidden.append(["Field", "Value"])
     hidden.append(["handover code", "NIGHT OWL 7429"])
-    output = BytesIO()
-    workbook.save(output)
-    workbook.close()
-    return output.getvalue()
+    return _stable_workbook(workbook)
 
 
 def _history_workbook(reverse: bool = False) -> bytes:
@@ -90,6 +88,33 @@ def _history_workbook(reverse: bool = False) -> bytes:
     for cell in sheet[1][1:]:
         cell.number_format = "yyyy-mm-dd"
     return _stable_workbook(workbook)
+
+
+def _completed_roster_workbook() -> bytes:
+    """An observed assignment pattern without the rules that produced it."""
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "Completed roster"
+    sheet.append(["Person", *[f"2026-11-{day:02}" for day in range(1, 7)]])
+    sheet.append(["P1", "D", "D", "OFF", "D", "D", "OFF"])
+    sheet.append(["P2", "E", "E", "OFF", "E", "E", "OFF"])
+    sheet.append(["P3", "N", "OFF", "N", "N", "OFF", "N"])
+    return _stable_workbook(book)
+
+
+def _comment_workbook() -> bytes:
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "Notes"
+    sheet["A1"] = "Handover notes"
+    for cell, text in {
+        "B3": "Handoff code LARCH 2841",
+        "D5": "Training slot AMBER 6032",
+        "F7": "Rest note CEDAR 9156",
+        "H12": "Outside the selected range",
+    }.items():
+        sheet[cell].comment = Comment(text, "Fixture")
+    return _stable_workbook(book)
 
 
 def _intake_workbook() -> bytes:
@@ -214,6 +239,24 @@ def _styled_requests_workbook() -> bytes:
     audit.append(["Evening", 5, "=SUM(B2:B3)"])
     audit.append(["Night", 3, "=B4+2"])
     return _stable_workbook(workbook, {"xl/worksheets/sheet3.xml": {"C2": 13, "C3": 9}})
+
+
+def _counting_workbook() -> bytes:
+    """Repeated values with independent font and fill distinctions."""
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Requests"
+    sheet.append(["Person", *[f"Nov {day:02}" for day in range(1, 29)]])
+    for person in range(60):
+        sheet.append([f"P{person + 1:02}"])
+        for day in range(28):
+            if (person + day) % 5 == 0:
+                continue
+            cell = sheet.cell(person + 2, day + 2, 1)
+            cell.font = Font(color="FFFF0000" if (person + day) % 3 == 0 else "FF000000")
+            if day % 7 == 0:
+                cell.fill = PatternFill("solid", fgColor="FFEEEEEE")
+    return _stable_workbook(workbook)
 
 
 def _pdf() -> bytes:
@@ -355,6 +398,16 @@ def _pptx() -> bytes:
 
 
 _FIXTURES: dict[str, tuple[str, str, Callable[[], bytes]]] = {
+    "comment-notes-xlsx": (
+        "notes.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        _comment_workbook,
+    ),
+    "counting-xlsx": (
+        "requests.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        _counting_workbook,
+    ),
     "request-table-csv": (
         "requests.csv",
         "text/csv",
@@ -367,6 +420,11 @@ _FIXTURES: dict[str, tuple[str, str, Callable[[], bytes]]] = {
         "history.csv",
         "text/csv",
         lambda: b"P1,OFF,2\nP2,D,3\n",
+    ),
+    "completed-roster-xlsx": (
+        "completed-roster.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        _completed_roster_workbook,
     ),
     "workbook-intake-xlsx": (
         "roster.xlsx",
@@ -422,6 +480,13 @@ _FIXTURES: dict[str, tuple[str, str, Callable[[], bytes]]] = {
         "staff-colors.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         _colored_workbook,
+    ),
+    "schedule-edit-checkpoint": (
+        "schedule-edit-checkpoint.txt",
+        "text/plain",
+        lambda: (
+            (Path(__file__).with_name("fixtures") / "schedule-edit-checkpoint.txt").read_text(encoding="utf-8").encode()
+        ),
     ),
     "timeout-checkpoint": (
         "timeout-checkpoint.txt",

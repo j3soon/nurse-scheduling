@@ -756,9 +756,9 @@ describe('ExperimentalAiPage', () => {
     }));
     render(<ExperimentalAiPage />);
 
-    expect(await screen.findByRole('button', { name: 'Prepare retry' })).toBeInTheDocument();
-    expect(screen.getByText('Uploaded files stay in this chat. Prepare the question, then reattach second.xlsx before sending.'))
+    expect(await screen.findByText('This question was not sent because its files did not finish uploading. Uploaded files stay in this chat. Attach second.xlsx again, then send the question.'))
       .toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
     expect(mockSendMessage).not.toHaveBeenCalled();
     await waitFor(() => {
       const stored = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
@@ -1021,7 +1021,7 @@ describe('ExperimentalAiPage', () => {
     });
     const optimizerInput = screen.getByText('Optimizer result with score 23.').closest('article');
     expect(optimizerInput?.querySelector('p')).toHaveTextContent('User · Optimizer');
-    expect(optimizerInput).toHaveClass('mr-auto');
+    expect(optimizerInput).toHaveClass('ml-auto');
     expect(optimizerInput?.previousElementSibling).toHaveTextContent('Background system prompt');
     expect(optimizerInput?.nextElementSibling).toHaveTextContent('Optimization result: result.xlsx.');
     // Background tools stay in message activity. The status area is reserved for optimizer jobs.
@@ -1601,6 +1601,58 @@ describe('ExperimentalAiPage', () => {
     expect(screen.queryByText('Applied to your schedule')).not.toBeInTheDocument();
     expect(mockLoadFromYaml).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+  });
+
+  it('shows automatic provider retries as notices without a retry button', async () => {
+    const user = userEvent.setup();
+    let callbacks: SessionStreamOptions | undefined;
+    let finish: (() => void) | undefined;
+    mockRunEvents.mockImplementation(async (_id: string, _question: string, stream: SessionStreamOptions) => {
+      callbacks = stream;
+      stream.onEvent({ type: 'tool', activity: { name: 'bash', arguments: '{}', result: 'Completed once', ok: true } });
+      stream.onEvent({ type: 'provider_retry', message: 'The provider timed out. Retrying in 2 s (attempt 2 of 5).' });
+      await new Promise<void>(resolve => { finish = resolve; });
+    });
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Build a schedule.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText('The provider timed out. Retrying in 2 s (attempt 2 of 5).')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
+    act(() => callbacks?.onEvent({ type: 'delta', text: 'Recovered output.' }));
+    expect(screen.getByText('Recovered output.')).toBeInTheDocument();
+    expect(screen.getByText('Completed once')).toBeInTheDocument();
+    expect(mockSendMessage).toHaveBeenCalledTimes(1);
+    await act(async () => finish?.());
+  });
+
+  it('delivers queued steering during optimizer review without sending it again', async () => {
+    const user = userEvent.setup();
+    let background: SessionStreamOptions | undefined;
+    mockStreamSessionEvents.mockImplementation(async (_id: string, callbacks: SessionStreamOptions) => {
+      background = callbacks;
+      await new Promise<void>(() => {});
+    });
+    render(<ExperimentalAiPage />);
+    const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+    await user.type(composer, 'Optimize it.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    act(() => background?.onEvent({ type: 'run_start', runId: 'review', trigger: 'optimizer' }));
+    await user.type(composer, 'Check night coverage first.');
+    await user.click(screen.getByRole('button', { name: 'Queue message' }));
+    const queuedId = mockQueueMessage.mock.calls[0][1] as string;
+    expect(screen.getByText('Queued for steering')).toBeInTheDocument();
+    act(() => {
+      background?.onEvent({ type: 'tool', runId: 'review', activity: { name: 'read', arguments: '{}', result: 'Read complete', ok: true } });
+      background?.onEvent({ type: 'steering', runId: 'review', messageId: queuedId, message: 'Check night coverage first.' });
+      background?.onEvent({ type: 'delta', runId: 'review', text: 'Night coverage checked.' });
+    });
+    expect(screen.queryByText('Queued for steering')).not.toBeInTheDocument();
+    expect(screen.getByText('Check night coverage first.')).toBeInTheDocument();
+    expect(screen.getByText('Night coverage checked.')).toBeInTheDocument();
+    act(() => background?.onEvent({ type: 'done', runId: 'review' }));
+    await screen.findByRole('button', { name: 'Send' });
+    expect(mockRunEvents).toHaveBeenCalledTimes(1);
   });
 
   it('stops a background assistant turn through the session endpoint', async () => {
@@ -2291,7 +2343,7 @@ describe('ExperimentalAiPage', () => {
     expect(screen.getByText('Partial answer.')).toBeInTheDocument();
     expect(screen.getByText('bash · interrupted')).toBeInTheDocument();
     expect(screen.queryByText('Stopped.')).not.toBeInTheDocument();
-    expect(screen.queryByText('This response failed before completion.')).not.toBeInTheDocument();
+    expect(screen.queryByText(/failed before completion/)).not.toBeInTheDocument();
   });
 
   it('changes the session model during streaming and uses the saved choice for the next queued turn', async () => {
@@ -2625,7 +2677,7 @@ describe('ExperimentalAiPage', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Later batch failed.');
     expect(within(screen.getByLabelText('Session files')).getByText('one.txt')).toBeInTheDocument();
-    expect(screen.getByText('Uploaded files stay in this chat. Prepare the question, then reattach two.txt before sending.'))
+    expect(screen.getByText('This question was not sent because its files did not finish uploading. Uploaded files stay in this chat. Attach two.txt again, then send the question.'))
       .toBeInTheDocument();
     expect(mockSendMessage).not.toHaveBeenCalled();
   });
@@ -2727,7 +2779,7 @@ describe('ExperimentalAiPage', () => {
     await waitFor(() => expect(screen.queryByRole('status', { name: 'Thinking' })).not.toBeInTheDocument());
   });
 
-  it('shows backend failures without discarding the user question', async () => {
+  it('shows backend failures and continues with a new message', async () => {
     const providerError = 'The AI provider returned HTTP 525. Error ID: 72dc8f31-45af-410d-9fc2-41bdf1fc718f.';
     mockRunEvents.mockImplementationOnce(async (
       _sessionId: string,
@@ -2747,17 +2799,19 @@ describe('ExperimentalAiPage', () => {
     expect(alert).toHaveTextContent(providerError);
     expect(screen.getByText('Can you help?')).toBeInTheDocument();
     expect(screen.getByText('Provisional response.')).toBeInTheDocument();
-    expect(screen.getByText('This response failed before completion.')).toBeInTheDocument();
+    expect(screen.getByText('This response failed before completion. Send a new message to continue.')).toBeInTheDocument();
     expect(screen.getByText('Provisional response.').closest('article')).toHaveTextContent(providerError);
+    expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'Retry' }));
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Continue');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
 
     expect(await screen.findByText('Alice works Monday.')).toBeInTheDocument();
     expect(mockRunEvents).toHaveBeenCalledTimes(2);
-    expect(mockRunEvents.mock.calls[1][1]).toBe('Can you help?');
-    expect(screen.getAllByText('Can you help?')).toHaveLength(1);
-    expect(screen.queryByText('Provisional response.')).not.toBeInTheDocument();
-    expect(screen.queryByText('This response failed before completion.')).not.toBeInTheDocument();
+    expect(mockRunEvents.mock.calls[1][1]).toBe('Continue');
+    // The failed response stays in the chat above the new question.
+    expect(screen.getByText('Provisional response.')).toBeInTheDocument();
+    expect(screen.getByText('This response failed before completion. Send a new message to continue.')).toBeInTheDocument();
   });
 
   it('removes provisional output when the backend discards a stale turn', async () => {
@@ -2776,14 +2830,14 @@ describe('ExperimentalAiPage', () => {
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Change it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
-    expect(await screen.findByText('This response failed before completion.')).toBeInTheDocument();
+    expect(await screen.findByText('This response failed before completion. Send a new message to continue.')).toBeInTheDocument();
     expect(screen.getByText('The schedule changed.')).toBeInTheDocument();
     expect(screen.queryByText('Obsolete response.')).not.toBeInTheDocument();
     expect(screen.queryByText('schedule edit')).not.toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
-  it('requires files to be reattached before retrying an attachment request', async () => {
+  it('asks for files again when the question was not sent', async () => {
     mockGetCapabilities.mockResolvedValueOnce(defaultCapabilities);
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:image-preview');
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
@@ -2796,15 +2850,14 @@ describe('ExperimentalAiPage', () => {
     await user.upload(await screen.findByLabelText('Attach files'), image);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Check this image.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
-    await user.click(await screen.findByRole('button', { name: 'Prepare retry' }));
 
-    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toHaveValue('Check this image.');
-    expect(screen.getByText('Uploaded files stay in this chat. Prepare the question, then reattach ward.png before sending.'))
+    expect(await screen.findByText('This question was not sent because its files did not finish uploading. Uploaded files stay in this chat. Attach ward.png again, then send the question.'))
       .toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
     expect(mockRunEvents).not.toHaveBeenCalled();
   });
 
-  it('retries only the question after its files uploaded', async () => {
+  it('asks for a new message, not the files, when a run fails after its uploads', async () => {
     // The upload succeeds, then the run fails.
     mockRunEvents.mockImplementationOnce(async () => {
       throw new Error('The temporary AI sandbox failed.');
@@ -2815,18 +2868,10 @@ describe('ExperimentalAiPage', () => {
     await user.upload(await screen.findByLabelText('Attach files'), new File(['png'], 'ward.png', { type: 'image/png' }));
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Check this image.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
-    await user.click(await screen.findByRole('button', { name: 'Retry' }));
 
-    // The backend recorded the upload as its own history message, so the retry sends no files.
-    expect(mockRunEvents).toHaveBeenLastCalledWith(
-      'session-id',
-      'Check this image.',
-      expect.any(Object),
-      expect.any(AbortSignal),
-      null,
-      '/ai',
-    );
-    expect(screen.queryByRole('button', { name: 'Prepare retry' })).not.toBeInTheDocument();
+    expect(await screen.findByText('This response failed before completion. Send a new message to continue.')).toBeInTheDocument();
+    expect(screen.queryByText(/did not finish uploading/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
   });
 
   describe('applied schedule changes', () => {
@@ -2921,7 +2966,7 @@ describe('ExperimentalAiPage', () => {
       render(<ExperimentalAiPage />);
       await ask(user);
 
-      await user.click(await screen.findByText('Schedule check failed'));
+      await screen.findByText('Schedule check failed');
       expect(screen.getByText('schedule.yaml introduces problems and cannot be applied.')).toBeVisible();
     });
 

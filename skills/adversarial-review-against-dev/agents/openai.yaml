@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Johnson Sun
+# This file is mostly AI generated.
+
+interface:
+  display_name: "Adversarial Branch Review"
+  short_description: "Review a branch against dev and fix findings"
+  default_prompt: "Use $adversarial-review-against-dev to review this branch against origin/dev, verify each finding, fix the clear defects as new commits, and ask about findings that may be intended."

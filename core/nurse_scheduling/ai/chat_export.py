@@ -188,6 +188,8 @@ def _summary(entry):
         return "Schedule check passed" if entry["ok"] else "Schedule check failed"
     if kind == "schedule-applied":
         return "Applied to your schedule"
+    if kind == "notice":
+        return "App notice"
     state = entry.get("state")
     suffix = state if state in {"running", "interrupted"} else "failed" if not entry["ok"] else ""
     return entry["name"] + (" · " + suffix if suffix else "")
@@ -197,7 +199,7 @@ def _activity_label(entry):
     kind = entry["kind"]
     if kind in {"reasoning", "response", "schedule-change"}:
         return {"reasoning": "Reasoning", "response": "Response", "schedule-change": "Schedule change"}[kind]
-    if kind in {"schedule-check", "schedule-applied", "compaction"}:
+    if kind in {"notice", "schedule-check", "schedule-applied", "compaction"}:
         return _summary(entry)
     state = entry.get("state")
     suffix = state if state in {"running", "interrupted"} else "failed" if not entry["ok"] else ""
@@ -221,7 +223,7 @@ def _activity_text(entry):
 
 def _activity_html(entry):
     kind = entry["kind"]
-    if kind in {"reasoning", "schedule-check", "schedule-applied", "compaction"}:
+    if kind in {"notice", "reasoning", "schedule-check", "schedule-applied", "compaction"}:
         body = '<pre class="activity-output">' + escape_html(_activity_text(entry)) + "</pre>"
     elif kind == "schedule-change":
         before, after = entry["before"].split("\n"), entry["after"].split("\n")
@@ -244,12 +246,20 @@ def _activity_html(entry):
         )
     else:
         arguments = (
-            '<pre class="activity-output">' + escape_html(entry["arguments"]) + "</pre>"
+            '<section class="tool-section" aria-label="Tool arguments"><h3>'
+            + ("Command" if entry["name"] == "bash" else "Arguments")
+            + '</h3><pre class="activity-output">'
+            + escape_html(entry["arguments"])
+            + "</pre></section>"
             if entry.get("arguments") and entry["arguments"] != "{}"
             else ""
         )
         result = (
-            '<pre class="activity-output">' + escape_html(entry["result"]) + "</pre>" if entry.get("result") else ""
+            '<section class="tool-section" aria-label="Tool result"><h3>Result</h3><pre class="activity-output">'
+            + escape_html(entry["result"])
+            + "</pre></section>"
+            if entry.get("result")
+            else ""
         )
         interrupted = (
             '<p class="interrupted">The command did not return before the turn ended.</p>'
@@ -257,9 +267,17 @@ def _activity_html(entry):
             else ""
         )
         body = '<div class="tool-body">' + arguments + result + interrupted + "</div>"
-    return f"""<details class="activity-details">
+    audience = (
+        '<p class="activity-status">Validation result sent to AI.</p>'
+        if kind == "schedule-check"
+        else '<p class="activity-status">App notice. Not sent to AI.</p>'
+        if kind == "schedule-applied"
+        else ""
+    )
+    opened = " open" if kind == "schedule-check" and not entry["ok"] else ""
+    return f"""<details class="activity-details"{opened}>
             <summary>{escape_html(_summary(entry))}</summary>
-            <div class="activity-body">{body}</div>
+            {audience}<div class="activity-body">{body}</div>
           </details>"""
 
 
@@ -525,7 +543,15 @@ def build_html_chat(messages, metadata):
                     if entry["kind"] == "response"
                     else _activity_html(entry)
                 )
-                fragments.append('<div class="activity-entry">' + separator + content + "</div>")
+                # Match the live chat: model inputs align right and app notices center.
+                placement = (
+                    " model-input"
+                    if entry["kind"] == "schedule-check"
+                    else " app-notice"
+                    if entry["kind"] in {"schedule-applied", "notice"}
+                    else ""
+                )
+                fragments.append(f'<div class="activity-entry{placement}">' + separator + content + "</div>")
             timeline = (
                 '<div class="assistant-activity" aria-label="Assistant activity">' + "".join(fragments) + "</div>"
             )
@@ -569,6 +595,13 @@ def build_html_chat(messages, metadata):
                 else ""
             )
             timing = f'<time datetime="{iso}" title="{escape_html(display)}">{escape_html(display)}{duration}</time>'
+        audience = (
+            '<p class="message-status">App notice. Not sent to AI.</p>'
+            if role == "optimizer"
+            else '<p class="message-status">Sent to AI.</p>'
+            if role == "system" or message.get("source")
+            else ""
+        )
         model_cost = "".join(
             '<p class="activity-details" style="overflow-wrap:anywhere">' + escape_html(line) + "</p>"
             for line in _model_cost_lines(message)
@@ -576,6 +609,7 @@ def build_html_chat(messages, metadata):
         rendered.append(f"""
       <article class="message {role}{source}">
         <div class="label">{escape_html(message_label(message))}</div>
+        {audience}
         {uploads}
         {timeline}
         {model_cost}{status}{timing}

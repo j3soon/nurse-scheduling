@@ -20,6 +20,7 @@
 # This file is mostly AI generated.
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -30,7 +31,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .agent_types import AgentToolOutcome
-from .candidate import SCHEDULE_FILENAME, review_schedule_candidate
+from .candidate import REQUIRED_RULE_NOTICE, SCHEDULE_FILENAME, review_schedule_candidate
 from .config import AiSettings
 from .optimizer import WORKSPACE_OPTIMIZER_RESULT
 from .result_context import build_result_context
@@ -55,18 +56,22 @@ from .system_prompt import compose_system_prompt
 
 logger = logging.getLogger("nurse_scheduling.ai.sandbox_agent")
 WORKSPACE_SCHEDULE = f"/workspace/{SCHEDULE_FILENAME}"
+WORKSPACE_LAST_ACCEPTED_SCHEDULE = "/workspace/last-accepted-schedule.yaml"
 WORKSPACE_ATTACHMENTS = "/workspace/attachments"
+WORKSPACE_ANALYSIS = "/workspace/analysis.md"
+MAX_ANALYSIS_BYTES = 64 * 1024
 REFERENCE_SCHEMAS = {group: f"/reference/{path.name}" for group, path in SCHEMA_REFERENCE_FILES.items()}
 REFERENCE_SCHEMAS["taiwan-holidays"] = f"/reference/{TAIWAN_HOLIDAYS_SOURCE.name}"
 REFERENCE_USER_GUIDE = "/reference/user-guide"
 REFERENCE_SCHEDULE_EXAMPLE = "/reference/examples/large-ward-with-87-people-2025-11.yaml"
 ATTACHMENT_TOOL_DIRECTORY = Path(__file__).with_name("attachment_tools")
 INSPECTION_HELPERS = {
+    "build_taiwan_holiday_groups.py": "Read-only Taiwan WORKDAY/FREEDAY group generation from the bundled calendar, including official holidays and makeup workdays. Preserves custom groups. Defaults to current schedule. --start/--end override the range. Rejects unsupported dates.",
     "inspect_request_tiers.py": "Current YAML inventory of all nonzero shift-request weight tiers, with entry and expanded target counts. --max-tiers bounds returned tiers.",
     "inspect_shift_requests.py": "Current YAML nonzero shift-request counts and resolved selectors. Repeat --weight, --person or --date to filter. --max-requests 0 returns counts only.",
-    "inspect_xlsx.py": "XLSX inspection. Use --overview for up to 100 sheet names, visibility states, and reported sizes without reading cells. Otherwise inspect bounded cells, formulas, and saved caches. Add --styles for stored font/fill colors, borders, alignment, and number formats.",
+    "inspect_xlsx.py": "XLSX sheets, cells, formulas and saved caches. Use --overview for sheet names, visibility and reported sizes. Use --comments --range Sheet!A1:H20 for stored legacy comments, including blank cells, source parts and truncation, without scanning worksheet cells. Use --styles for stored formatting. Use --summary --range A1:B10 for typed value frequencies and optional --axis row|column counts. With --styles, summaries separate values by style. Reports blanks and truncation without recalculating formulas.",
     "inspect_pdf.py": "PDF page text and rendered page images. Use --find TEXT for bounded literal search with matching page numbers and excerpts. Reports search truncation and pages without text. No OCR.",
-    "inspect_optimizer_result.py": "Optimizer assignments, signed request counts and available staffing/succession audits using a compiled schedule context.",
+    "inspect_optimizer_result.py": "Optimizer assignments, signed request counts and available staffing/succession audits using compiled schedule context. Use --statistics for shift totals, longest work/OFF run distributions and per-person counts over all scheduled dates. --summary-only omits person rows. --include-history uses only matching source history. Statistics are not a policy audit.",
 }
 REFERENCE_ATTACHMENT_TOOLS = {
     f"/reference/tools/{name}": ATTACHMENT_TOOL_DIRECTORY / name for name in INSPECTION_HELPERS
@@ -89,6 +94,14 @@ def inspection_helper_catalog() -> str:
 
 
 SANDBOX_SYSTEM_PROMPT = compose_system_prompt()
+
+
+@dataclass(frozen=True)
+class AgentAnalysis:
+    """Bounded untrusted notes tied to the inputs that were analyzed."""
+
+    source_sha256: str
+    content: bytes
 
 
 @dataclass(frozen=True)
@@ -158,6 +171,21 @@ class SandboxAttachment:
 AttachmentLoader = Callable[[SandboxAttachment], Awaitable[bytes]]
 
 
+def analysis_source_sha256(schedule_yaml: str, attachments: Sequence[SandboxAttachment]) -> str:
+    """Identify the exact schedule and upload files for reusable analysis."""
+    # A session rejects a retained upload ID with different bytes, so its path identifies
+    # the file even when a run snapshot holds only the persisted reference.
+    sources = [
+        (
+            attachment_path(item, index),
+            item.media_type,
+            item.byte_count if item.id else hashlib.sha256(item.data or b"").hexdigest(),
+        )
+        for index, item in enumerate(attachments, start=1)
+    ]
+    return hashlib.sha256(json.dumps([schedule_yaml, sources], ensure_ascii=False).encode()).hexdigest()
+
+
 @dataclass(frozen=True)
 class WorkspaceLimits:
     """Trusted orchestration and AI-context limits for one sandbox run."""
@@ -218,6 +246,7 @@ async def _measured_sandbox_run(
     optimizer_result: bytes | None,
     optimizer_context: bytes | None,
     load_attachment: AttachmentLoader | None = None,
+    analysis: AgentAnalysis | None = None,
 ) -> AsyncIterator[SandboxBackend]:
     """Create, hydrate, and measure a sandbox only when a tool needs it."""
     stack = AsyncExitStack()
@@ -231,6 +260,7 @@ async def _measured_sandbox_run(
         optimizer_result,
         optimizer_context,
         load_attachment,
+        analysis,
     )
     try:
         async with stack:
@@ -256,6 +286,7 @@ class _LazySandboxRun:
         optimizer_result: bytes | None,
         optimizer_context: bytes | None,
         load_attachment: AttachmentLoader | None = None,
+        analysis: AgentAnalysis | None = None,
     ) -> None:
         self._factory = factory
         self._cleanup_timeout_seconds = cleanup_timeout_seconds
@@ -266,6 +297,7 @@ class _LazySandboxRun:
         self._optimizer_result = optimizer_result
         self._optimizer_context = optimizer_context
         self._load_attachment = load_attachment
+        self._analysis = analysis
         self._sandbox: SandboxBackend | None = None
         self._hydrated = False
         self._start_lock = asyncio.Lock()
@@ -304,6 +336,7 @@ class _LazySandboxRun:
                     self._optimizer_result,
                     self._optimizer_context,
                     self._load_attachment,
+                    self._analysis,
                 )
                 self._hydrated = True
             return self._sandbox
@@ -380,10 +413,21 @@ async def hydrate_sandbox(
     optimizer_result: bytes | None = None,
     optimizer_context: bytes | None = None,
     load_attachment: AttachmentLoader | None = None,
+    analysis: AgentAnalysis | None = None,
 ) -> None:
     """Copy trusted application state and searchable references into one turn."""
     started = time.perf_counter()
-    files: dict[str, str | bytes] = {WORKSPACE_SCHEDULE: schedule_yaml}
+    files: dict[str, str | bytes] = {
+        WORKSPACE_SCHEDULE: schedule_yaml,
+        WORKSPACE_LAST_ACCEPTED_SCHEDULE: schedule_yaml,
+    }
+    if (
+        analysis is not None
+        and analysis.content
+        and len(analysis.content) <= MAX_ANALYSIS_BYTES
+        and analysis.source_sha256 == analysis_source_sha256(schedule_yaml, attachments)
+    ):
+        files[WORKSPACE_ANALYSIS] = analysis.content
     files[REFERENCE_SCHEDULE_EXAMPLE] = load_schedule_example()
     try:
         # Compiling a large schedule on the event loop would stall every session's stream.
@@ -473,52 +517,53 @@ def _inspection_context_json(schedule_yaml: str, workbook: bytes | None = None) 
 
 
 class _ScheduleCandidateTracker:
-    """Give the model trusted validation feedback after a shell edit."""
+    """Review drafts and keep authoritative recovery contents outside the sandbox."""
 
     def __init__(self, sandbox: SandboxBackend, base_text: str, max_bytes: int) -> None:
         self._sandbox = sandbox
         self._base_text = base_text
         self._max_bytes = max_bytes
-        self._last_content = base_text.encode("utf-8")
+        # The application's starting schedule is accepted even when incomplete.
+        self._last_accepted = base_text.encode("utf-8")
+        self._last_checked = (self._last_accepted, None)
+        self.rejection: str | None = None
+
+    async def _sync_accepted_copy(self) -> None:
+        # Rewrite after every mutating call, including calls that changed only this copy.
+        await self._sandbox.write_file(WORKSPACE_LAST_ACCEPTED_SCHEDULE, self._last_accepted)
+
+    async def _reject(self, message: str) -> tuple[AgentToolOutcome, None]:
+        await self._sync_accepted_copy()
+        self.rejection = (
+            f"{message}\nYour edits are kept. "
+            f"The server keeps the last accepted schedule at {WORKSPACE_LAST_ACCEPTED_SCHEDULE}. "
+            "Continue editing the draft or copy the last accepted schedule back to it. "
+            "The draft must pass trusted review before finishing or starting optimization."
+        )
+        return AgentToolOutcome(self.rejection, False), None
 
     async def review_if_changed(self) -> tuple[AgentToolOutcome, str | None] | None:
         prefix = "Trusted schedule check after this command:"
+        read_problem = None
         try:
             content = await self._sandbox.read_file(WORKSPACE_SCHEDULE, max_bytes=self._max_bytes)
         except SandboxFileSizeError:
-            return (
-                AgentToolOutcome(f"{prefix}\nThe candidate exceeds the {self._max_bytes}-byte schedule limit.", False),
-                None,
-            )
+            content, read_problem = b"", f"The candidate exceeds the {self._max_bytes}-byte schedule limit."
         except SandboxFileNotFoundError:
-            # Report the deletion to the model instead of failing the turn, so it
-            # can restore the working copy it removed.
-            return (
-                AgentToolOutcome(
-                    f"{prefix}\nThe working copy {WORKSPACE_SCHEDULE} no longer exists. "
-                    "Restore it before finishing this turn.",
-                    False,
-                ),
-                None,
-            )
-        if content == self._last_content:
+            content, read_problem = b"", f"The working copy {WORKSPACE_SCHEDULE} no longer exists."
+        checked = (content, read_problem)
+        if checked == self._last_checked:
+            await self._sync_accepted_copy()
             return None
-        self._last_content = content
+        self._last_checked = checked
+        if read_problem is not None:
+            return await self._reject(f"{prefix}\n{read_problem}")
         if len(content) > self._max_bytes:
-            return (
-                AgentToolOutcome(
-                    f"{prefix}\nThe candidate exceeds the {self._max_bytes}-byte schedule limit.",
-                    False,
-                ),
-                None,
-            )
+            return await self._reject(f"{prefix}\nThe candidate exceeds the {self._max_bytes}-byte schedule limit.")
         try:
             candidate = content.decode("utf-8")
         except UnicodeDecodeError:
-            return (
-                AgentToolOutcome(f"{prefix}\nThe candidate is not valid UTF-8.", False),
-                None,
-            )
+            return await self._reject(f"{prefix}\nThe candidate is not valid UTF-8.")
 
         # Validating or compiling a large schedule would otherwise block every session's stream.
         review = await asyncio.to_thread(review_schedule_candidate, self._base_text, candidate, self._max_bytes)
@@ -528,6 +573,16 @@ class _ScheduleCandidateTracker:
             review.outcome.ok,
             review.proposal is not None,
         )
+        if not review.outcome.ok:
+            return await self._reject(f"{prefix}\n{review.outcome.text}")
+        self.rejection = None
+        restored = review.proposal is not None and review.proposal.text != candidate
+        if restored:
+            candidate = review.proposal.text
+            await self._sandbox.write_file(WORKSPACE_SCHEDULE, candidate)
+        self._last_accepted = candidate.encode("utf-8")
+        self._last_checked = (self._last_accepted, None)
+        await self._sync_accepted_copy()
         if review.outcome.ok:
             try:
                 context = await asyncio.to_thread(_inspection_context_json, candidate)
@@ -547,17 +602,15 @@ class _ScheduleCandidateTracker:
         if review.proposal is not None:
             return (
                 AgentToolOutcome(
-                    f"{prefix}\nThe candidate passed trusted server-side validation and differs from the base schedule.",
+                    f"{prefix}\nThe candidate passed trusted server-side validation and differs from the base schedule."
+                    f"\nThe server updated {WORKSPACE_LAST_ACCEPTED_SCHEDULE}."
+                    + (f"\n{REQUIRED_RULE_NOTICE}" if restored else ""),
                     True,
                 ),
                 candidate,
             )
-        guidance = ""
-        if not review.outcome.ok:
-            guidance = (
-                "The working copy retains this command's changes. Repair the reported problems before finishing.\n"
-            )
+
         return (
-            AgentToolOutcome(f"{prefix}\n{guidance}{review.outcome.text}", review.outcome.ok),
+            AgentToolOutcome(f"{prefix}\n{review.outcome.text}", review.outcome.ok),
             candidate if review.outcome.ok else None,
         )

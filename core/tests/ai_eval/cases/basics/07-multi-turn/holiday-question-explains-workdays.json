@@ -1,0 +1,47 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "id": "holiday-question-explains-workdays",
+  "fixture": "small-clinic",
+  "question": "The current roster covers January 5 through January 11, 2026. Extend it through January 18, 2026.",
+  "expect_proposal": false,
+  "answer_contains": [
+    "Taiwan",
+    [
+      "holiday",
+      "holidays"
+    ],
+    [
+      "official",
+      "public"
+    ],
+    [
+      "make-up",
+      "makeup",
+      "make up"
+    ],
+    [
+      "workday",
+      "working day"
+    ],
+    [
+      "rule",
+      "constraint",
+      "preference"
+    ],
+    [
+      "weekend",
+      "weekday"
+    ]
+  ],
+  "turn_tool_usage": [
+    {
+      "max_total": 0
+    }
+  ],
+  "tags": [
+    "calendar",
+    "clarification"
+  ],
+  "note": "This testcase is mostly AI generated. A new user needs the holiday-calendar question to explain importing public holidays and make-up working days, and why this helps scheduling rules beyond plain weekdays and weekends. No schedule facts need a tool call."
+}

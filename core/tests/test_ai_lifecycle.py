@@ -617,3 +617,69 @@ def test_optimizer_completion_can_retry_and_review_again_without_a_user_turn():
             assert session.transcript[-1] == AssistantMessage("Reviewed fresh result.")
 
     asyncio.run(exercise())
+
+
+def test_analysis_commits_with_its_run_and_is_counted_in_retention():
+    from nurse_scheduling.ai.workspace import AgentAnalysis
+
+    store = SessionStore(make_settings())
+    session = store.create("owner", schedule_yaml())
+    before = store.retained_bytes
+    snapshot = store.begin(session.id, "owner")
+    snapshot.analysis = AgentAnalysis("a" * 64, b"confirmed source mapping")
+    assert store.finish(session.id, [], snapshot=snapshot).run_saved
+    assert session.analysis is snapshot.analysis
+    assert store.retained_bytes == before + 64 + len(snapshot.analysis.content)
+    next_run = store.begin(session.id, "owner")
+    assert next_run.analysis is session.analysis
+    store.abort(session.id, next_run)
+    store.update_schedule(session.id, "owner", schedule_yaml() + "\n")
+    assert session.analysis is None
+
+
+def test_aborted_or_stale_runs_do_not_replace_retained_analysis():
+    from nurse_scheduling.ai.workspace import AgentAnalysis
+
+    store = SessionStore(make_settings())
+    session = store.create("owner", schedule_yaml())
+    original = store.begin(session.id, "owner")
+    original.analysis = AgentAnalysis("a" * 64, b"original")
+    store.finish(session.id, [], snapshot=original)
+    aborted = store.begin(session.id, "owner")
+    aborted.analysis = AgentAnalysis("b" * 64, b"discarded")
+    store.abort(session.id, aborted)
+    successor = store.begin(session.id, "owner")
+    assert not store.finish(session.id, [], snapshot=aborted).run_saved
+    assert session.analysis.content == b"original"
+    store.update_schedule(session.id, "owner", schedule_yaml() + "\n")
+    successor.analysis = AgentAnalysis("c" * 64, b"stale")
+    assert not store.finish(session.id, [], snapshot=successor).run_saved
+    assert session.analysis is None
+
+
+def test_optional_analysis_is_dropped_when_the_session_budget_is_full():
+    from nurse_scheduling.ai.workspace import AgentAnalysis
+
+    source = schedule_yaml()
+    store = SessionStore(make_settings(max_session_bytes=len(source.encode()) + 10))
+    session = store.create("owner", source)
+    snapshot = store.begin(session.id, "owner")
+    snapshot.analysis = AgentAnalysis("a" * 64, b"notes exceed available budget")
+    assert store.finish(session.id, [], snapshot=snapshot).run_saved
+    assert session.analysis is None
+    assert store.retained_bytes == len(source.encode())
+
+
+def test_optional_analysis_does_not_block_new_session_input():
+    from nurse_scheduling.ai.workspace import AgentAnalysis
+
+    source = schedule_yaml()
+    store = SessionStore(make_settings(max_session_bytes=len(source.encode()) + 150))
+    session = store.create("owner", source)
+    snapshot = store.begin(session.id, "owner")
+    snapshot.analysis = AgentAnalysis("a" * 64, b"cached analysis")
+    store.finish(session.id, [], snapshot=snapshot)
+    assert session.analysis is not None
+    store.create("another-owner", "x" * 100)
+    assert session.analysis is None
+    assert store.retained_bytes == len(source.encode()) + 100

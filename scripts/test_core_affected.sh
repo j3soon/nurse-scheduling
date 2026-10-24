@@ -7,8 +7,9 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CORE_DIR="$ROOT_DIR/core"
 source "$SCRIPT_DIR/affected_test_common.sh"
 
-# Dev images omit the optional PuLP solver runtimes. This option skips their tests
-# instead of stopping, so the remaining suite can still run there.
+# Dev images omit the optional PuLP solver packages. Their tests skip automatically.
+# This option also skips tests whose installed runtime fails its probe, so the
+# remaining suite can still run there.
 skip_unavailable_solvers=false
 parse_args=()
 while (($# > 0)); do
@@ -127,18 +128,29 @@ fi
 
 if ((${#required_solvers[@]} > 0)); then
   SKIP_UNAVAILABLE_SOLVERS="$skip_unavailable_solvers" python - "${required_solvers[@]}" <<'PY'
+import importlib.util
 import os
 import sys
 
-from nurse_scheduling.server.solver_options import solver_is_available
+from nurse_scheduling.server.solver_options import SOLVER_RUNTIME_MODULES, solver_is_available
 
 unavailable = [solver for solver in dict.fromkeys(sys.argv[1:]) if not solver_is_available(solver)]
-if unavailable and os.environ["SKIP_UNAVAILABLE_SOLVERS"] == "true":
-    print(f"Skipping tests that need unavailable solver runtimes: {', '.join(unavailable)}", file=sys.stderr)
-elif unavailable:
-    print(f"Required optional solver runtimes unavailable: {', '.join(unavailable)}", file=sys.stderr)
+missing = []
+broken = []
+for solver in unavailable:
+    module = SOLVER_RUNTIME_MODULES.get(solver)
+    if module is not None and importlib.util.find_spec(module) is None:
+        missing.append(solver)
+    else:
+        broken.append(solver)
+if missing:
+    print(f"Optional solver packages not installed; their tests skip automatically: {', '.join(missing)}", file=sys.stderr)
+if broken and os.environ["SKIP_UNAVAILABLE_SOLVERS"] == "true":
+    print(f"Skipping tests that need unavailable solver runtimes: {', '.join(broken)}", file=sys.stderr)
+elif broken:
+    print(f"Optional solver runtimes failed although their packages are installed: {', '.join(broken)}", file=sys.stderr)
     if os.path.exists("/.dockerenv"):
-        print("This dev image omits them. Pass --skip-unavailable-solvers to skip their tests.", file=sys.stderr)
+        print("Fix the dev image installation. Pass --skip-unavailable-solvers to skip their tests.", file=sys.stderr)
     else:
         print("From core/, run: uv pip install -r requirements-optional.txt", file=sys.stderr)
     raise SystemExit(2)

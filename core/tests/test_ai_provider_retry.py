@@ -113,7 +113,11 @@ def test_transport_failures_retry_before_output(monkeypatch, error_type):
         return httpx.Response(200, text=_sse_body(_delta_chunk({"content": "Recovered"})))
 
     provider = _transport_provider(monkeypatch, handle, provider_retry_backoff_seconds=0)
-    assert _events(provider) == [TextDelta("Recovered"), provider_module.ResponseEnd(None)]
+    assert _events(provider) == [
+        provider_module.ProviderRetry("The AI provider is unavailable. Retrying in 0 s (attempt 2 of 5)."),
+        TextDelta("Recovered"),
+        provider_module.ResponseEnd(None),
+    ]
     assert len(requests) == 2
 
 
