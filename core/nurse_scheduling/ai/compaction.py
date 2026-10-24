@@ -26,7 +26,7 @@ from pathlib import Path
 
 from .agent_types import AgentCompaction, AgentCompactionEnd, AgentCompactionStart
 from .context import SUMMARY_PREFIX, apply_compaction, history_chars
-from .context_tokens import CONTEXT_SAFETY_TOKENS, estimate_context_tokens, estimate_tokens
+from .context_tokens import context_safety_tokens, estimate_context_tokens, estimate_tokens
 from .provider import (
     ChatMessage,
     ProviderCall,
@@ -150,7 +150,7 @@ class ContextCompactor:
         prompts = dict(zip((entry["id"] for entry in entries), load_system_prompt_sections(entries), strict=True))
         instruction_chars = max(len(prompt) for key, prompt in prompts.items() if key != "compaction-system")
         summary_space = (
-            (window - max(1, int(0.8 * reserve)) - CONTEXT_SAFETY_TOKENS) * 4
+            (window - max(1, int(0.8 * reserve)) - context_safety_tokens(window)) * 4
             - len(prompts["compaction-system"])
             - instruction_chars
             - 512

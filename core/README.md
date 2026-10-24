@@ -637,7 +637,8 @@ The composer footer updates Context and Tokens during streamed reasoning and ans
 text. Token estimates are replaced when the provider reports usage. Estimated cost
 updates when provider cost figures arrive. Missing prices stay unavailable.
 Completion requests cap output against the model's advertised output limit and
-remaining context, with a 4,096-token safety margin. Summaries request up to
+remaining context, with a safety margin of 4,096 tokens or half the context
+window, whichever is smaller. Summaries request up to
 80 percent of their reserved output space. Numeric reasoning budgets leave at
 least 1,024 tokens for the answer within the same completion limit. The gateway's
 supported parameters determine the token-limit field. Unknown model limits keep

@@ -69,6 +69,38 @@ def test_budget_counts_tool_definitions_and_leaves_context_room(monkeypatch):
     assert 1 < payload["max_tokens"] < 6000
 
 
+@pytest.mark.parametrize("window", [1024, 4096, 8192, 32000])
+def test_short_requests_leave_response_room_in_small_context_windows(monkeypatch, window):
+    requests = []
+    provider = wire_provider(monkeypatch, requests)
+    provider.context_tokens = window
+    messages = [{"role": "user", "content": "Hello"}]
+    asyncio.run(_collect(provider.stream_events(messages)))
+    payload = json.loads(requests[0].content)
+    assert payload["max_tokens"] == window - estimate_context_tokens(messages, []) - min(4096, window // 2)
+    assert payload["max_tokens"] > 1
+
+
+@pytest.mark.parametrize("window", [4096, 8192])
+def test_small_context_compaction_leaves_response_room(monkeypatch, window):
+    requests = []
+    provider = wire_provider(monkeypatch, requests)
+    provider.context_tokens = window
+    messages = [
+        {"role": "system", "content": "Scheduling assistant"},
+        {"role": "user", "content": "Keep nights. " + "x" * 20000},
+        {"role": "assistant", "content": "Earlier answer"},
+        {"role": "user", "content": "Inspect P1"},
+    ]
+    events = asyncio.run(_collect(ContextCompactor(provider).compact(messages, [], force=True)))
+    assert any(isinstance(event, AgentCompaction) for event in events)
+    for request in requests:
+        payload = json.loads(request.content)
+        assert estimate_context_tokens(payload["messages"], []) + payload["max_tokens"] <= window - min(
+            4096, window // 2
+        )
+
+
 def test_actual_context_usage_limits_output_when_wire_estimate_is_smaller(monkeypatch):
     requests = []
     provider = wire_provider(monkeypatch, requests)

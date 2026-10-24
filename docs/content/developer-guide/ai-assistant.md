@@ -385,7 +385,8 @@ records are not implemented.
 Summary calls use the frozen run model and reasoning selection. Their provider
 output limit is at most 80 percent of the reserved tokens, following Pi. Every
 completion also fits the model's advertised output cap and remaining context
-with a 4,096-token safety margin. Reported same-model usage informs the request
+with a safety margin of 4,096 tokens or half the context window, whichever is
+smaller. Summary chunks use the same margin. Reported same-model usage informs the request
 estimate when available, including tool definitions and later messages. Numeric
 thinking budgets leave 1,024 tokens for answer text. Models without discovered
 limits retain provider defaults unless the caller supplies a cap.

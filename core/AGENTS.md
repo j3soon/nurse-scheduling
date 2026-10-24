@@ -141,7 +141,7 @@ from the trust-based local harness.
   Keep summary requests visible in provider cost records, but keep their text out
   of the answer stream. Use `tests/test_ai_compaction.py` for these contracts.
   Test chunked summaries through the provider's token-limit calculation, including
-  updates with a previous split-turn summary.
+  updates with a previous split-turn summary and small model context windows.
   Coalesce streamed context estimates with text batches. Replace token estimates
   with provider usage without adding estimates to billed usage or cost totals.
   Test history character and message thresholds without model context metadata.

@@ -27,6 +27,11 @@ from typing import Any
 CONTEXT_SAFETY_TOKENS = 4096
 
 
+def context_safety_tokens(context_tokens: int) -> int:
+    """Keep the safety margin within half of a small model's context window."""
+    return min(CONTEXT_SAFETY_TOKENS, context_tokens // 2)
+
+
 def estimate_tokens(message: dict[str, Any]) -> int:
     """Use Pi's characters/4 fallback, with a fixed allowance for tool images."""
     content = message.get("content")
@@ -77,5 +82,5 @@ def response_token_limit(
     """Fit output inside model limits and leave Pi's context safety margin."""
     limits = [value for value in (output_tokens, requested_tokens) if type(value) is int and value > 0]
     if context_tokens is not None and context_tokens > 0:
-        limits.append(context_tokens - used_tokens - CONTEXT_SAFETY_TOKENS)
+        limits.append(context_tokens - used_tokens - context_safety_tokens(context_tokens))
     return min(limits) if limits else None
