@@ -122,7 +122,7 @@ def test_models_are_authenticated_filtered_and_do_not_expose_credentials(monkeyp
         assert "api_key" not in first.text and "must-not-leak" not in first.text
 
 
-def test_turns_freeze_reasoning_switch_model_and_replay_without_calls(monkeypatch):
+def test_conversation_locks_model_preserves_reasoning_choices_and_replays_without_calls(monkeypatch):
     session_ids = []
     calls = gateway(monkeypatch, session_ids=session_ids)
     app = basic.create_test_app(settings=settings(), provider=None)
@@ -138,9 +138,16 @@ def test_turns_freeze_reasoning_switch_model_and_replay_without_calls(monkeypatc
         assert first.status_code == 200
         assert "event: model_selection" in first.text
         assert client.post(path, json={**request, "selection": {"model": "unknown"}}).status_code == 202
-        assert client.post(path, json={"message": "Next", "selection": {"model": "fast"}}).status_code == 200
+        assert client.post(path, json={"message": "Switch", "selection": {"model": "fast"}}).status_code == 409
+        assert client.put(f"/sessions/{session}/model-selection", json={"model": "fast"}).status_code == 409
         assert (
-            client.post(path, json={"message": "Bad", "selection": {"model": "fast", "reasoning": "high"}}).status_code
+            client.post(path, json={"message": "Next", "selection": {"model": "deep", "reasoning": "off"}}).status_code
+            == 200
+        )
+        assert (
+            client.post(
+                path, json={"message": "Bad", "selection": {"model": "deep", "reasoning": "unknown"}}
+            ).status_code
             == 422
         )
         client.portal.call(
@@ -148,12 +155,12 @@ def test_turns_freeze_reasoning_switch_model_and_replay_without_calls(monkeypatc
         )
     assert len(calls) == 3
     assert session_ids == [session] * 3
-    assert calls[2][1]["model"] == "fast" and "thinking" not in calls[2][1]
+    assert calls[2][1]["model"] == "deep"
     assert calls[0][0] == "Bearer key-a" and calls[0][1]["reasoning_effort"] == "high"
     assert "reasoning_effort" not in calls[1][1]
-    assert calls[1][1]["model"] == "fast"
+    assert calls[1][1]["model"] == "deep"
     session = app.state.session_store._sessions[session]
-    assert session.recovery_state()["model_selection"] == {"model": "fast", "reasoning": "default"}
+    assert session.recovery_state()["model_selection"] == {"model": "deep", "reasoning": "high"}
     assert "key-a" not in json.dumps(session.recovery_state())
 
 
@@ -352,10 +359,14 @@ def test_current_session_selection_is_authorized_validated_and_saved(monkeypatch
             client.post(f"/sessions/{session_id}/messages", json={"message": "Use the saved model"}).status_code == 200
         )
         owner, expires_at, state = recorded_history["saves"][-1]["state"]
+        owner, expires_at, state = recorded_history["starts"][-1]["state"]
         restored = SessionStore(configuration).restore(
             session_id, owner, state, expires_at, entries=[], next_entry_seq=0
         )
         assert restored.model_selection == selection
+        assert restored.locked_model == "deep"
+        with pytest.raises(HTTPException, match="fixed for this conversation"):
+            restored.check_model("fast")
     assert len(calls) == 1
     assert calls[0][1]["model"] == "deep"
     assert calls[0][1]["thinking"] == {"type": "disabled"}
@@ -417,8 +428,8 @@ def test_midstream_selection_changes_only_future_turns(monkeypatch):
             await asyncio.sleep(0)
             assert len(app.state.runs._runs[session_id]) == 2
             assert (await client.put(path, json={"model": "deep", "reasoning": "off"})).status_code == 200
-            current = {"model": "fast", "reasoning": "default"}
-            assert (await client.put(path, json=current)).status_code == 200
+            assert (await client.put(path, json={"model": "fast", "reasoning": "default"})).status_code == 409
+            current = {"model": "deep", "reasoning": "off"}
             assert app.state.session_store.get(session_id).active
             release.set()
 
@@ -436,7 +447,7 @@ def test_midstream_selection_changes_only_future_turns(monkeypatch):
             assert (await client.post(messages, json={"message": "Next", "message_id": "two"})).status_code == 202
             await asyncio.wait_for(finish(), timeout=2)
             await app.state.session_optimizer._on_completion(session_id, "Review", None, original)
-            assert [call[1]["model"] for call in calls] == ["deep", "deep", "fast", "deep", "fast", "fast"]
+            assert [call[1]["model"] for call in calls] == ["deep"] * 6
             assert [call[1].get("reasoning_effort") for call in calls] == ["high", "high", None, "high", None, None]
             assert (
                 await client.post(messages, json={"message": "Read", "message_id": "one", "selection": original})
@@ -461,11 +472,13 @@ def test_postgres_restores_current_model_choice_after_restart(monkeypatch, postg
         owner = client.cookies[basic.OWNER_COOKIE]
         selection = {"model": "deep", "reasoning": "off"}
         assert client.put(f"/sessions/{session_id}/model-selection", json=selection).status_code == 200
+        assert client.post(f"/sessions/{session_id}/messages", json={"message": "First"}).status_code == 200
     restored = basic.create_test_app(settings=configuration, provider=None)
     with basic.AuthenticatedTestClient(
         restored, headers={**headers, "Cookie": f"{basic.OWNER_COOKIE}={owner}"}
     ) as client:
         assert client.get(f"/sessions/{session_id}/model-selection").json() == selection
+        assert client.put(f"/sessions/{session_id}/model-selection", json={"model": "fast"}).status_code == 409
         assert client.post(f"/sessions/{session_id}/messages", json={"message": "Continue"}).status_code == 200
     assert calls[0][1]["model"] == "deep"
     assert calls[0][1]["thinking"] == {"type": "disabled"}

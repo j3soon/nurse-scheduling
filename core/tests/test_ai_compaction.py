@@ -170,7 +170,7 @@ def test_app_event_indices_survive_compaction_retention_and_restore():
     asyncio.run(exercise())
 
 
-@pytest.mark.parametrize("invalid", ["primary", "secondary", "unavailable", "same", None])
+@pytest.mark.parametrize("invalid", ["primary", "unavailable", None])
 def test_live_compaction_validates_models_before_starting_paid_cases(monkeypatch, invalid):
     from nurse_scheduling.ai.models import AvailableModel
 
@@ -180,19 +180,18 @@ def test_live_compaction_validates_models_before_starting_paid_cases(monkeypatch
     for key in ("AI_PROVIDER_BASE_URL", "AI_PROVIDER_API_KEY", "AI_PROVIDER_MODEL", "E2B_API_KEY"):
         monkeypatch.setenv(key, "test-only")
     settings = make_settings()
-    secondary = settings.provider_model if invalid == "same" else "secondary-model"
-    monkeypatch.setenv("AI_COMPACTION_SWITCH_MODEL", secondary)
     monkeypatch.setattr(live.AiSettings, "from_env", lambda: settings)
     started = []
 
     async def models(_self, _credential):
         return (
-            AvailableModel(settings.provider_model, "Primary", context_tokens=None if invalid == "primary" else 32000),
-            *(
-                [AvailableModel(secondary, "Secondary", context_tokens=None if invalid == "secondary" else 32000)]
-                if invalid != "unavailable"
-                else []
-            ),
+            []
+            if invalid == "unavailable"
+            else [
+                AvailableModel(
+                    settings.provider_model, "Primary", context_tokens=None if invalid == "primary" else 32000
+                ),
+            ]
         )
 
     async def run_case(name, *_args):
@@ -203,11 +202,9 @@ def test_live_compaction_validates_models_before_starting_paid_cases(monkeypatch
     monkeypatch.setattr(live, "run_live_case", run_case)
     if invalid is None:
         live.test_real_chat_runs_preserve_context_through_compaction(monkeypatch)
-        assert started == ["threshold", "repeated", "model-switch", "cancellation"]
+        assert started == ["threshold", "repeated", "model-lock", "cancellation"]
         return
-    expected = (
-        "different model" if invalid == "same" else "unavailable" if invalid == "unavailable" else "context limit"
-    )
+    expected = "unavailable" if invalid == "unavailable" else "context limit"
     with pytest.raises(AssertionError, match=expected):
         live.test_real_chat_runs_preserve_context_through_compaction(monkeypatch)
     assert started == []

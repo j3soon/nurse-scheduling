@@ -140,6 +140,7 @@ def test_stop_before_an_accepted_run_begins_publishes_its_stopped_outcome():
                     None,
                     # The run never begins, so it never reads the runtime.
                     runtime=cast(Any, None),
+                    requested_model="test-model",
                     runs=app.state.runs,
                     owner=session.owner_token,
                     credential_id=None,

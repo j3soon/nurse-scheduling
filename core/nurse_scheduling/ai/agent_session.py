@@ -303,6 +303,7 @@ class AgentSession:
     reported_version_mismatch: bool = False
     export_metadata: dict[str, Any] = field(default_factory=dict)
     model_selection: dict[str, str] | None = None
+    locked_model: str | None = None
     provider_credential_id: str | None = None
     cost_totals: CostTotals = field(default_factory=CostTotals)
     cost_totals_version: int = 0
@@ -352,6 +353,7 @@ class AgentSession:
             "schedule_yaml": self.schedule_yaml,
             "queued_schedule": asdict(self.queued_schedule) if self.queued_schedule else None,
             "model_selection": self.model_selection,
+            "locked_model": self.locked_model,
             "provider_credential_id": self.provider_credential_id,
             "cost_totals": self.cost_totals.public(),
             "cost_totals_version": self.cost_totals_version,
@@ -410,6 +412,7 @@ class AgentSession:
             revision=schedule_revision(state["schedule_yaml"]),
             queued_schedule=QueuedSchedule(**state["queued_schedule"]) if state.get("queued_schedule") else None,
             model_selection=state.get("model_selection"),
+            locked_model=state.get("locked_model"),
             provider_credential_id=state.get("provider_credential_id"),
             cost_totals=CostTotals.restored(state.get("cost_totals")),
             cost_totals_version=state.get("cost_totals_version", 0),
@@ -501,12 +504,19 @@ class AgentSession:
         async with self._admission_lock:
             selected = await prepare_runtime()
             assert selected.selection is not None
+            self.check_model(selected.selection["model"])
             previous = self.model_selection
             self.model_selection = selected.selection
             if not await _complete(runtime.recorder.save(self.id, self.provider_credential_id)):
                 self.model_selection = previous
                 raise HTTPException(503, "The model choice could not be saved yet. Please try again.")
             return self.model_selection
+
+    def check_model(self, model: str) -> None:
+        if self.locked_model is not None and model != self.locked_model:
+            raise HTTPException(
+                409, "The model is fixed for this conversation. Start a new conversation to choose another model."
+            )
 
     async def accept_message(
         self,
@@ -518,6 +528,7 @@ class AgentSession:
         owner: str | None,
         credential_id: str | None,
         prepare_runtime: Callable[[], Awaitable[SessionRuntime]] | None = None,
+        requested_model: str | None = None,
     ) -> MessageReceipt:
         """Start a run for a client message, or return the run that already answers it.
 
@@ -547,8 +558,15 @@ class AgentSession:
                 if await runtime.recorder.message_stopped(self.id, message_id):
                     self.stopped_message_ids.add(message_id)
 
+            model = requested_model or (self.model_selection or {}).get("model", runtime.settings.provider_model)
+            self.check_model(model)
+            previous_lock = self.locked_model
+
             async def execute(run: AgentRun) -> None:
                 selected_runtime = await prepare_runtime() if prepare_runtime is not None else runtime
+                self.check_model(selected_runtime.settings.provider_model)
+                if selected_runtime.selection is not None and (self.model_selection or {}).get("model") != model:
+                    self.model_selection = selected_runtime.selection
                 await self.run(run, question, runtime=selected_runtime, owner=owner, credential_id=credential_id)
 
             run = runs.start(
@@ -556,6 +574,7 @@ class AgentSession:
                 execute,
                 message_id=message_id,
             )
+            self.locked_model = model
             if message_id is not None:
                 accepted = AcceptedMessage(message_id, question, run, run.id)
                 if not runtime.recorder.enabled:
@@ -567,6 +586,8 @@ class AgentSession:
                         raise
                 self.latest_message = accepted
         if not await asyncio.shield(run.ready):
+            if previous_lock is None:
+                self.locked_model = None
             if run.cancelled and not run.shutdown:
                 # A Stop arrived before the run reported its start. A run cancelled before
                 # it began never reaches finalization, so its stopped outcome is published here.
@@ -1127,6 +1148,9 @@ class AgentSession:
                     # Record the failed review before publishing its terminal error.
                     preparation_error = ProviderError.for_user(str(exc.detail))
             bind_session = getattr(runtime.provider, "with_session_id", None)
+            if preparation_error is None:
+                self.check_model(runtime.settings.provider_model)
+                self.locked_model = runtime.settings.provider_model
             if bind_session is not None:
                 runtime = replace(runtime, provider=bind_session(session_id))
             if recorder.enabled:

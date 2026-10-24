@@ -145,10 +145,10 @@ Keep your original files.
 
 ## See what the assistant did
 
-You can change **Model** and **Reasoning** while an answer streams. The active
-turn keeps its original settings, including tool calls and steering. The session
-saves your new choice for later turns, including new optimizer reviews. Reloading
-the page restores that choice.
+Choose **Model** before the first message. It stays fixed for the conversation.
+You can change **Reasoning** while an answer streams. The active turn keeps its
+original setting, including tool calls and steering. The new reasoning setting
+applies to later turns and optimizer reviews. Reloading restores the choice.
 
 **Context X% used** below the message box shows the portion of the server's
 conversation history budget selected for the next turn. It excludes instructions,

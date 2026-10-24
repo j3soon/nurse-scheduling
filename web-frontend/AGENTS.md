@@ -141,7 +141,8 @@ destroys that state.
 
 Experimental AI controls must follow backend `/capabilities` responses. The
 backend remains authoritative for feature enablement and input limits.
-Keep model and reasoning controls editable during streaming. Save the session's
+Lock the model control after the first message. Keep reasoning effort editable
+during streaming for future turns. Enforce the same model lock on the backend. Save the session's
 current choice separately from the active turn's accepted choice. Restore the
 session choice after reload and serialize saves before submitting a new turn.
 For retained attachments, count existing uploads toward session limits. Keep

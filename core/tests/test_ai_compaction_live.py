@@ -140,7 +140,6 @@ async def run_live_case(name, settings, controls, output):
             report["session_id"] = session
             models = {model["id"]: model for model in (await client.get("/models")).json()["models"]}
             primary = settings.provider_model
-            secondary = os.getenv("AI_COMPACTION_SWITCH_MODEL", "azure/gpt-6-luna")
             assert primary in models, "The configured model is unavailable"
 
             async def select(model, reasoning="none"):
@@ -176,17 +175,18 @@ async def run_live_case(name, settings, controls, output):
                     kind == "tool" and data["name"] in {"write", "edit", "optimizer"} for kind, data in events
                 )
 
-            await select(primary, "low" if name == "model-switch" else "none")
+            efforts = [option["id"] for option in models[primary]["reasoning_options"]] or ["default"]
+            await select(primary, efforts[0] if name == "model-lock" else "none")
             initial = await submit(FIRST, "initial")
             assert any(kind == "tool" and data["ok"] and NOTE in data["arguments"] for kind, data in initial)
             assert not any(event["type"] == "compaction_start" for event in report["events"]), (
                 "First turn compacted too early"
             )
-            if name == "model-switch":
-                assert secondary in models and secondary != primary, (
-                    "Set AI_COMPACTION_SWITCH_MODEL to another available model"
-                )
-                await select(secondary)
+            if name == "model-lock":
+                other = next((model for model in models if model != primary), "different-model")
+                response = await client.put(f"/sessions/{session}/model-selection", json={"model": other})
+                assert response.status_code == 409, response.text
+                await select(primary, efforts[-1])
             if name == "cancellation":
                 control["block_summary"] = True
                 pending = asyncio.create_task(submit(FOLLOW_UP + FILLER, "cancel", wait=False))
@@ -216,9 +216,9 @@ async def run_live_case(name, settings, controls, output):
                 await check_facts(FOLLOW_UP + FILLER, "follow-up")
                 if name == "repeated":
                     await check_facts(FOLLOW_UP + FILLER, "repeat")
-                elif name == "model-switch":
-                    await select(primary)
-                    await check_facts(FOLLOW_UP, "switch-back")
+                elif name == "model-lock":
+                    await select(primary, efforts[0])
+                    await check_facts(FOLLOW_UP, "reasoning-change")
             successful = [
                 event for event in report["events"] if event["type"] == "compaction_end" and event["data"]["success"]
             ]
@@ -233,8 +233,8 @@ async def run_live_case(name, settings, controls, output):
                     request["summary"] and "<previous-summary>" in str(request["messages"])
                     for request in report["requests"]
                 )
-            if name == "model-switch":
-                assert {request["model"] for request in report["requests"]} == {primary, secondary}
+            if name == "model-lock":
+                assert {request["model"] for request in report["requests"]} == {primary}
             assert len(factory.created) >= 2 and len({sandbox["id"] for sandbox in factory.created}) == len(
                 factory.created
             )
@@ -309,18 +309,12 @@ def test_real_chat_runs_preserve_context_through_compaction(monkeypatch):
     async def exercise():
         models = {model.id: model for model in await ModelCatalog(settings).models(None)}
         primary = settings.provider_model
-        secondary = os.getenv("AI_COMPACTION_SWITCH_MODEL", "azure/gpt-6-luna")
-        assert secondary != primary, "AI_COMPACTION_SWITCH_MODEL must select a different model"
-        for model in (primary, secondary):
-            assert model in models, f"Live compaction model is unavailable: {model}"
-            assert models[model].context_tokens is not None, (
-                f"Live compaction requires a reported context limit for {model}. "
-                "Select models with context metadata through AI_PROVIDER_MODEL and AI_COMPACTION_SWITCH_MODEL."
-            )
+        assert primary in models, f"Live compaction model is unavailable: {primary}"
+        assert models[primary].context_tokens is not None, "Live compaction requires a reported context limit"
         return await asyncio.gather(
             *(
                 run_live_case(name, settings, controls, output)
-                for name in ("threshold", "repeated", "model-switch", "cancellation")
+                for name in ("threshold", "repeated", "model-lock", "cancellation")
             )
         )
 

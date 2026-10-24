@@ -139,7 +139,8 @@ stderr. Do not replace an explicitly selected file with a fallback.
   in session byte budgets even when model requests omit the failed response.
   Preserve completed exchanges and append a note when the workspace is discarded. Retain completed tool exchanges and native reasoning metadata across runs.
   Replay opaque metadata only to its original endpoint, API, and model. Keep the
-  stored metadata intact when switching models. Release tool images after session
+  stored metadata intact. Lock the model after the first accepted message, while
+  allowing reasoning-effort changes for future runs. Release tool images after session
   finalization and omit failed or incomplete native output from provider requests.
 - Keep compaction entries in the ordered transcript. Apply a summary only after
   every summary request completes, and invalidate summaries from failed or
@@ -156,7 +157,8 @@ stderr. Do not replace an explicitly selected file with a fallback.
   For live cross-run checks, use `../scripts/test_ai_compaction_live.sh` with
   `AI_ENV_FILE`. It runs four concurrent scenarios through the real session API
   and prebuilt E2B sandboxes. A smaller history budget forces compaction.
-  Select two distinct available models that both report a context limit.
+  Select an available model with a reported context limit. Check that model
+  switching is rejected and supported reasoning-effort changes remain accepted.
   Check remembered file context separately from file availability in the new VM.
 - Apply queued steering before each follow-up provider request, including requests
   after refused tool batches. Reject conflicting provider finish reasons and any
@@ -230,6 +232,8 @@ stderr. Do not replace an explicitly selected file with a fallback.
 - Append database migrations without renaming previously applied files. Test an
   upgrade from the deployed schema with saved sessions, message IDs, and Stop
   requests. Document backup and rollback when the old code cannot read the new schema.
+  Do not add code that only preserves edge-case behavior for sessions saved by
+  earlier versions, such as their interrupted runs or a missing model lock.
 - Deliver terminal and optimizer status events even when their recovery write
   fails. When a call that could not fail becomes an awaited write, check every
   caller's failure path. Each caller must still release the session and report

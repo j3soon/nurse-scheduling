@@ -909,6 +909,7 @@ def create_app(
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> ModelSelection:
         session = store.require_owned(session_id, owner)
+        session.check_model(body.model)
         selection = await session.select_model(
             lambda: runtime_for(request.state.auth_credential_id, body), runtime=runtime
         )
@@ -960,6 +961,7 @@ def create_app(
         if request.client is not None:
             session.client_address = request.client.host
         cursor = event_stream.cursor(session_id)
+        selection = body.selection or session.model_selection
         receipt = await session.accept_message(
             question,
             body.message_id,
@@ -967,9 +969,10 @@ def create_app(
             runs=runs,
             owner=owner,
             credential_id=request.state.auth_credential_id,
-            prepare_runtime=lambda: runtime_for(
-                request.state.auth_credential_id, body.selection or session.model_selection
-            ),
+            requested_model=selection.model
+            if isinstance(selection, ModelSelection)
+            else (selection or {}).get("model"),
+            prepare_runtime=lambda: runtime_for(request.state.auth_credential_id, selection),
         )
         run = receipt.run
         if run is not None:

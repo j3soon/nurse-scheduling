@@ -69,6 +69,21 @@ it('loads models with the new credential and resets choices that it cannot use',
   expect(vi.mocked(fetch).mock.calls.at(-1)?.[1]?.headers).toEqual({ Authorization: 'Bearer second' });
 });
 
+it('locks the model while reasoning remains editable for later turns', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string, request?: RequestInit) => ({
+    ok: true, json: async () => url.endsWith('/models') ? catalog
+      : request?.method === 'PUT' ? JSON.parse(request.body as string) : { model: 'deep', reasoning: 'high' },
+  })));
+  const onChange = vi.fn();
+  render(<ModelControls endpoint="https://ai.example" token="chat-key" sessionId="session"
+    modelLocked disabled={false} onChange={onChange} />);
+  await waitFor(() => expect(screen.getByLabelText('Reasoning')).toHaveValue('high'));
+  expect(screen.getByLabelText('AI model')).toBeDisabled();
+  expect(screen.getByLabelText('Reasoning')).toBeEnabled();
+  await userEvent.setup().selectOptions(screen.getByLabelText('Reasoning'), 'off');
+  await waitFor(() => expect(onChange).toHaveBeenLastCalledWith({ model: 'deep', reasoning: 'off' }));
+});
+
 it('reports discovery errors and allows retry without accepting a stale selection', async () => {
   const user = userEvent.setup();
   vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(new Error('Gateway unavailable'))

@@ -2372,9 +2372,9 @@ describe('ExperimentalAiPage', () => {
     expect(screen.queryByText(/failed before completion/)).not.toBeInTheDocument();
   });
 
-  it('changes the session model during streaming and uses the saved choice for the next queued turn', async () => {
+  it('locks the model and saves reasoning changes for the next queued turn', async () => {
     const original = { model: 'deep', reasoning: 'high' };
-    const current = { model: 'fast', reasoning: 'default' };
+    const current = { model: 'deep', reasoning: 'off' };
     mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, model_selection: true });
     mockGetModels.mockResolvedValue({ default_model: 'fast', models: [
       { id: 'fast', name: 'Fast', default_reasoning: 'default', reasoning_options: [{ id: 'default', label: 'Default' }] },
@@ -2400,11 +2400,11 @@ describe('ExperimentalAiPage', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('The first model is streaming.');
     await waitFor(() => expect(composer).toBeEnabled());
-    expect(screen.getByLabelText('AI model')).toBeEnabled();
+    expect(screen.getByLabelText('AI model')).toBeDisabled();
     expect(screen.getByLabelText('Reasoning')).toBeEnabled();
     await user.type(composer, 'Next question');
     await user.keyboard('{Enter}');
-    await user.selectOptions(screen.getByLabelText('AI model'), 'fast');
+    await user.selectOptions(screen.getByLabelText('Reasoning'), 'off');
     expect(mockUpdateSessionModelSelection).toHaveBeenCalledWith('session-id', current, null, '/ai');
     await act(async () => finishStream());
     expect(mockSendMessage).toHaveBeenCalledTimes(1);

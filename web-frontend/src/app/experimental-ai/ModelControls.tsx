@@ -22,9 +22,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { getModels, getSessionModelSelection, updateSessionModelSelection, type AvailableModel, type ModelSelection } from './aiClient';
 
-export function ModelControls({ endpoint, token, disabled, sessionId = null, onChange }: {
+export function ModelControls({ endpoint, token, disabled, modelLocked = false, sessionId = null, onChange }: {
   endpoint: string; token: string | null; disabled: boolean;
   sessionId?: string | null;
+  modelLocked?: boolean;
   onChange: (selection: ModelSelection | undefined) => void;
 }) {
   const [models, setModels] = useState<AvailableModel[]>([]);
@@ -114,7 +115,7 @@ export function ModelControls({ endpoint, token, disabled, sessionId = null, onC
   return <div className="flex flex-wrap items-center gap-3 px-2 text-xs text-gray-700">
     <label className="flex min-w-0 max-w-full items-center gap-2">Model
       <select aria-label="AI model" className="min-w-0 max-w-64 rounded-lg border border-gray-300 bg-white p-2"
-        disabled={disabled || !ready || !!error} value={selection?.model ?? ''}
+        disabled={disabled || modelLocked || !ready || !!error} value={selection?.model ?? ''}
         onChange={event => {
           const target = models.find(item => item.id === event.target.value)!;
           const saved = choices.current.get(`${scope}\n${target.id}`);
@@ -133,6 +134,8 @@ export function ModelControls({ endpoint, token, disabled, sessionId = null, onC
     </label>}
     {error && <span role="alert">{error} <button type="button" className="underline" onClick={() => setReload(value => value + 1)}>Retry</button></span>}
     {saving && <span role="status">Saving model choice…</span>}
-    <span className="text-gray-500">Changes apply to future turns.</span>
+    <span className="text-gray-500">{modelLocked
+      ? 'Model fixed for this conversation. Reasoning changes apply to future turns.'
+      : 'Choose a model before the first message.'}</span>
   </div>;
 }

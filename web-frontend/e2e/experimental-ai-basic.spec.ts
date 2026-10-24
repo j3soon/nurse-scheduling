@@ -621,6 +621,7 @@ test('continues a failed text run with a new message and keeps its provisional a
   await expect(failedResponse).toContainText('The temporary AI sandbox failed.');
   await expect(failedResponse).toContainText('Incomplete response. Omitted from future model context.');
   await expect(failedResponse).toContainText('Sent in future model context: [App event] The run workspace was discarded.');
+  await page.screenshot({ path: '../artifacts/interrupted-context.png', fullPage: true });
   await page.getByText('bash · interrupted').click();
   await expect(page.getByText('{"command":"sleep 30"}', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: /retry/i })).toHaveCount(0);
@@ -1288,7 +1289,7 @@ test('keeps the composer above a reduced visual viewport and ignores pinch zoom'
 });
 
 
-test('changes model and reasoning during streaming for future turns and reload', async ({ page }) => {
+test('locks the model and changes reasoning during streaming for future turns and reload', async ({ page }) => {
   const captured = await mockAiBackend(page, ['Selected model answered.'], false, undefined, [], true, [], {
     default_model: 'fast', models: [
       { id: 'fast', name: 'Fast', context_tokens: null, default_reasoning: 'default', reasoning_options: [{ id: 'default', label: 'Default' }] },
@@ -1308,23 +1309,26 @@ test('changes model and reasoning during streaming for future turns and reload',
   await expect(page.getByText('Selected model answered.')).toBeVisible();
   expect(JSON.parse(captured.messageBodies[0]).selection).toEqual({ model: 'deep', reasoning: 'high' });
   await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
-  await expect(page.getByLabel('AI model')).toBeEnabled();
+  await expect(page.getByLabel('AI model')).toBeDisabled();
   await expect(page.getByLabel('Reasoning', { exact: true })).toBeEnabled();
   await page.getByLabel('Reasoning', { exact: true }).selectOption('off');
   await expect.poll(() => captured.modelSelections.at(-1)).toEqual({ model: 'deep', reasoning: 'off' });
-  await page.getByLabel('AI model').selectOption('fast');
-  await expect.poll(() => captured.modelSelections.at(-1)).toEqual({ model: 'fast', reasoning: 'default' });
+  await expect(page.getByLabel('AI model')).toBeDisabled();
+  await expect(page.getByText('Model fixed for this conversation. Reasoning changes apply to future turns.')).toBeVisible();
+  await page.screenshot({ path: '../artifacts/model-locked.png', fullPage: true });
   expect(JSON.parse(captured.messageBodies[0]).selection).toEqual({ model: 'deep', reasoning: 'high' });
-  await expect(page.getByLabel('Reasoning', { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('Reasoning', { exact: true })).toHaveValue('off');
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Next question');
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).press('Enter');
   await expect(page.getByText('Queued for steering')).toBeVisible();
   captured.finishTurn();
   await expect.poll(() => captured.messageBodies.length).toBe(2);
-  expect(JSON.parse(captured.messageBodies[1]).selection).toEqual({ model: 'fast', reasoning: 'default' });
+  expect(JSON.parse(captured.messageBodies[1]).selection).toEqual({ model: 'deep', reasoning: 'off' });
   await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeHidden();
   await page.reload();
-  await expect(page.getByLabel('AI model')).toHaveValue('fast');
+  await expect(page.getByLabel('AI model')).toHaveValue('deep');
+  await expect(page.getByLabel('AI model')).toBeDisabled();
+  await expect(page.getByLabel('Reasoning', { exact: true })).toBeEnabled();
 });
 
 

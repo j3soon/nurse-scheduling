@@ -213,6 +213,7 @@ def test_legacy_recovery_preserves_the_next_provider_request_after_app_events_an
     owner, expires, state = store.recovery_state(session.id)
     assert set(state) == {
         "model_selection",
+        "locked_model",
         "provider_credential_id",
         "cost_totals",
         "cost_totals_version",

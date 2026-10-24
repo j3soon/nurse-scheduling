@@ -427,9 +427,9 @@ trim offsets. Tool image bytes
 remain transient.
 
 The provider boundary replays native metadata only when the endpoint, API, and
-configured model match its source. Switching models omits incompatible metadata
-and normalizes tool call IDs with matching result IDs. Switching back can reuse
-the original metadata. Reasoning never becomes assistant answer text. Historical
+configured model match its source. The first accepted message fixes the model for the conversation. Reasoning effort
+can change for future runs. The provider boundary still omits incompatible native
+metadata and normalizes matching tool call IDs for historical or imported data. Reasoning never becomes assistant answer text. Historical
 unsigned reasoning without source metadata remains display-only. Retained
 reasoning can increase later input token usage.
 
