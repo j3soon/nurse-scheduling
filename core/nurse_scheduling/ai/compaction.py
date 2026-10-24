@@ -26,7 +26,7 @@ from pathlib import Path
 
 from .agent_types import AgentCompaction, AgentCompactionEnd, AgentCompactionStart
 from .context import SUMMARY_PREFIX, apply_compaction, history_chars
-from .context_tokens import estimate_context_tokens, estimate_tokens
+from .context_tokens import CONTEXT_SAFETY_TOKENS, estimate_context_tokens, estimate_tokens
 from .provider import (
     ChatMessage,
     ProviderCall,
@@ -147,11 +147,17 @@ class ContextCompactor:
         keep = sum(not message.get("_tool_image", False) for message in recent)
         entries = load_system_prompt_entries(COMPACTION_MANIFEST)
         prompts = dict(zip((entry["id"] for entry in entries), load_system_prompt_sections(entries), strict=True))
-        max_summary_chars = min(16000, max(256, reserve * 2), max(256, self.history_limit // 4))
         instruction_chars = max(len(prompt) for key, prompt in prompts.items() if key != "compaction-system")
-        input_chars = (
-            (window - reserve) * 4 - len(prompts["compaction-system"]) - instruction_chars - max_summary_chars - 512
+        summary_space = (
+            (window - max(1, int(0.8 * reserve)) - CONTEXT_SAFETY_TOKENS) * 4
+            - len(prompts["compaction-system"])
+            - instruction_chars
+            - 512
         )
+        max_summary_chars = min(
+            16000, max(256, reserve * 2), max(256, self.history_limit // 4), max(256, summary_space // 2)
+        )
+        input_chars = summary_space - max_summary_chars
         if input_chars < 256:
             return
         turn_start = None
@@ -225,8 +231,14 @@ class ContextCompactor:
         """Use Pi's initial or update instructions with explicit conversation data."""
         serialized = _serialize(messages)
         # Retain bounded chunking when a history cannot fit in one request.
-        for offset in range(0, len(serialized), input_chars):
-            chunk = serialized[offset : offset + input_chars]
+        offset = 0
+        while offset < len(serialized):
+            # A split-turn checkpoint can contain both history and turn summaries.
+            chunk_chars = input_chars - max(0, len(summary) - max_summary_chars)
+            if chunk_chars < 256:
+                raise ProviderError("Compaction has no room for the previous summary")
+            chunk = serialized[offset : offset + chunk_chars]
+            offset += len(chunk)
             instruction = prompts["compaction-update" if summary else initial_prompt]
             content = f"<conversation>\n{chunk}\n</conversation>\n\n"
             if summary:

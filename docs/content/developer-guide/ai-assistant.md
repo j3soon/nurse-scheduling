@@ -380,9 +380,10 @@ completion also fits the model's advertised output cap and remaining context
 with a 4,096-token safety margin. Reported same-model usage informs the request
 estimate when available, including tool definitions and later messages. Numeric
 thinking budgets leave 1,024 tokens for answer text. Models without discovered
-limits retain provider defaults unless the caller supplies a cap. Summary
-requests have no tools, and their text and reasoning do not enter the answer stream. Their
-provider call records include costs and usage. An empty, truncated, oversized,
+limits retain provider defaults unless the caller supplies a cap.
+Summary chunks leave room for the full previous summary, output, and safety margin.
+Summary requests have no tools, and their text and reasoning do not enter the answer stream.
+Their provider call records include costs and usage. An empty, truncated, oversized,
 failed, or tool-requesting summary leaves the original context intact. Stop
 cancels summary generation through the existing run owner. A confirmed provider
 context overflow permits one compact-and-retry attempt before reporting failure.

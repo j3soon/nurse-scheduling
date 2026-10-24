@@ -140,6 +140,8 @@ from the trust-based local harness.
   during retention. Reset older usage estimates at each compaction boundary.
   Keep summary requests visible in provider cost records, but keep their text out
   of the answer stream. Use `tests/test_ai_compaction.py` for these contracts.
+  Test chunked summaries through the provider's token-limit calculation, including
+  updates with a previous split-turn summary.
   For live cross-run checks, use `../scripts/test_ai_compaction_live.sh` with
   `AI_ENV_FILE`. It runs four concurrent scenarios through the real session API
   and prebuilt E2B sandboxes. A smaller history budget forces compaction.

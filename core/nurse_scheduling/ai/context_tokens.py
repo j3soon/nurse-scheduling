@@ -24,6 +24,8 @@ import math
 from collections.abc import Sequence
 from typing import Any
 
+CONTEXT_SAFETY_TOKENS = 4096
+
 
 def estimate_tokens(message: dict[str, Any]) -> int:
     """Use Pi's characters/4 fallback, with a fixed allowance for tool images."""
@@ -75,6 +77,5 @@ def response_token_limit(
     """Fit output inside model limits and leave Pi's context safety margin."""
     limits = [value for value in (output_tokens, requested_tokens) if type(value) is int and value > 0]
     if context_tokens is not None and context_tokens > 0:
-        safety = 4096
-        limits.append(max(1, context_tokens - used_tokens - safety))
+        limits.append(max(1, context_tokens - used_tokens - CONTEXT_SAFETY_TOKENS))
     return min(limits) if limits else None

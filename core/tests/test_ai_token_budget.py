@@ -25,7 +25,9 @@ import json
 import httpx
 import pytest
 
+from nurse_scheduling.ai.agent_types import AgentCompaction
 from nurse_scheduling.ai.compaction import COMPACTION_MANIFEST, ContextCompactor
+from nurse_scheduling.ai.context import summary_message
 from nurse_scheduling.ai.context_tokens import estimate_context_tokens
 from nurse_scheduling.ai.models import ModelCatalog, ModelSelection
 from nurse_scheduling.ai.system_prompt import load_system_prompt_entries, load_system_prompt_sections
@@ -96,6 +98,38 @@ def test_summary_has_its_own_provider_output_budget(monkeypatch):
     asyncio.run(_collect(compactor._summarize([{"role": "user", "content": "Keep P1 nights"}], prompts, 20000, 10000)))
     assert json.loads(requests[0].content)["max_tokens"] == 3200
     assert provider._max_output_tokens is None
+
+
+@pytest.mark.parametrize("previous_chars", [0, 14000])
+def test_chunked_compaction_leaves_output_room_after_the_context_safety_margin(monkeypatch, previous_chars):
+    requests = []
+    summary = "Goal: preserve nights. " + "s" * 7900
+
+    def handle(request):
+        payload = json.loads(request.content)
+        requests.append(payload)
+        required = (len(summary) + 3) // 4
+        finish = "stop" if payload["max_tokens"] >= required else "length"
+        return httpx.Response(
+            200,
+            text=_sse_body({"choices": [{"delta": {"content": summary}, "finish_reason": finish}]}),
+        )
+
+    provider = _transport_provider(monkeypatch, handle)
+    provider.context_tokens = 16000
+    messages = [
+        {"role": "system", "content": "Scheduling assistant"},
+        *([summary_message("s" * previous_chars)] if previous_chars else []),
+        {"role": "user", "content": "Keep nights. " + "x" * 100000},
+        {"role": "assistant", "content": "Earlier answer"},
+        {"role": "user", "content": "Inspect P1"},
+    ]
+    events = asyncio.run(_collect(ContextCompactor(provider).compact(messages, [], force=True)))
+    assert any(isinstance(event, AgentCompaction) for event in events)
+    assert len(requests) > 1
+    for payload in requests:
+        assert payload["max_tokens"] == 3200
+        assert estimate_context_tokens(payload["messages"], []) + payload["max_tokens"] <= 16000 - 4096
 
 
 @pytest.mark.parametrize(
