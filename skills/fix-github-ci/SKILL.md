@@ -43,6 +43,8 @@ must keep the event loop's timers running.
 An asyncio timer can expire before a coarse monotonic clock reaches its deadline.
 Check the timeout context's `expired()` state before treating its error as a
 retryable request timeout.
+Test elapsed-time accounting with a controlled performance clock and scripted
+work. Do not use an asyncio sleep as a portable lower bound for measured time.
 
 On Windows, `shutil.which("bash")` can find a WSL launcher without an installed
 distribution. Prefer Git for Windows' `bin/bash.exe` wrapper and check that the
