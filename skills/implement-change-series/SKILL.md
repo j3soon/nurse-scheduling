@@ -126,8 +126,11 @@ For an authorized local history rewrite:
    rewritten final tree with it and require no content difference. If the
    rewrite intentionally changes content, inspect and validate that difference.
 5. Inspect every changed commit message that could now be inaccurate. Update a
-   target subject or body whose scope changed. Confirm real paragraph breaks,
-   required attribution, and nothing after the final attribution line.
+   target subject or body whose scope changed. Read each affected description
+   against its parent in the rewritten history. Describe previous behavior
+   directly instead of relying on discarded commits or removed implementation
+   names. Confirm real paragraph breaks, required attribution, and nothing after
+   the final attribution line.
 6. Report the old-to-new hash mapping because all descendants may change. Remove
    the temporary recovery reference only after verification succeeds.
 

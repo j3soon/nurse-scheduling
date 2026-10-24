@@ -64,6 +64,7 @@ from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
 from nurse_scheduling.ai.workspace import (
     REFERENCE_ATTACHMENT_TOOLS,
     SANDBOX_SYSTEM_PROMPT,
+    WORKSPACE_LAST_ACCEPTED_SCHEDULE,
     WORKSPACE_SCHEDULE,
     WorkspaceMetrics,
 )
@@ -163,8 +164,33 @@ def test_grading_fingerprints_cover_called_helpers(monkeypatch):
     assert oracle_sha256(grading._answer_json_matches) != before
 
 
-def test_every_shipped_prompt_clause_has_current_repeated_benefit_evidence():
+@pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
+def test_every_shipped_prompt_clause_has_current_repeated_benefit_evidence(tmp_path, monkeypatch, newline):
+    from nurse_scheduling.ai import workspace
+
+    digests = _reference_digests()
+    for destination, source in workspace.REFERENCE_ATTACHMENT_TOOLS.items():
+        helper = tmp_path / source.name
+        helper.write_bytes(source.read_text(encoding="utf-8").replace("\n", newline).encode())
+        monkeypatch.setitem(workspace.REFERENCE_ATTACHMENT_TOOLS, destination, helper)
+    assert _reference_digests() == digests
     validate_prompt_evidence(load_prompt_steps(), CASE_BY_ID, FIXTURE_DIGESTS)
+
+
+def test_prompt_evidence_rejects_changed_helper_source(tmp_path, monkeypatch):
+    from nurse_scheduling.ai import workspace
+
+    step = next(step for step in load_prompt_steps() if step.id == "taiwan-holiday-renewal")
+    name = step.evidence[0]["helper_usage"]["helper"]
+    destination = f"/reference/tools/{name}"
+    reference = f"tools/{name}"
+    digest = _reference_digests()[reference]
+    helper = tmp_path / name
+    helper.write_bytes(workspace.REFERENCE_ATTACHMENT_TOOLS[destination].read_bytes() + b"\n# changed\n")
+    monkeypatch.setitem(workspace.REFERENCE_ATTACHMENT_TOOLS, destination, helper)
+    assert _reference_digests()[reference] != digest
+    with pytest.raises(ValueError, match="stale helper inputs"):
+        validate_prompt_evidence((step,), CASE_BY_ID, FIXTURE_DIGESTS)
 
 
 def test_optimizer_goal_and_background_start_have_separate_ladder_comparisons():
@@ -1352,6 +1378,7 @@ def test_the_report_records_enough_to_explain_a_run():
         "error",
         "token_usage",
         "provider_requests",
+        "provider_responses",
         "tool_batches",
     }
     assert record["timing"]["end_to_end_seconds"] == pytest.approx(run.seconds, abs=0.001)
@@ -2071,3 +2098,74 @@ def test_autonomous_review_delivers_each_completed_workbook_only_after_its_start
         assert contexts[0]["source_sha256"] == contexts[1]["source_sha256"]
         assert len(run.trajectory["user_turns"]) == 1
         assert sum(event["kind"] == "optimizer_artifact" for event in run.trajectory["events"]) == 2
+
+
+@pytest.mark.parametrize(
+    "ending,completed,reason", [("stop", True, "stop"), ("length", True, "length"), (None, False, None)]
+)
+def test_evaluation_records_completion_metadata_without_guessing_from_partial_words(ending, completed, reason):
+    from nurse_scheduling.ai.provider import ResponseEnd
+
+    from .ai_eval.runner import _CountingProvider
+
+    class Provider:
+        async def stream_events(self, messages, tools=None):
+            yield TextDelta("Even")
+            if ending is not None:
+                yield ResponseEnd(ending)
+
+    async def collect():
+        provider = _CountingProvider(Provider())
+        events = [event async for event in provider.stream_events([])]
+        assert events[0] == TextDelta("Even")
+        return provider.responses
+
+    assert asyncio.run(collect()) == [
+        {"completed": completed, "finish_reason": reason, "text_chars": 4, "reasoning_chars": 0}
+    ]
+
+
+def test_rejected_write_fault_runs_on_selected_turn_without_counting_as_provider_output():
+    initial = fixture_text("new-schedule")
+    candidate = initial.replace("description: ''", "description: Ready", 1)
+    case = EvalCase(
+        id="recovery",
+        fixture="new-schedule",
+        question="Prepare an edit.",
+        user_turns=("Prepare an edit.", "Set the description to Ready."),
+        expect_proposal=True,
+        rejected_write_turn=2,
+        changes=("description",),
+        expected_diff=(ExpectedDiff(path="description", before="", after="Ready", compares_value=True),),
+    )
+    factory = _factory()
+
+    class CheckingProvider(ScriptedProvider):
+        async def stream_events(self, messages, tools=None):
+            if len(self.messages) == 1:
+                # The first live request sees the rejected draft and a separate recovery copy.
+                files = factory.created[-1].files
+                assert files[WORKSPACE_SCHEDULE] == b"dates: [\n"
+                assert files[WORKSPACE_LAST_ACCEPTED_SCHEDULE] == initial.encode()
+                assert any("Your edits are kept" in str(message) for message in messages)
+                assert any(WORKSPACE_LAST_ACCEPTED_SCHEDULE in str(message) for message in messages)
+            async for event in super().stream_events(messages, tools):
+                yield event
+
+    provider = CheckingProvider(
+        [TextDelta("Ready to edit.")],
+        [
+            ToolCallRequest(
+                (ToolCall("repair", "write", json.dumps({"path": WORKSPACE_SCHEDULE, "content": candidate})),)
+            )
+        ],
+        [TextDelta("Done.")],
+    )
+    run = asyncio.run(run_case(provider, settings(), case, factory))
+    assert run.passed, run.failures
+    assert run.turns == len(provider.messages) == 3
+    assert run.tools == ["write(failed)", "write"]
+    assert run.tool_calls_per_turn == [0, 1, 0]
+    faults = [event for event in run.trajectory["events"] if event["kind"] == "evaluation_fault"]
+    assert faults == [{"kind": "evaluation_fault", "fault": "rejected-write", "turn": 2}]
+    assert run.trajectory["rejected_write_turn"] == 2

@@ -1,0 +1,40 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "expect_proposal": false,
+  "id": "result-monthly-roster-statistics",
+  "fixture": "monthly-roster-statistics",
+  "question": "Run optimization for 60 seconds. When it finishes, summarize observed assignments across all 60 people and all 31 scheduled days. Reply only as JSON with integer fields people, day (D only), qualifiedDay (D+ only), evening (E), night (N), off (OFF), maxWorkRun (longest consecutive working run among all people), maxOffRun, and peopleWithSixDayRun (people with at least one run of six working days). Counts exclude history. Preserve the source schedule. These are observed statistics, not policy compliance.",
+  "optimizer_completion": "monthly-roster-statistics",
+  "optimizer_completion_only": true,
+  "answer_json": {
+    "people": 60,
+    "day": 232,
+    "qualifiedDay": 232,
+    "evening": 465,
+    "night": 466,
+    "off": 465,
+    "maxWorkRun": 6,
+    "maxOffRun": 2,
+    "peopleWithSixDayRun": 60
+  },
+  "tool_usage": {
+    "required_calls": [
+      {
+        "name": "optimizer",
+        "arguments": {
+          "action": "start",
+          "timeout_seconds": 60
+        }
+      }
+    ],
+    "max_per_tool": {
+      "optimizer": 1
+    }
+  },
+  "tags": [
+    "optimizer-result",
+    "monthly-roster-statistics"
+  ],
+  "note": "Synthetic 60-person month with qualified shifts. Independent cyclic-assignment totals and run lengths are checked against the production-exported workbook. Tool selection is not a correctness requirement."
+}

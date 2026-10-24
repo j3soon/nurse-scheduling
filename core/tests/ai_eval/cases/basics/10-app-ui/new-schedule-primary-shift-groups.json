@@ -1,0 +1,56 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "id": "new-schedule-primary-shift-groups",
+  "fixture": "new-schedule",
+  "question": "Help me set up a new monthly ward schedule for November 2026. Use eight nurses P1 through P8, D day, E evening and N night shifts, with 2 D, 2 E and 1 N each day. All eight nurses have the same qualifications. I have not configured the schedule yet.",
+  "expect_proposal": false,
+  "answer_contains": [
+    "group",
+    [
+      "day",
+      "D"
+    ],
+    [
+      "evening",
+      "E"
+    ],
+    [
+      "night",
+      "N"
+    ],
+    [
+      "primary",
+      "preferred shift",
+      "shift preference",
+      "shift restriction",
+      "eligibility",
+      "day-only",
+      "evening-only",
+      "night-only"
+    ]
+  ],
+  "answer_matches": [
+    "(?is)(?:would|want|optional|can|could|like).{0,180}group"
+  ],
+  "tool_usage": {
+    "required_calls": [
+      {
+        "name": "read",
+        "arguments": {
+          "path": "/reference/user-guide/build-a-real-schedule.md"
+        }
+      }
+    ],
+    "forbidden": [
+      "optimizer",
+      "edit",
+      "write"
+    ]
+  },
+  "tags": [
+    "new-schedule",
+    "proactive-policy"
+  ],
+  "note": "This testcase is mostly AI generated. Equal qualifications do not establish whether nurses have primary or preferred shifts. Offer optional people groups for Day, Evening and Night shift preferences or eligibility, without assuming restrictions or constructing the roster before intake."
+}

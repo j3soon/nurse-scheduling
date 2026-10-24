@@ -148,10 +148,19 @@ to reconcile state manually. Compare implementations with the same prompt and
 help text to isolate the code change from wording changes.
 When a boundary input skips existing logic, check whether that logic belongs
 outside the loop or behind a different condition before adding a duplicate branch.
+Group related failures by their shared cause before choosing a fix. Prefer a
+general data-boundary repair over prompt exceptions for particular dates, IDs
+or workbook layouts. Test representative variations and a contrasting case.
 
 Use a focused prompt instruction for a decision or interpretation the model
-needs to learn. Extend an existing segment when it covers that behavior. Keep the
-instruction general enough to handle changed IDs and equivalent structures.
+needs to learn. Extend an existing segment only for the same intent. Each prompt
+step must be minimal and self-contained, with one decision or action, its trigger
+and its scope limits. Sharing a workflow is not enough to combine policies.
+If a failed control exposes another intent, put that fix in a separate step
+and evaluate it separately. When splitting existing guidance, recover its
+rationale and measure each extracted policy. Do not reuse the bundled benefit
+receipt for the new steps. Keep the instruction general enough to handle changed
+IDs and equivalent structures.
 Examples may clarify the policy, but must not encode the testcase's answer.
 Apply the repository's plain technical English rule. Explain when to act, what
 to do, and what the result means. Retest wording changes before accepting them.
@@ -175,6 +184,13 @@ To test whether naming a helper saves work, compare prompts with and without
 that instruction while both versions have the same helper available. Check the
 helper's correctness separately. Accept other correct approaches. Calling the
 helper alone does not count as success.
+Use the evaluation receipt tool's `check-helper` command to check actual helper
+execution and required mode flags alongside correctness and the declared cost
+target. Source reads and `--help` do not count as use. Keep adoption separate
+from benefit, and preserve a failed gate rather than choosing a cost target
+after seeing the results. For helper-selection prompt comparisons, pass the
+helper, mode flags and targeted cases to `receipt write` so the saved receipt
+and CI enforce adoption as well as benefit.
 
 Fix retry, attachment retention, or backend failures in code when that layer
 owns them. Do not conceal infrastructure defects behind unrelated prompt text.
@@ -225,6 +241,10 @@ generated tokens. Do not add them again when calculating totals.
 With only one matched passing pair, standard deviation is unavailable and cost
 changes are preliminary. Report repeated correctness separately from those costs.
 
+Require the complete comparison to pass before writing a benefit receipt.
+Keep measured control costs in the receipt so a cheaper witness cannot hide a
+control regression. A separate successful comparison must have its own receipt.
+
 Require correct answers before claiming cost improvements. Compare tool
 calls, tokens, or latency among passing runs with matched inputs. A relative
 cost target can be useful when justified by the baseline. Do not choose a
@@ -251,6 +271,10 @@ tests that remove sections from the full prompt for explicit requests or a
 specific investigation. If both versions fail, find the shared cause before
 adding more instructions. Do not weaken the task or pass/fail criteria to obtain
 a positive result.
+
+For test-only changes, distinguish validated coverage from a production improvement.
+Run the testcase on the reviewed revision. Attribute a measured behavior change to
+the production change tested, not to the addition of its testcase.
 
 Require understood failures and repeated correctness or cost gains before calling
 a candidate an agent improvement. A small
@@ -288,6 +312,10 @@ self-contained commit. Fold minor corrections into that commit. Follow the
 repository's Git and plain-English rules. Name the relevant
 case and observed change without adding routine validation footers or run-log
 paths. Lead with confirmed results and limit each caveat to the claim it affects.
+After amending or folding an improvement, check its rationale and comparison text
+against the resulting parent commit. Describe compared versions by their actual
+behavior. Replace labels or claims that depend on discarded revisions or removed
+implementations for context.
 
 For an authorized improvement loop, rank the remaining issues again after each
 validated fix. Do not count an inconclusive experiment as an improvement or add

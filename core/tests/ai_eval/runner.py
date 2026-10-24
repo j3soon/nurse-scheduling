@@ -65,6 +65,9 @@ from nurse_scheduling.ai.provider import (
     ProviderAttempt,
     ProviderError,
     ProviderResponseLimitError,
+    ReasoningDelta,
+    ResponseEnd,
+    TextDelta,
     TokenUsage,
     ToolCallRequest,
 )
@@ -88,6 +91,7 @@ from nurse_scheduling.ai.transcript import (
 from nurse_scheduling.ai.workspace import (
     REFERENCE_ATTACHMENT_TOOLS,
     SANDBOX_SYSTEM_PROMPT,
+    AgentAnalysis,
     AgentDownload,
     SandboxCommandTimeoutError,
     SandboxDownloadValidationError,
@@ -111,12 +115,14 @@ from .grading import (
 )
 from .optimizer_fixtures import RESULT_SOURCES, completion_result
 from .prompt_ladder import case_digest, load_prompt_steps, prompt_at_step
-from .provider_fixtures import TimeoutOnceProvider
+from .provider_fixtures import RejectedWriteOnceProvider, TimeoutOnceProvider
 from .report_extension import prepare_extension, read_completed_reports
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 CASES = Path(__file__).resolve().parent / "cases"
 FIXTURES = {
+    "monthly-roster-statistics": Path(__file__).resolve().parent / "fixtures" / "monthly-roster-statistics.yaml",
+    "calendar-makeup": Path(__file__).resolve().parent / "fixtures" / "calendar-makeup.yaml",
     "shift-groups": Path(__file__).resolve().parent / "fixtures" / "shift-groups.yaml",
     "policy-audit": Path(__file__).resolve().parent / "fixtures" / "policy-audit.yaml",
     "request-audit-groups": Path(__file__).resolve().parent / "fixtures" / "request-audit-groups.yaml",
@@ -155,6 +161,7 @@ class CaseRun:
     sandbox_metrics: WorkspaceMetrics | None = None
     provider_attempts: int = 0
     provider_attempts_per_turn: list[int] = field(default_factory=list)
+    provider_responses: list[dict[str, Any]] = field(default_factory=list)
     tool_calls_per_turn: list[int] = field(default_factory=list)
     tool_batch_metrics: list[AgentToolBatchMetrics] = field(default_factory=list)
     repetition: int = 1
@@ -257,6 +264,7 @@ class CaseRun:
                 self.provider_attempts,
                 self.provider_attempts_per_turn,
             ),
+            "provider_responses": self.provider_responses,
             "tool_batches": _tool_batch_record(self.tool_calls_per_turn, self.tool_batch_metrics),
         }
 
@@ -278,6 +286,7 @@ class _CountingProvider:
         self.attempts = 0
         self.attempts_per_turn: list[int] = []
         self.tool_calls_per_turn: list[int] = []
+        self.responses: list[dict[str, Any]] = []
 
     async def stream_events(
         self,
@@ -289,6 +298,8 @@ class _CountingProvider:
         turn_seconds = 0.0
         turn_attempts = 0
         turn_tool_calls = 0
+        completed, finish_reason = False, None
+        text_chars = reasoning_chars = 0
         try:
             while True:
                 started = time.perf_counter()
@@ -309,10 +320,24 @@ class _CountingProvider:
                     continue
                 if isinstance(event, ToolCallRequest):
                     turn_tool_calls += len(event.calls)
+                elif isinstance(event, ResponseEnd):
+                    completed, finish_reason = True, event.finish_reason
+                elif isinstance(event, TextDelta):
+                    text_chars += len(event.text)
+                elif isinstance(event, ReasoningDelta):
+                    reasoning_chars += len(event.text)
                 yield event
         finally:
             if turn_attempts == 0:
                 turn_attempts = 1
+            self.responses.append(
+                {
+                    "completed": completed,
+                    "finish_reason": finish_reason,
+                    "text_chars": text_chars,
+                    "reasoning_chars": reasoning_chars,
+                }
+            )
             self.attempts += turn_attempts
             self.attempts_per_turn.append(turn_attempts)
             self.tool_calls_per_turn.append(turn_tool_calls)
@@ -353,6 +378,7 @@ async def run_case(
     tools: list[str] = []
     events: list[dict[str, Any]] = []
     proposal_event: AgentProposal | None = None
+    analysis: AgentAnalysis | None = None
     turn_actions = {action.after_turn: action for action in case.turn_actions}
     sandbox_metrics = WorkspaceMetrics()
     tool_batch_metrics: list[AgentToolBatchMetrics] = []
@@ -480,8 +506,13 @@ async def run_case(
             turn_event_offset = len(events)
             events.append({"kind": "optimizer" if completion else "user", "turn": turn_index + 1, "text": question})
             agent = Agent()
+            turn_provider = counting
+            if case.rejected_write_turn == turn_index + 1:
+                events.append({"kind": "evaluation_fault", "fault": "rejected-write", "turn": turn_index + 1})
+                # Inject outside counting so provider telemetry covers only real requests.
+                turn_provider = RejectedWriteOnceProvider(counting)
             agent_events = run_workspace(
-                counting,
+                turn_provider,
                 sandbox_factory,
                 text,
                 messages,
@@ -490,6 +521,7 @@ async def run_case(
                 tool_batch_metrics.append,
                 execute_optimizer=execute_optimizer,
                 attachments=attachments,
+                analysis=analysis,
                 optimizer_result=optimizer_result,
                 optimizer_context=optimizer_context,
                 agent=agent,
@@ -547,6 +579,16 @@ async def run_case(
                                     break
                         if stopped_on_limit:
                             break
+                    elif isinstance(event, AgentAnalysis):
+                        analysis = event
+                        events.append(
+                            {
+                                "kind": "analysis",
+                                "bytes": len(event.content),
+                                "source_sha256": event.source_sha256,
+                                "prefix": event.content[:256].decode("utf-8", errors="ignore"),
+                            }
+                        )
                     elif isinstance(event, AgentDownload):
                         from io import BytesIO
                         from zipfile import ZipFile
@@ -614,6 +656,7 @@ async def run_case(
             sandbox_metrics=sandbox_metrics,
             provider_attempts=counting.attempts,
             provider_attempts_per_turn=counting.attempts_per_turn,
+            provider_responses=counting.responses,
             tool_calls_per_turn=counting.tool_calls_per_turn,
             tool_batch_metrics=tool_batch_metrics,
         )
@@ -650,6 +693,7 @@ async def run_case(
         sandbox_metrics=sandbox_metrics,
         provider_attempts=counting.attempts,
         provider_attempts_per_turn=counting.attempts_per_turn,
+        provider_responses=counting.responses,
         tool_calls_per_turn=counting.tool_calls_per_turn,
         tool_batch_metrics=tool_batch_metrics,
     )
@@ -690,6 +734,7 @@ def _trajectory(
     return {
         "fixture": case.fixture,
         "question": case.question,
+        **({"rejected_write_turn": case.rejected_write_turn} if case.rejected_write_turn else {}),
         **(
             {"provider_timeout_after_text": case.provider_timeout_after_text}
             if case.provider_timeout_after_text
@@ -1760,7 +1805,9 @@ def _reference_digests() -> dict[str, str]:
     for relative_path, reference in load_user_guide_references().items():
         digests[f"user-guide/{relative_path}"] = hashlib.sha256(reference.encode()).hexdigest()
     for destination, source in REFERENCE_ATTACHMENT_TOOLS.items():
-        digests[destination.removeprefix("/reference/")] = hashlib.sha256(source.read_bytes()).hexdigest()
+        digests[destination.removeprefix("/reference/")] = hashlib.sha256(
+            source.read_text(encoding="utf-8").encode()
+        ).hexdigest()
     digests["tools/README.md"] = hashlib.sha256(inspection_helper_catalog().encode()).hexdigest()
     import inspect
 

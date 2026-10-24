@@ -58,7 +58,7 @@ function isOptionalStringArray(value: unknown): boolean {
 
 function isActivityEntry(value: unknown): value is ActivityEntry {
   if (typeof value !== 'object' || value === null || !('kind' in value)) return false;
-  if (value.kind === 'response' || value.kind === 'reasoning' || value.kind === 'schedule-applied') {
+  if (value.kind === 'notice' || value.kind === 'response' || value.kind === 'reasoning' || value.kind === 'schedule-applied') {
     return 'text' in value && typeof value.text === 'string'
       && (!('notice' in value) || typeof value.notice === 'string')
       && (!('runId' in value) || typeof value.runId === 'string');
@@ -69,6 +69,12 @@ function isActivityEntry(value: unknown): value is ActivityEntry {
   if (value.kind === 'schedule-change') {
     return 'before' in value && typeof value.before === 'string'
       && 'after' in value && typeof value.after === 'string';
+  }
+  if (value.kind === 'compaction') {
+    return 'state' in value && typeof value.state === 'string'
+      && ['running', 'completed', 'failed', 'interrupted'].includes(value.state)
+      && 'reason' in value && (value.reason === 'threshold' || value.reason === 'overflow')
+      && 'text' in value && typeof value.text === 'string';
   }
   return value.kind === 'tool'
     && 'name' in value && typeof value.name === 'string'
@@ -95,13 +101,7 @@ function isChatMessage(value: unknown): value is ChatMessage {
     && (message.createdAt === undefined || Number.isFinite(message.createdAt))
     && (message.responseStartedAt === undefined || Number.isFinite(message.responseStartedAt))
     && (message.responseCompletedAt === undefined || Number.isFinite(message.responseCompletedAt))
-    && (message.retry === undefined || (
-      typeof message.retry === 'object'
-      && message.retry !== null
-      && typeof message.retry.question === 'string'
-      && typeof message.retry.requiresAttachments === 'boolean'
-      && isOptionalStringArray(message.retry.missingFiles)
-    ))
+    && isOptionalStringArray(message.unsentFiles)
     && (message.requestId === undefined || typeof message.requestId === 'string')
     && (message.request === undefined || (typeof message.request === 'object' && message.request !== null
       && typeof message.request.id === 'string' && typeof message.request.question === 'string'

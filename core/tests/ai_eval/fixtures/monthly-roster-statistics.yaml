@@ -1,0 +1,392 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Johnson Sun
+# This test is mostly AI generated.
+appVersion: v0.0.0-test
+apiVersion: alpha
+description: Synthetic monthly roster statistics
+dates:
+  range:
+    startDate: '2026-05-01'
+    endDate: '2026-05-31'
+  items: []
+  groups: []
+people:
+  items:
+  - id: P01
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P02
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P03
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P04
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P05
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P06
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P07
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P08
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P09
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P10
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P11
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P12
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P13
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P14
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P15
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P16
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P17
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P18
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P19
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P20
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P21
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P22
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P23
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P24
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P25
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P26
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P27
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P28
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P29
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P30
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P31
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P32
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P33
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P34
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P35
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P36
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P37
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P38
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P39
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P40
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P41
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P42
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P43
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P44
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P45
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P46
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P47
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P48
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P49
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P50
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P51
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P52
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P53
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P54
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P55
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P56
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P57
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P58
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P59
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  - id: P60
+    description: ''
+    history:
+    - D
+    - N
+    - OFF
+  groups: []
+shiftTypes:
+  items:
+  - id: D
+    description: D
+  - id: D+
+    description: D+
+  - id: E
+    description: E
+  - id: N
+    description: N
+  groups: []
+preferences:
+- type: at most one shift per day
+export:
+  formatting: []
+  extraColumns: []
+  extraRows: []

@@ -24,6 +24,7 @@ import json
 import logging
 import re
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -39,6 +40,7 @@ from nurse_scheduling.ai.provider import (
     ProviderCall,
     ProviderError,
     ProviderResponseLimitError,
+    ProviderRetry,
     ReasoningDelta,
     ReasoningReplay,
     ResponseEnd,
@@ -190,6 +192,8 @@ def _streaming_provider(
             provider_api_key="test-token",
             provider_model="test-model",
             auth_token="ai-shared-test-token",
+            # These tests read one response. Retry policy has its own tests.
+            provider_max_attempts=1,
         ),
         include_usage=include_usage,
     )
@@ -273,6 +277,137 @@ def test_deterministic_provider_errors_fail_without_retry(monkeypatch, status, b
     assert len(requests) == 1
 
 
+def test_retries_connection_errors_and_incomplete_streams_with_notices(monkeypatch):
+    attempts = []
+
+    def handle(request):
+        attempts.append(request)
+        if len(attempts) == 1:
+            raise httpx.ConnectError("refused", request=request)
+        if len(attempts) == 2:
+            return httpx.Response(200, text=f"data: {json.dumps(_delta_chunk({}))}\n\n")
+        return httpx.Response(200, text=_sse_body(_delta_chunk({"content": "Recovered"})))
+
+    delays = []
+
+    async def record_sleep(delay):
+        delays.append(delay)
+
+    monkeypatch.setattr(provider_module.asyncio, "sleep", record_sleep)
+    monkeypatch.setattr("nurse_scheduling.ai.provider_retry.random.random", lambda: 0)
+    events = _events(_transport_provider(monkeypatch, handle))
+    assert events == [
+        ProviderRetry("The AI provider is unavailable. Retrying in 2 s (attempt 2 of 5)."),
+        ProviderRetry("The AI provider stream ended before completion. Retrying in 4 s (attempt 3 of 5)."),
+        TextDelta("Recovered"),
+        ResponseEnd(None),
+    ]
+    assert delays == [2, 4]
+
+
+def test_retry_budget_ends_retries_before_the_attempt_limit(monkeypatch):
+    attempts = []
+    clock = [0.0]
+
+    def handle(request):
+        attempts.append(request)
+        return httpx.Response(503, headers={"Retry-After": "50"})
+
+    async def advance(delay):
+        clock[0] += delay
+
+    monkeypatch.setattr(provider_module.asyncio, "sleep", advance)
+    monkeypatch.setattr(provider_module.time, "monotonic", lambda: clock[0])
+    with pytest.raises(ProviderError, match="HTTP 503"):
+        _events(_transport_provider(monkeypatch, handle))
+    # Failures at 0 and 50 seconds retry. A third wait would end after the 120-second budget.
+    assert len(attempts) == 3
+    assert clock[0] == 100
+
+
+@pytest.mark.parametrize("partial_text", [False, True], ids=["waiting-for-headers", "streaming"])
+def test_retry_budget_interrupts_a_stalled_request(monkeypatch, partial_text):
+    attempts = []
+    closed = []
+
+    class StalledStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield f"data: {json.dumps(_delta_chunk({'content': 'Partial'}))}\n\n".encode()
+            await asyncio.Event().wait()
+
+        async def aclose(self):
+            closed.append(True)
+
+    async def handle(request):
+        attempts.append(request)
+        if len(attempts) == 1:
+            return httpx.Response(503)
+        if partial_text:
+            return httpx.Response(200, stream=StalledStream())
+        try:
+            await asyncio.Event().wait()
+        finally:
+            closed.append(True)
+
+    monkeypatch.setattr(provider_module, "PROVIDER_RETRY_BUDGET_SECONDS", 0.02)
+    provider = _transport_provider(monkeypatch, handle, provider_retry_backoff_seconds=0)
+
+    async def run():
+        with pytest.raises(ProviderError, match="timed out"):
+            await asyncio.wait_for(_collect(provider.stream_events([])), timeout=0.5)
+
+    asyncio.run(run())
+    assert len(attempts) == 2
+    assert closed == [True]
+
+
+def test_expired_retry_budget_does_not_send_another_request(monkeypatch):
+    attempts = []
+    clock = [0.0]
+
+    def handle(request):
+        attempts.append(request)
+        if len(attempts) == 1:
+            return httpx.Response(503)
+        return httpx.Response(200, text=_sse_body(_delta_chunk({"content": "Too late"})))
+
+    monkeypatch.setattr(provider_module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    provider = _transport_provider(monkeypatch, handle, provider_retry_backoff_seconds=0)
+
+    async def run():
+        with pytest.raises(ProviderError, match="timed out"):
+            async for event in provider.stream_events([]):
+                if isinstance(event, ProviderRetry):
+                    clock[0] = provider_module.PROVIDER_RETRY_BUDGET_SECONDS + 1
+
+    asyncio.run(run())
+    assert len(attempts) == 1
+
+
+def test_retries_discard_partial_tool_calls(monkeypatch):
+    streams = []
+
+    def handle(_request):
+        stream = _InterruptedStream(
+            _delta_chunk({"tool_calls": [{"index": 0, "id": "partial", "function": {"name": "schedule_patch"}}]})
+        )
+        streams.append(stream)
+        return httpx.Response(200, stream=stream)
+
+    provider = _transport_provider(monkeypatch, handle, provider_max_attempts=2, provider_retry_backoff_seconds=0)
+    events = []
+
+    async def consume():
+        async for event in provider.stream_events([ChatMessage(role="user", content="Edit")], TOOLS):
+            events.append(event)
+
+    with pytest.raises(ProviderError, match="timed out"):
+        asyncio.run(consume())
+    assert len(streams) == 2
+    assert all(stream.closed for stream in streams)
+    assert not any(isinstance(event, (ToolCallRequest, ResponseEnd)) for event in events)
+
+
 def test_retries_pre_stream_timeouts_with_exponential_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("nurse_scheduling.ai.provider_retry.random.random", lambda: 0)
     attempts: list[httpx.Request] = []
@@ -296,7 +431,7 @@ def test_retries_pre_stream_timeouts_with_exponential_backoff(monkeypatch: pytes
         provider_retry_backoff_seconds=0.25,
     )
 
-    assert _events(provider) == [
+    assert [event for event in _events(provider) if not isinstance(event, ProviderRetry)] == [
         ProviderAttempt(1),
         ProviderAttempt(2),
         ProviderAttempt(3),
@@ -365,7 +500,7 @@ def test_reports_streaming_timeout_after_all_attempts(monkeypatch: pytest.Monkey
     with pytest.raises(ProviderError, match="timed out while streaming the response"):
         asyncio.run(consume())
 
-    assert events == [TextDelta("Partial")] * 3
+    assert [event for event in events if not isinstance(event, ProviderRetry)] == [TextDelta("Partial")] * 3
     assert len(attempts) == 3
 
 
@@ -394,7 +529,7 @@ def test_continues_partial_answer_with_backoff(monkeypatch: pytest.MonkeyPatch) 
     events = _events(provider, TOOLS)
     assert "".join(event.text for event in events if isinstance(event, TextDelta)) == "First. Second. Third."
     assert events[-1] == ResponseEnd(None)
-    assert delays == [1, 2]
+    assert delays == [2, 4]
     for request, partial in zip(requests[1:], ["First. ", "First. Second. "], strict=True):
         assert request["messages"][:-2] == requests[0]["messages"]
         assert request["messages"][-2] == {"role": "assistant", "content": partial}
@@ -863,6 +998,27 @@ def test_duplicate_empty_completion_and_usage_chunks_are_accepted(monkeypatch):
     usage = {"choices": [], "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}}
     provider = _streaming_provider(monkeypatch, _sse_body(final, repeated, usage))
     assert _events(provider) == [TextDelta("Done"), TokenUsage(1, 1, 2), ResponseEnd("stop")]
+
+
+@pytest.mark.parametrize("reason,done", [("stop", True), ("length", False), (None, True), (None, False)])
+def test_stream_end_diagnostics_record_signals_without_response_text(monkeypatch, caplog, reason, done):
+    import logging
+
+    chunk = _delta_chunk({"content": "private words Even", "reasoning_content": "private reasoning"})
+    chunk["choices"][0]["finish_reason"] = reason
+    body = _sse_body(chunk)
+    if not done:
+        body = body.removesuffix("data: [DONE]\n\n")
+    caplog.set_level(logging.INFO, logger="nurse_scheduling.ai.provider")
+    provider = _streaming_provider(monkeypatch, body)
+    if reason is None and not done:
+        with pytest.raises(ProviderError, match="before completion"):
+            _events(provider)
+    else:
+        assert _events(provider)[-1] == ResponseEnd(reason)
+    assert f"finish_reason={reason} done_received={done}" in caplog.text
+    assert "text_chars=18 reasoning_chars=17 tool_calls=0" in caplog.text
+    assert "private words" not in caplog.text and "private reasoning" not in caplog.text
 
 
 def test_native_reasoning_metadata_round_trips_through_tool_turns_and_chat_runs(monkeypatch):

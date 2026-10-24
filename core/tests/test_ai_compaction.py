@@ -590,7 +590,7 @@ def test_steering_received_during_compaction_reaches_the_next_provider_request()
                 yield event
 
     provider = Provider()
-    agent.open_steering(True)
+    agent.open_steering()
     asyncio.run(collect(agent.prompt(provider, history(), [], take_steering=agent.take_steering)))
     assert provider.requests[0][0][-1]["content"] == "Also inspect P2"
 

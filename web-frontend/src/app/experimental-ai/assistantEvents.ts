@@ -39,6 +39,7 @@ export type AssistantEvent =
   | { type: 'reasoning'; text: string }
   | Extract<SessionEvent, { type: 'compaction_start' | 'compaction_end' }>
   | { type: 'truncated' }
+  | { type: 'provider_retry'; message: string }
   | { type: 'done' | 'stopped' }
   | { type: 'error' | 'stale'; message: string }
   | { type: 'tool_start'; activity: ToolStartActivity }
@@ -88,6 +89,8 @@ function finishToolActivity(entries: ActivityEntry[], result: ToolActivity): Act
 export function applyAssistantEvent<T extends ChatMessageContent>(message: T, event: AssistantEvent, occurredAt = Date.now()): T {
   const activity = message.activity ?? [];
   switch (event.type) {
+    case 'provider_retry':
+      return { ...message, activity: [...activity, { kind: 'notice', text: event.message }] };
     case 'delta':
       return {
         ...message,
@@ -187,7 +190,8 @@ export function toAssistantEvent(
   browserSchedule: { readonly current: string },
 ): AssistantEvent | null {
   switch (event.type) {
-    case 'delta': case 'reasoning': case 'truncated': case 'tool_start': case 'tool': case 'compaction_start': case 'compaction_end':
+    case 'provider_retry': case 'delta': case 'reasoning': case 'truncated': case 'tool_start': case 'tool':
+    case 'compaction_start': case 'compaction_end':
       return event;
     case 'schedule_change': {
       const before = workingSchedule.current ?? browserSchedule.current;

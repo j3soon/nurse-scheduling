@@ -30,6 +30,15 @@ def normalize_solver_option(value: str) -> str:
     return capabilities.value
 
 
+# Runtime package of each optional solver from requirements-optional.txt, keyed by the
+# normalized solver value. Dev images can omit these packages, so tests skip when the package
+# is absent. An installed but broken runtime still fails the solver_is_available probe.
+SOLVER_RUNTIME_MODULES = {
+    "pulp/highs": "highspy",
+    "pulp/scip": "pyscipopt",
+}
+
+
 def solver_is_available(value: str) -> bool:
     """Return whether a configured solver runtime can be initialized."""
     selector = normalize_solver_selector(value)

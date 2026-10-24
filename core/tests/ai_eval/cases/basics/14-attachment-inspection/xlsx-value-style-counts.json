@@ -1,0 +1,41 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "id": "xlsx-value-style-counts",
+  "fixture": "new-schedule",
+  "question": "Inspect Requests in the attached workbook without editing the schedule. Count only B2:AC61. A red-font numeric 1 is an OFF request and a black-font numeric 1 is a work request. Empty cells are blank, not requests. Ignore fills when combining counts. Return only JSON with all, P01, and Nov01. Each must contain red, black, and blank counts for the full rectangle, person P01, and the Nov 01 column respectively.",
+  "attachments": [
+    "counting-xlsx"
+  ],
+  "expect_proposal": false,
+  "answer_json": {
+    "all": {
+      "red": 448,
+      "black": 896,
+      "blank": 336
+    },
+    "P01": {
+      "red": 8,
+      "black": 14,
+      "blank": 6
+    },
+    "Nov01": {
+      "red": 16,
+      "black": 32,
+      "blank": 12
+    }
+  },
+  "tool_usage": {
+    "required": [
+      "bash"
+    ],
+    "forbidden": [
+      "optimizer"
+    ]
+  },
+  "tags": [
+    "attachment",
+    "xlsx-summary"
+  ],
+  "note": "This testcase is mostly AI generated. Repeated values require counting by stored font color while combining distinct fills. Grade answers independently of the inspection method. Review commands for reusable inspection versus generated counting scripts."
+}

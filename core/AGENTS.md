@@ -18,9 +18,10 @@ project packages are installed system-wide, so run `python`, `pytest`, and
   pytest suites. AI code, guidance, tests, shared AI fixtures, and deleted AI
   files run all `test_ai_*.py` files. Other source, helper, dependency, and deleted-file changes run the
   normal local suite, excluding optional PuLP CBC, cuOpt, and mixed progress
-  suites. The script stops when a selected test needs a missing PuLP HiGHS or
-  SCIP runtime. In a dev image that omits them, add `--skip-unavailable-solvers`
-  to skip only the tests marked `requires_solver` for the missing runtime.
+  suites. Tests marked `requires_solver` skip automatically when their optional
+  runtime package is absent. An installed runtime that fails its availability
+  check still stops the script. Use `--skip-unavailable-solvers` to skip those
+  tests too.
 - `pytest tests/real/schedule_ortools_cp_sat.py tests/real/schedule_pulp_cbc.py tests/real/schedule_pulp_cuopt.py`: run the slower bounded real-world checks.
 - `pytest tests/real/schedule_score_ground_truth.py`: replay the fixed real-world assignment and verify its exact objective score.
 - `python -m nurse_scheduling.cli tests/testcases/real/large-ward-with-87-people-2025-11.yaml --solver ortools/cp-sat --timeout 10 --show-model-build-stats`: print compact real-case model-build statistics.
@@ -204,9 +205,17 @@ stderr. Do not replace an explicitly selected file with a fallback.
 - Put shared AI test data under `tests/ai_fixtures/`, so affected checks select
   AI suites without running unrelated scheduling tests.
 - Keep browser and command chat exports on the shared Python ZIP writer. Read
-  one consistent PostgreSQL snapshot and use stored timestamps in UTC. Keep
-  TypeScript reference hashes when porting formatters. Verify browser download
+  one consistent PostgreSQL snapshot and use stored timestamps in UTC. When the
+  export output changes on purpose, first check that the previous output changes
+  only where intended. Then update the hashes in
+  `tests/ai_fixtures/chat-export-parity.json` and the golden archive in
+  `tests/ai_fixtures/chat-export-archive.json` together. Verify browser download
   bytes and native download authorization with a rich saved-event fixture.
+- Retry temporary provider failures automatically inside the provider request,
+  with exponential backoff and a bounded total time. Retry only the incomplete
+  model request, never commands or optimizer submissions. Do not wait for the
+  user while holding a shared run slot and its sandbox. After the last attempt,
+  fail the run. The user continues with a new message.
 - Keep accepted AI runs independent of the browser stream. Reconnect with the
   same `message_id` to replay output, without repeating provider or tool calls.
   Keep complete replay snapshots separate from the bounded event buffer. Persist
@@ -284,12 +293,21 @@ stderr. Do not replace an explicitly selected file with a fallback.
 - Keep bundled attachment helpers general and optional. Preserve meaningful
   source data such as spreadsheet formulas and cached values, report truncation,
   and let the agent write a focused sandbox parser when a helper is insufficient.
+  Check the helper catalog and `--help` before generating read-only parsing or
+  counting code. Add recurring missing operations to a maintained inspector.
+  Keep source inspection separate from schedule construction and policy audits.
+- Fix repeated representation failures at the data boundary before adding prompt
+  exceptions. Use the app's YAML 1.2 semantics for both reading and writing
+  schedule data. Prefer the installed library over custom scalar converters.
+  Keep schema validation in the trusted server instead of asking the model to
+  maintain a second validator.
 - When adding a bundled reference, include it in sandbox hydration, production
   Docker copy paths, and evaluation reference hashes.
-- Prefer extending an existing helper when an operation shares its parser,
-  dependencies, and output format. Reuse loading and validation instead of
-  adding a sibling script. Keep a separate helper when its interface is useful
-  independently.
+- Prefer one inspector per file format for related read-only operations.
+  Reuse its loading and validation for uploaded and generated files. Keep
+  schedule-specific calculations separate when they require schedule context.
+  Group related schedule analyses in one inspector when they share an assignment
+  reader and source context.
 - Keep the agent run deadline separate from the sandbox provider's continuous
   runtime limit. Paused time still counts toward the agent run deadline.
 - Separate command execution deadlines from provider connection timeouts. Reuse a
@@ -339,6 +357,13 @@ stderr. Do not replace an explicitly selected file with a fallback.
   category or tag only when the changed behavior spans it or a selected case
   reveals a neighboring risk. A bare evaluation command exits without running
   cases. Use `--tuning` to opt into the default tuning set.
+- When a helper, its catalog entry, a fixture or a grader changes, re-measure
+  each prompt receipt that it makes stale in the same commit. CI requires a
+  current receipt for every shipped clause, so a later repair leaves every commit
+  in between failing. List stale steps with `validate_prompt_evidence` on each
+  step separately, because the CI test stops at the first one. When the fresh
+  comparison shows no benefit, keep the old receipt stale and report the step.
+  Do not copy the new fingerprints into it.
 - Count exceeded model-output limits as behavior failures, not infrastructure
   outages. Count invalid or oversized generated downloads as behavior failures
   too. Keep the limit reason and partial trace. Keep provider connection and
@@ -380,8 +405,14 @@ stderr. Do not replace an explicitly selected file with a fallback.
   tune prompts directly against one held-out trajectory.
 - Keep `nurse_scheduling/ai/prompts/system-steps.json` aligned with the ordered
   production prompt sections. Give independently evaluated policies separate
-  prompt fragments and targeted cases. Keep each receipt tied to that policy's
-  comparison. Compare a changed step against its immediately
+  prompt fragments and targeted cases. Each step must have one intent and be
+  understandable on its own, including its trigger and scope limits. A shared
+  workflow or testcase does not make independent behaviors one intent.
+  Split a new intent before evaluating it, including one exposed by a failed
+  control. After splitting a step, measure each extracted policy separately.
+  Do not copy the bundled receipt to the new steps.
+  Keep each receipt tied to that policy's comparison.
+  Compare a changed step against its immediately
   previous prefix on its targeted cases, repeating three to five times. Treat linked
   cases as hypotheses until a clean comparison shows better outcomes or an
   explicit relative cost gain. Run full-prompt ablation only when requested or
@@ -424,6 +455,28 @@ stderr. Do not replace an explicitly selected file with a fallback.
 - Supply the current server time in the frontend timezone as request-specific
   status. Keep it out of retained history and the static prompt. Cover local
   midnight and timezone changes when testing calendar context.
+- Keep reusable analysis in the single bounded `/workspace/analysis.md` file.
+  Bind it to exact schedule and upload inputs, retain it only through the
+  successful run commit, and count it in session memory. Invalidate it when
+  sources change. Treat it as untrusted working notes, not user approval.
+  Do not retain arbitrary workspace files or execute saved notes automatically.
+- Keep unfinished edits in `/workspace/schedule.yaml`, including rejected drafts.
+  Keep authoritative last accepted contents outside the writable sandbox and
+  expose them at `/workspace/last-accepted-schedule.yaml`. Refresh that copy
+  after mutating tool calls, even if only the backup changed. Keep validation
+  feedback visible to the model and user. Require the current draft to pass
+  trusted review before optimization or successful completion. A nonzero command
+  exit alone must not undo an accepted schedule change. Pair deterministic
+  recovery checks with focused live cases for the model's response to validation
+  feedback. Grade the required recovery action as well as the final schedule.
+  Keep those cases with the implementation commit.
+- Restore only the mandatory one-shift-per-day rule during trusted candidate
+  review, and only when the restored schedule data passes the existing frontend
+  validator. Insert the rule as text so the rest of the model's text, including
+  comments and key order, stays unchanged. Report the restoration to the model
+  and user. Keep the workspace, inspection context, preview and optimizer input
+  on the same validated text. Do not auto-repair optional staffing, rest,
+  eligibility or preference rules.
 - Show known provider reasons and trusted validation details in both foreground
   and background chat errors. Keep raw provider bodies and private SDK errors
   in server logs. Test that failed validation still discards the turn's edits.
@@ -469,6 +522,10 @@ stderr. Do not replace an explicitly selected file with a fallback.
 - When changing `ai/pi`, compare with the exact upstream Pi revision cited in
   the module header. Preserve model-facing wording and edge-case behavior, add
   focused regression tests, and document intentional differences beside the port.
+- Diagnose partial replies with completion signals and character counts before
+  changing retry behavior. Preserve finish reasons in evaluation reports. A reply
+  ending mid-word does not prove a transport failure when the provider reports
+  completion. Keep response content and credentials out of diagnostic logs.
 - Retry provider timeouts with bounded exponential backoff. After visible text,
   continue with the partial answer as context instead of replaying the original
   request. Discard incomplete tool calls and release tools only after confirmed
@@ -600,7 +657,11 @@ stderr. Do not replace an explicitly selected file with a fallback.
   Run them locally after changing evaluation fixtures, reports, or grading
   tests, so encoding regressions fail before a push.
 - Write hash-bound fixture inputs as exact encoded bytes to avoid platform
-  newline translation. Fix ZIP creator metadata as well as timestamps when
+  newline translation. Keep optimizer source hashes tied to exact bytes.
+  Hash helper evidence as UTF-8 text with normalized line endings. Check report
+  creation, receipt creation, and receipt validation together. When changing
+  text hashes or their fixtures, cover LF and CRLF inputs and check that changed
+  content is rejected. Fix ZIP creator metadata as well as timestamps when
   generated archive bytes must match across platforms.
 - Give `pytest.mark.parametrize` explicit `ids` when a parameter is a large
   binary or text payload. Pytest derives the node ID from the parameter value

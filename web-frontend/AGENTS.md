@@ -186,6 +186,8 @@ reload recovery follows the production path.
 When adding AI session events, update the SSE decoder, chat hook callback dispatch,
 assistant reducer, saved transcript projection, and exports together. Check the
 visible browser result because decoder and reducer tests do not cover dispatch.
+When you add an `ActivityEntry` kind, also accept it in `isActivityEntry` in
+`chatConversation.ts`. Otherwise a reload discards the saved browser chat.
 
 For session actions, check the action's full server event sequence through the
 client decoder and transcript. Include `model_input`, not only `run_start`, text,

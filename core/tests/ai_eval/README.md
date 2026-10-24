@@ -128,10 +128,67 @@ answer wording is correct.
 Use `optimizer_error` to simulate an optimizer API outage, and `tool_usage.required_errors` to require an observed
 tool failure. This exercises the agent's response to a tool error without treating a controlled outage as a provider
 or sandbox infrastructure failure.
+The `schedule-recovery` cases use one uploaded script to save a valid description
+change, then stage an unfinished rename, a truncated YAML write, or an optional
+audit error in another tool call. They require the earlier accepted edit and
+preserve unrelated schedule data. The restore case requires a successful read
+of `/workspace/last-accepted-schedule.yaml`. The control runs the audit command
+unchanged so its nonzero exit reaches the tool.
+
+The final comparison uses the same prompt, fixture and provider in both versions,
+with three repetitions and four concurrent jobs. Provider requests and E2B commands
+are real. No optimizer job runs. Model: `unsloth/Qwen3.8-27B-NVFP4`. Template:
+`nurse-scheduling-trace-validation`, with a 900-second test-only turn limit.
+
+| Case | Automatic restoration | Separate draft and last accepted copy |
+| --- | --- | --- |
+| `schedule-recovery-partial-edit` | 3/3 | 3/3 |
+| `schedule-recovery-restore-last-accepted` | 0/3 | 3/3 |
+| `schedule-recovery-valid-edit-control` | 3/3 | 3/3 |
+
+The original flow does not provide the accepted file. One baseline run ended
+with an unresolved trusted-validation rejection. There were no provider or
+sandbox infrastructure failures. All three candidate partial-edit runs kept the
+unfinished group definition and edited only its remaining references. These
+checks validate the explicit recovery workflows. Performance was not an acceptance
+criterion. Earlier runs with a weaker restore check and an ambiguous control
+command remain in local reports. The final comparisons use the corrected cases.
+
 Use `provider_timeout_after_text` to inject one partial assistant answer followed by a stream timeout.
 The production retry policy sends the retained answer and interruption status to the live provider.
 Only that recovery request is live. The initial text and timeout are synthetic, so their timing does not measure
 a real provider outage. The ordinary response control runs without this field.
+Use `rejected_write_turn` to inject one malformed schedule write before a selected
+user turn's first live model request. Zero disables it. The seed runs through the
+production tool and trusted validator. The trace labels it `evaluation_fault`.
+Provider timing and token telemetry exclude the synthetic response. Tool counts
+include its write and validation. This tests recovery, not first-write reliability.
+`workbook-build-rejected-write-recovery` retains the strict construction case's
+source assertions and requires feedback that keeps the draft and names the recovery copy. It grades final recovery,
+so it does not limit repeated validation feedback while the rejection is unresolved.
+Keep strict cases at zero rejections. Do not replay customer commands as fixtures.
+The retained-draft recovery case and `workbook-build-after-confirmation` control
+both passed 3/3 with `unsloth/Qwen3.8-27B-NVFP4`, the isolated
+`nurse-scheduling-trace-validation` E2B template, four jobs and a 900-second test-only
+turn limit. No infrastructure errors occurred. Every proposal preserved the full
+source assertions. One recovery run made an additional schema-invalid write before
+repairing it. None read the last accepted copy. These results validate controlled
+final recovery, not first-write reliability, backup use or provider-outage recovery.
+This test-only change does not establish a production improvement or cost saving.
+Deterministic checks also verify that the draft remains malformed and the recovery
+copy keeps the starting schedule before the live provider responds.
+
+The command-outcome fix also passes these two live cases 3/3 each with the same
+model, template and settings. All recovery runs keep the rejection visible on
+successful commands without marking those commands as failed. The traces include
+reads, a shell command and scratch-file writes. One run needs two additional
+rejected edits before the final valid proposal. No infrastructure failures occur.
+The 15 command-status regression cases fail on the parent implementation and
+pass with the fix. A separate control preserves genuine command failures.
+Finalization and optimization remain blocked while the draft is invalid. These
+checks validate command status and final recovery, not first-write reliability
+or a performance gain.
+
 Use `tool_usage.max_validation_errors` to bound failed trusted schedule checks. A valid final proposal does not erase
 an invalid intermediate mutation. Unrelated tool errors are not schedule-validation repairs.
 
@@ -172,6 +229,13 @@ turns, and tokens with an earlier run. Reports record the model, Git revision, d
 hashes so comparisons do not silently mix configurations. Reference hashes cover every file hydrated into the sandbox,
 including the user guide pages the app-UI cases are graded on. Case hashes cover each case's parsed criteria, including
 untracked case files during local development.
+
+Each result records `provider_responses` with completion-signal presence, finish
+reason and emitted text/reasoning character counts per model request. A completed
+response with no finish reason means the endpoint sent `[DONE]`. An incomplete
+request remains `completed: false`. Counts include partial retry output, but contain
+no response text. Use the saved prompts and events to compare model output with
+retained history. A mid-word ending alone does not establish a transport error.
 
 Completed attempts are saved immediately to `results.jsonl` and `cases/`, with initial metadata and a
 `progress.json` status. Comparison arms keep separate directories. Interrupted batches retain completed
@@ -350,3 +414,132 @@ Run `--prompt-ablate-step N` only for a requested full-prompt removal check. It 
 section N against the complete prompt. Ordinary step comparisons run only the cases named for that step, unless
 additional `--case`, `--category`, `--tag`, `--tuning`, or `--full` scope is explicitly selected. Add a contrasting
 exact-target or holdout case when a new section might cause over-clarification or another nearby regression.
+
+## Optimizer inspector statistics
+
+Use `inspect_optimizer_result.py --statistics --source-sha256 HASH` for observed
+per-person shift counts and longest work/OFF runs. `--include-history` uses only
+source YAML whose bytes match the completed run. These statistics do not audit
+scheduling policies.
+
+A repeated comparison checked the same calculations exposed through a separate
+roster command versus this inspector mode. The prompt, case inputs and fixed
+assignments were unchanged. The CLI and helper catalog changed together.
+Both versions used `unsloth/Qwen3.8-27B-NVFP4`, real E2B commands, three repetitions
+and four concurrent case jobs. Optimizer submission was simulated with verified
+assignments exported as real XLSX files.
+
+| Case | Separate command correctness | Inspector correctness | Separate command use | Inspector statistics use |
+| --- | ---: | ---: | ---: | ---: |
+| `result-roster-statistics` | 3/3 | 3/3 | 2/3 | 3/3 |
+| `result-single-tier-summary` | 3/3 | 3/3 | 0/3 | 0/3 |
+
+Neither version had infrastructure errors. Helper use counts runs that execute
+the calculation, excluding source reads and `--help`. The single-tier control
+correctly answered from completion metadata without an inspection call. Three
+repetitions establish observed adoption, not a general reliability estimate. Twelve deterministic CLI comparisons also preserved
+statistics, history-source checks, request audits and assignment queries.
+This supports consolidation for maintainability. No efficiency gain is claimed.
+
+
+Check helper adoption on saved before/after reports with the receipt tool:
+
+```sh
+python -m tests.ai_eval.receipt check-helper BEFORE AFTER \
+  --case result-roster-statistics --helper inspect_optimizer_result.py \
+  --flag=--statistics --cost-metric completion-tokens --cost-ratio 0.9 \
+  --output helper-comparison.json
+```
+
+Declare the cost target before running the comparison. The command exits nonzero
+unless all candidate runs pass, every selected case executes the helper with the
+required flags, and a selected helper-use case has a correctness gain or the declared cost benefit.
+All report cases remain correctness controls. With a cost target, missing usage
+or a cost increase in any passing control also fails the gate. Reports retain
+all token categories, tool calls, reads, turns, timing and paired variation.
+
+Execution checks recognize one direct Python command with structured JSON output.
+Source reads, `--help`, quoted command text and failed calls do not count.
+Compound commands, pipelines, redirections and substitutions also do not count,
+because their exit status and output cannot be attributed to the helper.
+These forms and calls through inline Python or another wrapper need separate trajectory review.
+The target flags must occur on the helper invocation, not elsewhere in the call.
+Keep automatic counts separate from manually verified execution in historical receipts.
+Rejecting a compound command means its execution is unverified by this check.
+Keep answer grading independent so correct alternative methods remain valid.
+
+The roster consolidation comparison passes the helper-use gate. It has no
+correctness gain or declared cost target, so it does not pass the benefit gate.
+It supports the tested capability and consolidation, not an efficiency claim.
+
+
+For a prompt comparison, `receipt write` also accepts `--helper NAME`, repeated
+`--flag=--OPTION` and `--helper-case CASE` options. It checks the saved trajectories
+before storing helper-use counts with the existing benefit receipt. The prompt
+evidence validator requires all candidate runs to use the helper and binds those
+counts to the measured helper bytes. This adds an adoption condition without
+replacing the receipt's correctness or declared cost requirement.
+
+
+The bundled `inspect_xlsx.py --comments` reads stored legacy comment text, including
+blank cells. Use `--range` to select at most 10,000 cells. It returns at most 100
+comments per sheet and 2000 characters per comment, with separate truncation flags.
+`comment_part` identifies the source XML part or is null when no legacy comment
+part exists. `threaded_comment_part` reports unsupported threaded comments anywhere
+on the sheet without reading their text. The reader streams legacy comment XML
+and does not traverse worksheet cells.
+The cell modes keep their existing streaming behavior.
+The fresh comment comparison passes 3/3 per case and arm. Its receipt requires
+both `--comments` and `--range` on every candidate run. Generated tokens fall
+48.7% for extraction and 52.5% for the empty control. Empty-control candidates
+still write verification scripts. See [helper evidence](helper-evidence.md).
+
+## Taiwan calendar generator adoption
+
+The renewal policy generates holiday groups with
+`build_taiwan_holiday_groups.py --start START --end END`. The TypeScript table
+remains the generator's input, without a direct-read instruction in this policy.
+A fresh comparison used the original policy and this wording, with the same
+helper, fixtures, model and full production prompt otherwise unchanged.
+Both versions used `unsloth/Qwen3.8-27B-NVFP4`, real E2B commands, three repetitions
+and four concurrent jobs. No optimizer jobs ran.
+
+| Case | Correct before / after | Generator use before / after | TypeScript reads before / after |
+| --- | ---: | ---: | ---: |
+| `dates-range-renew-small` | 3/3 / 3/3 | 1/3 / 3/3 | 3/3 / 0/3 |
+| `dates-range-renew-custom-group-small` | 3/3 / 3/3 | 0/3 / 3/3 | 3/3 / 1/3 |
+| `dates-range-renew-makeup` | 3/3 / 3/3 | 0/3 / 3/3 | 3/3 / 1/3 |
+
+Use counts require successful calculation with both range flags. Source reads
+and `--help` do not count. Custom-group scope and the makeup workday remained
+correct. Some runs still read the source table after using the generator.
+
+Generated tokens, mean ± sample standard deviation, with three matched pairs:
+
+| Case | Before | After | Paired change ± SD |
+| --- | ---: | ---: | ---: |
+| Ordinary renewal | 5547 ± 2040 | 3825 ± 835 | -1722 ± 1733 |
+| Custom-group renewal | 5685 ± 271 | 5279 ± 2211 | -406 ± 2380 |
+| Makeup-workday renewal | 6244 ± 1098 | 4510 ± 897 | -1734 ± 202 |
+
+These are descriptive measurements. No cost target was declared, so the
+original-versus-revised comparison passes adoption but not the benefit gate.
+
+A separate full-prompt ablation removed the complete revised renewal policy.
+The four candidate cases each passed 3/3, including explanation-before-edit and
+custom-group controls. Both renewal controls executed the generator with both
+range flags in 3/3 runs. The saved prompt receipt enforces this adoption condition
+and binds it to the helper bytes. Its correctness benefit validates the complete
+policy, not the independent effect of selecting the generator. Neither comparison
+had infrastructure errors.
+
+A conservative recheck recognizes all three ordinary-renewal candidates and one
+custom-group candidate automatically. Manual review confirms the other two
+custom-group invocations and their calendar JSON. One redirects stderr, and the
+other runs `--help` before the calculation with `&&`. The historical 3/3 count
+includes this manual verification. These reports need manual review under the
+stricter execution check and do not pass its automatic adoption gate.
+
+Receipt creation rejects a failed or missing overall benefit decision. New
+receipts keep measured control cost ratios, and validation rejects a control
+cost regression. A favorable witness does not override the comparison result.

@@ -4,10 +4,10 @@ This walkthrough creates a small test schedule, saves a backup, and downloads
 an optimized workbook. It was validated with the frontend and backend running
 locally.
 
-!!! warning "Protect scheduling data"
+!!! warning "Protect schedule data"
 
     Use test names until your organization approves this system. The hosted
-    app stores the schedule in your browser and sends it to the selected
+    app stores the schedule data in your browser and sends it to the selected
     optimization server. It also uses Google Analytics and Sentry for
     analytics, replay, and error reporting. Error reports may attach partly
     anonymized scheduling YAML. **Anonymize schedule data** does not remove
@@ -99,7 +99,7 @@ format.
 4. Select **Optimize and Download**.
 
 The first online compatible server is selected in **Auto** mode. Submitting
-sends the schedule to that server. Anonymization applies to the outbound YAML.
+sends the schedule data to that server. Anonymization applies to the outbound YAML.
 The downloaded workbook restores the original people IDs.
 
 ![Online server and run options before optimization](../assets/images/user-guide/07-optimize.png)

@@ -226,35 +226,63 @@
     "cases": [
       "holiday-expansion-question-without-reads",
       "dates-range-renew-small",
-      "dates-range-renew-custom-group-small"
+      "dates-range-renew-custom-group-small",
+      "holiday-question-explains-workdays"
     ],
-    "hypothesis": "Asks the Taiwan holiday renewal question immediately and applies the confirmed range.",
-    "sha256": "ef1f009175af95a63ba305b272a051f1e19decfbdc99660392c07857d71d76a7",
+    "hypothesis": "Explains importing the Taiwan holiday calendar before expanding the range, then generates its groups with the maintained helper while preserving custom-group scope.",
+    "sha256": "530c501b18b7dd041fc0acd26e4fc910f5635e93e644867a4d1048849ec1d0d3",
     "evidence": [
       {
-        "case": "holiday-expansion-question-without-reads",
-        "input_sha256": "c6234d6b2c38bae175bb674b632a8723d878971f12d4e215df39225706215fac",
+        "case": "holiday-question-explains-workdays",
+        "input_sha256": "1406c72e4fe7b86f03e00456d4997c7c4fb2b49a1920b123f7260c98ea043635",
         "before": "0/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
         "controls": [
           {
+            "case": "dates-range-renew-custom-group-small",
+            "input_sha256": "b9c60e76671b3589bf752b8d9b3cb5fed5b4d69eea9287f27e0fde48c3706def",
+            "before": "2/3",
+            "after": "3/3"
+          },
+          {
             "case": "dates-range-renew-small",
-            "input_sha256": "1635101c576eba0d9aed90e90fb93a4933798050d3cd37f388a791cb5b537cc6",
+            "input_sha256": "76cda2cecc44c9426580037fe3467da9215994ad405d4acef9ef84992773a420",
             "before": "3/3",
             "after": "3/3"
           },
           {
-            "case": "dates-range-renew-custom-group-small",
-            "input_sha256": "aee21cba8f5b5bc79723633f3b8442c5831e9f1ff97d4a42f108c7ca2a9c4b79",
-            "before": "3/3",
+            "case": "holiday-expansion-question-without-reads",
+            "input_sha256": "7e7c6c75ddc15e7b1b976f45d5ca6b82575689be4893461a67a11001faaa68b1",
+            "before": "0/3",
             "after": "3/3"
           }
         ],
-        "note": "Controls explicitly distinguish custom-group preservation and extension."
+        "helper_usage": {
+          "helper": "build_taiwan_holiday_groups.py",
+          "sha256": "a87ca83d0174344afc2873f30a2fe35b0a6dc688eea2e62c4bce6238290517db",
+          "flags": [
+            "--start",
+            "--end"
+          ],
+          "cases": [
+            {
+              "case": "dates-range-renew-small",
+              "before": "1/3",
+              "after": "3/3"
+            },
+            {
+              "case": "dates-range-renew-custom-group-small",
+              "before": "1/3",
+              "after": "3/3"
+            }
+          ]
+        },
+        "note": "Full production prompt with the revised renewal policy versus that prompt with the complete policy omitted. Three repetitions and four concurrent jobs with real provider and E2B commands. All four candidate cases passed 3/3. Both renewal cases executed the generator with --start and --end in 3/3 runs. Manual rechecking confirms these counts. The stricter automatic checker recognizes 3/3 ordinary renewals and 1/3 custom-group renewals. The other two custom-group runs use stderr redirection or --help followed by && and require manual verification. This validates the complete policy and its reviewed adoption condition, not the independent benefit of changing the calendar source. A separate original-versus-revised comparison preserves correctness and measures adoption. No cost target or efficiency gain is claimed."
       }
-    ]
+    ],
+    "comparison_mode": "ablation"
   },
   {
     "id": "optimizer-start",
@@ -391,27 +419,27 @@
     "evidence": [
       {
         "case": "result-stale-summary-control",
-        "input_sha256": "ba6036aef76e5455d82962edc8f342fa308f321a40d02716788376879402d957",
+        "input_sha256": "d1ba65a0eb45b5f730d2b2ab2e35877091b0d40de35ea247458bca8d17a4c6cb",
         "before": "0/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
+        "comparison_passed": true,
         "controls": [
           {
             "case": "result-grouped-cross-month",
-            "input_sha256": "c49e7f9a9480933c19f428f4454186b9bda4b2675764f7c0dc5f6b40c62946f2",
+            "input_sha256": "b7826c4ac7e8c360301f527e8731659f1c5472b3078d3403b3247fb34cb5af49",
             "before": "3/3",
             "after": "3/3"
           },
           {
             "case": "result-single-tier-summary",
-            "input_sha256": "3543da51542c1b06d5120da5992ada60f923bd75daae62861514a8f87bed2ed1",
+            "input_sha256": "0c1466919b81098a5621a2a3bf96882c993210f395be9847b6b4f20938cd410f",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Full-prompt ablation with the A1-range helper, before moving download delivery earlier. The stale-summary witness uses the current workbook instead of archived summary counts. Both count controls pass. No cost target was declared.",
-        "fingerprint_note": "Expanded JSON comparator dependency coverage. Grading, model inputs and historical measurements are unchanged. Grading helpers are fingerprinted transitively, and list numbers compare by value. Model inputs, measurements, and grades of saved outputs are unchanged."
+        "note": "Full-prompt ablation after the XLSX summary, comment and roster statistics inspector changes. Before answers repeat the stale summary count without tools. After answers verify the completion hash with inspect_optimizer_result.py. Both count controls pass. No cost target was declared."
       }
     ],
     "comparison_mode": "ablation"
@@ -425,42 +453,38 @@
       "xlsx-styled-requests-and-caches",
       "xlsx-sheet-inventory"
     ],
-    "hypothesis": "Reduces generated XLSX parsing while preserving color-dependent requests and last-saved formula caches.",
-    "sha256": "b166d9f3956a724a6747b1d554b1a742d60f2a819e39a207eab2836f8491d62c",
+    "hypothesis": "Uses the maintained XLSX cell inspector for values, stored styles and saved formula caches before writing a parser.",
+    "sha256": "253648fab336668c7f0506ce814659cb46ff35823fa895aca84edcf81d0b4807",
     "evidence": [
       {
-        "case": "xlsx-sheet-inventory",
-        "input_sha256": "c12a1721ee4d4828ea5b92703e7250059a0350895c265fd072193094a4c41f28",
-        "before": "3/3",
+        "case": "xlsx-styled-requests-and-caches",
+        "input_sha256": "e76088a08a2e7ad0698fae37328b5e5cfe884e05f214efd3d2481d12cb26e9c5",
+        "before": "2/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
+        "comparison_passed": true,
         "controls": [
           {
             "case": "xlsx-color-fallback",
-            "input_sha256": "4ea7978977edb53330e80a3badfd82e2d88af56270d1873876578606426458fa",
+            "input_sha256": "0a14834c103a309199fc2563e0f16078a80a96cb90c11baa147f667b98bc2949",
             "before": "3/3",
             "after": "3/3"
           },
           {
             "case": "xlsx-formulas-and-caches",
-            "input_sha256": "94add7c51af64c4bf5912a70dfe9529a59ba18c99d6362610f2d4e6a89ff9c6e",
+            "input_sha256": "866128eb5cb5434852dac44a43557dc131bec835a1807f5a71ec2458603232c4",
             "before": "3/3",
             "after": "3/3"
           },
           {
-            "case": "xlsx-styled-requests-and-caches",
-            "input_sha256": "ce79a3d696cfe0a4eba3d3d39b36df3ad32a65f4eb261bce8fbf21ea5684c980",
+            "case": "xlsx-sheet-inventory",
+            "input_sha256": "82f7f71258ebb309642f35136089016849180a95141d112f8a999746c0590966",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Adjacent prefix comparison with the A1-range helper. The predeclared total-token target is 0.80. Formula caches, stored colors, and styled requests remain correct.",
-        "cost_metric": "total-tokens",
-        "cost_ratio": 0.39351841987514113,
-        "cost_target": 0.8,
-        "grading_note": "Regraded saved outputs after numeric comparison correction. Case and fixture fingerprints match. Pass counts and costs are unchanged.",
-        "fingerprint_note": "Expanded JSON comparator dependency coverage. Grading, model inputs and historical measurements are unchanged. Grading helpers are fingerprinted transitively, and list numbers compare by value. Model inputs, measurements, and grades of saved outputs are unchanged."
+        "note": "Adjacent prefixes after the XLSX summary, comment and roster statistics inspector changes, with live provider and E2B, three repetitions and four jobs. One before answer reports wrong off days. After answers pass 3/3. The color-fallback, formula-cache and sheet-inventory controls pass 3/3 in both versions. No cost target was declared."
       }
     ]
   },
@@ -670,82 +694,6 @@
     "comparison_mode": "ablation"
   },
   {
-    "id": "people-history-import",
-    "file": "steps/people-history-import.md",
-    "cases": [
-      "month-end-history-forward",
-      "month-end-history-reverse",
-      "month-end-full-history"
-    ],
-    "hypothesis": "Uses the final consecutive run for one-row shorthand CSVs and preserves every supplied day for full history arrays.",
-    "sha256": "25dbc83a8cf881add7ccdef8d181c053ab7e120051b4c53caa0a6c45fdfa03cf",
-    "evidence": [
-      {
-        "case": "month-end-full-history",
-        "input_sha256": "eb8803d170202f36813aa966c94c46cb23441a01a9b7f6ac887c1275e26535e6",
-        "before": "2/3",
-        "after": "3/3",
-        "model": "unsloth/Qwen3.8-27B-NVFP4",
-        "infrastructure_errors": 0,
-        "controls": [
-          {
-            "case": "month-end-history-forward",
-            "input_sha256": "0c2e937e0b5e76d297b594fd4dd7495ca74779b06d5bb1c1d43e411dc8d92607",
-            "before": "3/3",
-            "after": "3/3"
-          },
-          {
-            "case": "month-end-history-reverse",
-            "input_sha256": "53e030aa73c97b48da0e1863502de0f7857c56a8bb99f38f7a01f178fca87bdb",
-            "before": "3/3",
-            "after": "3/3"
-          }
-        ],
-        "note": "Full-prompt comparison of immediately previous wording with scoped wording, with the same code, helpers, cases, and attachments. Full-history arrays improve from 2/3 to 3/3. Both one-row shorthand CSV controls pass 3/3 with both wordings. Calendar order and all supplied days remain semantic. No optimizer jobs ran.",
-        "grading_note": "Regraded saved outputs after numeric comparison correction. Case and fixture fingerprints match. Pass counts and costs are unchanged.",
-        "fingerprint_note": "Expanded JSON comparator dependency coverage. Grading, model inputs and historical measurements are unchanged. Grading helpers are fingerprinted transitively, and list numbers compare by value. Model inputs, measurements, and grades of saved outputs are unchanged."
-      }
-    ],
-    "comparison_mode": "ablation"
-  },
-  {
-    "id": "workbook-policy-clarification",
-    "file": "steps/workbook-policy-clarification.md",
-    "cases": [
-      "workbook-unexplained-policy",
-      "workbook-explained-policy",
-      "workbook-unexplained-policy-ward87",
-      "workbook-import-first-valid-proposal"
-    ],
-    "hypothesis": "Clarifies unexplained workbook policy. Preserves exact cell-specific request weights and the required default rule in the first proposal.",
-    "sha256": "10cc9116f632ca3b66b5c8596b9bf16b06b4265019800d289c42d50c2929270f",
-    "evidence": [
-      {
-        "case": "workbook-import-first-valid-proposal",
-        "input_sha256": "38db47e271791a2f600f7fb3a4ec6506b8e7d4511cfd8b50073036b604ab4797",
-        "before": "0/3",
-        "after": "3/3",
-        "model": "unsloth/Qwen3.8-27B-NVFP4",
-        "infrastructure_errors": 0,
-        "controls": [
-          {
-            "case": "workbook-explained-policy",
-            "input_sha256": "56e82e30c340e51acb21e3aefafc32193ac970ed9813b89f2c9dfe7198a9ed58",
-            "before": "3/3",
-            "after": "3/3"
-          },
-          {
-            "case": "workbook-unexplained-policy",
-            "input_sha256": "1b5726e2b4f39ba126e9ccadfbb2d4619932ba8a64b47dd21f4779349cc4c579",
-            "before": "3/3",
-            "after": "3/3"
-          }
-        ],
-        "note": "Previous full prompt versus changed workbook-import wording, with code, tools and inputs fixed. The clean baseline omits the required default in all three first writes. The candidate preserves the default and exact source weights. Both explained and unexplained controls pass. Earlier candidates have wrong weights, one E2B failure and two provider timeouts, retained separately. One accepted run repairs generated-script errors. Most accepted runs still use handwritten YAML, so this receipt supports first-proposal correctness, not universal use of the requested script method or a cost saving."
-      }
-    ]
-  },
-  {
     "id": "optimizer-goal",
     "file": "steps/optimizer-goal.md",
     "cases": [
@@ -804,21 +752,22 @@
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
+        "comparison_passed": true,
         "controls": [
           {
             "case": "optimizer-result-already-downloadable",
-            "input_sha256": "e25d25f9d644d3fa41cb220d4c4c267d0462f28a52f1fd45a0a56841671dce39",
+            "input_sha256": "771c5a7530b94d8276df3fa2de676f5b4c9ebd658933522aa72a6d5ce2dab892",
             "before": "3/3",
             "after": "3/3"
           },
           {
             "case": "optimizer-result-explicit-zip",
-            "input_sha256": "d1141214d0d41d728daa0566156d8e210be99b07333b32380abd520660be9ebf",
+            "input_sha256": "008f54de5b7e64b1d2bd7ae6b5a4a513f2b65412f77c1e904b86e394b7a68fa9",
             "before": "0/3",
             "after": "3/3"
           }
         ],
-        "note": "Adjacent prefix comparison before file-import policies. Generated files and explicitly requested result archives reach the download capture. Already-downloadable optimizer results use the existing button. Optimizer completions use checked fixed assignments, not submitted jobs."
+        "note": "Adjacent prefixes after the XLSX summary, comment and roster statistics inspector changes, with live provider and E2B, three repetitions and four jobs. Before answers do not put the requested files in a captured ZIP download, and do not capture the explicitly requested result archive. After answers pass both cases 3/3. The already-downloadable control passes 3/3 in both versions."
       }
     ]
   },
@@ -941,42 +890,128 @@
     ]
   },
   {
-    "id": "proactive-policy-intake",
-    "file": "steps/proactive-policy-intake.md",
+    "id": "new-roster-guide-order",
+    "file": "steps/new-roster-guide-order.md",
     "cases": [
-      "new-schedule-policy-intake",
-      "new-schedule-policy-declined",
-      "new-schedule-qualified-slots"
+      "new-schedule-guide-before-intake",
+      "new-schedule-qualified-slots",
+      "new-schedule-policy-declined"
     ],
-    "hypothesis": "Confirms missing rest and fairness policy before new-roster construction, while respecting declined rules and explanation-only requests.",
-    "sha256": "63f4a00cbaa6cb7d0c28a0cd32eb9cc8116253f947cffadda0d96bd80891abc8",
+    "hypothesis": "Reads the setup guide before holiday questions when creating the first date range.",
+    "sha256": "449b97422ebdcb0fc72bc4a1456d6b298df54064802484ece7d01d98c1e2de80",
     "evidence": [
       {
-        "case": "new-schedule-policy-intake",
-        "input_sha256": "8bb7e532d0ec34b20c3d47f6373ac4fc71353270e19b09624ba639b09aea4d5a",
+        "case": "new-schedule-guide-before-intake",
+        "input_sha256": "12e169694484b6fb19b3529dc2726ccaf1bbdda1d27ff2a75aab7b62e7e43a94",
+        "before": "2/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "new-schedule-qualified-slots",
+            "input_sha256": "c1bcd8b11e58953937e9e0c19eb07ae70fb2698f15738a687619a9d48147993d",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Full-prompt ablation of this step only, with the other intake policies fixed. Real provider and E2B commands, four concurrent case jobs, no optimizer jobs. The baseline sometimes asks about holidays without reading the setup guide. No cost improvement is claimed."
+      }
+    ],
+    "comparison_mode": "ablation"
+  },
+  {
+    "id": "new-roster-rest-intake",
+    "file": "steps/new-roster-rest-intake.md",
+    "cases": [
+      "new-schedule-rest-intake",
+      "new-schedule-qualified-slots",
+      "new-schedule-policy-declined"
+    ],
+    "hypothesis": "Asks about missing rest rules before building a roster without inventing workplace defaults.",
+    "sha256": "783fdb4a391187e258298fbb49c474d4bbce9472b7e298af0f1644c132692ef9",
+    "evidence": [
+      {
+        "case": "new-schedule-rest-intake",
+        "input_sha256": "fc83689a3b3da9386a2af430dba636609a660801e6821c4ebf4f1ae67ecd3221",
         "before": "0/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
         "controls": [
           {
-            "case": "new-schedule-policy-declined",
-            "input_sha256": "f1e0c3fd4282ad7181901f4a8770c3413c45dcecbb722ac7bd428058a57be49b",
-            "before": "3/3",
-            "after": "3/3"
-          },
-          {
             "case": "new-schedule-qualified-slots",
-            "input_sha256": "e2089a4a2f41493dfa5146084e1d531673d96ad39cc6280344e17109633f6f7d",
+            "input_sha256": "dfa11089aa51430d5c30ef2a4c788cbeb32f853420f0fde867af3ce62681da9a",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Full previous production prompt versus the same prompt plus policy intake. Provider and E2B commands are live. Initial diagnostic batch has three provider failures and remains preserved. Clean intake/declined recheck and unchanged qualified explanation control are used here. No optimization or general cost benefit is claimed.",
-        "grading_note": "Regraded saved outputs after numeric comparison correction. Case and fixture fingerprints match. Pass counts and costs are unchanged.",
-        "fingerprint_note": "Expanded JSON comparator dependency coverage. Grading, model inputs and historical measurements are unchanged. Grading helpers are fingerprinted transitively, and list numbers compare by value. Model inputs, measurements, and grades of saved outputs are unchanged."
+        "note": "Full-prompt ablation of this step only. Saved outputs were regraded after requiring a direct question about the consecutive-work limit. Original testcase and fixture fingerprints were verified first. Questions, prompts, tools and raw measurements are unchanged. The baseline suggests defaults or asks only whether to add rest rules. Real provider and E2B commands, four case jobs, no optimizer jobs or cost claim."
       }
-    ]
+    ],
+    "comparison_mode": "ablation"
+  },
+  {
+    "id": "new-roster-fairness-intake",
+    "file": "steps/new-roster-fairness-intake.md",
+    "cases": [
+      "new-schedule-fairness-intake",
+      "new-schedule-qualified-slots",
+      "new-schedule-policy-declined"
+    ],
+    "hypothesis": "Asks about missing workload balance goals before building a roster while respecting the requested scope.",
+    "sha256": "a7ac7de65824e7eabd451f6065e8a72c29b7b3141730e3132d10872b71ea0302",
+    "evidence": [
+      {
+        "case": "new-schedule-fairness-intake",
+        "input_sha256": "be1896c8451433f8dbafc8ff26d3a9b3a20da74a69c53067a299fbcc14ef409c",
+        "before": "0/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "new-schedule-qualified-slots",
+            "input_sha256": "7bb88e6b8162aaeb5dd583b4c408a882cb9d3c5c5af460e3f89855f79113e912",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Full-prompt ablation of this step only, with the other intake policies fixed. The baseline omits a direct fairness question. Real provider and E2B commands, four concurrent case jobs, no optimizer jobs. No cost improvement is claimed."
+      }
+    ],
+    "comparison_mode": "ablation"
+  },
+  {
+    "id": "new-roster-primary-shift-groups",
+    "file": "steps/new-roster-primary-shift-groups.md",
+    "cases": [
+      "new-schedule-primary-shift-groups",
+      "new-schedule-qualified-slots",
+      "new-schedule-policy-declined"
+    ],
+    "hypothesis": "Offers optional people groups for shared primary shift preferences or eligibility rules before building a roster.",
+    "sha256": "a5b4e8d7724403e35c7e1de231c6dd19e06bfed18b4e4b025eab124a6c2cd211",
+    "evidence": [
+      {
+        "case": "new-schedule-primary-shift-groups",
+        "input_sha256": "459c2c97393d45085d9fbc182c514a24b83392116f8b857bf7a54a699da3d4ee",
+        "before": "0/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "new-schedule-qualified-slots",
+            "input_sha256": "50867b20a7f2372d0f7af8131d200e69562c8ad5d96e2aabdeceebed3b054e15",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Full-prompt ablation of this step only, with the other intake policies fixed. The baseline omits the optional primary shift people-group offer. Real provider and E2B commands, four concurrent case jobs, no optimizer jobs. No cost improvement is claimed."
+      }
+    ],
+    "comparison_mode": "ablation"
   },
   {
     "id": "autonomous-roster-validation",
@@ -1001,15 +1036,25 @@
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
+        "comparison_passed": true,
         "controls": [
+          {
+            "case": "new-schedule-policy-declined",
+            "input_sha256": "5777351306c1d95ecb33f2f2dbdbb41bba8e942b78e9d42b8cf32665c3b557ed",
+            "before": "3/3",
+            "after": "3/3"
+          },
+          {
+            "case": "optimization-loop-authorized-retry",
+            "input_sha256": "f11454d64554d89961e5cb870596a63246277c1f88264defe74a0c32068b4755",
+            "before": "3/3",
+            "after": "3/3"
+          },
           {
             "case": "optimization-loop-offer-accepted",
             "input_sha256": "2bf7ec43d96105c45f2c3b624a69fa3e348588a1d2b779d801f9e0503e1f22e9",
             "before": "0/3",
-            "after": "3/3",
-            "model": "unsloth/Qwen3.8-27B-NVFP4",
-            "infrastructure_errors": 0,
-            "note": "Fresh adjacent comparison after grading the applied edit on turn 1. Optimization starts on turn 2 from that edit without another proposal. Three repetitions per arm and four concurrent case jobs."
+            "after": "3/3"
           },
           {
             "case": "optimization-loop-offer-declined",
@@ -1020,36 +1065,23 @@
           {
             "case": "optimization-loop-outcome-after-edit",
             "input_sha256": "01f8f71402d0ec2672d6a7822c9e26741e8b3e9c4ea89693bb72f1bcab421e65",
-            "before": "3/3",
+            "before": "0/3",
             "after": "3/3"
           },
           {
             "case": "optimization-loop-outcome-holdout",
             "input_sha256": "9b799cb7e9e543e2f107c2cb4ce21c0b223f5f32376ca5bacdd4496d331d3532",
-            "before": "2/3",
-            "after": "3/3"
-          },
-          {
-            "case": "new-schedule-policy-declined",
-            "input_sha256": "5777351306c1d95ecb33f2f2dbdbb41bba8e942b78e9d42b8cf32665c3b557ed",
             "before": "3/3",
             "after": "3/3"
           },
           {
             "case": "result-policy-misses",
-            "input_sha256": "c6f13af9c19e9aea52fa6f00bb2d928317c80cf73cfffe4b2ccdbde9b7dd41aa",
-            "before": "3/3",
-            "after": "3/3"
-          },
-          {
-            "case": "optimization-loop-authorized-retry",
-            "input_sha256": "05316616bda4058f3829bdc057b453384317f76a44eca33f37a7a46697cd4205",
+            "input_sha256": "734b751b7e59c73686474952fd5912b70a6cc4855de76765bc088363fdd7c1ed",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Full previous production prompt with a 315-word clause versus the same prompt with 77-word initiative guidance. Provider and E2B commands are live, with three repetitions per version and four case jobs. Offers need not enumerate loop steps. Actual starts, pending edits and every retry source are checked independently. Authorized retries use solver-checked exports, without HTTP optimizer jobs. The refusal receipt uses a clean recheck after an E2B failure. A larger policy control had five provider errors and remains diagnostic. The unchanged immediate-start case is 2/3 and the detailed automatic-policy-retry smoke is 0/1 with this wording. Those stronger automatic-only contracts are not certified by these decision cases. No general token saving or equivalence claim.",
-        "fingerprint_note": "Expanded JSON comparator dependency coverage. Grading, model inputs and historical measurements are unchanged. Grading helpers are fingerprinted transitively, and list numbers compare by value. Model inputs, measurements, and grades of saved outputs are unchanged. The offer check now requires a proposed optimization action. Regrading 27 saved outputs from both arms changes no result."
+        "note": "Adjacent prefixes after the XLSX summary, comment and roster statistics inspector changes, with live provider and E2B, three repetitions and four jobs. Before answers make no correct optimization offer in the offer-after-edit, offer-accepted, offer-declined and outcome-after-edit cases (0/3 each). After answers pass all eight cases 3/3. The holdout, declined-policy, policy-miss and authorized-retry controls pass 3/3 in both versions. No token saving is claimed."
       }
     ]
   },
@@ -1079,6 +1111,210 @@
           }
         ],
         "note": "Three paired trials per case with four case jobs. The initial answer prefix and timeout are synthetic. Recovery uses the production retry policy and a live provider. Without this section, all three recovery answers repeat the first identifier. With it, all three continue without repetition. The uninterrupted control is 2/3 before and 3/3 after, with one empty baseline answer. No infrastructure errors or timing benefit are claimed. Earlier diagnostics used an overly strict whitespace contract and remain separate."
+      }
+    ]
+  },
+  {
+    "id": "schedule-yaml-format",
+    "file": "steps/schedule-yaml-format.md",
+    "cases": [
+      "schedule-yaml-roundtrip-scalars",
+      "import-complete-uploaded-yaml"
+    ],
+    "hypothesis": "Preserves scalar types during Python schedule I/O by using the app's YAML version instead of ad hoc conversion.",
+    "sha256": "9ab39c4fd34c8535762ab42c445ea76c32b79664d783dbf298b290444ae2c511",
+    "evidence": [
+      {
+        "case": "schedule-yaml-roundtrip-scalars",
+        "input_sha256": "f6751bf157ad34395145fc1ea269960ac59893687508167ceab2446eb8fef3b7",
+        "before": "0/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "import-complete-uploaded-yaml",
+            "input_sha256": "e2f73781faf567e06a2a3a4d5c1b9f4cd81ca49a5b73a6d3909342cfdee1f500",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Adjacent final-step comparison with the previous full prompt. Both arms use the corrected formatting-only proposal contract and preserve every parsed value. The baseline uses YAML 1.1 and corrupts scalar types. The candidate uses the installed YAML 1.2 library. Real provider and E2B commands, four concurrent case jobs, no optimizer jobs. A discarded writer prototype and the earlier incorrect proposal expectation remain separate. No performance gain is claimed."
+      }
+    ]
+  },
+  {
+    "id": "completed-schedule-inference",
+    "file": "steps/completed-schedule-inference.md",
+    "cases": [
+      "completed-schedule-onboarding",
+      "completed-schedule-infer-rules",
+      "completed-schedule-confirmed-rules",
+      "completed-roster-unknown-policy",
+      "completed-roster-confirmed-policy"
+    ],
+    "hypothesis": "Suggests rules from completed-schedule observations and confirms them before building YAML, while respecting explicit user policies.",
+    "sha256": "0b176a2493ccf9ba5880e8290b8c124cd010b1019cf8232984cf0d900ad7716c",
+    "evidence": [
+      {
+        "case": "completed-roster-unknown-policy",
+        "input_sha256": "da30f08a3f8a5332aa97a3f62eb8365044f4bed0ebddb27d0f1759e6a017cc45",
+        "before": "1/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "comparison_passed": true,
+        "controls": [
+          {
+            "case": "completed-roster-confirmed-policy",
+            "input_sha256": "155c88789a0972270b25bafc23f19e61a23890b7bf4eb9de6738e2ab7b064224",
+            "before": "5/5",
+            "after": "5/5",
+            "cost_ratio": 0.7939214232765011
+          },
+          {
+            "case": "completed-schedule-onboarding",
+            "input_sha256": "50b66893fc153f6569ad8de7850127573b84f02b36035218eee8a5103f8218ff",
+            "before": "2/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Adjacent prefixes after the XLSX summary, comment and roster statistics inspector changes, with live provider and E2B, three repetitions and four jobs. Before answers report inferred rules as facts in two of three unknown-policy runs. After answers pass 3/3. The onboarding control improves from 2/3 to 3/3. The declared completion-token target failed on the confirmed-policy control at three runs, with a ratio of 1.45 on about 200 tokens. That case alone was extended once to five runs, where the ratio is 0.79. No cost gain is claimed for the witness, because it has no matched passing baseline runs."
+      }
+    ]
+  },
+  {
+    "id": "reusable-analysis",
+    "file": "steps/reusable-analysis.md",
+    "cases": [
+      "workbook-retained-analysis",
+      "workbook-retained-analysis-correction",
+      "reread-retained-upload"
+    ],
+    "hypothesis": "Preserves and uses source-bound workbook analysis across fresh workspaces, while respecting corrected mappings and retrieving previously unread facts.",
+    "sha256": "6442e556ee7923bfbb97bdf2f25cfc70694fc60fc6fce64f8761336efb0feff9",
+    "evidence": [
+      {
+        "case": "workbook-retained-analysis",
+        "input_sha256": "e7e4d01794b142f4fde06dad87099c4aba8c03458a4eff78f1058ab31840cec3",
+        "before": "0/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "comparison_passed": true,
+        "controls": [
+          {
+            "case": "reread-retained-upload",
+            "input_sha256": "d479bb145ac86311bdc2fd91482e169ffbb1bd50bc055913f46a5216a1803997",
+            "before": "3/3",
+            "after": "3/3"
+          },
+          {
+            "case": "workbook-retained-analysis-correction",
+            "input_sha256": "a1006b36c39e9b908af163d08d47244a6e9c660ab1bc6757c80c0fae7e366afa",
+            "before": "0/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Adjacent prefixes after the XLSX summary, comment and roster statistics inspector changes, with live provider and E2B, three repetitions and four jobs. Before runs do not receive the retained analysis contents on a later turn in the retained-analysis and correction cases (0/3 each). After runs pass both 3/3. The reread-retained-upload control passes 3/3 in both versions. No latency claim."
+      }
+    ]
+  },
+  {
+    "id": "editable-schedule-source",
+    "file": "steps/editable-schedule-source.md",
+    "cases": [
+      "completed-roster-source-question",
+      "completed-roster-source-unavailable",
+      "completed-roster-inspection-only",
+      "completed-roster-confirmed-policy"
+    ],
+    "hypothesis": "Asks once for an optional editable source when reconstructing missing original rules, without blocking unavailable-source or inspection-only work.",
+    "sha256": "536b9ee46cf6754547e7c025f92009bb071fd02d607acc7a16129db20f968313",
+    "evidence": [
+      {
+        "case": "completed-roster-source-question",
+        "input_sha256": "78c74547988c414b7c2b886225bc03da5851d5c6bb17e9ce9ab01fa2898c55f6",
+        "before": "0/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "comparison_passed": true,
+        "controls": [
+          {
+            "case": "completed-roster-confirmed-policy",
+            "input_sha256": "333dc4de924202dfc9bb0d3777107acf6aae1f3ff45fea74913e69c30ef00972",
+            "before": "3/3",
+            "after": "3/3"
+          },
+          {
+            "case": "completed-roster-inspection-only",
+            "input_sha256": "4c252378019d75bb1aa1fbb6d5b9ba45afff5eb44820132cfa2d451cedc3dd7b",
+            "before": "3/3",
+            "after": "3/3"
+          },
+          {
+            "case": "completed-roster-source-unavailable",
+            "input_sha256": "d7b5c61c34c6f11b654a47176e54bbd644bc20d2a205f369bed8fc35694482cb",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Adjacent prefixes after the XLSX summary, comment and roster statistics inspector changes, with live provider and E2B, three repetitions and four jobs. Before answers do not ask for a saved or editable schedule source. After answers pass 3/3. The unavailable-source, inspection-only and confirmed-policy controls pass 3/3 in both versions. No cost improvement is claimed, because the witness has no matched passing baseline runs."
+      }
+    ]
+  },
+  {
+    "id": "xlsx-comments",
+    "file": "steps/xlsx-comments.md",
+    "cases": [
+      "xlsx-cell-comments",
+      "xlsx-no-cell-comments"
+    ],
+    "hypothesis": "Reads stored XLSX comments with the maintained bounded inspector, including blank cells and a no-comment control.",
+    "sha256": "12189769e0bf3fd2dcd22904066c5c31f42359e5d8c6e827112a33ca507e111b",
+    "evidence": [
+      {
+        "case": "xlsx-cell-comments",
+        "input_sha256": "c83ee8397999502f69ce91f91dc0cd89e0ffc5e78527d4094e8cea85ae8dc911",
+        "before": "3/3",
+        "after": "3/3",
+        "cost_ratio": 0.513469827586207,
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "comparison_passed": true,
+        "cost_metric": "completion-tokens",
+        "cost_target": 0.9,
+        "controls": [
+          {
+            "case": "xlsx-no-cell-comments",
+            "input_sha256": "97063307af33a9dd3785d9d5dd73e8c87752f51eb06a2e76f80765b1b2712f3d",
+            "before": "3/3",
+            "after": "3/3",
+            "cost_ratio": 0.4745328896851805
+          }
+        ],
+        "helper_usage": {
+          "helper": "inspect_xlsx.py",
+          "sha256": "8c16cf3ba4238aa0480373f98f78b6120fc39a5921975542bad4049e19b9b314",
+          "flags": [
+            "--comments",
+            "--range"
+          ],
+          "cases": [
+            {
+              "case": "xlsx-cell-comments",
+              "before": "1/3",
+              "after": "3/3"
+            },
+            {
+              "case": "xlsx-no-cell-comments",
+              "before": "0/3",
+              "after": "3/3"
+            }
+          ]
+        },
+        "note": "Fresh adjacent prefixes 37/38 on the shared-inspector implementation, three repetitions and four jobs. Both questions explicitly require the root JSON object and named string fields. Both cases pass 3/3 per arm. Generated tokens fall 48.7% for extraction and 52.5% for the empty control, meeting the declared 10% target without a control increase. Every candidate executes inspect_xlsx.py with --comments and --range. Extraction uses one helper call without custom parsing. Empty-control candidates still write verification scripts. The initial bare-array response and its failed batch are preserved separately."
       }
     ]
   }

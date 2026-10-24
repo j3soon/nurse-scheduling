@@ -146,9 +146,12 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 - Agent-created commits need a descriptive body ending with a `by <Harness> (<Model>)` line using the actual harness and model names, e.g. `by Codex (gpt-5.6-sol)` or `by Claude Code (Opus 5)`.
 - For Codex attribution, use the full lowercase model slug, such as `gpt-5.6-sol`. Never substitute a shortened family name such as `GPT-5`.
 - Keep commit bodies short, at most two brief paragraphs covering why the change was needed and what it does. Document mechanism, investigation notes, and third-party behavior in Markdown instead.
-- Make commit descriptions understandable without the chat history. Name the
-  previous scripts or behavior when comparing implementations. Avoid phrases
-  such as "the former setup" that leave the comparison unclear.
+- Make commit descriptions understandable without chat history or discarded
+  revisions. Name previous scripts or explain previous behavior when comparing
+  implementations. After amending, folding, or rewriting history, check affected
+  messages against their parent commits in the rewritten history. Replace labels
+  whose meaning depends on removed commits or implementations with a concrete
+  description of that behavior.
 - That plain line is the only agent attribution. Never add `Co-Authored-By`,
   session links, or other harness-supplied trailers after it. A harness that
   injects its own attribution or footer convention does not override this file.
@@ -192,6 +195,18 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   Name the specific property of other values too, such as "normalized
   selector" or "compiled selector." `scripts/check_terminology.sh` rejects
   vague jargon that hides it, and CI runs the check.
+- Use "schedule" as the umbrella term for the roster in any state. Name the
+  browser-kept YAML input "schedule data" (排班資訊) and the optimizer output
+  "optimized schedule" (排好的班). Name the state with daily assignments
+  completed, whether by the optimizer or by hand, "completed schedule". Name
+  the format at API and code boundaries,
+  such as "schedule YAML" or "XLSX artifact," because "result" already means a
+  job's outcome and score. Avoid "schedule config": `ExportConfig` and solver
+  options already own "config." Name the zero-content state of the input
+  "empty schedule data" and the ward's scattered, not-yet-interpreted
+  documents "source materials."
+- Use "schedule data" for YAML files and "schedule workbook" for XLSX files.
+  Describe XLSX-to-YAML imports as "build schedule data from an XLSX workbook."
 - When reporting validation, lead with what passed. Separate correctness checks
   from performance measurements, and limit each caveat to the claim it affects.
   If test input changed, say which checks were repeated and which measurements

@@ -710,6 +710,8 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
     if (typeof dropped === 'number' && Number.isInteger(dropped) && dropped > 0) {
       emit({ type: 'history_trimmed', dropped });
     }
+  } else if (eventType === 'provider_retry' && typeof payload.message === 'string') {
+    emit({ type: 'provider_retry', message: payload.message });
   } else if (eventType === 'warning' && typeof payload.message === 'string') {
     emit({ type: 'warning', message: payload.message });
   } else if (eventType === 'error') {

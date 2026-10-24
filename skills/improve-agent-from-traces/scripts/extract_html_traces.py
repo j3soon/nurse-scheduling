@@ -158,6 +158,8 @@ def extract_export(html, *, include_reasoning=False):
                         "outputs": outputs,
                     }
                 )
+            elif summary == "App notice":
+                activity.append({"index": index, "kind": "notice", "outputs": outputs})
             elif summary == "Applied to your schedule":
                 activity.append(
                     {"index": index, "kind": "schedule-applied", "outputs": outputs}

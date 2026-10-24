@@ -74,6 +74,7 @@ from nurse_scheduling.ai.pi.read import READ_TOOL
 from nurse_scheduling.ai.provider import (
     ChatMessage,
     ProviderError,
+    ProviderRetry,
     ResponseEnd,
     TextDelta,
     TokenUsage,
@@ -272,7 +273,7 @@ def test_chat_requests_report_the_frontend_build_after_session_creation(queued, 
         session_id = client.post("/sessions", json={"schedule_yaml": schedule_yaml()}).json()["id"]
         session = app.state.session_store.get(session_id)
         if queued:
-            session.begin_run(accepting_steering=True)
+            session.begin_run()
         response = client.post(
             f"/sessions/{session_id}/messages" + ("/queue" if queued else ""),
             json={"message": "Hello", "message_id": "version-message", "frontend_version": "v0.4.2"},
@@ -296,7 +297,7 @@ def test_chat_timezone_comes_from_the_frontend_and_updates_later_requests(queued
         session = app.state.session_store.get(session_id)
         assert session.frontend_timezone == "Asia/Taipei"
         if queued:
-            session.begin_run(accepting_steering=True)
+            session.begin_run()
         response = client.post(
             f"/sessions/{session_id}/messages" + ("/queue" if queued else ""),
             json={"message": "Hello", "message_id": "timezone-message", "frontend_timezone": "America/Los_Angeles"},
@@ -1730,7 +1731,7 @@ def test_environment_configuration_reads_provider_retry_settings(monkeypatch: py
     assert settings.provider_retry_backoff_seconds == 0.25
 
 
-def test_environment_configuration_defaults_to_three_provider_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_environment_configuration_defaults_to_five_provider_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
     monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
     monkeypatch.setenv("AI_SANDBOX_BACKEND", "e2b")
@@ -1740,8 +1741,8 @@ def test_environment_configuration_defaults_to_three_provider_attempts(monkeypat
 
     settings = AiSettings.from_env()
 
-    assert settings.provider_max_attempts == 3
-    assert settings.provider_retry_backoff_seconds == 1.0
+    assert settings.provider_max_attempts == 5
+    assert settings.provider_retry_backoff_seconds == 2.0
 
 
 def test_environment_configuration_defaults_to_thirty_day_session_retention(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2869,11 +2870,12 @@ def test_the_applied_schedule_starts_the_next_run() -> None:
     assert not any(str(message["content"]).startswith("[App event]") for message in provider.calls[2])
 
 
-def test_session_store_queues_steering_once_and_retains_it_with_the_turn() -> None:
+@pytest.mark.parametrize("background", [False, True])
+def test_session_store_queues_steering_once_and_retains_it_with_the_turn(background) -> None:
     app = create_test_app(settings=make_settings(), provider=FakeProvider())
     store = app.state.session_store
     session = store.create("browser-owner", schedule_yaml())
-    revision = store.begin(session.id, "browser-owner")
+    revision = store.begin_background(session.id) if background else store.begin(session.id, "browser-owner")
 
     store.queue_steering(session.id, "browser-owner", "queued-1", "Focus on P2 instead.")
     store.queue_steering(session.id, "browser-owner", "queued-1", "Focus on P2 instead.")
@@ -3084,6 +3086,82 @@ def test_a_browser_may_send_the_newer_schedule_across_origins() -> None:
     assert "PUT" in preflight.headers["access-control-allow-methods"]
 
 
+def test_background_review_delivers_steering_after_tool_before_next_model_request():
+    provider = ScriptedToolProvider(
+        [ToolCallRequest((ToolCall("start", OPTIMIZER_TOOL, '{"action":"start"}'),))],
+        [ToolCallRequest((ToolCall("inspect", BASH_TOOL, '{"command":"inspect"}'),))],
+        [TextDelta("Night coverage checked.")],
+    )
+    optimizer = BackgroundTestOptimizer()
+    executed = []
+
+    def inspect(command, _timeout, _backend):
+        executed.append(command)
+        store = app.state.session_store
+        owner = store._sessions[session_id].owner_token
+        store.queue_steering(session_id, owner, "queued-review", "Check night coverage first.")
+        return CommandResult("Read complete", "", 0)
+
+    factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=inspect))
+    app = create_test_app(
+        settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT, optimizer_poll_interval_seconds=0.001),
+        provider=provider,
+        sandbox_factory=factory,
+        optimizer_backend=optimizer,
+    )
+    with AuthenticatedTestClient(app) as client:
+        session_id = create_session(client, schedule_yaml())
+        client.post(f"/sessions/{session_id}/messages", json={"message": "Optimize."})
+        optimizer.release.set()
+        events = review_run_events(app, session_id)
+        assert events[-1].type == "done"
+        steering = next(event for event in events if event.type == "steering")
+        assert steering.data["message_id"] == "queued-review"
+        request = provider.calls[-1]
+        tool_index = next(index for index, message in enumerate(request) if message.get("tool_call_id") == "inspect")
+        steering_index = next(
+            index for index, message in enumerate(request) if message.get("content") == "Check night coverage first."
+        )
+        assert tool_index < steering_index
+        assert executed == ["inspect"]
+        assert sum(event.type == "steering" for event in events) == 1
+        session = app.state.session_store._sessions[session_id]
+        assert sum(entry == UserMessage("Check night coverage first.") for entry in session.transcript) == 1
+
+
+def test_provider_failure_ends_the_run_and_a_new_message_continues():
+    error = ProviderError.for_user("The AI provider timed out.")
+    notice = "The AI provider timed out. Retrying in 2 s (attempt 2 of 5)."
+    provider = ScriptedToolProvider(
+        rename_call(), [ProviderRetry(notice), TextDelta("Partial answer. "), error], [TextDelta("Continued.")]
+    )
+    factory = rename_factory()
+    app = create_test_app(
+        settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT),
+        provider=provider,
+        sandbox_factory=factory,
+    )
+    with AuthenticatedTestClient(app) as client:
+        session_id = create_session(client, schedule_yaml())
+        failed = client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P1"})
+        events = parse_sse(failed.text)
+        # The run fails without waiting for the user, so it holds no run slot or sandbox.
+        assert not app.state.runs.busy(session_id)
+        assert factory.created[0].closed
+        assert [data["message"] for kind, data in events if kind == "provider_retry"] == [notice]
+        assert events[-1][0] == "error"
+        assert events[-1][1]["message"] == "The AI provider timed out."
+        session = app.state.session_store._sessions[session_id]
+        assert session.schedule_yaml == schedule_yaml()
+
+        continued = client.post(f"/sessions/{session_id}/messages", json={"message": "Continue"})
+        assert parse_sse(continued.text)[-1][0] == "done"
+        request = [message.get("content") for message in provider.calls[-1]]
+        assert request.index("Rename P1") < request.index(ABORTED_RESPONSE_HISTORY) < request.index("Continue")
+        assert "Partial answer. " not in request
+        assert not any(message.get("role") == "tool" for message in provider.calls[-1])
+
+
 def test_background_command_timeout_preserves_tool_result_and_reports_the_actual_cause():
     def timeout(_command, _timeout, backend):
         backend.closed = True
@@ -3121,7 +3199,7 @@ def test_provider_http_failure_shows_status_and_reference_without_response_body(
     from nurse_scheduling.ai.provider import OpenAiCompatibleProvider
 
     real_client = httpx.AsyncClient
-    transport = httpx.MockTransport(lambda _request: httpx.Response(503, text="private provider body secret-token"))
+    transport = httpx.MockTransport(lambda _request: httpx.Response(400, text="private provider body secret-token"))
     monkeypatch.setattr(
         provider_module.httpx, "AsyncClient", lambda **kwargs: real_client(**{**kwargs, "transport": transport})
     )
@@ -3132,7 +3210,7 @@ def test_provider_http_failure_shows_status_and_reference_without_response_body(
         session = create_session(client)
         response = client.post(f"/sessions/{session}/messages", json={"message": "Review the schedule"})
         message = parse_sse(response.text)[-1][1]["message"]
-        assert "HTTP 503" in message
+        assert "HTTP 400" in message
         assert re.search(r"Error ID: [0-9a-f-]{36}", message)
         assert "private provider body" not in response.text
         assert "secret-token" not in response.text
@@ -3315,3 +3393,27 @@ def test_chunked_upload_body_is_bounded_before_the_whole_file_is_spooled():
             assert (await client.get(f"/sessions/{session_id}/uploads")).json() == accepted.json()
 
     asyncio.run(exercise())
+
+
+def test_analysis_notes_survive_two_messages_in_separate_workspaces():
+    from nurse_scheduling.ai.workspace import WORKSPACE_ANALYSIS
+
+    notes = "Confirmed source mapping: black cells mean 11m."
+    save = ToolCallRequest((ToolCall("save", "write", json.dumps({"path": WORKSPACE_ANALYSIS, "content": notes})),))
+    read = ToolCallRequest((ToolCall("reuse", READ_TOOL, json.dumps({"path": WORKSPACE_ANALYSIS})),))
+    provider = ScriptedToolProvider([save], [TextDelta("Please confirm.")], [read], [TextDelta("Used the mapping.")])
+    factory = FakeSandboxFactory()
+    app = create_test_app(settings=make_settings(), provider=provider, sandbox_factory=factory)
+    with AuthenticatedTestClient(app) as client:
+        sid = create_session(client)
+        first = client.post(f"/sessions/{sid}/messages", json={"message": "Inspect the source."})
+        assert first.status_code == 200
+        session = app.state.session_store._sessions[sid]
+        assert session.analysis.content == notes.encode()
+        second = client.post(f"/sessions/{sid}/messages", json={"message": "Confirmed. Continue."})
+        assert second.status_code == 200
+        assert "Used the mapping." in second.text
+        assert len(factory.created) == 2
+        assert factory.created[0].closed and factory.created[1].closed
+        assert factory.created[1].files[WORKSPACE_ANALYSIS] == notes.encode()
+        assert notes in second.text

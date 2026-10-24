@@ -12,6 +12,44 @@ behavioral hypothesis, witness testcase, and contrasting controls. It keeps one 
 clause: model, paired pass counts, infrastructure-error count, and an input fingerprint. Counts are directional
 evidence for the named model and cases, not proof that a clause is universally necessary.
 
+## Causal explanation checks
+
+A fresh check after restoring YAML parser guidance reproduces four false passes
+in the parent checks. The revised grading suite passes 455 tests. Two independent
+solver checks confirm that the compatible fixture can satisfy every request and
+that the contrasting fixture has a genuine conflict.
+
+The unchanged production agent passes 9/9 automatically, but manual review
+accepts only 2/3 summaries, 0/3 retry explanations and 3/3 verified-conflict
+controls. It still invents priority tradeoffs for compatible requests. The
+sentence-wide uncertainty filter can treat the month May as a modal verb, and
+paraphrases can escape the patterns. These are known limitations of the
+conservative language check. Do not treat its pass rate as validated explanation
+quality or extend it with one pattern for each observed sentence. Keep manual
+review of causal claims. No production prompt or cost improvement is claimed.
+
+The summary and retry cases now reject claims that an unmet request was caused by
+higher-weight requests taking precedence. Negation, uncertainty and general
+statements about the weighted objective remain allowed. This is a grader change,
+not an agent behavior improvement.
+
+Earlier manual review of the production prompt found a false pass containing
+an unsupported cause, incorrect counts and a reversed hard prohibition. A fresh
+comparison with the corrected cases passes 2/3 summaries, 3/3 retries and 3/3
+verified-conflict controls. All runs use the real provider and E2B sandbox with
+verified result fixtures, three repetitions and four jobs. No HTTP optimizer jobs
+run. Two focused conflict-wording candidates pass 6/9 and 8/9 versus 8/9 baseline.
+Both are rejected. A separate audit-scope description experiment passes 9/9
+automatically but only 8/9 on manual review: one answer acknowledges uncertainty
+then still asserts that higher weights caused the miss. It is also rejected.
+No infrastructure errors occur in these completed batches.
+
+These historical comparisons included the now-removed evidence-strength step.
+Their pass rates describe that prompt. Unsupported causal explanations remain
+unresolved. Manual
+review is still needed for facts and causal language beyond the conservative
+patterns. No cost or reliability improvement is claimed.
+
 ## Repository and artifact boundary
 
 Keep prompt text, testcase definitions, hypotheses, concise scope notes, and the latest aggregate receipts tracked.
@@ -90,3 +128,51 @@ The literal-expression witness measures avoiding validation repairs, not eventua
 witness holds optimizer-error guidance fixed in both arms. Optimizer startup cases use a controlled tool. Completion
 cases replay verified assignments through the exporter and production message shape, without testing stochastic
 solve quality or the service job lifecycle. Those durable limits remain beside their receipts in the manifest.
+
+## Confirm inferred rules from a completed schedule
+
+The `completed-schedule-inference` step asks the agent to suggest candidate rules
+from an XLSX completed schedule, explain the observations, and confirm the rules
+before building YAML. User corrections take precedence. A question about what
+is established still leaves unstated rules unknown. The recorded paired
+comparison held an additional evidence-strength step fixed. That step is no
+longer retained. Its token measurements describe the historical prompt.
+
+Historical measurements use the integrated branch. Adjacent prefixes 35/36 use the
+same model, helpers and workbook. Each case has
+three repetitions with four concurrent jobs and no infrastructure failures.
+
+| Case | Without the added step | With the added step |
+| --- | --- | --- |
+| completed-schedule-onboarding | 3/3 | 3/3 |
+| completed-roster-unknown-policy | 3/3 | 3/3 |
+| completed-roster-confirmed-policy | 3/3 | 3/3 |
+
+The baseline already suggests rules. This amendment makes that expectation
+explicit. On the fact-only witness, generated tokens decrease from a mean of
+1,647 to 1,001, or 39.2%, meeting the declared 15% target. Sample standard
+deviations are 777 and 396 tokens. Full local reports retain all token categories,
+matched-pair variation, tool counts and timing. These small samples do not prove
+a general performance improvement.
+
+Separate full-prompt checks cover structured suggestions and the user's later
+correction to a five-day work limit and unrestricted D/E/N eligibility. The
+saved proposals are checked with the frontend validator and the source grader.
+The construction case no longer requires a literal question mark in the first
+confirmation request. Both versions' saved answers are regraded with that same
+correction. This changes no model input or final-source requirement. Regraded
+correctness is separate from the original timing and token measurements. Structured suggestions
+pass 3/3 in both full-prompt versions. Corrected-rule construction passes 3/3 in
+each version after regrading, and all six saved YAML proposals independently
+pass the frontend validator.
+
+These checks validate suggestions, confirmation and use of corrected rules.
+They do not establish general workbook arithmetic accuracy. Replies still contain
+counting errors, which remain a separate follow-up. Earlier wording candidates
+and test-format errors remain in local reports. Model calls and E2B commands are real.
+No optimizer jobs run in the onboarding checks.
+
+A separate check without evidence-strength passes 3/3 each for natural onboarding,
+fact-only policy, explicit policy and corrected-rule construction. Structured
+inference passes 2/3. One response omits a comma in JSON. These runs use the
+same inference prompt and make no token or timing improvement claim.

@@ -63,6 +63,7 @@ from nurse_scheduling.ai.schema import load_schedule_example, load_taiwan_holida
 from nurse_scheduling.ai.workspace import (
     REFERENCE_SCHEMAS,
     REFERENCE_USER_GUIDE,
+    WORKSPACE_LAST_ACCEPTED_SCHEDULE,
     WORKSPACE_RESULT_CONTEXT,
     WORKSPACE_SCHEDULE,
     WORKSPACE_SOURCE_CONTEXT,
@@ -840,8 +841,8 @@ def test_intermediate_trusted_validation_lets_the_model_repair_a_bad_edit():
     assert tools[0].details["schedule_yaml"] is None
     assert tools[1].details["schedule_check"]["ok"] is True
     assert "description: Head" in tools[1].details["schedule_yaml"]
-    assert "working copy retains this command's changes" in tools[0].result
-    assert "Repair the reported problems before finishing" in tools[0].result
+    assert "Your edits are kept" in tools[0].result
+    assert "last-accepted-schedule.yaml" in tools[0].result
     assert "introduces problems" in tools[0].result
     assert "Remaining edit attempts" not in tools[0].result
     assert tools[1].ok
@@ -890,7 +891,7 @@ def test_a_turn_that_ends_without_the_working_copy_fails_candidate_validation():
 
     factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=delete))
 
-    with pytest.raises(SandboxCandidateError, match="no longer exists"):
+    with pytest.raises(SandboxCandidateError, match="trusted schedule validation"):
         _collect(ScriptedProvider(_run_call("delete"), [TextDelta("Done.")]), factory)
 
     assert factory.created[0].closed
@@ -1208,6 +1209,317 @@ def test_accepted_incomplete_draft_keeps_yaml_without_inspection_context():
         outcome, accepted = await tracker.review_if_changed()
         assert outcome.ok and accepted == candidate
         assert backend.files[WORKSPACE_SCHEDULE] == candidate.encode()
+        assert backend.files[WORKSPACE_LAST_ACCEPTED_SCHEDULE] == candidate.encode()
         assert WORKSPACE_SOURCE_CONTEXT not in backend.files
+
+    asyncio.run(check())
+
+
+def test_required_rule_restoration_matches_preview_workspace_context_and_optimizer():
+    import hashlib
+
+    payload = base_schedule_payload()
+    payload["description"] = "Rebuilt"
+    payload["preferences"] = payload["preferences"][1:]
+
+    def rebuild(_command, _timeout, backend):
+        backend.files[WORKSPACE_SCHEDULE] = schedule_yaml(payload).encode()
+        return CommandResult("Built schedule", "", 0)
+
+    factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=rebuild))
+    optimizer_call = ToolCallRequest((ToolCall("optimize", OPTIMIZER_TOOL, '{"action":"start"}'),))
+    provider = ScriptedProvider(_run_call(), [optimizer_call], [TextDelta("Done")])
+    submitted = []
+
+    async def execute_optimizer(current_schedule, _arguments):
+        submitted.append(current_schedule)
+        return AgentToolOutcome("Started", True)
+
+    async def exercise():
+        return [
+            event
+            async for event in run_workspace(
+                provider, factory, schedule_yaml(), MESSAGES, _limits(), execute_optimizer=execute_optimizer
+            )
+        ]
+
+    events = asyncio.run(exercise())
+    tool = next(event for event in events if isinstance(event, AgentToolUse))
+    preview = next(event for event in events if isinstance(event, AgentScheduleChange)).schedule_yaml
+    proposal = next(event for event in events if isinstance(event, AgentProposal)).text
+    backend = factory.created[0]
+    assert tool.ok
+    assert "restored the required" in tool.result
+    assert tool.details["schedule_check"]["text"] in tool.result
+    assert proposal == preview == backend.files[WORKSPACE_SCHEDULE].decode() == submitted[0]
+    assert backend.files[WORKSPACE_LAST_ACCEPTED_SCHEDULE] == proposal.encode()
+    assert (
+        json.loads(backend.files[WORKSPACE_SOURCE_CONTEXT])["source_sha256"]
+        == hashlib.sha256(proposal.encode()).hexdigest()
+    )
+    assert proposal.count("type: at most one shift per day") == 1
+
+
+@pytest.mark.parametrize("change", [None, "schedule", "bytes", "path", "removed"])
+def test_analysis_hydration_requires_the_same_source_inputs(change):
+    from dataclasses import replace
+
+    from nurse_scheduling.ai.workspace import WORKSPACE_ANALYSIS, AgentAnalysis, analysis_source_sha256
+
+    source = schedule_yaml()
+    # Without a retained upload ID, the bytes identify the file.
+    uploads = (SandboxAttachment("source.csv", "text/csv", b"P1,D"),)
+    notes = AgentAnalysis(analysis_source_sha256(source, uploads), b"P1 requests D. User confirmation pending.")
+    if change == "schedule":
+        source += "\n"
+    elif change == "bytes":
+        uploads = (replace(uploads[0], data=b"P1,N"),)
+    elif change == "path":
+        uploads = (replace(uploads[0], filename="renamed.csv"),)
+    elif change == "removed":
+        uploads = ()
+    backend = FakeSandboxBackend("new-workspace")
+    asyncio.run(hydrate_sandbox(backend, source, uploads, analysis=notes))
+    assert (WORKSPACE_ANALYSIS in backend.files) is (change is None)
+    if change is None:
+        assert backend.files[WORKSPACE_ANALYSIS] == notes.content
+
+
+def test_analysis_hydration_accepts_the_persisted_reference_of_a_retained_upload():
+    from nurse_scheduling.ai.workspace import WORKSPACE_ANALYSIS, AgentAnalysis, analysis_source_sha256
+
+    source = schedule_yaml()
+    upload = SandboxAttachment("source.csv", "text/csv", b"P1,D", id="source")
+    notes = AgentAnalysis(analysis_source_sha256(source, (upload,)), b"P1 requests D. User confirmation pending.")
+
+    async def load(_attachment):
+        return upload.data
+
+    backend = FakeSandboxBackend("new-workspace")
+    asyncio.run(hydrate_sandbox(backend, source, (upload.reference(),), load_attachment=load, analysis=notes))
+    assert backend.files[WORKSPACE_ANALYSIS] == notes.content
+
+
+@pytest.mark.parametrize(
+    "content",
+    [b"Mapping: black cells mean 11m.", b"x" * (65536 + 1), b"\xff"],
+    ids=["valid-notes", "oversized-notes", "invalid-utf8"],
+)
+def test_analysis_capture_is_bounded_and_does_not_execute_or_change_the_schedule(content):
+    from nurse_scheduling.ai.workspace import WORKSPACE_ANALYSIS, AgentAnalysis
+
+    def save_notes(_command, _timeout, backend):
+        backend.files[WORKSPACE_ANALYSIS] = content
+        return CommandResult("Saved notes", "", 0)
+
+    factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=save_notes))
+    events = _collect(ScriptedProvider(_run_call(), [TextDelta("Please confirm the mapping.")]), factory)
+    notes = [event for event in events if isinstance(event, AgentAnalysis)]
+    assert bool(notes) is (content.startswith(b"Mapping"))
+    if notes:
+        assert notes[0].content == content
+    assert not any(isinstance(event, AgentProposal) for event in events)
+    assert factory.created[0].files[WORKSPACE_SCHEDULE] == schedule_yaml().encode()
+
+
+@pytest.mark.parametrize(
+    "rejected",
+    [b"", b"not: [valid", b"\xff", b"x" * (SCHEDULE_BYTE_LIMIT + 1), None],
+    ids=["truncated", "malformed", "encoding", "oversized", "deleted"],
+)
+def test_rejected_schedule_keeps_the_draft_and_last_accepted_copy(rejected):
+    async def check():
+        base = schedule_yaml()
+        backend = FakeSandboxBackend("recover-write")
+        await hydrate_sandbox(backend, base)
+        tracker = _ScheduleCandidateTracker(backend, base, SCHEDULE_BYTE_LIMIT)
+        accepted = base.replace("description: ''", "description: Accepted", 1)
+        await backend.write_file(WORKSPACE_SCHEDULE, accepted)
+        assert (await tracker.review_if_changed())[0].ok
+        if rejected is None:
+            del backend.files[WORKSPACE_SCHEDULE]
+        else:
+            await backend.write_file(WORKSPACE_SCHEDULE, rejected)
+        outcome, candidate = await tracker.review_if_changed()
+        assert not outcome.ok and candidate is None
+        assert backend.files.get(WORKSPACE_SCHEDULE) == rejected
+        assert backend.files[WORKSPACE_LAST_ACCEPTED_SCHEDULE] == accepted.encode()
+        assert "last-accepted-schedule.yaml" in outcome.text
+        assert tracker.rejection is not None
+        repaired = backend.files[WORKSPACE_LAST_ACCEPTED_SCHEDULE].decode().replace("Accepted", "Repaired", 1)
+        await backend.write_file(WORKSPACE_SCHEDULE, repaired)
+        assert (await tracker.review_if_changed())[0].ok
+        assert tracker.rejection is None
+        assert backend.files[WORKSPACE_LAST_ACCEPTED_SCHEDULE] == repaired.encode()
+
+    asyncio.run(check())
+
+
+def test_valid_schedule_is_kept_when_a_later_command_assertion_fails():
+    updated = schedule_yaml().replace("description: ''", "description: Accepted", 1)
+
+    def edit(_command, _timeout, backend):
+        backend.files[WORKSPACE_SCHEDULE] = updated.encode()
+        return CommandResult("", "AssertionError in a later audit", 1)
+
+    factory = FakeSandboxFactory(lambda sid: FakeSandboxBackend(sid, command_handler=edit))
+    events = _collect(ScriptedProvider(_run_call(), [TextDelta("Updated.")]), factory)
+    tool = next(event for event in events if isinstance(event, AgentToolUse))
+    assert not tool.ok
+    assert tool.details["schedule_check"]["ok"]
+    assert factory.created[0].files[WORKSPACE_SCHEDULE] == updated.encode()
+    assert next(event for event in events if isinstance(event, AgentProposal)).text == updated
+
+
+@pytest.mark.parametrize("draft_changed", [False, True], ids=["unchanged-draft", "rejected-draft"])
+@pytest.mark.parametrize("tampered", [b"forged: schedule", None], ids=["overwritten", "deleted"])
+def test_last_accepted_copy_is_restored_from_server_state(draft_changed, tampered):
+    def tamper(_command, _timeout, backend):
+        backup = WORKSPACE_LAST_ACCEPTED_SCHEDULE
+        if tampered is None:
+            del backend.files[backup]
+        else:
+            backend.files[backup] = tampered
+        if draft_changed:
+            backend.files[WORKSPACE_SCHEDULE] = b"dates: ["
+        return CommandResult("", "", 0)
+
+    from nurse_scheduling.ai.workspace_tools import WorkspaceTools
+
+    async def check():
+        base = schedule_yaml()
+        backend = FakeSandboxBackend("tampered-backup", command_handler=tamper)
+        await hydrate_sandbox(backend, base)
+        tools = WorkspaceTools(backend, base, _limits(), None)
+        assert backend.files[WORKSPACE_LAST_ACCEPTED_SCHEDULE] == base.encode()
+        await tools._execute(BASH_TOOL, json.dumps({"command": "tamper"}))
+        assert backend.files[WORKSPACE_LAST_ACCEPTED_SCHEDULE] == base.encode()
+        assert backend.files[WORKSPACE_SCHEDULE] == (b"dates: [" if draft_changed else base.encode())
+        assert (tools.candidate_tracker.rejection is not None) == draft_changed
+
+    asyncio.run(check())
+
+
+def test_group_rename_can_remain_invalid_between_tool_calls():
+    base = schedule_yaml()
+
+    def edit(command, _timeout, backend):
+        current = backend.files[WORKSPACE_SCHEDULE].decode()
+        if command == "rename":
+            current = current.replace("id: FIRST", "id: OPENING", 1)
+        else:
+            assert "id: OPENING" in current
+            assert "- FIRST" in current
+            assert backend.files[WORKSPACE_LAST_ACCEPTED_SCHEDULE] == base.encode()
+            current = current.replace("- FIRST", "- OPENING")
+        backend.files[WORKSPACE_SCHEDULE] = current.encode()
+        return CommandResult("updated", "", 0)
+
+    provider = ScriptedProvider(_run_call("rename"), _run_call("references"), [TextDelta("Renamed the group.")])
+    factory = FakeSandboxFactory(lambda sid: FakeSandboxBackend(sid, command_handler=edit))
+    events = _collect(provider, factory)
+    tools = [event for event in events if isinstance(event, AgentToolUse)]
+    assert not tools[0].details["schedule_check"]["ok"]
+    assert tools[1].details["schedule_check"]["ok"]
+    assert "last-accepted-schedule.yaml" in tools[0].result
+    result = next(event for event in events if isinstance(event, AgentProposal)).text
+    assert "FIRST" not in result
+    assert "id: OPENING" in result
+    assert factory.created[0].files[WORKSPACE_LAST_ACCEPTED_SCHEDULE] == result.encode()
+    assert any(
+        message.get("role") == "tool" and "last-accepted-schedule.yaml" in str(message.get("content"))
+        for message in provider.requests[1][0]
+    )
+
+
+def test_restoring_the_last_accepted_copy_clears_the_rejection():
+    from nurse_scheduling.ai.workspace_tools import WorkspaceTools
+
+    async def check():
+        base = schedule_yaml()
+        backend = FakeSandboxBackend("restore-accepted")
+        await hydrate_sandbox(backend, base)
+        tools = WorkspaceTools(backend, base, _limits(), None)
+        accepted = base.replace("description: ''", "description: Accepted", 1)
+        await tools._execute(WRITE_TOOL, json.dumps({"path": WORKSPACE_SCHEDULE, "content": accepted}))
+        await tools._execute(WRITE_TOOL, json.dumps({"path": WORKSPACE_SCHEDULE, "content": "dates: ["}))
+        assert tools.candidate_tracker.rejection is not None
+        restored = backend.files[WORKSPACE_LAST_ACCEPTED_SCHEDULE].decode()
+        result = await tools._execute(WRITE_TOOL, json.dumps({"path": WORKSPACE_SCHEDULE, "content": restored}))
+        assert result.ok
+        assert tools.candidate_tracker.rejection is None
+        assert backend.files[WORKSPACE_SCHEDULE] == accepted.encode()
+        assert result.details["schedule_yaml"] == accepted
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize(
+    "rejected",
+    [b"dates: [", b"", b"\xff", b"x" * (SCHEDULE_BYTE_LIMIT + 1), None],
+    ids=["malformed", "truncated", "encoding", "oversized", "deleted"],
+)
+@pytest.mark.parametrize(
+    "tool,arguments",
+    [
+        (READ_TOOL, {"path": WORKSPACE_LAST_ACCEPTED_SCHEDULE}),
+        (BASH_TOOL, {"command": "cat schedule.yaml"}),
+        (WRITE_TOOL, {"path": "notes.txt", "content": "notes"}),
+    ],
+)
+def test_pending_rejection_does_not_fail_unrelated_successful_commands(tool, arguments, rejected):
+    from nurse_scheduling.ai.workspace_tools import WorkspaceTools
+
+    async def check():
+        base = schedule_yaml()
+
+        def command(name, _timeout, backend):
+            if name == "break":
+                if rejected is None:
+                    backend.files.pop(WORKSPACE_SCHEDULE, None)
+                else:
+                    backend.files[WORKSPACE_SCHEDULE] = rejected
+            return CommandResult("read", "", 0)
+
+        backend = FakeSandboxBackend("pending-rejection", command_handler=command)
+        await hydrate_sandbox(backend, base)
+        tools = WorkspaceTools(backend, base, _limits(), None)
+        bad_edit = {"command": "break"}
+        assert not (await tools._execute(BASH_TOOL, json.dumps(bad_edit))).ok
+        result = await tools._execute(tool, json.dumps(arguments))
+        assert result.ok
+        assert result.details["schedule_check"]["ok"] is False
+        assert tools.candidate_tracker.rejection in result.text
+        assert tools.candidate_tracker.rejection is not None
+        assert backend.files.get(WORKSPACE_SCHEDULE) == rejected
+        assert backend.files[WORKSPACE_LAST_ACCEPTED_SCHEDULE] == base.encode()
+
+        async def unexpected_start(*_):
+            pytest.fail("An unresolved rejected edit must block optimization")
+
+        tools.execute_optimizer = unexpected_start
+        blocked = await tools._execute(OPTIMIZER_TOOL, '{"action":"start"}')
+        assert not blocked.ok
+        # Repeating the same draft must keep the failed check visible.
+        repeated = await tools._execute(BASH_TOOL, json.dumps(bad_edit))
+        assert not repeated.details["schedule_check"]["ok"]
+        assert tools.candidate_tracker.rejection is not None
+
+    asyncio.run(check())
+
+
+def test_pending_rejection_preserves_real_command_failure():
+    from nurse_scheduling.ai.workspace_tools import WorkspaceTools
+
+    async def check():
+        backend = FakeSandboxBackend("failed-command", command_handler=lambda *_: CommandResult("", "missing file", 1))
+        base = schedule_yaml()
+        await hydrate_sandbox(backend, base)
+        tools = WorkspaceTools(backend, base, _limits(), None)
+        await tools._execute(WRITE_TOOL, json.dumps({"path": WORKSPACE_SCHEDULE, "content": "dates: ["}))
+        result = await tools._execute(BASH_TOOL, json.dumps({"command": "cat missing"}))
+        assert not result.ok
+        assert "missing file" in result.text
+        assert tools.candidate_tracker.rejection is not None
 
     asyncio.run(check())

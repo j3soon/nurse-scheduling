@@ -1,0 +1,26 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "fixture": "new-schedule",
+  "attachments": [
+    "completed-roster-xlsx"
+  ],
+  "expect_proposal": false,
+  "tool_usage": {
+    "forbidden": [
+      "optimizer"
+    ]
+  },
+  "tags": [
+    "editable-schedule-source"
+  ],
+  "id": "completed-roster-source-unavailable",
+  "question": "I want to recreate a schedule from this roster, but I have no saved schedule data file, YAML, backup, or original rule sheet. Do not ask me for a saved file again. Ask one useful question about missing staffing or rest rules. Do not build anything yet.",
+  "answer_matches": [
+    "(?i)(staffing|how many|consecutive|rest|transition)"
+  ],
+  "answer_not_matches": [
+    "(?i)(do you have|can you (upload|provide|share)|could you (upload|provide|share)).{0,80}(saved|backup|YAML|original file)"
+  ],
+  "note": "An unavailable source must not block intake or cause a repeated file request."
+}

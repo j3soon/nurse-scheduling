@@ -1,0 +1,29 @@
+# This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
+# Copyright (C) 2023-2026 Johnson Sun
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# This test is mostly AI generated.
+
+import sys
+from pathlib import Path
+
+mode = sys.argv[1]
+workspace = Path(sys.argv[2]) if len(sys.argv) > 2 else Path('/workspace')
+schedule = workspace / 'schedule.yaml'
+if mode == 'prepare':
+    text = schedule.read_text(encoding='utf-8')
+    old = 'description: Small pediatric clinic'
+    assert text.count(old) == 1
+    schedule.write_text(text.replace(old, 'description: Accepted clinic edit', 1), encoding='utf-8')
+    print('Saved the clinic description.')
+elif mode == 'partial':
+    text = schedule.read_text(encoding='utf-8')
+    assert text.count('id: Night\n') == 1
+    schedule.write_text(text.replace('id: Night\n', 'id: Overnight\n', 1), encoding='utf-8')
+    print('Renamed the group definition. Its references still need updating.')
+elif mode == 'truncate':
+    schedule.write_text('dates: [\n', encoding='utf-8')
+    print('Simulated an interrupted YAML write.')
+elif mode == 'audit-error':
+    raise SystemExit('Optional audit failed. The saved schedule was not changed.')
+else:
+    raise ValueError(f'Unknown mode: {mode}')

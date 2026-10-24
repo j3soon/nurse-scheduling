@@ -1,0 +1,30 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "id": "new-schedule-guide-before-intake",
+  "fixture": "new-schedule",
+  "question": "Help me create a schedule for November 1-30, 2026. There are ten nurses P1 through P10. P1 through P5 are seniors. Every day needs two day nurses, two evening nurses and one night nurse. One of each day and evening pair must be senior. Seniors can also fill the other slots.",
+  "expect_proposal": false,
+  "answer_contains": [],
+  "answer_matches": [],
+  "tool_usage": {
+    "required_calls": [
+      {
+        "name": "read",
+        "arguments": {
+          "path": "/reference/user-guide/build-a-real-schedule.md"
+        }
+      }
+    ],
+    "forbidden": [
+      "optimizer",
+      "edit",
+      "write"
+    ]
+  },
+  "tags": [
+    "new-schedule",
+    "proactive-policy"
+  ],
+  "note": "This testcase is mostly AI generated. Read the setup guide before answering intake questions for the first date range."
+}

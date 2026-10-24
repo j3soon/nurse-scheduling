@@ -278,9 +278,9 @@ remain in application state.
 
 When a turn fails, its provisional activity remains visible but is not added to
 model conversation history. Optional PostgreSQL logging retains failed turns
-for operators. **Retry** resends the original text in a fresh sandbox. Uploaded
-files stay available for that retry. If an upload did not finish, **Prepare retry**
-restores the text and requires the files to be attached again before sending.
+for operators. The chat asks the user to send a new message and offers no retry
+button. Uploaded files stay available to that message. If an upload did not finish,
+the question was not sent, and the chat asks the user to attach the files again.
 
 ## Provider session affinity
 
@@ -315,11 +315,13 @@ data and unsuccessful finish reasons also fail immediately.
 
 `AI_PROVIDER_MAX_ATTEMPTS` includes the first request. Exponential backoff uses
 `AI_PROVIDER_RETRY_BACKOFF_SECONDS`, an eight-second cap, and up to 25 percent
-jitter. Valid `Retry-After-ms` or `Retry-After` headers take precedence, including
-HTTP dates. A server delay above 60 seconds fails immediately. Stop interrupts
-backoff and streaming. Each attempt keeps its own cost record and the same
-session ID. The adapter uses one retry budget instead of stacking SDK retries
-with whole-agent retries.
+jitter. Valid `Retry-After-ms` or `Retry-After` headers take precedence,
+including HTTP dates. A server delay above 60 seconds fails immediately. Retries
+also stop 120 seconds after the first failure, because a waiting run holds a
+shared run slot and its sandbox. Each retry adds a chat notice with its delay
+and attempt number. Stop interrupts backoff and streaming. Each attempt keeps
+its own cost record and the same session ID. The adapter uses one retry budget
+instead of stacking SDK retries with whole-agent retries.
 
 After interrupted output, the next request receives the visible answer text and
 an interruption note. Failed reasoning metadata and partial tool arguments are
@@ -567,12 +569,11 @@ to 5/5 against the acknowledgement before it. The forced end of turn made that
 instruction redundant, so the acknowledgement now reports only the job and
 wake-up behavior.
 
-The `proactive-policy-intake` prompt asks about missing rest and fairness before
-new-roster construction. `new-schedule-policy-intake` improved from 0/3 to 3/3
-against the previous full prompt. Declined-rule and explanation-only controls
-passed 3/3 in both versions. These selected checks used live provider requests
-and E2B commands with four case jobs. Three provider failures from an earlier
-diagnostic batch remain separate from the clean comparison.
+New-roster intake uses separate prompt steps for guide order, rest questions,
+fairness questions and optional primary shift groups. Each step states its own
+trigger and scope limits and has a separate evaluation witness. The combined
+`new-schedule-policy-intake` case also checks rest and fairness together.
+Declined-rule and explanation-only cases check that intake respects the user's scope.
 
 ## Agent capabilities
 

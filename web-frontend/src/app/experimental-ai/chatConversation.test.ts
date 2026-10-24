@@ -44,16 +44,25 @@ describe('stored conversation compatibility', () => {
     });
   });
 
+  it('restores conversation summary activity after a reload', () => {
+    const summary = { kind: 'compaction', state: 'completed', reason: 'threshold', text: 'The conversation was summarized.' };
+    sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify({
+      ...conversation(), messages: [{ id: 'answer', role: 'assistant', content: 'Answer', activity: [summary] }],
+    }));
+    expect(readStoredConversation()?.messages[0].activity).toEqual([summary]);
+  });
+
   it('rejects corrupt activity and pending request data', () => {
     for (const change of [
       { messages: [{ id: 'answer', role: 'assistant', content: '', activity: [{ kind: 'tool' }] }] },
       { messages: [{ id: 'answer', role: 'assistant', content: '', failureReason: 525 }] },
+      { messages: [{ id: 'answer', role: 'assistant', content: '',
+        activity: [{ kind: 'compaction', state: 'done', reason: 'threshold', text: 'Summarized.' }] }] },
       { pendingRequest: { messageId: 'request', question: 'Question', questionId: 'question',
         assistantId: 'answer', createdAt: 'invalid' } },
       { pendingRequest: { messageId: 'request', question: 'Question', questionId: 'question',
         assistantId: 'answer', createdAt: 100, uploading: true, pendingFiles: [1] } },
-      { messages: [{ id: 'answer', role: 'assistant', content: '', retry: {
-        question: 'Question', requiresAttachments: true, missingFiles: 'two.txt' } }] },
+      { messages: [{ id: 'answer', role: 'assistant', content: '', unsentFiles: 'two.txt' }] },
       { sessionEventId: -1 },
       { appliedScheduleRuns: { run: 123 } },
       { appliedScheduleRuns: [] },

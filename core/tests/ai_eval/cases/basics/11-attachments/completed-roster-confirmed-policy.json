@@ -1,0 +1,24 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "fixture": "new-schedule",
+  "attachments": [
+    "completed-roster-xlsx"
+  ],
+  "expect_proposal": false,
+  "tool_usage": {
+    "forbidden": [
+      "optimizer"
+    ]
+  },
+  "tags": [
+    "workbook-policy-evidence"
+  ],
+  "id": "completed-roster-confirmed-policy",
+  "question": "The attached completed roster is only a layout example. Our confirmed policy allows at most five consecutive working days, and every nurse is eligible for D, E and N. Summarize these confirmed rules without editing. Reply only as JSON with maxConsecutiveWorkingDays and eligibility, using all-staff-all-shifts for unrestricted D/E/N eligibility.",
+  "answer_json": {
+    "maxConsecutiveWorkingDays": 5,
+    "eligibility": "all-staff-all-shifts"
+  },
+  "note": "This testcase is mostly AI generated. The explicit user policy is authoritative even though the example contains at most two-day streaks and separate shift assignments. Do not replace it with inferred sample limits or claim the supplied rules are unknown."
+}

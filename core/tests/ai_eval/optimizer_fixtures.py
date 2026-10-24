@@ -33,6 +33,10 @@ from nurse_scheduling.loader import _load_yaml
 FIXTURE = Path(__file__).with_name("fixtures") / "request-audit.yaml"
 ASSIGNMENTS = {"Alex": ["OFF", "K", "D"], "Mira": ["D", "N", "OFF"], "Kai": ["N", "D", "N"]}
 RESULT_ASSIGNMENTS = {
+    "monthly-roster-statistics": {
+        f"P{person + 1:02d}": [("D", "D+", "E", "E", "N", "N", "OFF", "OFF")[(day + person) % 8] for day in range(31)]
+        for person in range(60)
+    },
     "policy-audit-misses": {
         "Alex": ["OFF", "K", "D"],
         "Mira": ["D", "OFF", "OFF"],
@@ -67,7 +71,9 @@ RESULT_ASSIGNMENTS = {
 }
 RESULT_SOURCES = {
     name: (
-        FIXTURE.with_name("policy-audit.yaml")
+        FIXTURE.with_name("monthly-roster-statistics.yaml")
+        if name == "monthly-roster-statistics"
+        else FIXTURE.with_name("policy-audit.yaml")
         if name.startswith("policy-audit-")
         else FIXTURE.with_name("request-audit-groups.yaml")
         if name == "request-audit-groups"

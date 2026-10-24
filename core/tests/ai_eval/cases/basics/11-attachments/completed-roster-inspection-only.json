@@ -1,0 +1,27 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "fixture": "new-schedule",
+  "attachments": [
+    "completed-roster-xlsx"
+  ],
+  "expect_proposal": false,
+  "tool_usage": {
+    "forbidden": [
+      "optimizer"
+    ]
+  },
+  "tags": [
+    "editable-schedule-source"
+  ],
+  "id": "completed-roster-inspection-only",
+  "question": "Only inspect the attached roster. How many D shifts and OFF days does P1 have? Reply only as JSON with dayShifts and offDays. Do not reconstruct rules or change anything.",
+  "answer_json": {
+    "dayShifts": 4,
+    "offDays": 2
+  },
+  "answer_not_matches": [
+    "(?i)(saved schedule|backup file|upload.{0,20}YAML)"
+  ],
+  "note": "A read-only assignment count does not require an editable source."
+}

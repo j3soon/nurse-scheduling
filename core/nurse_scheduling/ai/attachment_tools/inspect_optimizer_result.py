@@ -1,4 +1,4 @@
-"""Inspect optimizer assignments and signed requests without parsing annotations as shifts."""
+"""Inspect optimizer assignments, signed requests and roster statistics without parsing annotations as shifts."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -24,12 +24,15 @@ import hashlib
 import json
 import re
 import sys
+from collections import Counter
+from collections.abc import Sequence
 from decimal import Decimal, InvalidOperation
-from itertools import islice
+from itertools import islice, takewhile
 from pathlib import Path
 from typing import Any
 
 from openpyxl import load_workbook
+from ruamel.yaml import YAML
 
 try:
     from .inspect_xlsx import _check_archive
@@ -213,6 +216,84 @@ def inspect_result(
     return result
 
 
+def _longest_run(shifts: Sequence[str], working: bool, history: Sequence[str] = ()) -> int:
+    matches = lambda shift: (shift != "OFF") == working
+    run = sum(1 for _ in takewhile(matches, reversed(history)))
+    longest = 0
+    for shift in shifts:
+        run = run + 1 if matches(shift) else 0
+        longest = max(longest, run)
+    return longest
+
+
+def _statistics(assignments, context, people, histories, include_history, max_people, summary_only):
+    person_ids = {str(person): person for person in context["people"]}
+    if len(person_ids) != len(context["people"]):
+        raise ValueError("Person IDs cannot be uniquely selected as text")
+    selected = list(dict.fromkeys(people)) if people else list(person_ids)
+    if set(selected) - person_ids.keys():
+        raise ValueError("Unknown person ID in statistics query")
+    rows = []
+    for selected_id in selected:
+        person = person_ids[selected_id]
+        shifts = [assignments[person][day] for day in context["dates"]]
+        row = {
+            "person": person,
+            "shift_counts": dict(Counter(shifts)),
+            "max_work_run": _longest_run(shifts, True),
+            "max_off_run": _longest_run(shifts, False),
+        }
+        if include_history:
+            history = histories.get(person)
+            row.update(
+                history_days=None if history is None else len(history),
+                max_work_run_including_history=None if history is None else _longest_run(shifts, True, history),
+                max_off_run_including_history=None if history is None else _longest_run(shifts, False, history),
+            )
+        rows.append(row)
+    shift_counts = Counter()
+    for row in rows:
+        shift_counts.update(row["shift_counts"])
+    summary = {"people": len(rows), "shift_counts": dict(shift_counts)}
+    run_fields = ["max_work_run", "max_off_run"]
+    if include_history:
+        run_fields += ["max_work_run_including_history", "max_off_run_including_history"]
+    for field in run_fields:
+        known = [row[field] for row in rows if row[field] is not None]
+        summary[field] = max(known, default=None)
+        summary[field + "_distribution"] = dict(sorted(Counter(known).items()))
+        if include_history and field.endswith("including_history"):
+            summary[field + "_unknown_people"] = len(rows) - len(known)
+    return {
+        "source_sha256": context["source_sha256"],
+        "scope": "Observed assignments over the full scheduled date range, not a policy audit. "
+        "Counts exclude history. Extended runs include only history suffixes crossing the first scheduled date. "
+        "Unknown history remains null.",
+        "dates": context["dates"],
+        "summary": summary,
+        "statistics": [] if summary_only else rows[:max_people],
+        "statistics_truncated": bool(rows) if summary_only else len(rows) > max_people,
+    }
+
+
+def summarize_roster(
+    path, context, source_sha256, *, people=None, max_people=100, include_history=False, source=None, summary_only=False
+):
+    """Summarize observed assignments, independently of scheduling policy."""
+    if context.get("schema_version") != 1 or context.get("source_sha256") != source_sha256:
+        raise ValueError("The compiled context does not match the optimizer source")
+    if not 1 <= max_people <= 1000:
+        raise ValueError("max_people must be between 1 and 1000")
+    histories = {}
+    if include_history and source is not None and source.is_file():
+        content = source.read_bytes()
+        if hashlib.sha256(content).hexdigest() == source_sha256:
+            data = YAML(typ="safe").load(content)
+            histories = {person["id"]: person.get("history") for person in data["people"]["items"]}
+    assignments, _, _ = _read_assignments(path, context)
+    return _statistics(assignments, context, people, histories, include_history, max_people, summary_only)
+
+
 def _weight_arguments(arguments: list[str]) -> list[str]:
     """Keep negative numeric weights from being mistaken for option names."""
     normalized = []
@@ -253,34 +334,63 @@ def load_context(source_sha256: str, path: Path | None = None) -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Audit an optimizer workbook using compiled request selectors.")
+    parser = argparse.ArgumentParser(description="Inspect optimizer assignments, request audits and roster statistics.")
     parser.add_argument("workbook", nargs="?", type=Path, default=Path(RESULT))
     parser.add_argument("--context", type=Path)
     parser.add_argument("--source-sha256", required=True, help="source_sha256 from the optimizer completion")
     parser.add_argument(
+        "--statistics", action="store_true", help="Count shifts and longest work/OFF runs, not policy compliance"
+    )
+    parser.add_argument(
         "--weight", action="append", help="numeric request weight, repeatable. Use --weight=-.inf for bans"
     )
-    parser.add_argument("--max-unmet", type=int, default=20)
+    parser.add_argument("--max-unmet", type=int)
     parser.add_argument(
-        "--person", action="append", help="Exact person ID, repeatable. Selects assignment-query output."
+        "--person", action="append", help="Exact person ID, repeatable. Selects assignments unless --statistics is set."
     )
     parser.add_argument(
         "--date", action="append", help="ISO date YYYY-MM-DD, repeatable. Selects assignment-query output."
     )
-    parser.add_argument("--max-assignments", type=int, default=100, help="Assignment-query row limit, at most 1000.")
+    parser.add_argument("--max-assignments", type=int, help="Assignment-query row limit, at most 1000. Default: 100.")
+    parser.add_argument("--summary-only", action="store_true", help="Return statistics totals without person rows")
+    parser.add_argument("--max-people", type=int, help="Statistics row limit, at most 1000. Default: 100.")
+    parser.add_argument("--include-history", action="store_true", help="Include known history suffixes in statistics")
+    parser.add_argument(
+        "--source",
+        type=Path,
+        help="Statistics history source. Defaults to /workspace/schedule.yaml. Used only when its bytes match source_sha256.",
+    )
     args = parser.parse_args(_weight_arguments(sys.argv[1:]))
+    if args.statistics:
+        if any(value is not None for value in (args.weight, args.max_unmet, args.date, args.max_assignments)):
+            parser.error("--statistics cannot be combined with --weight, --max-unmet, --date or --max-assignments")
+    elif args.summary_only or args.max_people is not None or args.include_history or args.source is not None:
+        parser.error("--summary-only, --max-people, --include-history and --source require --statistics")
     try:
-        result = inspect_result(
-            args.workbook,
-            load_context(args.source_sha256, args.context),
-            args.source_sha256,
-            args.weight,
-            args.max_unmet,
-            people=args.person,
-            dates=args.date,
-            max_assignments=args.max_assignments,
-        )
-    except (ValueError, KeyError, FileNotFoundError) as error:
+        context = load_context(args.source_sha256, args.context)
+        if args.statistics:
+            result = summarize_roster(
+                args.workbook,
+                context,
+                args.source_sha256,
+                people=args.person,
+                max_people=100 if args.max_people is None else args.max_people,
+                include_history=args.include_history,
+                source=args.source or Path("/workspace/schedule.yaml"),
+                summary_only=args.summary_only,
+            )
+        else:
+            result = inspect_result(
+                args.workbook,
+                context,
+                args.source_sha256,
+                args.weight,
+                20 if args.max_unmet is None else args.max_unmet,
+                people=args.person,
+                dates=args.date,
+                max_assignments=100 if args.max_assignments is None else args.max_assignments,
+            )
+    except (ValueError, KeyError, OSError) as error:
         parser.exit(1, f"{error}\n")
     print(json.dumps(result, ensure_ascii=False, allow_nan=False))
 

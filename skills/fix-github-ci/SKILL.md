@@ -24,6 +24,12 @@ flaky test, incorrect workflow setup, a dependency mismatch, and a transient
 runner or external-service failure. Consult focused history when the intended
 behavior is unclear.
 
+For Windows-only hash failures or missing source-derived data, compare the
+hashed text with the bytes on disk. Check both Git checkout line endings and
+text-write newline translation. `Path.read_text(encoding="utf-8")` normalizes
+CRLF to LF, while `Path.write_text()` can write CRLF on Windows. A hash of the
+normalized text can therefore differ from a hash of the file bytes.
+
 When Playwright reports only that `config.webServer` could not start, inspect
 its command and run the build step directly with the same environment. Save
 stdout and stderr under the repository-root `artifacts/` directory. Compact
@@ -41,6 +47,12 @@ Make the smallest change in the layer that owns the cause.
 - Treat infrastructure failures as infrastructure failures rather than turning
   them into unrelated code changes.
 
+Choose whether each hash identifies normalized text or exact bytes. For text
+evidence, normalize line endings consistently when creating and checking its
+hash. Trace its creation and validation, including test metadata that supplies
+the hash. For fixtures bound to exact bytes, write `text.encode("utf-8")` with
+`Path.write_bytes()`. Preserve source checks whose contract requires exact bytes.
+
 Avoid platform skips, weakened assertions, arbitrary delays, and blanket retries
 unless they are part of the intended contract. A CI fix should remove the faulty
 assumption without reducing meaningful coverage.
@@ -51,3 +63,9 @@ Run the original failing command first, then the affected checks and the exact C
 step when practical. If the runner platform cannot be exercised locally, state
 that limitation clearly. Report the root cause, changed layer, validation
 results, and any remaining runner-specific uncertainty.
+
+For newline-related fixes, cover LF and CRLF and check that a real content
+change still fails the hash check. If Windows is unavailable, simulate checkout
+line endings and default text-write translation separately. Run the affected
+suites under the simulation to cover other code and fixtures that create or
+validate the same hash.

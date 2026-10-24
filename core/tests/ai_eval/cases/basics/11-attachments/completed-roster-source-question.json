@@ -1,0 +1,25 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "fixture": "new-schedule",
+  "attachments": [
+    "completed-roster-xlsx"
+  ],
+  "expect_proposal": false,
+  "tool_usage": {
+    "forbidden": [
+      "optimizer"
+    ]
+  },
+  "tags": [
+    "editable-schedule-source"
+  ],
+  "id": "completed-roster-source-question",
+  "question": "I want to recreate the original rules and settings behind this completed roster for next month. What is the most useful first question you would ask me? Do not build anything yet. Keep your reply brief.",
+  "answer_matches": [
+    "(?i)(saved|backup|exported|original|editable).{0,70}(file|YAML|schedule data)|(file|YAML).{0,70}(saved|backup|original)",
+    "(?i)(rules|settings|constraints)",
+    "(?i)(if.{0,35}(not|no|unavailable|don.t)|without|optional|can still)"
+  ],
+  "note": "A roster does not encode the original scheduling rules. Ask for an optional editable source before reconstructing missing policy."
+}

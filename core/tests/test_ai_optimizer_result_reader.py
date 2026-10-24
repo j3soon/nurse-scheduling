@@ -26,7 +26,12 @@ import sys
 import pytest
 from openpyxl import load_workbook
 
-from nurse_scheduling.ai.attachment_tools.inspect_optimizer_result import _assigned, inspect_result, load_context
+from nurse_scheduling.ai.attachment_tools.inspect_optimizer_result import (
+    _assigned,
+    inspect_result,
+    load_context,
+    summarize_roster,
+)
 from nurse_scheduling.ai.result_context import MAX_REQUEST_AUDIT_BYTES, build_request_audit, build_result_context
 from nurse_scheduling.ai.workspace import INSPECTION_HELPERS, REFERENCE_ATTACHMENT_TOOLS, inspection_helper_catalog
 
@@ -337,3 +342,207 @@ def test_result_cli_selects_pending_source_and_respects_explicit_context(tmp_pat
         reader.main()
         result = json.loads(capsys.readouterr().out)
         assert result["summary"] == [{"weight": 11000000000, "total": 5, "satisfied": 3, "unmet": 2}]
+
+
+def test_roster_statistics_count_exact_shifts_and_bound_people(audit):
+    path, context = audit
+    result = summarize_roster(path, context, context["source_sha256"], max_people=2)
+    assert result["statistics_truncated"]
+    assert result["statistics"][0] == {
+        "person": "Alex",
+        "shift_counts": {"OFF": 1, "K": 1, "D": 1},
+        "max_work_run": 2,
+        "max_off_run": 1,
+    }
+    assert result["statistics"][1]["person"] == "Mira"
+    assert "not a policy audit" in result["scope"]
+    assert result["summary"]["people"] == 3
+    assert sum(result["summary"]["shift_counts"].values()) == 9
+
+
+def test_roster_statistics_include_only_history_runs_crossing_the_boundary(audit, tmp_path):
+    path, _ = audit
+    payload = parse_schedule(FIXTURE.read_text(encoding="utf-8"))
+    for person, history in zip(payload["people"]["items"], [["OFF", "OFF"], ["D", "N"], None]):
+        person["history"] = history
+    source = tmp_path / "source.yaml"
+    source.write_bytes(schedule_yaml(payload).encode())
+    context = build_result_context(source.read_text(encoding="utf-8"))
+    result = summarize_roster(path, context, context["source_sha256"], include_history=True, source=source)
+    alex, mira, kai = result["statistics"]
+    assert alex["max_off_run_including_history"] == 3
+    assert alex["shift_counts"]["OFF"] == 1
+    assert mira["max_work_run_including_history"] == 4
+    assert kai["max_work_run_including_history"] is None
+    assert kai["history_days"] is None
+    # Changed source history must not be used with an earlier optimizer result.
+    source.write_bytes(source.read_bytes() + b"\n# changed")
+    alex = summarize_roster(path, context, context["source_sha256"], include_history=True, source=source)["statistics"][
+        0
+    ]
+    assert alex["history_days"] is None
+
+
+@pytest.mark.parametrize("matching_source", [False, True], ids=["different-bytes", "matching-bytes"])
+def test_roster_history_checks_exact_source_bytes(audit, tmp_path, matching_source):
+    path, _ = audit
+    text = FIXTURE.read_text(encoding="utf-8")
+    windows_text = text.replace("\n", "\r\n")
+    source = tmp_path / "source.yaml"
+    source.write_bytes(windows_text.encode())
+    context = build_result_context(windows_text if matching_source else text)
+    row = summarize_roster(path, context, context["source_sha256"], source=source, include_history=True)["statistics"][
+        0
+    ]
+    assert row["history_days"] == (3 if matching_source else None)
+
+
+@pytest.mark.parametrize("options", [{"max_people": 0}, {"max_people": 1001}, {"people": ["missing"]}])
+def test_roster_statistics_reject_unknown_people_and_unbounded_options(audit, options):
+    path, context = audit
+    with pytest.raises(ValueError):
+        summarize_roster(path, context, context["source_sha256"], **options)
+
+
+def test_statistics_preserve_qualified_shifts_and_ignore_annotations(audit):
+    path, context = audit
+    workbook = load_workbook(path)
+    context["shift_types"].append("D+")
+    for row in workbook.active:
+        for cell in row:
+            if str(cell.value) == "D" or str(cell.value).startswith("D ["):
+                cell.value = "D+ [OFF]"
+    workbook.save(path)
+    result = summarize_roster(path, context, context["source_sha256"])
+    alex = result["statistics"][0]
+    assert alex["shift_counts"] == {"OFF": 1, "K": 1, "D+": 1}
+    assert alex["max_work_run"] == 2
+
+
+@pytest.mark.parametrize("summary_only", [False, True])
+def test_standalone_roster_statistics_reuse_the_hydrated_readers(audit, tmp_path, summary_only):
+    path, context = audit
+    for source in REFERENCE_ATTACHMENT_TOOLS.values():
+        (tmp_path / source.name).write_bytes(source.read_bytes())
+    source = tmp_path / "source.yaml"
+    source.write_bytes(FIXTURE.read_text(encoding="utf-8").encode())
+    context_path = tmp_path / "context.json"
+    context_path.write_text(json.dumps(context), encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(tmp_path / "inspect_optimizer_result.py"),
+            "--statistics",
+            *(["--summary-only"] if summary_only else []),
+            str(path),
+            "--context",
+            str(context_path),
+            "--source-sha256",
+            context["source_sha256"],
+            "--source",
+            str(source),
+            "--include-history",
+            "--person",
+            "Alex",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    output = json.loads(result.stdout)
+    assert output["summary"]["shift_counts"] == {"OFF": 1, "K": 1, "D": 1}
+    assert output["summary"]["max_work_run_including_history"] == 2
+    if summary_only:
+        assert output["statistics"] == []
+        return
+    row = output["statistics"][0]
+    assert row["history_days"] == 3
+    assert row["shift_counts"] == {"OFF": 1, "K": 1, "D": 1}
+    assert row["max_work_run_including_history"] == 2
+
+
+def test_history_only_streak_does_not_inflate_scheduled_work_run(audit, tmp_path):
+    path, _ = audit
+    payload = parse_schedule(FIXTURE.read_text(encoding="utf-8"))
+    payload["people"]["items"][0]["history"] = ["N"] * 10
+    source = tmp_path / "source.yaml"
+    source.write_bytes(schedule_yaml(payload).encode())
+    context = build_result_context(source.read_text(encoding="utf-8"))
+    row = summarize_roster(path, context, context["source_sha256"], source=source, include_history=True)["statistics"][
+        0
+    ]
+    assert row["history_days"] == 10
+    assert row["max_work_run_including_history"] == 2
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["--summary-only"],
+        ["--max-people", "1"],
+        ["--include-history"],
+        ["--source", "source.yaml"],
+        ["--statistics", "--weight", "11"],
+        ["--statistics", "--max-unmet", "20"],
+        ["--statistics", "--date", "2026-05-01"],
+        ["--statistics", "--max-assignments", "100"],
+    ],
+)
+def test_result_cli_rejects_options_from_another_mode(monkeypatch, capsys, options):
+    from nurse_scheduling.ai.attachment_tools.inspect_optimizer_result import main
+
+    monkeypatch.setattr(sys, "argv", ["inspect_optimizer_result.py", "--source-sha256", "unused", *options])
+    with pytest.raises(SystemExit) as error:
+        main()
+    assert error.value.code == 2
+    assert "--statistics" in capsys.readouterr().err
+
+
+def test_monthly_statistics_match_independent_counts_and_run_lengths(tmp_path):
+    source = RESULT_SOURCES["monthly-roster-statistics"].read_text(encoding="utf-8")
+    context = build_result_context(source)
+    path = tmp_path / "monthly.xlsx"
+    path.write_bytes(completion_result("monthly-roster-statistics", source)[0])
+    rows = summarize_roster(path, context, context["source_sha256"])["statistics"]
+    summary = summarize_roster(path, context, context["source_sha256"], summary_only=True)["summary"]
+    assert summary == {
+        "people": 60,
+        "shift_counts": {"D": 232, "D+": 232, "E": 465, "N": 466, "OFF": 465},
+        "max_work_run": 6,
+        "max_work_run_distribution": {6: 60},
+        "max_off_run": 2,
+        "max_off_run_distribution": {2: 60},
+    }
+    assert len(rows) == 60
+    assert {
+        shift: sum(row["shift_counts"].get(shift, 0) for row in rows) for shift in ["D", "D+", "E", "N", "OFF"]
+    } == {"D": 232, "D+": 232, "E": 465, "N": 466, "OFF": 465}
+    assert all(row["max_work_run"] == 6 and row["max_off_run"] == 2 for row in rows)
+
+
+def test_roster_summary_selects_people_before_limiting_rows(audit):
+    path, context = audit
+    full = summarize_roster(path, context, context["source_sha256"])
+    bounded = summarize_roster(path, context, context["source_sha256"], max_people=1)
+    assert bounded["summary"] == full["summary"]
+    selected = summarize_roster(path, context, context["source_sha256"], people=["Alex", "Alex"], summary_only=True)
+    assert selected["statistics"] == []
+    assert selected["statistics_truncated"]
+    assert selected["summary"] == {
+        "people": 1,
+        "shift_counts": {"OFF": 1, "K": 1, "D": 1},
+        "max_work_run": 2,
+        "max_work_run_distribution": {2: 1},
+        "max_off_run": 1,
+        "max_off_run_distribution": {1: 1},
+    }
+
+
+def test_roster_summary_keeps_unknown_history_separate(audit):
+    path, context = audit
+    summary = summarize_roster(path, context, context["source_sha256"], include_history=True)["summary"]
+    assert summary["max_work_run_including_history"] is None
+    assert summary["max_work_run_including_history_distribution"] == {}
+    assert summary["max_work_run_including_history_unknown_people"] == 3
+    assert sum(summary["max_work_run_distribution"].values()) == 3

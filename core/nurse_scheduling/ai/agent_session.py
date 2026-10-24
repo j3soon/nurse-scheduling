@@ -67,6 +67,7 @@ from .transcript import (
     UserMessage,
 )
 from .workspace import (
+    AgentAnalysis,
     SandboxAttachment,
     SandboxAttachmentUnavailableError,
     SandboxCandidateError,
@@ -277,6 +278,7 @@ class AgentSession:
     pending_archive_files: dict[tuple[str, str], dict] = field(default_factory=dict)
     # Bytes of every file version that recovery storage keeps for this session, including removed files.
     archive_bytes: int = 0
+    analysis: AgentAnalysis | None = None
     # Last owner access, which orders eviction. A restored session keeps its stored expiry.
     last_used: float = field(default_factory=time.monotonic)
     latest_message: AcceptedMessage | None = None
@@ -383,7 +385,7 @@ class AgentSession:
     ) -> "AgentSession":
         """Rebuild a session from `recovery_state` and its saved conversation entries.
 
-        File bytes are loaded separately from their persisted references.
+        File bytes are loaded separately from their persisted references. Analysis notes are not saved.
         """
         return cls(
             id=session_id,
@@ -583,12 +585,12 @@ class AgentSession:
     def active(self) -> bool:
         return self.snapshot is not None
 
-    def begin_run(self, *, accepting_steering: bool, run_id: str | None = None) -> RunSnapshot:
+    def begin_run(self, *, run_id: str | None = None) -> RunSnapshot:
         """Reserve this conversation version and open its steering queue."""
         if self.active:
             raise HTTPException(status_code=409, detail="This chat session already has an active response.")
         self.agent.reset()
-        self.agent.open_steering(accepting_steering)
+        self.agent.open_steering()
         self._saved_run_messages = 0
         self.snapshot = RunSnapshot(
             list(self.transcript),
@@ -598,6 +600,7 @@ class AgentSession:
             run_id=run_id,
             uploads=tuple(self.uploads.values()),
             frontend_timezone=self.frontend_timezone,
+            analysis=self.analysis,
             transcript_offset=self.dropped_entries,
         )
         return self.snapshot
@@ -617,7 +620,9 @@ class AgentSession:
         if self.version != snapshot.version:
             return RunCompletion(False, False)
         self.transcript.extend(entries)
+        self.analysis = snapshot.analysis if snapshot.analysis and snapshot.analysis.content else None
         if schedule_yaml is not None:
+            self.analysis = None
             self.schedule_yaml = schedule_yaml
             self.revision = schedule_revision(schedule_yaml)
         return RunCompletion(True, schedule_yaml is not None)
@@ -665,6 +670,7 @@ class AgentSession:
         else:
             data_changed = schedule_data_changed(self.schedule_yaml, schedule_yaml)
         self.version += 1
+        self.analysis = None
         self.schedule_yaml = schedule_yaml
         self.revision = schedule_revision(schedule_yaml)
         if data_changed:
@@ -677,6 +683,7 @@ class AgentSession:
 
     def add_uploads(self, uploads: Sequence[SandboxAttachment], event: str) -> None:
         """Retain uploads with their IDs assigned and record their `upload_event` once in history."""
+        self.analysis = None
         self.uploads.update((upload.id, upload) for upload in uploads)
         self._add_entry(AppEventEntry(event))
 
@@ -686,6 +693,7 @@ class AgentSession:
             raise HTTPException(status_code=404, detail="The uploaded file is no longer available.")
         index = list(self.uploads).index(upload_id) + 1
         upload = self.uploads.pop(upload_id)
+        self.analysis = None
         self.pending_upload_removals.add(upload_id)
         self.removed_upload_paths.add(attachment_path(upload, index))
         self._add_entry(AppEventEntry(removal_event(upload, index)))
@@ -780,7 +788,6 @@ class AgentSession:
         messages: Sequence[ChatMessage],
         artifact: OptimizerArtifact | None,
         runtime: SessionRuntime,
-        background: bool,
         output: RunOutput,
         events: RunEvents,
         context_chars: int,
@@ -794,7 +801,7 @@ class AgentSession:
                     snapshot.schedule_yaml,
                     messages,
                     WorkspaceLimits.from_settings(runtime.settings),
-                    take_steering=None if background else lambda close: runtime.store.take_steering(self.id, close),
+                    take_steering=lambda close: runtime.store.take_steering(self.id, close),
                     execute_optimizer=lambda current_yaml, arguments: execute_optimizer_tool(
                         runtime.session_optimizer,
                         self.id,
@@ -805,6 +812,7 @@ class AgentSession:
                     ),
                     attachments=snapshot.uploads,
                     load_attachment=lambda upload: runtime.recorder.read_upload(self.id, self.owner_token, upload),
+                    analysis=snapshot.analysis,
                     optimizer_result=artifact.content if artifact is not None else None,
                     optimizer_context=artifact.schedule_context if artifact is not None else None,
                     agent=self.agent,
@@ -864,6 +872,8 @@ class AgentSession:
         # begins. Stop must not turn a committed answer into a stopped response
         # while its history write is still pending.
         run.finishing = True
+        if output.analysis is not None:
+            snapshot.analysis = output.analysis
         completion = store.finish(
             self.id,
             retained_entries(entries),
@@ -1089,7 +1099,7 @@ class AgentSession:
             )
             if runtime.selection is not None:
                 events.emit({"type": "model_selection", **runtime.selection})
-            await self._execute_run(snapshot, messages, artifact, runtime, background, output, events, context_chars)
+            await self._execute_run(snapshot, messages, artifact, runtime, output, events, context_chars)
             run_entries = [run_entries[0], *self.agent.state.messages]
             completion = self._commit_run(run, snapshot, run_entries, output, store)
             outcome = RunOutcome("completed" if completion.run_saved else "stale", completion=completion)

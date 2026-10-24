@@ -235,7 +235,7 @@ def test_generator_bytes_are_bound_to_evidence_fingerprint(monkeypatch):
     assert case_digest(case) != original
 
 
-@pytest.mark.parametrize("name", ["pyyaml-generator", "timeout-checkpoint"])
+@pytest.mark.parametrize("name", ["pyyaml-generator", "timeout-checkpoint", "schedule-edit-checkpoint"])
 def test_text_attachment_fixtures_normalize_checkout_line_endings(name, tmp_path: Path, monkeypatch):
     from .ai_eval import attachment_fixtures
 
@@ -249,3 +249,30 @@ def test_text_attachment_fixtures_normalize_checkout_line_endings(name, tmp_path
 
     assert load_attachment_fixtures([name])[0] == original
     assert case_digest(case) == original_digest
+
+
+@pytest.mark.parametrize("mode", ["partial", "truncate", "audit-error"])
+def test_schedule_recovery_fixture_preserves_an_earlier_accepted_edit(tmp_path, monkeypatch, mode):
+    fixture = _fixture("schedule-edit-checkpoint", tmp_path)
+    schedule = tmp_path / "schedule.yaml"
+    schedule.write_text(fixture_text("small-clinic"), encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", [str(fixture), "prepare", str(tmp_path)])
+    runpy.run_path(str(fixture))
+    accepted = schedule.read_text(encoding="utf-8")
+    assert "description: Accepted clinic edit" in accepted
+    assert validate_frontend_schedule_yaml(accepted, 1_000_000).valid
+
+    monkeypatch.setattr(sys, "argv", [str(fixture), mode, str(tmp_path)])
+    if mode == "audit-error":
+        with pytest.raises(SystemExit, match="Optional audit failed"):
+            runpy.run_path(str(fixture))
+        assert schedule.read_text(encoding="utf-8") == accepted
+    else:
+        runpy.run_path(str(fixture))
+        draft = schedule.read_text(encoding="utf-8")
+        assert not validate_frontend_schedule_yaml(draft, 1_000_000).valid
+        if mode == "partial":
+            assert "id: Overnight" in draft and "shiftType: [Night]" in draft
+            assert "description: Accepted clinic edit" in draft
+        else:
+            assert draft == "dates: [\n"

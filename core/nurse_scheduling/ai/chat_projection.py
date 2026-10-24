@@ -118,6 +118,7 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
         "schedule_change",
         "schedule_applied",
         "truncated",
+        "provider_retry",
         "compaction_start",
         "compaction_end",
         "done",
@@ -330,6 +331,8 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
             )
             turn["working"] = data["schedule_yaml"]
             turn["has_output"] = True
+        elif kind == "provider_retry":
+            activity.append({"kind": "notice", "text": data["message"]})
         elif kind == "schedule_applied":
             activity[:] = [a for a in activity if a["kind"] != "schedule-applied" or a.get("runId") != run_id]
             activity.append({"kind": "schedule-applied", "text": data["diff"], "runId": run_id})

@@ -1,0 +1,36 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "id": "result-roster-statistics",
+  "fixture": "request-audit",
+  "question": "Run optimization for 60 seconds. When it finishes, report observed roster statistics for Alex and Kai. Reply only as JSON with alexTraining (K shift count), alexOff (OFF count), alexMaxWork (longest consecutive working run), kaiOff, kaiMaxWork, and alexHistoryDays (number of available history days). Counts cover only the scheduled dates. Do not infer policy compliance or change the schedule.",
+  "expect_proposal": false,
+  "optimizer_completion": "request-audit",
+  "optimizer_completion_only": true,
+  "answer_json": {
+    "alexTraining": 1,
+    "alexOff": 1,
+    "alexMaxWork": 2,
+    "kaiOff": 0,
+    "kaiMaxWork": 3,
+    "alexHistoryDays": 3
+  },
+  "tool_usage": {
+    "required_calls": [
+      {
+        "name": "optimizer",
+        "arguments": {
+          "action": "start",
+          "timeout_seconds": 60
+        }
+      }
+    ],
+    "max_per_tool": {
+      "optimizer": 1
+    }
+  },
+  "tags": [
+    "optimizer-result"
+  ],
+  "note": "This testcase is mostly AI generated. Reuses the verified exported assignment, including bracketed annotations and OFF. Grade observed counts independently of the inspection method."
+}

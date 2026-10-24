@@ -88,6 +88,7 @@ interface StreamCallbacks {
   onReasoning?: (text: string) => void;
   onCompaction?: (event: Extract<SessionEvent, { type: 'compaction_start' | 'compaction_end' }>) => void;
   onTruncated?: () => void;
+  onProviderRetry?: (message: string) => void;
   onToolStart?: (activity: ToolStartActivity) => void;
   onTool?: (activity: ToolActivity) => void;
   onSteering?: (messageId: string, message: string) => void;
@@ -114,6 +115,7 @@ function dispatchPageEvent(event: SessionEvent, callbacks: StreamCallbacks): voi
     case 'run_start': callbacks.onRunStart?.(event.runId, event.trigger); break;
     case 'delta': callbacks.onDelta(event.text); break;
     case 'reasoning': callbacks.onReasoning?.(event.text); break;
+    case 'provider_retry': callbacks.onProviderRetry?.(event.message); break;
     case 'compaction_start': case 'compaction_end': callbacks.onCompaction?.(event); break;
     case 'truncated': callbacks.onTruncated?.(); break;
     case 'tool_start': callbacks.onToolStart?.(event.activity); break;
@@ -141,8 +143,10 @@ function assistantEventCallbacks(
   browserSchedule: { readonly current: string },
   applySchedule: (applied: ScheduleApplied) => string | null,
 ): Required<Pick<StreamCallbacks,
-  'onDelta' | 'onReasoning' | 'onCompaction' | 'onTruncated' | 'onToolStart' | 'onTool' | 'onScheduleChange' | 'onScheduleApplied'>> {
+  'onDelta' | 'onReasoning' | 'onCompaction' | 'onTruncated' | 'onProviderRetry' | 'onToolStart' | 'onTool' | 'onScheduleChange'
+  | 'onScheduleApplied'>> {
   return {
+    onProviderRetry: message => apply({ type: 'provider_retry', message }),
     onDelta: text => apply({ type: 'delta', text }),
     onReasoning: text => apply({ type: 'reasoning', text }),
     onCompaction: event => apply(event),
@@ -539,6 +543,8 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       onSteering: (queuedId, content) => {
         const runId = lifecycle.current('background')?.id;
         if (!runId) return;
+        queuedMessagesRef.current = queuedMessagesRef.current.filter(message => message.id !== queuedId);
+        setQueuedMessages(queuedMessagesRef.current);
         const nextId = messageId();
         setMessages(previous => {
           if (previous.some(message => message.id === queuedId)) return previous;
@@ -671,10 +677,6 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     ]);
     const recoveredAssistant = resume?.recover ? messages.find(message => message.id === activeAssistantId) : undefined;
     let activeAssistantHasOutput = Boolean(recoveredAssistant?.content || recoveredAssistant?.activity?.length);
-    let activeQuestion = resume?.recover
-      ? messages.slice(0, messages.findIndex(message => message.id === activeAssistantId))
-        .findLast(message => message.role === 'user' && message.requestId === request.id)?.content ?? question
-      : question;
     let activeQuestionRequiresAttachments = attachmentsForMessage.length > 0;
     const responseStartedAt = Date.now();
     onSendStart(clearComposer ? 'send' : 'retry');
@@ -771,7 +773,6 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
           const runId = eventRouterRef.current.foreground?.runId;
           activeAssistantId = initialAssistantId;
           activeAssistantHasOutput = false;
-          activeQuestion = question;
           const resetIds = new Set(runMessageIds);
           setMessages(previous => {
             const first = previous.findIndex(message => resetIds.has(message.id));
@@ -848,7 +849,6 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
             });
             setSteeringAssistantId(pendingAssistantId);
           }
-          activeQuestion = queuedMessage;
           activeQuestionRequiresAttachments = false;
         },
         onDownload: id => setMessages(previous => previous.map(message => message.id === activeAssistantId ? { ...message, downloadId: id } : message)),
@@ -936,11 +936,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
           activity: staleTurnMessage === null
             ? interruptRunningTools(message.activity ?? [])
             : [{ kind: 'response' as const, text: staleTurnMessage }],
-          retry: {
-            question: activeQuestion,
-            requiresAttachments: activeQuestionRequiresAttachments,
-            ...(activeQuestionRequiresAttachments ? { missingFiles: request.pendingFiles } : {}),
-          },
+          ...(activeQuestionRequiresAttachments ? { unsentFiles: request.pendingFiles ?? [] } : {}),
         };
       }));
       if (streamError instanceof AiHttpError && streamError.status === 404) {
@@ -980,7 +976,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       ...(message.request?.id === pending.id ? { request: { ...message.request, active: false } } : {}),
       ...(message.id === pending.assistantId ? {
         status: 'failed' as const, responseCompletedAt: Date.now(), request: { ...pending, active: false },
-        retry: { question: pending.question, requiresAttachments: true, missingFiles: pending.pendingFiles },
+        unsentFiles: pending.pendingFiles ?? [],
       } : {}),
     })));
   };
@@ -1026,14 +1022,6 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       return;
     }
     await sendRequest(question, attachments, true);
-  };
-
-  const retryMessage = (failedId: string, question: string) => {
-    if (!question || isStreaming || (authRequired && authToken === null)) return;
-    const failedIndex = messages.findIndex(message => message.id === failedId);
-    const original = messages.slice(0, failedIndex).reverse().find(message => message.role === 'user' && message.source === undefined);
-    if (!original) return;
-    void sendRequest(question, [], false, original.createdAt, { id: messageId(), questionId: original.id, assistantId: failedId });
   };
 
   const stop = () => {
@@ -1149,7 +1137,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     sessionNotice, trimmedHistoryCount, isStreaming, isStopping, isReconnecting,
     activeOptimization, queuedMessages, steeringAssistantId,
     setSessionRetentionSeconds, restoreConversation, captureSession,
-    newConversation, submitMessage, retryMessage, stop, removeUploadedFile,
+    newConversation, submitMessage, stop, removeUploadedFile,
     removeGeneratedFiles,
     sessionEndpoint: sessionEndpoint ?? aiEndpoint,
   };

@@ -1,6 +1,6 @@
 {
   "_license": "SPDX-License-Identifier: AGPL-3.0-or-later; SPDX-FileCopyrightText: 2026 Johnson Sun",
-  "_comment": "This fixture is mostly AI generated. Expected hashes were captured from the TypeScript exporters at af57b49f. All 52 Python documents matched those exact reference bytes before capture.",
+  "_comment": "This fixture is mostly AI generated. Expected hashes were captured from the TypeScript exporters at af57b49f. All 52 Python documents matched those exact reference bytes before capture. Later Python-only changes updated the HTML hashes. The AI input and app notice labels, tool sections, and notice activity came from the last TypeScript exporter, and the Python HTML changed exactly as its output did.",
   "cases": [
     {
       "id": "paragraphs",
@@ -18,7 +18,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "b8c405f272cf142b3d038b27f18987b41c79386b0839f9bd52878b5f16e63baf",
+        "html": "8847284a7b1b1214bacdc73c343332d6fb7134af213f69bb9be541e13df729a9",
         "markdown": "73a18f0ef989e918bea82bcd66270eb1716668cf0784ff7a598688dc2bd95b83"
       }
     },
@@ -38,7 +38,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "784c64f479f9c28fc3ad5f165bed5d75089e1d1487d160679659604a16f5b6f4",
+        "html": "54391ca760178c0e247d0462a0b810eb7dc8bf3f8640abd046b61678984ec85f",
         "markdown": "a7209cad24c44307d470b8a739b6e636d16258bba0759d04366b649efc6eac2c"
       }
     },
@@ -58,7 +58,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "47ef72bafb4352b9260620c469d80d43a0643d33e12e00d20b62046a26a1595d",
+        "html": "ea6cd12b74211a0f19075c2d047636f51051b4b3ebe55608dee76a89b336b335",
         "markdown": "cce58ebebba8075992a37ac00c9719831a93939c98a74e0d560acb45d3f906fa"
       }
     },
@@ -78,7 +78,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "ef8d154c03c4687aaeec1b42f8e17d9354ee05be10fb153d51431b387e8ee197",
+        "html": "7bcae38735d19c93b1472a055136fb2e86fb14511921ed116e07169108810a63",
         "markdown": "fd078763609566c070fd66cbf4d3e01f22d8349f5519ef6c15aa82906bb4afc2"
       }
     },
@@ -98,7 +98,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "947341251980b9c8e7526addeea5493a48ee80ddc8fee4697b9e6e8bf654beb8",
+        "html": "9bc5deafd847a1804ce9120788aab0267228fad93f957f0a01981b48f9fbadcb",
         "markdown": "54339e8c97df89f3a96e41bc937e17ad1b1ef8f885e6b65c13f515acc4f62c83"
       }
     },
@@ -118,7 +118,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "b23d705d88b08adb545e0f9837d6ad6a09a46dac5ee1bc9a3916712bdee1d58f",
+        "html": "fbe146a23f5b56b4ed347d2ffb47b0818029dc4184941f82f5bc930893a32a0c",
         "markdown": "8f6fbeed76384e8e114de45a5966a51166181aebd4ac550ff7674883e28cfadf"
       }
     },
@@ -138,7 +138,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "a7d369a5fcfa90aae1c24e933dde8c1b6940168f2d440b2434b5a4f4d71e6866",
+        "html": "fb776e71baa04047621c3a47948cc661c161400a3a459e3a6348052fe3265808",
         "markdown": "c6d8d30c0849c3162c9e23562fb0db1ff9700a2ecc496df42aadda6f2d2caa0f"
       }
     },
@@ -158,7 +158,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "cfcb010a81236ee26f6e2edf4f03e566e227a7d987905475b8fa8e1bf5ccd10b",
+        "html": "c116016bbba92cb18b6609fa122a8e5c4293a7ff60b886508c85748abc7f671d",
         "markdown": "c602c89d09f5d6e6bde227b14a4b7a84f173d59eb346d8ac6bcc986c50fbe1db"
       }
     },
@@ -178,7 +178,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "9d02f531cdf6e8bded1e9ed96d68a7cc07c6952208014314b15e4e7f3e765008",
+        "html": "4eddeb315a587354784301146b0a6045245c55fb1163cdb7941e78e6924fd9bd",
         "markdown": "600ff31c28b5e97cff0f57dd768a717a83711f5903cc600c1877467f9a1c5097"
       }
     },
@@ -198,7 +198,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "a28970550719e9ff03ee1b1dc3c532d567e8f6c8f21aabdcf33bab07126a8abb",
+        "html": "afb54b64b51d4b3b21ed537858e6f2077b4f95d58fb93c39756c96bf200f88a3",
         "markdown": "d7c4f47d94193774e4691f9ce26f7ce5d5c847e818d2f326b787eceeb6f9d5da"
       }
     },
@@ -218,7 +218,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "1f2e78ef04f78aa41547d81cedb75372dd9d8a3027d9c8ac008114bb1392ab42",
+        "html": "b11edcb835a2c80731af872aff76491c99bd6e3f059b5b46a485da5960d67aff",
         "markdown": "dc700460a9b5f918bf140e0527e511e93a1d019ec6840c5a5fd991bd0c1e1ffd"
       }
     },
@@ -238,7 +238,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "7b9a592266da86b705caf3ff43d25a3c933af2e2c2623ce6695e8a44b11bf723",
+        "html": "040f1fe82cc549f8404c6af36ee98d30fe0dc9921753356fe189ebd88c8488be",
         "markdown": "6114e9e9aadf9819298673e4ae788b71e33e2a1705b6a8dc00aaae9133ae0da4"
       }
     },
@@ -258,7 +258,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "de72b3386b24594382bf2a5c7cb7e3c0834621cf4d2a4695899dcb35c7acc868",
+        "html": "ab70e2480dca342aef95d49e18fe6d257e1f4beead922cda3ce15c0e953c2f1b",
         "markdown": "c6caedf1fd6a5f657b26cf7f690d68bd1ded907b7c0b0ca8a589efcbf6c8e8f3"
       }
     },
@@ -282,7 +282,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "097bdfe2d3debe98343a22ef7cdc1402d100ce07a0547127379795d4cf16e9f1",
+        "html": "16f4a248426227da139a256ed41b6eb5e43b655fd68240f0c97f7afb0faacdf2",
         "markdown": "5b241806ba40a7910d7216fa72532d64da2fbac6c8a874a9f282468bf7fdf296"
       }
     },
@@ -306,7 +306,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "87d164795358870f28b99b3cb13a8802a26a4e466c1a0c9f29d965a574f6476b",
+        "html": "6a213c90f5bfcb9f5a37a71607e074c53329b6f15bea97c4926f0e9e38f4027b",
         "markdown": "10755d6ea91598dce83504bfd8c4c70ef40cd6d9e0fe8c43f3863e7ccf7ecfba"
       }
     },
@@ -331,7 +331,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "387105545190ee58e75ccd54c55eec8cc8a7770bb1feab390f61f7c2e321eab5",
+        "html": "070faded52e4b24de5d4716463e97ee2bdc275598deef0cfdc348b092ec8a027",
         "markdown": "9700fee1ed58e9358fd7b74f0d4a9e90f98ec5d9550bb2a36798b7e2228f2e49"
       }
     },
@@ -356,7 +356,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "415ecd56510ec923984c3f1f564fb7301c8e041c9736ef0c4fb92fe25acd6133",
+        "html": "c28471092e75ed0d85880f7417389e3733dcd2debc06326954d3f2c1a00a51d7",
         "markdown": "a79843233e7eeb7d56b4784027f4ed78296ab7d3665cf5aa296b88d645b59786"
       }
     },
@@ -381,7 +381,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "d1519ecac65f73e37ea6580d55e516e185e8d27e216dcd80ab51b3146dc7105d",
+        "html": "5e71361680d2a8ea888103ca423a95ad3263d52668bc5fd6fcf5cc5a3fce9455",
         "markdown": "d3565031e72f0e9cf9ef6a15d2667dfbbc50b37695f4f65417c465ca5cda4ad5"
       }
     },
@@ -406,7 +406,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "706533d200c75f20b9c0ce8d34b6996ce5dea464830516c7e45a59115278a687",
+        "html": "5a6fdf5c29c72019ab1d9eb79000336d9ce49e7f1ca497153aa6d6aa4534c16e",
         "markdown": "924feed4e078d448cd05c76a6dec9e6110b8819a24a9789d5724e371867d8e70"
       }
     },
@@ -431,7 +431,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "ab19ec1c8218bd5273af782d0ceefaf8895d14125db6d61ec59ff7b71e4c92ae",
+        "html": "495158d2291d79444c578b36eb538bdce2ba76900c80f71d6ee05062160c4d37",
         "markdown": "9851c6bb1f629ad03a3240b586f7af4bb15f4680587860d87906405fa2f1eda9"
       }
     },
@@ -456,7 +456,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "b76d9708a5645c24b24485a2cc5ec1b92c5eedbace8952843c00bea453f25140",
+        "html": "f9766132d505d246e88d67fcc78c8f915ffcf0610554e66c7d58d4b40450b2be",
         "markdown": "f69147df24714eea592884b3a889b462f6ba25814b26bf584509cb41015bb060"
       }
     },
@@ -552,7 +552,7 @@
         }
       ],
       "sha256": {
-        "html": "bc95bbe594f4ba173db3d88d9b1d9bfa129366ad0eeb103571d3f923c966bb4e",
+        "html": "a094086aa1f41f566a0742176362891d8e1fffe0703a7d62df77974c80e400a2",
         "markdown": "2b6b71ac1d23cac18e9c666d433c9ac1dfcdeb25c6e9dfdb4e79b2ae240811a1"
       }
     },
@@ -560,7 +560,7 @@
       "id": "saved-rich",
       "snapshot": "saved-rich",
       "sha256": {
-        "html": "1bab67b2c99bbea3249d8e11962ebcfe61d7d44eac86a07adfcd5ee958afd5d1",
+        "html": "79c14e3fde3601c9edf7e5fddbf090704caa170441d33709cb3fec15483ec7d7",
         "markdown": "b9d2c505a9acfb97ad3c62b94ae6ab161c1e282f851e6893fd6b9481666f7ee2"
       }
     },
@@ -568,7 +568,7 @@
       "id": "early-steering",
       "snapshot": "early-steering",
       "sha256": {
-        "html": "79a3ab5515653a6ef6236e6995b9852a6acfa933e971e5be9c227788bb0a1214",
+        "html": "a8bbad5b77105a0c621e533a99f9150ec0f175cb1740b2b01190bd3d5bdc7e7a",
         "markdown": "3f1af6becb94e81a3f3692149bc4332917d61e3883b0348abf2c69ac7163f4b3"
       }
     },
@@ -576,7 +576,7 @@
       "id": "missing-terminal",
       "snapshot": "missing-terminal",
       "sha256": {
-        "html": "4408919a3617cc4a3420f53a2d71f6cbd0500f615a942d4d4065ee76e8b05470",
+        "html": "a939d20bbf0eb7995b900377dfa09aa2e9152461bb22fc8c350a69dd03e65998",
         "markdown": "1cd63155c9fa91fd42996b58b8c1bb3727f15dac29051cd928148c319760b531"
       }
     },
@@ -584,8 +584,47 @@
       "id": "changed-system",
       "snapshot": "changed-system",
       "sha256": {
-        "html": "802b32f16325f017b0f875530f6f64ced3e810453a61da5c7fec9d85f2e61a70",
+        "html": "e3fd9d282e2b83042b0d8badc7d1111c4e7e7b2854ae8c2a839be8159127c6d8",
         "markdown": "c8e9007f4c51d1f7e62e8521439308f9f74e3acd160c5c638367810cde2f7b08"
+      }
+    },
+    {
+      "id": "notice-activity",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Fix the roster",
+          "createdAt": 1700000000000
+        },
+        {
+          "role": "assistant",
+          "content": "Partial answer",
+          "status": "failed",
+          "failureReason": "The AI provider is unavailable.",
+          "activity": [
+            {
+              "kind": "notice",
+              "text": "The AI provider is unavailable. Retrying in 2 s (attempt 2 of 5)."
+            },
+            {
+              "kind": "response",
+              "text": "Partial answer"
+            }
+          ],
+          "responseStartedAt": 1700000001000,
+          "responseCompletedAt": 1700000005000
+        }
+      ],
+      "metadata": {
+        "endpoint": "https://ai.example.test",
+        "exportedAt": 1700000000123,
+        "frontendVersion": "v1.2.3",
+        "backendVersion": "v2.3.4",
+        "timeZone": "UTC"
+      },
+      "sha256": {
+        "html": "06cfe6f97b3d457ae8d64783d1ac780a6d3f4fe34016fe1f6732785e62792d01",
+        "markdown": "14c2238a7c80ebd826b5d84f454e0e63ddf466b565fbe2ec0ba35ad09c665b16"
       }
     }
   ]
