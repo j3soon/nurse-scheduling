@@ -379,29 +379,31 @@
       "weight-shorthand-exact-selector"
     ],
     "hypothesis": "Clarifies weight-versus-selector ambiguity before edits or proposals and applies explicitly named fields directly.",
-    "sha256": "73f7515c812d4afa1146add66cb4bb64be70689e2f408a60af4c8245c95c9cf8",
+    "sha256": "f989c34dea94a88c52d3e30fb3cfe00d2565d94c1d1fe208f488e0567bd96e36",
     "evidence": [
       {
         "case": "weight-shorthand-clarify-selector",
-        "input_sha256": "16ac170d8d972b1514b14b4f0f681d1c6eb7732a9b82801b4dadb48e882db4f2",
+        "input_sha256": "abdddb9459f65e3f5b72542a6b582da75518bd4678a2e2c92fb476212d85d8d9",
         "before": "0/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
+        "comparison_passed": true,
         "controls": [
           {
-            "case": "weight-shorthand-exact-weight",
-            "input_sha256": "2f3c0160adc7c92d10d6ec37e305cb5046624024c3c536c82f9a090f0d039057",
+            "case": "weight-shorthand-exact-selector",
+            "input_sha256": "10f0d5991b6e0ef9718065428ad94584f0f586865b43b33284f5c0c486729756",
             "before": "3/3",
             "after": "3/3"
           },
           {
-            "case": "weight-shorthand-exact-selector",
-            "input_sha256": "e9e652f703d154390e730db64f774c25928f7928e996774d0df3d68c7b0b2e81",
-            "before": "3/3",
+            "case": "weight-shorthand-exact-weight",
+            "input_sha256": "214c8c3b65faed0a90c3f0ede9c605aceb34c3237ac06680d1ca6bd72301eb25",
+            "before": "1/3",
             "after": "3/3"
           }
-        ]
+        ],
+        "note": "Asks before editing the schedule instead of before preparing a proposal."
       }
     ]
   },
@@ -1027,11 +1029,11 @@
       "optimization-loop-authorized-retry"
     ],
     "hypothesis": "Proposes or starts optimization and inspection for schedule outcomes, offers the loop after edits, and continues once authorized.",
-    "sha256": "fab20e40ade90d211a71b56c3de318289eb8c55912f790da4e0e6d73e1d4604d",
+    "sha256": "90ec9f03e78eded9b7c6bde234570a1d2af7f3ea9edbdbfdd155d40381de63e9",
     "evidence": [
       {
         "case": "optimization-loop-offer-after-edit",
-        "input_sha256": "d6e64de18de4ae3a25dc93cdea9c07f31019c119237b43ac5ee7d4bbb129e05c",
+        "input_sha256": "d65e0f0370adc42cec1d2a93ad46fd5848bff01cbe22cae504e2f85d9887230f",
         "before": "0/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
@@ -1040,48 +1042,48 @@
         "controls": [
           {
             "case": "new-schedule-policy-declined",
-            "input_sha256": "5777351306c1d95ecb33f2f2dbdbb41bba8e942b78e9d42b8cf32665c3b557ed",
+            "input_sha256": "1c80ad006bb7d98953f8d0dbb4f72a9dcaf6f0901157bb94837a918b20340f75",
             "before": "3/3",
             "after": "3/3"
           },
           {
             "case": "optimization-loop-authorized-retry",
-            "input_sha256": "f11454d64554d89961e5cb870596a63246277c1f88264defe74a0c32068b4755",
+            "input_sha256": "b4477054f49e13bd73ba37e34b3bc596c0df9082fc4dba9cff998e123f6a4659",
             "before": "3/3",
             "after": "3/3"
           },
           {
             "case": "optimization-loop-offer-accepted",
-            "input_sha256": "2bf7ec43d96105c45f2c3b624a69fa3e348588a1d2b779d801f9e0503e1f22e9",
+            "input_sha256": "dede43d322fdf4b044309a450edd9fd41a0206c9964ed08344a83eecb30cd885",
             "before": "0/3",
             "after": "3/3"
           },
           {
             "case": "optimization-loop-offer-declined",
-            "input_sha256": "eed79b72d2068362616a545cd5d68af8af56f7a632ad2a943e4d41fc0748cec6",
+            "input_sha256": "1af84f8fddccc52c48b1b72d0b93f5be5b4b6401ea51e5b064ba3cd7941367d1",
             "before": "0/3",
             "after": "3/3"
           },
           {
             "case": "optimization-loop-outcome-after-edit",
-            "input_sha256": "01f8f71402d0ec2672d6a7822c9e26741e8b3e9c4ea89693bb72f1bcab421e65",
-            "before": "0/3",
+            "input_sha256": "63dc71a507c930d963588391238aeba13367f7a484539baeb114022691c88353",
+            "before": "2/3",
             "after": "3/3"
           },
           {
             "case": "optimization-loop-outcome-holdout",
-            "input_sha256": "9b799cb7e9e543e2f107c2cb4ce21c0b223f5f32376ca5bacdd4496d331d3532",
+            "input_sha256": "29645a231952da0d52b9492f21f44b5fbcb6f1f4dc4daf8c91175452443cf9db",
             "before": "3/3",
             "after": "3/3"
           },
           {
             "case": "result-policy-misses",
-            "input_sha256": "734b751b7e59c73686474952fd5912b70a6cc4855de76765bc088363fdd7c1ed",
+            "input_sha256": "340c9a6cd2e4dfdcf63f62c2821fc3ade39208a4012d1f8c046be1156fbc2a57",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Adjacent prefixes after the XLSX summary, comment and roster statistics inspector changes, with live provider and E2B, three repetitions and four jobs. Before answers make no correct optimization offer in the offer-after-edit, offer-accepted, offer-declined and outcome-after-edit cases (0/3 each). After answers pass all eight cases 3/3. The holdout, declined-policy, policy-miss and authorized-retry controls pass 3/3 in both versions. No token saving is claimed."
+        "note": "Offers to optimize the changed schedule instead of the proposal."
       }
     ]
   },

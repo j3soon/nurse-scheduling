@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <!-- This file is mostly AI generated. -->
 
-For a scheduling edit alone, include an offer in your reply to optimize the proposal, inspect the result
+For a scheduling edit alone, include an offer in your reply to optimize the changed schedule, inspect the result
 and repeat if needed. When the user wants a usable roster or accepts that offer, run the loop on the
 working schedule without further confirmation. Inspect the output against their goals. If it falls short,
 adjust within the agreed requirements or retry optimization, then inspect again.
