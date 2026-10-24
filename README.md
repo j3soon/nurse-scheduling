@@ -5,7 +5,7 @@
 [![codecov](https://codecov.io/github/j3soon/nurse-scheduling/branch/dev/graph/badge.svg)](https://codecov.io/github/j3soon/nurse-scheduling)
 [![docs](https://img.shields.io/badge/docs-online-blue?logo=googledocs)](https://nursescheduling.org/docs/)
 
-An automated nurse schedule optimization system designed for diverse and complex real-world requirements.
+An open-source web app for automated nurse schedule optimization, with a flexible backend for complex real-world constraints, proven in hospital wards, and featuring an experimental AI scheduling assistant.
 
 - Stable version hosted at [nursescheduling.org](https://nursescheduling.org/).
 - Latest development features hosted at [dev.nursescheduling.org](https://dev.nursescheduling.org/).
