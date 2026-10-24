@@ -26,6 +26,7 @@ Options:
   --executable-path PATH   Browser executable outside Playwright's cache
   --storage-state PATH     Playwright state with cookies and local storage
   --allow-host HOST        Repeat to authorize an exact remote hostname
+  --block-other-hosts      Block other requests instead of failing the capture
   --viewport WIDTHxHEIGHT  Default: 1440x900
   --device-scale NUMBER    Default: 1
   --color-scheme light|dark
@@ -47,6 +48,7 @@ function parseArguments(argv) {
     executablePath: undefined,
     storageState: undefined,
     allowHosts: [],
+    blockOtherHosts: false,
     viewport: '1440x900',
     deviceScale: 1,
     colorScheme: 'light',
@@ -77,8 +79,9 @@ function parseArguments(argv) {
       usage();
       process.exit(0);
     }
-    if (argument === '--force' || argument === '--full-page') {
-      options[argument === '--force' ? 'force' : 'fullPage'] = true;
+    const flags = { '--force': 'force', '--full-page': 'fullPage', '--block-other-hosts': 'blockOtherHosts' };
+    if (Object.hasOwn(flags, argument)) {
+      options[flags[argument]] = true;
       continue;
     }
     if (argument === '--expect-text' || argument === '--hide' || argument === '--mask' || argument === '--allow-host') {
@@ -191,6 +194,7 @@ let finalUrl;
 let title;
 let captureError;
 let context;
+const blockedRequests = new Set();
 try {
   context = await browser.newContext({
     viewport: options.viewport,
@@ -205,6 +209,10 @@ try {
     rejectPolicyViolation = reject;
   });
   const recordPolicyViolation = error => {
+    if (options.blockOtherHosts) {
+      blockedRequests.add(redactUrlCredentials(error instanceof Error ? error.message : String(error)));
+      return;
+    }
     if (policyViolated) return;
     policyViolated = true;
     rejectPolicyViolation(error);
@@ -311,4 +319,5 @@ console.log(JSON.stringify({
   capture: options.selector ? 'element' : options.fullPage ? 'full-page' : 'viewport',
   assertions: options.expectTexts.length,
   storageState: options.storageState ? resolve(options.storageState) : null,
+  blocked: [...blockedRequests],
 }));

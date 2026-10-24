@@ -72,7 +72,10 @@ builds the current checkout, launches its own server on an OS-selected port,
 and shuts it down afterwards. Existing local servers are never reused.
 The full suite also starts a development server for the allowed-origin check.
 If an existing server or development lock blocks it, test the current changes
-in a separate checkout instead of stopping a user's server.
+in a separate checkout instead of stopping a user's server. For a temporary
+`git worktree`, copy `web-frontend/node_modules` as hard links with `cp -al`.
+Turbopack fails to build when `node_modules` is a symbolic link outside the
+project root.
 
 `next dev` can append a managed Next.js agent-rules block to this file. Browser
 tests that launch a dev server can also cause this edit. After those checks,
