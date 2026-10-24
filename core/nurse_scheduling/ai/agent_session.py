@@ -22,7 +22,6 @@
 import asyncio
 import hashlib
 import logging
-import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import aclosing
 from dataclasses import asdict, dataclass, field, replace
@@ -294,8 +293,6 @@ class AgentSession:
     # Bytes of every file version that recovery storage keeps for this session, including removed files.
     archive_bytes: int = 0
     analysis: AgentAnalysis | None = None
-    # Last owner access, which orders eviction. A restored session keeps its stored expiry.
-    last_used: float = field(default_factory=time.monotonic)
     latest_message: AcceptedMessage | None = None
     frontend_version: str | None = None
     frontend_timezone: str = "UTC"

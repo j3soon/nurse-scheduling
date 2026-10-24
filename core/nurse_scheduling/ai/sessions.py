@@ -23,6 +23,7 @@ import hashlib
 import json
 import math
 import time
+from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from typing import Any
@@ -104,7 +105,8 @@ class SessionStore:
     def __init__(self, settings: AiSettings, *, event_stream: SessionEventStream | None = None) -> None:
         self._event_stream = event_stream
         self._settings = settings
-        self._sessions: dict[str, AgentSession] = {}
+        # Owner access moves a session to the end, independent of clock resolution.
+        self._sessions: OrderedDict[str, AgentSession] = OrderedDict()
         self._retained_bytes = 0
         self._session_bytes: dict[str, int] = {}
         self._on_retire: Callable[[str], None] | None = None
@@ -155,7 +157,7 @@ class SessionStore:
             return
         idle = [session for session in self._sessions.values() if not session.active and self._evictable(session.id)]
         if idle:
-            self._retire(min(idle, key=lambda session: session.last_used).id)
+            self._retire(idle[0].id)
 
     @property
     def retained_bytes(self) -> int:
@@ -641,7 +643,7 @@ class SessionStore:
         session = self._sessions.get(session_id)
         if session is None or owner_token is None or session.owner_token != owner_token:
             raise HTTPException(status_code=404, detail="Chat session not found.")
-        session.last_used = time.monotonic()
+        self._sessions.move_to_end(session_id)
         return session
 
     def _retire(self, session_id: str) -> None:

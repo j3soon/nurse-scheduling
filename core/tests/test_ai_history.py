@@ -30,6 +30,7 @@ import time
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 from zipfile import ZipFile
 
@@ -42,6 +43,7 @@ from psycopg.conninfo import make_conninfo
 from nurse_scheduling.ai import app as app_module
 from nurse_scheduling.ai import history as history_module
 from nurse_scheduling.ai import recovery as recovery_module
+from nurse_scheduling.ai import sessions as sessions_module
 from nurse_scheduling.ai.agent_session import BACKGROUND_RECOVERY_ERROR, RECOVERY_SAVE_WARNING
 from nurse_scheduling.ai.chat_export import build_saved_chat_export
 from nurse_scheduling.ai.config import AiSettings
@@ -604,7 +606,9 @@ def test_schedule_update_that_cannot_be_saved_can_be_retried(recorded_history, m
         assert client.put(path, json={"schedule_yaml": "description: newer"}).status_code == 204
 
 
-def test_full_store_evicts_the_least_recently_used_idle_session(recorded_history):
+def test_full_store_evicts_the_least_recently_used_idle_session(recorded_history, monkeypatch):
+    # Sequential requests can share one clock tick on Windows.
+    monkeypatch.setattr(sessions_module, "time", SimpleNamespace(monotonic=lambda: 100.0, time=time.time))
     app = basic.create_test_app(
         settings=basic.make_settings(history_postgres_url="test", max_sessions=2), provider=basic.FakeProvider()
     )
@@ -617,9 +621,28 @@ def test_full_store_evicts_the_least_recently_used_idle_session(recorded_history
         assert client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()}).status_code == 429
         for session_id in (first, second):
             store._sessions[session_id].snapshot = None
+        assert client.get(f"/sessions/{second}/uploads").status_code == 200
         assert client.get(f"/sessions/{first}/uploads").status_code == 200
         third = basic.create_session(client)
     assert list(store._sessions) == [first, third]
+
+
+@pytest.mark.parametrize("restored", [False, True], ids=["created", "restored"])
+def test_session_admission_counts_as_most_recent_use(restored):
+    store = SessionStore(basic.make_settings(max_sessions=2))
+    store.allow_eviction(lambda _session_id: True)
+    first = store.create("browser-owner", basic.schedule_yaml())
+    second = store.create("browser-owner", basic.schedule_yaml())
+    store.require_owned(first.id, first.owner_token)
+    if restored:
+        owner, expires_at, state = store.recovery_state(first.id)
+        third = store.restore(str(uuid4()), owner, state, expires_at, entries=(), next_entry_seq=0)
+    else:
+        third = store.create("browser-owner", basic.schedule_yaml())
+    assert store.get(second.id) is None
+
+    fourth = store.create("browser-owner", basic.schedule_yaml())
+    assert list(store._sessions) == [third.id, fourth.id]
 
 
 @pytest.mark.parametrize("operation", ["finish_run", "save_session"])

@@ -36,6 +36,11 @@ stdout and stderr under the repository-root `artifacts/` directory. Compact
 output such as `--quiet` can hide build and TypeScript diagnostics. Diagnose
 those diagnostics before rerunning the browser suite.
 
+For timing failures, check clock resolution in the runner's Python version.
+Sequential calls to a monotonic clock can return the same value. Reproduce ties
+with a frozen clock. Replace only the tested module's clock when an async test
+must keep the event loop's timers running.
+
 ## Repair
 
 Make the smallest change in the layer that owns the cause.
