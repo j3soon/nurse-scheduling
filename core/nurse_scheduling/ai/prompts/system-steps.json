@@ -694,45 +694,6 @@
     "comparison_mode": "ablation"
   },
   {
-    "id": "people-history-import",
-    "file": "steps/people-history-import.md",
-    "cases": [
-      "month-end-history-forward",
-      "month-end-history-reverse",
-      "month-end-full-history"
-    ],
-    "hypothesis": "Uses the final consecutive run for one-row shorthand CSVs and preserves every supplied day for full history arrays.",
-    "sha256": "25dbc83a8cf881add7ccdef8d181c053ab7e120051b4c53caa0a6c45fdfa03cf",
-    "evidence": [
-      {
-        "case": "month-end-full-history",
-        "input_sha256": "eb8803d170202f36813aa966c94c46cb23441a01a9b7f6ac887c1275e26535e6",
-        "before": "2/3",
-        "after": "3/3",
-        "model": "unsloth/Qwen3.8-27B-NVFP4",
-        "infrastructure_errors": 0,
-        "controls": [
-          {
-            "case": "month-end-history-forward",
-            "input_sha256": "0c2e937e0b5e76d297b594fd4dd7495ca74779b06d5bb1c1d43e411dc8d92607",
-            "before": "3/3",
-            "after": "3/3"
-          },
-          {
-            "case": "month-end-history-reverse",
-            "input_sha256": "53e030aa73c97b48da0e1863502de0f7857c56a8bb99f38f7a01f178fca87bdb",
-            "before": "3/3",
-            "after": "3/3"
-          }
-        ],
-        "note": "Full-prompt comparison of immediately previous wording with scoped wording, with the same code, helpers, cases, and attachments. Full-history arrays improve from 2/3 to 3/3. Both one-row shorthand CSV controls pass 3/3 with both wordings. Calendar order and all supplied days remain semantic. No optimizer jobs ran.",
-        "grading_note": "Regraded saved outputs after numeric comparison correction. Case and fixture fingerprints match. Pass counts and costs are unchanged.",
-        "fingerprint_note": "Expanded JSON comparator dependency coverage. Grading, model inputs and historical measurements are unchanged. Grading helpers are fingerprinted transitively, and list numbers compare by value. Model inputs, measurements, and grades of saved outputs are unchanged."
-      }
-    ],
-    "comparison_mode": "ablation"
-  },
-  {
     "id": "workbook-policy-clarification",
     "file": "steps/workbook-policy-clarification.md",
     "cases": [
