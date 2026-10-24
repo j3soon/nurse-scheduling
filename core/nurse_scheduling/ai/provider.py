@@ -380,6 +380,8 @@ class OpenAiCompatibleProvider:
         )
         if limit is None:
             return
+        if limit < 1:
+            raise ProviderContextOverflowError.for_user("The AI request leaves no room for a response.")
         parameter = "max_completion_tokens" if "max_completion_tokens" in payload else self.output_token_parameter
         payload.pop("max_tokens", None)
         payload.pop("max_completion_tokens", None)
@@ -394,6 +396,11 @@ class OpenAiCompatibleProvider:
             # for a visible answer, as Pi's clampThinkingBudgetToAnswerRoom does.
             available = limit - 1024
             if available < 1024:
+                output_limit = response_token_limit(
+                    0, context_tokens=None, output_tokens=self.output_tokens, requested_tokens=requested
+                )
+                if output_limit is not None and output_limit < 2048:
+                    raise ProviderError.for_user("The AI output token limit has no room for reasoning and an answer.")
                 raise ProviderContextOverflowError.for_user("The AI request has no room for reasoning and an answer.")
             payload["thinking"] = {**thinking, "budget_tokens": min(thinking["budget_tokens"], available)}
 

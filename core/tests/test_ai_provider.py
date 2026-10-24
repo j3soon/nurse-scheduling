@@ -599,7 +599,7 @@ def test_requests_and_streams_token_usage_when_enabled(monkeypatch: pytest.Monke
 @pytest.mark.parametrize(
     ("model_metadata", "expected"),
     [
-        ({"data": [{"id": "other-model", "max_model_len": 9999}, {"id": "test-model", "max_model_len": 4096}]}, 4096),
+        ({"data": [{"id": "other-model", "max_model_len": 9999}, {"id": "test-model", "max_model_len": 16384}]}, 16384),
         ({"data": [{"id": "test-model", "context_length": 8192}]}, 8192),
         ({"data": [{"id": "other-model", "max_model_len": 9999}]}, None),
         ({"data": [{"id": "test-model", "max_model_len": -1}]}, None),

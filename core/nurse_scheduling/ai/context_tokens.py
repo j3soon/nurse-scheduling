@@ -77,5 +77,5 @@ def response_token_limit(
     """Fit output inside model limits and leave Pi's context safety margin."""
     limits = [value for value in (output_tokens, requested_tokens) if type(value) is int and value > 0]
     if context_tokens is not None and context_tokens > 0:
-        limits.append(max(1, context_tokens - used_tokens - CONTEXT_SAFETY_TOKENS))
+        limits.append(context_tokens - used_tokens - CONTEXT_SAFETY_TOKENS)
     return min(limits) if limits else None

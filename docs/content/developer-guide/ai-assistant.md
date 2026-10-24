@@ -381,6 +381,8 @@ with a 4,096-token safety margin. Reported same-model usage informs the request
 estimate when available, including tool definitions and later messages. Numeric
 thinking budgets leave 1,024 tokens for answer text. Models without discovered
 limits retain provider defaults unless the caller supplies a cap.
+An exhausted context budget triggers overflow recovery. An output cap too small
+for reasoning and answer text reports a provider error without compacting history.
 Summary chunks leave room for the full previous summary, output, and safety margin.
 Summary requests have no tools, and their text and reasoning do not enter the answer stream.
 Their provider call records include costs and usage. An empty, truncated, oversized,

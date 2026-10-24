@@ -25,11 +25,13 @@ import json
 import httpx
 import pytest
 
-from nurse_scheduling.ai.agent_types import AgentCompaction
+from nurse_scheduling.ai.agent_loop import agent_loop
+from nurse_scheduling.ai.agent_types import AgentCompaction, AgentCompactionStart
 from nurse_scheduling.ai.compaction import COMPACTION_MANIFEST, ContextCompactor
 from nurse_scheduling.ai.context import summary_message
 from nurse_scheduling.ai.context_tokens import estimate_context_tokens
 from nurse_scheduling.ai.models import ModelCatalog, ModelSelection
+from nurse_scheduling.ai.provider import ProviderContextOverflowError, ProviderError
 from nurse_scheduling.ai.system_prompt import load_system_prompt_entries, load_system_prompt_sections
 
 from .test_ai_basic import make_settings
@@ -85,6 +87,73 @@ def test_numeric_reasoning_budget_leaves_answer_room_and_preserves_parameters(mo
     assert payload["max_tokens"] == 6000
     assert payload["thinking"] == {"type": "enabled", "budget_tokens": 4976}
     assert provider._parameters["thinking"]["budget_tokens"] == 8192
+
+
+@pytest.mark.parametrize("remaining", [0, -100])
+def test_exhausted_context_fails_before_sending_a_completion(monkeypatch, remaining):
+    requests = []
+    provider = wire_provider(monkeypatch, requests)
+    provider.context_tokens = 16000
+    bound = provider.with_output_limit(None, context_used_tokens=16000 - 4096 - remaining)
+    with pytest.raises(ProviderContextOverflowError, match="no room for a response"):
+        asyncio.run(_collect(bound.stream_events([])))
+    assert requests == []
+
+
+@pytest.mark.parametrize("limit_source", ["max_tokens", "max_completion_tokens", "model"])
+def test_small_reasoning_output_cap_does_not_start_compaction(monkeypatch, limit_source):
+    requests = []
+    provider = wire_provider(monkeypatch, requests)
+    provider.context_tokens = 32000
+    provider._context_tokens_loaded = True
+    provider._parameters = {"thinking": {"type": "enabled", "budget_tokens": 8192}}
+    if limit_source == "model":
+        provider.output_tokens = 1024
+    else:
+        provider._parameters[limit_source] = 1024
+    events = []
+
+    async def run():
+        async for event in agent_loop(
+            provider,
+            [{"role": "user", "content": "Keep nights"}, {"role": "assistant", "content": "Understood"}],
+            [],
+        ):
+            events.append(event)
+
+    with pytest.raises(ProviderError, match="output token limit") as error:
+        asyncio.run(run())
+    assert type(error.value) is ProviderError
+    assert not any(isinstance(event, AgentCompactionStart) for event in events)
+    assert requests == []
+
+
+def test_small_request_output_cap_is_not_context_overflow(monkeypatch):
+    requests = []
+    provider = wire_provider(monkeypatch, requests)
+    provider._parameters = {"thinking": {"type": "enabled", "budget_tokens": 8192}}
+    with pytest.raises(ProviderError, match="output token limit") as error:
+        asyncio.run(_collect(provider.with_output_limit(1024).stream_events([])))
+    assert type(error.value) is ProviderError
+    assert requests == []
+
+
+@pytest.mark.parametrize("remaining", [1024, 2048])
+def test_context_limited_reasoning_can_compact_or_keep_the_minimum_budget(monkeypatch, remaining):
+    requests = []
+    provider = wire_provider(monkeypatch, requests)
+    provider.context_tokens = 16000
+    provider._parameters = {"thinking": {"type": "enabled", "budget_tokens": 8192}}
+    bound = provider.with_output_limit(6000, context_used_tokens=16000 - 4096 - remaining)
+    if remaining == 1024:
+        with pytest.raises(ProviderContextOverflowError, match="reasoning and an answer"):
+            asyncio.run(_collect(bound.stream_events([])))
+        assert requests == []
+    else:
+        asyncio.run(_collect(bound.stream_events([])))
+        payload = json.loads(requests[0].content)
+        assert payload["max_tokens"] == 2048
+        assert payload["thinking"]["budget_tokens"] == 1024
 
 
 def test_summary_has_its_own_provider_output_budget(monkeypatch):
