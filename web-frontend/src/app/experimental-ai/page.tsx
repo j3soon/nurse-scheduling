@@ -1335,6 +1335,8 @@ export default function ExperimentalAiPage() {
               const input = event.currentTarget;
               const { selectionStart: start, selectionEnd: end, value, maxLength } = input;
               const pasted = markdown.slice(0, Math.max(0, maxLength - value.length + end - start));
+              // Keep converted paste in the browser's text undo history.
+              if (typeof document.execCommand === 'function' && document.execCommand('insertText', false, pasted)) return;
               setDraft(value.slice(0, start) + pasted + value.slice(end));
               requestAnimationFrame(() => input.setSelectionRange(start + pasted.length, start + pasted.length));
             }}

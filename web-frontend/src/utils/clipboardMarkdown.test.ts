@@ -37,3 +37,10 @@ it.each([
 it.each(['', '<div>Plain **Markdown**</div>', '<a href="javascript:alert(1)">label</a>', '<a href="/relative">label</a>', '<b> </b>'])('leaves ordinary paste to the browser: %s', html => {
   expect(clipboardHtmlToMarkdown(html)).toBeNull();
 });
+
+it.each([
+  '<table><tr><td><b>Person</b></td><td>Day</td></tr><tr><td>P1</td><td>2</td></tr></table>',
+  '<b>Keep this YAML:</b><pre>people:\n  - id: P1\n</pre>',
+])('uses plain text for clipboard structures that basic Markdown conversion cannot preserve: %s', html => {
+  expect(clipboardHtmlToMarkdown(html)).toBeNull();
+});

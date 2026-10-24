@@ -373,6 +373,60 @@ test('converts rich clipboard text to Markdown before sending', async ({ page, c
   expect(JSON.parse(captured.messageBody).message).toBe(markdown);
 });
 
+for (const { label, html, text } of [
+  {
+    label: 'table cells',
+    html: '<table><tr><td><b>Person</b></td><td>Day</td></tr><tr><td>P1</td><td>2</td></tr></table>',
+    text: 'Person\tDay\nP1\t2',
+  },
+  {
+    label: 'YAML indentation',
+    html: '<p><b>Keep this YAML:</b></p><pre>people:\n  - id: P1\n</pre>',
+    text: 'Keep this YAML:\npeople:\n  - id: P1\n',
+  },
+]) {
+  test(`preserves pasted source text with ${label}`, async ({ page, context }) => {
+    const captured = await mockAiBackend(page);
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    await page.goto('/experimental-ai');
+    const input = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+    await expect(input).toBeEnabled();
+    await page.evaluate(async ({ html, text }) => {
+      await navigator.clipboard.write([new ClipboardItem({
+        'text/html': new Blob([html], { type: 'text/html' }),
+        'text/plain': new Blob([text], { type: 'text/plain' }),
+      })]);
+    }, { html, text });
+    await input.press('ControlOrMeta+v');
+    await expect(input).toHaveValue(text);
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await expect(page.getByText('The image and schedule were received.')).toBeVisible();
+    expect(JSON.parse(captured.messageBody).message).toBe(text.trim());
+  });
+}
+
+test('keeps formatted paste in native text undo history', async ({ page, context }) => {
+  await mockAiBackend(page);
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.goto('/experimental-ai');
+  const input = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+  await expect(input).toBeEnabled();
+  await input.fill('Keep this sentence.');
+  await page.evaluate(async () => {
+    await navigator.clipboard.write([new ClipboardItem({
+      'text/html': new Blob(['<b>New text</b>'], { type: 'text/html' }),
+      'text/plain': new Blob(['New text'], { type: 'text/plain' }),
+    })]);
+  });
+  await input.press('ControlOrMeta+a');
+  await input.press('ControlOrMeta+v');
+  await expect(input).toHaveValue('**New text**');
+  await input.press('ControlOrMeta+z');
+  await expect(input).toHaveValue('Keep this sentence.');
+  await input.press('ControlOrMeta+Shift+z');
+  await expect(input).toHaveValue('**New text**');
+});
+
 test('asks about the current schedule and renders a streamed answer', async ({ page }) => {
   const captured = await mockAiBackend(page);
 

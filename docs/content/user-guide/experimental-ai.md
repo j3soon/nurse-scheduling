@@ -213,7 +213,8 @@ The blue development-version banner appears only in non-release builds.
    <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line. Where browser speech
    recognition is available, select the microphone to dictate the question.
    Pasting formatted text converts bold, italics, and links to Markdown in
-   the message box. Pasting plain text preserves it as written.
+   the message box. Tables and preformatted blocks use plain text to preserve
+   cell separators and indentation. Pasting plain text preserves it as written.
 6. While the assistant is working, enter another message and select **Queue**
    to steer the same turn after its next tool call. This does not cancel work
    already in progress.

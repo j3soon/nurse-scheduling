@@ -44,6 +44,10 @@ archives out of browser Blobs.
 For row reorder tests, drop inside the intended half of the target row. Its
 midpoint separates insertion before and after, so center drops are ambiguous.
 
+For clipboard transformations, test a real browser paste and native text undo.
+Preserve table cell separators and preformatted indentation. Use the clipboard's
+plain text when the converter cannot preserve that structure.
+
 Filesystem failure tests must accept the supported platforms' error codes.
 Assert the failed operation and path as well as output preservation.
 
