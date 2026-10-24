@@ -35,7 +35,7 @@ from tests.ai_eval.prompt_ladder import (
     validate_prompt_evidence,
 )
 from tests.ai_eval.receipt import build_receipt, helper_comparison, refresh_hash, uses_helper, write_receipt
-from tests.ai_eval.runner import CASES, fixture_text
+from tests.ai_eval.runner import CASES, _reference_digests, fixture_text
 
 CASE_BY_ID = {case.id: case for case in load_cases(CASES)}
 
@@ -364,14 +364,18 @@ def test_unrelated_control_gain_cannot_establish_helper_benefit(tmp_path):
 
 
 @pytest.mark.parametrize("change", ["none", "no-flag", "stale-helper", "incomplete-use"])
-def test_prompt_receipt_can_require_helper_execution_and_flags(tmp_path, change):
+@pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
+def test_prompt_receipt_can_require_helper_execution_and_flags(tmp_path, monkeypatch, change, newline):
     from nurse_scheduling.ai.workspace import REFERENCE_ATTACHMENT_TOOLS
 
     number = next(i for i, step in enumerate(load_prompt_steps(), 1) if len(step.cases) > 1)
     step = _report(tmp_path, number)
     helper = "inspect_optimizer_result.py"
     key = f"/reference/tools/{helper}"
-    digest = hashlib.sha256(REFERENCE_ATTACHMENT_TOOLS[key].read_bytes()).hexdigest()
+    source = tmp_path / helper
+    source.write_bytes(REFERENCE_ATTACHMENT_TOOLS[key].read_text(encoding="utf-8").replace("\n", newline).encode())
+    monkeypatch.setitem(REFERENCE_ATTACHMENT_TOOLS, key, source)
+    digest = _reference_digests()[f"tools/{helper}"]
     for arm in ("before", "after"):
         directory = tmp_path / arm
         metadata = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))

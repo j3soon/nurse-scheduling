@@ -168,10 +168,12 @@ def test_grading_fingerprints_cover_called_helpers(monkeypatch):
 def test_every_shipped_prompt_clause_has_current_repeated_benefit_evidence(tmp_path, monkeypatch, newline):
     from nurse_scheduling.ai import workspace
 
+    digests = _reference_digests()
     for destination, source in workspace.REFERENCE_ATTACHMENT_TOOLS.items():
         helper = tmp_path / source.name
         helper.write_bytes(source.read_text(encoding="utf-8").replace("\n", newline).encode())
         monkeypatch.setitem(workspace.REFERENCE_ATTACHMENT_TOOLS, destination, helper)
+    assert _reference_digests() == digests
     validate_prompt_evidence(load_prompt_steps(), CASE_BY_ID, FIXTURE_DIGESTS)
 
 
@@ -181,9 +183,12 @@ def test_prompt_evidence_rejects_changed_helper_source(tmp_path, monkeypatch):
     step = next(step for step in load_prompt_steps() if step.id == "taiwan-holiday-renewal")
     name = step.evidence[0]["helper_usage"]["helper"]
     destination = f"/reference/tools/{name}"
+    reference = f"tools/{name}"
+    digest = _reference_digests()[reference]
     helper = tmp_path / name
     helper.write_bytes(workspace.REFERENCE_ATTACHMENT_TOOLS[destination].read_bytes() + b"\n# changed\n")
     monkeypatch.setitem(workspace.REFERENCE_ATTACHMENT_TOOLS, destination, helper)
+    assert _reference_digests()[reference] != digest
     with pytest.raises(ValueError, match="stale helper inputs"):
         validate_prompt_evidence((step,), CASE_BY_ID, FIXTURE_DIGESTS)
 

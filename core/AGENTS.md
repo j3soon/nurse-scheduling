@@ -648,7 +648,8 @@ from the trust-based local harness.
   tests, so encoding regressions fail before a push.
 - Write hash-bound fixture inputs as exact encoded bytes to avoid platform
   newline translation. Keep optimizer source hashes tied to exact bytes.
-  Hash helper evidence as UTF-8 text with normalized line endings. When changing
+  Hash helper evidence as UTF-8 text with normalized line endings. Check report
+  creation, receipt creation, and receipt validation together. When changing
   text hashes or their fixtures, cover LF and CRLF inputs and check that changed
   content is rejected. Fix ZIP creator metadata as well as timestamps when
   generated archive bytes must match across platforms.

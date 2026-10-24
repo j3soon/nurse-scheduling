@@ -1781,7 +1781,9 @@ def _reference_digests() -> dict[str, str]:
     for relative_path, reference in load_user_guide_references().items():
         digests[f"user-guide/{relative_path}"] = hashlib.sha256(reference.encode()).hexdigest()
     for destination, source in REFERENCE_ATTACHMENT_TOOLS.items():
-        digests[destination.removeprefix("/reference/")] = hashlib.sha256(source.read_bytes()).hexdigest()
+        digests[destination.removeprefix("/reference/")] = hashlib.sha256(
+            source.read_text(encoding="utf-8").encode()
+        ).hexdigest()
     digests["tools/README.md"] = hashlib.sha256(inspection_helper_catalog().encode()).hexdigest()
     import inspect
 

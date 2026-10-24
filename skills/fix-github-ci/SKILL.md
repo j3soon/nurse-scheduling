@@ -49,7 +49,8 @@ Make the smallest change in the layer that owns the cause.
 
 Choose whether each hash identifies normalized text or exact bytes. For text
 evidence, normalize line endings consistently when creating and checking its
-hash. For fixtures bound to exact bytes, write `text.encode("utf-8")` with
+hash. Trace its creation and validation, including test metadata that supplies
+the hash. For fixtures bound to exact bytes, write `text.encode("utf-8")` with
 `Path.write_bytes()`. Preserve source checks whose contract requires exact bytes.
 
 Avoid platform skips, weakened assertions, arbitrary delays, and blanket retries
@@ -65,4 +66,6 @@ results, and any remaining runner-specific uncertainty.
 
 For newline-related fixes, cover LF and CRLF and check that a real content
 change still fails the hash check. If Windows is unavailable, simulate checkout
-line endings and default text-write translation separately.
+line endings and default text-write translation separately. Run the affected
+suites under the simulation to cover other code and fixtures that create or
+validate the same hash.
