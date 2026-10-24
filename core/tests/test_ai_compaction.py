@@ -459,7 +459,7 @@ def test_session_api_checkpoints_compaction_and_accounts_for_summary_calls():
         end = events[end_index][1]
         assert end["success"] and not end["aborted"]
         latest_context = [data for kind, data in events if kind == "context_usage"][-1]
-        assert latest_context["used_tokens"] == end["estimated_tokens_after"]
+        assert latest_context["used_tokens"] > end["estimated_tokens_after"]
         assert latest_context["used_tokens"] < end["tokens_before"]
         assert "x" * 1000 not in str(session.history)
 

@@ -26,9 +26,11 @@ from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import aclosing, asynccontextmanager
 from dataclasses import asdict
 from datetime import datetime
+from math import ceil
 
 from .agent_types import (
     AgentCompaction,
+    AgentContextUsage,
     AgentEvent,
     AgentMessageEnd,
     AgentReasoning,
@@ -45,7 +47,7 @@ from .agent_types import (
     ToolExecutor,
 )
 from .compaction import ContextCompactor
-from .context import compatible_provider_messages, prepare_provider_request
+from .context import compatible_provider_messages, history_chars, prepare_provider_request
 from .provider import (
     ChatMessage,
     ProviderCall,
@@ -135,12 +137,15 @@ async def agent_loop(
         usage = None
         request = current_request()
         definitions = [] if final_answer_only else [tool.definition for tool in tools]
-        bind_limit = getattr(provider, "with_output_limit", None)
-        request_provider = (
-            bind_limit(None, context_used_tokens=compactor.tokens(request, definitions))
-            if bind_limit is not None
-            else provider
+        request_chars = history_chars(
+            [message for message in request if message["role"] != "system" and not message.get("_current_status")]
         )
+        request_tokens = compactor.tokens(request, definitions)
+        response_chars = 0
+        reported_chars = 0
+        yield AgentContextUsage(min(history_limit, request_chars), request_tokens)
+        bind_limit = getattr(provider, "with_output_limit", None)
+        request_provider = bind_limit(None, context_used_tokens=request_tokens) if bind_limit is not None else provider
         provider_events = request_provider.stream_events(
             compatible_provider_messages(request, getattr(provider, "identity", None)),
             definitions,
@@ -148,17 +153,25 @@ async def agent_loop(
         try:
             async with aclosing(provider_events):
                 async for event in provider_events:
-                    if isinstance(event, TextDelta):
-                        answer.append(event.text)
-                        yield AgentText(event.text)
-                    elif isinstance(event, ReasoningDelta):
-                        reasoning.append(event.text)
-                        yield AgentReasoning(event.text)
+                    if isinstance(event, TextDelta | ReasoningDelta):
+                        response_chars += len(event.text)
+                        if isinstance(event, TextDelta):
+                            answer.append(event.text)
+                            yield AgentText(event.text)
+                        else:
+                            reasoning.append(event.text)
+                            yield AgentReasoning(event.text)
+                        yield AgentContextUsage(
+                            min(history_limit, request_chars + response_chars),
+                            request_tokens + ceil((response_chars - reported_chars) / 4),
+                        )
                     elif isinstance(event, ReasoningReplay):
                         replay = event
                     elif isinstance(event, (TokenUsage, ProviderCall)):
                         if isinstance(event, TokenUsage):
                             usage = asdict(event)
+                            request_tokens = event.prompt_tokens + event.completion_tokens
+                            reported_chars = response_chars
                         yield event
                     elif isinstance(event, ToolCallRequest):
                         calls = event.calls

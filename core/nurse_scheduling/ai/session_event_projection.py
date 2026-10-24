@@ -27,6 +27,7 @@ from typing import Literal
 from .agent_types import (
     AgentCompactionEnd,
     AgentCompactionStart,
+    AgentContextUsage,
     AgentEvent,
     AgentMessageEnd,
     AgentProposal,
@@ -79,6 +80,9 @@ class RunOutput:
             self.pending_text.clear()
             self.pending_reasoning.clear()
             return {"type": "truncated"} if event.message.stop_reason == "length" else None
+        if isinstance(event, AgentContextUsage):
+            self.context_estimate = event.used_tokens
+            return None
         if isinstance(event, AgentCompactionStart):
             self.compaction = event
             return {"type": "compaction_start", "reason": event.reason, "tokens_before": event.tokens_before}
@@ -138,6 +142,7 @@ class RunEvents:
         self.run_id = run_id
         self._publish = publish
         self._pending: TextEvent | None = None
+        self._pending_usage: AgentSessionRunEvent | None = None
         self._timer: asyncio.TimerHandle | None = None
         self._terminal: AgentSessionTerminalEvent | None = None
 
@@ -148,6 +153,9 @@ class RunEvents:
         if self._pending is not None:
             self._publish(self._pending)
             self._pending = None
+        if self._pending_usage is not None:
+            self._publish(self._pending_usage)
+            self._pending_usage = None
 
     def emit(self, event: AgentSessionRunEvent) -> SessionEvent | None:
         # Every replayable fragment identifies its run, even after run_start expires.
@@ -170,6 +178,9 @@ class RunEvents:
                 self.flush()
             elif self._timer is None:
                 self._timer = asyncio.get_running_loop().call_later(0.025, self.flush)
+        elif event["type"] == "context_usage" and self._pending is not None:
+            # Publish the latest estimate with the same batch as its streamed text.
+            self._pending_usage = event
         else:
             self.flush()
             return self._publish(event)

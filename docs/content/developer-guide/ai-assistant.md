@@ -343,6 +343,12 @@ changed model settings, tool definitions, and current system and status content.
 Old usage is invalid after a summary replaces its original input. Cached tokens
 are already included in Chat Completions prompt usage.
 
+The composer footer shows Context, Tokens, and estimated cost during SSE streaming.
+`AgentContextUsage` estimates include the current request and streamed reasoning or
+answer text. `RunEvents` coalesces these reports with text batches. Provider usage
+replaces token estimates, and provider cost updates replace each call's previous
+cost contribution. Estimates do not enter billed usage or invent missing prices.
+
 Replayable `compaction_start` and `compaction_end` events report threshold or
 overflow recovery, success, and cancellation. The live transcript and saved
 exports show the same status. Successful compaction replaces the context meter

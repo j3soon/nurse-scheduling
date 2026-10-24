@@ -98,3 +98,30 @@ def test_partial_text_is_published_while_the_run_is_still_waiting() -> None:
         assert published[-1] == {"type": "done", "run_id": "run"}
 
     asyncio.run(scenario())
+
+
+def test_usage_updates_are_coalesced_with_their_text_batch():
+    async def scenario():
+        published = []
+        received = asyncio.Event()
+
+        def publish(event):
+            published.append(event)
+            if event["type"] == "context_usage":
+                received.set()
+
+        events = RunEvents("run", publish)
+        for index in range(1, 11):
+            events.emit({"type": "delta", "text": "x"})
+            events.emit({"type": "context_usage", "used_chars": index, "max_chars": 100, "used_tokens": index})
+        assert published == []
+        await asyncio.wait_for(received.wait(), timeout=1)
+        assert published == [
+            {"type": "delta", "run_id": "run", "text": "x" * 10},
+            {"type": "context_usage", "run_id": "run", "used_chars": 10, "max_chars": 100, "used_tokens": 10},
+        ]
+        events.emit({"type": "done"})
+        events.finish()
+        assert published[-1]["type"] == "done"
+
+    asyncio.run(scenario())

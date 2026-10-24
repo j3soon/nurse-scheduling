@@ -28,6 +28,7 @@ import pytest
 from nurse_scheduling.ai.agent import Agent
 from nurse_scheduling.ai.agent_loop import agent_loop
 from nurse_scheduling.ai.agent_types import (
+    AgentContextUsage,
     AgentMessageEnd,
     AgentReasoning,
     AgentSteering,
@@ -95,7 +96,7 @@ def _run(provider: FakeProvider, *, tool_ok: bool = True, **limits: int) -> list
         return [
             event
             async for event in agent_loop(provider, QUESTION, bind_agent_tools(TOOLS, execute, frozenset()), **limits)
-            if not isinstance(event, AgentMessageEnd)
+            if not isinstance(event, AgentMessageEnd | AgentContextUsage)
         ]
 
     return asyncio.run(collect())
@@ -122,6 +123,7 @@ def test_agent_closing_a_stream_releases_provider_before_reuse():
 
         agent = Agent()
         first = agent.prompt(Provider(), QUESTION, [])
+        assert isinstance(await anext(first), AgentContextUsage)
         assert await anext(first) == AgentText("First fragment")
         assert agent.state.is_streaming
         overlapping = agent.prompt(FakeProvider(_text("Overlapping")), QUESTION, [])
@@ -131,7 +133,11 @@ def test_agent_closing_a_stream_releases_provider_before_reuse():
         await first.aclose()
         assert closed == [True]
         assert not agent.state.is_streaming
-        assert [event async for event in agent.prompt(FakeProvider(_text("Next")), QUESTION, [])] == [
+        assert [
+            event
+            async for event in agent.prompt(FakeProvider(_text("Next")), QUESTION, [])
+            if not isinstance(event, AgentContextUsage)
+        ] == [
             AgentText("Next"),
             AgentMessageEnd(AssistantMessage("Next")),
         ]
@@ -338,7 +344,8 @@ def test_allowed_tool_batch_executes_concurrently_and_reports_in_call_order():
 
     assert max_active == 2
     assert [event.result for event in uses] == ['{"command":"first"}', '{"command":"second"}']
-    assert all(isinstance(event, AgentToolStart) for event in events[1:3])
+    activity = [event for event in events if not isinstance(event, AgentContextUsage)]
+    assert all(isinstance(event, AgentToolStart) for event in activity[1:3])
 
 
 @pytest.mark.parametrize("count", [8, 9, 32])
@@ -579,6 +586,7 @@ def test_agent_keeps_partial_output_when_closed_and_releases_it_on_reset():
     async def exercise():
         agent = Agent()
         stream = agent.prompt(FakeProvider(_text("Partial", "not delivered")), QUESTION, [])
+        assert isinstance(await anext(stream), AgentContextUsage)
         assert await anext(stream) == AgentText("Partial")
         with pytest.raises(RuntimeError, match="cleanup"):
             agent.reset()
@@ -639,7 +647,11 @@ def test_refused_tools_consume_steering_before_the_next_provider_request(call_co
     assert not executed
     assert len(requests) == 2
     assert events.count(AgentSteering("cancel-edit", instruction)) == 1
-    assert events[-2:] == [AgentText("I will only explain."), AgentMessageEnd(AssistantMessage("I will only explain."))]
+    activity = [event for event in events if not isinstance(event, AgentContextUsage)]
+    assert activity[-2:] == [
+        AgentText("I will only explain."),
+        AgentMessageEnd(AssistantMessage("I will only explain.")),
+    ]
 
 
 @pytest.mark.parametrize("steering", [False, True])

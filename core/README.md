@@ -633,6 +633,9 @@ Summary calls use the selected model and appear in provider cost estimates.
 The transcript shows when summarization starts, succeeds, fails, or stops.
 After a successful summary, the context meter uses the smaller estimated context
 until the next model call reports usage. Failed summaries keep the original context.
+The composer footer updates Context and Tokens during streamed reasoning and answer
+text. Token estimates are replaced when the provider reports usage. Estimated cost
+updates when provider cost figures arrive. Missing prices stay unavailable.
 Completion requests cap output against the model's advertised output limit and
 remaining context, with a 4,096-token safety margin. Summaries request up to
 80 percent of their reserved output space. Numeric reasoning budgets leave at

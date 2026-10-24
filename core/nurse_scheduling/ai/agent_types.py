@@ -50,6 +50,14 @@ class AgentMessageEnd:
 
 
 @dataclass(frozen=True)
+class AgentContextUsage:
+    """The current request and streamed output, estimated until provider usage arrives."""
+
+    used_chars: int
+    used_tokens: int
+
+
+@dataclass(frozen=True)
 class AgentCompaction:
     """A completed context summary ready for the ordered recovery checkpoint."""
 
@@ -115,6 +123,7 @@ class AgentProposal:
 
 AgentEvent = (
     AgentMessageEnd
+    | AgentContextUsage
     | AgentCompaction
     | AgentCompactionStart
     | AgentCompactionEnd

@@ -33,7 +33,7 @@ from ruamel.yaml.error import YAMLError
 
 from ..loader import _load_yaml
 from .agent import Agent
-from .agent_types import AgentCompactionEnd
+from .agent_types import AgentCompactionEnd, AgentContextUsage
 from .config import AiSettings
 from .context import (
     SCHEDULE_CHANGED_EVENT,
@@ -821,7 +821,9 @@ class AgentSession:
                         wire_event = output.consume(event)
                         if wire_event is not None:
                             events.emit(wire_event)
-                        if isinstance(event, AgentCompactionEnd) and event.success:
+                        if isinstance(event, AgentContextUsage) or (
+                            isinstance(event, AgentCompactionEnd) and event.success
+                        ):
                             context_chars = event.used_chars
                             events.emit(
                                 {
@@ -830,7 +832,7 @@ class AgentSession:
                                         context_chars,
                                         runtime.settings,
                                         provider=runtime.provider,
-                                        estimated_tokens=event.estimated_tokens_after,
+                                        estimated_tokens=output.context_estimate,
                                     ),
                                 }
                             )
