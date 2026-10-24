@@ -279,7 +279,7 @@
             }
           ]
         },
-        "note": "Full production prompt with the revised renewal policy versus that prompt with the complete policy omitted. Three repetitions and four concurrent jobs with real provider and E2B commands. All four candidate cases passed 3/3. Both renewal cases executed the generator with --start and --end in 3/3 runs. This validates the complete policy and its adoption condition, not the independent benefit of changing the calendar source. A separate original-versus-revised comparison preserves correctness and measures adoption. No cost target or efficiency gain is claimed."
+        "note": "Full production prompt with the revised renewal policy versus that prompt with the complete policy omitted. Three repetitions and four concurrent jobs with real provider and E2B commands. All four candidate cases passed 3/3. Both renewal cases executed the generator with --start and --end in 3/3 runs. Manual rechecking confirms these counts. The stricter automatic checker recognizes 3/3 ordinary renewals and 1/3 custom-group renewals. The other two custom-group runs use stderr redirection or --help followed by && and require manual verification. This validates the complete policy and its reviewed adoption condition, not the independent benefit of changing the calendar source. A separate original-versus-revised comparison preserves correctness and measures adoption. No cost target or efficiency gain is claimed."
       }
     ],
     "comparison_mode": "ablation"

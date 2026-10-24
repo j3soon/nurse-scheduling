@@ -422,10 +422,14 @@ All report cases remain correctness controls. With a cost target, missing usage
 or a cost increase in any passing control also fails the gate. Reports retain
 all token categories, tool calls, reads, turns, timing and paired variation.
 
-Execution checks recognize direct Python commands with structured JSON output.
+Execution checks recognize one direct Python command with structured JSON output.
 Source reads, `--help`, quoted command text and failed calls do not count.
-Calls through inline Python or another wrapper need separate trajectory review.
+Compound commands, pipelines, redirections and substitutions also do not count,
+because their exit status and output cannot be attributed to the helper.
+These forms and calls through inline Python or another wrapper need separate trajectory review.
 The target flags must occur on the helper invocation, not elsewhere in the call.
+Keep automatic counts separate from manually verified execution in historical receipts.
+Rejecting a compound command means its execution is unverified by this check.
 Keep answer grading independent so correct alternative methods remain valid.
 
 The roster consolidation comparison passes the helper-use gate. It has no
@@ -492,6 +496,13 @@ range flags in 3/3 runs. The saved prompt receipt enforces this adoption conditi
 and binds it to the helper bytes. Its correctness benefit validates the complete
 policy, not the independent effect of selecting the generator. Neither comparison
 had infrastructure errors.
+
+A conservative recheck recognizes all three ordinary-renewal candidates and one
+custom-group candidate automatically. Manual review confirms the other two
+custom-group invocations and their calendar JSON. One redirects stderr, and the
+other runs `--help` before the calculation with `&&`. The historical 3/3 count
+includes this manual verification. These reports need manual review under the
+stricter execution check and do not pass its automatic adoption gate.
 
 Receipt creation rejects a failed or missing overall benefit decision. New
 receipts keep measured control cost ratios, and validation rejects a control

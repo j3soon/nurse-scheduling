@@ -157,8 +157,9 @@ def test_hash_refresh_records_the_current_section(tmp_path):
     "command,ok,result,used",
     [
         ("python /reference/tools/inspect_optimizer_result.py --statistics", True, "{}", True),
-        ("python3 /reference/tools/inspect_optimizer_result.py --statistics | head -30", True, "{}", True),
-        ("ls /reference/tools\npython /reference/tools/inspect_optimizer_result.py --statistics", True, "{}", True),
+        ("python3 /reference/tools/inspect_optimizer_result.py --statistics | head -30", True, "{}", False),
+        ("ls /reference/tools\npython /reference/tools/inspect_optimizer_result.py --statistics", True, "{}", False),
+        ("\npython3 /reference/tools/inspect_optimizer_result.py --statistics # inspect\n", True, "{}", True),
         ("python /reference/tools/inspect_optimizer_result.py", True, "{}", False),
         ("python /reference/tools/inspect_optimizer_result.py; echo --statistics", True, "{}", False),
         ("python /reference/tools/inspect_optimizer_result.py --statistics --help", True, "{}", False),
@@ -174,6 +175,40 @@ def test_helper_use_requires_execution_target_flag_and_structured_output(command
     event = {"kind": "tool", "name": "bash", "ok": ok, "arguments": json.dumps({"command": command}), "result": result}
     assert uses_helper({"events": [event]}, "inspect_optimizer_result.py", ("--statistics",)) is used
     event["name"] = "read"
+    assert not uses_helper({"events": [event]}, "inspect_optimizer_result.py", ("--statistics",))
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "false && python /reference/tools/inspect_optimizer_result.py --statistics; printf '{}\\n'",
+        "true || python /reference/tools/inspect_optimizer_result.py --statistics; printf '{}\\n'",
+        "python /reference/tools/inspect_optimizer_result.py --statistics || printf '{}\\n'",
+        "printf '{}\\n' | python /reference/tools/inspect_optimizer_result.py --statistics --bad-option | cat",
+        "printf '{}\\n' # discovery only\nfalse && python /reference/tools/inspect_optimizer_result.py --statistics",
+        "cat <<'EOF'\npython /reference/tools/inspect_optimizer_result.py --statistics\nEOF\nprintf '{}\\n'",
+        "python /reference/tools/inspect_optimizer_result.py --statistics $(printf '{}\\n' >&2; echo --help)",
+        "python /reference/tools/inspect_optimizer_result.py --statistics `printf '{}\\n' >&2; echo --help`",
+    ],
+    ids=[
+        "skipped-and",
+        "skipped-or",
+        "fallback",
+        "failed-pipeline",
+        "unrelated-json",
+        "heredoc",
+        "substitution",
+        "backticks",
+    ],
+)
+def test_helper_use_rejects_shell_forms_with_unattributed_output(command):
+    event = {
+        "kind": "tool",
+        "name": "bash",
+        "ok": True,
+        "arguments": json.dumps({"command": command}),
+        "result": "{}",
+    }
     assert not uses_helper({"events": [event]}, "inspect_optimizer_result.py", ("--statistics",))
 
 
@@ -240,6 +275,7 @@ def _helper_reports(tmp_path):
         "wrong-answer",
         "no-flag",
         "discovery-only",
+        "skipped-command",
         "no-saving",
         "control-regression",
         "missing-usage",
@@ -264,6 +300,10 @@ def test_helper_benefit_requires_correctness_execution_and_declared_savings(tmp_
             trajectory["events"][0]["arguments"] = json.dumps(
                 {"command": "python /reference/tools/inspect_optimizer_result.py --statistics --help"}
             )
+        if change == "skipped-command":
+            trajectory["events"][0]["arguments"] = json.dumps(
+                {"command": "false && python /reference/tools/inspect_optimizer_result.py --statistics; printf '{}\\n'"}
+            )
         if change == "no-saving":
             record["token_usage"]["completion_tokens"] = 99
         if change == "missing-usage":
@@ -282,7 +322,9 @@ def test_helper_benefit_requires_correctness_execution_and_declared_savings(tmp_
         max_ratio=0.9,
     )
     assert result["improved"] is (change == "none")
-    assert result["helper_usage"]["after"]["witness"]["used"] == (0 if change in ("no-flag", "discovery-only") else 3)
+    assert result["helper_usage"]["after"]["witness"]["used"] == (
+        0 if change in ("no-flag", "discovery-only", "skipped-command") else 3
+    )
 
 
 def test_helper_comparison_rejects_changed_inputs_and_unpaired_repetitions(tmp_path):

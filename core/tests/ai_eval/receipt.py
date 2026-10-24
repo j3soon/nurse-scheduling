@@ -191,7 +191,7 @@ def write_receipt(step_id: str, record: dict[str, Any], path: Path = STEPS_PATH)
 
 
 def uses_helper(trajectory: dict[str, Any], helper: str, flags: tuple[str, ...] = ()) -> bool:
-    """Count successful direct Python invocations, excluding discovery and shell text."""
+    """Count one successful direct invocation with output attributable to the helper."""
     for event in trajectory.get("events", []):
         if (
             event.get("kind") != "tool"
@@ -206,35 +206,31 @@ def uses_helper(trajectory: dict[str, Any], helper: str, flags: tuple[str, ...] 
             continue
         if not isinstance(command, str):
             continue
-        # Parse command words without treating a quoted script name as execution.
-        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>\n")
+        # Compound commands do not identify which process produced JSON or succeeded.
+        # Keep those forms for manual review instead of inferring shell execution.
+        lexer = shlex.shlex(command.strip(), posix=True, punctuation_chars=";&|()<>\n")
         lexer.whitespace = " \t\r"
         lexer.whitespace_split = True
         lexer.commenters = "#"
         try:
-            tokens = list(lexer)
+            words = list(lexer)
         except ValueError:
             continue
-        segments = [[]]
-        for token in tokens:
-            if token and all(char in ";&|()<>\n" for char in token):
-                segments.append([])
-            else:
-                segments[-1].append(token)
-        for words in segments:
-            if len(words) < 2 or not re.fullmatch(r"python(?:[0-9]+(?:\.[0-9]+)*)?", Path(words[0]).name):
-                continue
-            if words[1] != f"/reference/tools/{helper}":
-                continue
-            options = {word.split("=", 1)[0] for word in words[2:]}
-            if not options.intersection({"-h", "--help"}) and set(flags) <= options:
-                output = str(event.get("result", ""))
-                for line in (output, *output.splitlines()):
-                    try:
-                        if isinstance(json.loads(line), dict):
-                            return True
-                    except ValueError:
-                        continue
+        if any((word and all(char in ";&|()<>\n" for char in word)) or "$" in word or "`" in word for word in words):
+            continue
+        if len(words) < 2 or not re.fullmatch(r"python(?:[0-9]+(?:\.[0-9]+)*)?", Path(words[0]).name):
+            continue
+        if words[1] != f"/reference/tools/{helper}":
+            continue
+        options = {word.split("=", 1)[0] for word in words[2:]}
+        if not options.intersection({"-h", "--help"}) and set(flags) <= options:
+            output = str(event.get("result", ""))
+            for line in (output, *output.splitlines()):
+                try:
+                    if isinstance(json.loads(line), dict):
+                        return True
+                except ValueError:
+                    continue
     return False
 
 
