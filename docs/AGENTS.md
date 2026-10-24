@@ -133,6 +133,8 @@
 - Keep Mermaid source readable. Avoid invisible layout machinery unless a
   simple declaration cannot produce a clear result.
 - Use text or tables below a figure for detail.
+- Check diagram width against the article width. Mermaid scales inside its
+  figure, and a fit-content figure can shrink it to the caption width.
 
 ## Reproduce pages and links
 

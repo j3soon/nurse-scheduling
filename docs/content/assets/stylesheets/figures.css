@@ -1,0 +1,10 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-FileCopyrightText: 2026 Johnson Sun
+ */
+/* This file is mostly AI generated. */
+
+/* Mermaid scales to its container. The theme's fit-content figure width
+ * otherwise shrinks diagrams to the width of their captions. */
+.md-typeset figure:has(.mermaid) {
+  width: 100%;
+}

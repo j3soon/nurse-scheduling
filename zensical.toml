@@ -8,6 +8,7 @@ site_dir = "site"
 copyright = "Copyright &copy; 2023-2026 <a href=\"https://github.com/j3soon/nurse-scheduling\">Nurse Scheduling Contributors</a>"
 repo_url = "https://github.com/j3soon/nurse-scheduling"
 repo_name = "j3soon/nurse-scheduling"
+extra_css = ["assets/stylesheets/figures.css"]
 extra_javascript = [
   "assets/javascripts/mathjax.js",
   "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js",
