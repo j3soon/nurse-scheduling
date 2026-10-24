@@ -12,6 +12,10 @@ bun install
 bun run dev
 ```
 
+The development, build, start, and E2E build commands disable
+[Next.js anonymous telemetry](https://nextjs.org/telemetry) with
+`NEXT_TELEMETRY_DISABLED=1` on every run.
+
 Run frontend unit/component tests:
 
 ```sh
