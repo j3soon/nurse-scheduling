@@ -51,12 +51,9 @@ interface ChatTranscriptViewProps {
   showReasoning: boolean;
   showTools: boolean;
   steeringAssistantId: string | null;
-  isStreaming: boolean;
   conversationUnavailable: boolean;
   removingDownloadId: string | null;
   downloadingOptimizationId: string | null;
-  retryMessage: (id: string, question: string) => void;
-  prepareAttachmentRetry: (question: string) => void;
   downloadGeneratedFiles: (id: string) => Promise<void>;
   removeGeneratedFiles: (id: string) => Promise<void>;
   downloadOptimizationResult: (id: string) => Promise<void>;
@@ -65,18 +62,15 @@ interface ChatTranscriptViewProps {
   sessionRetentionSeconds: number;
 }
 
-/** Render the transcript with the same activity and retry rules as the page. */
+/** Render the transcript with the same activity and failure notices as the page. */
 export function ChatTranscriptView({
   messages,
   showReasoning,
   showTools,
   steeringAssistantId,
-  isStreaming,
   conversationUnavailable,
   removingDownloadId,
   downloadingOptimizationId,
-  retryMessage,
-  prepareAttachmentRetry,
   downloadGeneratedFiles,
   removeGeneratedFiles,
   downloadOptimizationResult,
@@ -203,36 +197,12 @@ export function ChatTranscriptView({
               )) && (
                 <p className="mt-2 whitespace-pre-wrap text-sm text-red-700">{message.failureReason}</p>
               )}
-              {message.role === 'assistant' && message.status === 'failed' && message.retry && (
-                <div className="mt-3 border-t border-red-200 pt-3 text-sm text-red-700">
-                  <p>This response failed before completion.</p>
-                  {message.retry.requiresAttachments ? (
-                    <>
-                      <p className="mt-1 text-xs">
-                        {message.retry.missingFiles?.length
-                          ? `Uploaded files stay in this chat. Prepare the question, then reattach ${message.retry.missingFiles.join(', ')} before sending.`
-                          : 'Prepare the question, then reattach its files before sending.'}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => prepareAttachmentRetry(message.retry?.question ?? '')}
-                        disabled={isStreaming}
-                        className="mt-2 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        Prepare retry
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => retryMessage(message.id, message.retry?.question ?? '')}
-                      disabled={isStreaming}
-                      className="mt-2 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      Retry
-                    </button>
-                  )}
-                </div>
+              {message.role === 'assistant' && message.status === 'failed' && !conversationUnavailable && (
+                <p className="mt-3 border-t border-red-200 pt-3 text-sm text-red-700">
+                  {message.unsentFiles
+                    ? `This question was not sent because its files did not finish uploading. Uploaded files stay in this chat. Attach ${message.unsentFiles.length ? message.unsentFiles.join(', ') : 'the files'} again, then send the question.`
+                    : 'This response failed before completion. Send a new message to continue.'}
+                </p>
               )}
             </article>
           );

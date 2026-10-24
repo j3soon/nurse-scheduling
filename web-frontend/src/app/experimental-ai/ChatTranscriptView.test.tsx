@@ -32,12 +32,9 @@ function renderTranscript(messages: ChatMessage[]) {
     showReasoning={false}
     showTools={false}
     steeringAssistantId={null}
-    isStreaming={false}
     conversationUnavailable={false}
     removingDownloadId={null}
     downloadingOptimizationId={null}
-    retryMessage={vi.fn()}
-    prepareAttachmentRetry={vi.fn()}
     downloadGeneratedFiles={vi.fn()}
     removeGeneratedFiles={vi.fn()}
     downloadOptimizationResult={vi.fn()}

@@ -90,13 +90,7 @@ function isChatMessage(value: unknown): value is ChatMessage {
     && (message.createdAt === undefined || Number.isFinite(message.createdAt))
     && (message.responseStartedAt === undefined || Number.isFinite(message.responseStartedAt))
     && (message.responseCompletedAt === undefined || Number.isFinite(message.responseCompletedAt))
-    && (message.retry === undefined || (
-      typeof message.retry === 'object'
-      && message.retry !== null
-      && typeof message.retry.question === 'string'
-      && typeof message.retry.requiresAttachments === 'boolean'
-      && isOptionalStringArray(message.retry.missingFiles)
-    ))
+    && isOptionalStringArray(message.unsentFiles)
     && (message.requestId === undefined || typeof message.requestId === 'string')
     && (message.request === undefined || (typeof message.request === 'object' && message.request !== null
       && typeof message.request.id === 'string' && typeof message.request.question === 'string'

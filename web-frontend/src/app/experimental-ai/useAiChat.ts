@@ -183,7 +183,6 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [removingUploadId, setRemovingUploadId] = useState<string | null>(null);
   const [removingDownloadId, setRemovingDownloadId] = useState<string | null>(null);
-  // Each wait has its own ID, so an accepted retry stays disabled until its notice clears it.
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
   const updateContextUsage = useCallback((usage: ContextUsage) => setContextUsage(previous => (
     usage.usedTokens === undefined && previous?.usedTokens !== undefined
@@ -644,10 +643,6 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     ]);
     const recoveredAssistant = resume?.recover ? messages.find(message => message.id === activeAssistantId) : undefined;
     let activeAssistantHasOutput = Boolean(recoveredAssistant?.content || recoveredAssistant?.activity?.length);
-    let activeQuestion = resume?.recover
-      ? messages.slice(0, messages.findIndex(message => message.id === activeAssistantId))
-        .findLast(message => message.role === 'user' && message.requestId === request.id)?.content ?? question
-      : question;
     let activeQuestionRequiresAttachments = attachmentsForMessage.length > 0;
     const responseStartedAt = Date.now();
     onSendStart(clearComposer ? 'send' : 'retry');
@@ -730,7 +725,6 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
           const runId = eventRouterRef.current.foreground?.runId;
           activeAssistantId = initialAssistantId;
           activeAssistantHasOutput = false;
-          activeQuestion = question;
           const resetIds = new Set(runMessageIds);
           setMessages(previous => {
             const first = previous.findIndex(message => resetIds.has(message.id));
@@ -806,7 +800,6 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
             });
             setSteeringAssistantId(pendingAssistantId);
           }
-          activeQuestion = queuedMessage;
           activeQuestionRequiresAttachments = false;
         },
         onDownload: id => setMessages(previous => previous.map(message => message.id === activeAssistantId ? { ...message, downloadId: id } : message)),
@@ -893,11 +886,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
           activity: staleTurnMessage === null
             ? interruptRunningTools(message.activity ?? [])
             : [{ kind: 'response' as const, text: staleTurnMessage }],
-          retry: {
-            question: activeQuestion,
-            requiresAttachments: activeQuestionRequiresAttachments,
-            ...(activeQuestionRequiresAttachments ? { missingFiles: request.pendingFiles } : {}),
-          },
+          ...(activeQuestionRequiresAttachments ? { unsentFiles: request.pendingFiles ?? [] } : {}),
         };
       }));
       if (streamError instanceof AiHttpError && streamError.status === 404) {
@@ -937,7 +926,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       ...(message.request?.id === pending.id ? { request: { ...message.request, active: false } } : {}),
       ...(message.id === pending.assistantId ? {
         status: 'failed' as const, responseCompletedAt: Date.now(), request: { ...pending, active: false },
-        retry: { question: pending.question, requiresAttachments: true, missingFiles: pending.pendingFiles },
+        unsentFiles: pending.pendingFiles ?? [],
       } : {}),
     })));
   };
@@ -982,14 +971,6 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       return;
     }
     await sendRequest(question, attachments, true);
-  };
-
-  const retryMessage = (failedId: string, question: string) => {
-    if (!question || isStreaming || (authRequired && authToken === null)) return;
-    const failedIndex = messages.findIndex(message => message.id === failedId);
-    const original = messages.slice(0, failedIndex).reverse().find(message => message.role === 'user' && message.source === undefined);
-    if (!original) return;
-    void sendRequest(question, [], false, original.createdAt, { id: messageId(), questionId: original.id, assistantId: failedId });
   };
 
   const stop = () => {
@@ -1103,7 +1084,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     sessionNotice, trimmedHistoryCount, isStreaming, isStopping, isReconnecting,
     activeOptimization, queuedMessages, steeringAssistantId,
     setSessionRetentionSeconds, restoreConversation, captureSession,
-    newConversation, submitMessage, retryMessage, stop, removeUploadedFile,
+    newConversation, submitMessage, stop, removeUploadedFile,
     removeGeneratedFiles,
     sessionEndpoint: sessionEndpoint ?? aiEndpoint,
   };

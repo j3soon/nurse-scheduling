@@ -266,9 +266,9 @@ remain in application state.
 
 When a turn fails, its provisional activity remains visible but is not added to
 model conversation history. Optional PostgreSQL logging retains failed turns
-for operators. **Retry** resends the original text in a fresh sandbox. Uploaded
-files stay available for that retry. If an upload did not finish, **Prepare retry**
-restores the text and requires the files to be attached again before sending.
+for operators. The chat asks the user to send a new message and offers no retry
+button. Uploaded files stay available to that message. If an upload did not finish,
+the question was not sent, and the chat asks the user to attach the files again.
 
 ## Reasoning and tool activity
 

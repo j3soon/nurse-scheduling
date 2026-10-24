@@ -52,8 +52,7 @@ describe('stored conversation compatibility', () => {
         assistantId: 'answer', createdAt: 'invalid' } },
       { pendingRequest: { messageId: 'request', question: 'Question', questionId: 'question',
         assistantId: 'answer', createdAt: 100, uploading: true, pendingFiles: [1] } },
-      { messages: [{ id: 'answer', role: 'assistant', content: '', retry: {
-        question: 'Question', requiresAttachments: true, missingFiles: 'two.txt' } }] },
+      { messages: [{ id: 'answer', role: 'assistant', content: '', unsentFiles: 'two.txt' }] },
       { sessionEventId: -1 },
       { appliedScheduleRuns: { run: 123 } },
       { appliedScheduleRuns: [] },

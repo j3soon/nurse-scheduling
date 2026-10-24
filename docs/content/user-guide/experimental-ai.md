@@ -126,10 +126,12 @@ You can switch to another app page while the assistant answers. Returning to
 chat resumes the conversation. The app still warns before leaving with unsent
 text or selected files.
 
-A failed turn keeps its original question and provisional output visible. **Retry**
-starts a new attempt. Reconnecting an accepted request keeps the same message ID,
-so it does not send the question to the model twice. Failed and stopped output is
-excluded from the model's conversation context.
+A failed turn keeps its original question and provisional output visible. To
+continue, send a new message. If the files of a question did not finish uploading,
+the question was not sent. Attach the files again and send the question. Reconnecting
+an accepted request keeps the same message ID, so it does not send the question to
+the model twice. Failed and stopped output is excluded from the model's conversation
+context.
 
 Recovery lasts until the session expires, normally after 30 days of inactivity.
 Hosted deployments use PostgreSQL to

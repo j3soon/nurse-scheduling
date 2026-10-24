@@ -283,7 +283,7 @@ export default function ExperimentalAiPage() {
     sessionExpiresAt, sessionRetentionSeconds, conversationUnavailable, sessionNotice, trimmedHistoryCount,
     isStreaming, isStopping, isReconnecting, activeOptimization, queuedMessages, steeringAssistantId,
     setSessionRetentionSeconds, restoreConversation,
-    captureSession, newConversation, submitMessage, retryMessage, stop, removeUploadedFile,
+    captureSession, newConversation, submitMessage, stop, removeUploadedFile,
     removeGeneratedFiles, sessionEndpoint,
   } = useAiChat({
     scheduleYaml, aiEndpoint, authRequired, authToken, isClientReady, serverStatus,
@@ -694,13 +694,6 @@ export default function ExperimentalAiPage() {
       if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
       return previous.filter(attachment => attachment.id !== id);
     });
-  };
-
-  // Leaving the page aborted this upload before the question was sent, so its files must be attached again.
-
-  const prepareAttachmentRetry = (question: string) => {
-    setDraft(question);
-    setError(null);
   };
 
   const downloadGeneratedFiles = async (downloadId: string) => {
@@ -1152,12 +1145,9 @@ export default function ExperimentalAiPage() {
         showReasoning={showReasoning}
         showTools={showTools}
         steeringAssistantId={steeringAssistantId}
-        isStreaming={isStreaming}
         conversationUnavailable={conversationUnavailable}
         removingDownloadId={removingDownloadId}
         downloadingOptimizationId={downloadingOptimizationId}
-        retryMessage={retryMessage}
-        prepareAttachmentRetry={prepareAttachmentRetry}
         downloadGeneratedFiles={downloadGeneratedFiles}
         removeGeneratedFiles={removeGeneratedFiles}
         downloadOptimizationResult={downloadOptimizationResult}

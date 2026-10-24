@@ -36,12 +36,8 @@ export interface ChatMessage extends ChatExportMessage {
   // Absolute history position of an app event, so a retried turn does not show it twice.
   historyIndex?: number;
   runId?: string;
-  retry?: {
-    question: string;
-    requiresAttachments: boolean;
-    // Confirmed uploads stay in the chat, so a retry needs only these files.
-    missingFiles?: string[];
-  };
+  // These files did not finish uploading, so the question was not sent. Confirmed uploads stay in the chat.
+  unsentFiles?: string[];
   optimizerJob?: Pick<OptimizationActivity, 'jobId' | 'downloadable'>;
 }
 
