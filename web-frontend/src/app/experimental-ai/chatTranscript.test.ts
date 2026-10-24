@@ -33,7 +33,7 @@ const input: ModelInput = {
 };
 
 describe('model input transcript placement', () => {
-  it('places a proposal follow-up after the original reply and keeps its prompt once on replay', () => {
+  it('places a legacy proposal follow-up after the original reply and keeps its prompt once on replay', () => {
     const messages: ChatMessage[] = [
       { id: 'question', role: 'user', content: 'Make a proposal' },
       { id: 'answer', role: 'assistant', content: 'Proposed' },

@@ -25,6 +25,7 @@ import json
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
+from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .config import DEFAULT_MAX_HISTORY_CHARS, AiSettings
@@ -257,8 +258,11 @@ def message_title(kind: str, content: str) -> str | None:
     return None
 
 
+QuestionKind = Literal["question", "optimizer"]
+
+
 def model_input(
-    messages: Sequence[ChatMessage], history_indices: Sequence[int], question_kind: str
+    messages: Sequence[ChatMessage], history_indices: Sequence[int], question_kind: QuestionKind
 ) -> dict[str, object]:
     """Describe a provider request for the chat: its system message and the messages added since the last reply.
 

@@ -37,6 +37,7 @@ from .agent_types import AgentCompactionEnd, AgentContextUsage
 from .config import AiSettings
 from .context import (
     SCHEDULE_CHANGED_EVENT,
+    QuestionKind,
     build_provider_messages,
     context_usage,
     model_input,
@@ -706,7 +707,7 @@ class AgentSession:
         artifact: OptimizerArtifact | None,
         settings: AiSettings,
         events: RunEvents,
-        question_kind: str,
+        question_kind: QuestionKind,
     ) -> tuple[list[ChatMessage], int, int]:
         """Project the reserved transcript and report the model input and its context usage."""
         history = project_history(snapshot.transcript, settings.max_history_chars)
