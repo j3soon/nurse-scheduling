@@ -25,7 +25,7 @@ from contextlib import aclosing
 from pathlib import Path
 
 from .agent_types import AgentCompaction, AgentCompactionEnd, AgentCompactionStart
-from .context import SUMMARY_PREFIX, apply_compaction, history_chars
+from .context import STATUS_PREFIX, SUMMARY_PREFIX, apply_compaction, history_chars
 from .context_tokens import context_safety_tokens, estimate_context_tokens, estimate_tokens
 from .provider import (
     ChatMessage,
@@ -70,7 +70,11 @@ def _cut_point(messages: list[ChatMessage], keep_tokens: int) -> int:
     cut = len(messages)
     for index in range(len(messages) - 1, -1, -1):
         accumulated += estimate_tokens(messages[index])
-        valid = messages[index]["role"] != "tool" and not messages[index].get("_tool_image")
+        valid = (
+            messages[index]["role"] != "tool"
+            and not messages[index].get("_tool_image")
+            and not str(messages[index].get("content", "")).startswith(STATUS_PREFIX)
+        )
         if accumulated >= keep_tokens and cut < len(messages):
             break
         if valid:
@@ -167,7 +171,9 @@ class ContextCompactor:
                 (
                     index
                     for index in range(cut - 1, -1, -1)
-                    if body[index]["role"] == "user" and not body[index].get("_tool_image")
+                    if body[index]["role"] == "user"
+                    and not body[index].get("_tool_image")
+                    and not str(body[index].get("content", "")).startswith(STATUS_PREFIX)
                 ),
                 None,
             )

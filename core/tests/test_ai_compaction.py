@@ -252,6 +252,19 @@ def test_auto_compaction_preserves_current_request_and_persists_the_summary():
     assert request[-1]["content"] == "Continue"
 
 
+def test_compaction_keeps_a_long_current_question_with_its_trailing_status():
+    provider = CompactionProvider()
+    question = "Inspect the file again in this new workspace. " + "filler " * 1500
+    messages = [
+        *history()[:-1],
+        {"role": "user", "content": question},
+        {"role": "user", "content": "[Current status]\nWorkspace timezone: UTC."},
+    ]
+    asyncio.run(collect(agent_loop(provider, messages, [])))
+    assert provider.summaries
+    assert provider.requests[0][0][-2:] == messages[-2:]
+
+
 def test_context_compaction_tool_continuation_keeps_native_tool_pairs_and_status():
     provider = CompactionProvider()
     call = ToolCall("read-1", "read", '{"path":"/workspace/schedule.yaml"}')

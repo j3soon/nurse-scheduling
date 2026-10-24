@@ -147,6 +147,8 @@ stderr. Do not replace an explicitly selected file with a fallback.
   cancelled runs. Keep a summary and its referenced recent tool messages together
   during retention. Reset older usage estimates at each compaction boundary.
   Keep app-event indices tied to transcript entries across compaction and retention.
+  Keep a trailing status message with its user question when choosing a
+  compaction boundary. A status message cannot stand in for the current request.
   Keep summary requests visible in provider cost records, but keep their text out
   of the answer stream. Use `tests/test_ai_compaction.py` for these contracts.
   Test chunked summaries through the provider's token-limit calculation, including

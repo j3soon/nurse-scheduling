@@ -164,6 +164,11 @@ The server reads the limit from the provider's model metadata. If the provider
 does not report a limit, the chat shows **unavailable** for the limit. Hover over
 **Context**, **Last**, or **Est. cost** for a short description of that value.
 
+When the conversation is summarized, expand **Conversation summarized** to read
+the summary sent to the assistant. A discarded summary stays visible and is
+marked as omitted from future context. Earlier messages remain in the visible
+transcript even when the summary replaces them in model context.
+
 Small grey rows under an answer record how it was produced. They stay collapsed
 until you select one.
 
