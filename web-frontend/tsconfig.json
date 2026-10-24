@@ -41,7 +41,9 @@
     "src/**/*.test.tsx",
     "src/test",
     "e2e",
+    "docs-screenshots",
     "vitest.config.ts",
-    "playwright.config.ts"
+    "playwright.config.ts",
+    "playwright.docs.config.ts"
   ]
 }

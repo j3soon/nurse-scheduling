@@ -36,6 +36,14 @@
 - Distinguish a pre-run optimization configuration from a completed solve. Do
   not imply that a solver ran when only backend readiness or UI state was
   prepared for a screenshot.
+- Recapture the app screenshots with `bun run docs:screenshots` in
+  `web-frontend/`. It builds the app, serves the build as the production site
+  with mocked backends, and overwrites the PNG files under
+  `docs/content/assets/images/user-guide/`. Add or change captures in
+  `web-frontend/docs-screenshots/user-guide.spec.ts`. Render workbook images,
+  such as `09-workbook.png`, with `skills/screenshot-xlsx`.
+  A rerun can change a few shadow pixels by one color level. Commit only the
+  images whose content changed.
 - Introduce technical concepts in this order: schema or example, description,
   then runtime or optimization behavior.
 - Define notation once and use it consistently. Distinguish sets, selected
