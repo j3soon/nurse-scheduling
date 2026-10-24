@@ -609,6 +609,9 @@ stderr. Do not replace an explicitly selected file with a fallback.
 
 ## Testing
 - Normal tests live under `tests/`.
+- Test ordering with equal timestamps and IDs whose lexical order differs from
+  admission order. Windows clocks can give sequential operations the same time.
+  Track event order directly instead of adding sleeps or requiring distinct times.
 - When replacing a browser cookie in a test, delete the existing cookie first
   or match its domain and path. Setting only its name can add a duplicate.
   HTTP client versions can send those duplicates in different orders.

@@ -126,9 +126,11 @@ def store(store_factory):
     return store_factory()
 
 
-def _controller(store, *, max_pending=8, max_retained=32, max_pending_per_client=None, now=None, runtime_identity=None):
+def _controller(
+    store, *, max_pending=8, max_retained=32, max_pending_per_client=None, now=None, runtime_identity=None, job_ids=None
+):
     clock = (lambda: now) if now is not None else (lambda: datetime.now(timezone.utc))
-    sequence = iter(f"job_{index}" for index in range(100))
+    sequence = iter(job_ids if job_ids is not None else (f"job_{index}" for index in range(100)))
     return JobController(
         store,
         limits=StoreLimits(
@@ -658,7 +660,7 @@ def test_store_rejects_events_from_stale_workers_and_terminal_jobs(store):
 
 
 def test_store_queue_positions_are_derived_from_queue_order(store):
-    controller = _controller(store)
+    controller = _controller(store, now=datetime.now(timezone.utc), job_ids=["job_z_first", "job_a_second"])
     first = _create(controller, "first.yaml")
     second = _create(controller, "second.yaml")
     assert controller.get_job(first.id).queue_position == 1
@@ -666,6 +668,21 @@ def test_store_queue_positions_are_derived_from_queue_order(store):
 
     _claim(controller)
     assert controller.get_job(second.id).queue_position == 1
+
+
+def test_redis_queue_appends_after_legacy_timestamp_scores(fake_redis_store_factory):
+    store = fake_redis_store_factory()
+    now = datetime.now(timezone.utc)
+    controller = _controller(store, now=now, job_ids=["job_z_first", "job_a_second"])
+    first = _create(controller)
+    store._redis.zadd(store._queue_key, {first.id: now.timestamp()})
+
+    second = _create(controller)
+
+    assert controller.get_job(first.id).queue_position == 1
+    assert controller.get_job(second.id).queue_position == 2
+    _lease, claimed = _claim(controller)
+    assert claimed.id == first.id
 
 
 def test_store_caps_replayable_events_per_job(store_factory):
@@ -1080,7 +1097,7 @@ def test_terminal_job_read_with_a_caught_up_cursor_is_empty_and_terminal(store):
 
 
 def test_queue_position_events_track_queue_reordering(store):
-    controller = _controller(store)
+    controller = _controller(store, now=datetime.now(timezone.utc), job_ids=["job_z_first", "job_a_second"])
     first = _create(controller, "first.yaml")
     second = _create(controller, "second.yaml")
 

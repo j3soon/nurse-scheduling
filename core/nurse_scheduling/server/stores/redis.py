@@ -187,7 +187,7 @@ class RedisJobStore:
         self._pending_key = self._key("pending")
         """Set key (`SADD`) of non-terminal job IDs used for pending-capacity checks."""
         self._queue_key = self._key("queue")
-        """Sorted-set key (`ZADD`) of queued job IDs scored by creation time for FIFO claims."""
+        """Sorted-set key (`ZADD`) of queued job IDs scored by admission order for FIFO claims."""
         self._workers_key = self._key("workers", "leases")
         """Sorted-set key of worker IDs scored by lease expiration time."""
         self._worker_tokens_key = self._key("workers", "tokens")
@@ -287,13 +287,11 @@ class RedisJobStore:
                         prune_ids = [candidate.id for candidate in terminal[:prune_count]]
 
                     queued_entries = transaction.zrange(self._queue_key, 0, -1, withscores=True)
-                    queue_order = [(_decode(raw_id), score) for raw_id, score in queued_entries]
-                    # can bisect to insert but just sort for simplicity
-                    queue_order.append((job.id, job.created_at.timestamp()))
-                    queue_order.sort(key=lambda entry: (entry[1], entry[0]))
-                    queue_position = next(
-                        index for index, (queued_id, _score) in enumerate(queue_order, start=1) if queued_id == job.id
-                    )
+                    # Append after legacy timestamp scores too. WATCH serializes concurrent admissions.
+                    queue_score = queued_entries[-1][1] + 1 if queued_entries else 0
+                    queue_order = [_decode(raw_id) for raw_id, _score in queued_entries]
+                    queue_order.append(job.id)
+                    queue_position = len(queue_order)
 
                     saved = replace(job, revision=1, queue_position=None)
                     transaction.multi()
@@ -302,7 +300,7 @@ class RedisJobStore:
                     transaction.set(job_key, self._serialize_job(saved))
                     transaction.set(self._input_key(job.id), input_bytes)
                     transaction.zadd(self._jobs_key, {job.id: job.created_at.timestamp()})
-                    transaction.zadd(self._queue_key, {job.id: job.created_at.timestamp()})
+                    transaction.zadd(self._queue_key, {job.id: queue_score})
                     transaction.sadd(self._pending_key, job.id)
                     self._stage_event_appends(
                         transaction,
@@ -311,7 +309,7 @@ class RedisJobStore:
                     )
                     if self._usage_metrics is not None:
                         self._usage_metrics.stage_job_created(transaction, saved, schedule_basics)
-                    for position, (queued_id, _score) in enumerate(queue_order, start=1):
+                    for position, queued_id in enumerate(queue_order, start=1):
                         if queued_id != job.id:
                             self._stage_queue_position_event(transaction, queued_id, position, job.created_at)
                     transaction.execute()

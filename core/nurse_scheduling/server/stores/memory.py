@@ -203,10 +203,7 @@ class MemoryJobStore:
             worker = self._get_worker_for_live_lease_locked(lease, started_at)
             if worker is None or worker.active_job_id is not None:
                 return None
-            queued = sorted(
-                (record for record in self._records.values() if record.job.state == JobState.QUEUED),
-                key=lambda record: (record.job.created_at, record.job.id),
-            )
+            queued = [record for record in self._records.values() if record.job.state == JobState.QUEUED]
             if not queued:
                 return None
             record = queued[0]
@@ -413,13 +410,7 @@ class MemoryJobStore:
         """Return a job copy with its queue position derived from current state."""
         if job.state != JobState.QUEUED:
             return replace(job, queue_position=None)
-        queued_ids = [
-            candidate.id
-            for candidate in sorted(
-                (record.job for record in self._records.values() if record.job.state == JobState.QUEUED),
-                key=lambda candidate: (candidate.created_at, candidate.id),
-            )
-        ]
+        queued_ids = [record.job.id for record in self._records.values() if record.job.state == JobState.QUEUED]
         return replace(job, queue_position=queued_ids.index(job.id) + 1)
 
     def _append_events(self, record: _MemoryJobRecord, events: Sequence[JobEvent]) -> None:
@@ -450,10 +441,7 @@ class MemoryJobStore:
         exclude_job_id: str | None = None,
     ) -> None:
         """Append current position events for queued jobs except the excluded job."""
-        queued = sorted(
-            (record for record in self._records.values() if record.job.state == JobState.QUEUED),
-            key=lambda record: (record.job.created_at, record.job.id),
-        )
+        queued = [record for record in self._records.values() if record.job.state == JobState.QUEUED]
         for position, record in enumerate(queued, start=1):
             if record.job.id == exclude_job_id:
                 continue

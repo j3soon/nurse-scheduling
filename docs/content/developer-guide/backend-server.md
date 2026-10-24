@@ -94,6 +94,10 @@ The controller owns job lifecycle policy. The worker owns execution
 orchestration. The process executor owns child process supervision. The runner
 owns one scheduler invocation and its output conversion.
 
+Stores claim jobs in successful admission order. Equal timestamps and clock
+adjustments do not change queue positions. Redis appends after the largest
+existing queue score, including timestamp scores written by older versions.
+
 ## Job Lifecycle
 
 <figure markdown="1">
