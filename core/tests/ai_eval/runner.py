@@ -28,7 +28,7 @@ import subprocess
 import time
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import aclosing
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from io import StringIO
 from pathlib import Path
@@ -55,6 +55,7 @@ from nurse_scheduling.ai.context import (
     retained_entries,
     upload_event,
 )
+from nurse_scheduling.ai.litellm_concurrency import discover_capacity
 from nurse_scheduling.ai.optimizer import optimizer_completion_message
 from nurse_scheduling.ai.optimizer_tool import optimizer_start_message
 from nurse_scheduling.ai.provider import (
@@ -128,7 +129,6 @@ FIXTURES = {
     "ward87": Path(__file__).resolve().parents[1] / "testcases" / "real",
 }
 WARD_FILE = "large-ward-with-87-people-2025-11.yaml"
-DEFAULT_CASE_JOBS = 4
 DEFAULT_CASE_TAGS = {"difficult", "tuning"}
 
 
@@ -1004,6 +1004,7 @@ def write_report(
     metadata: dict[str, Any] | None = None,
     baseline_report: Path | None = None,
     checkpointed: bool = False,
+    concurrency_reason: str | None = None,
 ) -> Path:
     """Write one run's results and summary, and report where the summary landed."""
     output_dir.mkdir(parents=True, exist_ok=checkpointed)
@@ -1026,6 +1027,7 @@ def write_report(
     summary = output_dir / "summary.md"
     wall_label = "Extension wall time" if metadata and metadata.get("extensions") else "Wall time"
     timing = f"\n{wall_label}: {wall_seconds:.1f} seconds\n" if wall_seconds is not None else ""
+    concurrency_note = f"Concurrency selection: {concurrency_reason}\n" if concurrency_reason else ""
     stability = stability_markdown(runs)
     comparison = ""
     if baseline_report:
@@ -1038,7 +1040,7 @@ def write_report(
     stability_section = f"{stability}\n\n" if stability else ""
     comparison_section = f"{comparison}\n\n" if comparison else ""
     summary.write_text(
-        f"# AI evaluation\n\nCase concurrency: {jobs}{timing}\n"
+        f"# AI evaluation\n\nCase concurrency: {jobs}{timing}\n{concurrency_note}\n"
         f"## Aggregate\n\n```\n{summarize(runs)}\n```\n"
         f"{stability_section}"
         f"{comparison_section}"
@@ -1361,8 +1363,8 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--jobs",
         type=int,
-        default=DEFAULT_CASE_JOBS,
-        help=f"number of cases to run concurrently (default: {DEFAULT_CASE_JOBS})",
+        default=None,
+        help="maximum concurrent cases (default: discover provider capacity, capped at 20)",
     )
     arguments = parser.parse_args(argv)
     comparing = arguments.prompt_compare_step is not None or arguments.prompt_ablate_step is not None
@@ -1371,7 +1373,7 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         if arguments.repeat is not None
         else (5 if arguments.extend_report else 3 if comparing or arguments.ladder_audit else 1)
     )
-    if arguments.jobs <= 0 or arguments.repeat <= 0:
+    if (arguments.jobs is not None and arguments.jobs <= 0) or arguments.repeat <= 0:
         parser.error("--jobs and --repeat must be positive")
     if (comparing or arguments.ladder_audit) and not 3 <= arguments.repeat <= 10:
         parser.error("prompt comparisons require --repeat between 3 and 10")
@@ -1517,7 +1519,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             json.dumps(
                 {
                     "source_report": str(arguments.extend_report.resolve()),
-                    "jobs": arguments.jobs,
+                    "jobs": arguments.jobs if arguments.jobs is not None else "auto",
                     "variants": [label for label, _ in arguments.extension_variants],
                     "saved_attempts": len(arguments.saved_runs),
                     "new_attempts": sum(arguments.repeat - first + 1 for first in arguments.extension.starts.values())
@@ -1554,7 +1556,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         return run_audit(plan, root, unchanged=unchanged)
     settings = AiSettings.from_env()
-    sandbox_factory = create_sandbox_factory(settings)
     variants = arguments.extension_variants if arguments.extension else _prompt_variants(arguments)
     output_dir = (arguments.output_dir or default_output_dir()).resolve()
     metadata = (
@@ -1574,8 +1575,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     expected = len(saved_runs) + sum(arguments.repeat - (starts or {}).get(case.id, 1) + 1 for case in cases) * len(
         variants
     )
+    capacity = discover_capacity(settings.provider_base_url, settings.provider_api_key, settings.provider_model)
+    requested_jobs = arguments.jobs
+    try:
+        arguments.jobs = capacity.select_jobs(requested_jobs, expected - len(saved_runs))
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+    print(f"Case concurrency: {arguments.jobs} ({capacity.reason}; maximum 20)", flush=True)
+    sandbox_factory = create_sandbox_factory(settings)
     report_repetitions = max(value["repetitions"] for value in metadata.values())
     checkpoints = RunCheckpoints(output_dir, metadata, report_repetitions, expected)
+    (output_dir / "concurrency.json").write_text(
+        json.dumps(
+            {
+                **asdict(capacity),
+                "configured_limit": capacity.configured_limit,
+                "requested_jobs": requested_jobs,
+                "jobs": arguments.jobs,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     for run in saved_runs:
         checkpoints.record(run)
     started = time.perf_counter()
@@ -1611,6 +1633,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 wall_seconds=wall_seconds,
                 metadata=metadata[label],
                 checkpointed=True,
+                concurrency_reason=capacity.reason,
             )
         comparison, improved = prompt_comparison_markdown(runs, arguments.cost_metric, arguments.cost_ratio)
         step_number = arguments.prompt_compare_step or arguments.prompt_ablate_step
@@ -1646,6 +1669,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             metadata=metadata[variants[0][0]],
             baseline_report=arguments.baseline_report,
             checkpointed=True,
+            concurrency_reason=capacity.reason,
         )
         improved = all(run.passed for run in runs)
     checkpoints.completed = len(runs)

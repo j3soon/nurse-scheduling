@@ -34,7 +34,7 @@ from .prompt_ladder import PromptStep, case_digest
 
 
 def build_plan(
-    steps: Sequence[PromptStep], cases: Mapping[str, EvalCase], root: Path, *, repeat: int, jobs: int
+    steps: Sequence[PromptStep], cases: Mapping[str, EvalCase], root: Path, *, repeat: int, jobs: int | None
 ) -> dict[str, Any]:
     """Freeze the declared comparison modes, cases, and cost targets before execution."""
     from .runner import _reference_digests, fixture_text
@@ -63,12 +63,12 @@ def build_plan(
     args = [value for case in case_ids for value in ("--case", case)]
     cohorts.append({"name": "production", "mode": "production", "args": args})
     for cohort in cohorts:
-        cohort["args"].extend(
-            ["--repeat", str(repeat), "--jobs", str(jobs), "--output-dir", str(root / cohort["name"])]
-        )
+        cohort["args"].extend(["--repeat", str(repeat), "--output-dir", str(root / cohort["name"])])
+        if jobs is not None:
+            cohort["args"].extend(["--jobs", str(jobs)])
     return {
         "repeat": repeat,
-        "jobs": jobs,
+        "jobs": jobs if jobs is not None else "auto",
         "cases": case_ids,
         "prompt_sha256": hashlib.sha256(compose_system_prompt().encode()).hexdigest(),
         "case_sha256": {case: case_digest(cases[case]) for case in case_ids},

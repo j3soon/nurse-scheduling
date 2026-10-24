@@ -349,7 +349,7 @@ stderr. Do not replace an explicitly selected file with a fallback.
 - Reuse production response formatters in controlled evaluations. Shortened mock
   replies can change the agent's decisions.
 - Treat one provider pass as a smoke check. Before claiming a tuning improvement,
-  repeat affected cases at least three times with four total jobs and compare
+  repeat affected cases at least three times with the same concurrency and compare
   pass rate, infrastructure failures, turns, and tokens with a recorded baseline.
   Treat success rate, tool calls and reads, turns, latency, and provider token
   categories as first-class comparison metrics. Report before/after means and
@@ -369,7 +369,11 @@ stderr. Do not replace an explicitly selected file with a fallback.
   in the evaluation process. Never print or commit credential values. Check
   that the selected file and required values exist before starting. If absent,
   report the missing configuration instead of running a known-to-fail evaluation.
-  Use four concurrent case jobs.
+  Leave `--jobs` unset to discover provider capacity, capped at 20 case jobs.
+  Reuse `AI_PROVIDER_BASE_URL` and `AI_PROVIDER_API_KEY` for model metadata
+  and cached deployment health checks.
+  Missing health uses a conservative fallback of at most four jobs. Keep
+  concurrency equal across variants when comparing performance.
 - Pair ambiguous-language cases with exact-target controls so clarification
   guidance does not teach the agent to ask when the user already supplied a
   unique ID. Keep structurally different fixtures under a `holdout` tag. Do not
