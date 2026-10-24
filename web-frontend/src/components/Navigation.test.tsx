@@ -170,6 +170,30 @@ describe('Navigation', () => {
     expect(mockPush).not.toHaveBeenCalled();
   });
 
+  it('undoes and redoes schedule changes with the tab bar buttons', async () => {
+    const user = userEvent.setup();
+    seedCustomExportLayoutState();
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)!);
+    const withoutExport = { ...saved.state, export: undefined };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...saved, history: [withoutExport, saved.state], currentHistoryIndex: 1 }));
+
+    renderNavigation();
+    const undoButton = screen.getByRole('button', { name: 'Undo' });
+    const redoButton = screen.getByRole('button', { name: 'Redo' });
+    expect(undoButton).toHaveAttribute('title', 'Undo (Ctrl+Z or Cmd+Z)');
+    expect(redoButton).toBeDisabled();
+    expect(screen.getByTestId('custom-export-layout-indicator')).toBeInTheDocument();
+
+    await user.click(undoButton);
+    expect(undoButton).toBeDisabled();
+    expect(screen.queryByTestId('custom-export-layout-indicator')).not.toBeInTheDocument();
+
+    await user.click(redoButton);
+    expect(redoButton).toBeDisabled();
+    expect(screen.getByTestId('custom-export-layout-indicator')).toBeInTheDocument();
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
   it('asks before navigating away when the YAML editor has unsaved changes', async () => {
     const user = userEvent.setup();
     (confirm as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);

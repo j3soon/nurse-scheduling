@@ -372,7 +372,7 @@ export default function SaveAndLoadPage() {
             {formatCount(importSummary.counts.people, 'person', 'people')},{' '}
             {formatCount(importSummary.counts.shiftTypes, 'shift type')},{' '}
             {formatCount(importSummary.counts.preferences, 'preference')}.{' '}
-            Ctrl+Z or Cmd+Z to undo.
+            Use Undo in the tab bar or Ctrl+Z (Cmd+Z) to undo.
           </p>
           {(importSummary.versionWarning || importSummary.warnings.length > 0) && (
             <p className="mt-1 text-amber-800">

@@ -13,8 +13,8 @@ This page answers questions about the schedule currently open in the browser.
 A question can include files of any type when **Attach files** is available.
 The assistant can inspect common text, image, PDF, and spreadsheet formats in
 its temporary workspace. The assistant can change the schedule. A valid change
-replaces the schedule in this browser when the response finishes, and
-<kbd>Ctrl</kbd>+<kbd>Z</kbd> undoes it. The assistant can also run the
+replaces the schedule in this browser when the response finishes. **Undo** in
+the tab bar or <kbd>Ctrl</kbd>+<kbd>Z</kbd> undoes it. The assistant can also run the
 optimizer and review its result.
 
 ## Build from ward requirements
@@ -95,8 +95,8 @@ assistant edits a temporary copy of the schedule, and the app checks each edit.
    this browser. **Applied to your schedule** lists every difference.
    If you changed the browser schedule during the response, a notice explains
    that the assistant replaced those changes.
-4. The change is one step in the edit history, so <kbd>Ctrl</kbd>+<kbd>Z</kbd>
-   reverts the whole change. The assistant learns about the undo when you send
+4. The change is one step in the edit history, so **Undo** or
+   <kbd>Ctrl</kbd>+<kbd>Z</kbd> reverts the whole change. The assistant learns about the undo when you send
    your next question.
 
 A change replaces edits that you made elsewhere in the app while the assistant

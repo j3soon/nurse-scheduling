@@ -898,7 +898,7 @@ export default function ExperimentalAiPage() {
         </p>
         <p className="mt-2 max-w-3xl rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
           When a response finishes, the assistant&apos;s valid schedule changes replace the schedule in this browser.
-          Press Ctrl+Z to undo them. This beta is API-key gated by default.{' '}
+          Use Undo in the tab bar or Ctrl+Z (Cmd+Z) to undo them. This beta is API-key gated by default.{' '}
           <a
             className="font-medium underline"
             href={GITHUB_AI_BETA_ACCESS_URL}
