@@ -640,6 +640,56 @@ def test_missing_model_metadata_does_not_prevent_chat_or_usage(monkeypatch, stat
     assert provider.context_tokens is None
 
 
+@pytest.mark.parametrize("models_status", [200, 503], ids=["discovered", "unavailable"])
+def test_session_and_output_copies_share_model_limit_discovery(monkeypatch, models_status):
+    requests = []
+
+    async def handle(request):
+        requests.append(request)
+        if request.method == "GET":
+            await asyncio.sleep(0)
+            return httpx.Response(
+                models_status,
+                json={
+                    "data": [
+                        {
+                            "id": "test-model",
+                            "context_length": 32000,
+                            "max_output_tokens": 8192,
+                            "supported_openai_params": ["max_completion_tokens"],
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(200, text=_sse_body(_delta_chunk({"content": "Done"})))
+
+    original = _transport_provider(monkeypatch, handle)
+    original._include_usage = True
+    first = original.with_session_id("first").with_output_limit(1000)
+    second = original.with_output_limit(2000).with_session_id("second")
+
+    async def run():
+        await asyncio.gather(first.prepare_context(), second.prepare_context())
+        later = original.with_session_id("later").with_output_limit(3000)
+        await asyncio.gather(*(_collect(provider.stream_events([])) for provider in (first, second, later)))
+        return later
+
+    later = asyncio.run(run())
+    assert len([request for request in requests if request.method == "GET"]) == 1
+    parameter = "max_completion_tokens" if models_status == 200 else "max_tokens"
+    for provider in (original, first, second, later):
+        assert provider.context_tokens == (32000 if models_status == 200 else None)
+        assert provider.output_tokens == (8192 if models_status == 200 else None)
+        assert provider.output_token_parameter == parameter
+    completions = [request for request in requests if request.method == "POST"]
+    assert {request.headers["x-session-id"]: json.loads(request.content)[parameter] for request in completions} == {
+        "first": 1000,
+        "second": 2000,
+        "later": 3000,
+    }
+    assert original._session_id is None and original._max_output_tokens is None
+
+
 def test_skips_a_choiceless_chunk_that_carries_no_usage(monkeypatch: pytest.MonkeyPatch) -> None:
     body = _sse_body({"choices": []}, _delta_chunk({"content": "Answer"}))
 

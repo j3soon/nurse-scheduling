@@ -179,8 +179,9 @@ from the trust-based local harness.
   run's frozen selection. Changing session settings must not change an active run.
 - Bind the stable `AgentSession.id` to provider calls through a run-scoped
   provider. Keep the same `x-session-id` for retries, tool follow-ups, compaction,
-  optimizer reviews, and restored sessions. Never mutate a provider shared by
-  concurrent chats or use the per-attempt call ID for session affinity.
+  optimizer reviews, and restored sessions. Never store session IDs or request
+  limits on a provider shared by concurrent chats. Use the chat ID for session
+  affinity, not the per-attempt call ID.
 - Track provider costs by HTTP attempt ID. Replace streamed updates instead of
   adding them, preserve missing prices as unknown, and use decimal USD totals.
   Restore totals from saved call records and test replay before acknowledgement.

@@ -342,6 +342,7 @@ class OpenAiCompatibleProvider:
         self._context_used_tokens: int | None = None
         self._context_tokens_loaded = False
         self._context_tokens_lock = asyncio.Lock()
+        self._limits_owner = self
 
     def with_session_id(self, session_id: str) -> "OpenAiCompatibleProvider":
         """Bind a stable conversation ID without changing a shared provider."""
@@ -406,6 +407,14 @@ class OpenAiCompatibleProvider:
 
     async def _load_context_tokens(self) -> None:
         """Read and cache the configured model's context limit when metadata is available."""
+        owner = self._limits_owner
+        if owner is not self:
+            await owner._load_context_tokens()
+            self.context_tokens = owner.context_tokens
+            self.output_tokens = owner.output_tokens
+            self.output_token_parameter = owner.output_token_parameter
+            self._context_tokens_loaded = owner._context_tokens_loaded
+            return
         async with self._context_tokens_lock:
             if self._context_tokens_loaded:
                 return

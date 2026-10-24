@@ -286,9 +286,10 @@ restores the text and requires the files to be attached again before sending.
 
 Each run binds `AgentSession.id` to a provider copy through `with_session_id`.
 The copy preserves the selected model, reasoning parameters, credentials, and
-provider metadata. The shared provider stays unchanged, so concurrent chats
-cannot overwrite each other's session ID. Optional session binding also keeps
-existing providers without this capability usable.
+provider metadata. Session IDs and request limits stay on each copy, so
+concurrent chats cannot overwrite each other's settings. Direct-provider copies
+share cached model-limit discovery, including unavailable metadata. Optional
+session binding also keeps existing providers without this capability usable.
 
 The Chat Completions adapter sends `x-session-id` on every completion request.
 Tool follow-ups, timeout retries, compaction summaries, and optimizer reviews
