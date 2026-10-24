@@ -40,6 +40,7 @@ import pytest
 import yaml
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from starlette import formparsers
 
 from nurse_scheduling.ai import agent_session as agent_session_module
 from nurse_scheduling.ai.agent_session import (
@@ -3352,7 +3353,18 @@ def test_upload_request_id_rejects_different_file_identity(filename, content, me
     assert client.get(f"/sessions/{session_id}/uploads").json() == original.json()
 
 
-def test_chunked_upload_body_is_bounded_before_the_whole_file_is_spooled():
+def test_chunked_upload_body_is_bounded_before_the_whole_file_is_spooled(monkeypatch):
+    spooled_files = []
+    create_spooled_file = formparsers.SpooledTemporaryFile
+
+    def tracked_spooled_file(*args, **kwargs):
+        file = create_spooled_file(*args, **kwargs)
+        spooled_files.append(file)
+        return file
+
+    monkeypatch.setattr(formparsers, "SpooledTemporaryFile", tracked_spooled_file)
+    monkeypatch.setattr(formparsers.MultiPartParser, "spool_max_size", 1024)
+
     async def exercise():
         app = create_test_app(
             settings=make_settings(max_attachment_bytes=4),
@@ -3384,6 +3396,8 @@ def test_chunked_upload_body_is_bounded_before_the_whole_file_is_spooled():
             assert response.json()["detail"] == "AI request body is too large."
             assert len(consumed) < 10
             assert (await client.get(f"/sessions/{session_id}/uploads")).json() == accepted.json()
+            assert any(file._rolled for file in spooled_files)
+            assert all(file.closed for file in spooled_files)
 
     asyncio.run(exercise())
 

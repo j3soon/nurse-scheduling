@@ -24,12 +24,15 @@ from collections.abc import Callable
 from starlette._utils import get_route_path
 from starlette.datastructures import Headers
 from starlette.exceptions import HTTPException
+from starlette.formparsers import MultiPartException
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from ..server.request_limits import MULTIPART_OVERHEAD_BYTES
 from .config import AiSettings
+
+BODY_TOO_LARGE_MESSAGE = "AI request body is too large."
 
 
 class AiRequestLimitsMiddleware:
@@ -58,18 +61,15 @@ class AiRequestLimitsMiddleware:
                 response = JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
                 await response(scope, receive, send)
                 return
-        max_bytes = (
-            self._upload_max_bytes
-            if scope["method"] == "POST" and path.startswith("/sessions/") and path.endswith("/uploads")
-            else self._json_max_bytes
-        )
+        is_upload = scope["method"] == "POST" and path.startswith("/sessions/") and path.endswith("/uploads")
+        max_bytes = self._upload_max_bytes if is_upload else self._json_max_bytes
         declared_length = Headers(scope=scope).get("content-length")
         try:
             oversized = declared_length is not None and int(declared_length) > max_bytes
         except ValueError:
             oversized = False
         if oversized:
-            await JSONResponse({"detail": "AI request body is too large."}, status_code=413)(scope, receive, send)
+            await JSONResponse({"detail": BODY_TOO_LARGE_MESSAGE}, status_code=413)(scope, receive, send)
             return
         received = 0
 
@@ -79,7 +79,10 @@ class AiRequestLimitsMiddleware:
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
                 if received > max_bytes:
-                    raise HTTPException(status_code=413, detail="AI request body is too large.")
+                    if is_upload:
+                        # Starlette closes partially spooled files for multipart parsing errors.
+                        raise MultiPartException(BODY_TOO_LARGE_MESSAGE)
+                    raise HTTPException(status_code=413, detail=BODY_TOO_LARGE_MESSAGE)
             return message
 
         await self._app(scope, bounded_receive, send)

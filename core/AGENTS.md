@@ -599,6 +599,9 @@ stderr. Do not replace an explicitly selected file with a fallback.
 ## Input Limits
 - Match middleware routes relative to the ASGI `root_path`. Test authentication
   and body limits at the application root and under a mounted URL prefix.
+- For streamed multipart limits, raise `MultiPartException` so Starlette closes
+  temporary files, then translate the rejection to HTTP 413. Check file closure
+  as well as the response and consumed bytes.
 - Bound submitted scheduling data by its alias expansion and nesting depth as
   well as its byte size. `loader.measure_yaml_expansion` measures both from the
   parse events without building the structure, and both the API and `load_data`

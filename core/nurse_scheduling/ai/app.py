@@ -63,7 +63,7 @@ from .optimizer import (
 from .optimizer_http import HttpOptimizerBackend
 from .provider import OpenAiCompatibleProvider, ToolCapableChatProvider
 from .recovery import SessionRecovery
-from .request_limits import AiRequestLimitsMiddleware
+from .request_limits import BODY_TOO_LARGE_MESSAGE, AiRequestLimitsMiddleware
 from .sandbox import SandboxFactory, managed_sandbox_factory
 from .sandbox.factory import create_sandbox_factory
 from .session_event_stream import SessionEventStream, SessionResetData
@@ -282,6 +282,8 @@ async def _parse_upload_request(request: Request, settings: AiSettings) -> list[
                 raise HTTPException(status_code=422, detail="Upload at least one file.")
             return await _read_files(uploads, settings)
     except StarletteHTTPException as exc:
+        if exc.status_code == 400 and exc.detail == BODY_TOO_LARGE_MESSAGE:
+            raise HTTPException(status_code=413, detail=exc.detail) from exc
         if exc.status_code == 400 and str(exc.detail).startswith("Too many files"):
             raise HTTPException(status_code=413, detail="Too many file attachments.") from exc
         if exc.status_code == 400 and str(exc.detail).startswith("Too many fields"):
