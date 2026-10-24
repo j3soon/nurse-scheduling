@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -42,6 +42,8 @@ from .transcript import (
     AgentMessage,
     AppEventEntry,
     AssistantMessage,
+    CompactionEntry,
+    ProviderIdentity,
     ToolCall,
     ToolResultMessage,
     UserMessage,
@@ -178,6 +180,8 @@ def context_usage(
     settings: AiSettings,
     last_call: TokenUsage | None = None,
     provider: ToolCapableChatProvider | None = None,
+    *,
+    estimated_tokens: int | None = None,
 ) -> dict[str, int]:
     """Report retained history size and the latest request's tokens with the provider's context limit.
 
@@ -186,8 +190,10 @@ def context_usage(
     the same prompt several times.
     """
     usage = {"used_chars": used_chars, "max_chars": settings.max_history_chars}
-    if last_call is not None:
-        usage["used_tokens"] = last_call.prompt_tokens + last_call.completion_tokens
+    if last_call is not None or estimated_tokens is not None:
+        usage["used_tokens"] = (
+            estimated_tokens if estimated_tokens is not None else last_call.prompt_tokens + last_call.completion_tokens
+        )
         limit = getattr(provider, "context_tokens", None)
         if type(limit) is int and limit > 0:
             usage["max_tokens"] = limit
@@ -236,7 +242,7 @@ def build_provider_messages(
         ChatMessage(role="system", content=system_content),
         *retained,
         ChatMessage(role="user", content=question),
-        *([ChatMessage(role="user", content=status)] if status else []),
+        *([ChatMessage(role="user", content=status, _current_status=True)] if status else []),
     ]
 
 
@@ -252,17 +258,18 @@ def message_title(kind: str, content: str) -> str | None:
 
 
 def model_input(
-    messages: Sequence[ChatMessage], history_count: int, history_offset: int, question_kind: str
+    messages: Sequence[ChatMessage], history_indices: Sequence[int], question_kind: str
 ) -> dict[str, object]:
     """Describe a provider request for the chat: its system message and the messages added since the last reply.
 
-    History messages after the last assistant reply are app events. Each one carries its absolute history
-    index, so the chat shows it once even when a failed turn is retried.
+    History messages after the last assistant reply are app events. Each one carries its absolute
+    transcript entry index, so compaction and retries cannot reuse its identity.
     """
+    history_count = len(history_indices)
     history = messages[1 : 1 + history_count]
     last_reply = max((index for index, message in enumerate(history) if message["role"] == "assistant"), default=-1)
     added: list[dict[str, object]] = [
-        {"kind": "app", "index": history_offset + index, "content": message["content"]}
+        {"kind": "app", "index": history_indices[index], "content": message["content"]}
         for index, message in enumerate(history)
         if index > last_reply
     ]
@@ -275,12 +282,17 @@ def model_input(
 
 
 def prepare_provider_request(
-    prefix: Sequence[ChatMessage], entries: Sequence[AgentMessage], *, now: datetime | None = None
+    prefix: Sequence[ChatMessage],
+    entries: Sequence[AgentMessage],
+    *,
+    now: datetime | None = None,
+    provider: ProviderIdentity | None = None,
+    _preserve_native: bool = False,
 ) -> list[ChatMessage]:
     """Project the agent's in-run messages at the provider boundary."""
     request = list(prefix)
     clock_status = None
-    if request and isinstance(request[-1]["content"], str) and request[-1]["content"].startswith(STATUS_PREFIX + "\n"):
+    if request and request[-1].get("_current_status"):
         lines = request[-1]["content"].splitlines()
         for index, line in enumerate(lines):
             if line.startswith(CURRENT_TIME_STATUS):
@@ -295,6 +307,11 @@ def prepare_provider_request(
         pending_images.clear()
 
     for entry in entries:
+        if isinstance(entry, CompactionEntry):
+            flush_images()
+            if entry.valid:
+                request = apply_compaction(request, entry)
+            continue
         if isinstance(entry, ToolResultMessage):
             request.append(tool_result_message(entry.tool_call_id, entry.text))
             if entry.image is not None:
@@ -310,58 +327,187 @@ def prepare_provider_request(
                     if entry.stop_reason == "length"
                     else entry.tool_calls
                 )
-                request.append(assistant_tool_call_message(calls, entry.text))
+                message = assistant_tool_call_message(calls, entry.text)
             else:
-                request.append(ChatMessage(role="assistant", content=entry.text))
-        elif isinstance(entry, UserMessage):
+                message = ChatMessage(role="assistant", content=entry.text)
+            if entry.stop_reason in {"aborted", "error"}:
+                continue
+            if entry.provider is not None:
+                message["_provider"] = asdict(entry.provider)
+                if entry.stop_reason != "length":
+                    message.update(entry.native_reasoning)
+            if entry.usage is not None:
+                message["_usage"] = entry.usage
+            request.append(message)
+        elif isinstance(entry, UserMessage | AppEventEntry):
             request.append(ChatMessage(role="user", content=entry.text))
     flush_images()
     if clock_status is not None:
         request.append(clock_status)
-    return request
+    return (
+        _repair_tool_pairs(request)
+        if _preserve_native
+        else compatible_provider_messages(_repair_tool_pairs(request), provider)
+    )
+
+
+SUMMARY_PREFIX = "[Conversation summary]"
+
+
+def summary_message(summary: str) -> ChatMessage:
+    """Represent a compaction summary as conversation data."""
+    return ChatMessage(role="user", content=f"{SUMMARY_PREFIX}\n{summary}", _compaction_summary=True)
+
+
+def _recent_messages(projected: list[tuple[bool, ChatMessage]], count: int) -> list[tuple[bool, ChatMessage]]:
+    if count <= 0:
+        return []
+    start = len(projected)
+    while start > 0 and count > 0:
+        start -= 1
+        if not projected[start][1].get("_tool_image"):
+            count -= 1
+    tail = []
+    for prompt, original in projected[start:]:
+        message = dict(original)
+        message.pop("_usage", None)
+        tail.append((prompt, message))
+    return tail
+
+
+def apply_compaction(messages: Sequence[ChatMessage], entry: CompactionEntry) -> list[ChatMessage]:
+    """Replace old context while preserving fixed instructions and current status."""
+    system, status, conversation = [], [], []
+    for message in messages:
+        if message["role"] == "system":
+            system.append(message)
+        elif message.get("_current_status"):
+            status.append(message)
+        else:
+            conversation.append((False, message))
+    tail = [message for _, message in _recent_messages(conversation, entry.keep_messages)]
+    return [*system, summary_message(entry.summary), *tail, *status]
 
 
 def retained_entries(entries: Sequence[AgentMessage]) -> list[AgentMessage]:
-    """Keep what later model context may use from a run's ordered entries.
-
-    Tool calls, tool results, and reasoning describe a sandbox that no longer
-    exists, so later runs never see them. The in-run record keeps them until the
-    caller finishes.
-    """
-    return [
-        AssistantMessage(entry.text, entry.stop_reason) if isinstance(entry, AssistantMessage) else entry
-        for entry in entries
-        if not isinstance(entry, ToolResultMessage)
-    ]
+    """Retain native reasoning and tool exchanges. Release transient image bytes."""
+    return [replace(entry, image=None) if isinstance(entry, ToolResultMessage) else entry for entry in entries]
 
 
-def _projected_messages(transcript: Sequence[AgentMessage]) -> list[tuple[bool, ChatMessage]]:
-    """Project entries into prior-run context, marking which messages are prompts."""
-    projected: list[tuple[bool, ChatMessage]] = []
-    answer: list[str] = []
-    interrupted = False
-    answering = False
+def compatible_provider_messages(
+    messages: Sequence[ChatMessage], provider: ProviderIdentity | None
+) -> list[ChatMessage]:
+    """Replay opaque metadata only to its original API, endpoint, and model."""
+    import hashlib
+    import re
+
+    result = []
+    ids = {}
+    for original in messages:
+        message = dict(original)
+        source = message.pop("_provider", None)
+        message.pop("_usage", None)
+        message.pop("_tool_image", None)
+        message.pop("_current_status", None)
+        message.pop("_compaction_summary", None)
+        compatible = provider is not None and source == asdict(provider)
+        if message["role"] == "assistant" and not compatible:
+            for name in (
+                "reasoning",
+                "reasoning_content",
+                "reasoning_text",
+                "reasoning_details",
+                "thinking_blocks",
+                "provider_specific_fields",
+            ):
+                message.pop(name, None)
+            if "tool_calls" in message:
+                calls = []
+                for call in message["tool_calls"]:
+                    call_id = call["id"]
+                    if provider is not None and source is not None:
+                        normalized = re.sub(r"[^a-zA-Z0-9_-]", "_", call_id)
+                        if normalized != call_id or len(normalized) > 40:
+                            normalized = normalized[:31] + "_" + hashlib.sha256(call_id.encode()).hexdigest()[:8]
+                        ids[call_id] = normalized
+                        call_id = normalized
+                    calls.append({"id": call_id, "type": "function", "function": dict(call["function"])})
+                message["tool_calls"] = calls
+        if message["role"] == "tool":
+            message["tool_call_id"] = ids.get(message["tool_call_id"], message["tool_call_id"])
+        result.append(message)
+    return result
+
+
+def _repair_tool_pairs(messages: Sequence[ChatMessage]) -> list[ChatMessage]:
+    """Complete interrupted tool batches before the next assistant or user message."""
+    result = []
+    pending = {}
+    for message in messages:
+        if message["role"] == "tool":
+            if message["tool_call_id"] in pending:
+                pending.pop(message["tool_call_id"])
+                result.append(message)
+            continue
+        for call_id in pending:
+            result.append(tool_result_message(call_id, "No result provided. The tool exchange was interrupted."))
+        pending = {call["id"]: call for call in message.get("tool_calls", [])}
+        result.append(message)
+    result.extend(
+        tool_result_message(call_id, "No result provided. The tool exchange was interrupted.") for call_id in pending
+    )
+    return result
+
+
+def _projected_messages(
+    transcript: Sequence[AgentMessage], *, with_sources: bool = False
+) -> list[tuple[bool, ChatMessage]]:
+    """Project complete exchanges, retaining each native response and tool result."""
+    projected = []
+    response = []
+    response_start = 0
 
     def close_answer() -> None:
-        nonlocal answer, interrupted, answering
-        if answering:
-            # Pi's provider adapters also skip aborted and errored assistant messages.
-            # We keep a note in their place because the interrupted run's sandbox is
-            # gone, so its partial text may claim schedule changes that no longer
-            # exist. A length-truncated answer finished its run and is replayed.
-            content = ABORTED_RESPONSE_HISTORY if interrupted else "".join(answer)
-            projected.append((False, ChatMessage(role="assistant", content=content)))
-        answer, interrupted, answering = [], False, False
+        if not response:
+            return
+        if any(isinstance(entry, AssistantMessage) and entry.stop_reason in {"aborted", "error"} for entry in response):
+            messages = [ChatMessage(role="assistant", content=ABORTED_RESPONSE_HISTORY)]
+        elif all(
+            isinstance(entry, AssistantMessage)
+            and not entry.tool_calls
+            and not entry.native_reasoning
+            and entry.usage is None
+            for entry in response
+        ):
+            # Keep the historical text-only projection for legacy sessions.
+            messages = [ChatMessage(role="assistant", content="".join(entry.text for entry in response))]
+        else:
+            messages = prepare_provider_request([], response, _preserve_native=True)
+        if with_sources:
+            for message in messages:
+                message["_source_index"] = response_start
+        projected.extend((False, message) for message in messages)
+        response.clear()
 
-    for entry in transcript:
-        if isinstance(entry, AssistantMessage):
-            # The responses between two prompts form one answer, as the user saw it.
-            answering = True
-            answer.append(entry.text)
-            interrupted = interrupted or entry.stop_reason in ("aborted", "error")
+    for index, entry in enumerate(transcript):
+        if isinstance(entry, CompactionEntry):
+            if entry.valid:
+                close_answer()
+                tail = _recent_messages(projected, entry.keep_messages)
+                message = summary_message(entry.summary)
+                if with_sources:
+                    message["_source_index"] = index
+                projected[:] = [(True, message), *tail]
         elif isinstance(entry, UserMessage | AppEventEntry):
             close_answer()
-            projected.append((starts_exchange(entry), ChatMessage(role="user", content=entry.text)))
+            message = ChatMessage(role="user", content=entry.text)
+            if with_sources:
+                message["_source_index"] = index
+            projected.append((True, message))
+        else:
+            if not response:
+                response_start = index
+            response.append(entry)
     close_answer()
     return projected
 
@@ -373,11 +519,12 @@ def projected_history(transcript: Sequence[AgentMessage]) -> list[ChatMessage]:
 
 @dataclass(frozen=True)
 class HistoryContext:
-    """Selected prior-run messages and their serialized JSON character budget."""
+    """Selected prior-run messages, source entry indices, and serialized JSON character budget."""
 
     messages: list[ChatMessage]
     used_chars: int
     dropped_messages: int
+    source_indices: list[int]
 
 
 def project_history(transcript: Sequence[AgentMessage], max_chars: int = DEFAULT_MAX_HISTORY_CHARS) -> HistoryContext:
@@ -387,23 +534,25 @@ def project_history(transcript: Sequence[AgentMessage], max_chars: int = DEFAULT
     provider can accept. A long session would otherwise grow every later prompt past
     the model context window and fail the request outright.
     """
-    projected = _projected_messages(transcript)
-    kept: list[tuple[bool, ChatMessage, int]] = []
+    projected = _projected_messages(transcript, with_sources=True)
+    kept: list[tuple[bool, ChatMessage, int, int]] = []
     remaining = max_chars
     for prompt, message in reversed(projected):
+        source_index = message.pop("_source_index")
         size = len(json.dumps(message, ensure_ascii=False))
         remaining -= size
         if remaining < 0:
             break
-        kept.append((prompt, message, size))
+        kept.append((prompt, message, size, source_index))
     # Start at a prompt or app event. An answer whose prompt did not fit refers to
     # an exchange the model can no longer see.
     while kept and not kept[-1][0]:
         kept.pop()
     return HistoryContext(
-        messages=[message for _prompt, message, _size in reversed(kept)],
-        used_chars=sum(size for _prompt, _message, size in kept),
+        messages=[message for _prompt, message, _size, _source in reversed(kept)],
+        used_chars=sum(size for _prompt, _message, size, _source in kept),
         dropped_messages=len(projected) - len(kept),
+        source_indices=[source for _prompt, _message, _size, source in reversed(kept)],
     )
 
 
@@ -428,15 +577,47 @@ def entries_from_legacy_history(messages: Sequence[ChatMessage]) -> list[AgentMe
 
 def interrupted_entries(entries: Sequence[AgentMessage], reason) -> list[AgentMessage]:
     """Do not replay claims from a run whose temporary workspace was discarded."""
-    result = [replace(entry, stop_reason=reason) if isinstance(entry, AssistantMessage) else entry for entry in entries]
+    result = [
+        replace(entry, stop_reason=reason)
+        if isinstance(entry, AssistantMessage)
+        else replace(entry, valid=False)
+        if isinstance(entry, CompactionEntry)
+        else entry
+        for entry in entries
+    ]
     if not result or not isinstance(result[-1], AssistantMessage):
         result.append(AssistantMessage("", reason))
     return result
 
 
+def compaction_safe_drop_end(transcript: Sequence[AgentMessage], end: int | None) -> int | None:
+    """Retain a summary and the older messages it references as one retention unit."""
+    if end is None:
+        return None
+    for index, entry in enumerate(transcript):
+        if not isinstance(entry, CompactionEntry) or not entry.valid or entry.keep_messages <= 0:
+            continue
+        before = _projected_messages(transcript[:index], with_sources=True)
+        tail = _recent_messages(before, entry.keep_messages)
+        first = min((message["_source_index"] for _, message in tail), default=index)
+        if first < end <= index:
+            end = next(
+                (
+                    candidate
+                    for candidate in range(index + 1, len(transcript))
+                    if starts_exchange(transcript[candidate])
+                ),
+                None,
+            )
+            if end is None:
+                return None
+    return end
+
+
 def drop_oldest_exchange(transcript: list[AgentMessage], keep_entries: int = 0) -> list[AgentMessage]:
     """Remove one prompt with its answers and decisions, while preserving the newest exchange."""
     end = next((index for index in range(1, len(transcript)) if starts_exchange(transcript[index])), None)
+    end = compaction_safe_drop_end(transcript, end)
     if end is None or len(transcript) - end < keep_entries:
         return []
     removed = transcript[:end]

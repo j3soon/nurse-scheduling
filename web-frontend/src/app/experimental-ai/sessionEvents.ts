@@ -42,6 +42,8 @@ export type SessionEvent = (
   | { type: 'cost_summary'; conversation: CostSummary; run?: CostSummary }
   | { type: 'delta' | 'reasoning'; text: string }
   | { type: 'truncated' }
+  | { type: 'compaction_start'; reason: 'threshold' | 'overflow'; tokensBefore: number }
+  | { type: 'compaction_end'; reason: 'threshold' | 'overflow'; tokensBefore: number; success: boolean; aborted: boolean; estimatedTokensAfter?: number }
   | { type: 'tool_start'; activity: ToolStartActivity }
   | { type: 'tool'; activity: ToolActivity }
   | { type: 'steering'; messageId: string; message: string }

@@ -509,8 +509,8 @@ cleaned while the AI service is offline.
 | `AI_HISTORY_POSTGRES_URL` | Unset | PostgreSQL connection string for session recovery and turn metadata. Compose sets its internal URL directly. |
 | `AI_REQUEST_LOG_ENABLED` | `true` | Log a question preview for each incoming message, which records chat text. |
 | `AI_PROVIDER_TIMEOUT_SECONDS` | `180` | Provider request timeout. |
-| `AI_PROVIDER_MAX_ATTEMPTS` | `3` | Total attempts for a provider request that times out before streaming begins. |
-| `AI_PROVIDER_RETRY_BACKOFF_SECONDS` | `1` | Initial pre-stream timeout retry delay. The delay doubles after each failed attempt. |
+| `AI_PROVIDER_MAX_ATTEMPTS` | `3` | Total attempts per provider turn for transient HTTP, timeout, connection, or interrupted-stream failures. |
+| `AI_PROVIDER_RETRY_BACKOFF_SECONDS` | `1` | Initial retry delay, doubled up to 8 seconds with jitter. Valid server retry headers take precedence, with a 60-second maximum. |
 | `AI_OPTIMIZER_BASE_URL` | `http://localhost:8000` (`http://api:8000` in Docker Compose) | Optimizer API base URL. Use HTTPS for a credentialed remote endpoint. An unavailable API produces a tool error without disabling chat. |
 | `AI_OPTIMIZER_AUTH_TOKEN` | Unset (defaults to `API_AUTH_TOKEN` in Docker Compose) | Server-side optimizer API bearer token. Set it explicitly when the API uses identified keys. |
 | `AI_OPTIMIZER_POLL_INTERVAL_SECONDS` | `1` | Delay between background optimizer status checks. |
@@ -625,6 +625,37 @@ backend restarts. Model settings are separate from expanding returned reasoning
 text. Smaller context windows remain subject to the provider's input limits. The
 chat reports the selected model's context limit when available.
 
+The agent automatically summarizes older conversation context before requests
+approach that limit. It retains recent tool exchanges and native reasoning for
+compatible models. Summaries preserve goals, constraints, decisions, pending
+work, and file context. Current schedule and file status stay in each request.
+Summary calls use the selected model and appear in provider cost estimates.
+The transcript shows when summarization starts, succeeds, fails, or stops.
+After a successful summary, the context meter uses the smaller estimated context
+until the next model call reports usage. Failed summaries keep the original context.
+The composer footer updates Context and Tokens during streamed reasoning and answer
+text. Token estimates are replaced when the provider reports usage. Estimated cost
+updates when provider cost figures arrive. Missing prices stay unavailable.
+Completion requests cap output against the model's advertised output limit and
+remaining context, with a safety margin of 4,096 tokens or half the context
+window, whichever is smaller. Summaries request up to
+80 percent of their reserved output space. Numeric reasoning budgets leave at
+least 1,024 tokens for the answer within the same completion limit. The gateway's
+supported parameters determine the token-limit field. Unknown model limits keep
+provider defaults unless the request supplies an explicit cap.
+
+Without a reported context limit, the existing history limits still apply.
+A confirmed context overflow permits one compact-and-retry attempt. PostgreSQL
+recovery retains successful summaries across service restarts.
+
+The chat sends its stable session UUID in the `x-session-id` header on each
+completion request, including retries, tool follow-ups, compaction summaries,
+and optimizer reviews. It keeps the UUID after restoring a saved session.
+LiteLLM can use this header when `session_affinity` is enabled under
+`router_settings.optional_pre_call_checks` to keep a conversation on one
+deployment. The provider copy for each run keeps concurrent conversations
+separate. HTTP attempt IDs remain independent for cost accounting.
+
 ### Provider cost estimates
 
 Enable cost reporting in the LiteLLM gateway configuration:
@@ -644,7 +675,7 @@ float values returned by gateways. Configure prices for custom models so missing
 gateway pricing does not appear free.
 
 Each HTTP attempt has a stable local call ID and an optional LiteLLM call ID.
-The chat includes retries, tool follow-ups, and optimizer reviews in its totals.
+The chat includes retries, tool follow-ups, compaction summaries, and optimizer reviews in its totals.
 It keeps input, output, cached input, and reasoning token counts when supplied.
 Reasoning tokens are already included in output tokens and are not added again.
 Costs use decimal USD arithmetic on the server. The UI shows a turn total,
@@ -773,6 +804,29 @@ executed. For a smaller change, pass explicit affected test paths. The
 [AI validation guide](https://github.com/j3soon/nurse-scheduling/blob/dev/skills/implement-change-series/references/ai-validation.md)
 explains when selected live cases are needed. Frontend ownership changes need
 browser checks. Model, tool, and context changes need selected live cases.
+
+The opt-in long-chat regression uses the real session API, configured providers,
+and a prebuilt E2B template. Run it from the repository root:
+
+```sh
+AI_ENV_FILE=docker/.env.staging ./scripts/test_ai_compaction_live.sh
+```
+
+It runs four scenarios concurrently: automatic compaction across runs, repeated
+compaction, model switching, and Stop during a real summary stream followed by
+resume. A 24,000-character history budget forces compaction without filling the
+provider's full context window. Checks cover remembered constraints, complete
+tool exchanges, reconnect replay, attempt costs, stable session IDs, and missing
+temporary files in each fresh sandbox. The schedule must stay unchanged.
+The cancellation case pauses after receiving a real summary fragment.
+
+The command reads `docker/.env`, falling back to `docker/.env.staging`, unless
+`AI_ENV_FILE` is set. `AI_COMPACTION_SWITCH_MODEL` selects the second model and
+defaults to `azure/gpt-6-luna`. Both models must be available, distinct, and report
+a context limit. The command checks this before starting paid scenarios.
+Traces go to `artifacts/compaction-live/`, or
+`AI_COMPACTION_LIVE_OUTPUT_DIR`. The check uses no production database, does not
+rebuild the template, and remains skipped in ordinary pytest runs.
 
 ## Export saved AI chats
 

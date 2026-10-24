@@ -117,6 +117,11 @@ from the trust-based local harness.
 ## Experimental AI
 - Prioritize maintainability, readability, and simplicity. Avoid over-engineering.
   Use Pi agent v1.0.0 as a reference for AI chat architecture and design philosophy.
+  Clone external reference code under the ignored repository-root `artifacts/`
+  directory and record the inspected revision in related developer documentation.
+  Preserve upstream compaction prompt text exactly and record its revision and
+  hashes. Keep project-specific workspace guidance in the main system prompt
+  instead of duplicating it in compaction prompts.
 - `AgentSession` owns conversation changes, steering, applied schedules, and
   the shared foreground and optimizer-review execution path. `SessionStore`
   owns access, expiry, and retained-byte budgets. `SessionRecovery` owns ordered
@@ -125,7 +130,27 @@ from the trust-based local harness.
 - Keep conversation entries independent of provider wire messages. Derive model
   requests and retained history through `context.py`. Count retained partial text
   in session byte budgets even when model context replaces it with an interruption
-  note. Release in-run tool results and images after session finalization.
+  note. Retain completed tool exchanges and native reasoning metadata across runs.
+  Replay opaque metadata only to its original endpoint, API, and model. Keep the
+  stored metadata intact when switching models. Release tool images after session
+  finalization and omit failed or incomplete native output from provider requests.
+- Keep compaction entries in the ordered transcript. Apply a summary only after
+  every summary request completes, and invalidate summaries from failed or
+  cancelled runs. Keep a summary and its referenced recent tool messages together
+  during retention. Reset older usage estimates at each compaction boundary.
+  Keep app-event indices tied to transcript entries across compaction and retention.
+  Keep summary requests visible in provider cost records, but keep their text out
+  of the answer stream. Use `tests/test_ai_compaction.py` for these contracts.
+  Test chunked summaries through the provider's token-limit calculation, including
+  updates with a previous split-turn summary and small model context windows.
+  Coalesce streamed context estimates with text batches. Replace token estimates
+  with provider usage without adding estimates to billed usage or cost totals.
+  Test history character and message thresholds without model context metadata.
+  For live cross-run checks, use `../scripts/test_ai_compaction_live.sh` with
+  `AI_ENV_FILE`. It runs four concurrent scenarios through the real session API
+  and prebuilt E2B sandboxes. A smaller history budget forces compaction.
+  Select two distinct available models that both report a context limit.
+  Check remembered file context separately from file availability in the new VM.
 - Apply queued steering before each follow-up provider request, including requests
   after refused tool batches. Reject conflicting provider finish reasons and any
   further output after a completion signal.
@@ -155,6 +180,11 @@ from the trust-based local harness.
   order. If the gateway omits reasoning choices, hide the selector and preserve
   its defaults. Keep the session's current selection separate from each accepted
   run's frozen selection. Changing session settings must not change an active run.
+- Bind the stable `AgentSession.id` to provider calls through a run-scoped
+  provider. Keep the same `x-session-id` for retries, tool follow-ups, compaction,
+  optimizer reviews, and restored sessions. Never store session IDs or request
+  limits on a provider shared by concurrent chats. Use the chat ID for session
+  affinity, not the per-attempt call ID.
 - Track provider costs by HTTP attempt ID. Replace streamed updates instead of
   adding them, preserve missing prices as unknown, and use decimal USD totals.
   Restore totals from saved call records and test replay before acknowledgement.

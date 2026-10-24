@@ -37,7 +37,7 @@ from ..sentry import report_outage_recovery
 from ..server.retry import RepeatedFailure
 from .costs import CostTotals
 from .provider import ProviderCall, TokenUsage
-from .transcript import AgentMessage, AssistantMessage, UserMessage, entry_from_record, entry_record
+from .transcript import AgentMessage, AssistantMessage, CompactionEntry, UserMessage, entry_from_record, entry_record
 from .workspace import SandboxAttachment, attachment_path
 
 logger = logging.getLogger("nurse_scheduling.ai.history")
@@ -355,8 +355,7 @@ class ChatHistory:
         """Load an unexpired owned session, its conversation, and the runs whose terminal event was not stored.
 
         As Pi's `buildSessionContext`, the conversation is rebuilt from saved entries: app
-        events, proposal decisions, and the messages of committed runs. Tool results never
-        join later context, so each loaded entry is one conversation entry, and the entries
+        events, proposal decisions, and the messages of committed runs. The entries
         that retention trimmed from the front are skipped.
         """
         with self._connect() as connection:
@@ -392,7 +391,7 @@ class ChatHistory:
                 row[0]["pending_provider_calls"] = []
             entries = connection.execute(
                 "SELECT e.type, e.payload, r.status FROM chat_session_entries e LEFT JOIN chat_runs r ON r.id = e.run_id "
-                "WHERE e.session_id = %s AND e.type <> 'tool_result' "
+                "WHERE e.session_id = %s "
                 "AND (e.run_id IS NULL OR e.type IN ('app_event', 'proposal_decision') OR r.committed) ORDER BY e.seq OFFSET %s",
                 (session_id, row[0]["dropped_entries"]),
             ).fetchall()
@@ -433,6 +432,8 @@ class ChatHistory:
                 replace(entry, stop_reason="aborted" if status == "cancelled" else "error")
                 if isinstance(entry := entry_from_record(entry_type, payload), AssistantMessage)
                 and status in {"failed", "cancelled", "stale"}
+                else replace(entry, valid=False)
+                if isinstance(entry, CompactionEntry) and status in {"failed", "cancelled", "stale"}
                 else entry
                 for entry_type, payload, status in entries
             ],

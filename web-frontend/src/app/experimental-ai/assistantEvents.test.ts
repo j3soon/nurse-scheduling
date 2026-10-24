@@ -35,6 +35,27 @@ function reduce(events: AssistantEvent[]): ChatMessageContent {
 }
 
 describe('assistant events', () => {
+  it.each([true, false])('replaces running compaction with its outcome: success=%s', success => {
+    const message = reduce([
+      { type: 'compaction_start', reason: 'threshold', tokensBefore: 25000 },
+      { type: 'compaction_end', reason: 'threshold', tokensBefore: 25000, success, aborted: false },
+      { type: 'delta', text: 'Continue.' },
+    ]);
+    expect(message.activity).toEqual([
+      { kind: 'compaction', reason: 'threshold', state: success ? 'completed' : 'failed',
+        text: success ? 'The conversation was summarized.' : 'Summarization failed. The original context was kept.' },
+      { kind: 'response', text: 'Continue.' },
+    ]);
+  });
+
+  it('marks a compaction interrupted if its stream terminates', () => {
+    const message = reduce([
+      { type: 'compaction_start', reason: 'overflow', tokensBefore: 25000 },
+      { type: 'stopped' },
+    ]);
+    expect(message.activity?.[0]).toMatchObject({ kind: 'compaction', state: 'interrupted' });
+  });
+
   it('uses secure random bytes for message IDs when randomUUID is unavailable', () => {
     const getRandomValues = vi.fn((bytes: Uint8Array) => {
       bytes.set(Array.from({ length: 16 }, (_, index) => index));

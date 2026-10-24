@@ -19,11 +19,21 @@
 
 # This file is mostly AI generated.
 
-from dataclasses import asdict, dataclass, replace
+import json
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Literal
 
 # Pi's stop reasons. `tool_use` ends a response that requested tools.
 StopReason = Literal["stop", "length", "tool_use", "aborted", "error"]
+
+
+@dataclass(frozen=True)
+class ProviderIdentity:
+    """The endpoint, API, and model that own native replay metadata."""
+
+    endpoint: str
+    model: str
+    api: str = "openai-completions"
 
 
 @dataclass(frozen=True)
@@ -33,6 +43,7 @@ class ToolCall:
     id: str
     name: str
     arguments: str
+    native: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -53,6 +64,9 @@ class AssistantMessage:
     stop_reason: StopReason = "stop"
     reasoning: str = ""
     tool_calls: tuple[ToolCall, ...] = ()
+    native_reasoning: dict[str, Any] = field(default_factory=dict)
+    provider: ProviderIdentity | None = None
+    usage: dict[str, int | None] | None = None
 
 
 @dataclass(frozen=True)
@@ -81,7 +95,17 @@ class AppEventEntry:
     text: str
 
 
-AgentMessage = UserMessage | AssistantMessage | ToolResultMessage | AppEventEntry
+@dataclass(frozen=True)
+class CompactionEntry:
+    """A summary that replaces older model context while retaining a recent tail."""
+
+    summary: str
+    keep_messages: int
+    tokens_before: int
+    valid: bool = True
+
+
+AgentMessage = UserMessage | AssistantMessage | ToolResultMessage | AppEventEntry | CompactionEntry
 
 # Earlier versions stored the user's approval of each schedule change. A stored decision
 # restores as the app event the model received.
@@ -100,6 +124,7 @@ ENTRY_TYPES = {
     AssistantMessage: "assistant",
     ToolResultMessage: "tool_result",
     AppEventEntry: "app_event",
+    CompactionEntry: "compaction",
 }
 
 
@@ -119,22 +144,37 @@ def entry_from_record(entry_type: str, payload: dict[str, Any]) -> AgentMessage:
             payload["stop_reason"],
             payload.get("reasoning", ""),
             tuple(ToolCall(**call) for call in payload.get("tool_calls", ())),
+            payload.get("native_reasoning", {}),
+            ProviderIdentity(**payload["provider"]) if payload.get("provider") else None,
+            payload.get("usage"),
         )
     if entry_type == "proposal_decision":
         return AppEventEntry(_LEGACY_DECISION_EVENTS[payload["decision"]])
-    types = {"user": UserMessage, "tool_result": ToolResultMessage, "app_event": AppEventEntry}
+    types = {
+        "user": UserMessage,
+        "tool_result": ToolResultMessage,
+        "app_event": AppEventEntry,
+        "compaction": CompactionEntry,
+    }
     return types[entry_type](**payload)
 
 
 def starts_exchange(entry: AgentMessage) -> bool:
     """Whether model context may start at this entry without an earlier answer it refers to."""
-    return isinstance(entry, UserMessage | AppEventEntry)
+    return isinstance(entry, UserMessage | AppEventEntry | CompactionEntry)
 
 
 def entry_text(entry: AgentMessage) -> str:
     """Return the text an entry holds, which bounds its share of session memory."""
     if isinstance(entry, UserMessage | ToolResultMessage | AppEventEntry):
         return entry.text
+    if isinstance(entry, CompactionEntry):
+        return entry.summary
     if isinstance(entry, AssistantMessage):
-        return entry.text + entry.reasoning + "".join(call.arguments for call in entry.tool_calls)
+        return (
+            entry.text
+            + entry.reasoning
+            + "".join(call.arguments + json.dumps(call.native, ensure_ascii=False) for call in entry.tool_calls)
+            + (json.dumps(entry.native_reasoning, ensure_ascii=False) if entry.native_reasoning else "")
+        )
     return ""

@@ -29,7 +29,15 @@ import httpx
 import pytest
 
 from nurse_scheduling.ai.costs import CostTotals
-from nurse_scheduling.ai.provider import OpenAiCompatibleProvider, ProviderCall, TokenUsage, _parse_cost
+from nurse_scheduling.ai.provider import (
+    OpenAiCompatibleProvider,
+    ProviderCall,
+    ReasoningDelta,
+    ResponseEnd,
+    TextDelta,
+    TokenUsage,
+    _parse_cost,
+)
 from nurse_scheduling.ai.session_event_stream import SessionEventStream
 from nurse_scheduling.ai.sessions import SessionStore
 
@@ -37,6 +45,40 @@ from . import test_ai_basic as basic
 from .test_ai_history import postgres_history, recorded_history, uninitialized_postgres_history
 
 __all__ = ["postgres_history", "recorded_history", "uninitialized_postgres_history"]
+
+
+def test_context_tokens_and_costs_update_before_the_stream_finishes():
+    class Provider:
+        context_tokens = 32000
+
+        async def stream_events(self, _messages, _tools=None):
+            call = ProviderCall("streamed-call", "model")
+            yield call
+            yield ReasoningDelta("Planning the answer.")
+            await asyncio.sleep(0.04)
+            yield TextDelta("First part of the answer. ")
+            await asyncio.sleep(0.04)
+            yield replace(call, cost_usd="0.01")
+            yield TextDelta("Second part of the answer.")
+            await asyncio.sleep(0.04)
+            yield TokenUsage(500, 100, 600)
+            yield replace(call, status="reported", cost_usd="0.02")
+            yield ResponseEnd("stop")
+
+    app = basic.create_test_app(settings=basic.make_settings(), provider=Provider())
+    with basic.AuthenticatedTestClient(app) as client:
+        session = basic.create_session(client, basic.schedule_yaml())
+        response = client.post(f"/sessions/{session}/messages", json={"message": "Question"})
+    events = basic.parse_sse(response.text)
+    last_delta = max(index for index, (kind, _) in enumerate(events) if kind == "delta")
+    progress = [data for kind, data in events[:last_delta] if kind == "context_usage" and "used_tokens" in data]
+    assert len(progress) >= 2
+    assert progress[-1]["used_tokens"] > progress[0]["used_tokens"]
+    assert progress[-1]["used_chars"] > progress[0]["used_chars"]
+    assert progress[-1]["max_tokens"] == 32000
+    assert any(kind == "cost_summary" and data["conversation"]["usd"] == "0.01" for kind, data in events[:last_delta])
+    assert [data for kind, data in events if kind == "context_usage"][-1]["used_tokens"] == 600
+    assert [data for kind, data in events if kind == "cost_summary"][-1]["conversation"]["usd"] == "0.02"
 
 
 def stream_response(cost, *, usage=True, header_cost="0", text="Answer"):

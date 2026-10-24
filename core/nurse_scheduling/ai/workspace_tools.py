@@ -178,6 +178,8 @@ async def run_workspace(
                     max_tool_rounds=limits.max_tool_rounds,
                     max_tool_calls=limits.max_tool_calls,
                     request_clock=request_clock,
+                    history_limit=limits.history_limit,
+                    message_limit=limits.message_limit,
                 )
                 async with aclosing(events):
                     async for event in events:

@@ -45,6 +45,8 @@ class RunSnapshot:
     # Uploads cannot change while a run is active, so this stays valid for the whole run.
     uploads: tuple[SandboxAttachment, ...] = ()
     frontend_timezone: str = "UTC"
+    # Freeze entry positions before retention can remove more of the transcript.
+    transcript_offset: int = 0
 
 
 @dataclass(eq=False)

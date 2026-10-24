@@ -22,10 +22,10 @@
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from .provider import ProviderCall, TokenUsage, ToolResultImage
-from .transcript import AssistantMessage
+from .transcript import AssistantMessage, CompactionEntry
 
 
 @dataclass(frozen=True)
@@ -47,6 +47,41 @@ class AgentMessageEnd:
     """A completed model response, ready for a durable entry checkpoint."""
 
     message: AssistantMessage
+
+
+@dataclass(frozen=True)
+class AgentContextUsage:
+    """The current request and streamed output, estimated until provider usage arrives."""
+
+    used_chars: int
+    used_tokens: int
+
+
+@dataclass(frozen=True)
+class AgentCompaction:
+    """A completed context summary ready for the ordered recovery checkpoint."""
+
+    entry: CompactionEntry
+
+
+@dataclass(frozen=True)
+class AgentCompactionStart:
+    """A context summary is about to call the provider."""
+
+    reason: Literal["threshold", "overflow"]
+    tokens_before: int
+
+
+@dataclass(frozen=True)
+class AgentCompactionEnd:
+    """A summary finished, with a fresh estimate only when it was applied."""
+
+    reason: Literal["threshold", "overflow"]
+    success: bool
+    tokens_before: int
+    estimated_tokens_after: int | None = None
+    used_chars: int | None = None
+    aborted: bool = False
 
 
 @dataclass(frozen=True)
@@ -88,6 +123,10 @@ class AgentProposal:
 
 AgentEvent = (
     AgentMessageEnd
+    | AgentContextUsage
+    | AgentCompaction
+    | AgentCompactionStart
+    | AgentCompactionEnd
     | AgentText
     | AgentReasoning
     | AgentToolStart

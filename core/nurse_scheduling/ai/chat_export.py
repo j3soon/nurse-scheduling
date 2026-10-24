@@ -177,6 +177,13 @@ def _summary(entry):
         return "Reasoning · " + _count(entry["text"]) + " characters"
     if kind == "schedule-change":
         return "schedule edit"
+    if kind == "compaction":
+        return {
+            "running": "Summarizing conversation",
+            "completed": "Conversation summarized",
+            "failed": "Summarization failed",
+            "interrupted": "Summarization interrupted",
+        }[entry["state"]]
     if kind == "schedule-check":
         return "Schedule check passed" if entry["ok"] else "Schedule check failed"
     if kind == "schedule-applied":
@@ -190,7 +197,7 @@ def _activity_label(entry):
     kind = entry["kind"]
     if kind in {"reasoning", "response", "schedule-change"}:
         return {"reasoning": "Reasoning", "response": "Response", "schedule-change": "Schedule change"}[kind]
-    if kind in {"schedule-check", "schedule-applied"}:
+    if kind in {"schedule-check", "schedule-applied", "compaction"}:
         return _summary(entry)
     state = entry.get("state")
     suffix = state if state in {"running", "interrupted"} else "failed" if not entry["ok"] else ""
@@ -214,7 +221,7 @@ def _activity_text(entry):
 
 def _activity_html(entry):
     kind = entry["kind"]
-    if kind in {"reasoning", "schedule-check", "schedule-applied"}:
+    if kind in {"reasoning", "schedule-check", "schedule-applied", "compaction"}:
         body = '<pre class="activity-output">' + escape_html(_activity_text(entry)) + "</pre>"
     elif kind == "schedule-change":
         before, after = entry["before"].split("\n"), entry["after"].split("\n")

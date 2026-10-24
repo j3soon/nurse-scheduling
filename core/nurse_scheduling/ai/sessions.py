@@ -32,7 +32,7 @@ from fastapi import HTTPException
 
 from .agent_session import AcceptedMessage, AgentSession, RunCompletion, schedule_revision
 from .config import AiSettings
-from .context import history_chars, project_history, projected_history, upload_event
+from .context import compaction_safe_drop_end, history_chars, project_history, projected_history, upload_event
 from .history import EntryRow
 from .lifecycle import RunSnapshot
 from .session_event_stream import SessionEventStream
@@ -218,6 +218,7 @@ class SessionStore:
         """
         transcript = session.transcript
         end = next((index for index in range(1, len(transcript)) if starts_exchange(transcript[index])), None)
+        end = compaction_safe_drop_end(transcript, end)
         if end is None or len(transcript) - end < keep_entries:
             return []
         removed = transcript[:end]

@@ -37,6 +37,7 @@ export function messageId(): string {
 export type AssistantEvent =
   | { type: 'delta'; text: string }
   | { type: 'reasoning'; text: string }
+  | Extract<SessionEvent, { type: 'compaction_start' | 'compaction_end' }>
   | { type: 'truncated' }
   | { type: 'done' | 'stopped' }
   | { type: 'error' | 'stale'; message: string }
@@ -95,6 +96,17 @@ export function applyAssistantEvent<T extends ChatMessageContent>(message: T, ev
       };
     case 'reasoning':
       return { ...message, activity: appendReasoningActivity(activity, event.text) };
+    case 'compaction_start':
+      return { ...message, activity: [...activity, { kind: 'compaction', state: 'running', reason: event.reason,
+        text: 'The conversation is being summarized.' }] };
+    case 'compaction_end': {
+      const state = event.success ? 'completed' : event.aborted ? 'interrupted' : 'failed';
+      const entry: ActivityEntry = { kind: 'compaction', state, reason: event.reason,
+        text: event.success ? 'The conversation was summarized.' : event.aborted
+          ? 'Summarization stopped. The original context was kept.' : 'Summarization failed. The original context was kept.' };
+      const index = activity.findLastIndex(item => item.kind === 'compaction' && item.state === 'running');
+      return { ...message, activity: index < 0 ? [...activity, entry] : [...activity.slice(0, index), entry, ...activity.slice(index + 1)] };
+    }
     case 'truncated':
       return { ...message, truncated: true };
     case 'done':
@@ -128,7 +140,7 @@ export function applyAssistantEvent<T extends ChatMessageContent>(message: T, ev
 
 export function interruptRunningTools(entries: ActivityEntry[]): ActivityEntry[] {
   return entries.map(entry => (
-    entry.kind === 'tool' && entry.state === 'running'
+    (entry.kind === 'tool' || entry.kind === 'compaction') && entry.state === 'running'
       ? { ...entry, state: 'interrupted' as const }
       : entry
   ));
@@ -175,7 +187,7 @@ export function toAssistantEvent(
   browserSchedule: { readonly current: string },
 ): AssistantEvent | null {
   switch (event.type) {
-    case 'delta': case 'reasoning': case 'truncated': case 'tool_start': case 'tool':
+    case 'delta': case 'reasoning': case 'truncated': case 'tool_start': case 'tool': case 'compaction_start': case 'compaction_end':
       return event;
     case 'schedule_change': {
       const before = workingSchedule.current ?? browserSchedule.current;

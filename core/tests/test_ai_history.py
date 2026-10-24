@@ -181,7 +181,9 @@ def test_records_text_usage_and_sanitized_failure(recorded_history, failed):
     )
     assert run_messages(recorded_history, start["run_id"]) == [
         UserMessage("Question"),
-        AssistantMessage("Partial answer", "error" if failed else "stop"),
+        AssistantMessage(
+            "Partial answer", "error" if failed else "stop", usage=None if failed else asdict(TokenUsage(1, 1, 2))
+        ),
     ]
     if not failed:
         assert basic.parse_sse(response.text)[-1] == ("done", {"run_id": start["run_id"], "history_saved": True})
@@ -283,7 +285,7 @@ def test_history_records_the_typed_prompt_and_the_retained_upload_count(recorded
     assert "ward.xlsx" in transcript[0].text
 
 
-def test_history_keeps_the_full_run_while_the_session_keeps_only_later_context(recorded_history):
+def test_history_and_session_keep_the_full_run_context(recorded_history):
     provider = basic.ScriptedToolProvider(
         [ReasoningDelta("Find P1. "), basic.TextDelta("Checking. "), *basic.rename_call()],
         [basic.TextDelta("Renamed P1.")],
@@ -306,7 +308,7 @@ def test_history_keeps_the_full_run_while_the_session_keeps_only_later_context(r
     assert (tool_result.tool_call_id, tool_result.tool_name, tool_result.ok) == (call.id, call.name, True)
     assert "passed trusted server-side validation" in tool_result.text
     assert answer == AssistantMessage("Renamed P1.")
-    assert retained == [UserMessage("Rename P1."), AssistantMessage("Checking. ", "tool_use"), answer]
+    assert retained == [prompt, tool_use, tool_result, answer]
 
 
 def test_database_unavailable_prevents_startup(recorded_history, monkeypatch):
@@ -1112,8 +1114,17 @@ def test_postgres_duplicates_and_reconnection(postgres_history):
     history.start_run(run, session, session_state(owner), "What's next?", 0, model="model", attachment_count=3)
     history.start_run(run, session, session_state(owner), "duplicate", 1, model="model", attachment_count=3)
     call = ToolCall("call-1", "read", '{"path":"schedule.yaml"}')
+    from nurse_scheduling.ai.transcript import ProviderIdentity
+
     entries = [
-        AssistantMessage("Checking.", "tool_use", "Look first.", (call,)),
+        AssistantMessage(
+            "Checking.",
+            "tool_use",
+            "Look first.",
+            (call,),
+            {"thinking_blocks": [{"type": "redacted_thinking", "data": "cipher"}]},
+            ProviderIdentity("https://gateway.example/v1", "model"),
+        ),
         ToolResultMessage("call-1", "read", "people: []", True),
         UserMessage("Only nights."),
         AssistantMessage("Answer"),
@@ -1150,11 +1161,12 @@ def test_postgres_duplicates_and_reconnection(postgres_history):
             *map(record, entries),
             record(app_event[2]),
         ]
-        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (7,)
-    # Tool results never join later context, so the conversation is rebuilt without them.
+        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (9,)
+    # Complete tool exchanges survive a process restart.
     assert restarted.load_session(session, owner)["entries"] == [
         UserMessage("What's next?"),
         entries[0],
+        entries[1],
         UserMessage("Only nights."),
         AssistantMessage("Answer"),
         app_event[2],
@@ -1371,7 +1383,7 @@ def test_postgres_upgrade_preserves_deployed_sessions_and_message_receipts(unini
     assert [(row[3], row[4].get("text")) for row in events] == [("delta", "Saved answer"), ("optimization", None)]
     assert events[0][4]["run_id"] == run_id
     with history._connect() as connection:
-        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (7,)
+        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (9,)
         assert connection.execute("SELECT auth_credential_id FROM chat_sessions").fetchone() == ("team-a",)
         assert connection.execute("SELECT model FROM chat_runs").fetchone() == ("saved-model",)
 
@@ -1404,6 +1416,8 @@ def test_postgres_recovery_enforces_owner_and_session_expiry(postgres_history):
 
 
 def test_postgres_recovery_keeps_operational_metadata(postgres_history):
+    answer = AssistantMessage("Answer", usage=asdict(TokenUsage(2, 3, 5)))
+
     class Provider:
         def __init__(self):
             self.calls = 0
@@ -1433,7 +1447,7 @@ def test_postgres_recovery_keeps_operational_metadata(postgres_history):
         ).fetchone()
         assert session_entries(connection) == [
             record(UserMessage("First")),
-            record(AssistantMessage("Answer")),
+            record(answer),
             record(UserMessage("Second")),
             record(AssistantMessage("Partial", "error")),
         ]
@@ -1461,7 +1475,7 @@ def test_postgres_recovery_keeps_operational_metadata(postgres_history):
     restored = postgres_history.load_session(session, owner)
     assert restored["entries"] == [
         UserMessage("First"),
-        AssistantMessage("Answer"),
+        answer,
         UserMessage("Second"),
         AssistantMessage("Partial", "error"),
     ]
@@ -2196,3 +2210,162 @@ def test_postgres_saved_export_is_owned_and_survives_restart(postgres_history):
         client.cookies.update(cookies)
         restored = client.get(f"/sessions/{session_id}/export")
         assert restored.content == exported.content
+
+
+def test_postgres_upgrade_converts_old_trim_offsets(uninitialized_postgres_history):
+    history = uninitialized_postgres_history
+    # Build the deployed schema before the tool-context migration.
+    with history._connect() as connection:
+        connection.execute("CREATE TABLE ai_history_migrations (version text PRIMARY KEY)")
+        for migration in sorted(Path(history_module.__file__).with_name("migrations").glob("*.sql")):
+            if migration.name.startswith("008_"):
+                break
+            connection.execute(migration.read_text(encoding="utf-8"))
+            if migration.name.startswith("004_"):
+                history_module._migrate_legacy_transcripts(connection)
+            connection.execute("INSERT INTO ai_history_migrations (version) VALUES (%s)", (migration.name,))
+    run, session, owner = str(uuid4()), str(uuid4()), str(uuid4())
+    state = session_state(owner)
+    history.save_session(session, state)
+    history.start_run(run, session, state, "Old", 0, model="model", attachment_count=0)
+    entries = [
+        AssistantMessage("Check", "tool_use", tool_calls=(ToolCall("r", "read", "{}"),)),
+        ToolResultMessage("r", "read", "Old result", True),
+        AssistantMessage("Old answer"),
+        UserMessage("Keep"),
+        AssistantMessage("Kept answer"),
+    ]
+    history.append_entries(session, [(seq, run, entry) for seq, entry in enumerate(entries, 1)])
+    owner_token, expires, payload = state
+    payload["dropped_entries"] = 3
+    history.finish_run(run, "completed", None, None, True, session_id=session, state=(owner_token, expires, payload))
+    history.initialize()
+    loaded = history.load_session(session, owner)
+    assert loaded["state"]["dropped_entries"] == 4
+    assert loaded["entries"] == [UserMessage("Keep"), AssistantMessage("Kept answer")]
+
+
+@pytest.mark.parametrize("status", ["completed", "cancelled", "failed"])
+def test_postgres_compaction_survives_restart_only_for_completed_runs(postgres_history, status):
+    from nurse_scheduling.ai.context import projected_history
+    from nurse_scheduling.ai.transcript import CompactionEntry
+
+    history = postgres_history
+    run, session, owner = str(uuid4()), str(uuid4()), str(uuid4())
+    state = session_state(owner)
+    history.save_session(session, state)
+    history.start_run(run, session, state, "Keep nights", 0, model="model", attachment_count=0)
+    entries = [AssistantMessage("old"), CompactionEntry("Goal: keep nights", 1, 9000), AssistantMessage("Done")]
+    history.append_entries(session, [(seq, run, entry) for seq, entry in enumerate(entries, 1)])
+    history.finish_run(run, status, None, None, True, session_id=session, state=state)
+    restarted = ChatHistory("test")
+    restarted.initialize()
+    restored = restarted.load_session(session, owner)["entries"]
+    summary = next(entry for entry in restored if isinstance(entry, CompactionEntry))
+    assert summary.valid == (status == "completed")
+    assert ("Goal: keep nights" in str(projected_history(restored))) == (status == "completed")
+
+
+@pytest.mark.parametrize("destination", ["same", "model", "endpoint"])
+def test_postgres_compacted_chat_replays_native_tools_events_and_costs_after_restart(postgres_history, destination):
+    from nurse_scheduling.ai.context import prepare_provider_request
+    from nurse_scheduling.ai.transcript import CompactionEntry, ProviderIdentity
+
+    session, owner, run = str(uuid4()), str(uuid4()), str(uuid4())
+    identity = ProviderIdentity("https://provider.example/v1", "test-model")
+    native = {
+        "reasoning_details": [{"type": "reasoning.encrypted", "data": "cipher", "id": "reasoning-1"}],
+        "thinking_blocks": [{"type": "thinking", "thinking": "Read the schedule", "signature": "signed"}],
+    }
+    tool = ToolCall("read-1", "read", '{"path":"/workspace/schedule.yaml"}')
+    entries = [
+        AssistantMessage("Earlier answer"),
+        AssistantMessage("", "tool_use", "Read the schedule", (tool,), native, identity),
+        ToolResultMessage(tool.id, tool.name, "P1 never works nights.", True),
+        AssistantMessage("The current schedule was inspected."),
+        CompactionEntry("Goal: preserve P1's night restriction. The schedule was inspected.", 3, 9000),
+    ]
+    state = session_state(owner)
+    history = postgres_history
+    history.save_session(session, state)
+    history.start_run(
+        run, session, state, "Inspect the schedule", 0, model="test-model", attachment_count=0, message_id="inspect"
+    )
+    history.append_entries(session, [(seq, run, entry) for seq, entry in enumerate(entries, 1)])
+    common = {"run_id": run, "reason": "threshold", "tokens_before": 9000}
+    call = {
+        "run_id": run,
+        "model": "test-model",
+        "reasoning": "default",
+        "status": "reported",
+        "usage": None,
+        "provider_call_id": None,
+        "response_model": None,
+    }
+    events = [
+        ("run_start", {"run_id": run, "trigger": "user"}),
+        ("provider_call", {**call, "call_id": "answer", "cost_usd": "0.1"}),
+        ("delta", {"run_id": run, "text": "The current schedule was inspected."}),
+        ("compaction_start", common),
+        ("provider_call", {**call, "call_id": "summary", "status": "pending", "cost_usd": None}),
+        ("provider_call", {**call, "call_id": "summary", "cost_usd": "0.02"}),
+        ("compaction_end", {**common, "success": True, "aborted": False, "estimated_tokens_after": 1000}),
+        (
+            "context_usage",
+            {"run_id": run, "used_chars": 400, "max_chars": 200000, "used_tokens": 1000, "max_tokens": 32000},
+        ),
+        ("done", {"run_id": run}),
+    ]
+    history.append_events(session, [(seq, seq, run, kind, data) for seq, (kind, data) in enumerate(events, 1)])
+    history.finish_run(run, "completed", None, None, True, session_id=session, state=state)
+    restarted_history = ChatHistory("test")
+    restarted_history.initialize()
+    restored = restarted_history.load_session(session, owner)
+    assert restored["entries"] == [UserMessage("Inspect the schedule"), *entries]
+    assert restored["state"]["cost_totals"] == {"usd": "0.12", "calls": 2, "pending": 0, "unavailable": 0}
+    original_request = prepare_provider_request([], restored["entries"], provider=identity)
+    assert original_request[0]["content"].endswith(entries[-1].summary)
+    assert original_request[1]["tool_calls"][0]["id"] == tool.id
+    assert original_request[2]["tool_call_id"] == tool.id
+    assert original_request[1]["thinking_blocks"] == native["thinking_blocks"]
+
+    async def recover():
+        provider = basic.FakeProvider([["Follow-up answer"]])
+        provider.identity = ProviderIdentity(
+            "https://other.example/v1" if destination == "endpoint" else identity.endpoint,
+            "other-model" if destination == "model" else identity.model,
+        )
+        app = basic.create_test_app(settings=basic.make_settings(history_postgres_url="test"), provider=provider)
+        async with asyncio.timeout(10), serving(app, owner) as client:
+            assert (await client.get(f"/sessions/{session}")).status_code == 200
+            frames = await read_events(app, session, owner, 3, until="session_reset", reset=True)
+            reset = next(data for _, kind, data in frames if kind == "session_reset")
+            replay = [(event["type"], event["data"]) for event in reset["events"]]
+            assert ("compaction_start", common) in replay
+            assert events[6] in replay
+            assert next(data for kind, data in replay if kind == "context_usage")["used_tokens"] == 1000
+            assert reset["cost_summary"]["usd"] == "0.12"
+            repeated = await client.post(
+                f"/sessions/{session}/messages", json={"message": "Inspect the schedule", "message_id": "inspect"}
+            )
+            assert repeated.json() == {"run_id": run} and provider.calls == []
+            assert (
+                await client.post(
+                    f"/sessions/{session}/messages", json={"message": "Continue", "message_id": "follow-up"}
+                )
+            ).status_code == 202
+            await read_events(app, session, owner, frames[-1][0])
+            while app.state.runs.busy(session):
+                await asyncio.sleep(0.01)
+            request = provider.calls[0]
+            retained_tool = next(message for message in request if message.get("tool_calls"))
+            assert ("thinking_blocks" in retained_tool) == (destination == "same")
+            assert ("reasoning_details" in retained_tool) == (destination == "same")
+            assert any(message.get("tool_call_id") == tool.id for message in request)
+            assert native in [
+                entry.native_reasoning
+                for entry in app.state.session_store.get(session).transcript
+                if isinstance(entry, AssistantMessage)
+            ]
+
+    asyncio.run(recover())
