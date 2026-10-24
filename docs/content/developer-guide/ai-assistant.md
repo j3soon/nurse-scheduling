@@ -1180,7 +1180,13 @@ See the [capability discovery instructions](reproduce/core.md#attachment-capabil
 
 ## Validate
 
-Follow the [AI test instructions](reproduce/core.md#ai-tests).
+Follow the [AI test instructions](reproduce/core.md#ai-tests). The opt-in
+`test_ai_compaction_live.sh` command exercises the real session API and E2B with
+four concurrent long-chat scenarios. It forces compaction with a smaller history
+budget and checks constraints, complete tool exchanges, model switching, Stop,
+reconnect replay, and fresh sandbox filesystems. Its traces are synthetic test
+conversations. It does not change the production prompts or connect to a
+production database.
 
 ## Mapping to Pi
 

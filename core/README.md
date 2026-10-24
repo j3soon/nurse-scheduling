@@ -801,6 +801,27 @@ executed. For a smaller change, pass explicit affected test paths. The
 explains when selected live cases are needed. Frontend ownership changes need
 browser checks. Model, tool, and context changes need selected live cases.
 
+The opt-in long-chat regression uses the real session API, configured providers,
+and a prebuilt E2B template. Run it from the repository root:
+
+```sh
+AI_ENV_FILE=docker/.env.staging ./scripts/test_ai_compaction_live.sh
+```
+
+It runs four scenarios concurrently: automatic compaction across runs, repeated
+compaction, model switching, and Stop during a real summary stream followed by
+resume. A 24,000-character history budget forces compaction without filling the
+provider's full context window. Checks cover remembered constraints, complete
+tool exchanges, reconnect replay, attempt costs, stable session IDs, and missing
+temporary files in each fresh sandbox. The schedule must stay unchanged.
+The cancellation case pauses after receiving a real summary fragment.
+
+The command reads `docker/.env`, falling back to `docker/.env.staging`, unless
+`AI_ENV_FILE` is set. `AI_COMPACTION_SWITCH_MODEL` selects the second model and
+defaults to `azure/gpt-6-luna`. Traces go to `artifacts/compaction-live/`, or
+`AI_COMPACTION_LIVE_OUTPUT_DIR`. The check uses no production database, does not
+rebuild the template, and remains skipped in ordinary pytest runs.
+
 ## Export saved AI chats
 
 From the repository root, export one PostgreSQL-backed chat session:
