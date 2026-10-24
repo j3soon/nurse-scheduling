@@ -729,7 +729,7 @@ flowchart TB
     Keep["<b>Replay receipt</b><br/>Preserve the browser's current schedule"]
     Candidate -->|Read after model execution| Validation
     Validation -->|Valid changed schedule and current RunSnapshot| Session
-    Session -->|schedule_applied with run ID, YAML, diff, and hashes| Replay
+    Session -->|schedule_applied with run ID, YAML,<br/>diff, and replaced_queued_schedule| Replay
     Replay -->|No| Import
     Import --> Notice
     Replay -->|Yes| Keep

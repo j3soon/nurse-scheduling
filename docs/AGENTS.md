@@ -138,7 +138,8 @@
 - Make architecture and data-flow figures understandable without surrounding
   prose. Use bold titles and short descriptions inside nodes.
 - Give each diagram a numbered caption inside its figure. Label arrows with
-  their action or data. Verify owners, allocation, cleanup, and persistence
+  their action or data. Check payload field names against the emitted API or
+  event schema. Verify owners, allocation, cleanup, and persistence
   ordering against code before updating the diagram.
 - Keep stored states separate from derived phases. Distinguish preparing a
   resource adapter from allocating a resource when allocation is lazy.
