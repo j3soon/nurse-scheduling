@@ -35,7 +35,7 @@ from psycopg.types.json import Jsonb
 
 from ..sentry import report_outage_recovery
 from ..server.retry import RepeatedFailure
-from .context import ABORTED_RESPONSE_HISTORY
+from .context import ABORTED_RESPONSE_HISTORY, interrupted_entries
 from .costs import CostTotals
 from .provider import ProviderCall, TokenUsage
 from .transcript import (
@@ -43,6 +43,7 @@ from .transcript import (
     AppEventEntry,
     AssistantMessage,
     CompactionEntry,
+    ToolResultMessage,
     UserMessage,
     entry_from_record,
     entry_record,
@@ -351,17 +352,7 @@ class ChatHistory:
             status = {"done": "completed", "stopped": "cancelled", "stale": "stale"}.get(kind, "failed")
             committed = kind == "done" or (kind != "stale" and not stopped_before_work)
             if committed and kind != "done":
-                seq = connection.execute(
-                    "SELECT coalesce(max(seq) + 1, 0) FROM chat_session_entries WHERE session_id = %s", (session_id,)
-                ).fetchone()[0]
-                _insert_entries(
-                    connection,
-                    session_id,
-                    [
-                        (seq, run_id, AssistantMessage("", "error")),
-                        (seq + 1, run_id, AppEventEntry(ABORTED_RESPONSE_HISTORY)),
-                    ],
-                )
+                _recover_run_context(connection, session_id, run_id)
             connection.execute(
                 "UPDATE chat_runs SET status = %s, error_code = %s, committed = %s, finished_at = now() WHERE id = %s",
                 (status, "service_restart" if kind is None else None, committed, run_id),
@@ -605,6 +596,83 @@ class ChatHistory:
         while True:
             await asyncio.sleep(3600)
             await self.write("prune")
+
+
+def _recover_run_context(connection, session_id: str, run_id: str) -> None:
+    """Repair stored context and its public events in the same recovery transaction."""
+    rows = connection.execute(
+        "SELECT seq, type, payload FROM chat_session_entries WHERE session_id = %s AND run_id = %s ORDER BY seq",
+        (session_id, run_id),
+    ).fetchall()
+    original = [entry_from_record(entry_type, payload) for _seq, entry_type, payload in rows]
+    repaired = interrupted_entries(original, "error")
+    known_tools = {id(entry) for entry in original if isinstance(entry, ToolResultMessage)}
+    missing = [entry for entry in repaired if isinstance(entry, ToolResultMessage) and id(entry) not in known_tools]
+    last = next(
+        (
+            (seq, entry)
+            for (seq, _kind, _payload), entry in zip(reversed(rows), reversed(original), strict=True)
+            if not isinstance(entry, CompactionEntry)
+        ),
+        None,
+    )
+    final_answer = last is not None and isinstance(last[1], AssistantMessage) and not last[1].tool_calls
+    if final_answer:
+        # Final validation may not have run before the process stopped.
+        _entry_type, payload = entry_record(replace(last[1], stop_reason="error"))
+        connection.execute(
+            "UPDATE chat_session_entries SET payload = %s WHERE session_id = %s AND seq = %s",
+            (_jsonb(payload), session_id, last[0]),
+        )
+    appended = [*missing]
+    if not final_answer:
+        appended.append(AssistantMessage("", "error"))
+    if not any(isinstance(entry, AppEventEntry) and entry.text == ABORTED_RESPONSE_HISTORY for entry in original):
+        appended.append(AppEventEntry(ABORTED_RESPONSE_HISTORY))
+    seq = connection.execute(
+        "SELECT coalesce(max(seq) + 1, 0) FROM chat_session_entries WHERE session_id = %s", (session_id,)
+    ).fetchone()[0]
+    _insert_entries(
+        connection,
+        session_id,
+        [(seq + offset, run_id, entry) for offset, entry in enumerate(appended)],
+    )
+    calls = {call.id: call for entry in original if isinstance(entry, AssistantMessage) for call in entry.tool_calls}
+    events = [
+        {
+            "type": "tool",
+            "tool_call_id": entry.tool_call_id,
+            "name": entry.tool_name,
+            "arguments": calls[entry.tool_call_id].arguments,
+            "result": entry.text,
+            "ok": False,
+        }
+        for entry in missing
+    ]
+    if not connection.execute(
+        "SELECT EXISTS (SELECT 1 FROM chat_session_events WHERE session_id = %s AND run_id = %s "
+        "AND type = 'response_end' AND data ? 'context_note')",
+        (session_id, run_id),
+    ).fetchone()[0]:
+        events.append({"type": "response_end", "stop_reason": "error", "context_note": ABORTED_RESPONSE_HISTORY})
+    event_id = connection.execute(
+        "SELECT coalesce(max(last_event_id), 0) FROM chat_session_events WHERE session_id = %s",
+        (session_id,),
+    ).fetchone()[0]
+    for offset, event in enumerate(events, 1):
+        event_type = event.pop("type")
+        connection.execute(
+            "INSERT INTO chat_session_events (session_id, event_id, last_event_id, run_id, type, data) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (
+                session_id,
+                event_id + offset,
+                event_id + offset,
+                run_id,
+                event_type,
+                _jsonb({**event, "run_id": run_id}),
+            ),
+        )
 
 
 def _insert_entries(connection, session_id: str, entries: Sequence[EntryRow]) -> None:

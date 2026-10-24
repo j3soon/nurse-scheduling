@@ -1654,6 +1654,9 @@ def test_postgres_recovers_question_and_partial_output_from_interrupted_run(post
     frames = asyncio.run(exercise())
     (reset,) = [data for _id, kind, data in frames if kind == "session_reset"]
     assert reset_text(frames) == "Saved partial output"
+    boundary = next(event for event in reset["events"] if event["type"] == "response_end")
+    assert boundary["data"]["stop_reason"] == "error"
+    assert boundary["data"]["context_note"] == basic.ABORTED_RESPONSE_HISTORY
     assert reset["events"][-1]["type"] == "error"
     assert "service restarted" in reset["events"][-1]["data"]["message"]
     assert provider.calls == []
@@ -1662,6 +1665,61 @@ def test_postgres_recovers_question_and_partial_output_from_interrupted_run(post
             "failed",
             "service_restart",
         )
+
+
+def test_postgres_restart_repairs_unfinished_tools_and_omits_the_last_incomplete_response(postgres_history):
+    session, run, owner = str(uuid4()), str(uuid4()), str(uuid4())
+    state = session_state(owner)
+    postgres_history.save_session(session, state)
+    postgres_history.start_run(run, session, state, "Inspect", 0, model="model", attachment_count=0)
+    call = ToolCall("pending", "bash", '{"command":"sleep 30"}')
+    postgres_history.append_entries(
+        session,
+        [
+            (1, run, AssistantMessage("Earlier", "tool_use", tool_calls=(call,))),
+            (2, run, ToolResultMessage(call.id, call.name, "Earlier result", True)),
+            (3, run, AssistantMessage("Checking", "tool_use", tool_calls=(call,))),
+        ],
+    )
+    postgres_history.recover_run(session, run)
+    loaded = postgres_history.load_session(session, owner)
+    repair = next(entry for entry in loaded["entries"] if isinstance(entry, ToolResultMessage) and not entry.ok)
+    assert repair.tool_call_id == call.id and not repair.ok
+    events = postgres_history.load_events(session, 0)
+    tool = next(data for _first, _last, _run, kind, data in events if kind == "tool")
+    assert tool["result"] == repair.text == "No result provided. The tool exchange was interrupted."
+    assert tool["arguments"] == call.arguments
+    assert loaded["entries"][1].stop_reason == "tool_use"
+    before = loaded["entries"]
+    postgres_history.recover_run(session, run)
+    assert postgres_history.load_session(session, owner)["entries"] == before
+
+
+@pytest.mark.parametrize("finished_answer", [True, False])
+def test_postgres_restart_omits_final_text_that_was_pending_validation(postgres_history, finished_answer):
+    from nurse_scheduling.ai.context import projected_history
+
+    session, run, owner = str(uuid4()), str(uuid4()), str(uuid4())
+    state = session_state(owner)
+    postgres_history.save_session(session, state)
+    postgres_history.start_run(run, session, state, "First", 0, model="model", attachment_count=0)
+    postgres_history.append_entries(
+        session,
+        [
+            (1, run, AssistantMessage("Completed earlier exchange")),
+            (2, run, UserMessage("Now edit")),
+            *([(3, run, AssistantMessage("Provisional edit is saved"))] if finished_answer else []),
+        ],
+    )
+    postgres_history.recover_run(session, run)
+    entries = postgres_history.load_session(session, owner)["entries"]
+    assert entries[1].stop_reason == "stop"
+    if finished_answer:
+        assert entries[3].text == "Provisional edit is saved" and entries[3].stop_reason == "error"
+    context = str(projected_history(entries))
+    assert "Completed earlier exchange" in context
+    assert "Provisional edit is saved" not in context
+    assert basic.ABORTED_RESPONSE_HISTORY in context
 
 
 def test_postgres_recovers_background_metadata_after_restart(postgres_history):
@@ -1700,7 +1758,7 @@ def test_postgres_recovers_background_metadata_after_restart(postgres_history):
     events = fold_recovery(
         SessionEvent(last, kind, data) for _f, last, _r, kind, data in postgres_history.load_events(session, 0)
     )
-    assert [event.type for event in events] == ["run_start", "delta", "error"]
+    assert [event.type for event in events] == ["run_start", "delta", "response_end", "error"]
     assert "background response" in events[-1].data["message"]
 
 

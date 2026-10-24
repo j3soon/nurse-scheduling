@@ -445,6 +445,9 @@ Aborted and errored responses are excluded from model replay. Completed response
 and tool exchanges remain. A separate app event explains when the run workspace
 was discarded and warns that earlier tool results describe that workspace.
 Timeout retries restart only the incomplete model call from the same request.
+Restart recovery saves interrupted tool results and the context-omission notice
+in the same transaction as the interrupted entries. A final answer awaiting
+validation is marked failed, while earlier completed exchanges remain.
 Missing tool results receive an explicit failure placeholder that is also shown in
 the frontend. Truncated calls expose their original arguments and the empty
 arguments used for model replay. Tool pairs are repaired before the next

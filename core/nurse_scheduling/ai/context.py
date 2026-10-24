@@ -558,8 +558,7 @@ def project_history(transcript: Sequence[AgentMessage], max_chars: int = DEFAULT
 
 ABORTED_RESPONSE_HISTORY = (
     "[App event] The response was interrupted. Its incomplete output is omitted from context. "
-    "The run's temporary workspace was discarded. Earlier tool results describe that discarded workspace. "
-    "Read current files before relying on earlier workspace changes."
+    "The run's temporary workspace was discarded. Earlier tool results describe that discarded workspace."
 )
 
 

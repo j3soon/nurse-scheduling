@@ -1018,14 +1018,12 @@ class AgentSession:
         if outcome.completion is None:
             stop_reason = "aborted" if outcome.status == "cancelled" else "error"
             entries = output.interrupted_entries([entries[0], *self.agent.state.messages], stop_reason)
-            completed_tools = {
-                entry.tool_call_id for entry in self.agent.state.messages if isinstance(entry, ToolResultMessage)
-            }
+            completed_tools = {id(entry) for entry in self.agent.state.messages if isinstance(entry, ToolResultMessage)}
             calls = {
                 call.id: call for entry in entries if isinstance(entry, AssistantMessage) for call in entry.tool_calls
             }
             for entry in entries:
-                if isinstance(entry, ToolResultMessage) and entry.tool_call_id not in completed_tools:
+                if isinstance(entry, ToolResultMessage) and id(entry) not in completed_tools:
                     events.emit(
                         {
                             "type": "tool",

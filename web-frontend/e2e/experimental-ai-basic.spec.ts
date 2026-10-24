@@ -318,6 +318,7 @@ async function mockAiBackend(
         ? [
           `event: tool_start\ndata: ${JSON.stringify({ name: 'bash', arguments: '{"command":"sleep 30"}' })}\n\n`,
           'event: delta\ndata: {"text":"Provisional response."}\n\n',
+          `event: tool\ndata: ${JSON.stringify({ name: 'bash', arguments: '{"command":"sleep 30"}', result: 'No result provided. The tool exchange was interrupted.', ok: false })}\n\n`,
           'event: response_end\ndata: {"stop_reason":"error","context_note":"[App event] The run workspace was discarded."}\n\n',
           'event: error\ndata: {"message":"The temporary AI sandbox failed."}\n\n',
         ].join('')
@@ -621,9 +622,10 @@ test('continues a failed text run with a new message and keeps its provisional a
   await expect(failedResponse).toContainText('The temporary AI sandbox failed.');
   await expect(failedResponse).toContainText('Incomplete response. Omitted from future model context.');
   await expect(failedResponse).toContainText('Sent in future model context: [App event] The run workspace was discarded.');
-  await page.screenshot({ path: '../artifacts/interrupted-context.png', fullPage: true });
-  await page.getByText('bash · interrupted').click();
+  await page.getByText('bash · failed').click();
+  await expect(page.getByText('No result provided. The tool exchange was interrupted.', { exact: true })).toBeVisible();
   await expect(page.getByText('{"command":"sleep 30"}', { exact: true })).toBeVisible();
+  await page.screenshot({ path: '../artifacts/interrupted-context.png', fullPage: true });
   await expect(page.getByRole('button', { name: /retry/i })).toHaveCount(0);
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Continue');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
