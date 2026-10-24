@@ -50,6 +50,12 @@ skipped does not validate persistence.
 passing database URLs to subprocesses. Check password authentication separately
 from the trust-based local harness.
 
+Read-only admin commands must not call `ChatHistory.initialize`, which applies
+migrations and prunes sessions. Enforce read-only transactions in PostgreSQL
+and truncate prompt previews in SQL before returning them to Python.
+When an admin command selects a deployment environment file, print its path to
+stderr. Do not replace an explicitly selected file with a fallback.
+
 ## Dependencies
 - `requirements.txt` is the minimal runtime set. Deployment images install only
   it, so a small file keeps those builds fast. Add a package there only when

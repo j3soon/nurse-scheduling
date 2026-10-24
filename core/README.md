@@ -828,6 +828,34 @@ Traces go to `artifacts/compaction-live/`, or
 `AI_COMPACTION_LIVE_OUTPUT_DIR`. The check uses no production database, does not
 rebuild the template, and remains skipped in ordinary pytest runs.
 
+## Inspect recent AI prompts
+
+From the repository root, list recent PostgreSQL-backed user prompts:
+
+```sh
+./scripts/recent_ai_prompts.sh
+./scripts/recent_ai_prompts.sh --sessions 10 --prompts 3 --chars 160
+```
+
+The defaults are 15 sessions, five prompts per session, and 300 characters per
+prompt. Sessions sort by their latest user prompt. Prompts sort newest first,
+including steering messages. Automatic optimizer prompts and assistant text are
+excluded. Each session shows its ID, UTC timestamps, and shown/total prompt
+counts. Each prompt shows its timestamp, character count, run status, and saved
+input/output token totals. Token totals cover the whole run, including context
+and tool exchanges. Steering prompts in one run share those totals. `?` means
+usage is unavailable.
+
+The command uses `docker/.env` and `docker/compose.backend.yml` by default.
+If `docker/.env` is missing, it falls back to `docker/.env.staging` and prints
+a notice. It always prints the selected Compose environment file to stderr.
+Set `AI_ENV_FILE` to select a file explicitly and disable fallback, or
+`AI_COMPOSE_FILE` for another Compose variant.
+Set `AI_HISTORY_POSTGRES_URL` for native access with the core Python dependencies.
+It uses one read-only database snapshot and does not apply migrations or prune
+expired rows. Previews are truncated in SQL and printed on one line. The command
+reads only retained history, so deleted content cannot appear.
+
 ## Export saved AI chats
 
 From the repository root, export one PostgreSQL-backed chat session:

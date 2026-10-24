@@ -917,6 +917,31 @@ or changing the frontend protocol. A browser disconnect leaves the accepted
 agent running. A backend process crash recovers saved content and marks
 interrupted work failed. It does not rerun model calls or mutating tools.
 
+### Inspect recent user prompts
+
+Run these commands from the repository root:
+
+```sh
+./scripts/recent_ai_prompts.sh
+./scripts/recent_ai_prompts.sh --sessions 10 --prompts 3 --chars 160
+```
+
+The read-only command shows 15 recent sessions by default, with five user
+prompts per session and 300 characters per preview. Sessions sort by their
+latest user prompt, with prompts newest first. Output includes UTC timestamps,
+prompt counts, run status, and available run token totals. Steering messages
+are included. Automatic optimizer prompts and assistant text are excluded.
+Token totals include the whole run's context and tool exchanges, so steering
+messages in one run share them. `?` means usage is unavailable.
+
+The command prefers `docker/.env`. If it is missing, the command falls back
+to `docker/.env.staging` and prints a notice. The selected Compose environment
+file always appears on stderr. Set `AI_ENV_FILE` to select a file explicitly
+and disable fallback, or `AI_COMPOSE_FILE` to select
+`docker/compose.backend.memory.yml`. Set `AI_HISTORY_POSTGRES_URL`
+for native database access. The command does not migrate or prune the database.
+It shows retained rows, including expired sessions that have not been pruned.
+
 ### Inspect chat history with pgAdmin
 
 Start pgAdmin from `docker/` with the same Compose file and environment file
