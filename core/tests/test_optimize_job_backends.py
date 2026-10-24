@@ -432,6 +432,52 @@ def test_store_rejects_duplicate_ids_and_prunes_terminal_jobs(store):
         controller.get_job(first.id)
 
 
+@pytest.mark.parametrize("job_ids", [("job_a", "job_z"), ("job_z", "job_a")], ids=["ascending-ids", "descending-ids"])
+def test_store_prunes_jobs_in_completion_order_when_timestamps_tie(store, job_ids):
+    controller = _controller(
+        store, now=datetime.now(timezone.utc), max_retained=2, job_ids=[*job_ids, "job_replacement"]
+    )
+    first = _create(controller)
+    second = _create(controller)
+    controller.cancel_job(second.id)
+    controller.cancel_job(first.id)
+    # Updating terminal metadata does not make a completed job newer.
+    older = controller.get_job(second.id)
+    store.update_job(older, older.revision, [])
+
+    _create(controller)
+
+    assert controller.get_job(first.id).state == JobState.CANCELLED
+    with pytest.raises(JobNotFoundError):
+        controller.get_job(second.id)
+
+
+def test_redis_completion_order_survives_upgrade_and_restart(fake_redis_store_factory):
+    prefix = f"test:completion-order:{uuid.uuid4().hex}"
+    store = fake_redis_store_factory(key_prefix=prefix)
+    now = datetime.now(timezone.utc)
+    controller = _controller(store, now=now, max_retained=3, job_ids=["job_legacy", "job_a_recent", "job_z_older"])
+    legacy = _create(controller)
+    recent = _create(controller)
+    older = _create(controller)
+    controller.cancel_job(legacy.id)
+    # Older releases did not retain a completion index.
+    store._redis.delete(store._finished_key)
+    controller.cancel_job(older.id)
+    controller.cancel_job(recent.id)
+
+    restarted = _controller(
+        fake_redis_store_factory(key_prefix=prefix), now=now, max_retained=3, job_ids=["job_new0", "job_new1"]
+    )
+    _create(restarted)
+    with pytest.raises(JobNotFoundError):
+        restarted.get_job(legacy.id)
+    _create(restarted)
+    assert restarted.get_job(recent.id).state == JobState.CANCELLED
+    with pytest.raises(JobNotFoundError):
+        restarted.get_job(older.id)
+
+
 def test_store_rejects_stale_delete_and_missing_update(store):
     controller = _controller(store)
     created = _create(controller)

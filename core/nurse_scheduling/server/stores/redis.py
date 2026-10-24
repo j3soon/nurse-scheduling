@@ -188,6 +188,8 @@ class RedisJobStore:
         """Set key (`SADD`) of non-terminal job IDs used for pending-capacity checks."""
         self._queue_key = self._key("queue")
         """Sorted-set key (`ZADD`) of queued job IDs scored by admission order for FIFO claims."""
+        self._finished_key = self._key("finished")
+        """Sorted-set key of terminal job IDs scored by their first stored terminal transition."""
         self._workers_key = self._key("workers", "leases")
         """Sorted-set key of worker IDs scored by lease expiration time."""
         self._worker_tokens_key = self._key("workers", "tokens")
@@ -249,7 +251,7 @@ class RedisJobStore:
             try:
                 with self._redis.pipeline() as transaction:
                     job_key = self._job_key(job.id)
-                    transaction.watch(self._jobs_key, self._pending_key, self._queue_key, job_key)
+                    transaction.watch(self._jobs_key, self._pending_key, self._queue_key, self._finished_key, job_key)
                     if transaction.exists(job_key):
                         transaction.unwatch()
                         raise StoreWriteConflictError(f"Job already exists: {job.id}")
@@ -276,9 +278,19 @@ class RedisJobStore:
                     prune_ids: list[str] = []
                     retained_count = transaction.zcard(self._jobs_key)
                     if retained_count >= limits.max_retained:
+                        finished_order = {
+                            _decode(raw_id): rank
+                            for rank, raw_id in enumerate(transaction.zrange(self._finished_key, 0, -1))
+                        }
                         terminal = sorted(
                             (candidate for candidate in self._all_jobs() if candidate.state.terminal),
-                            key=lambda candidate: candidate.finished_at or candidate.created_at,
+                            # Legacy jobs predate the completion index. Break their time ties by ID.
+                            key=lambda candidate: (
+                                candidate.id in finished_order,
+                                finished_order.get(candidate.id, 0),
+                                candidate.finished_at or candidate.created_at,
+                                candidate.id,
+                            ),
                         )
                         prune_count = retained_count - limits.max_retained + 1
                         if len(terminal) < prune_count:
@@ -620,6 +632,11 @@ class RedisJobStore:
                             transaction.unwatch()
                             return self.get(job.id)
                     updated_job = replace(job, revision=expected_revision + 1, queue_position=None)
+                    finished_score = None
+                    if updated_job.state.terminal and not current.state.terminal:
+                        transaction.watch(self._finished_key)
+                        finished_tail = transaction.zrange(self._finished_key, -1, -1, withscores=True)
+                        finished_score = finished_tail[0][1] + 1 if finished_tail else 0
                     remaining_queue_ids: list[str] = []
                     if current.state == JobState.QUEUED and updated_job.state != JobState.QUEUED:
                         transaction.watch(self._queue_key)
@@ -640,6 +657,10 @@ class RedisJobStore:
                         transaction.zrem(self._queue_key, updated_job.id)
                     if updated_job.state.terminal:
                         transaction.srem(self._pending_key, updated_job.id)
+                        if finished_score is not None:
+                            transaction.zadd(self._finished_key, {updated_job.id: finished_score})
+                    else:
+                        transaction.zrem(self._finished_key, updated_job.id)
                     if worker_id_to_release is not None:
                         transaction.hdel(self._worker_active_jobs_key, worker_id_to_release)
                     if artifact is not None:
@@ -812,6 +833,7 @@ class RedisJobStore:
         )
         transaction.zrem(self._jobs_key, job_id)
         transaction.zrem(self._queue_key, job_id)
+        transaction.zrem(self._finished_key, job_id)
         transaction.srem(self._pending_key, job_id)
 
     @staticmethod
