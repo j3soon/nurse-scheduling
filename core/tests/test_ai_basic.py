@@ -32,6 +32,7 @@ import time
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock
 from uuid import uuid4
 
@@ -43,6 +44,7 @@ from fastapi.testclient import TestClient
 from starlette import formparsers
 
 from nurse_scheduling.ai import agent_session as agent_session_module
+from nurse_scheduling.ai import sessions as sessions_module
 from nurse_scheduling.ai.agent_session import (
     CANDIDATE_VALIDATION_ERROR,
     PROVIDER_ERROR,
@@ -1137,7 +1139,9 @@ def test_capabilities_report_configured_attachment_limits(monkeypatch: pytest.Mo
 
 def test_session_status_reports_sliding_lifetime_without_refreshing_it(monkeypatch: pytest.MonkeyPatch) -> None:
     now = 100.0
-    monkeypatch.setattr("nurse_scheduling.ai.sessions.time.monotonic", lambda: now)
+    real_monotonic = time.monotonic
+    monkeypatch.setattr(sessions_module, "time", SimpleNamespace(monotonic=lambda: now, time=time.time))
+    assert time.monotonic is real_monotonic
     client = AuthenticatedTestClient(
         create_test_app(settings=make_settings(session_ttl_seconds=20), provider=FakeProvider())
     )
@@ -1165,7 +1169,7 @@ def test_session_status_reports_sliding_lifetime_without_refreshing_it(monkeypat
 
 def test_idle_and_expired_sessions_retain_no_turn_tasks(monkeypatch: pytest.MonkeyPatch) -> None:
     now = 100.0
-    monkeypatch.setattr("nurse_scheduling.ai.sessions.time.monotonic", lambda: now)
+    monkeypatch.setattr(sessions_module, "time", SimpleNamespace(monotonic=lambda: now, time=time.time))
     app = create_test_app(settings=make_settings(session_ttl_seconds=20), provider=FakeProvider())
     client = AuthenticatedTestClient(app)
     session_id = create_session(client)
@@ -1185,7 +1189,7 @@ def test_idle_and_expired_sessions_retain_no_turn_tasks(monkeypatch: pytest.Monk
 
 def test_finishing_a_turn_keeps_the_deadline_set_when_it_started(monkeypatch: pytest.MonkeyPatch) -> None:
     now = 100.0
-    monkeypatch.setattr("nurse_scheduling.ai.sessions.time.monotonic", lambda: now)
+    monkeypatch.setattr(sessions_module, "time", SimpleNamespace(monotonic=lambda: now, time=time.time))
     app = create_test_app(settings=make_settings(session_ttl_seconds=20), provider=FakeProvider())
     store = app.state.session_store
     owner = "b6d00cf8-1c7b-49b6-ab06-e162a54de489"
@@ -1202,7 +1206,7 @@ def test_finishing_a_turn_keeps_the_deadline_set_when_it_started(monkeypatch: py
 
 def test_unchanged_schedule_renews_session_with_owner_cookie(monkeypatch: pytest.MonkeyPatch) -> None:
     now = 100.0
-    monkeypatch.setattr("nurse_scheduling.ai.sessions.time.monotonic", lambda: now)
+    monkeypatch.setattr(sessions_module, "time", SimpleNamespace(monotonic=lambda: now, time=time.time))
     app = create_test_app(settings=make_settings(session_ttl_seconds=20), provider=FakeProvider())
     client = AuthenticatedTestClient(app)
     schedule = schedule_yaml()

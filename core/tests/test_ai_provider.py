@@ -23,6 +23,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 
@@ -308,6 +309,7 @@ def test_retries_connection_errors_and_incomplete_streams_with_notices(monkeypat
 def test_retry_budget_ends_retries_before_the_attempt_limit(monkeypatch):
     attempts = []
     clock = [0.0]
+    real_monotonic = time.monotonic
 
     def handle(request):
         attempts.append(request)
@@ -317,7 +319,8 @@ def test_retry_budget_ends_retries_before_the_attempt_limit(monkeypatch):
         clock[0] += delay
 
     monkeypatch.setattr(provider_module.asyncio, "sleep", advance)
-    monkeypatch.setattr(provider_module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(provider_module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    assert time.monotonic is real_monotonic
     with pytest.raises(ProviderError, match="HTTP 503"):
         _events(_transport_provider(monkeypatch, handle))
     # Failures at 0 and 50 seconds retry. A third wait would end after the 120-second budget.
