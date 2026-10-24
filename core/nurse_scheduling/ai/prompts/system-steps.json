@@ -694,43 +694,6 @@
     "comparison_mode": "ablation"
   },
   {
-    "id": "workbook-policy-clarification",
-    "file": "steps/workbook-policy-clarification.md",
-    "cases": [
-      "workbook-unexplained-policy",
-      "workbook-explained-policy",
-      "workbook-unexplained-policy-ward87",
-      "workbook-import-first-valid-proposal"
-    ],
-    "hypothesis": "Clarifies unexplained workbook policy. Preserves exact cell-specific request weights and the required default rule in the first proposal.",
-    "sha256": "10cc9116f632ca3b66b5c8596b9bf16b06b4265019800d289c42d50c2929270f",
-    "evidence": [
-      {
-        "case": "workbook-import-first-valid-proposal",
-        "input_sha256": "38db47e271791a2f600f7fb3a4ec6506b8e7d4511cfd8b50073036b604ab4797",
-        "before": "0/3",
-        "after": "3/3",
-        "model": "unsloth/Qwen3.8-27B-NVFP4",
-        "infrastructure_errors": 0,
-        "controls": [
-          {
-            "case": "workbook-explained-policy",
-            "input_sha256": "56e82e30c340e51acb21e3aefafc32193ac970ed9813b89f2c9dfe7198a9ed58",
-            "before": "3/3",
-            "after": "3/3"
-          },
-          {
-            "case": "workbook-unexplained-policy",
-            "input_sha256": "1b5726e2b4f39ba126e9ccadfbb2d4619932ba8a64b47dd21f4779349cc4c579",
-            "before": "3/3",
-            "after": "3/3"
-          }
-        ],
-        "note": "Previous full prompt versus changed workbook-import wording, with code, tools and inputs fixed. The clean baseline omits the required default in all three first writes. The candidate preserves the default and exact source weights. Both explained and unexplained controls pass. Earlier candidates have wrong weights, one E2B failure and two provider timeouts, retained separately. One accepted run repairs generated-script errors. Most accepted runs still use handwritten YAML, so this receipt supports first-proposal correctness, not universal use of the requested script method or a cost saving."
-      }
-    ]
-  },
-  {
     "id": "optimizer-goal",
     "file": "steps/optimizer-goal.md",
     "cases": [
