@@ -230,12 +230,14 @@ def test_cleanup_worker_survives_a_failure_the_client_reports_outside_sandbox_er
 
     async def exercise() -> int:
         list_calls = 0
+        retried = asyncio.Event()
 
         def list_sandboxes(**_kwargs):
             nonlocal list_calls
             list_calls += 1
             if list_calls == 1:
                 raise AuthenticationFailure("invalid api key")
+            retried.set()
             return FakePaginator([])
 
         manager = E2BSandboxCleanupManager(
@@ -246,11 +248,10 @@ def test_cleanup_worker_survives_a_failure_the_client_reports_outside_sandbox_er
             list_sandboxes=list_sandboxes,
         )
         await manager.start()
-        for _ in range(200):
-            if list_calls >= 2:
-                break
-            await asyncio.sleep(0.01)
-        await manager.stop()
+        try:
+            await asyncio.wait_for(retried.wait(), timeout=2)
+        finally:
+            await manager.stop()
         return list_calls
 
     with caplog.at_level(logging.ERROR):

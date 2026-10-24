@@ -76,6 +76,8 @@ stderr. Do not replace an explicitly selected file with a fallback.
   sleep, or ordering assumption. Run deterministic regressions and the complete
   affected test modules locally before another CI attempt. Use events or
   barriers when a test needs task ordering instead of an elapsed duration.
+- Bound polling by elapsed time or wait for a completion event with a timeout.
+  Do not derive a waiting budget from a fixed number of sleeps.
 
 ## Dependencies
 - `requirements.txt` is the minimal runtime set. Deployment images install only
