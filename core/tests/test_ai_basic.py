@@ -47,7 +47,6 @@ from nurse_scheduling.ai.agent_session import (
     PROVIDER_ERROR,
     SANDBOX_COMMAND_TIMEOUT_ERROR,
     SANDBOX_RUN_TIMEOUT_ERROR,
-    STALE_RUN_ERROR,
 )
 from nurse_scheduling.ai.app import (
     OWNER_COOKIE,
@@ -1496,7 +1495,7 @@ def test_provider_failure_retains_safe_context_for_retry() -> None:
     assert "Provisional answer." not in recovered_prompt
 
 
-def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming(monkeypatch) -> None:
+def test_schedule_update_during_streaming_is_recorded_after_the_turn(monkeypatch) -> None:
     saved = []
     saved_entries = []
 
@@ -1518,7 +1517,7 @@ def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming(monke
                 yield event
             self.update_schedule()
 
-    provider = ScheduleUpdatingProvider([["Obsolete answer."]])
+    provider = ScheduleUpdatingProvider([["Current answer."]])
     app = create_test_app(settings=make_settings(history_postgres_url="test"), provider=provider)
     client = AuthenticatedTestClient(app)
     session_id = create_session(client)
@@ -1531,19 +1530,14 @@ def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming(monke
 
     response = client.post(f"/sessions/{session_id}/messages", json={"message": "Edit it"})
 
-    assert [entry for entry in parse_sse(response.text) if entry[0] != "context_usage"] == [
-        ("run_start", {"trigger": "user", "run_id": ANY}),
-        ("model_selection", {"model": "test-model", "reasoning": "default", "run_id": ANY}),
-        ("delta", {"text": "Obsolete answer.", "run_id": ANY}),
-        ("stale", {"message": STALE_RUN_ERROR, "run_id": ANY}),
+    assert [name for name, _ in parse_sse(response.text)][-1] == "done"
+    assert saved[0][1] == "completed" and saved[0][4] is True
+    # The answer joins the conversation, and the schedule change follows it.
+    assert [(run_id is not None, entry) for _seq, run_id, entry in sorted(saved_entries)][-2:] == [
+        (True, AssistantMessage("Current answer.")),
+        (False, AppEventEntry(SCHEDULE_CHANGED_EVENT)),
     ]
-    assert len(saved) == 1
-    assert saved[0][1] == "stale"
-    # The answer is saved for audit but never joins the conversation.
-    assert saved[0][4] is False
-    assert [entry for _seq, run_id, entry in saved_entries if run_id is not None] == [
-        AssistantMessage("Obsolete answer.")
-    ]
+    assert app.state.session_store.get(session_id).schedule_yaml == "description: updated concurrently"
 
 
 @pytest.mark.parametrize(

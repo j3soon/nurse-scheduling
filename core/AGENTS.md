@@ -171,8 +171,9 @@ stderr. Do not replace an explicitly selected file with a fallback.
 - `SessionRuns` owns admission, execution, cancellation, and cleanup. Keep the
   owner until recovery writes finish. Stop requests cancel once, and shutdown
   joins owners before closing the sandbox factory and optimizer transport.
-  Commit and abort through the owning `RunSnapshot`. A conversation version
-  rejects stale work even when the schedule changes back to its original text.
+  Commit and abort through the owning `RunSnapshot`. Queue a schedule update
+  received during a run and apply it after the run's entries, so a browser
+  update never discards the run.
 - Include delayed model discovery in admission and cancellation tests. Injecting
   a provider bypasses model selection and does not exercise this path.
 - Use provider metadata for model limits instead of duplicate environment

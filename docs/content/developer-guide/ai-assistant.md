@@ -701,6 +701,9 @@ AI runs belong to the server and continue without a browser connection. Browser
 edits, Undo, notices, and reconnects do not start, stop, or gate a run. Send
 synchronizes the current browser YAML through `PUT /sessions/{id}/schedule`
 before its next user-requested run, and records an app event for the agent.
+An update that arrives during a run does not change that run. The backend keeps
+only the latest such update and applies it after the run's entries, unless the
+run applied its own schedule, which then replaces it.
 Stop explicitly requests cancellation. Optimizer completion can start a server
 review without a client connection. This separation replaces the earlier
 approval and rejection flow, which tied server progress to browser decisions.

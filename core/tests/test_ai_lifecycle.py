@@ -27,14 +27,15 @@ import pytest
 from fastapi import HTTPException
 
 from nurse_scheduling.ai.app import OWNER_COOKIE, SessionStore
-from nurse_scheduling.ai.context import ABORTED_RESPONSE_HISTORY
+from nurse_scheduling.ai.context import ABORTED_RESPONSE_HISTORY, SCHEDULE_CHANGED_EVENT
 from nurse_scheduling.ai.history import ChatHistory
 from nurse_scheduling.ai.lifecycle import SessionRuns
 from nurse_scheduling.ai.provider import ProviderError, TextDelta
 from nurse_scheduling.ai.session_event_stream import SessionEventStream
-from nurse_scheduling.ai.transcript import AssistantMessage, UserMessage
+from nurse_scheduling.ai.sessions import _session_bytes
+from nurse_scheduling.ai.transcript import AppEventEntry, AssistantMessage, UserMessage
 
-from .ai_test_helper import schedule_yaml
+from .ai_test_helper import base_schedule_payload, schedule_yaml
 from .test_ai_basic import AI_AUTH_HEADERS, FakeProvider, create_test_app, make_settings
 
 
@@ -220,15 +221,66 @@ def test_stale_turn_cannot_release_or_commit_over_its_successor():
     assert session.transcript == [UserMessage("new"), AssistantMessage("new")]
 
 
-def test_schedule_round_trip_invalidates_an_in_flight_snapshot():
+def _edited_schedule(description: str) -> str:
+    payload = base_schedule_payload()
+    payload["description"] = description
+    return schedule_yaml(payload)
+
+
+@pytest.mark.parametrize("ending", ["answer", "stop"])
+def test_schedule_update_during_a_run_applies_after_the_run(ending):
     store = SessionStore(make_settings())
     original = schedule_yaml()
     session = store.create("owner", original)
     turn = store.begin(session.id, "owner")
-    store.update_schedule(session.id, "owner", original + "\n")
+    store.update_schedule(session.id, "owner", _edited_schedule("Discarded"))
     store.update_schedule(session.id, "owner", original)
-    assert not store.finish(session.id, [UserMessage("question"), AssistantMessage("answer")], snapshot=turn).run_saved
-    assert session.transcript == []
+    assert session.queued_schedule is None
+    edited = _edited_schedule("Edited")
+    store.update_schedule(session.id, "owner", edited)
+    assert session.schedule_yaml == original
+    if ending == "answer":
+        assert store.finish(session.id, [UserMessage("question"), AssistantMessage("answer")], snapshot=turn).run_saved
+    else:
+        store.abort(session.id, turn)
+    store.apply_queued_schedule(session.id)
+
+    assert session.schedule_yaml == edited and session.queued_schedule is None
+    run_entries = [UserMessage("question"), AssistantMessage("answer")] if ending == "answer" else []
+    assert session.transcript == [*run_entries, AppEventEntry(SCHEDULE_CHANGED_EVENT)]
+    assert store.retained_bytes == _session_bytes(session)
+
+
+def test_a_run_schedule_replaces_an_update_queued_during_the_run():
+    store = SessionStore(make_settings())
+    session = store.create("owner", schedule_yaml())
+    turn = store.begin(session.id, "owner")
+    store.update_schedule(session.id, "owner", _edited_schedule("Browser"))
+    applied = _edited_schedule("Assistant")
+
+    assert store.finish(
+        session.id, [UserMessage("question"), AssistantMessage("answer")], applied, snapshot=turn
+    ).run_saved
+    store.apply_queued_schedule(session.id)
+
+    assert session.schedule_yaml == applied and session.queued_schedule is None
+    assert session.transcript == [UserMessage("question"), AssistantMessage("answer")]
+
+
+def test_restore_applies_a_schedule_update_queued_before_the_restart():
+    store = SessionStore(make_settings())
+    session = store.create("owner", schedule_yaml())
+    store.begin(session.id, "owner")
+    edited = _edited_schedule("Edited")
+    store.update_schedule(session.id, "owner", edited)
+    owner, expires_at, state = store.recovery_state(session.id)
+
+    restored = SessionStore(make_settings()).restore(
+        session.id, owner, json.loads(json.dumps(state)), expires_at, entries=[], next_entry_seq=0
+    )
+
+    assert restored.schedule_yaml == edited and restored.queued_schedule is None
+    assert restored.transcript == [AppEventEntry(SCHEDULE_CHANGED_EVENT)]
 
 
 @pytest.mark.parametrize("background", [False, True], ids=["foreground", "background"])
@@ -652,8 +704,10 @@ def test_aborted_or_stale_runs_do_not_replace_retained_analysis():
     assert not store.finish(session.id, [], snapshot=aborted).run_saved
     assert session.analysis.content == b"original"
     store.update_schedule(session.id, "owner", schedule_yaml() + "\n")
-    successor.analysis = AgentAnalysis("c" * 64, b"stale")
-    assert not store.finish(session.id, [], snapshot=successor).run_saved
+    successor.analysis = AgentAnalysis("c" * 64, b"previous schedule")
+    assert store.finish(session.id, [], snapshot=successor).run_saved
+    # The schedule update queued during the run invalidates notes about the previous schedule.
+    store.apply_queued_schedule(session.id)
     assert session.analysis is None
 
 

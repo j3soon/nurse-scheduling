@@ -128,6 +128,15 @@ class RunCompletion:
 
 
 @dataclass(frozen=True)
+class QueuedSchedule:
+    """The latest browser schedule received during a run, applied after the run ends."""
+
+    schedule_yaml: str
+    # Whether its data differs from the session schedule, when the update request compared them.
+    data_changed: bool | None
+
+
+@dataclass(frozen=True)
 class RunOutcome:
     """One execution result, finalized after workspace cleanup and before releasing the run."""
 
@@ -176,6 +185,8 @@ class SessionPersistence(Protocol):
     ) -> RunCompletion: ...
 
     def abort(self, session_id: str, snapshot: RunSnapshot) -> None: ...
+
+    def apply_queued_schedule(self, session_id: str) -> None: ...
 
     def save_download(self, session_id: str, download_id: str, content: bytes) -> bool: ...
 
@@ -269,6 +280,7 @@ class AgentSession:
     next_entry_seq: int = 0
     version: int = 0
     snapshot: RunSnapshot | None = None
+    queued_schedule: QueuedSchedule | None = None
     agent: Agent = field(default_factory=Agent)
     # Retained source files keyed by upload ID, in upload order, and generated ZIPs keyed by run ID.
     uploads: dict[str, SandboxAttachment] = field(default_factory=dict)
@@ -337,6 +349,7 @@ class AgentSession:
         """
         return {
             "schedule_yaml": self.schedule_yaml,
+            "queued_schedule": asdict(self.queued_schedule) if self.queued_schedule else None,
             "model_selection": self.model_selection,
             "provider_credential_id": self.provider_credential_id,
             "cost_totals": self.cost_totals.public(),
@@ -394,6 +407,7 @@ class AgentSession:
             expires_at=expires_at,
             schedule_yaml=state["schedule_yaml"],
             revision=schedule_revision(state["schedule_yaml"]),
+            queued_schedule=QueuedSchedule(**state["queued_schedule"]) if state.get("queued_schedule") else None,
             model_selection=state.get("model_selection"),
             provider_credential_id=state.get("provider_credential_id"),
             cost_totals=CostTotals.restored(state.get("cost_totals")),
@@ -623,6 +637,8 @@ class AgentSession:
         self.transcript.extend(entries)
         self.analysis = snapshot.analysis if snapshot.analysis and snapshot.analysis.content else None
         if schedule_yaml is not None:
+            # The run's schedule replaces an update queued during the run, as it replaces newer browser work.
+            self.queued_schedule = None
             self.analysis = None
             self.schedule_yaml = schedule_yaml
             self.revision = schedule_revision(schedule_yaml)
@@ -662,12 +678,18 @@ class AgentSession:
         """Replace the session schedule, invalidate in-flight results, and record the change.
 
         `compared` holds a base schedule and its `schedule_data_changed` result. It is reused
-        only while that base is still the session schedule.
+        only while that base is still the session schedule. During a run, keep only the latest
+        update until the run ends, so a browser update never discards the run.
         """
+        known_change = compared[1] if compared is not None and compared[0] == self.schedule_yaml else None
+        if self.active:
+            changed = schedule_yaml != self.schedule_yaml
+            self.queued_schedule = QueuedSchedule(schedule_yaml, known_change) if changed else None
+            return
         if self.schedule_yaml == schedule_yaml:
             return
-        if compared is not None and compared[0] == self.schedule_yaml:
-            data_changed = compared[1]
+        if known_change is not None:
+            data_changed = known_change
         else:
             data_changed = schedule_data_changed(self.schedule_yaml, schedule_yaml)
         self.version += 1
@@ -676,6 +698,16 @@ class AgentSession:
         self.revision = schedule_revision(schedule_yaml)
         if data_changed:
             self._add_entry(AppEventEntry(SCHEDULE_CHANGED_EVENT))
+
+    def apply_queued_schedule(self) -> bool:
+        """Apply the schedule update received during the last run. Return whether one was applied."""
+        queued = self.queued_schedule
+        if queued is None or self.active:
+            return False
+        self.queued_schedule = None
+        compared = None if queued.data_changed is None else (self.schedule_yaml, queued.data_changed)
+        self.update_schedule(queued.schedule_yaml, compared)
+        return True
 
     def require_idle(self, action: str) -> None:
         """Refuse a file change while a run may still read the session files."""
@@ -959,6 +991,8 @@ class AgentSession:
         if history_started:
             # Messages the run loop has not saved yet, including an interrupted response.
             self._save_run_messages(run.id, entries[1:])
+        # A schedule update received during the run is recorded after the run's own entries.
+        runtime.store.apply_queued_schedule(self.id)
         if stopped and run.shutdown:
             # The run stays running in recovery storage, so the restarted service reports
             # a restart instead of a user Stop.
