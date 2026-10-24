@@ -27,6 +27,7 @@ import httpx
 import pytest
 from fastapi import HTTPException
 
+from nurse_scheduling.ai.agent_session import AgentSession
 from nurse_scheduling.ai.models import ModelCatalog, ModelSelection
 from nurse_scheduling.ai.provider import OpenAiCompatibleProvider
 from nurse_scheduling.ai.sessions import SessionStore
@@ -227,7 +228,14 @@ def test_duplicate_message_during_model_discovery(monkeypatch, duplicate_questio
     original_models = ModelCatalog.models
 
     async def exercise():
-        started, release = asyncio.Event(), asyncio.Event()
+        started, release, duplicate_admitted = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        original_accepted_message = AgentSession._accepted_message
+
+        def accepted_message(session, message_id):
+            accepted = original_accepted_message(session, message_id)
+            if accepted is not None:
+                duplicate_admitted.set()
+            return accepted
 
         async def delayed(catalog, credential_id):
             started.set()
@@ -235,6 +243,7 @@ def test_duplicate_message_during_model_discovery(monkeypatch, duplicate_questio
             return await original_models(catalog, credential_id)
 
         monkeypatch.setattr(ModelCatalog, "models", delayed)
+        monkeypatch.setattr(AgentSession, "_accepted_message", accepted_message)
         async with (
             app.router.lifespan_context(app),
             client_type(
@@ -249,16 +258,19 @@ def test_duplicate_message_during_model_discovery(monkeypatch, duplicate_questio
             duplicate = asyncio.create_task(
                 client.post(path, json={"message": duplicate_question, "message_id": "one"})
             )
-            await asyncio.sleep(0.02)
-            release.set()
-            responses = await asyncio.wait_for(asyncio.gather(first, duplicate), timeout=2)
-            assert responses[0].status_code == 200
-            assert responses[1].status_code == expected_status
+            try:
+                await asyncio.wait_for(duplicate_admitted.wait(), timeout=1)
+                assert not first.done()
+            finally:
+                release.set()
+            response, duplicate_response = await asyncio.wait_for(asyncio.gather(first, duplicate), timeout=2)
+            assert response.status_code == 200
+            assert duplicate_response.status_code == expected_status
             if expected_status == 202:
-                run_id = basic.parse_sse(responses[0].text)[0][1]["run_id"]
-                assert responses[1].json() == {"run_id": run_id}
+                run_id = basic.parse_sse(response.text)[0][1]["run_id"]
+                assert duplicate_response.json() == {"run_id": run_id}
             else:
-                assert "different question" in responses[1].json()["detail"]
+                assert "different question" in duplicate_response.json()["detail"]
 
     asyncio.run(exercise())
     assert len(calls) == 1
