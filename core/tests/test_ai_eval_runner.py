@@ -517,12 +517,6 @@ def test_a_correct_answer_passes_and_records_its_cost():
     assert run.seconds >= 0
 
 
-def test_frozen_clock_context_cannot_silently_pass_without_being_supplied():
-    case = replace(CASE_BY_ID["ask-people-count"], current_time="2031-03-31T23:30:00+00:00")
-    with pytest.raises(ValueError, match="reference instant in the question"):
-        asyncio.run(run_case(ScriptedProvider(), settings(), case, _factory()))
-
-
 @pytest.mark.parametrize("case_id", ["local-date-from-instant-taipei", "local-date-from-instant-los-angeles"])
 def test_date_cases_use_the_vm_timezone_and_an_explicit_reference_instant(case_id):
     provider = ScriptedProvider(

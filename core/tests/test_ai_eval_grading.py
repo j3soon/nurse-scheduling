@@ -383,14 +383,15 @@ def _write(tmp_path: Path, *entries: dict) -> Path:
     return tmp_path
 
 
-@pytest.mark.parametrize(
-    "context",
-    [{"frontend_timezone": "Unknown/Place"}, {"current_time": "2031-03-31T23:30:00"}, {"current_time": "bad"}],
-    ids=["unknown-zone", "missing-offset", "invalid-time"],
-)
-def test_invalid_clock_context_is_rejected(tmp_path, context):
+def test_unknown_frontend_timezone_is_rejected(tmp_path):
     with pytest.raises(EvalCaseError, match="clock context"):
-        load_cases(_write(tmp_path, _case(expect_proposal=False, **context)))
+        load_cases(_write(tmp_path, _case(expect_proposal=False, frontend_timezone="Unknown/Place")))
+
+
+def test_removed_current_time_field_is_rejected_when_cases_load(tmp_path):
+    # The runner no longer injects clock values, so the case could never run.
+    with pytest.raises(EvalCaseError, match="unknown case fields: current_time"):
+        load_cases(_write(tmp_path, _case(expect_proposal=False, current_time="2031-03-31T23:30:00+00:00")))
 
 
 @pytest.mark.parametrize("partial_text", [None, 8, ["ALPHA|BR"]])

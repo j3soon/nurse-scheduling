@@ -365,8 +365,6 @@ async def run_case(
     optimizer_completion_factory: Callable[[str, str], tuple[bytes, dict]] | None = None,
 ) -> CaseRun:
     """Answer one case the way the service would, then grade what it produced."""
-    if case.current_time:
-        raise ValueError("Automatic clock context is no longer supported. Put the reference instant in the question.")
     text = fixture_text(case.fixture)
     initial_text = text
     if case.provider_timeout_after_text:

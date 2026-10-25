@@ -116,7 +116,6 @@ def case_digest(case: EvalCase) -> str:
         "download_files",
         "import_attachment",
         "frontend_timezone",
-        "current_time",
         "after_optimizer_turns",
         "optimizer_download_file",
         "staffing_contract",

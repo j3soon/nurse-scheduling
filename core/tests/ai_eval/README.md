@@ -71,8 +71,9 @@ Missing cached-token details are recorded as `null` in evaluations, so uncached
 token comparisons remain unavailable rather than inventing cache misses.
 
 Use `frontend_timezone` to set the VM timezone. Put fixed reference instants in
-the user question, as the `local-date-from-instant-*` cases do. The runner rejects
-the historical `current_time` field because it no longer injects clock values.
+the user question, as the `local-date-from-instant-*` cases do. The case loader
+rejects the historical `current_time` field because the runner no longer injects
+clock values.
 
 Store one JSON object per case under `cases/<dataset>/<category>/<id>.json`. Existing synthetic coverage lives under
 `cases/basics/`, mirroring the normal YAML testcase layout under `tests/testcases/basics/`. Reserve sibling dataset
