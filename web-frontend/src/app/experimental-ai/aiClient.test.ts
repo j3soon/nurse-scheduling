@@ -231,6 +231,7 @@ describe('AI client', () => {
   it('reads the advertised AI authentication requirement', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
       auth: { required: true, scheme: 'Bearer' },
+
       file_attachments: {
         enabled: true,
         max_files: 1,

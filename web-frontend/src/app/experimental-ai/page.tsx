@@ -1355,8 +1355,8 @@ export default function ExperimentalAiPage() {
               if (markdown === null) return;
               event.preventDefault();
               const input = event.currentTarget;
-              const { selectionStart: start, selectionEnd: end, value, maxLength } = input;
-              const pasted = markdown.slice(0, Math.max(0, maxLength - value.length + end - start));
+              const { selectionStart: start, selectionEnd: end, value } = input;
+              const pasted = markdown;
               // Keep converted paste in the browser's text undo history.
               if (typeof document.execCommand === 'function' && document.execCommand('insertText', false, pasted)) return;
               setDraft(value.slice(0, start) + pasted + value.slice(end));
@@ -1371,7 +1371,6 @@ export default function ExperimentalAiPage() {
             }}
             disabled={!isClientReady || composerUnavailable}
             rows={1}
-            maxLength={8000}
             aria-label="Ask about the current schedule"
             placeholder="Ask anything…"
             className="min-h-6 max-h-40 min-w-0 flex-1 resize-none bg-transparent px-2 py-2 text-base leading-6 text-gray-900 outline-none disabled:text-gray-400"

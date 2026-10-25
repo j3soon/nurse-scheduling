@@ -141,7 +141,7 @@ def test_summary_progress_counts_only_the_current_draft_and_identifies_each_pass
     asyncio.run(exercise())
 
 
-def test_app_event_indices_survive_compaction_retention_and_restore():
+def test_app_event_indices_survive_compaction_and_restore():
     from nurse_scheduling.ai.context import SCHEDULE_CHANGED_EVENT
     from nurse_scheduling.ai.session_event_projection import RunEvents
     from nurse_scheduling.ai.sessions import SessionStore
@@ -177,10 +177,6 @@ def test_app_event_indices_survive_compaction_retention_and_restore():
         assert [entry["index"] for entry in prepare()] == [5]
         add(UserMessage("Second"), AssistantMessage("Second answer"), CompactionEntry("Updated constraints", 0, 1000))
         add(AppEventEntry(SCHEDULE_CHANGED_EVENT))
-        assert [entry["index"] for entry in prepare()] == [9]
-        while SessionStore._drop_oldest_exchange(session):
-            pass
-        assert session.dropped_entries > 0
         assert [entry["index"] for entry in prepare()] == [9]
         owner, expires, state = store.recovery_state(session.id)
         recovered = SessionStore(settings)
@@ -591,8 +587,8 @@ def test_unknown_model_window_refuses_manual_compaction():
     assert not provider.summaries
 
 
-@pytest.mark.parametrize("history_limit,message_limit", [(100, 1000), (200000, 3)])
-def test_history_budgets_do_not_trigger_or_change_compaction(history_limit, message_limit):
+@pytest.mark.parametrize("history_limit", [100, 200000])
+def test_history_budget_does_not_trigger_or_change_compaction(history_limit):
     provider = CompactionProvider()
     provider.context_tokens = 262144
     events = asyncio.run(
@@ -602,7 +598,6 @@ def test_history_budgets_do_not_trigger_or_change_compaction(history_limit, mess
                 history(),
                 [],
                 history_limit=history_limit,
-                message_limit=message_limit,
                 reserve_tokens=1500,
                 keep_recent_tokens=1000,
             )

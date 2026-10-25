@@ -351,7 +351,8 @@ def test_allowed_tool_batch_executes_concurrently_and_reports_in_call_order():
 
 
 @pytest.mark.parametrize("count", [8, 9, 32])
-def test_large_read_batches_limit_active_calls_and_keep_result_order(count):
+@pytest.mark.parametrize("parallel", [None, 4, 16], ids=["default", "four", "sixteen"])
+def test_large_read_batches_limit_active_calls_and_keep_result_order(count, parallel):
     active = peak = 0
 
     async def execute(_name, arguments):
@@ -370,11 +371,12 @@ def test_large_read_batches_limit_active_calls_and_keep_result_order(count):
                 provider,
                 QUESTION,
                 bind_agent_tools(TOOLS, execute, frozenset({BASH_TOOL})),
+                **({"max_parallel_tools": parallel} if parallel is not None else {}),
             )
         ]
 
     events = asyncio.run(collect())
-    assert peak <= 8
+    assert peak == min(count, parallel or 16)
     uses = [event for event in events if isinstance(event, AgentToolUse)]
     assert [event.tool_call_id for event in uses] == [f"call_{index}" for index in range(count)]
     assert all(event.ok for event in uses)

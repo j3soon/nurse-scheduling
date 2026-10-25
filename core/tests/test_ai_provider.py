@@ -25,6 +25,7 @@ import logging
 import re
 import time
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from types import SimpleNamespace
 
 import httpx
@@ -176,6 +177,7 @@ def _streaming_provider(
     include_usage: bool = False,
     model_metadata: dict | None = None,
     models_status: int = 200,
+    max_response_bytes: int = 64 * 1024 * 1024,
 ) -> OpenAiCompatibleProvider:
     """Build a provider whose endpoint replies with one prepared stream."""
     real_async_client = httpx.AsyncClient
@@ -209,6 +211,7 @@ def _streaming_provider(
         include_usage=include_usage,
     )
 
+    provider._settings = replace(provider._settings, provider_max_response_bytes=max_response_bytes)
     if not include_usage:
         provider.context_tokens = 262144
         provider._context_tokens_loaded = True
@@ -655,27 +658,25 @@ def test_retries_without_partial_answer(monkeypatch: pytest.MonkeyPatch, chunk: 
     assert requests[0] == requests[1]
 
 
-@pytest.mark.parametrize(
-    ("field", "limit", "message"),
-    [
-        ("content", "MAX_RESPONSE_TEXT_CHARS", "more text"),
-        ("reasoning_content", "MAX_RESPONSE_REASONING_CHARS", "more reasoning"),
-    ],
-)
-def test_output_limits_apply_across_retries(monkeypatch: pytest.MonkeyPatch, field, limit, message) -> None:
-    monkeypatch.setattr(provider_module, limit, 5)
-    streams: list[_InterruptedStream] = []
+@pytest.mark.parametrize("field", ["content", "reasoning_content"])
+def test_defensive_response_limit_is_per_http_attempt(monkeypatch, field):
+    requests = []
+    interrupted = _InterruptedStream(_delta_chunk({field: "x" * 300}))
 
-    def handle(request: httpx.Request) -> httpx.Response:
-        stream = _InterruptedStream(_delta_chunk({field: "1234"}))
-        streams.append(stream)
-        return httpx.Response(200, stream=stream)
+    def handle(request):
+        requests.append(request)
+        if len(requests) == 1:
+            return httpx.Response(200, stream=interrupted)
+        return httpx.Response(200, text=_sse_body(_delta_chunk({field: "x" * 300})))
 
-    provider = _transport_provider(monkeypatch, handle, provider_retry_backoff_seconds=0)
-    with pytest.raises(ProviderResponseLimitError, match=message):
-        _events(provider)
-    assert len(streams) == 2
-    assert all(stream.closed for stream in streams)
+    provider = _transport_provider(
+        monkeypatch, handle, provider_retry_backoff_seconds=0, provider_max_response_bytes=500
+    )
+    events = _events(provider)
+    deltas = [event for event in events if isinstance(event, (TextDelta, ReasoningDelta))]
+    assert sum(len(event.text) for event in deltas) == 600
+    assert len(requests) == 2
+    assert interrupted.closed
 
 
 def test_interrupted_tool_call_is_regenerated_and_executed_once(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1008,18 +1009,16 @@ def test_streams_reasoning_separately_from_the_answer(monkeypatch: pytest.Monkey
     ]
 
 
-def test_rejects_an_answer_longer_than_the_limit(monkeypatch: pytest.MonkeyPatch) -> None:
-    body = _sse_body(_delta_chunk({"content": "x" * (provider_module.MAX_RESPONSE_TEXT_CHARS + 1)}))
+def test_model_output_can_exceed_the_old_answer_character_ceiling(monkeypatch):
+    text = "x" * 250000
+    events = _events(_streaming_provider(monkeypatch, _sse_body(_delta_chunk({"content": text}))))
+    assert events[0] == TextDelta(text)
 
-    with pytest.raises(ProviderResponseLimitError, match="more text than"):
-        _events(_streaming_provider(monkeypatch, body))
 
-
-def test_rejects_reasoning_longer_than_the_limit(monkeypatch: pytest.MonkeyPatch) -> None:
-    body = _sse_body(_delta_chunk({"reasoning_content": "x" * (provider_module.MAX_RESPONSE_REASONING_CHARS + 1)}))
-
-    with pytest.raises(ProviderResponseLimitError, match="more reasoning than"):
-        _events(_streaming_provider(monkeypatch, body))
+def test_model_output_can_exceed_the_old_reasoning_character_ceiling(monkeypatch):
+    text = "x" * 500000
+    events = _events(_streaming_provider(monkeypatch, _sse_body(_delta_chunk({"reasoning_content": text}))))
+    assert events[0] == ReasoningDelta(text)
 
 
 @pytest.mark.parametrize("finish_reason", [None, "stop", "tool_calls", "length", "content_filter"])
@@ -1200,10 +1199,9 @@ def test_native_reasoning_metadata_round_trips_through_tool_turns_and_chat_runs(
 
 
 def test_reasoning_metadata_is_bounded_and_rejected_after_completion(monkeypatch):
-    monkeypatch.setattr(provider_module, "MAX_RESPONSE_REASONING_CHARS", 50)
     body = _sse_body(_delta_chunk({"reasoning_details": [{"type": "reasoning.encrypted", "data": "x" * 100}]}))
-    with pytest.raises(ProviderResponseLimitError, match="reasoning metadata"):
-        _events(_streaming_provider(monkeypatch, body))
+    with pytest.raises(ProviderResponseLimitError, match="defensive response byte limit"):
+        _events(_streaming_provider(monkeypatch, body, max_response_bytes=100))
     monkeypatch.undo()
     body = _sse_body(
         {"choices": [{"delta": {}, "finish_reason": "stop"}]},
@@ -1384,3 +1382,40 @@ def test_chat_uuid_reaches_tools_compaction_and_runs_after_restore(monkeypatch):
     assert any(summary for _, _, summary, _ in captured)
     assert any(tool for _, _, _, tool in captured)
     assert all(actual == expected for actual, expected, _, _ in captured)
+
+
+@pytest.mark.parametrize("ending", [b"\n", b"\r\n", b"\r"])
+def test_bounded_stream_preserves_split_utf8_and_sse_line_endings(monkeypatch, ending):
+    wire = (
+        b"data: "
+        + json.dumps(_delta_chunk({"content": "新😀"}), ensure_ascii=False).encode()
+        + ending
+        + ending
+        + b"data: [DONE]"
+        + ending
+    )
+
+    class Stream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            for byte in wire:
+                yield bytes([byte])
+
+    provider = _transport_provider(monkeypatch, lambda request: httpx.Response(200, stream=Stream()))
+    assert _events(provider) == [TextDelta("新😀"), ResponseEnd(None)]
+
+
+def test_defensive_limit_stops_an_unterminated_sse_line_before_json_parsing(monkeypatch):
+    read = []
+
+    class Stream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            for index in range(10):
+                read.append(index)
+                yield b"x" * 100
+
+    provider = _transport_provider(
+        monkeypatch, lambda request: httpx.Response(200, stream=Stream()), provider_max_response_bytes=250
+    )
+    with pytest.raises(ProviderResponseLimitError, match="defensive response byte limit"):
+        _events(provider)
+    assert read == [0, 1, 2]

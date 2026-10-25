@@ -213,6 +213,7 @@ async function mockAiBackend(
         body: JSON.stringify({
           model_selection: modelCatalog !== undefined,
           ...(requiredAuthToken ? { auth: { required: true, scheme: 'bearer' } } : {}),
+
           file_attachments: {
             enabled: true,
             max_files: 8,
@@ -359,6 +360,28 @@ async function mockAiBackend(
     },
   });
 }
+
+test('submits a long question without a character limit', async ({ page }) => {
+  const captured = await mockAiBackend(page, ['Long question received.']);
+  await page.route('**/capabilities', route => route.fulfill({ json: {
+    app_version: 'v0.4.3',
+    auth: { required: false, scheme: 'bearer' },
+    session_retention_seconds: 2592000,
+    file_attachments: { enabled: true, max_files: 8, max_bytes_per_file: 5000000, max_bytes_per_session: 200000000 },
+  } }));
+  await page.goto('/experimental-ai');
+  const input = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+  await expect(input).toBeEnabled();
+  await expect(input).not.toHaveAttribute('maxlength');
+  const question = 'x'.repeat(300000);
+  await input.fill(question);
+  await expect(input).toHaveValue(question);
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('Long question received.', { exact: true })).toBeVisible();
+  expect(JSON.parse(captured.messageBody).message).toBe(question);
+  await page.getByText('Long question received.', { exact: true }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: '../artifacts/ai-long-message.png' });
+});
 
 test('converts rich clipboard text to Markdown before sending', async ({ page, context }) => {
   const captured = await mockAiBackend(page);

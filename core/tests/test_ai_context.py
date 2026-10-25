@@ -20,6 +20,7 @@
 # This test is mostly AI generated.
 
 import pytest
+from fastapi import HTTPException
 
 from nurse_scheduling.ai.context import (
     ABORTED_RESPONSE_HISTORY,
@@ -313,9 +314,11 @@ def test_retained_byte_budget_counts_partial_text_hidden_from_model_context():
     )
     assert store.retained_bytes == len(b"scheduleq") + len(("新" * 2000).encode())
     assert session.history == [{"role": "user", "content": "q"}]
-    # A later exchange releases the oversized failed turn and its accounted bytes.
-    store.finish(session.id, [UserMessage("next"), AssistantMessage("done")], snapshot=store.begin(session.id, "owner"))
-    assert store.retained_bytes == len(b"schedulenextdone")
+    # Refuse more work while retaining the failed text and its accounted bytes.
+    with pytest.raises(HTTPException) as error:
+        store.begin(session.id, "owner")
+    assert error.value.status_code == 429
+    assert store.retained_bytes == len(b"scheduleq") + len(("新" * 2000).encode())
 
 
 @pytest.mark.parametrize(

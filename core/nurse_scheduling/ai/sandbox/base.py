@@ -28,9 +28,9 @@ from dataclasses import dataclass
 from typing import Protocol
 
 logger = logging.getLogger("nurse_scheduling.ai.sandbox")
-DEFAULT_MAX_FILE_BYTES = 16 * 1024 * 1024
+DEFAULT_MAX_FILE_BYTES = 64 * 1024 * 1024
 """Default host-side bound for one sandbox file read, before text or image processing."""
-MAX_COMMAND_OUTPUT_BYTES = 4 * 1024 * 1024
+MAX_COMMAND_OUTPUT_BYTES = 64 * 1024 * 1024
 """Combined UTF-8 stdout and stderr bytes accepted from one command."""
 
 

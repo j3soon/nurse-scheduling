@@ -300,7 +300,6 @@ def test_real_chat_runs_preserve_context_through_compaction(monkeypatch):
         compaction_keep_recent_tokens=1000,
         max_history_chars=10_000_000,
         max_history_messages=1000,
-        max_message_chars=20000,
         request_log_enabled=False,
         cookie_secure=False,
         provider_timeout_seconds=60,

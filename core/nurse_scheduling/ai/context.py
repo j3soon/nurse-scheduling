@@ -27,7 +27,7 @@ from dataclasses import asdict, dataclass, replace
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .config import DEFAULT_MAX_HISTORY_CHARS, AiSettings
+from .config import MAX_DOWNLOAD_BYTES, MAX_HISTORY_CHARS, AiSettings
 from .provider import (
     ChatMessage,
     TokenUsage,
@@ -172,8 +172,8 @@ def build_provider_messages(
     question: str,
     *,
     system_prompt: str = SANDBOX_SYSTEM_PROMPT,
-    max_history_chars: int = DEFAULT_MAX_HISTORY_CHARS,
-    max_download_bytes: int = 50_000_000,
+    max_history_chars: int = MAX_HISTORY_CHARS,
+    max_download_bytes: int = MAX_DOWNLOAD_BYTES,
 ) -> list[ChatMessage]:
     """Build a provider prompt whose system message and history stay unchanged between requests.
 
@@ -468,7 +468,7 @@ class HistoryContext:
     source_indices: list[int]
 
 
-def project_history(transcript: Sequence[AgentMessage], max_chars: int = DEFAULT_MAX_HISTORY_CHARS) -> HistoryContext:
+def project_history(transcript: Sequence[AgentMessage], max_chars: int = MAX_HISTORY_CHARS) -> HistoryContext:
     """Project the newest transcript messages that fit the prompt budget, oldest first.
 
     Retention bounds how much of a conversation the session holds, not how much a

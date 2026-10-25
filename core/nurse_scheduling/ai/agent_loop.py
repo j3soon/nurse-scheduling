@@ -47,6 +47,7 @@ from .agent_types import (
     ToolExecutor,
 )
 from .compaction import ContextCompactor
+from .config import MAX_HISTORY_CHARS
 from .context import compatible_provider_messages, history_chars, prepare_provider_request
 from .provider import (
     ChatMessage,
@@ -66,7 +67,7 @@ from .provider import (
 from .transcript import AgentMessage, AssistantMessage, ToolResultMessage, UserMessage
 
 logger = logging.getLogger("nurse_scheduling.ai.agent")
-MAX_PARALLEL_TOOL_CALLS = 8
+MAX_PARALLEL_TOOL_CALLS = 16
 
 TRUNCATED_TOOL_CALL_RESULT = (
     "The response reached the output token limit before this tool call was complete, so it was not run. "
@@ -88,9 +89,9 @@ async def agent_loop(
     take_steering: SteeringSource | None = None,
     max_tool_rounds: int | None = None,
     max_tool_calls: int | None = None,
+    max_parallel_tools: int = MAX_PARALLEL_TOOL_CALLS,
     run_messages: list[AgentMessage] | None = None,
-    history_limit: int = 200_000,
-    message_limit: int = 1000,
+    history_limit: int = MAX_HISTORY_CHARS,
     reserve_tokens: int = 16384,
     keep_recent_tokens: int = 20000,
 ) -> AsyncIterator[AgentEvent]:
@@ -272,7 +273,7 @@ async def agent_loop(
                 for call in calls:
                     yield AgentToolStart(call.name, call.arguments, call.id)
                 started = time.perf_counter()
-                outcomes = await _execute_parallel_tool_calls(calls, execute)
+                outcomes = await _execute_parallel_tool_calls(calls, execute, max_parallel_tools)
                 execution_seconds = time.perf_counter() - started
                 completed = zip(calls, outcomes, strict=True)
                 for call, outcome in completed:
@@ -335,8 +336,9 @@ def _record_tool_result(conversation: list[AgentMessage], call: ToolCall, outcom
 async def _execute_parallel_tool_calls(
     calls: Sequence[ToolCall],
     execute: ToolExecutor,
+    max_parallel_tools: int,
 ) -> list[AgentToolOutcome]:
-    semaphore = asyncio.Semaphore(MAX_PARALLEL_TOOL_CALLS)
+    semaphore = asyncio.Semaphore(max_parallel_tools)
 
     async def bounded_execute(call: ToolCall) -> AgentToolOutcome:
         async with semaphore:

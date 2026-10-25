@@ -16,6 +16,10 @@
   must resolve to the matching page under the deployed `/docs` path.
 - Write developer-guide pages for contributors and operators. Keep content
   minimal, precise, and self-contained.
+- Describe the current supported behavior as if earlier project versions did
+  not exist. Keep change history, migration narratives, and upgrade comparisons
+  in Git history. External reference revisions may identify the source used.
+- In comparison tables, omit rows where both sides are N/A.
 - Keep screenshots focused on a decision or result. Add concise alt text and
   describe any warning that appears in the image. Add screenshots where a
   beginner would otherwise struggle to follow a step.
@@ -166,8 +170,8 @@
 - Git on Windows can check out symlinks as plain text. Enable symlink support
   or use Linux or WSL when building the documentation.
 
-- Describe the current recovery schema separately from historical migrations.
-  Keep conversation order, event cursors, and execution status distinct.
+- Describe the current recovery schema. Keep conversation order, event cursors,
+  and execution status distinct.
 - For backup and restore instructions, use the same environment file, Compose
   variant, and project for every step. Verify the dump before replacement and
   keep restore failures from restarting writers.

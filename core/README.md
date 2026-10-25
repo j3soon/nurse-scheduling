@@ -516,16 +516,12 @@ cleaned while the AI service is offline.
 | `AI_OPTIMIZER_POLL_INTERVAL_SECONDS` | `1` | Delay between background optimizer status checks. |
 | `AI_OPTIMIZER_REQUEST_TIMEOUT_SECONDS` | `30` | Timeout for one optimizer API request or result download. |
 | `AI_OPTIMIZER_DEFAULT_TIMEOUT_SECONDS` | `300` | Optimizer time limit sent when the assistant omits one. Docker Compose derives it from `OPTIMIZE_DEFAULT_TIMEOUT_SECONDS`. |
-| `AI_OPTIMIZER_MAX_RUNS_PER_SESSION` | `50` | Maximum background optimizer runs one chat session may start. |
-| `AI_OPTIMIZER_MAX_RESULT_BYTES` | `10000000` | Maximum workbook bytes retained for one result download. |
-| `AI_OPTIMIZER_RESULT_CACHE_BYTES` | `100000000` | Maximum total optimizer workbook bytes retained by one AI process. Oldest results are evicted first. |
+| `AI_OPTIMIZER_RESULT_CACHE_BYTES` | `256000000` | Maximum total optimizer workbook bytes retained by one AI process. Oldest results are evicted first. |
 | `AI_SANDBOX_BACKEND` | Required | Sandbox provider. Currently `e2b`. |
 | `E2B_API_KEY` | Required for E2B | E2B Cloud credential used only by the trusted application. |
 | `E2B_TEMPLATE` | `nurse-scheduling-ai-sandbox` | Prebuilt E2B template alias. |
 | `AI_SANDBOX_COMMAND_TIMEOUT_SECONDS` | `60` | Default and maximum deadline for one shell command. |
 | `AI_SANDBOX_TURN_TIMEOUT_SECONDS` | `21600` | Six-hour agent run deadline, including paused time. The E2B VM has a one-hour active timeout that each auto-resume restarts, and the application pauses it between tool batches. The Compose NGINX proxy waits up to 21660 seconds between response bytes. |
-| `AI_AGENT_MAX_TOOL_ROUNDS` | `2000` | Maximum model tool-call rounds before the agent must answer from verified results. |
-| `AI_AGENT_MAX_TOOL_CALLS` | `6000` | Maximum total tool calls in one sandbox-backed user message. |
 | `AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS` | `10` | Deadline for destroying a sandbox. |
 | `AI_SANDBOX_MAX_ATTEMPTS` | `3` | Total attempts for replay-safe E2B requests. |
 | `AI_SANDBOX_RETRY_BACKOFF_SECONDS` | `0.5` | Initial E2B retry delay, doubled after each failure. |
@@ -536,18 +532,18 @@ cleaned while the AI service is offline.
 | `AI_COOKIE_SECURE` | `0` in the launcher | Use `0` for local HTTP and `1` for public HTTPS. Secure deployments use `SameSite=None` so approved cross-site frontends can retain session ownership. |
 | `AI_SESSION_TTL_SECONDS` | `2592000` | Idle session lifetime. Session activity renews it. |
 | `AI_MAX_SESSIONS` | `1000` | Maximum process-local sessions. With PostgreSQL, a new or restored session unloads the least recently used idle session instead of getting HTTP 429. Its stored uploads, generated ZIPs, and optimizer files remain in PostgreSQL and load again on demand. A session stays loaded while a response, optimizer run, or recovery write is unfinished, and after a failed save until a later save succeeds. |
-| `AI_MAX_SESSION_BYTES` | `1073741824` | Retained-byte budget across live sessions, including chat text, uploads, and generated downloads. It leaves room for several sessions at the `AI_MAX_ATTACHMENT_TOTAL_BYTES` limit. New sessions, uploads, schedule updates, and queued steering that would exceed it get HTTP 429. A completed turn instead drops its session's oldest complete exchanges and warns the browser. Size the process above this budget plus the newest turn of each session. |
+| `AI_MAX_SESSION_BYTES` | `1073741824` | Retained-byte budget across live sessions, including chat text, uploads, and generated downloads. It includes every active attachment and pending file write. New sessions, uploads, schedule updates, and queued steering that would exceed it get HTTP 429. A completed turn keeps its exchanges. Further input is refused while capacity is exhausted. Size the process above this budget plus the newest turn of each session. |
 | `AI_COMPACTION_RESERVE_TOKENS` | `16384` | Output reserve used by Pi's automatic compaction threshold and summary budgets. |
 | `AI_COMPACTION_KEEP_RECENT_TOKENS` | `20000` | Estimated recent context retained after compaction. |
-| `AI_MAX_HISTORY_MESSAGES` | `1000` | Conversation messages retained per session. The effective minimum is two, so a completed question and answer survive when this is set to one. |
-| `AI_MAX_HISTORY_CHARS` | `200000` | Prompt budget for retained history. The newest messages that fit are sent, so a long session cannot outgrow the model context window. |
-| `AI_MAX_MESSAGE_CHARS` | `8000` | Maximum question length. |
-| `AI_MAX_SCHEDULE_BYTES` | `1000000` | Maximum UTF-8 YAML snapshot size. |
+| `AI_AGENT_MAX_PARALLEL_TOOLS` | `16` | Concurrent independent read-only tools. Mutating batches remain sequential. |
 | `AI_MAX_CONCURRENT_REQUESTS` | `4` | Maximum simultaneous agent runs. Each run holds a slot until it ends, which can take up to `AI_SANDBOX_TURN_TIMEOUT_SECONDS`, and other runs wait. |
-| `AI_MAX_ATTACHMENT_FILES` | `32` | Maximum retained files per session. |
-| `AI_MAX_ATTACHMENT_BYTES` | `25000000` | Maximum source bytes per file. The browser uploads one file per request. Keep this plus 64 KiB multipart overhead below NGINX's 64 MiB `/ai/` limit. |
-| `AI_MAX_ATTACHMENT_TOTAL_BYTES` | `200000000` | Maximum retained source bytes per session. These bytes also count toward `AI_MAX_SESSION_BYTES`. Remove unused uploads to free capacity. |
-| `AI_MAX_ARCHIVE_BYTES` | `1000000000` | Maximum file bytes that PostgreSQL stores per session: uploads, generated ZIPs, and optimizer files, including removed files. Removal does not free this capacity. A full session refuses new uploads with HTTP 413 and does not keep new generated ZIPs or optimizer results. Without PostgreSQL, this limit does not apply. |
+| `AI_MAX_ARCHIVE_BYTES` | `10000000000` | Maximum file bytes that PostgreSQL stores per session: uploads, generated ZIPs, and optimizer files, including removed files. Removal does not free this capacity. A full session refuses new uploads with HTTP 413 and does not keep new generated ZIPs or optimizer results. Without PostgreSQL, this limit does not apply. |
+
+Defensive input, history, response, and tool-count bounds use code defaults.
+Optional environment overrides are documented in the limits page and omitted
+from the environment examples. Questions have no separate character limit.
+JSON request bodies are bounded to 64 MiB before parsing. See the
+[AI runtime limits and Pi comparison](https://github.com/j3soon/nurse-scheduling/blob/dev/docs/content/developer-guide/ai-limits.md).
 
 Attachments are always enabled. Every upload is copied unchanged into the
 disposable sandbox, where the agent can inspect it with Pi-compatible tools.

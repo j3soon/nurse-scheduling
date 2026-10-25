@@ -143,7 +143,7 @@ class CreateSessionRequest(BaseModel):
 class ChatRequest(BaseModel):
     """One user question for an existing schedule chat."""
 
-    message: str = Field(min_length=1, max_length=100_000)
+    message: str = Field(min_length=1)
     # A repeated client message ID reattaches to its run instead of asking again.
     message_id: str | None = Field(default=None, min_length=1, max_length=100)
     frontend_version: str | None = Field(default=None, min_length=1, max_length=200)
@@ -249,7 +249,7 @@ async def _read_files(uploads: list[UploadFile], settings: AiSettings) -> list[S
     return attachments
 
 
-def _validate_question(raw_message: object, settings: AiSettings) -> str:
+def _validate_question(raw_message: object) -> str:
     """Validate one question consistently across message and steering requests."""
     try:
         request = ChatRequest.model_validate({"message": raw_message})
@@ -258,8 +258,6 @@ def _validate_question(raw_message: object, settings: AiSettings) -> str:
     question = request.message.strip()
     if not question:
         raise HTTPException(status_code=422, detail="Message must not be blank.")
-    if len(question) > settings.max_message_chars:
-        raise HTTPException(status_code=413, detail="Message is too large.")
     return question
 
 
@@ -949,7 +947,7 @@ def create_app(
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> Response:
         """Queue a follow-up for the next boundary in an active agent run."""
-        message = _validate_question(request.message, settings)
+        message = _validate_question(request.message)
         session = store.require_owned(session_id, owner)
         session.observe_frontend_version(request.frontend_version, app.state.app_version)
         if request.frontend_timezone is not None:
@@ -1001,7 +999,7 @@ def create_app(
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> Response:
         """Start a run independently of its event subscribers."""
-        question = _validate_question(body.message, settings)
+        question = _validate_question(body.message)
         session = store.require_owned(session_id, owner)
         session.observe_frontend_version(body.frontend_version, app.state.app_version)
         if body.frontend_timezone is not None:

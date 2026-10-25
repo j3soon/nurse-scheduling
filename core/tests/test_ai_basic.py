@@ -64,6 +64,7 @@ from nurse_scheduling.ai.context import (
     build_provider_messages,
     message_title,
     project_history,
+    projected_history,
     removal_event,
     upload_event,
 )
@@ -179,8 +180,7 @@ def make_settings(**overrides: object) -> AiSettings:
         "provider_model": "test-model",
         "auth_token": AI_AUTH_TOKEN,
         "max_sessions": 10,
-        "max_history_messages": 20,
-        "max_message_chars": 100,
+        "max_history_messages": 1000,
         "max_schedule_bytes": 1000,
         "max_concurrent_requests": 2,
         "cookie_secure": False,
@@ -560,9 +560,7 @@ def test_message_request_log_flattens_and_truncates_long_questions(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.INFO, logger="nurse_scheduling.ai.requests")
-    client = AuthenticatedTestClient(
-        create_test_app(settings=make_settings(max_message_chars=500), provider=FakeProvider())
-    )
+    client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
     session_id = create_session(client)
     question = f"First line\n{'x' * 250}"
 
@@ -1092,7 +1090,7 @@ def test_health_and_streamed_schedule_question() -> None:
         ("done", {"run_id": run_id}),
     ]
     usage = [data for name, data in events if name == "context_usage"][-1]
-    assert usage["used_chars"] == 97 and usage["max_chars"] == 200_000
+    assert usage["used_chars"] == 97 and usage["max_chars"] == 64_000_000
     assert usage["used_tokens"] > 0
     prompt = provider.calls[0]
     assert prompt[-1] == {"role": "user", "content": "Who works Monday?"}
@@ -1565,7 +1563,7 @@ def test_sandbox_timeout_does_not_expose_exception_details(exception, message) -
 def test_request_limits_are_enforced() -> None:
     client = AuthenticatedTestClient(
         create_test_app(
-            settings=make_settings(max_message_chars=5, max_schedule_bytes=5),
+            settings=make_settings(max_schedule_bytes=5),
             provider=FakeProvider(),
         )
     )
@@ -1575,8 +1573,19 @@ def test_request_limits_are_enforced() -> None:
 
     assert schedule_response.status_code == 413
     assert schedule_response.json()["detail"] == "Schedule is too large."
-    assert message_response.status_code == 413
-    assert message_response.json()["detail"] == "Message is too large."
+    assert message_response.status_code == 200
+
+
+def test_long_question_reaches_the_provider_without_a_character_limit() -> None:
+    provider = FakeProvider()
+    client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=provider))
+    session_id = create_session(client)
+    question = "x" * 300_000
+
+    response = client.post(f"/sessions/{session_id}/messages", json={"message": question})
+
+    assert response.status_code == 200
+    assert any(message.get("content") == question for message in provider.calls[0])
 
 
 def test_environment_configuration_requires_a_provider_token(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1692,21 +1701,52 @@ def test_environment_configuration_rejects_a_non_ascii_ai_auth_token() -> None:
         create_test_app(settings=make_settings(auth_token="long-enough-auth-token-密"), provider=FakeProvider())
 
 
-def test_environment_configuration_reads_attachment_limits(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    "name",
+    [
+        "AI_PROVIDER_MAX_RESPONSE_BYTES",
+        "AI_MAX_HISTORY_MESSAGES",
+        "AI_MAX_HISTORY_CHARS",
+        "AI_MAX_SCHEDULE_BYTES",
+        "AI_MAX_ATTACHMENT_FILES",
+        "AI_MAX_ATTACHMENT_BYTES",
+        "AI_MAX_ATTACHMENT_TOTAL_BYTES",
+        "AI_MAX_DOWNLOAD_BYTES",
+        "AI_OPTIMIZER_MAX_RUNS_PER_SESSION",
+        "AI_OPTIMIZER_MAX_RESULT_BYTES",
+        "AI_AGENT_MAX_TOOL_ROUNDS",
+        "AI_AGENT_MAX_TOOL_CALLS",
+    ],
+)
+def test_defensive_bounds_have_optional_environment_overrides(monkeypatch, name):
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
+    monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
+    monkeypatch.delenv(name, raising=False)
+    field = name.removeprefix("AI_").lower()
+    assert getattr(AiSettings.from_env(), field) == getattr(AiSettings, field)
+    monkeypatch.setenv(name, "7")
+    assert getattr(AiSettings.from_env(), field) == 7
+    for invalid in ("not-a-number", "0", "-1", ""):
+        monkeypatch.setenv(name, invalid)
+        with pytest.raises(ValueError, match=name):
+            AiSettings.from_env()
+    docker = Path(__file__).resolve().parents[2] / "docker"
+    for path in docker.glob(".env*.example"):
+        assert not re.search(rf"(?m)^\s*{name}[=:]", path.read_text()), path.name
+    for path in docker.glob("compose.backend*.yml"):
+        environment = yaml.safe_load(path.read_text())["services"]["ai"]["environment"]
+        assert name in environment and environment[name] is None, path.name
+
+
+def test_environment_configuration_reads_archive_capacity(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
     monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
     monkeypatch.setenv("AI_SANDBOX_BACKEND", "e2b")
     monkeypatch.setenv("E2B_API_KEY", "e2b-key")
-    monkeypatch.setenv("AI_MAX_ATTACHMENT_FILES", "6")
-    monkeypatch.setenv("AI_MAX_ATTACHMENT_BYTES", "6000000")
-    monkeypatch.setenv("AI_MAX_ATTACHMENT_TOTAL_BYTES", "12000000")
     monkeypatch.setenv("AI_MAX_ARCHIVE_BYTES", "30000000")
 
     settings = AiSettings.from_env()
 
-    assert settings.max_attachment_files == 6
-    assert settings.max_attachment_bytes == 6_000_000
-    assert settings.max_attachment_total_bytes == 12_000_000
     assert settings.max_archive_bytes == 30_000_000
 
 
@@ -1756,8 +1796,6 @@ def test_environment_configuration_reads_optimizer_connection(monkeypatch: pytes
     monkeypatch.setenv("AI_OPTIMIZER_POLL_INTERVAL_SECONDS", "0.25")
     monkeypatch.setenv("AI_OPTIMIZER_REQUEST_TIMEOUT_SECONDS", "12")
     monkeypatch.setenv("AI_OPTIMIZER_DEFAULT_TIMEOUT_SECONDS", "420")
-    monkeypatch.setenv("AI_OPTIMIZER_MAX_RUNS_PER_SESSION", "7")
-    monkeypatch.setenv("AI_OPTIMIZER_MAX_RESULT_BYTES", "9000000")
     monkeypatch.setenv("AI_OPTIMIZER_RESULT_CACHE_BYTES", "80000000")
 
     settings = AiSettings.from_env()
@@ -1767,8 +1805,6 @@ def test_environment_configuration_reads_optimizer_connection(monkeypatch: pytes
     assert settings.optimizer_poll_interval_seconds == 0.25
     assert settings.optimizer_request_timeout_seconds == 12
     assert settings.optimizer_default_timeout_seconds == 420
-    assert settings.optimizer_max_runs_per_session == 7
-    assert settings.optimizer_max_result_bytes == 9_000_000
     assert settings.optimizer_result_cache_bytes == 80_000_000
 
 
@@ -1776,20 +1812,18 @@ def test_optimizer_defaults_are_always_configured(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
     monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
     monkeypatch.setenv("AI_OPTIMIZER_BASE_URL", "")
-    monkeypatch.delenv("AI_OPTIMIZER_MAX_RUNS_PER_SESSION", raising=False)
 
     settings = AiSettings.from_env()
 
     assert settings.optimizer_base_url == "http://localhost:8000"
-    assert settings.optimizer_max_runs_per_session == 50
+    assert settings.optimizer_max_runs_per_session == 1000
 
 
 def test_chat_history_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
     monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
-    monkeypatch.delenv("AI_MAX_HISTORY_MESSAGES", raising=False)
 
-    assert AiSettings.from_env().max_history_messages == 1000
+    assert AiSettings.from_env().max_history_messages == 100_000
 
 
 def test_compose_exposes_the_ai_session_byte_budget(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1809,46 +1843,37 @@ def test_compose_exposes_the_ai_session_byte_budget(monkeypatch: pytest.MonkeyPa
         assert re.search(rf"(?m)^AI_MAX_SESSION_BYTES={default}$", contents), name
 
 
-def test_a_trimmed_prompt_history_is_reported_to_the_client() -> None:
-    provider = FakeProvider([["First answer."], ["Second answer."], ["Third answer."]])
-    settings = make_settings(max_history_chars=200, max_history_messages=100, max_session_bytes=1_000_000)
-    client = AuthenticatedTestClient(create_test_app(settings=settings, provider=provider))
-    session_id = create_session(client)
-
-    first = client.post(f"/sessions/{session_id}/messages", json={"message": "A" * 50})
-    second = client.post(f"/sessions/{session_id}/messages", json={"message": "B" * 50})
-    third = client.post(f"/sessions/{session_id}/messages", json={"message": "C" * 50})
-
-    assert [event for event, _ in parse_sse(first.text) if event == "history_trimmed"] == []
-    assert [payload["dropped"] for event, payload in parse_sse(second.text) if event == "history_trimmed"] == [2]
-    trimmed = [payload for event, payload in parse_sse(third.text) if event == "history_trimmed"]
-    assert [payload["dropped"] for payload in trimmed] == [2, 4]
-    # The oldest exchange is dropped from the prompt while the newest survives.
-    latest_prompt = json.dumps(provider.calls[-1])
-    assert "A" * 50 not in latest_prompt
-    assert "C" * 50 in latest_prompt
-    assert second.status_code == 200
+def test_defensive_history_limit_rejects_new_work_without_dropping_the_chat():
+    provider = FakeProvider([["First answer."], ["Second answer."]])
+    settings = make_settings(max_history_chars=200, max_history_messages=100)
+    app = create_test_app(settings=settings, provider=provider)
+    with AuthenticatedTestClient(app) as client:
+        session_id = create_session(client)
+        path = f"/sessions/{session_id}/messages"
+        assert client.post(path, json={"message": "A" * 50}).status_code == 200
+        assert client.post(path, json={"message": "B" * 50}).status_code == 200
+        before = list(app.state.session_store._sessions[session_id].transcript)
+        rejected = client.post(path, json={"message": "C" * 50})
+        assert rejected.status_code == 429
+        assert "defensive history limit" in rejected.json()["detail"]
+        assert len(provider.calls) == 2
+        assert app.state.session_store._sessions[session_id].transcript == before
+        assert before == exchange("A" * 50, "First answer.") + exchange("B" * 50, "Second answer.")
 
 
-def test_history_is_trimmed_in_steps_so_most_requests_extend_the_previous_prefix() -> None:
+def test_requests_extend_the_previous_prefix_without_history_trimming():
     provider = FakeProvider([["Answer " + "x" * 40] for _ in range(10)])
-    settings = make_settings(max_history_chars=1200, max_history_messages=100, max_session_bytes=1_000_000)
-    client = AuthenticatedTestClient(create_test_app(settings=settings, provider=provider))
-    session_id = create_session(client)
-
-    for turn in range(10):
-        assert (
-            client.post(f"/sessions/{session_id}/messages", json={"message": f"Q{turn} " + "y" * 40}).status_code == 200
-        )
-
-    # A request that extends the previous one lets the provider reuse its cached prefix.
-    prefix_changes = [
-        turn
-        for turn in range(1, 10)
-        if provider.calls[turn][: len(provider.calls[turn - 1]) - 1] != provider.calls[turn - 1][:-1]
-    ]
-    assert len(prefix_changes) == 1
-    assert "Q0" not in json.dumps(provider.calls[-1])
+    app = create_test_app(settings=make_settings(), provider=provider)
+    with AuthenticatedTestClient(app) as client:
+        session_id = create_session(client)
+        for turn in range(10):
+            response = client.post(f"/sessions/{session_id}/messages", json={"message": f"Q{turn} " + "y" * 40})
+            assert response.status_code == 200
+            assert not any(kind == "history_trimmed" for kind, _ in parse_sse(response.text))
+    assert len(provider.calls) == 10
+    for turn in range(1, 10):
+        assert provider.calls[turn][: len(provider.calls[turn - 1]) - 1] == provider.calls[turn - 1][:-1]
+    assert "Q0" in json.dumps(provider.calls[-1])
 
 
 def test_schedule_edit_is_recorded_only_when_its_data_changes() -> None:
@@ -1942,7 +1967,7 @@ def test_context_usage_reports_selected_history_before_and_after_each_run() -> N
         if event == "context_usage"
     ]
 
-    # Only the newest exchange fits after the second turn.
+    # A completed exchange remains visible even when it crosses the defensive bound.
     first_chars = len(json.dumps(ChatMessage(role="user", content="A" * 50), ensure_ascii=False)) + len(
         json.dumps(ChatMessage(role="assistant", content="First answer."), ensure_ascii=False)
     )
@@ -1950,41 +1975,36 @@ def test_context_usage_reports_selected_history_before_and_after_each_run() -> N
         json.dumps(ChatMessage(role="assistant", content="Second answer."), ensure_ascii=False)
     )
     assert first_usage[-1] == {"used_chars": first_chars, "max_chars": 200, "used_tokens": ANY, "estimated": True}
-    assert second_usage[-1] == {"used_chars": second_chars, "max_chars": 200, "used_tokens": ANY, "estimated": True}
+    assert second_usage[-1] == {
+        "used_chars": first_chars + second_chars,
+        "max_chars": 200,
+        "used_tokens": ANY,
+        "estimated": True,
+    }
 
 
-def test_session_budget_keeps_the_latest_exchange_and_reports_all_dropped_messages() -> None:
-    provider = FakeProvider([["X" * 20], ["Y" * 20], ["Z" * 20]])
+def test_session_memory_budget_preserves_completed_exchanges_and_refuses_input():
+    provider = FakeProvider([["X" * 20], ["Y" * 20]])
     settings = make_settings(max_session_bytes=65, max_history_chars=10_000)
     app = create_test_app(settings=settings, provider=provider)
-    client = AuthenticatedTestClient(app)
-    session_id = create_session(client)
-
-    first = client.post(f"/sessions/{session_id}/messages", json={"message": "A" * 10})
-    second = client.post(f"/sessions/{session_id}/messages", json={"message": "B" * 10})
-    third = client.post(f"/sessions/{session_id}/messages", json={"message": "C" * 10})
-
-    assert [payload for event, payload in parse_sse(first.text) if event == "history_trimmed"] == []
-    assert [payload["dropped"] for event, payload in parse_sse(second.text) if event == "history_trimmed"] == [2]
-    assert [payload["dropped"] for event, payload in parse_sse(third.text) if event == "history_trimmed"] == [
-        2,
-        4,
-    ]
-    assert app.state.session_store._sessions[session_id].transcript == [
-        UserMessage("C" * 10),
-        AssistantMessage("Z" * 20),
-    ]
-    latest_prompt = json.dumps(provider.calls[-1])
-    assert "B" * 10 in latest_prompt
-    assert "A" * 10 not in latest_prompt
+    with AuthenticatedTestClient(app) as client:
+        session_id = create_session(client)
+        path = f"/sessions/{session_id}/messages"
+        assert client.post(path, json={"message": "A" * 10}).status_code == 200
+        assert client.post(path, json={"message": "B" * 10}).status_code == 200
+        rejected = client.post(path, json={"message": "C" * 10})
+        assert rejected.status_code == 429
+    assert len(provider.calls) == 2
+    assert app.state.session_store._sessions[session_id].transcript == exchange("A" * 10, "X" * 20) + exchange(
+        "B" * 10, "Y" * 20
+    )
 
 
 def test_history_prompt_budget_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
     monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
-    monkeypatch.delenv("AI_MAX_HISTORY_CHARS", raising=False)
 
-    assert AiSettings.from_env().max_history_chars == 200_000
+    assert AiSettings.from_env().max_history_chars == 64_000_000
 
 
 def test_a_long_history_is_trimmed_to_the_newest_messages_that_fit_the_prompt() -> None:
@@ -2081,8 +2101,6 @@ def test_environment_configuration_defaults_to_extended_sandbox_turn_limits(
     monkeypatch.delenv("AI_PROVIDER_TIMEOUT_SECONDS", raising=False)
     monkeypatch.delenv("AI_SANDBOX_COMMAND_TIMEOUT_SECONDS", raising=False)
     monkeypatch.delenv("AI_SANDBOX_TURN_TIMEOUT_SECONDS", raising=False)
-    monkeypatch.delenv("AI_AGENT_MAX_TOOL_ROUNDS", raising=False)
-    monkeypatch.delenv("AI_AGENT_MAX_TOOL_CALLS", raising=False)
 
     settings = AiSettings.from_env()
     assert settings.provider_timeout_seconds == 180
@@ -2133,8 +2151,6 @@ def test_environment_configuration_reads_e2b_sandbox_settings(monkeypatch: pytes
     monkeypatch.setenv("AI_SANDBOX_PAUSE_REQUEST_TIMEOUT_SECONDS", "4.5")
     monkeypatch.setenv("AI_SANDBOX_CONTROL_REQUEST_TIMEOUT_SECONDS", "1.5")
     monkeypatch.setenv("AI_SANDBOX_REAPER_INTERVAL_SECONDS", "45")
-    monkeypatch.setenv("AI_AGENT_MAX_TOOL_ROUNDS", "7")
-    monkeypatch.setenv("AI_AGENT_MAX_TOOL_CALLS", "12")
 
     settings = AiSettings.from_env()
 
@@ -2149,8 +2165,6 @@ def test_environment_configuration_reads_e2b_sandbox_settings(monkeypatch: pytes
     assert settings.sandbox_pause_request_timeout_seconds == 4.5
     assert settings.sandbox_control_request_timeout_seconds == 1.5
     assert settings.sandbox_reaper_interval_seconds == 45
-    assert settings.agent_max_tool_rounds == 7
-    assert settings.agent_max_tool_calls == 12
 
 
 def test_environment_configuration_requires_a_sandbox_backend(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2492,7 +2506,7 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         assert provider.calls[2][0] == provider.calls[0][0]
         assert events[5].data == {"model": "test-model", "reasoning": "default", "run_id": run_id}
         assert events[9].data == {"text": "The optimizer returned score 23.", "run_id": run_id}
-        assert events[11].data["max_chars"] == 200_000
+        assert events[11].data["max_chars"] == 64_000_000
         assert events[11].data["used_chars"] > 0
         if history_enabled:
             assert len(history_starts) == 3
@@ -2951,16 +2965,21 @@ def test_prompt_budget_projection_starts_at_a_prompt() -> None:
 
 
 @pytest.mark.parametrize("message_cap", [1, 3], ids=["below-exchange-size", "odd-overflow"])
-def test_history_message_cap_keeps_complete_exchanges(message_cap: int) -> None:
+def test_defensive_message_cap_preserves_every_completed_exchange(message_cap):
     app = create_test_app(settings=make_settings(max_history_messages=message_cap), provider=FakeProvider())
     store = app.state.session_store
     session = store.create("browser-owner", "description: test")
-
-    for question in ("first question", "second question"):
+    expected = []
+    while len(projected_history(expected)) < message_cap:
         snapshot = store.begin(session.id, "browser-owner")
-        store.finish(session.id, exchange(question, f"answer to {question}"), snapshot=snapshot)
-        assert session.transcript == exchange(question, f"answer to {question}")
-    assert session.dropped_history_messages == 2
+        entries = exchange(f"question {len(expected)}", "answer")
+        store.finish(session.id, entries, snapshot=snapshot)
+        expected.extend(entries)
+    with pytest.raises(HTTPException) as error:
+        store.begin(session.id, "browser-owner")
+    assert error.value.status_code == 429
+    assert session.transcript == expected
+    assert session.dropped_history_messages == 0
 
 
 def test_steering_adjusts_retained_bytes_without_a_full_recount() -> None:
@@ -2979,24 +2998,18 @@ def test_steering_adjusts_retained_bytes_without_a_full_recount() -> None:
     assert store.retained_bytes == 100
 
 
-def test_completed_turns_do_not_accumulate_past_the_budget() -> None:
-    # Completed runs add output without another capacity check. Initially small
-    # sessions must not keep every answer they produce.
-    settings = make_settings(max_session_bytes=10_000, max_schedule_bytes=1000, max_history_messages=20)
-    app = create_test_app(settings=settings, provider=FakeProvider())
-    store = app.state.session_store
-    sessions = [store.create("browser-owner", "a" * 10) for _ in range(5)]
-
-    for _ in range(6):
-        for session in sessions:
-            snapshot = store.begin(session.id, "browser-owner")
-            store.finish(session.id, exchange("q" * 100, "A" * 5_000), None, snapshot=snapshot)
-
-    # Each session keeps its schedule and its newest question and answer, so that floor is what
-    # remains, independently of how many turns ran.
-    assert store.retained_bytes == 5 * (10 + 100 + 5_000)
-    for session in sessions:
-        assert store._sessions[session.id].transcript == exchange("q" * 100, "A" * 5_000)
+def test_completed_turn_is_kept_when_output_exceeds_the_service_budget():
+    settings = make_settings(max_session_bytes=1000)
+    store = create_test_app(settings=settings, provider=FakeProvider()).state.session_store
+    session = store.create("browser-owner", "schedule")
+    snapshot = store.begin(session.id, "browser-owner")
+    entries = exchange("question", "A" * 5000)
+    store.finish(session.id, entries, snapshot=snapshot)
+    with pytest.raises(HTTPException) as error:
+        store.begin(session.id, "browser-owner")
+    assert error.value.status_code == 429
+    assert session.transcript == entries
+    assert store.retained_bytes >= 5000
 
 
 def test_session_store_rejects_steering_after_the_final_boundary() -> None:

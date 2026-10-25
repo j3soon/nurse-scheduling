@@ -234,7 +234,20 @@ describe('ExperimentalAiPage', () => {
     expect(mockSendMessage.mock.calls[0][1]).toBe('Keep **new** [link](https://example.com/) ending');
   });
 
-  it('caps formatted paste at the message limit and preserves plain text paste', async () => {
+  it('submits long messages without a character limit', async () => {
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    const input = screen.getByRole('textbox', { name: 'Ask about the current schedule' }) as HTMLTextAreaElement;
+    await waitFor(() => expect(input).toBeEnabled());
+    expect(input).not.toHaveAttribute('maxlength');
+    input.focus();
+    await user.paste('x'.repeat(300000));
+    expect(input.value).toHaveLength(300000);
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    expect(mockSendMessage.mock.calls[0][1]).toHaveLength(300000);
+  });
+
+  it('keeps complete formatted and plain text pastes', async () => {
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
     const input = screen.getByRole('textbox', { name: 'Ask about the current schedule' }) as HTMLTextAreaElement;
@@ -245,8 +258,7 @@ describe('ExperimentalAiPage', () => {
     fireEvent.change(input, { target: { value: 'x'.repeat(7998) } });
     input.setSelectionRange(7998, 7998);
     fireEvent.paste(input, { clipboardData: { getData: () => '<b>long paste</b>' } });
-    expect(input.value).toHaveLength(8000);
-    expect(input.value.endsWith('**')).toBe(true);
+    expect(input.value).toBe('x'.repeat(7998) + '**long paste**');
   });
 
   it('renews a reconnected background run with the current retention period', async () => {

@@ -48,10 +48,8 @@ SECRET_ASSIGNMENT_PATTERN = re.compile(
     r"(?i)(\b(?:api[_-]?key|access[_-]?token|authorization|secret)\b\s*[\"']?\s*[:=]\s*[\"']?)"
     r"([^\"'\s,;<}]+)"
 )
-MAX_TOOL_CALLS_PER_RESPONSE = 32
-MAX_TOOL_ARGUMENT_CHARS = 20_000
-MAX_RESPONSE_TEXT_CHARS = 200_000
-MAX_RESPONSE_REASONING_CHARS = 400_000
+MAX_TOOL_CALLS_PER_RESPONSE = 1024
+MAX_TOOL_ARGUMENT_CHARS = 4_000_000
 MAX_PROVIDER_ERROR_EXCERPT_CHARS = 1_000
 MAX_PROVIDER_CONTENT_TYPE_CHARS = 100
 PROVIDER_ERROR_TRUNCATION_MARKER = "...[truncated]"
@@ -335,6 +333,27 @@ def _provider_error_excerpt(response_body: str, provider_api_key: str) -> str:
     return excerpt[:content_chars] + PROVIDER_ERROR_TRUNCATION_MARKER
 
 
+async def _bounded_response_lines(response: httpx.Response, max_bytes: int) -> AsyncIterator[str]:
+    """Bound decoded HTTP bytes before buffering an SSE line or parsing JSON."""
+    received = 0
+    parts: list[bytes] = []
+    skip_lf = False
+    async for chunk in response.aiter_bytes():
+        received += len(chunk)
+        if received > max_bytes:
+            raise ProviderResponseLimitError.for_user("The AI provider exceeded the defensive response byte limit.")
+        if skip_lf and chunk.startswith(b"\n"):
+            chunk = chunk[1:]
+        skip_lf = chunk.endswith(b"\r")
+        for fragment in chunk.splitlines(keepends=True):
+            parts.append(fragment)
+            if fragment.endswith((b"\r", b"\n")):
+                yield b"".join(parts).rstrip(b"\r\n").decode("utf-8", errors="replace")
+                parts.clear()
+    if parts:
+        yield b"".join(parts).decode("utf-8", errors="replace")
+
+
 class OpenAiCompatibleProvider:
     """Stream chat completions from an OpenAI-compatible HTTP endpoint."""
 
@@ -509,8 +528,6 @@ class OpenAiCompatibleProvider:
 
         original_estimate = estimate_context_tokens(messages, tools or [])
         stream_started = False
-        text_chars = 0
-        reasoning_chars = 0
         max_attempts = self._settings.provider_max_attempts
         retry_deadline: float | None = None
         for attempt in range(1, max_attempts + 1):
@@ -556,18 +573,6 @@ class OpenAiCompatibleProvider:
                             completed.append(event)
                             continue
                         stream_started = True
-                        if isinstance(event, TextDelta):
-                            text_chars += len(event.text)
-                            if text_chars > MAX_RESPONSE_TEXT_CHARS:
-                                raise ProviderResponseLimitError.for_user(
-                                    "The AI provider returned more text than one answer may contain."
-                                )
-                        elif isinstance(event, ReasoningDelta):
-                            reasoning_chars += len(event.text)
-                            if reasoning_chars > MAX_RESPONSE_REASONING_CHARS:
-                                raise ProviderResponseLimitError.for_user(
-                                    "The AI provider returned more reasoning than one answer may contain."
-                                )
                         yield event
                 for event in completed:
                     yield event
@@ -650,9 +655,13 @@ class OpenAiCompatibleProvider:
             ) as response,
         ):
             if response.status_code != 200:
-                await response.aread()
+                response_body = "\n".join(
+                    [
+                        line
+                        async for line in _bounded_response_lines(response, self._settings.provider_max_response_bytes)
+                    ]
+                ).strip()
                 error_id = str(uuid4())
-                response_body = response.text.strip()
                 content_type = " ".join(response.headers.get("content-type", "unknown").split())[
                     :MAX_PROVIDER_CONTENT_TYPE_CHARS
                 ]
@@ -683,13 +692,12 @@ class OpenAiCompatibleProvider:
 
             partial_calls: dict[int, _PartialToolCall] = {}
             native_reasoning: dict[str, Any] = {}
-            native_chars = 0
             if self._include_costs:
                 yield ProviderResponseMetadata(provider_call_id=response.headers.get("x-litellm-call-id"))
             finish_reason: str | None = None
             done_received = False
             text_chars = reasoning_chars = 0
-            async for line in response.aiter_lines():
+            async for line in _bounded_response_lines(response, self._settings.provider_max_response_bytes):
                 if not line.startswith("data:"):
                     continue
                 raw_data = line.removeprefix("data:").strip()
@@ -754,11 +762,7 @@ class OpenAiCompatibleProvider:
                 if isinstance(reasoning, str) and reasoning:
                     reasoning_chars += len(reasoning)
                     yield ReasoningDelta(reasoning)
-                native_chars += _merge_reasoning(native_reasoning, delta)
-                if native_chars > MAX_RESPONSE_REASONING_CHARS:
-                    raise ProviderResponseLimitError.for_user(
-                        "The AI provider returned more reasoning metadata than one answer may contain."
-                    )
+                _merge_reasoning(native_reasoning, delta)
                 _merge_tool_call_fragments(partial_calls, delta.get("tool_calls"))
                 if delta.get("tool_calls"):
                     yield ToolCallProgress(sum(len(partial.arguments) for partial in partial_calls.values()))
@@ -930,8 +934,6 @@ def _merge_tool_call_fragments(partial_calls: dict[int, _PartialToolCall], fragm
         for key in ("extra_content", "provider_specific_fields"):
             if isinstance(fragment.get(key), dict):
                 partial.native = {**(partial.native or {}), key: fragment[key]}
-                if len(json.dumps(partial.native)) > MAX_RESPONSE_REASONING_CHARS:
-                    raise ProviderResponseLimitError.for_user("The AI provider returned too much tool metadata.")
         function = fragment.get("function")
         if not isinstance(function, dict):
             continue

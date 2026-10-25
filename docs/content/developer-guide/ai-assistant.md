@@ -331,7 +331,7 @@ reasoning metadata and partial tool arguments are discarded. Tools are released 
 after a completed tool exchange resends its result without executing it again.
 Summary generation also discards the failed draft before collecting the retry,
 matching Pi's `completeSummarization`. Each attempt retains its cost record, and
-the provider's cumulative output limits still apply.
+the provider's defensive HTTP byte limit applies separately to each attempt.
 
 ## Automatic context compaction
 
@@ -476,9 +476,9 @@ asked. Sandbox backends return raw command output to the AI layer. The AI
 `bash` adapter combines stdout and stderr, keeps the last 2,000 lines or 50 KB,
 and stores the full output in the temporary sandbox when truncation occurs.
 This display policy stays outside the provider-neutral sandbox interface.
-The E2B adapter separately bounds combined stdout and stderr to 4 MiB while
+The E2B adapter separately bounds combined stdout and stderr to 64 MiB while
 receiving it. Exceeding that bound stops the stream, destroys the sandbox,
-and fails the turn. File reads stream at most 16 MiB by default. Schedule
+and fails the turn. File reads stream at most 64 MiB by default. Schedule
 reads use the configured schedule limit, and ZIP reads use the download limit.
 
 When one model response requests multiple reads, the reads run concurrently
@@ -490,10 +490,9 @@ pauses again before the next provider reasoning turn.
 An agent run spans the model/tool loop until the agent finishes. Pi uses a turn
 for one model response and its tool results. VM lifecycle code uses run.
 
-Agent runs default to a six-hour deadline (`AI_SANDBOX_TURN_TIMEOUT_SECONDS=21600`),
-2,000 tool rounds and 6,000 tool calls (`AI_AGENT_MAX_TOOL_ROUNDS` and
-`AI_AGENT_MAX_TOOL_CALLS`). The deadline includes provider responses, sandbox
-operations and paused time.
+Agent runs default to a six-hour deadline (`AI_SANDBOX_TURN_TIMEOUT_SECONDS=21600`)
+with defensive defaults of 2,000 tool rounds and 6,000 tool calls.
+The deadline includes provider responses, sandbox operations and paused time.
 Each optimizer follow-up is a separate run with its own limits. Stop still cancels
 an active run.
 
@@ -502,8 +501,8 @@ its start until it ends. A run does not hold a slot while its optimizer job
 solves. Other runs wait for a free slot, so four long runs can delay every other
 session for up to the run deadline. Autonomous optimization can also chain
 follow-up runs without a user message until the session reaches
-`AI_OPTIMIZER_MAX_RUNS_PER_SESSION`. Raise the concurrency limit when a
-deployment expects long runs, or lower the deadline and tool limits.
+the defensive bound of 1,000 optimizer runs by default. Raise the concurrency limit
+when a deployment expects long runs, or lower the run deadline.
 
 The VM active timeout is independent of the agent run deadline. It is one
 hour, which is the E2B Hobby tier maximum. Timeout pauses the VM with memory
@@ -637,8 +636,8 @@ final candidate.
 
 Configured tool-round and tool-call limits bound the model-tool loop alongside
 per-command and complete agent-turn deadlines.
-One provider response may contain up to 32 tool calls. Read-only batches run at
-most eight calls concurrently and keep results in call order. Mixed or mutating
+One provider response has a defensive bound of 1,024 tool calls. Read-only
+batches run at most `AI_AGENT_MAX_PARALLEL_TOOLS` calls concurrently (default 16) and keep results in call order. Mixed or mutating
 batches run sequentially. A larger valid batch does not discard earlier workspace
 changes or replay the provider request.
 
@@ -1091,10 +1090,10 @@ controls. `/capabilities.app_version` identifies the AI service. The parent
 | `DELETE /sessions/{id}/uploads/{upload_id}` | Remove one retained file. |
 | `POST /sessions/{id}/messages` | Stream one answer to a JSON `message`. |
 
-The default limits are 32 retained files, 25 MB per file, and 200 MB of retained
+The default bounds are 128 retained files, 50 MB per file, and 500 MB of retained
 source files per session. MB uses 1,000,000 bytes.
 With PostgreSQL, `AI_MAX_ARCHIVE_BYTES` also limits the file bytes stored per
-session, 1 GB by default. It counts every stored upload, generated ZIP, and
+session, 10 GB by default. It counts every stored upload, generated ZIP, and
 optimizer file, including removed files, because removal keeps the stored copy.
 A full session refuses new uploads with HTTP 413. It keeps the answer without a
 new generated ZIP, and an optimizer result that cannot be stored reports this
@@ -1116,6 +1115,9 @@ the retry asks only for the files that did not upload. Remove unused uploads to
 free session capacity.
 The backend bounds each streamed request body to the per-file limit plus
 64 KiB for multipart overhead. NGINX permits 64 MiB per `/ai/` request.
+JSON requests have a 64 MiB body bound before parsing. Questions have no
+separate character limit. Provider requests must fit the selected model's
+context window with its response budget and safety margin.
 
 Upload requests contain only repeated `files` fields. Other field names are
 rejected. Uploads are refused while a response is active. Every turn can read
@@ -1144,9 +1146,10 @@ lost during compaction. Historical status messages remain unchanged. Each VM
 receives `TZ` once at creation from the browser timezone. The agent can use bash
 `date` when it needs the current date or time.
 
-When history passes `AI_MAX_HISTORY_CHARS`, the backend drops the oldest
-messages until about half the budget remains. It keeps the newest completed
-exchange. This keeps the request prefix unchanged for many turns between cuts.
+Defensive history and memory limits refuse new work without discarding completed
+exchanges. Normal compaction follows Pi token settings. See
+[AI runtime limits and Pi comparison](ai-limits.md) for defaults, remaining
+differences, and deployment capacity controls.
 
 Each assistant turn starts with a `model_input` event. Its `system` field
 contains the system message. Its `messages` field lists the request messages

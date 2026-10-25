@@ -32,7 +32,7 @@ from pathlib import Path
 
 from .agent_types import AgentToolOutcome
 from .candidate import REQUIRED_RULE_NOTICE, SCHEDULE_FILENAME, review_schedule_candidate
-from .config import AiSettings
+from .config import MAX_DOWNLOAD_BYTES, MAX_HISTORY_CHARS, AiSettings
 from .optimizer import WORKSPACE_OPTIMIZER_RESULT
 from .result_context import build_result_context
 from .sandbox import (
@@ -196,10 +196,10 @@ class WorkspaceLimits:
     bash_command_timeout_seconds: float
     max_tool_rounds: int
     max_tool_calls: int
+    max_parallel_tools: int = 16
     optimizer_default_timeout_seconds: int = 300
-    max_download_bytes: int = 50_000_000
-    history_limit: int = 200_000
-    message_limit: int = 1000
+    max_download_bytes: int = MAX_DOWNLOAD_BYTES
+    history_limit: int = MAX_HISTORY_CHARS
     compaction_reserve_tokens: int = 16384
     compaction_keep_recent_tokens: int = 20000
 
@@ -212,12 +212,12 @@ class WorkspaceLimits:
             compaction_reserve_tokens=settings.compaction_reserve_tokens,
             compaction_keep_recent_tokens=settings.compaction_keep_recent_tokens,
             history_limit=settings.max_history_chars,
-            message_limit=settings.max_history_messages,
             turn_timeout_seconds=settings.sandbox_turn_timeout_seconds,
             cleanup_timeout_seconds=settings.sandbox_cleanup_timeout_seconds,
             bash_command_timeout_seconds=settings.sandbox_command_timeout_seconds,
             max_tool_rounds=settings.agent_max_tool_rounds,
             max_tool_calls=settings.agent_max_tool_calls,
+            max_parallel_tools=settings.agent_max_parallel_tools,
             optimizer_default_timeout_seconds=settings.optimizer_default_timeout_seconds,
         )
 

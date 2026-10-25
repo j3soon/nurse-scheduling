@@ -207,6 +207,14 @@ stderr. Do not replace an explicitly selected file with a fallback.
   candidate review in `workspace_tools.py`, and model-facing optimizer arguments
   in `optimizer_tool.py`. Optimizer job operations remain in `optimizer.py`,
   with HTTP transport in `optimizer_http.py`.
+- Keep defensive history, stream, and service capacity bounds separate from normal
+  Pi token budgets. Refuse new work at capacity without silently dropping completed
+  exchanges. Document defaults and upstream differences in
+  `docs/content/developer-guide/ai-limits.md`.
+  Define defensive defaults once as constants and allow optional environment
+  overrides. Keep those overrides out of environment examples and document them
+  in the limits page. Compose must pass optional overrides without duplicating
+  their defaults. Test code may lower bounds through constructor arguments.
 - `SessionRuns` owns admission, execution, cancellation, and cleanup. Keep the
   owner until recovery writes finish. Stop requests cancel once, and shutdown
   joins owners before closing the sandbox factory and optimizer transport.
@@ -578,8 +586,10 @@ stderr. Do not replace an explicitly selected file with a fallback.
 - Retry provider timeouts with bounded exponential backoff. After visible text,
   omit the failed attempt from model context and retry the original request.
   Keep the partial output visible and label it as omitted from future context. Discard incomplete tool calls and release tools only after confirmed
-  response completion. Keep output limits cumulative across attempts and use
-  distinct errors for timeouts before and during streaming.
+  response completion. Follow model token limits and bound each HTTP response
+  while reading bytes, including unterminated SSE lines. Keep defensive byte
+  limits separate from normal output budgets. Use distinct errors for timeouts
+  before and during streaming.
 
 ## Server Authentication
 - `API_AUTH_TOKEN` is the optional legacy credential. Authentication is
