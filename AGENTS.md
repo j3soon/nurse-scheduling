@@ -159,9 +159,9 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 - Choose the model actually running the commit for the attribution line. Codex
   may use `gpt-6-sol` or `gpt-6-astra`. Select the matching full lowercase
   slug rather than inferring it from task difficulty or available model lists.
-  Pi and Claude Code must use their own active harness and model names. If the
-  active model is unclear, verify it before committing. Never substitute a
-  shortened family name such as `GPT-5`.
+  Pi, Claude Code, and Antigravity CLI must use their own active harness and
+  model names. If the active model is unclear, verify it before committing.
+  Never substitute a shortened family name such as `GPT-5`.
 - Include validation details in a commit body only when they materially help a
   reviewer assess the change, such as a regression reproduction, an unusual check,
   or a known limitation. Omit routine successful-test and lint summaries. Keep
