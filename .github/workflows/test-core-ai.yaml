@@ -33,7 +33,7 @@ jobs:
     needs: validate
     if: github.event_name == 'push' && github.repository == 'j3soon/nurse-scheduling'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 60
     concurrency:
       group: core-ai-${{ vars.E2B_TEMPLATE || 'nurse-scheduling-ai-sandbox-github-ci' }}
       cancel-in-progress: false
@@ -61,11 +61,4 @@ jobs:
           AI_SANDBOX_BACKEND: e2b
           E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
           AI_SANDBOX_TURN_TIMEOUT_SECONDS: "300"
-        run: python -m tests.ai.runner run
-      - name: Upload failure evidence
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ai-testcase-failures
-          path: artifacts/ai-testcases/
-          if-no-files-found: ignore
+        run: python -m tests.ai.runner run --diagnostic-attempts 3

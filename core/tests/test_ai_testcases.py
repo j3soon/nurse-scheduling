@@ -32,7 +32,7 @@ from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFact
 from nurse_scheduling.ai.transcript import ToolCall
 from nurse_scheduling.ai.workspace import WORKSPACE_SCHEDULE
 from tests.ai.assertions import check_event, check_schedule
-from tests.ai.runner import DatedFactory, _timezone, main, run_case
+from tests.ai.runner import DatedFactory, _timezone, main, run_case, run_cases
 from tests.ai.schema import FIXTURES, TESTCASES, DefinitionError, Step, load_case, load_yaml
 
 
@@ -219,7 +219,7 @@ def test_production_execution_keeps_schedule_history_and_attachments(tmp_path):
         ]
     )
     factory = FakeSandboxFactory()
-    assert asyncio.run(run_case(case, provider, settings(), factory, tmp_path / "evidence"))
+    assert asyncio.run(run_case(case, provider, settings(), factory))
     assert len(factory.created) == 3
     assert all(sandbox.closed for sandbox in factory.created)
     assert load_yaml(factory.created[1].files[WORKSPACE_SCHEDULE].decode())["people"]["items"][0]["id"] == "Alice"
@@ -230,7 +230,7 @@ def test_production_execution_keeps_schedule_history_and_attachments(tmp_path):
 
 
 @pytest.mark.parametrize("failure", ["assertion", "unexpected-change", "provider"], ids=str)
-def test_failure_evidence_and_sandbox_cleanup(tmp_path, failure):
+def test_failure_stdout_and_sandbox_cleanup(tmp_path, capsys, failure):
     case = definition(tmp_path, "steps: [{user: hi}, {assistant: {contains_any: [expected]}}]")
     edited = (FIXTURES / "empty.yaml").read_text(encoding="utf-8").replace("description: ''", "description: changed", 1)
     responses = [
@@ -246,15 +246,14 @@ def test_failure_evidence_and_sandbox_cleanup(tmp_path, failure):
                 yield event
 
     factory = FakeSandboxFactory()
-    output = tmp_path / "evidence"
-    assert not asyncio.run(run_case(case, Provider(responses), settings(), factory, output))
+    assert not asyncio.run(run_case(case, Provider(responses), settings(), factory))
     assert factory.created[0].closed
-    evidence = next(output.glob("*.json")).read_text(encoding="utf-8")
-    assert "provider-secret" not in evidence and "sandbox-secret" not in evidence
-    record = json.loads(evidence)
-    assert record["turn"] == 1 and record["turns"][0]["before"]
+    log = capsys.readouterr().out
+    assert "provider-secret" not in log and "sandbox-secret" not in log
+    assert "turn 1, step" in log and "Schedule before" in log
+    assert not list(tmp_path.glob("evidence*"))
     if failure == "unexpected-change":
-        assert "unexpected schedule changes" in record["error"]
+        assert "unexpected schedule changes" in log
 
 
 def test_clock_setup_precedes_hydration_and_retains_timezone():
@@ -331,25 +330,26 @@ def test_date_steps_persist_and_change_between_turns(tmp_path):
             )
         ]
     )
-    assert asyncio.run(run_case(case, provider, settings(), factory, tmp_path / "evidence"))
+    assert asyncio.run(run_case(case, provider, settings(), factory))
     assert [sandbox.envs["TZ"] for sandbox in factory.created] == ["UTC-08:00:00", "UTC-08:00:00", "UTC+03:30:00"]
     assert all(sandbox.closed for sandbox in factory.created)
 
 
-def test_schedule_failure_is_attributed_to_preceding_turn(tmp_path):
-    case = definition(tmp_path, "steps: [{user: change}, {user: should-not-run}]")
+def test_schedule_failure_is_attributed_to_preceding_turn(tmp_path, capsys):
+    case = definition(tmp_path, "steps: [{user: change}, {user: follow-up}]")
     edited = (FIXTURES / "empty.yaml").read_text(encoding="utf-8").replace("description: ''", "description: changed", 1)
     provider = ScriptedProvider(
         [
             [tool_call("write", "write", json.dumps({"path": WORKSPACE_SCHEDULE, "content": edited}))],
             [TextDelta("Changed."), ResponseEnd("stop")],
+            [TextDelta("Follow-up reply."), ResponseEnd("stop")],
         ]
     )
-    output = tmp_path / "evidence"
-    assert not asyncio.run(run_case(case, provider, settings(), FakeSandboxFactory(), output))
-    record = json.loads(next(output.glob("*.json")).read_text(encoding="utf-8"))
-    assert record["turn"] == 1 and record["step"] == 1
-    assert len(provider.requests) == 2
+    assert not asyncio.run(run_case(case, provider, settings(), FakeSandboxFactory()))
+    log = capsys.readouterr().out
+    assert "turn 1, step 1" in log
+    assert len(provider.requests) == 3
+    assert "## Turn 2" in log and "Follow-up reply." in log
 
 
 @pytest.mark.parametrize(
@@ -382,7 +382,7 @@ def test_schedule_failure_is_attributed_to_preceding_turn(tmp_path):
 def test_chat_identity_case_accepts_equivalent_acknowledgements(tmp_path, reply, passed):
     case = load_case(TESTCASES / "basics" / "01_already-in-ai-chat.yaml")
     provider = ScriptedProvider([[TextDelta(reply), ResponseEnd("stop")]])
-    assert asyncio.run(run_case(case, provider, settings(), FakeSandboxFactory(), tmp_path / "evidence")) is passed
+    assert asyncio.run(run_case(case, provider, settings(), FakeSandboxFactory())) is passed
 
 
 @pytest.mark.parametrize("expected_history", ["", ", history: null", ", history: []"], ids=["omitted", "null", "empty"])
@@ -452,3 +452,66 @@ def test_empty_person_description_is_equivalent(expected, actual):
             check_schedule(steps, "people: {items: []}", "people: {items: [{id: Alice" + extra + "}]}")
     with pytest.raises(AssertionError):
         check_schedule([], "people: {items: [{id: Alice, description: nurse}]}", after)
+
+
+@pytest.mark.parametrize(
+    "replies",
+    [["expected"], ["wrong", "expected", "expected"], ["wrong", "wrong", "wrong"]],
+    ids=["first-pass", "later-pass", "all-fail"],
+)
+def test_diagnostic_attempts_preserve_initial_failure_and_isolate_history(tmp_path, capsys, replies):
+    case = definition(tmp_path, "steps: [{user: hi}, {assistant: {contains_any: [expected]}}]")
+    provider = ScriptedProvider(
+        [
+            response
+            for reply in replies
+            for response in (
+                [tool_call("read", "read", json.dumps({"path": WORKSPACE_SCHEDULE}))],
+                [TextDelta(reply), ResponseEnd("stop")],
+            )
+        ]
+    )
+    factory = FakeSandboxFactory()
+    passed = asyncio.run(run_cases([case], provider, settings(), factory, diagnostic_attempts=3))
+    assert passed is (replies[0] == "expected")
+    assert len(factory.created) == len(replies)
+    assert all(sandbox.closed for sandbox in factory.created)
+    assert all(sum(message["role"] == "user" for message in request) == 1 for request in provider.requests)
+    log = capsys.readouterr().out
+    assert log.count("## Turn 1") == len(replies)
+    for attempt, reply in enumerate(replies, start=1):
+        assert f"Attempt {attempt}:" in log and reply in log
+        assert f"| case | {attempt} | {'PASS' if reply == 'expected' else 'FAIL'} |" in log
+    assert f"| case | {sum(reply != 'expected' for reply in replies)}/{len(replies)} |" in log
+    assert list(tmp_path.iterdir()) == [case.path]
+
+
+def test_stdout_includes_all_messages_tools_and_reasoning(tmp_path, capsys):
+    from nurse_scheduling.ai.provider import ReasoningDelta
+
+    case = definition(tmp_path, "steps: [{user: Read the people.}, {user: Thanks.}]")
+    provider = ScriptedProvider(
+        [
+            [ReasoningDelta("Inspect the schedule."), tool_call("r", "read", json.dumps({"path": WORKSPACE_SCHEDULE}))],
+            [TextDelta("No people."), ResponseEnd("stop")],
+            [TextDelta("You're welcome."), ResponseEnd("stop")],
+        ]
+    )
+    assert asyncio.run(run_case(case, provider, settings(), FakeSandboxFactory()))
+    log = capsys.readouterr().out
+    assert log.count("## Turn ") == 2
+    assert all(
+        text in log
+        for text in [
+            "Read the people.",
+            "Inspect the schedule.",
+            "No people.",
+            "Thanks.",
+            "You're welcome.",
+            "Tool Result",
+            "people:",
+            "Schedule before",
+            "Schedule after",
+        ]
+    )
+    assert list(tmp_path.iterdir()) == [case.path]

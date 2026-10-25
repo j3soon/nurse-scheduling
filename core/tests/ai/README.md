@@ -39,11 +39,16 @@ python -m tests.ai.runner run
 
 Required settings are `AI_PROVIDER_BASE_URL`, `AI_PROVIDER_API_KEY`, and
 `E2B_API_KEY`. Set `AI_SANDBOX_BACKEND=e2b` and select `AI_PROVIDER_MODEL`
-and `E2B_TEMPLATE` for your deployment. Cases run sequentially, once each,
-without automatic testcase retries. Production provider retries still apply.
+and `E2B_TEMPLATE` for your deployment. Cases run sequentially. By default,
+each case runs once.
+`--diagnostic-attempts 3` runs three independent attempts when the first fails,
+even if the second passes. Any failure keeps the command failed. Production
+provider retries still apply.
 Missing configuration fails the run. Failures include a case, turn, step, and
-observed evidence. JSON transcripts and before/after schedule YAML are saved
-under repository-root `artifacts/ai-testcases/`. `--output-dir` overrides this.
+observed evidence. Every attempt prints the full conversation to stdout, including
+reasoning, tool calls and results, and before/after schedule YAML. The final
+summary shows each outcome and failed/total attempt counts. Assertion failures
+do not stop later turns. Execution errors stop that attempt.
 
 ## Authoring
 
@@ -119,4 +124,6 @@ the conversations. Jobs with the same template alias serialize building and
 testing, without cancelling an active job. The default CI alias is separate
 from production and staging. Missing credentials or a failed template build
 fail the live job. Each turn has a five-minute limit.
-Failure evidence is uploaded as the `ai-testcase-failures` workflow artifact.
+CI runs two additional attempts for each initially failed case and stays failed.
+Read each attempt's full conversation and the final summary in the
+**Run human-reviewed AI conversations** step's job log. No artifacts are created.

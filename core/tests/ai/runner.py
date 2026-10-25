@@ -21,11 +21,11 @@
 
 import argparse
 import asyncio
-import hashlib
 import json
 import mimetypes
 import shlex
 from contextlib import aclosing
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -49,7 +49,8 @@ from nurse_scheduling.ai.workspace import AgentAnalysis, SandboxAttachment, Work
 from nurse_scheduling.ai.workspace_tools import run_workspace
 
 from .assertions import check_event, check_schedule
-from .schema import FIXTURES, ROOT, TESTCASES, Case, DefinitionError, Step, load_case
+from .reporting import print_attempt, print_summary
+from .schema import FIXTURES, TESTCASES, Case, DefinitionError, Step, load_case
 
 
 class DatedFactory:
@@ -88,24 +89,8 @@ def _timezone(date: datetime | None) -> str:
     return f"UTC{sign}{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
-def _failure(
-    case: Case, turn: int, step: int, error: Exception, trace: list[dict], output: Path, settings: AiSettings
-) -> None:
-    record = {"case": str(case.path), "turn": turn, "step": step, "error": str(error), "turns": trace}
-    text = json.dumps(record, ensure_ascii=False, indent=2, default=str) + "\n"
-    for secret in (settings.provider_api_key, settings.e2b_api_key):
-        if secret:
-            text = text.replace(secret, "[redacted]")
-    output.mkdir(parents=True, exist_ok=True)
-    suffix = hashlib.sha256(str(case.path).encode()).hexdigest()[:8]
-    path = output / f"{case.path.stem}-{suffix}.json"
-    path.write_text(text, encoding="utf-8")
-    summary = json.loads(text)["error"]
-    print(f"FAIL {case.path}: turn {turn}, step {step}: {summary}\nEvidence: {path}", flush=True)
-
-
-async def run_case(case: Case, provider: Any, settings: AiSettings, factory: SandboxFactory, output: Path) -> bool:
-    """Execute one isolated conversation and stop at its first failed assertion."""
+async def run_case(case: Case, provider: Any, settings: AiSettings, factory: SandboxFactory) -> bool:
+    """Execute one isolated conversation and retain all assertions and messages."""
     schedule = (FIXTURES / "empty.yaml").read_text(encoding="utf-8")
     history = []
     attachments = []
@@ -117,11 +102,19 @@ async def run_case(case: Case, provider: Any, settings: AiSettings, factory: San
     before = schedule
     turn = cursor = number = turn_step = 0
     pending = False
+    errors = []
+
+    def assert_schedule():
+        try:
+            check_schedule(checks, before, schedule)
+        except AssertionError as error:
+            errors.append({"turn": turn, "step": number, "kind": "assertion", "error": str(error)})
+
     try:
         for step in case.steps:
             if step.kind in {"date", "yaml", "user"} and pending:
                 number = checks[-1].number if checks else turn_step
-                check_schedule(checks, before, schedule)
+                assert_schedule()
                 pending = False
             number = step.number
             if step.kind == "date":
@@ -154,7 +147,17 @@ async def run_case(case: Case, provider: Any, settings: AiSettings, factory: San
                     max_download_bytes=settings.max_download_bytes,
                 )
                 agent = Agent()
-                entry = {"turn": turn, "user": step.value, "before": before, "events": events, "after": schedule}
+                entry = {
+                    "turn": turn,
+                    "user": step.value,
+                    "before": before,
+                    "events": events,
+                    "after": schedule,
+                    "attachments": [
+                        {"name": item.filename, "media_type": item.media_type, "bytes": len(item.data)}
+                        for item in uploaded
+                    ],
+                }
                 trace.append(entry)
                 stream = run_workspace(
                     provider,
@@ -170,17 +173,28 @@ async def run_case(case: Case, provider: Any, settings: AiSettings, factory: San
                 async with aclosing(stream):
                     async for event in stream:
                         if isinstance(event, AgentMessageEnd):
+                            events.append({"kind": "assistant", **asdict(event.message)})
                             if event.message.stop_reason in {"error", "aborted", "length"}:
                                 raise RuntimeError(f"assistant response ended with {event.message.stop_reason}")
-                            if event.message.text:
-                                events.append({"kind": "assistant", "text": event.message.text})
                         elif isinstance(event, AgentToolStart):
                             events.append(
-                                {"kind": "tool", "name": event.name, "arguments": json.loads(event.arguments)}
+                                {
+                                    "kind": "tool",
+                                    "name": event.name,
+                                    "arguments": json.loads(event.arguments),
+                                    "id": event.tool_call_id,
+                                }
                             )
                         elif isinstance(event, AgentToolUse):
                             events.append(
-                                {"kind": "tool_result", "name": event.name, "ok": event.ok, "text": event.result}
+                                {
+                                    "kind": "tool_result",
+                                    "name": event.name,
+                                    "ok": event.ok,
+                                    "text": event.result,
+                                    "id": event.tool_call_id,
+                                    "details": event.details,
+                                }
                             )
                         elif isinstance(event, AgentProposal):
                             schedule = event.text
@@ -194,33 +208,58 @@ async def run_case(case: Case, provider: Any, settings: AiSettings, factory: San
             elif step.kind == "schedule":
                 checks.append(step)
             else:
-                cursor = check_event(step, events, cursor)
+                try:
+                    cursor = check_event(step, events, cursor)
+                except AssertionError as error:
+                    errors.append({"turn": turn, "step": number, "kind": "assertion", "error": str(error)})
         if pending:
             number = checks[-1].number if checks else turn_step
-            check_schedule(checks, before, schedule)
+            assert_schedule()
     except Exception as error:  # noqa: BLE001 - Preserve evidence from provider and sandbox adapters.
-        _failure(case, turn, number, error, trace, output, settings)
-        return False
-    print(f"PASS {case.path} ({turn} turns)", flush=True)
-    return True
+        errors.append({"turn": turn, "step": number, "kind": "execution", "error": str(error)})
+    print_attempt(case, errors, trace, settings)
+    return not errors
 
 
-async def _run(cases: list[Case], output: Path) -> bool:
+async def run_cases(cases, provider, settings, factory, diagnostic_attempts: int = 1) -> bool:
+    """Repeat initially failed cases for inspection without changing their outcome."""
+    results = []
+    for case in cases:
+        for attempt in range(1, diagnostic_attempts + 1):
+            print(f"Attempt {attempt}: {case.path}", flush=True)
+            passed = await run_case(case, provider, settings, factory)
+            results.append(
+                {
+                    "case": case.path.stem,
+                    "attempt": attempt,
+                    "passed": passed,
+                }
+            )
+            if attempt == 1 and passed:
+                break
+    print_summary(results)
+    return all(result["passed"] for result in results)
+
+
+async def _run(cases: list[Case], diagnostic_attempts: int) -> bool:
     settings = AiSettings.from_env()
     provider = OpenAiCompatibleProvider(settings)
     factory = create_sandbox_factory(settings)
-    passed = True
     async with managed_sandbox_factory(factory):
-        for case in cases:
-            passed = await run_case(case, provider, settings, factory, output) and passed
-    return passed
+        return await run_cases(cases, provider, settings, factory, diagnostic_attempts)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("validate", "run"))
     parser.add_argument("paths", nargs="*", type=Path, help="testcase files or directories (default: all cases)")
-    parser.add_argument("--output-dir", type=Path, default=ROOT.parents[2] / "artifacts" / "ai-testcases")
+    parser.add_argument(
+        "--diagnostic-attempts",
+        type=int,
+        choices=range(1, 4),
+        default=1,
+        help="total attempts for initially failed cases, without clearing failure (default: 1)",
+    )
     args = parser.parse_args(argv)
     try:
         paths = set()
@@ -230,7 +269,7 @@ def main(argv: list[str] | None = None) -> int:
             raise DefinitionError("no testcase YAML files found")
         cases = [load_case(path) for path in sorted(paths)]
         print(f"Validated {len(cases)} testcase(s).", flush=True)
-        return 0 if args.command == "validate" or asyncio.run(_run(cases, args.output_dir)) else 1
+        return 0 if args.command == "validate" or asyncio.run(_run(cases, args.diagnostic_attempts)) else 1
     except (DefinitionError, ValueError, OSError) as error:
         print(f"ERROR: {error}", flush=True)
         return 2
