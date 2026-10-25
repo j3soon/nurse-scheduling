@@ -256,8 +256,9 @@ async function mockAiBackend(
         currentSelection = request.postDataJSON() as typeof currentSelection;
         captured.modelSelections.push(currentSelection);
       }
+      // Like the backend, report the model as fixed after the first accepted message.
       await route.fulfill({ status: 200, contentType: 'application/json', headers: corsHeaders,
-        body: JSON.stringify(currentSelection) });
+        body: JSON.stringify({ ...currentSelection, locked: captured.messageBodies.length > 0 }) });
       return;
     }
     if (request.url().endsWith('/sessions/browser-session/messages/queue')) {
@@ -298,6 +299,14 @@ async function mockAiBackend(
       return;
     }
 
+    if (request.url().endsWith('/sessions/browser-session/compact')) {
+      publish('run_start', { run_id: 'manual-summary', trigger: 'compaction' });
+      publish('compaction_start', { run_id: 'manual-summary', reason: 'manual', tokens_before: 8000 });
+      await route.fulfill({ status: 202, contentType: 'application/json', headers: corsHeaders,
+        body: JSON.stringify({ run_id: 'manual-summary' }) });
+      return;
+    }
+
     captured.messageBody = request.postData() ?? '';
     captured.messageBodies.push(captured.messageBody);
     captured.messageContentType = request.headers()['content-type'] ?? '';
@@ -318,10 +327,12 @@ async function mockAiBackend(
         ? [
           `event: tool_start\ndata: ${JSON.stringify({ name: 'bash', arguments: '{"command":"sleep 30"}' })}\n\n`,
           'event: delta\ndata: {"text":"Provisional response."}\n\n',
+          `event: tool\ndata: ${JSON.stringify({ name: 'bash', arguments: '{"command":"sleep 30"}', result: 'No result provided. The tool exchange was interrupted.', ok: false })}\n\n`,
+          'event: response_end\ndata: {"stop_reason":"error","context_note":"[App event] The run workspace was discarded."}\n\n',
           'event: error\ndata: {"message":"The temporary AI sandbox failed."}\n\n',
         ].join('')
         : [
-          'event: context_usage\ndata: {"used_chars":500,"max_chars":2000}\n\n',
+          'event: context_usage\ndata: {"used_chars":500,"max_chars":2000,"used_tokens":8000,"max_tokens":32000,"estimated":false}\n\n',
           ...answerDeltas.map(text => `event: delta\ndata: ${JSON.stringify({ text })}\n\n`),
           ...answerEvents.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`),
           'event: done\ndata: {"run_id":"answer-id"}\n\n',
@@ -502,8 +513,8 @@ test('updates Context, Tokens, and estimated cost while the answer is still stre
     captured.publishEvent('cost_summary', {
       run_id: 'answer-1', conversation: { usd: index ? '0.02' : '0.01', calls: 1, pending: 1, unavailable: 0, version: 100 + index },
     });
-    await expect(footer).toContainText(index ? 'Context 40.0% used' : 'Context 30.0% used');
-    await expect(footer).toContainText(index ? 'Tokens: 1,200 / 32,000' : 'Tokens: 1,000 / 32,000');
+    await expect(footer).toContainText(index ? 'Context 3.8% used (est.)' : 'Context 3.1% used (est.)');
+    await expect(footer).toContainText(index ? 'Tokens (est.): 1,200 / 32,000' : 'Tokens (est.): 1,000 / 32,000');
     await expect(footer).toContainText(index ? 'Est. cost: $0.0200' : 'Est. cost: $0.0100');
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
   }
@@ -512,6 +523,202 @@ test('updates Context, Tokens, and estimated cost while the answer is still stre
   captured.finishTurn();
   await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeHidden();
 });
+
+test('compacts context on demand and restores the summary after reload', async ({ page }) => {
+  const captured = await mockAiBackend(page, ['Earlier answer.']);
+  await page.goto('/experimental-ai');
+  const input = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+  await input.fill('Keep the night constraints.');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('Earlier answer.', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Compact context', exact: true }).click();
+  await expect(page.getByText('You requested context compaction.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Summarizing conversation', { exact: true })).toBeVisible();
+  await expect(input).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Compact context', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
+  captured.publishEvent('generation_progress', { run_id: 'manual-summary', kind: 'compaction', characters: 1200, step: 1 });
+  await expect(page.getByText('Summarizing conversation · 1,200 characters', { exact: true })).toBeVisible();
+  captured.publishEvent('generation_progress', { run_id: 'manual-summary', kind: 'compaction', characters: 0, step: 1 });
+  await expect(page.getByText('Summarizing conversation · 0 characters', { exact: true })).toBeVisible();
+  captured.publishEvent('generation_progress', { run_id: 'manual-summary', kind: 'compaction', characters: 24, step: 2 });
+  await expect(page.getByText('Summarizing conversation · pass 2 · 24 characters', { exact: true })).toBeVisible();
+  await page.screenshot({ path: '../artifacts/compaction-character-progress.png', fullPage: true });
+  captured.publishEvent('compaction_end', { run_id: 'manual-summary', reason: 'manual', tokens_before: 8000,
+    success: true, aborted: false, estimated_tokens_after: 1000,
+    summary: 'Keep the night constraints.', keep_messages: 2, characters: 27, step: 2 });
+  captured.publishEvent('context_usage', { run_id: 'manual-summary', used_chars: 500, max_chars: 200000,
+    used_tokens: 1000, max_tokens: 32000, estimated: true });
+  const costSummary = { usd: '0.02', calls: 1, pending: 0, unavailable: 0, version: 10 };
+  captured.publishEvent('cost_summary', { run_id: 'manual-summary', conversation: costSummary, run: costSummary });
+  captured.publishEvent('done', { run_id: 'manual-summary' });
+  await expect(input).toBeEnabled();
+  await expect(page.getByText('Context 3.1% used (est.)')).toBeVisible();
+  await expect(page.getByText('Tokens (est.): 1,000 / 32,000')).toBeVisible();
+  await expect(page.getByText('You requested context compaction.').locator('xpath=ancestor::article')).toHaveClass(/mx-auto/);
+  await expect(page.getByText('User · Conversation summary', { exact: true }).locator('xpath=ancestor::article')).toHaveClass(/ml-auto/);
+  const notice = page.getByText('Conversation summarized · pass 2 · 27 characters', { exact: true }).locator('xpath=ancestor::article');
+  await expect(notice.getByText(/^Estimated turn cost:/)).toBeVisible();
+  await expect(notice.locator('time')).toBeVisible();
+  await expect(page.getByText('User · Conversation summary', { exact: true }).locator('xpath=ancestor::article').locator('time')).toHaveCount(0);
+  await page.getByText('Conversation summary', { exact: true }).click();
+  await expect(page.getByText('[Conversation summary]\nKeep the night constraints.', { exact: true })).toBeVisible();
+  expect(captured.messageBodies).toHaveLength(1);
+  await page.screenshot({ path: '../artifacts/manual-compaction.png', fullPage: true });
+  await page.reload();
+  await expect(page.getByText('You requested context compaction.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Conversation summarized · pass 2 · 27 characters', { exact: true })).toBeVisible();
+  await expect(notice.getByText(/^Estimated turn cost:/)).toBeVisible();
+  await expect(notice.locator('time')).toBeVisible();
+  await expect(page.getByText('Earlier answer.', { exact: true })).toBeVisible();
+});
+
+test('shows character progress while preparing tools and preserves completed counts after reload', async ({ page }) => {
+  const captured = await mockAiBackend(page, [], false, undefined, [], true, [
+    { type: 'generation_progress', data: { kind: 'tool_calls', characters: 3, step: 1 } },
+  ]);
+  captured.holdNextTurn();
+  await page.goto('/experimental-ai');
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Inspect the ward.');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('Preparing tool calls · 3 characters', { exact: true })).toBeVisible();
+  captured.publishEvent('generation_progress', { run_id: 'answer-1', kind: 'tool_calls', characters: 8, step: 1 });
+  await expect(page.getByText('Preparing tool calls · 8 characters', { exact: true })).toBeVisible();
+  captured.publishEvent('provider_retry', { run_id: 'answer-1', message: 'Retrying the provider request.' });
+  captured.publishEvent('generation_progress', { run_id: 'answer-1', kind: 'tool_calls', characters: 2, step: 1 });
+  await expect(page.getByText('Preparing tool calls · 2 characters', { exact: true })).toBeVisible();
+  await expect(page.getByText('Preparing tool calls · 8 characters', { exact: true })).toBeHidden();
+  captured.publishEvent('reasoning', { run_id: 'answer-1', text: '新😀' });
+  await expect(page.getByText('Reasoning · 2 characters', { exact: true })).toBeVisible();
+  const tool = { run_id: 'answer-1', tool_call_id: 'one', name: 'bash', arguments: '{"command":"pwd"}' };
+  captured.publishEvent('tool_start', tool);
+  await expect(page.getByText('bash · running', { exact: true })).toBeVisible();
+  await expect(page.getByText('Preparing tool calls · 2 characters', { exact: true })).toBeHidden();
+  captured.publishEvent('tool', { ...tool, result: '新😀', ok: true });
+  await page.getByText('bash', { exact: true }).click();
+  await expect(page.getByLabel('Tool arguments').getByText('17 characters', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Tool result').getByText('2 characters', { exact: true })).toBeVisible();
+  captured.publishEvent('delta', { run_id: 'answer-1', text: 'Done😀' });
+  await expect(page.getByText('5 characters', { exact: true })).toBeVisible();
+  captured.finishTurn();
+  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeHidden();
+  await page.screenshot({ path: '../artifacts/tool-character-progress.png', fullPage: true });
+  await page.reload();
+  await expect(page.getByText('Reasoning · 2 characters', { exact: true })).toBeVisible();
+  await expect(page.getByText('5 characters', { exact: true })).toBeVisible();
+  await page.getByText('bash', { exact: true }).click();
+  await expect(page.getByLabel('Tool result').getByText('2 characters', { exact: true })).toBeVisible();
+});
+
+test('can stop manual compaction while admission waits before run_start', async ({ page }) => {
+  const captured = await mockAiBackend(page, ['Earlier answer.']);
+  let accept!: () => void;
+  const admission = new Promise<void>(resolve => { accept = resolve; });
+  let compactionMessageId: string | undefined;
+  let stoppedMessageId: string | undefined;
+  await page.route('**/sessions/browser-session/compact', async route => {
+    compactionMessageId = (route.request().postDataJSON() as { message_id: string }).message_id;
+    await admission;
+    await route.fulfill({ status: 202, contentType: 'application/json', body: JSON.stringify({ run_id: 'delayed-summary' }) });
+  });
+  await page.route('**/sessions/browser-session/stop', async route => {
+    stoppedMessageId = (route.request().postDataJSON() as { message_id: string }).message_id;
+    captured.publishEvent('stopped', { run_id: 'delayed-summary' });
+    accept();
+    await route.fulfill({ status: 202, body: '{}' });
+  });
+  await page.goto('/experimental-ai');
+  const input = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+  await input.fill('Keep the night constraints.');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('Earlier answer.', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Compact context', exact: true }).click();
+  await expect(input).toBeDisabled();
+  await expect.poll(() => compactionMessageId).toBeTruthy();
+  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
+  await page.screenshot({ path: '../artifacts/compaction-admission-stop.png', fullPage: true });
+  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  await expect(page.getByText('Stopped before completion.', { exact: true })).toBeVisible();
+  expect(stoppedMessageId).toBe(compactionMessageId);
+  await expect(input).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeHidden();
+  expect(captured.messageBodies).toHaveLength(1);
+});
+
+test('keeps short context with a manual request notice instead of a compaction failure', async ({ page }) => {
+  const captured = await mockAiBackend(page, ['Hello.']);
+  await page.goto('/experimental-ai');
+  const input = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+  await input.fill('Hi');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('Hello.', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Compact context', exact: true }).click();
+  captured.publishEvent('compaction_end', { run_id: 'manual-summary', reason: 'manual', tokens_before: 4000,
+    success: false, aborted: false, skipped: true });
+  captured.publishEvent('done', { run_id: 'manual-summary' });
+  await expect(page.getByText('You requested context compaction.', { exact: true })).toBeVisible();
+  await expect(page.getByText('No compaction needed', { exact: true })).toBeVisible();
+  await expect(input).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Compact context', exact: true })).toBeEnabled();
+  await expect(page.getByText('Summarization failed', { exact: true })).toBeHidden();
+  await page.getByText('No compaction needed', { exact: true }).click();
+  await expect(page.getByText('Compaction would not reduce context. The original context was kept.', { exact: true })).toBeVisible();
+  expect(captured.messageBodies).toHaveLength(1);
+  await page.screenshot({ path: '../artifacts/manual-compaction-skipped.png', fullPage: true });
+  await page.reload();
+  await expect(page.getByText('You requested context compaction.', { exact: true })).toBeVisible();
+  await expect(page.getByText('No compaction needed', { exact: true })).toBeVisible();
+  await expect(page.getByText('Hello.', { exact: true })).toBeVisible();
+});
+
+for (const trigger of ['user', 'optimizer'] as const) for (const terminal of ['error', 'stopped'] as const) {
+  test(`discards summaries on earlier steering replies after ${trigger} ${terminal}`, async ({ page }) => {
+    const events = [
+      { type: 'compaction_end', data: { reason: 'threshold', tokens_before: 25000, success: true, aborted: false,
+        summary: 'Summary from a run that later fails.', keep_messages: 1 } },
+      { type: 'delta', data: { text: 'Earlier completed output.' } },
+      { type: 'steering', data: { message_id: 'steer', message: 'Now edit the schedule.' } },
+      { type: 'delta', data: { text: 'Partial second reply.' } },
+    ];
+    const captured = await mockAiBackend(page, trigger === 'user' ? [] : ['Previous run answer.'],
+      false, undefined, [], true, trigger === 'user' ? events : []);
+    if (trigger === 'user') captured.holdNextTurn();
+    await page.goto('/experimental-ai');
+    await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Continue with the constraints.');
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    const runId = trigger === 'user' ? 'answer-1' : 'optimizer-review';
+    const optimizerInputText = 'The optimizer finished. Review its schedule.';
+    const optimizerInput = page.getByText('User · Optimizer', { exact: true }).locator('xpath=ancestor::article');
+    if (trigger === 'optimizer') {
+      await expect(page.getByText('Previous run answer.', { exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeVisible();
+      captured.publishEvent('run_start', { run_id: runId, trigger });
+      captured.publishEvent('model_input', { run_id: runId, system: 'Mock system prompt',
+        messages: [{ kind: 'optimizer', content: optimizerInputText }] });
+      for (const event of events) captured.publishEvent(event.type, { ...event.data, run_id: runId });
+      await expect(optimizerInput).toHaveClass(/ml-auto/);
+      await optimizerInput.getByText(/characters$/).click();
+      await expect(optimizerInput.getByText(optimizerInputText, { exact: true })).toBeVisible();
+    }
+    await expect(page.getByText('Partial second reply.', { exact: true })).toBeVisible();
+    captured.publishEvent('response_end', { run_id: runId,
+      stop_reason: terminal === 'error' ? 'error' : 'aborted', context_note: '[App event] The run workspace was discarded.' });
+    captured.publishEvent(terminal, { run_id: runId, ...(terminal === 'error' ? { message: 'Validation failed.' } : {}) });
+    await expect(page.getByText('Discarded conversation summary', { exact: true })).toBeVisible();
+    await expect(page.getByText('Omitted from future model context.', { exact: true })).toBeVisible();
+    await expect(page.getByText('Earlier completed output.', { exact: true })).toBeVisible();
+    await expect(page.getByText('Summary used in future model context.', { exact: true })).toBeHidden();
+    await page.screenshot({ path: `../artifacts/discarded-summary-${trigger}-${terminal}.png`, fullPage: true });
+    await page.reload();
+    await expect(page.getByText('Discarded conversation summary', { exact: true })).toBeVisible();
+    await expect(page.getByText('Earlier completed output.', { exact: true })).toBeVisible();
+    await expect(page.getByText('Partial second reply.', { exact: true })).toBeVisible();
+    if (trigger === 'optimizer') {
+      await optimizerInput.getByText(/characters$/).click();
+      await expect(optimizerInput.getByText(optimizerInputText, { exact: true })).toBeVisible();
+    }
+  });
+}
 
 test('shows compaction status and the reduced context before an answer', async ({ page }) => {
   const captured = await mockAiBackend(page, [], false, undefined, [], true, [
@@ -524,26 +731,31 @@ test('shows compaction status and the reduced context before an answer', async (
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Summarizing conversation', { exact: true })).toBeVisible();
   await expect(page.getByText('Thinking…', { exact: true })).toBeHidden();
-  await expect(page.getByText('Context 90.0% used')).toBeVisible();
+  await expect(page.getByText('Context 78.1% used (est.)')).toBeVisible();
   await page.screenshot({ path: '../artifacts/compaction-running.png', fullPage: true });
   captured.publishEvent('compaction_end', {
     run_id: 'answer-1', reason: 'threshold', tokens_before: 25000,
     success: true, aborted: false, estimated_tokens_after: 4000,
+    summary: 'Keep P1 off nights and confirm the next edit.', keep_messages: 4,
   });
   captured.publishEvent('context_usage', {
     run_id: 'answer-1', used_chars: 400, max_chars: 2000, used_tokens: 4000, max_tokens: 32000,
   });
   await expect(page.getByText('Conversation summarized', { exact: true })).toBeVisible();
-  await expect(page.getByText('Context 20.0% used')).toBeVisible();
-  await expect(page.getByText('Tokens: 4,000 / 32,000')).toBeVisible();
+  await expect(page.getByText('Context 12.5% used (est.)')).toBeVisible();
+  await expect(page.getByText('Tokens (est.): 4,000 / 32,000')).toBeVisible();
   captured.publishEvent('delta', { run_id: 'answer-1', text: 'The current constraints are preserved.' });
   captured.finishTurn();
   await expect(page.getByText('The current constraints are preserved.', { exact: true })).toBeVisible();
+  await page.getByText('Conversation summary', { exact: true }).click();
+  await expect(page.getByText('[Conversation summary]\nKeep P1 off nights and confirm the next edit.', { exact: true })).toBeVisible();
+  await expect(page.getByText('The latest 4 messages remain unchanged after the summary.')).toBeVisible();
   await page.screenshot({ path: '../artifacts/compaction-completed.png', fullPage: true });
   // The browser copy of the chat keeps the summary entry, so a reload restores the chat.
   await page.reload();
   await expect(page.getByText('The current constraints are preserved.', { exact: true })).toBeVisible();
-  await expect(page.getByText('Conversation summarized', { exact: true })).toBeVisible();
+  await page.getByText('Conversation summary', { exact: true }).click();
+  await expect(page.getByText('[Conversation summary]\nKeep P1 off nights and confirm the next edit.', { exact: true })).toBeVisible();
 });
 
 test('explains unavailable context usage when the backend omits it', async ({ page }) => {
@@ -553,7 +765,7 @@ test('explains unavailable context usage when the backend omits it', async ({ pa
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   const usage = page.getByText('Context unavailable');
   await expect(usage).toBeVisible();
-  await expect(usage).toHaveAttribute('title', /The AI server has not reported context usage/);
+  await expect(usage).toHaveAttribute('title', /The AI server has not reported context tokens/);
 });
 
 test('returns to the top of a long chat on desktop and mobile', async ({ page }) => {
@@ -627,8 +839,14 @@ test('continues a failed text run with a new message and keeps its provisional a
   await expect(page.getByText('This response failed before completion. Send a new message to continue.')).toBeVisible();
   const failedResponse = page.locator('article').filter({ hasText: 'Provisional response.' });
   await expect(failedResponse).toContainText('The temporary AI sandbox failed.');
-  await page.getByText('bash · interrupted').click();
+  await expect(failedResponse).toContainText('Incomplete response. Omitted from future model context.');
+  const contextNotice = page.getByText('[App event] The run workspace was discarded.', { exact: true });
+  await expect(contextNotice).toBeVisible();
+  await expect(contextNotice.locator('xpath=ancestor::article')).toHaveClass(/ml-auto/);
+  await page.getByText('bash · failed').click();
+  await expect(page.getByText('No result provided. The tool exchange was interrupted.', { exact: true })).toBeVisible();
   await expect(page.getByText('{"command":"sleep 30"}', { exact: true })).toBeVisible();
+  await page.screenshot({ path: '../artifacts/interrupted-context.png', fullPage: true });
   await expect(page.getByRole('button', { name: /retry/i })).toHaveCount(0);
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Continue');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
@@ -1294,7 +1512,7 @@ test('keeps the composer above a reduced visual viewport and ignores pinch zoom'
 });
 
 
-test('changes model and reasoning during streaming for future turns and reload', async ({ page }) => {
+test('locks the model and changes reasoning during streaming for future runs and reload', async ({ page }) => {
   const captured = await mockAiBackend(page, ['Selected model answered.'], false, undefined, [], true, [], {
     default_model: 'fast', models: [
       { id: 'fast', name: 'Fast', context_tokens: null, default_reasoning: 'default', reasoning_options: [{ id: 'default', label: 'Default' }] },
@@ -1314,23 +1532,92 @@ test('changes model and reasoning during streaming for future turns and reload',
   await expect(page.getByText('Selected model answered.')).toBeVisible();
   expect(JSON.parse(captured.messageBodies[0]).selection).toEqual({ model: 'deep', reasoning: 'high' });
   await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
-  await expect(page.getByLabel('AI model')).toBeEnabled();
+  await expect(page.getByLabel('AI model')).toBeDisabled();
   await expect(page.getByLabel('Reasoning', { exact: true })).toBeEnabled();
   await page.getByLabel('Reasoning', { exact: true }).selectOption('off');
   await expect.poll(() => captured.modelSelections.at(-1)).toEqual({ model: 'deep', reasoning: 'off' });
-  await page.getByLabel('AI model').selectOption('fast');
-  await expect.poll(() => captured.modelSelections.at(-1)).toEqual({ model: 'fast', reasoning: 'default' });
+  await expect(page.getByLabel('AI model')).toBeDisabled();
+  await expect(page.getByText('Model fixed for this conversation. Reasoning changes apply to future runs.')).toBeVisible();
+  await page.screenshot({ path: '../artifacts/model-locked.png', fullPage: true });
   expect(JSON.parse(captured.messageBodies[0]).selection).toEqual({ model: 'deep', reasoning: 'high' });
-  await expect(page.getByLabel('Reasoning', { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('Reasoning', { exact: true })).toHaveValue('off');
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Next question');
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).press('Enter');
   await expect(page.getByText('Queued for steering')).toBeVisible();
   captured.finishTurn();
   await expect.poll(() => captured.messageBodies.length).toBe(2);
-  expect(JSON.parse(captured.messageBodies[1]).selection).toEqual({ model: 'fast', reasoning: 'default' });
+  expect(JSON.parse(captured.messageBodies[1]).selection).toEqual({ model: 'deep', reasoning: 'off' });
   await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeHidden();
   await page.reload();
-  await expect(page.getByLabel('AI model')).toHaveValue('fast');
+  await expect(page.getByLabel('AI model')).toHaveValue('deep');
+  await expect(page.getByLabel('AI model')).toBeDisabled();
+  await expect(page.getByLabel('Reasoning', { exact: true })).toBeEnabled();
+});
+
+
+test('keeps the model editable until the server accepts a message', async ({ page }) => {
+  const captured = await mockAiBackend(page, ['Accepted answer.'], false, undefined, [], true, [], {
+    default_model: 'fast', models: [
+      { id: 'fast', name: 'Fast', context_tokens: null, default_reasoning: 'default', reasoning_options: [{ id: 'default', label: 'Default' }] },
+      { id: 'deep', name: 'Deep', context_tokens: 32000, default_reasoning: 'off', reasoning_options: [{ id: 'off', label: 'Off' }] },
+    ],
+  });
+  let rejected = false;
+  await page.route('**/ai/sessions/browser-session/messages', async route => {
+    if (rejected || route.request().method() !== 'POST') return route.fallback();
+    rejected = true;
+    await route.fulfill({
+      status: 503, contentType: 'application/json',
+      headers: { 'Access-Control-Allow-Credentials': 'true', 'Access-Control-Allow-Origin': frontendOrigin() },
+      body: JSON.stringify({ detail: 'The AI service is busy. Try again later.' }),
+    });
+  });
+  await page.goto('/experimental-ai');
+  const composer = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+  await composer.fill('First question');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('The AI service is busy. Try again later.').first()).toBeVisible();
+  await expect(page.getByLabel('AI model')).toBeEnabled();
+  await page.reload();
+  await expect(page.getByText('First question', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('AI model')).toBeEnabled();
+  await page.getByLabel('AI model').selectOption('deep');
+  await expect.poll(() => captured.modelSelections.at(-1)).toEqual({ model: 'deep', reasoning: 'off' });
+  await composer.fill('Second question');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('Accepted answer.')).toBeVisible();
+  expect(JSON.parse(captured.messageBodies[0]).selection).toEqual({ model: 'deep', reasoning: 'off' });
+  await expect(page.getByLabel('AI model')).toBeDisabled();
+});
+
+
+test('follows the saved model lock after a question stops before its run starts', async ({ page }) => {
+  const captured = await mockAiBackend(page, ['Accepted answer.'], false, undefined, [], true, [], {
+    default_model: 'fast', models: [
+      { id: 'fast', name: 'Fast', context_tokens: null, default_reasoning: 'default', reasoning_options: [{ id: 'default', label: 'Default' }] },
+      { id: 'deep', name: 'Deep', context_tokens: 32000, default_reasoning: 'off', reasoning_options: [{ id: 'off', label: 'Off' }] },
+    ],
+  });
+  let accepted = false;
+  await page.route('**/ai/sessions/browser-session/messages', async route => {
+    if (accepted || route.request().method() !== 'POST') return route.fallback();
+    accepted = true;
+    // The server accepted the question, but Stop arrived before its run started, so the model stays unlocked.
+    captured.publishEvent('stopped', { run_id: 'never-started' });
+    await route.fulfill({
+      status: 202, contentType: 'application/json',
+      headers: { 'Access-Control-Allow-Credentials': 'true', 'Access-Control-Allow-Origin': frontendOrigin() },
+      body: JSON.stringify({ run_id: 'never-started' }),
+    });
+  });
+  await page.goto('/experimental-ai');
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('First question');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('Stopped before completion.')).toBeVisible();
+  await expect(page.getByLabel('AI model')).toBeEnabled();
+  await page.reload();
+  await expect(page.getByText('First question', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('AI model')).toBeEnabled();
 });
 
 

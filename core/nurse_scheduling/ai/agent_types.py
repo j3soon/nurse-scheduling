@@ -65,10 +65,19 @@ class AgentCompaction:
 
 
 @dataclass(frozen=True)
+class AgentGenerationProgress:
+    """Current draft size. A new summary step or retry starts its count again."""
+
+    kind: Literal["compaction", "tool_calls"]
+    characters: int
+    step: int = 1
+
+
+@dataclass(frozen=True)
 class AgentCompactionStart:
     """A context summary is about to call the provider."""
 
-    reason: Literal["threshold", "overflow"]
+    reason: Literal["threshold", "overflow", "manual"]
     tokens_before: int
 
 
@@ -76,12 +85,15 @@ class AgentCompactionStart:
 class AgentCompactionEnd:
     """A summary finished, with a fresh estimate only when it was applied."""
 
-    reason: Literal["threshold", "overflow"]
+    reason: Literal["threshold", "overflow", "manual"]
     success: bool
     tokens_before: int
     estimated_tokens_after: int | None = None
     used_chars: int | None = None
     aborted: bool = False
+    summary: str | None = None
+    keep_messages: int = 0
+    skipped: bool = False
 
 
 @dataclass(frozen=True)
@@ -126,6 +138,7 @@ AgentEvent = (
     | AgentContextUsage
     | AgentCompaction
     | AgentCompactionStart
+    | AgentGenerationProgress
     | AgentCompactionEnd
     | AgentText
     | AgentReasoning

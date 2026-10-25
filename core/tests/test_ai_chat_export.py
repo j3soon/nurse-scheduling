@@ -41,32 +41,323 @@ CASES = json.loads((FIXTURES / "chat-export-parity.json").read_text(encoding="ut
 
 
 @pytest.mark.parametrize(
-    "success,aborted,state,label",
+    "success,aborted,skipped,state,label",
     [
-        (True, False, "completed", "Conversation summarized"),
-        (False, False, "failed", "Summarization failed"),
-        (False, True, "interrupted", "Summarization interrupted"),
+        (True, False, False, "completed", "Conversation summarized"),
+        (False, False, False, "failed", "Summarization failed"),
+        (False, True, False, "interrupted", "Summarization interrupted"),
+        (False, False, True, "skipped", "No compaction needed"),
     ],
 )
-def test_saved_compaction_status_matches_live_activity_and_exports(success, aborted, state, label):
+@pytest.mark.parametrize("reason", ["threshold", "manual"])
+def test_saved_compaction_status_matches_live_activity_and_exports(success, aborted, skipped, state, label, reason):
     snapshot = saved_case("saved-rich")
     run = snapshot["runs"][0]
     snapshot["runs"] = [run]
-    data = {"run_id": run["id"], "reason": "threshold", "tokens_before": 25000}
+    data = {"run_id": run["id"], "reason": reason, "tokens_before": 25000}
     snapshot["events"] = [
         {"type": "compaction_start", "data": data, "occurred_at": snapshot["snapshot_at"]},
         {
             "type": "compaction_end",
-            "data": {**data, "success": success, "aborted": aborted},
+            "data": {**data, "success": success, "aborted": aborted, "skipped": skipped},
             "occurred_at": snapshot["snapshot_at"],
         },
     ]
     messages, _ = project_saved_chat(snapshot)
     activity = messages[-1]["activity"]
-    assert len(activity) == 1 and activity[0]["kind"] == "compaction" and activity[0]["state"] == state
+    assert len(activity) == (2 if reason == "manual" else 1)
+    assert activity[-1]["kind"] == "compaction" and activity[-1]["state"] == state
     for format in ("html", "markdown"):
         rendered = build_saved_chat_export(snapshot, format)
-        assert label in rendered and activity[0]["text"] in rendered
+        assert label in rendered and activity[-1]["text"] in rendered
+        assert rendered.count("You requested context compaction.") == (1 if reason == "manual" else 0)
+
+
+def test_saved_character_progress_survives_recovery_and_matches_export_counts():
+    from nurse_scheduling.ai.session_event_stream import SessionEvent, fold_recovery
+
+    snapshot = saved_case("saved-rich")
+    run = snapshot["runs"][0]
+    snapshot["runs"] = [run]
+    rows = [
+        ("compaction_start", {"reason": "manual", "tokens_before": 10000}),
+        ("generation_progress", {"kind": "compaction", "characters": 50, "step": 1}),
+        (
+            "compaction_end",
+            {
+                "reason": "manual",
+                "tokens_before": 10000,
+                "success": True,
+                "aborted": False,
+                "characters": 50,
+                "step": 1,
+            },
+        ),
+        ("compaction_start", {"reason": "threshold", "tokens_before": 10000}),
+        ("generation_progress", {"kind": "compaction", "characters": 2, "step": 2}),
+        (
+            "compaction_end",
+            {
+                "reason": "threshold",
+                "tokens_before": 10000,
+                "success": True,
+                "aborted": False,
+                "characters": 2,
+                "step": 2,
+            },
+        ),
+        ("generation_progress", {"kind": "tool_calls", "characters": 90, "step": 1}),
+        ("provider_retry", {"message": "Retrying"}),
+        ("generation_progress", {"kind": "tool_calls", "characters": 2, "step": 1}),
+        ("tool_start", {"name": "read", "arguments": "{}", "tool_call_id": "call"}),
+        ("tool", {"name": "read", "arguments": "{}", "tool_call_id": "call", "result": "新😀", "ok": True}),
+        ("reasoning", {"text": "新😀"}),
+        ("delta", {"text": "新😀"}),
+        ("done", {}),
+    ]
+    events = [SessionEvent(index + 1, kind, {"run_id": run["id"], **data}) for index, (kind, data) in enumerate(rows)]
+
+    def project(events):
+        snapshot["events"] = [
+            {"type": event.type, "data": event.data, "occurred_at": snapshot["snapshot_at"]} for event in events
+        ]
+        return project_saved_chat(snapshot)[0]
+
+    original = project(events)
+    assert project(fold_recovery(events)) == original
+    activity = original[-1]["activity"]
+    assert [entry["characters"] for entry in activity if entry["kind"] == "compaction"] == [50, 2]
+    assert not any(entry.get("state") == "preparing" for entry in activity)
+    for format in ("html", "markdown"):
+        rendered = build_saved_chat_export(snapshot, format)
+        assert "Reasoning · 2 characters" in rendered and "50 characters" in rendered
+        assert "pass 2 · 2 characters" in rendered
+        assert "新😀" in rendered
+
+
+def test_saved_summary_and_tool_repair_match_model_context_in_both_exports():
+    snapshot = saved_case("saved-rich")
+    run = snapshot["runs"][0]
+    snapshot["runs"] = [run]
+    data = {"run_id": run["id"]}
+    snapshot["events"] = [
+        {
+            "type": "compaction_end",
+            "data": {
+                **data,
+                "reason": "threshold",
+                "tokens_before": 25000,
+                "success": True,
+                "aborted": False,
+                "summary": "Keep P1 off nights.",
+                "keep_messages": 4,
+            },
+        },
+        {
+            "type": "tool",
+            "data": {
+                **data,
+                "name": "bash",
+                "arguments": '{"command":',
+                "result": "Not executed",
+                "ok": False,
+                "replay_arguments": "{}",
+            },
+        },
+        {"type": "response_end", "data": {**data, "stop_reason": "error", "context_note": "Workspace discarded."}},
+    ]
+    for event in snapshot["events"]:
+        event["occurred_at"] = snapshot["snapshot_at"]
+    messages, _ = project_saved_chat(snapshot)
+    assert messages[-1]["activity"][0]["invalidated"]
+    assert messages[-1]["activity"][1]["replayArguments"] == "{}"
+    for format in ("html", "markdown"):
+        rendered = build_saved_chat_export(snapshot, format)
+        assert "[Conversation summary]" in rendered and "Keep P1 off nights." in rendered
+        assert "Omitted from future model context" in rendered
+        assert "Arguments sent in later model context" in rendered
+
+
+@pytest.mark.parametrize("terminal", ["error", "stopped"])
+@pytest.mark.parametrize("boundary", [False, True], ids=["terminal-only", "response-boundary"])
+def test_failed_steered_run_discards_summaries_on_all_replies(terminal, boundary):
+    snapshot = saved_case("saved-rich")
+    run = snapshot["runs"][0]
+    snapshot["runs"] = [run]
+    events = [
+        ("run_start", {"trigger": "user"}),
+        (
+            "compaction_end",
+            {
+                "reason": "threshold",
+                "tokens_before": 25000,
+                "success": True,
+                "aborted": False,
+                "summary": "Summary from a run that later fails.",
+                "keep_messages": 1,
+            },
+        ),
+        ("delta", {"text": "Earlier completed output."}),
+        ("steering", {"message_id": "steer", "message": "Now edit the schedule."}),
+        ("delta", {"text": "Partial second reply."}),
+        *(
+            [
+                (
+                    "response_end",
+                    {
+                        "stop_reason": "error" if terminal == "error" else "aborted",
+                        "context_note": "The run's summaries were discarded.",
+                    },
+                )
+            ]
+            if boundary
+            else []
+        ),
+        (terminal, {"message": "Validation failed."} if terminal == "error" else {}),
+    ]
+    snapshot["events"] = [
+        {"type": kind, "data": {"run_id": run["id"], **data}, "occurred_at": snapshot["snapshot_at"]}
+        for kind, data in events
+    ]
+    messages, _ = project_saved_chat(snapshot)
+    earlier, latest = [message for message in messages if message["role"] == "assistant"]
+    assert earlier["activity"][0].get("invalidated") is True
+    assert earlier["content"] == "Earlier completed output."
+    assert earlier["status"] is None
+    assert earlier["activity"][1].get("context") != "omitted"
+    assert latest["status"] == ("failed" if terminal == "error" else "stopped")
+    for format in ("html", "markdown"):
+        rendered = build_saved_chat_export(snapshot, format)
+        assert "Discarded conversation summary" in rendered
+        assert "Omitted from future model context" in rendered
+        assert "Summary used in future model context." not in rendered
+
+
+@pytest.mark.parametrize("keep", [0, 4])
+def test_export_separates_notices_and_summary_without_changing_saved_messages(keep):
+    messages = [
+        {
+            "role": "assistant",
+            "content": "Continued.",
+            "activity": [
+                {"kind": "tool", "name": "read", "arguments": "{}", "result": "Tool output", "ok": True},
+                {"kind": "notice", "text": "You requested context compaction."},
+                {
+                    "kind": "compaction",
+                    "reason": "manual",
+                    "state": "completed",
+                    "text": "The conversation was summarized.",
+                    "summary": "Keep nights.",
+                    "keepMessages": keep,
+                },
+                {"kind": "response", "text": "Continued."},
+                {"kind": "notice", "text": "Sent in future model context: [App event] Workspace discarded."},
+            ],
+        }
+    ]
+    original = copy.deepcopy(messages)
+    metadata = {"exportedAt": 1792919105509, "frontendVersion": "test", "endpoint": "https://ai.example"}
+    html = build_html_chat(messages, metadata)
+    articles = html.split('<article class="')[1:]
+    assert articles[0].startswith('message assistant"') and "Tool output" in articles[0]
+    assert (
+        articles[1].startswith('message assistant app-notice"') and "You requested context compaction." in articles[1]
+    )
+    assert articles[2].startswith('message user app"') and "User · Conversation summary" in articles[2]
+    assert articles[3].startswith('message assistant"') and "Continued." in articles[3]
+    assert articles[4].startswith('message user app"') and "[App event] Workspace discarded." in articles[4]
+    markdown = build_markdown_chat(messages, metadata)
+    for rendered in (html, markdown):
+        assert (
+            "The latest 4 messages remain unchanged after the summary." in rendered
+            if keep
+            else ("The summary replaces all earlier conversation messages in model context." in rendered)
+        )
+        assert rendered.count("You requested context compaction.") == 1
+        assert "User · Conversation summary" in rendered
+        assert "[No message text]" not in rendered
+    assert messages == original
+
+
+def test_export_keeps_the_placeholder_on_the_last_assistant_part_without_response_text():
+    messages = [
+        {
+            "role": "assistant",
+            "content": "",
+            "activity": [
+                {"kind": "tool", "name": "read", "arguments": "{}", "result": "First output", "ok": True},
+                {"kind": "notice", "text": "Workspace changed."},
+                {"kind": "tool", "name": "read", "arguments": "{}", "result": "Last output", "ok": True},
+            ],
+        }
+    ]
+    metadata = {"exportedAt": 1792919105509, "frontendVersion": "test", "endpoint": "https://ai.example"}
+    for build in (build_html_chat, build_markdown_chat):
+        rendered = build(messages, metadata)
+        assert rendered.count("[No message text]") == 1
+        assert rendered.index("Last output") < rendered.index("[No message text]")
+
+
+@pytest.mark.parametrize("status", [None, "failed", "stopped"])
+def test_export_keeps_answer_metadata_before_a_trailing_app_notice(status):
+    messages = [
+        {
+            "role": "assistant",
+            "content": "Updated.",
+            "status": status,
+            "failureReason": "The provider failed.",
+            "modelSelection": {"model": "test-model", "reasoning": "high"},
+            "costSummary": {"usd": "0.02", "calls": 1, "pending": 0, "unavailable": 0},
+            "activity": [
+                {"kind": "response", "text": "Updated."},
+                {"kind": "schedule-applied", "text": "The schedule was applied."},
+            ],
+        }
+    ]
+    metadata = {"exportedAt": 1792919105509, "frontendVersion": "test", "endpoint": "https://ai.example"}
+    html = build_html_chat(messages, metadata)
+    answer, notice = html.split('<article class="')[1:]
+    assert "Model: test-model" in answer and "Estimated turn cost" in answer
+    assert "Model: test-model" not in notice and "Estimated turn cost" not in notice
+    if status:
+        assert ("The provider failed." if status == "failed" else "Stopped before completion.") in answer
+    markdown = build_markdown_chat(messages, metadata)
+    assert markdown.index("Model: test-model") < markdown.index("## App notice")
+    assert markdown.index("Estimated turn cost") < markdown.index("## App notice")
+
+
+def test_manual_compaction_keeps_metadata_on_notice_before_summary():
+    messages = [
+        {
+            "role": "assistant",
+            "content": "",
+            "responseStartedAt": 1000,
+            "responseCompletedAt": 2500,
+            "modelSelection": {"model": "test-model", "reasoning": "high"},
+            "costSummary": {"usd": "0.02", "calls": 1, "pending": 0, "unavailable": 0},
+            "activity": [
+                {"kind": "notice", "text": "You requested context compaction."},
+                {
+                    "kind": "compaction",
+                    "reason": "manual",
+                    "state": "completed",
+                    "text": "The conversation was summarized.",
+                    "summary": "Keep nights.",
+                    "keepMessages": 2,
+                },
+            ],
+        }
+    ]
+    original = copy.deepcopy(messages)
+    metadata = {"exportedAt": 1792919105509, "frontendVersion": "test", "endpoint": "https://ai.example"}
+    notice, summary = build_html_chat(messages, metadata).split('<article class="')[1:]
+    assert notice.startswith('message assistant app-notice"')
+    for detail in ("Model: test-model", "Estimated turn cost", "1970-01-01T00:00:02.500Z", "1.5s"):
+        assert detail in notice and detail not in summary
+    markdown = build_markdown_chat(messages, metadata)
+    for detail in ("Model: test-model", "Estimated turn cost", "Completed:", "Response time: 1.5s"):
+        assert markdown.index(detail) < markdown.index("## User · Conversation summary")
+    assert messages == original
 
 
 def saved_case(variant):

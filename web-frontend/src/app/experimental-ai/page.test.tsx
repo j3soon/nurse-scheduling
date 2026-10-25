@@ -24,6 +24,7 @@ import userEvent from '@testing-library/user-event';
 import ExperimentalAiPage from './page';
 import type { SessionEvent, SessionEventHandler, SessionStreamOptions } from './sessionEvents';
 
+const mockCompactSession = vi.hoisted(() => vi.fn());
 const mockCreateSession = vi.hoisted(() => vi.fn());
 const mockGetUploads = vi.hoisted(() => vi.fn());
 const mockRemoveUpload = vi.hoisted(() => vi.fn());
@@ -70,6 +71,7 @@ vi.mock('./aiClient', async importOriginal => {
   LOCAL_AI_API_URL: 'http://localhost:8001',
   PRODUCTION_AI_API_URL: 'https://api.nursescheduling.org/ai',
   createSession: mockCreateSession,
+  compactSession: mockCompactSession,
   downloadOptimization: mockDownloadOptimization,
   cancelOptimization: mockCancelOptimization,
   downloadGeneratedZip: mockDownloadGeneratedZip,
@@ -185,6 +187,7 @@ describe('ExperimentalAiPage', () => {
       callbacks.onEvent({ type: 'delta', text: 'Alice' });
       callbacks.onEvent({ type: 'delta', text: ' works Monday.' });
     });
+    mockCompactSession.mockReset().mockResolvedValue('compact-run');
     mockStreamSessionEvents.mockReset().mockImplementation(() => new Promise<void>(() => {}));
     // Run fixtures publish normalized events while POST returns only its acknowledgement.
     mockSendMessage.mockReset().mockImplementation(async (id, message, signal, token, endpoint) => {
@@ -431,41 +434,45 @@ describe('ExperimentalAiPage', () => {
     expect(versions).not.toHaveTextContent('versions do not match');
   });
 
-  it('downloads the server archive directly without building a browser Blob', async () => {
+  it('downloads the prepared server archive in a hidden frame without a popup or Blob', async () => {
     mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, saved_chat_export: true });
     const user = userEvent.setup();
     const blob = vi.spyOn(URL, 'createObjectURL');
-    const replace = vi.fn();
-    const tab = { document: document.implementation.createHTMLDocument(), location: { replace }, close: vi.fn(), closed: false, opener: window };
-    const open = vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window);
+    const open = vi.spyOn(window, 'open');
     let finishPreparation!: (url: string) => void;
     mockGetChatExportUrl.mockReturnValue(new Promise<string>(resolve => { finishPreparation = resolve; }));
     render(<ExperimentalAiPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await user.click(screen.getByRole('button', { name: 'Export Chat', exact: true }));
-    expect(open).toHaveBeenCalledExactlyOnceWith('about:blank', '_blank');
-    expect(tab.opener).toBeNull();
-    expect(tab.document.body.textContent).toContain('Preparing the chat download');
-    expect(replace).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Preparing export…' })).toBeDisabled();
+    expect(document.querySelector('iframe')).toBeNull();
     expect(mockGetChatExportUrl).toHaveBeenCalledWith('session-id', null, '/ai');
-    finishPreparation('/ai/sessions/session-id/export?token=temporary');
-    await waitFor(() => expect(replace).toHaveBeenCalledExactlyOnceWith('/ai/sessions/session-id/export?token=temporary'));
+    finishPreparation('/ai/sessions/session-id/export?download=prepared&token=temporary');
+    await waitFor(() => expect(document.querySelector('iframe')).not.toBeNull());
+    const frame = document.querySelector('iframe')!;
+    expect(frame.hidden).toBe(true);
+    await waitFor(() => expect(frame.src).toContain('/export?download=prepared&token=temporary'));
+    expect(open).not.toHaveBeenCalled();
     expect(blob).not.toHaveBeenCalled();
-    expect(screen.queryByRole('button', { name: 'HTML', exact: true })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Markdown', exact: true })).not.toBeInTheDocument();
+    expect(screen.getByText('Chat download requested. Check your browser’s downloads.')).toBeVisible();
+    // A server error loads a document instead of starting an attachment download.
+    fireEvent.load(frame);
+    expect(screen.getByText('The chat download could not start. Please try Export Chat again.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Export Chat', exact: true })).toBeEnabled();
   });
 
-  it('reports a blocked export tab before requesting an archive', async () => {
+  it('reports archive preparation errors inline without opening a download frame', async () => {
     mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, saved_chat_export: true });
-    vi.spyOn(window, 'open').mockReturnValue(null);
+    mockGetChatExportUrl.mockRejectedValue(new Error('The chat archive could not be created. Try again.'));
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await user.click(screen.getByRole('button', { name: 'Export Chat', exact: true }));
-    expect(screen.getByText('Allow pop-ups for this site to export the chat, then try again.')).toBeVisible();
-    expect(mockGetChatExportUrl).not.toHaveBeenCalled();
+    expect(screen.getByText('The chat archive could not be created. Try again.')).toBeVisible();
+    expect(document.querySelector('iframe')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Export Chat', exact: true })).toBeEnabled();
   });
 
   it('disables chat export when the server has no saved history', async () => {
@@ -483,11 +490,11 @@ describe('ExperimentalAiPage', () => {
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     const usage = await screen.findByText('Context unavailable');
-    expect(usage).toHaveAttribute('title', expect.stringContaining('The AI server has not reported context usage.'));
+    expect(usage).toHaveAttribute('title', expect.stringContaining('The AI server has not reported context tokens.'));
     expect(usage.closest('form')).toBeInTheDocument();
   });
 
-  it('shows the server history budget below the composer and clears it for a new chat', async () => {
+  it('does not use the character budget as a model context percentage', async () => {
     const user = userEvent.setup();
     mockRunEvents.mockImplementationOnce(async (_id, _message, callbacks) => {
       callbacks.onEvent({ type: 'context_usage', usage: { usedChars: 500, maxChars: 2000 } });
@@ -498,17 +505,17 @@ describe('ExperimentalAiPage', () => {
     expect(screen.queryByText(/Context /)).not.toBeInTheDocument();
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
-    const usage = await screen.findByText('Context 25.0% used');
-    expect(usage).toHaveAttribute('title', expect.stringContaining('500 of 2,000 characters'));
+    const usage = await screen.findByText('Context unavailable');
+    expect(usage).toHaveAttribute('title', expect.stringContaining('not reported context tokens'));
     expect(usage.closest('form')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Start new chat' }));
     expect(screen.queryByText(/Context /)).not.toBeInTheDocument();
   });
 
-  it.each([131072, undefined])('shows request tokens beside the history budget with limit %s', async maxTokens => {
+  it.each([131072, undefined])('uses the same context tokens for percentage and count with limit %s', async maxTokens => {
     const user = userEvent.setup();
     mockRunEvents.mockImplementationOnce(async (_id: string, _message: string, callbacks: SessionStreamOptions) => {
-      callbacks.onEvent({ type: 'context_usage', usage: { usedChars: 500, maxChars: 2000, usedTokens: 4321, maxTokens } });
+      callbacks.onEvent({ type: 'context_usage', usage: { usedChars: 500, maxChars: 2000, usedTokens: 4321, maxTokens, estimated: true } });
       // A report without tokens, such as the next run's first one, keeps the latest token figures.
       callbacks.onEvent({ type: 'context_usage', usage: { usedChars: 600, maxChars: 2000 } });
       callbacks.onEvent({ type: 'delta', text: 'Done.' });
@@ -517,10 +524,102 @@ describe('ExperimentalAiPage', () => {
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
-    const usage = await screen.findByText(/Context 30\.0% used/);
-    expect(usage).toHaveAttribute('title', expect.stringContaining('600 of 2,000 characters'));
-    const tokens = screen.getByText(`Tokens: 4,321 / ${maxTokens ? '131,072' : 'unavailable'}`);
-    expect(tokens).toHaveAttribute('title', 'Current context tokens, estimated while streaming and after summarization / model input limit.');
+    const usage = await screen.findByText(maxTokens ? 'Context 3.3% used (est.)' : 'Context unavailable');
+    expect(usage).toHaveAttribute('title', expect.stringContaining('current LLM context'));
+    const tokens = screen.getByText(`Tokens (est.): 4,321 / ${maxTokens ? '131,072' : 'unavailable'}`);
+    expect(tokens).toHaveAttribute('title', 'Estimated current LLM context tokens / model context limit. Includes system instructions, tools, and conversation messages.');
+  });
+
+  it('compacts an idle conversation through the session stream without sending a question', async () => {
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Who works Monday?');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    await user.click(screen.getByRole('button', { name: 'Compact context' }));
+    expect(mockCompactSession).toHaveBeenCalledWith('session-id', expect.any(String), null, '/ai', {
+      signal: expect.any(AbortSignal), shouldStop: expect.any(Function), onConnectionChange: expect.any(Function),
+    });
+    expect(mockRunEvents).toHaveBeenCalledTimes(1);
+    const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
+    await act(async () => {
+      stream.onEvent!({ type: 'run_start', runId: 'compact-run', trigger: 'compaction' });
+      stream.onEvent!({ type: 'compaction_start', runId: 'compact-run', reason: 'manual', tokensBefore: 12000 });
+    });
+    expect(screen.getByRole('button', { name: 'Compact context' })).toBeDisabled();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeDisabled();
+    expect(screen.getByText('You requested context compaction.')).toBeVisible();
+    await act(async () => {
+      stream.onEvent!({ type: 'compaction_end', runId: 'compact-run', reason: 'manual', tokensBefore: 12000,
+        success: true, aborted: false, summary: 'Keep the night constraints.', keepMessages: 2, estimatedTokensAfter: 1000 });
+      stream.onEvent!({ type: 'context_usage', runId: 'compact-run', usage: { usedChars: 1000, maxChars: 200000,
+        usedTokens: 1000, maxTokens: 10000, estimated: true } });
+      stream.onEvent!({ type: 'done', runId: 'compact-run' });
+    });
+    expect(screen.getByRole('button', { name: 'Compact context' })).toBeEnabled();
+    expect(screen.getByText('Context 10.0% used (est.)')).toBeInTheDocument();
+    expect(screen.getByText('Tokens (est.): 1,000 / 10,000')).toBeInTheDocument();
+    await user.click(screen.getByText('Conversation summary', { exact: true }));
+    expect(screen.getByText(/\[Conversation summary\]\s+Keep the night constraints\./)).toBeInTheDocument();
+  });
+
+  it.each([true, false])('can stop compaction before run_start, with terminal before acceptance=%s', async terminalBeforeAcceptance => {
+    const user = userEvent.setup();
+    let accept: ((id: string) => void) | undefined;
+    mockCompactSession.mockImplementationOnce(() => new Promise<string>(resolve => { accept = resolve; }));
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Hello');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    await user.click(screen.getByRole('button', { name: 'Compact context' }));
+    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Stop' }));
+    const requestId = mockCompactSession.mock.calls[0][1] as string;
+    expect(mockStopSession).toHaveBeenLastCalledWith('session-id', null, '/ai', requestId);
+    const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
+    if (terminalBeforeAcceptance) act(() => stream.onEvent({ type: 'stopped', runId: 'compact-run' }));
+    await act(async () => accept?.('compact-run'));
+    if (!terminalBeforeAcceptance) {
+      await waitFor(() => expect(mockStopSession).toHaveBeenCalledTimes(2));
+      expect(mockStopSession).toHaveBeenLastCalledWith('session-id', null, '/ai', requestId);
+      act(() => stream.onEvent({ type: 'stopped', runId: 'compact-run' }));
+    }
+    expect(await screen.findByText('Stopped before completion.')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
+  });
+
+  it('keeps compaction busy when an unrelated optimizer review finishes', async () => {
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Hello');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    await user.click(screen.getByRole('button', { name: 'Compact context' }));
+    const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
+    act(() => {
+      stream.onEvent({ type: 'delta', runId: 'earlier-review', text: 'Earlier review.' });
+      stream.onEvent({ type: 'done', runId: 'earlier-review' });
+    });
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeVisible();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeDisabled();
+    await act(async () => stream.onEvent({ type: 'done', runId: 'compact-run' }));
+    expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
+  });
+
+  it('releases a rejected compaction and leaves the conversation available', async () => {
+    const user = userEvent.setup();
+    mockCompactSession.mockRejectedValueOnce(new Error('Compaction is unavailable.'));
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Hello');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    await user.click(screen.getByRole('button', { name: 'Compact context' }));
+    expect(await screen.findByText('Compaction is unavailable.')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Compact context' })).toBeEnabled();
   });
 
   it('restores the transcript and live session after navigating away', async () => {
@@ -974,12 +1073,12 @@ describe('ExperimentalAiPage', () => {
     await screen.findByText('Answer to Second');
 
     const cards = Array.from(screen.getByLabelText('Chat messages').querySelectorAll('article'));
-    // History never keeps a status message, so only the latest request's status is shown.
+    // Earlier status messages remain visible because they stay in model context.
     expect(cards.map(card => card.querySelector('p')?.textContent)).toEqual([
-      'System', 'User · App - Files Uploaded', 'User', 'Assistant', 'User', 'User · Status - Current Time', 'Assistant',
+      'System', 'User · App - Files Uploaded', 'User', 'User · Status - Current Time', 'Assistant', 'User', 'User · Status - Current Time', 'Assistant',
     ]);
     // The label names the topic, so the exact text of app and status messages starts collapsed.
-    for (const [card, text] of [[cards[1], '[App event] The user uploaded files: ward.csv'], [cards[5], 'Turn 2']] as const) {
+    for (const [card, text] of [[cards[1], '[App event] The user uploaded files: ward.csv'], [cards[6], 'Turn 2']] as const) {
       expect(card.querySelector('details')).not.toHaveAttribute('open');
       expect(card.querySelector('details pre')).toHaveTextContent(text);
     }
@@ -2372,9 +2471,9 @@ describe('ExperimentalAiPage', () => {
     expect(screen.queryByText(/failed before completion/)).not.toBeInTheDocument();
   });
 
-  it('changes the session model during streaming and uses the saved choice for the next queued turn', async () => {
+  it('locks the model and saves reasoning changes for the next queued turn', async () => {
     const original = { model: 'deep', reasoning: 'high' };
-    const current = { model: 'fast', reasoning: 'default' };
+    const current = { model: 'deep', reasoning: 'off' };
     mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, model_selection: true });
     mockGetModels.mockResolvedValue({ default_model: 'fast', models: [
       { id: 'fast', name: 'Fast', default_reasoning: 'default', reasoning_options: [{ id: 'default', label: 'Default' }] },
@@ -2382,9 +2481,9 @@ describe('ExperimentalAiPage', () => {
         { id: 'off', label: 'Off' }, { id: 'high', label: 'High' },
       ] },
     ] });
-    mockGetSessionModelSelection.mockResolvedValue(original);
+    mockGetSessionModelSelection.mockResolvedValue({ selection: original, locked: false });
     let finishStream!: () => void;
-    let finishSave!: (selection: typeof current) => void;
+    let finishSave!: (saved: { selection: typeof current; locked: boolean }) => void;
     mockUpdateSessionModelSelection.mockImplementation(() => new Promise(resolve => { finishSave = resolve; }));
     mockRunEvents.mockImplementationOnce(async (_session: string, _question: string, callbacks: SessionStreamOptions) => {
       callbacks.onEvent({ type: 'model_selection', selection: original });
@@ -2400,15 +2499,15 @@ describe('ExperimentalAiPage', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('The first model is streaming.');
     await waitFor(() => expect(composer).toBeEnabled());
-    expect(screen.getByLabelText('AI model')).toBeEnabled();
+    expect(screen.getByLabelText('AI model')).toBeDisabled();
     expect(screen.getByLabelText('Reasoning')).toBeEnabled();
     await user.type(composer, 'Next question');
     await user.keyboard('{Enter}');
-    await user.selectOptions(screen.getByLabelText('AI model'), 'fast');
+    await user.selectOptions(screen.getByLabelText('Reasoning'), 'off');
     expect(mockUpdateSessionModelSelection).toHaveBeenCalledWith('session-id', current, null, '/ai');
     await act(async () => finishStream());
     expect(mockSendMessage).toHaveBeenCalledTimes(1);
-    await act(async () => finishSave(current));
+    await act(async () => finishSave({ selection: current, locked: true }));
     await waitFor(() => expect(mockSendMessage).toHaveBeenCalledTimes(2));
     expect(mockCreateSession).toHaveBeenCalledWith('description: current schedule\n', null, '/ai', original);
     expect(mockSendMessage.mock.calls[0][5].selection).toEqual(original);

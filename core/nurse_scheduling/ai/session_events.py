@@ -29,7 +29,7 @@ class RunFields(TypedDict):
 
 class RunStartEvent(RunFields):
     type: Literal["run_start"]
-    trigger: Literal["user", "optimizer"]
+    trigger: Literal["user", "optimizer", "compaction"]
 
 
 class ModelSelectionEvent(RunFields):
@@ -84,6 +84,12 @@ class ProviderRetryEvent(RunFields):
     message: str
 
 
+class ResponseEndEvent(RunFields):
+    type: Literal["response_end"]
+    stop_reason: Literal["stop", "tool_use", "length", "error", "aborted"]
+    context_note: NotRequired[str]
+
+
 class ToolFields(RunFields):
     tool_call_id: str
     name: str
@@ -103,6 +109,7 @@ class ToolEndEvent(ToolFields):
     type: Literal["tool"]
     result: str
     ok: bool
+    replay_arguments: NotRequired[str]
     # The trusted schedule check included in `result`, when the tool changed the working copy.
     schedule_check: NotRequired[ScheduleCheck]
 
@@ -154,7 +161,7 @@ class ModelInputEvent(RunFields):
 
 
 class CompactionFields(RunFields):
-    reason: Literal["threshold", "overflow"]
+    reason: Literal["threshold", "overflow", "manual"]
     tokens_before: int
 
 
@@ -166,7 +173,19 @@ class CompactionEndEvent(CompactionFields):
     type: Literal["compaction_end"]
     success: bool
     aborted: bool
+    skipped: NotRequired[bool]
     estimated_tokens_after: NotRequired[int]
+    summary: NotRequired[str]
+    keep_messages: NotRequired[int]
+    characters: NotRequired[int]
+    step: NotRequired[int]
+
+
+class GenerationProgressEvent(RunFields):
+    type: Literal["generation_progress"]
+    kind: Literal["compaction", "tool_calls"]
+    characters: int
+    step: int
 
 
 class ContextUsageEvent(RunFields):
@@ -176,6 +195,7 @@ class ContextUsageEvent(RunFields):
     # Latest request tokens, or an estimate after compaction. The limit needs model metadata.
     used_tokens: NotRequired[int]
     max_tokens: NotRequired[int]
+    estimated: NotRequired[bool]
 
 
 class HistoryTrimmedEvent(RunFields):
@@ -227,6 +247,7 @@ AgentSessionRunEvent = (
     | ToolEndEvent
     | SteeringEvent
     | ProviderRetryEvent
+    | ResponseEndEvent
     | ScheduleChangeEvent
     | ScheduleAppliedEvent
     | DownloadEvent
@@ -235,6 +256,7 @@ AgentSessionRunEvent = (
     | ContextUsageEvent
     | CompactionStartEvent
     | CompactionEndEvent
+    | GenerationProgressEvent
     | HistoryTrimmedEvent
 )
 AgentSessionEvent = AgentSessionRunEvent | OptimizationEvent | OptimizationProgressEvent

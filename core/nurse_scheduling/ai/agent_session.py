@@ -32,7 +32,8 @@ from ruamel.yaml.error import YAMLError
 
 from ..loader import _load_yaml
 from .agent import Agent
-from .agent_types import AgentCompactionEnd, AgentContextUsage
+from .agent_types import AgentCompaction, AgentCompactionEnd, AgentContextUsage
+from .compaction import ContextCompactor
 from .config import AiSettings
 from .context import (
     SCHEDULE_CHANGED_EVENT,
@@ -48,9 +49,10 @@ from .costs import CostTotals
 from .history import RECOVERY_UNAVAILABLE, EntryRow, RunKind, RunStatus
 from .lifecycle import AgentRun, RunSnapshot, SessionRuns
 from .optimizer import OptimizerArtifact, SessionOptimizer
-from .optimizer_tool import execute_optimizer_tool
+from .optimizer_tool import execute_optimizer_tool, optimizer_tool_definition
 from .provider import ChatMessage, ProviderCall, ProviderError, TokenUsage, ToolCapableChatProvider
 from .sandbox import SandboxError, SandboxFactory
+from .sandbox_tools import SandboxPiTools
 from .session_event_projection import RunEvents, RunOutput
 from .session_event_stream import SessionEvent, SessionEventStream
 from .session_events import (
@@ -64,6 +66,8 @@ from .session_events import (
 from .transcript import (
     AgentMessage,
     AppEventEntry,
+    AssistantMessage,
+    ToolResultMessage,
     UserMessage,
 )
 from .workspace import (
@@ -214,7 +218,7 @@ class RunRecorder(Protocol):
         self,
         session_id: str,
         run_id: str,
-        prompt: str,
+        prompt: str | None,
         prompt_seq: int,
         *,
         model: str,
@@ -301,6 +305,7 @@ class AgentSession:
     reported_version_mismatch: bool = False
     export_metadata: dict[str, Any] = field(default_factory=dict)
     model_selection: dict[str, str] | None = None
+    locked_model: str | None = None
     provider_credential_id: str | None = None
     cost_totals: CostTotals = field(default_factory=CostTotals)
     cost_totals_version: int = 0
@@ -311,7 +316,8 @@ class AgentSession:
     event_stream: SessionEventStream | None = field(default=None, repr=False)
     # Recovery storage, which receives each new entry as Pi's SessionManager does.
     entry_log: Callable[[str, EntryRow], None] | None = field(default=None, repr=False)
-    _saved_run_messages: int = field(default=0, repr=False)
+    # The sequence number and saved content of each run message, in run order.
+    _saved_run_messages: list[tuple[int, AgentMessage]] = field(default_factory=list, repr=False)
     _listeners: list[Callable[[AgentSessionEvent], None]] = field(default_factory=list, repr=False)
     _events_closed: bool = False
     _admission_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
@@ -350,6 +356,7 @@ class AgentSession:
             "schedule_yaml": self.schedule_yaml,
             "queued_schedule": asdict(self.queued_schedule) if self.queued_schedule else None,
             "model_selection": self.model_selection,
+            "locked_model": self.locked_model,
             "provider_credential_id": self.provider_credential_id,
             "cost_totals": self.cost_totals.public(),
             "cost_totals_version": self.cost_totals_version,
@@ -408,6 +415,7 @@ class AgentSession:
             revision=schedule_revision(state["schedule_yaml"]),
             queued_schedule=QueuedSchedule(**state["queued_schedule"]) if state.get("queued_schedule") else None,
             model_selection=state.get("model_selection"),
+            locked_model=state.get("locked_model"),
             provider_credential_id=state.get("provider_credential_id"),
             cost_totals=CostTotals.restored(state.get("cost_totals")),
             cost_totals_version=state.get("cost_totals_version", 0),
@@ -442,9 +450,19 @@ class AgentSession:
         self._append_entries(run_id, [entry])
 
     def _save_run_messages(self, run_id: str | None, messages: Sequence[AgentMessage]) -> None:
-        """Save the run messages that ended since the last call, as Pi saves each one on `message_end`."""
-        self._append_entries(run_id, messages[self._saved_run_messages :])
-        self._saved_run_messages = len(messages)
+        """Save the run messages that ended since the last call, as Pi saves each one on `message_end`.
+
+        An interruption can mark a saved message. Save that state under the message's sequence number,
+        so restored sessions match the live transcript.
+        """
+        for index, (seq, saved) in enumerate(self._saved_run_messages[: len(messages)]):
+            if messages[index] is not saved and messages[index] != saved:
+                self._saved_run_messages[index] = (seq, messages[index])
+                if self.entry_log is not None:
+                    self.entry_log(self.id, (seq, run_id, messages[index]))
+        for message in messages[len(self._saved_run_messages) :]:
+            self._saved_run_messages.append((self.next_entry_seq, message))
+            self._append_entries(run_id, [message])
 
     def subscribe(self, listener: Callable[[AgentSessionEvent], None]) -> Callable[[], None]:
         """Observe public session events. HTTP serialization belongs to the caller."""
@@ -499,12 +517,19 @@ class AgentSession:
         async with self._admission_lock:
             selected = await prepare_runtime()
             assert selected.selection is not None
+            self.check_model(selected.selection["model"])
             previous = self.model_selection
             self.model_selection = selected.selection
             if not await _complete(runtime.recorder.save(self.id, self.provider_credential_id)):
                 self.model_selection = previous
                 raise HTTPException(503, "The model choice could not be saved yet. Please try again.")
             return self.model_selection
+
+    def check_model(self, model: str) -> None:
+        if self.locked_model is not None and model != self.locked_model:
+            raise HTTPException(
+                409, "The model is fixed for this conversation. Start a new conversation to choose another model."
+            )
 
     async def accept_message(
         self,
@@ -516,6 +541,8 @@ class AgentSession:
         owner: str | None,
         credential_id: str | None,
         prepare_runtime: Callable[[], Awaitable[SessionRuntime]] | None = None,
+        requested_model: str | None = None,
+        compact_only: bool = False,
     ) -> MessageReceipt:
         """Start a run for a client message, or return the run that already answers it.
 
@@ -545,26 +572,44 @@ class AgentSession:
                 if await runtime.recorder.message_stopped(self.id, message_id):
                     self.stopped_message_ids.add(message_id)
 
+            model = requested_model or (self.model_selection or {}).get("model", runtime.settings.provider_model)
+            self.check_model(model)
+            previous_lock = self.locked_model
+
             async def execute(run: AgentRun) -> None:
                 selected_runtime = await prepare_runtime() if prepare_runtime is not None else runtime
-                await self.run(run, question, runtime=selected_runtime, owner=owner, credential_id=credential_id)
+                self.check_model(selected_runtime.settings.provider_model)
+                if selected_runtime.selection is not None and (self.model_selection or {}).get("model") != model:
+                    self.model_selection = selected_runtime.selection
+                await self.run(
+                    run,
+                    question,
+                    runtime=selected_runtime,
+                    owner=owner,
+                    credential_id=credential_id,
+                    compact_only=compact_only,
+                )
 
             run = runs.start(
                 self.id,
                 execute,
                 message_id=message_id,
             )
+            self.locked_model = model
             if message_id is not None:
                 accepted = AcceptedMessage(message_id, question, run, run.id)
                 if not runtime.recorder.enabled:
                     try:
                         runtime.store.remember_message(self.id, accepted)
                     except HTTPException:
+                        self.locked_model = previous_lock
                         run.cancel()
                         await asyncio.shield(run.done)
                         raise
                 self.latest_message = accepted
         if not await asyncio.shield(run.ready):
+            if previous_lock is None:
+                self.locked_model = None
             if run.cancelled and not run.shutdown:
                 # A Stop arrived before the run reported its start. A run cancelled before
                 # it began never reaches finalization, so its stopped outcome is published here.
@@ -605,7 +650,7 @@ class AgentSession:
             raise HTTPException(status_code=409, detail="This chat session already has an active response.")
         self.agent.reset()
         self.agent.open_steering()
-        self._saved_run_messages = 0
+        self._saved_run_messages = []
         self.snapshot = RunSnapshot(
             list(self.transcript),
             self.schedule_yaml,
@@ -737,7 +782,6 @@ class AgentSession:
         self,
         snapshot: RunSnapshot,
         question: str,
-        artifact: OptimizerArtifact | None,
         settings: AiSettings,
         events: RunEvents,
         question_kind: QuestionKind,
@@ -749,17 +793,21 @@ class AgentSession:
             history,
             snapshot.schedule_yaml,
             question,
-            snapshot.uploads,
-            optimizer_result_available=artifact is not None,
             max_download_bytes=settings.max_download_bytes,
-            frontend_timezone=snapshot.frontend_timezone,
         )
         events.emit(
             {
                 "type": "model_input",
                 "schedule_yaml": snapshot.schedule_yaml,
                 **model_input(
-                    messages, [snapshot.transcript_offset + index for index in history.source_indices], question_kind
+                    messages,
+                    [snapshot.transcript_offset + index for index in history.source_indices],
+                    question_kind,
+                    app_indices={
+                        snapshot.transcript_offset + index
+                        for index, entry in enumerate(snapshot.transcript)
+                        if isinstance(entry, AppEventEntry)
+                    },
                 ),
             }
         )
@@ -816,6 +864,73 @@ class AgentSession:
             }
         )
 
+    async def _finalize_provider_calls(self, runtime: SessionRuntime, output: RunOutput, events: RunEvents) -> None:
+        for call in tuple(output.calls.values()):
+            if call.status == "pending":
+                final = replace(call, status="reported" if call.cost_usd is not None else "unavailable")
+                await _complete(self._report_provider_call(final, runtime, output, events))
+
+    async def _compact_context(
+        self,
+        run: AgentRun,
+        snapshot: RunSnapshot,
+        runtime: SessionRuntime,
+        output: RunOutput,
+        events: RunEvents,
+    ) -> None:
+        """Summarize retained context without a user question or workspace."""
+        settings = runtime.settings
+        history = project_history(snapshot.transcript, settings.max_history_chars)
+        messages = build_provider_messages(
+            history, snapshot.schedule_yaml, "", max_download_bytes=settings.max_download_bytes
+        )[:-1]
+        skipped = False
+        try:
+            async with runtime.concurrency_limit:
+                compactor = ContextCompactor(
+                    runtime.provider,
+                    history_limit=settings.max_history_chars,
+                    message_limit=settings.max_history_messages,
+                )
+                await compactor.prepare()
+                definitions = SandboxPiTools.tool_definitions(settings.sandbox_command_timeout_seconds)
+                definitions.append(optimizer_tool_definition(settings.optimizer_default_timeout_seconds))
+                summary_events = compactor.compact(messages, definitions, force=True, manual=True)
+                async with aclosing(summary_events):
+                    async for event in summary_events:
+                        if isinstance(event, ProviderCall):
+                            await self._report_provider_call(event, runtime, output, events)
+                            continue
+                        if isinstance(event, AgentCompaction):
+                            self.agent.state.messages.append(event.entry)
+                            self._save_run_messages(run.id, self.agent.state.messages)
+                        wire = output.consume(event)
+                        if wire is not None:
+                            events.emit(wire)
+                        if isinstance(event, AgentCompactionEnd):
+                            skipped = event.skipped
+                        if isinstance(event, AgentCompactionEnd) and event.success:
+                            events.emit(
+                                {
+                                    "type": "context_usage",
+                                    **context_usage(
+                                        event.used_chars,
+                                        settings,
+                                        provider=runtime.provider,
+                                        estimated_tokens=event.estimated_tokens_after,
+                                    ),
+                                }
+                            )
+        finally:
+            await self._finalize_provider_calls(runtime, output, events)
+        if not self.agent.state.messages and not skipped:
+            events.emit(
+                {
+                    "type": "warning",
+                    "message": "Context was not compacted. The original conversation context was kept.",
+                }
+            )
+
     async def _execute_run(
         self,
         snapshot: RunSnapshot,
@@ -850,6 +965,7 @@ class AgentSession:
                     optimizer_result=artifact.content if artifact is not None else None,
                     optimizer_context=artifact.schedule_context if artifact is not None else None,
                     agent=self.agent,
+                    timezone=snapshot.frontend_timezone,
                 )
                 async with aclosing(agent_events):
                     async for event in agent_events:
@@ -889,10 +1005,7 @@ class AgentSession:
                                 }
                             )
         finally:
-            for call in tuple(output.calls.values()):
-                if call.status == "pending":
-                    final = replace(call, status="reported" if call.cost_usd is not None else "unavailable")
-                    await _complete(self._report_provider_call(final, runtime, output, events))
+            await self._finalize_provider_calls(runtime, output, events)
 
     def _commit_run(
         self,
@@ -974,14 +1087,37 @@ class AgentSession:
         history_started: bool,
         dropped_history: int,
         background: bool,
+        compact_only: bool = False,
     ) -> None:
         """Resolve the transcript, save the run record once, then publish the terminal outcome."""
         run.finishing = True
         stopped = outcome.terminal is not None and outcome.terminal["type"] == "stopped"
         committed = outcome.status == "completed"
-        if outcome.completion is None:
+        if outcome.completion is not None:
+            final = next((entry for entry in reversed(entries) if isinstance(entry, AssistantMessage)), None)
+            if final is not None:
+                events.emit({"type": "response_end", "stop_reason": final.stop_reason})
+        if outcome.completion is None and compact_only:
+            runtime.store.abort(self.id, snapshot)
+        elif outcome.completion is None:
             stop_reason = "aborted" if outcome.status == "cancelled" else "error"
             entries = output.interrupted_entries([entries[0], *self.agent.state.messages], stop_reason)
+            completed_tools = {id(entry) for entry in self.agent.state.messages if isinstance(entry, ToolResultMessage)}
+            calls = {
+                call.id: call for entry in entries if isinstance(entry, AssistantMessage) for call in entry.tool_calls
+            }
+            for entry in entries:
+                if isinstance(entry, ToolResultMessage) and id(entry) not in completed_tools:
+                    events.emit(
+                        {
+                            "type": "tool",
+                            "tool_call_id": entry.tool_call_id,
+                            "name": entry.tool_name,
+                            "arguments": calls[entry.tool_call_id].arguments,
+                            "result": entry.text,
+                            "ok": False,
+                        }
+                    )
             history_unavailable = runtime.recorder.enabled and not history_started
             if not run.shutdown and not history_unavailable and outcome.status in {"cancelled", "failed"}:
                 # Keep the prompt so a follow-up can refer to it. Workspace changes were
@@ -989,9 +1125,16 @@ class AgentSession:
                 committed = runtime.store.finish(self.id, retained_entries(entries), snapshot=snapshot).run_saved
             else:
                 runtime.store.abort(self.id, snapshot)
+            events.emit(
+                {
+                    "type": "response_end",
+                    "stop_reason": stop_reason,
+                    **({"context_note": entries[-1].text} if committed else {}),
+                }
+            )
         if history_started:
             # Messages the run loop has not saved yet, including an interrupted response.
-            self._save_run_messages(run.id, entries[1:])
+            self._save_run_messages(run.id, entries if compact_only else entries[1:])
         # A schedule update received during the run is recorded after the run's own entries.
         runtime.store.apply_queued_schedule(self.id)
         if stopped and run.shutdown:
@@ -1053,6 +1196,7 @@ class AgentSession:
         *,
         runtime: SessionRuntime,
         background: bool = False,
+        compact_only: bool = False,
         owner: str | None = None,
         credential_id: str | None = None,
         artifact: OptimizerArtifact | None = None,
@@ -1069,9 +1213,11 @@ class AgentSession:
         )
         if snapshot is None:
             return
+        if compact_only:
+            self.agent.close_steering()
         # History keeps the question as typed. Upload and removal events are separate history entries.
         output = RunOutput()
-        run_entries: list[AgentMessage] = [UserMessage(question)]
+        run_entries: list[AgentMessage] = [] if compact_only else [UserMessage(question)]
         history_started = False
         outcome = RunOutcome()
         dropped_history = 0
@@ -1087,20 +1233,24 @@ class AgentSession:
                     # Record the failed review before publishing its terminal error.
                     preparation_error = ProviderError.for_user(str(exc.detail))
             bind_session = getattr(runtime.provider, "with_session_id", None)
+            if preparation_error is None:
+                self.check_model(runtime.settings.provider_model)
+                self.locked_model = runtime.settings.provider_model
             if bind_session is not None:
                 runtime = replace(runtime, provider=bind_session(session_id))
             if recorder.enabled:
                 prompt_seq = self.next_entry_seq
-                self.next_entry_seq += 1
+                if not compact_only:
+                    self.next_entry_seq += 1
                 start = asyncio.ensure_future(
                     recorder.start_run(
                         session_id,
                         run.id,
-                        question,
+                        None if compact_only else question,
                         prompt_seq,
                         model=(runtime.selection or {}).get("model", settings.provider_model),
                         attachment_count=len(snapshot.uploads),
-                        kind="background" if background else "foreground",
+                        kind="compaction" if compact_only else "background" if background else "foreground",
                         message_id=run.message_id,
                         credential_id=credential_id,
                     )
@@ -1114,7 +1264,12 @@ class AgentSession:
                     raise
                 if not history_started:
                     raise HTTPException(status_code=503, detail=RECOVERY_UNAVAILABLE)
-            events.emit({"type": "run_start", "trigger": "optimizer" if background else "user"})
+            events.emit(
+                {
+                    "type": "run_start",
+                    "trigger": "compaction" if compact_only else "optimizer" if background else "user",
+                }
+            )
             run.ready.set_result(True)
             if preparation_error is not None:
                 raise preparation_error
@@ -1122,20 +1277,23 @@ class AgentSession:
                 # A Stop for this message arrived first, so its question never runs.
                 outcome = RunOutcome(terminal={"type": "stopped"})
                 return
-            if not background:
-                artifact = await runtime.session_optimizer.latest_result_artifact(session_id)
-            messages, dropped_history, context_chars = self._prepare_run(
-                snapshot,
-                question,
-                artifact,
-                settings,
-                events,
-                "optimizer" if background else "question",
-            )
-            if runtime.selection is not None:
-                events.emit({"type": "model_selection", **runtime.selection})
-            await self._execute_run(snapshot, messages, artifact, runtime, output, events, context_chars)
-            run_entries = [run_entries[0], *self.agent.state.messages]
+            if compact_only:
+                await self._compact_context(run, snapshot, runtime, output, events)
+                run_entries = list(self.agent.state.messages)
+            else:
+                if not background:
+                    artifact = await runtime.session_optimizer.latest_result_artifact(session_id)
+                messages, dropped_history, context_chars = self._prepare_run(
+                    snapshot,
+                    question,
+                    settings,
+                    events,
+                    "optimizer" if background else "question",
+                )
+                if runtime.selection is not None:
+                    events.emit({"type": "model_selection", **runtime.selection})
+                await self._execute_run(snapshot, messages, artifact, runtime, output, events, context_chars)
+                run_entries = [run_entries[0], *self.agent.state.messages]
             completion = self._commit_run(run, snapshot, run_entries, output, store)
             outcome = RunOutcome("completed" if completion.run_saved else "stale", completion=completion)
         except asyncio.CancelledError:
@@ -1187,6 +1345,7 @@ class AgentSession:
                     history_started,
                     dropped_history,
                     background,
+                    compact_only,
                 )
             finally:
                 self.agent.reset()

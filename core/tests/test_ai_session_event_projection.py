@@ -21,7 +21,7 @@
 
 import asyncio
 
-from nurse_scheduling.ai.agent_types import AgentCompactionEnd, AgentCompactionStart
+from nurse_scheduling.ai.agent_types import AgentCompactionEnd, AgentCompactionStart, AgentGenerationProgress
 from nurse_scheduling.ai.context import context_usage
 from nurse_scheduling.ai.provider import TokenUsage
 from nurse_scheduling.ai.session_event_projection import RunEvents, RunOutput
@@ -49,6 +49,41 @@ def test_compaction_replaces_stale_usage_until_the_next_model_call():
     )
     output.consume(TokenUsage(4200, 200, 4400))
     assert output.last_call == TokenUsage(4200, 200, 4400) and output.context_estimate is None
+
+
+def test_generation_counts_are_coalesced_and_saved_on_compaction_completion():
+    async def scenario():
+        published = []
+        received = asyncio.Event()
+
+        def publish(event):
+            published.append(event)
+            received.set()
+
+        output = RunOutput()
+        events = RunEvents("run", publish)
+        events.emit(output.consume(AgentCompactionStart("manual", 10000)))
+        received.clear()
+        for characters in range(100):
+            events.emit(output.consume(AgentGenerationProgress("compaction", characters)))
+        assert len(published) == 1
+        await asyncio.wait_for(received.wait(), timeout=1)
+        assert published[-1] == {
+            "type": "generation_progress",
+            "kind": "compaction",
+            "characters": 99,
+            "step": 1,
+            "run_id": "run",
+        }
+        events.emit(output.consume(AgentGenerationProgress("compaction", 0, 2)))
+        events.emit(output.consume(AgentGenerationProgress("compaction", 4, 2)))
+        events.emit(output.consume(AgentCompactionEnd("manual", True, 10000, 100)))
+        events.finish()
+        assert published[-2]["characters"] == 4
+        assert published[-1]["characters"] == 4 and published[-1]["step"] == 2
+        assert len(published) == 4
+
+    asyncio.run(scenario())
 
 
 def test_batched_output_keeps_reasoning_text_tools_and_terminal_in_order() -> None:

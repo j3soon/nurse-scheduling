@@ -48,6 +48,7 @@ from nurse_scheduling.ai.provider import (
     ProviderCall,
     ProviderContextOverflowError,
     ProviderError,
+    ProviderRetry,
     ResponseEnd,
     TextDelta,
     TokenUsage,
@@ -107,13 +108,36 @@ def history(size=26000):
     return [
         {"role": "system", "content": "Scheduling assistant"},
         {"role": "user", "content": "Keep nights. " + "x" * size},
-        {"role": "assistant", "content": "Earlier answer"},
+        {"role": "assistant", "content": "Earlier answer " + "y" * (size // 2)},
         {"role": "user", "content": "Inspect P1"},
     ]
 
 
 async def collect(stream):
     return [event async for event in stream]
+
+
+def test_summary_progress_counts_only_the_current_draft_and_identifies_each_pass():
+    from nurse_scheduling.ai.agent_types import AgentGenerationProgress
+    from nurse_scheduling.ai.provider import ProviderRetry
+
+    class Provider:
+        async def stream_events(self, _messages, _tools):
+            yield TextDelta("failed")
+            yield ProviderRetry("Retrying")
+            yield TextDelta("新😀")
+            yield ResponseEnd("stop")
+
+    async def exercise():
+        compactor = ContextCompactor(Provider())
+        prompts = {"compaction-system": "System", "context-compaction": "Summarize"}
+        messages = [{"role": "user", "content": "Earlier question"}]
+        for step in (1, 2):
+            events = await collect(compactor._summarize(messages, prompts, 1000, 100))
+            assert events[:-1] == [AgentGenerationProgress("compaction", n, step) for n in (0, 6, 0, 2)]
+            assert events[-1] == "新😀"
+
+    asyncio.run(exercise())
 
 
 def test_app_event_indices_survive_compaction_retention_and_restore():
@@ -136,7 +160,7 @@ def test_app_event_indices_survive_compaction_retention_and_restore():
             snapshot = store.begin(session.id, "owner")
             published = []
             events = RunEvents("run", lambda event: published.append(event))
-            messages, _, _ = session._prepare_run(snapshot, "Continue", None, settings, events, "question")
+            messages, _, _ = session._prepare_run(snapshot, "Continue", settings, events, "question")
             events.flush()
             store.finish(session.id, [], snapshot=snapshot)
             model_input = next(event for event in published if event["type"] == "model_input")
@@ -170,7 +194,74 @@ def test_app_event_indices_survive_compaction_retention_and_restore():
     asyncio.run(exercise())
 
 
-@pytest.mark.parametrize("invalid", ["primary", "secondary", "unavailable", "same", None])
+@pytest.mark.parametrize(
+    "reply", [None, "Hello", "I can help with schedules. " * 30], ids=["empty", "short", "longer-reply"]
+)
+def test_manual_compaction_skips_context_that_cannot_be_reduced(reply):
+    import httpx
+
+    from . import test_ai_basic as basic
+
+    async def exercise():
+        provider = CompactionProvider()
+        app = basic.create_test_app(settings=basic.make_settings(), provider=provider)
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://testserver", headers=basic.AI_AUTH_HEADERS
+            ) as client,
+        ):
+            sid = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            session = app.state.session_store._sessions[sid]
+            original = [UserMessage("Hi"), AssistantMessage(reply)] if reply is not None else []
+            for entry in original:
+                session._add_entry(entry)
+            publications = []
+            session.subscribe(publications.append)
+            request = {"message_id": "compact-short-context"}
+            response = await client.post(f"/sessions/{sid}/compact", json=request)
+            assert response.status_code == 202
+            async with asyncio.timeout(3):
+                while app.state.runs.busy(sid):
+                    await asyncio.sleep(0)
+            assert (await client.post(f"/sessions/{sid}/compact", json=request)).json() == response.json()
+            end = next(event for event in publications if event["type"] == "compaction_end")
+            assert end["skipped"] and not end["success"] and not end["aborted"]
+            assert not provider.summaries
+            assert not provider.requests
+            assert session.transcript == original
+            assert app.state.sandbox_factory.created == []
+            assert not any(event["type"] in {"warning", "error"} for event in publications)
+            assert publications[-1]["type"] == "done"
+
+    asyncio.run(exercise())
+
+
+def test_manual_and_automatic_compaction_share_pi_retention():
+    messages = [{"role": "system", "content": "Scheduling assistant"}]
+    for index in range(12):
+        messages.extend(
+            [
+                {"role": "user", "content": f"Earlier task {index}"},
+                {"role": "assistant", "content": "Earlier work. " + "x" * 8000},
+            ]
+        )
+    messages.extend([{"role": "user", "content": "Latest task"}, {"role": "assistant", "content": "Latest answer"}])
+    retained = []
+    for manual in (False, True):
+        provider = CompactionProvider()
+        provider.context_tokens = 262144
+        compactor = ContextCompactor(provider, history_limit=1_000_000)
+        events = asyncio.run(collect(compactor.compact(messages, [], force=True, manual=manual)))
+        (entry,) = [event.entry for event in events if isinstance(event, AgentCompaction)]
+        assert entry.keep_messages > 2
+        after = apply_compaction(messages, entry)
+        assert after[-2:] == messages[-2:]
+        retained.append(after)
+    assert retained[0] == retained[1]
+
+
+@pytest.mark.parametrize("invalid", ["primary", "unavailable", None])
 def test_live_compaction_validates_models_before_starting_paid_cases(monkeypatch, invalid):
     from nurse_scheduling.ai.models import AvailableModel
 
@@ -180,19 +271,18 @@ def test_live_compaction_validates_models_before_starting_paid_cases(monkeypatch
     for key in ("AI_PROVIDER_BASE_URL", "AI_PROVIDER_API_KEY", "AI_PROVIDER_MODEL", "E2B_API_KEY"):
         monkeypatch.setenv(key, "test-only")
     settings = make_settings()
-    secondary = settings.provider_model if invalid == "same" else "secondary-model"
-    monkeypatch.setenv("AI_COMPACTION_SWITCH_MODEL", secondary)
     monkeypatch.setattr(live.AiSettings, "from_env", lambda: settings)
     started = []
 
     async def models(_self, _credential):
         return (
-            AvailableModel(settings.provider_model, "Primary", context_tokens=None if invalid == "primary" else 32000),
-            *(
-                [AvailableModel(secondary, "Secondary", context_tokens=None if invalid == "secondary" else 32000)]
-                if invalid != "unavailable"
-                else []
-            ),
+            []
+            if invalid == "unavailable"
+            else [
+                AvailableModel(
+                    settings.provider_model, "Primary", context_tokens=None if invalid == "primary" else 32000
+                ),
+            ]
         )
 
     async def run_case(name, *_args):
@@ -203,11 +293,9 @@ def test_live_compaction_validates_models_before_starting_paid_cases(monkeypatch
     monkeypatch.setattr(live, "run_live_case", run_case)
     if invalid is None:
         live.test_real_chat_runs_preserve_context_through_compaction(monkeypatch)
-        assert started == ["threshold", "repeated", "model-switch", "cancellation"]
+        assert started == ["threshold", "repeated", "model-lock", "cancellation", "manual"]
         return
-    expected = (
-        "different model" if invalid == "same" else "unavailable" if invalid == "unavailable" else "context limit"
-    )
+    expected = "unavailable" if invalid == "unavailable" else "context limit"
     with pytest.raises(AssertionError, match=expected):
         live.test_real_chat_runs_preserve_context_through_compaction(monkeypatch)
     assert started == []
@@ -230,6 +318,8 @@ def test_auto_compaction_preserves_current_request_and_persists_the_summary():
     assert end.estimated_tokens_after < end.tokens_before
     assert events.index(end) > next(i for i, event in enumerate(events) if isinstance(event, AgentCompaction))
     (entry,) = [event.entry for event in events if isinstance(event, AgentCompaction)]
+    assert end.summary == entry.summary
+    assert end.keep_messages == entry.keep_messages
     assert entry.keep_messages > 0
     assert provider.requests[0][0][0] == messages[0]
     assert provider.requests[0][0][-1] == messages[-1]
@@ -253,6 +343,58 @@ def test_auto_compaction_preserves_current_request_and_persists_the_summary():
     assert request[-1]["content"] == "Continue"
 
 
+@pytest.mark.parametrize(
+    "retry,draft_size",
+    [(False, "short"), (True, "short"), (True, "near-limit")],
+    ids=["uninterrupted", "retried", "retried-near-limit"],
+)
+def test_compaction_keeps_only_the_successful_attempt_and_all_cost_records(retry, draft_size):
+    class Provider(CompactionProvider):
+        def __init__(self):
+            super().__init__()
+            self.calls = []
+
+        async def stream_events(self, messages, tools=None):
+            self.summaries.append((messages, tools))
+            request_id = len(self.summaries)
+            if retry:
+                limit = int(messages[-1]["content"].rsplit("Summary character limit: ", 1)[1].rstrip("."))
+                draft = "FAILED ATTEMPT" + ("x" * (limit - 15) if draft_size == "near-limit" else "")
+                yield TextDelta(draft)
+                call = ProviderCall(f"failed-{request_id}", "model", "reported", "0.01")
+                self.calls.append(call)
+                yield call
+                yield ProviderRetry("Retry the original summary request")
+            yield TextDelta("P1 must avoid nights.")
+            call = ProviderCall(f"completed-{request_id}", "model", "reported", "0.02")
+            self.calls.append(call)
+            yield call
+            yield ResponseEnd("stop")
+
+    provider = Provider()
+    events = asyncio.run(collect(ContextCompactor(provider).compact(history(), [], force=True)))
+    assert next(event for event in events if isinstance(event, AgentCompactionEnd)).success
+    (entry,) = [event.entry for event in events if isinstance(event, AgentCompaction)]
+    assert "P1 must avoid nights." in entry.summary
+    assert "FAILED ATTEMPT" not in entry.summary
+    assert all("FAILED ATTEMPT" not in str(messages) for messages, _tools in provider.summaries)
+    assert [event for event in events if isinstance(event, ProviderCall)] == provider.calls
+    assert len(provider.calls) == len(provider.summaries) * (2 if retry else 1)
+
+
+def test_compaction_keeps_a_long_current_question_with_its_trailing_status():
+    provider = CompactionProvider()
+    question = "Inspect the file again in this new workspace. " + "filler " * 1500
+    messages = [
+        *history()[:-1],
+        {"role": "user", "content": question},
+        {"role": "user", "content": "[Current status]\nWorkspace timezone: UTC."},
+    ]
+    asyncio.run(collect(agent_loop(provider, messages, [])))
+    assert provider.summaries
+    assert provider.requests[0][0][-2:] == messages[-2:]
+
+
 def test_context_compaction_tool_continuation_keeps_native_tool_pairs_and_status():
     provider = CompactionProvider()
     call = ToolCall("read-1", "read", '{"path":"/workspace/schedule.yaml"}')
@@ -262,9 +404,7 @@ def test_context_compaction_tool_continuation_keeps_native_tool_pairs_and_status
         ToolResultMessage(call.id, call.name, "P1 exists", True, ToolResultImage("image/png", b"png")),
     ]
     messages = prepare_provider_request(history()[:-1], entries, _preserve_native=True)
-    messages.append(
-        {"role": "user", "content": "[Current status]\nCurrent schedule is active", "_current_status": True}
-    )
+    messages.append({"role": "user", "content": "[Current status]\nCurrent schedule is active"})
     events = asyncio.run(collect(ContextCompactor(provider).compact(messages, [])))
     (entry,) = [event.entry for event in events if isinstance(event, AgentCompaction)]
     request = prepare_provider_request(apply_compaction(messages, entry), [], provider=provider.identity)
@@ -297,7 +437,7 @@ def test_stop_during_summary_discards_partial_summary_and_closes_the_agent():
         provider = CompactionProvider(fail_summary="cancel")
         agent = Agent()
         task = asyncio.create_task(collect(agent.prompt(provider, history(), [])))
-        await provider.summary_started.wait()
+        await asyncio.wait_for(provider.summary_started.wait(), 2)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
@@ -328,7 +468,7 @@ def test_session_stop_ends_compaction_before_the_terminal_event():
             snapshot = store.begin(session_id, session.owner_token)
             store.finish(
                 session_id,
-                [UserMessage("Keep nights " + "x" * 100000), AssistantMessage("Old answer")],
+                [UserMessage("Keep nights " + "x" * 100000), AssistantMessage("Old answer " + "y" * 60000)],
                 snapshot=snapshot,
             )
             turn = asyncio.create_task(client.post(f"/sessions/{session_id}/messages", json={"message": "Continue"}))
@@ -371,7 +511,9 @@ def test_context_overflow_retries_once_without_repeating_tools():
         return AgentToolOutcome("P1 result", True)
 
     tool = AgentTool({"type": "function", "function": {"name": "read", "parameters": {"type": "object"}}}, execute)
-    events = asyncio.run(collect(agent_loop(provider, history(8000), [tool])))
+    messages = history(8000)
+    messages[2]["content"] = "Earlier answer " + "y" * 24000
+    events = asyncio.run(collect(agent_loop(provider, messages, [tool])))
     assert executed == ["{}"]
     assert len(provider.requests) == 3
     assert any(isinstance(event, AgentCompaction) for event in events)
@@ -381,8 +523,10 @@ def test_context_overflow_retries_once_without_repeating_tools():
 def test_repeated_overflow_stops_after_one_compact_and_retry():
     provider = CompactionProvider(overflow=True)
     provider.context_tokens = 16000
+    messages = history(8000)
+    messages[2]["content"] = "Earlier answer " + "y" * 24000
     with pytest.raises(ProviderContextOverflowError):
-        asyncio.run(collect(agent_loop(provider, history(8000), [])))
+        asyncio.run(collect(agent_loop(provider, messages, [])))
     assert len(provider.requests) == 2
     assert len(provider.summaries) == 1
 
@@ -499,7 +643,9 @@ def test_session_api_checkpoints_compaction_and_accounts_for_summary_calls():
         session = store._sessions[session_id]
         snapshot = store.begin(session_id, session.owner_token)
         store.finish(
-            session_id, [UserMessage("Keep nights " + "x" * 100000), AssistantMessage("Old answer")], snapshot=snapshot
+            session_id,
+            [UserMessage("Keep nights " + "x" * 100000), AssistantMessage("Old answer " + "y" * 60000)],
+            snapshot=snapshot,
         )
         response = client.post(f"/sessions/{session_id}/messages", json={"message": "Inspect P1"})
         assert response.status_code == 200
@@ -568,6 +714,9 @@ def test_closing_after_a_summary_cost_event_closes_the_provider_before_returning
         agent = Agent()
         stream = agent.prompt(Provider(), history(), [])
         assert isinstance(await anext(stream), AgentCompactionStart)
+        from nurse_scheduling.ai.agent_types import AgentGenerationProgress
+
+        assert isinstance(await anext(stream), AgentGenerationProgress)
         assert isinstance(await anext(stream), ProviderCall)
         await stream.aclose()
         assert closed
@@ -724,3 +873,111 @@ def test_failed_split_turn_summary_leaves_original_context_intact(monkeypatch):
     assert not any(isinstance(event, AgentCompaction) for event in events)
     assert compactor.failed
     assert json.dumps(messages) == before
+
+
+@pytest.mark.parametrize("failure", [None, "error", "cancel"])
+@pytest.mark.parametrize("pending_cost", [None, "0.02"])
+def test_manual_compaction_uses_session_events_without_a_question_or_workspace(failure, pending_cost):
+    import httpx
+
+    from . import test_ai_basic as basic
+
+    class Provider(CompactionProvider):
+        async def stream_events(self, messages, tools=None):
+            yield ProviderCall("summary-1", "model", cost_usd=pending_cost)
+            async for event in super().stream_events(messages, tools):
+                yield event
+                if isinstance(event, TextDelta) and failure is None:
+                    await self.release_summary.wait()
+
+    async def exercise():
+        provider = Provider(fail_summary=failure)
+        provider.release_summary = asyncio.Event()
+        progressed = asyncio.Event()
+        provider.context_tokens = 131072
+        app = basic.create_test_app(settings=basic.make_settings(), provider=provider)
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://testserver", headers=basic.AI_AUTH_HEADERS
+            ) as client,
+        ):
+            sid = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            session = app.state.session_store._sessions[sid]
+            original = [
+                UserMessage("Keep nights " + "x" * 12000),
+                AssistantMessage("Earlier answer " + "y" * 70000),
+                UserMessage("Latest request"),
+                AssistantMessage("Latest answer"),
+            ]
+            for entry in original:
+                session._add_entry(entry)
+            publications = []
+
+            def publish(event):
+                publications.append(event)
+                if event["type"] == "generation_progress" and event["characters"] > 0:
+                    progressed.set()
+
+            session.subscribe(publish)
+            request = {"message_id": "manual-compact"}
+            response = await client.post(f"/sessions/{sid}/compact", json=request)
+            assert response.status_code == 202, response.text
+            await asyncio.wait_for(provider.summary_started.wait(), 2)
+            if failure is None:
+                await asyncio.wait_for(progressed.wait(), 2)
+                assert not any(event["type"] == "compaction_end" for event in publications)
+                progress = [event for event in publications if event["type"] == "generation_progress"][-1]
+                assert progress["kind"] == "compaction" and progress["characters"] > 0
+                assert "text" not in progress and "summary" not in progress
+                provider.release_summary.set()
+            if failure == "cancel":
+                busy = await client.post(f"/sessions/{sid}/compact", json={"message_id": "another"})
+                assert busy.status_code == 409
+                queued = await client.post(
+                    f"/sessions/{sid}/messages/queue", json={"message": "hello", "message_id": "steer"}
+                )
+                assert queued.status_code == 409
+                assert (await client.post(f"/sessions/{sid}/stop")).status_code == 202
+            async with asyncio.timeout(3):
+                while app.state.runs.busy(sid):
+                    await asyncio.sleep(0)
+            repeated = await client.post(f"/sessions/{sid}/compact", json=request)
+            assert repeated.json() == response.json()
+            assert len(provider.summaries) == 1
+            assert not provider.requests
+            assert app.state.sandbox_factory.created == []
+            assert not session.active
+            expected_cost = "0.01" if failure is None else pending_cost or "0"
+            assert session.cost_totals.public() == {
+                "usd": expected_cost,
+                "calls": 1,
+                "pending": 0,
+                "unavailable": int(failure is not None and pending_cost is None),
+            }
+            assert not session.pending_provider_calls
+            assert session.recovery_state()["pending_provider_calls"] == []
+            calls = [event for event in publications if event["type"] == "provider_call"]
+            assert calls[-1]["status"] == (
+                "unavailable" if failure is not None and pending_cost is None else "reported"
+            )
+            assert session.transcript[: len(original)] == original
+            assert not any(entry.text == "/compact" for entry in session.transcript if isinstance(entry, UserMessage))
+            assert not any(
+                event["type"] in {"delta", "reasoning", "tool_start", "tool", "response_end"} for event in publications
+            )
+            assert publications[0]["trigger"] == "compaction"
+            end = next(event for event in publications if event["type"] == "compaction_end")
+            assert end["reason"] == "manual"
+            assert end["success"] is (failure is None)
+            assert end["aborted"] is (failure == "cancel")
+            if failure is None:
+                assert isinstance(session.transcript[-1], CompactionEntry)
+                assert end["summary"] == session.transcript[-1].summary
+                assert session.transcript[-1].keep_messages > 0
+                assert any(event["type"] == "context_usage" and event["estimated"] for event in publications)
+            else:
+                assert session.transcript == original
+            assert publications[-1]["type"] == ("stopped" if failure == "cancel" else "done")
+
+    asyncio.run(exercise())

@@ -44,6 +44,7 @@ import {
   type ModelSelection,
   ToolActivity,
   createSession,
+  compactSession,
   removeGeneratedZip,
   getUploads,
   removeUpload,
@@ -66,6 +67,7 @@ import {
   stopResponse,
   messageId,
   interruptRunningTools,
+  invalidateRunSummaries,
   startsVisibleOutput,
   type AssistantEvent,
 } from './assistantEvents';
@@ -87,9 +89,11 @@ interface StreamCallbacks {
   onReasoning?: (text: string) => void;
   onCompaction?: (event: Extract<SessionEvent, { type: 'compaction_start' | 'compaction_end' }>) => void;
   onTruncated?: () => void;
+  onResponseEnd?: (event: Extract<SessionEvent, { type: 'response_end' }>) => void;
   onProviderRetry?: (message: string) => void;
   onToolStart?: (activity: ToolStartActivity) => void;
   onTool?: (activity: ToolActivity) => void;
+  onGenerationProgress?: (event: Extract<SessionEvent, { type: 'generation_progress' }>) => void;
   onSteering?: (messageId: string, message: string) => void;
   onScheduleChange?: (scheduleYaml: string) => void;
   onScheduleApplied?: (applied: ScheduleApplied) => void;
@@ -103,7 +107,12 @@ interface StreamCallbacks {
   onError?: (message: string) => void;
 }
 
-function dispatchPageEvent(event: SessionEvent, callbacks: StreamCallbacks): void {
+function dispatchPageEvent(event: SessionEvent, callbacks: StreamCallbacks, setMessages: Dispatch<SetStateAction<ChatMessage[]>>): void {
+  const runId = event.runId;
+  if (runId && (event.type === 'error' || event.type === 'stopped' || event.type === 'stale'
+    || (event.type === 'response_end' && event.contextNote))) {
+    setMessages(previous => invalidateRunSummaries(previous, runId));
+  }
   if (event.runId && event.type !== 'run_context' && event.type !== 'session_reset') callbacks.onRunContext?.(event.runId);
   switch (event.type) {
     case 'provider_call': callbacks.onProviderCall?.(event.call); break;
@@ -116,7 +125,9 @@ function dispatchPageEvent(event: SessionEvent, callbacks: StreamCallbacks): voi
     case 'reasoning': callbacks.onReasoning?.(event.text); break;
     case 'provider_retry': callbacks.onProviderRetry?.(event.message); break;
     case 'compaction_start': case 'compaction_end': callbacks.onCompaction?.(event); break;
+    case 'generation_progress': callbacks.onGenerationProgress?.(event); break;
     case 'truncated': callbacks.onTruncated?.(); break;
+    case 'response_end': callbacks.onResponseEnd?.(event); break;
     case 'tool_start': callbacks.onToolStart?.(event.activity); break;
     case 'tool': callbacks.onTool?.(event.activity); break;
     case 'steering': callbacks.onSteering?.(event.messageId, event.message); break;
@@ -142,14 +153,16 @@ function assistantEventCallbacks(
   browserSchedule: { readonly current: string },
   applySchedule: (applied: ScheduleApplied) => string | null,
 ): Required<Pick<StreamCallbacks,
-  'onDelta' | 'onReasoning' | 'onCompaction' | 'onTruncated' | 'onProviderRetry' | 'onToolStart' | 'onTool' | 'onScheduleChange'
-  | 'onScheduleApplied'>> {
+  'onDelta' | 'onReasoning' | 'onCompaction' | 'onTruncated' | 'onResponseEnd' | 'onProviderRetry' | 'onToolStart' | 'onTool' | 'onScheduleChange'
+  | 'onScheduleApplied' | 'onGenerationProgress'>> {
   return {
     onProviderRetry: message => apply({ type: 'provider_retry', message }),
     onDelta: text => apply({ type: 'delta', text }),
     onReasoning: text => apply({ type: 'reasoning', text }),
     onCompaction: event => apply(event),
+    onGenerationProgress: event => apply(event),
     onTruncated: () => apply({ type: 'truncated' }),
+    onResponseEnd: event => apply(event),
     onToolStart: activity => apply({ type: 'tool_start', activity }),
     onTool: activity => apply({ type: 'tool', activity }),
     onScheduleChange: after => {
@@ -196,11 +209,12 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [removingUploadId, setRemovingUploadId] = useState<string | null>(null);
   const [removingDownloadId, setRemovingDownloadId] = useState<string | null>(null);
+  const [compactionRequested, setCompactionRequested] = useState(false);
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
   const [costSummary, setCostSummary] = useState<CostSummary | null>(null);
   const updateContextUsage = useCallback((usage: ContextUsage) => setContextUsage(previous => (
     usage.usedTokens === undefined && previous?.usedTokens !== undefined
-      ? { ...usage, usedTokens: previous.usedTokens, maxTokens: previous.maxTokens }
+      ? { ...usage, usedTokens: previous.usedTokens, maxTokens: previous.maxTokens, estimated: previous.estimated }
       : usage
   )), []);
 
@@ -219,6 +233,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   const [isReconnecting, setIsReconnecting] = useState(false);
   const resumedRequestRef = useRef<string | null>(null);
   const currentRequestRef = useRef<{ id: string; stopped: boolean } | null>(null);
+  const backgroundEventRef = useRef<(event: SessionEvent) => void>(() => {});
   const [activeOptimization, setActiveOptimization] = useState<ActiveOptimization | null>(null);
   const [queuedMessages, setQueuedMessages] = useState<QueuedChatMessage[]>([]);
   const [steeringAssistantId, setSteeringAssistantId] = useState<string | null>(null);
@@ -267,6 +282,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
     sessionEvents.reset();
+    setCompactionRequested(false);
     sessionIdRef.current = null;
     sessionEndpointRef.current = null;
     setSessionEndpoint(null);
@@ -605,11 +621,12 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       onHistoryTrimmed: setTrimmedHistoryCount,
       onError: failBackgroundTurn,
     };
+    backgroundEventRef.current = event => dispatchPageEvent(event, handlers, setMessages);
     sessionEvents.connect({
       sessionId, endpoint, authToken, resetReplay,
       onEventId: () => setIsReconnecting(false),
       onDisconnect: () => { if (lifecycle.busy) setIsReconnecting(true); },
-      onEvent: event => eventRouterRef.current.dispatch(event, value => dispatchPageEvent(value, handlers), ownsConversation),
+      onEvent: event => eventRouterRef.current.dispatch(event, value => dispatchPageEvent(value, handlers, setMessages), ownsConversation),
       onError: streamError => {
         if (isAuthenticationError(streamError)) reportRequestError(streamError, 'The AI session could not reconnect.');
       },
@@ -853,7 +870,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
         onHistoryTrimmed: setTrimmedHistoryCount,
       }, () => lifecycle.owns(operation) && !controller.signal.aborted);
       const foreground = eventRouterRef.current.begin(
-        event => dispatchPageEvent(event, callbacks), rejectRun,
+        event => dispatchPageEvent(event, callbacks, setMessages), rejectRun,
         () => startSessionEventStream(sessionId, sessionEndpoint, true),
       );
       if (!sessionEvents.connected()) startSessionEventStream(sessionId, sessionEndpoint);
@@ -1016,6 +1033,68 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     await sendRequest(question, attachments, true);
   };
 
+  const isCompacting = compactionRequested || messages.some(message => message.status === 'pending'
+    && message.activity?.some(entry => entry.kind === 'compaction' && entry.reason === 'manual' && entry.state === 'running'));
+
+  const compactContext = async () => {
+    const sessionId = sessionIdRef.current;
+    if (!sessionId || lifecycle.busy) return;
+    const request = { id: messageId(), stopped: false };
+    currentRequestRef.current = request;
+    const operation = lifecycle.begin('foreground', request.id);
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    setCompactionRequested(true);
+    const endpoint = sessionEndpointRef.current ?? aiEndpoint;
+    let runFinished = false;
+    let finishRun!: () => void;
+    let rejectRun!: (error: Error) => void;
+    const finished = new Promise<void>((resolve, reject) => {
+      finishRun = () => { runFinished = true; resolve(); };
+      rejectRun = reject;
+    });
+    void finished.catch(() => {});
+    const foreground = eventRouterRef.current.begin(event => {
+      if (!lifecycle.owns(operation)) return;
+      // Compaction has no user question, so use the background transcript projection.
+      backgroundEventRef.current(event);
+      if (['done', 'stopped', 'stale', 'error'].includes(event.type)) finishRun();
+    }, rejectRun, () => startSessionEventStream(sessionId, endpoint, true));
+    controller.signal.addEventListener('abort', finishRun, { once: true });
+    if (!sessionEvents.connected()) startSessionEventStream(sessionId, endpoint);
+    try {
+      const runId = await compactSession(sessionId, request.id, authToken, endpoint, {
+        signal: controller.signal,
+        shouldStop: () => request.stopped,
+        onConnectionChange: connected => { if (lifecycle.owns(operation)) setIsReconnecting(!connected); },
+      });
+      if (!lifecycle.owns(operation)) return;
+      eventRouterRef.current.acknowledge(foreground, runId, () => {});
+      if (!runFinished && lifecycle.getSnapshot().foreground?.phase === 'stopping') {
+        await stopSession(sessionId, authToken, endpoint, request.id).catch(stopError => {
+          if (!lifecycle.owns(operation)) return;
+          lifecycle.stopFailed([operation]);
+          reportRequestError(stopError, 'The AI response could not be stopped.');
+        });
+      }
+      await finished;
+    } catch (compactError) {
+      if (lifecycle.owns(operation) && !controller.signal.aborted) {
+        reportRequestError(compactError, 'The conversation could not be compacted.');
+      }
+    } finally {
+      controller.signal.removeEventListener('abort', finishRun);
+      eventRouterRef.current.finish(foreground);
+      if (lifecycle.owns(operation)) {
+        setCompactionRequested(false);
+        setIsReconnecting(false);
+        if (currentRequestRef.current === request) currentRequestRef.current = null;
+        if (abortControllerRef.current === controller) abortControllerRef.current = null;
+        lifecycle.finish(operation);
+      }
+    }
+  };
+
   const stop = () => {
     if (isStopping) return;
     const stopping = lifecycle.stop();
@@ -1124,7 +1203,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     activeOptimization, queuedMessages, steeringAssistantId,
     setSessionRetentionSeconds, restoreConversation, captureSession,
     newConversation, submitMessage, stop, removeUploadedFile,
-    removeGeneratedFiles,
+    removeGeneratedFiles, compactContext, isCompacting,
     sessionEndpoint: sessionEndpoint ?? aiEndpoint,
   };
 }

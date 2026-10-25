@@ -24,12 +24,10 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, replace
-from datetime import UTC, datetime
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .config import DEFAULT_MAX_HISTORY_CHARS, AiSettings
-from .optimizer import WORKSPACE_OPTIMIZER_RESULT
 from .provider import (
     ChatMessage,
     TokenUsage,
@@ -40,6 +38,7 @@ from .provider import (
 )
 from .schedule_context import describe_schedule
 from .transcript import (
+    STATUS_PREFIX,
     AgentMessage,
     AppEventEntry,
     AssistantMessage,
@@ -75,8 +74,8 @@ def recent_history(history: list[ChatMessage], max_chars: int) -> list[ChatMessa
 
 
 APP_EVENT_PREFIX = "[App event]"
-STATUS_PREFIX = "[Current status]"
-CURRENT_TIME_STATUS = "Current date and time: "
+TIMEZONE_STATUS = "Workspace timezone: "
+INTERRUPTED_TOOL_RESULT = "No result provided. The tool exchange was interrupted."
 SCHEDULE_CHANGED_EVENT = (
     f"{APP_EVENT_PREFIX} The schedule changed in the app. /workspace/schedule.yaml contains the current version."
 )
@@ -90,8 +89,9 @@ _APP_EVENT_TITLES = (
     (REMOVAL_EVENT_PREFIX, "File Removed"),
     (SCHEDULE_CHANGED_EVENT, "Schedule Changed"),
 )
+# Preserve titles when displaying historical status entries.
 _STATUS_TITLES = (
-    (CURRENT_TIME_STATUS, "Current Time"),
+    (TIMEZONE_STATUS, "Workspace Timezone"),
     (OPTIMIZER_RESULT_STATUS, "Optimizer Result"),
     (UNLISTED_UPLOADS_STATUS, "Unlisted Uploads"),
 )
@@ -126,54 +126,13 @@ def removal_event(attachment: SandboxAttachment, index: int) -> str:
     return f"{REMOVAL_EVENT_PREFIX} {json.dumps(removed, ensure_ascii=False)}"
 
 
-def status_message(
-    history: Sequence[ChatMessage],
-    attachments: Sequence[SandboxAttachment],
-    *,
-    optimizer_result_available: bool,
-    frontend_timezone: str | None = None,
-    now: datetime | None = None,
-) -> str:
-    """Describe request-specific state that would otherwise change the cached prompt prefix."""
-    lines = []
-    if frontend_timezone is not None:
-        lines.append(current_time_status(frontend_timezone, now))
-    if optimizer_result_available:
-        lines.append(
-            f"{OPTIMIZER_RESULT_STATUS} {WORKSPACE_OPTIMIZER_RESULT}. "
-            "The user can already download this workbook with the chat's Download result button."
-        )
-    # Trimmed history or a failed turn can hide an upload event, so list only the files the request cannot show.
-    sent = "\n".join(str(message["content"]) for message in history)
-    unlisted = [
-        entry
-        for index, attachment in enumerate(attachments, start=1)
-        if (entry := _file_entry(attachment, index))["path"] not in sent
-    ]
-    if unlisted:
-        lines.append(f"{UNLISTED_UPLOADS_STATUS} {json.dumps(unlisted, ensure_ascii=False)}")
-    return f"{STATUS_PREFIX}\n" + "\n".join(lines) if lines else ""
-
-
 def validate_frontend_timezone(value: str) -> str:
-    """Accept an IANA timezone that the server can use for the browser's clock context."""
+    """Accept an IANA timezone that the server can use for the sandbox environment."""
     try:
         ZoneInfo(value)
     except (ValueError, ZoneInfoNotFoundError) as error:
         raise ValueError("frontend_timezone must be a known IANA timezone") from error
     return value
-
-
-def current_time_status(frontend_timezone: str, now: datetime | None = None) -> str:
-    """Describe the server's current instant in the frontend's timezone."""
-    instant = now if now is not None else datetime.now(UTC)
-    if instant.utcoffset() is None:
-        raise ValueError("Current time must include a UTC offset")
-    timezone = UTC if frontend_timezone in {"UTC", "Etc/UTC", "GMT", "Etc/GMT"} else ZoneInfo(frontend_timezone)
-    local = instant.astimezone(timezone)
-    return CURRENT_TIME_STATUS + json.dumps(
-        {"datetime": local.isoformat(timespec="seconds"), "timezone": frontend_timezone}
-    )
 
 
 def context_usage(
@@ -183,7 +142,7 @@ def context_usage(
     provider: ToolCapableChatProvider | None = None,
     *,
     estimated_tokens: int | None = None,
-) -> dict[str, int]:
+) -> dict[str, int | bool]:
     """Report retained history size and the latest request's tokens with the provider's context limit.
 
     The latest provider call holds the whole conversation that the model saw, so its prompt and
@@ -195,6 +154,7 @@ def context_usage(
         usage["used_tokens"] = (
             estimated_tokens if estimated_tokens is not None else last_call.prompt_tokens + last_call.completion_tokens
         )
+        usage["estimated"] = estimated_tokens is not None
         limit = getattr(provider, "context_tokens", None)
         if type(limit) is int and limit > 0:
             usage["max_tokens"] = limit
@@ -210,19 +170,15 @@ def build_provider_messages(
     history: HistoryContext | list[ChatMessage],
     schedule_yaml: str,
     question: str,
-    attachments: Sequence[SandboxAttachment] = (),
     *,
     system_prompt: str = SANDBOX_SYSTEM_PROMPT,
-    optimizer_result_available: bool = False,
     max_history_chars: int = DEFAULT_MAX_HISTORY_CHARS,
     max_download_bytes: int = 50_000_000,
-    frontend_timezone: str | None = None,
-    now: datetime | None = None,
 ) -> list[ChatMessage]:
     """Build a provider prompt whose system message and history stay unchanged between requests.
 
-    Providers reuse cached work only for an identical prefix. Request-specific state therefore goes
-    into a final status message that history never keeps.
+    Providers reuse cached work only for an identical prefix. Workspace changes
+    are recorded as ordinary app events.
     """
     system_content = f"{system_prompt}\n\n{describe_schedule(schedule_yaml)}"
     system_content += f"\nDownload size limit: {max_download_bytes} bytes.\n"
@@ -232,23 +188,17 @@ def build_provider_messages(
         else project_history(entries_from_legacy_history(history), max_history_chars)
     )
     retained = selected.messages
-    status = status_message(
-        retained,
-        attachments,
-        optimizer_result_available=optimizer_result_available,
-        frontend_timezone=frontend_timezone,
-        now=now,
-    )
     return [
         ChatMessage(role="system", content=system_content),
         *retained,
         ChatMessage(role="user", content=question),
-        *([ChatMessage(role="user", content=status, _current_status=True)] if status else []),
     ]
 
 
 def message_title(kind: str, content: str) -> str | None:
     """Name the topic of an app event or status message for its chat label."""
+    if kind == "app" and content.startswith(STATUS_PREFIX):
+        return message_title("status", content)
     if kind == "app":
         return next((title for prefix, title in _APP_EVENT_TITLES if content.startswith(prefix)), None)
     if kind == "status":
@@ -262,7 +212,11 @@ QuestionKind = Literal["question", "optimizer"]
 
 
 def model_input(
-    messages: Sequence[ChatMessage], history_indices: Sequence[int], question_kind: QuestionKind
+    messages: Sequence[ChatMessage],
+    history_indices: Sequence[int],
+    question_kind: QuestionKind,
+    *,
+    app_indices: set[int] | None = None,
 ) -> dict[str, object]:
     """Describe a provider request for the chat: its system message and the messages added since the last reply.
 
@@ -276,9 +230,10 @@ def model_input(
         {"kind": "app", "index": history_indices[index], "content": message["content"]}
         for index, message in enumerate(history)
         if index > last_reply
+        and message["role"] == "user"
+        and (app_indices is None or history_indices[index] in app_indices)
     ]
     added.append({"kind": question_kind, "content": messages[1 + history_count]["content"]})
-    added.extend({"kind": "status", "content": message["content"]} for message in messages[2 + history_count :])
     for entry in added:
         if title := message_title(str(entry["kind"]), str(entry["content"])):
             entry["title"] = title
@@ -289,21 +244,11 @@ def prepare_provider_request(
     prefix: Sequence[ChatMessage],
     entries: Sequence[AgentMessage],
     *,
-    now: datetime | None = None,
     provider: ProviderIdentity | None = None,
     _preserve_native: bool = False,
 ) -> list[ChatMessage]:
     """Project the agent's in-run messages at the provider boundary."""
     request = list(prefix)
-    clock_status = None
-    if request and request[-1].get("_current_status"):
-        lines = request[-1]["content"].splitlines()
-        for index, line in enumerate(lines):
-            if line.startswith(CURRENT_TIME_STATUS):
-                timezone = json.loads(line.removeprefix(CURRENT_TIME_STATUS))["timezone"]
-                lines[index] = current_time_status(timezone, now)
-                clock_status = {**request.pop(), "content": "\n".join(lines)}
-                break
     pending_images: list[ChatMessage] = []
 
     def flush_images() -> None:
@@ -346,8 +291,6 @@ def prepare_provider_request(
         elif isinstance(entry, UserMessage | AppEventEntry):
             request.append(ChatMessage(role="user", content=entry.text))
     flush_images()
-    if clock_status is not None:
-        request.append(clock_status)
     return (
         _repair_tool_pairs(request)
         if _preserve_native
@@ -380,17 +323,15 @@ def _recent_messages(projected: list[tuple[bool, ChatMessage]], count: int) -> l
 
 
 def apply_compaction(messages: Sequence[ChatMessage], entry: CompactionEntry) -> list[ChatMessage]:
-    """Replace old context while preserving fixed instructions and current status."""
-    system, status, conversation = [], [], []
+    """Replace old context while preserving fixed instructions and the recent tail."""
+    system, conversation = [], []
     for message in messages:
         if message["role"] == "system":
             system.append(message)
-        elif message.get("_current_status"):
-            status.append(message)
         else:
             conversation.append((False, message))
     tail = [message for _, message in _recent_messages(conversation, entry.keep_messages)]
-    return [*system, summary_message(entry.summary), *tail, *status]
+    return [*system, summary_message(entry.summary), *tail]
 
 
 def retained_entries(entries: Sequence[AgentMessage]) -> list[AgentMessage]:
@@ -412,7 +353,6 @@ def compatible_provider_messages(
         source = message.pop("_provider", None)
         message.pop("_usage", None)
         message.pop("_tool_image", None)
-        message.pop("_current_status", None)
         message.pop("_compaction_summary", None)
         compatible = provider is not None and source == asdict(provider)
         if message["role"] == "assistant" and not compatible:
@@ -454,12 +394,10 @@ def _repair_tool_pairs(messages: Sequence[ChatMessage]) -> list[ChatMessage]:
                 result.append(message)
             continue
         for call_id in pending:
-            result.append(tool_result_message(call_id, "No result provided. The tool exchange was interrupted."))
+            result.append(tool_result_message(call_id, INTERRUPTED_TOOL_RESULT))
         pending = {call["id"]: call for call in message.get("tool_calls", [])}
         result.append(message)
-    result.extend(
-        tool_result_message(call_id, "No result provided. The tool exchange was interrupted.") for call_id in pending
-    )
+    result.extend(tool_result_message(call_id, INTERRUPTED_TOOL_RESULT) for call_id in pending)
     return result
 
 
@@ -474,10 +412,9 @@ def _projected_messages(
     def close_answer() -> None:
         if not response:
             return
-        if any(isinstance(entry, AssistantMessage) and entry.stop_reason in {"aborted", "error"} for entry in response):
-            messages = [ChatMessage(role="assistant", content=ABORTED_RESPONSE_HISTORY)]
-        elif all(
+        if all(
             isinstance(entry, AssistantMessage)
+            and entry.stop_reason not in {"aborted", "error"}
             and not entry.tool_calls
             and not entry.native_reasoning
             and entry.usage is None
@@ -507,7 +444,7 @@ def _projected_messages(
             message = ChatMessage(role="user", content=entry.text)
             if with_sources:
                 message["_source_index"] = index
-            projected.append((True, message))
+            projected.append((starts_exchange(entry), message))
         else:
             if not response:
                 response_start = index
@@ -560,7 +497,10 @@ def project_history(transcript: Sequence[AgentMessage], max_chars: int = DEFAULT
     )
 
 
-ABORTED_RESPONSE_HISTORY = "[This response was interrupted before completion. Its workspace changes were discarded.]"
+ABORTED_RESPONSE_HISTORY = (
+    "[App event] The response was interrupted. Its incomplete output is omitted from context. "
+    "The run's temporary workspace was discarded. Earlier tool results describe that discarded workspace."
+)
 
 
 def entries_from_legacy_history(messages: Sequence[ChatMessage]) -> list[AgentMessage]:
@@ -580,17 +520,29 @@ def entries_from_legacy_history(messages: Sequence[ChatMessage]) -> list[AgentMe
 
 
 def interrupted_entries(entries: Sequence[AgentMessage], reason) -> list[AgentMessage]:
-    """Do not replay claims from a run whose temporary workspace was discarded."""
-    result = [
-        replace(entry, stop_reason=reason)
-        if isinstance(entry, AssistantMessage)
-        else replace(entry, valid=False)
-        if isinstance(entry, CompactionEntry)
-        else entry
-        for entry in entries
-    ]
-    if not result or not isinstance(result[-1], AssistantMessage):
+    """Preserve completed exchanges and explain the discarded workspace separately."""
+    result = []
+    pending: dict[str, ToolCall] = {}
+    for entry in entries:
+        if isinstance(entry, ToolResultMessage):
+            pending.pop(entry.tool_call_id, None)
+        elif isinstance(entry, AssistantMessage | UserMessage | AppEventEntry):
+            result.extend(
+                ToolResultMessage(call.id, call.name, INTERRUPTED_TOOL_RESULT, False) for call in pending.values()
+            )
+            pending.clear()
+            if isinstance(entry, AssistantMessage) and entry.stop_reason not in {"aborted", "error"}:
+                pending.update((call.id, call) for call in entry.tool_calls)
+        result.append(replace(entry, valid=False) if isinstance(entry, CompactionEntry) else entry)
+    result.extend(ToolResultMessage(call.id, call.name, INTERRUPTED_TOOL_RESULT, False) for call in pending.values())
+    last = next(
+        (index for index in range(len(result) - 1, -1, -1) if not isinstance(result[index], CompactionEntry)), None
+    )
+    if last is not None and isinstance(result[last], AssistantMessage) and not result[last].tool_calls:
+        result[last] = replace(result[last], stop_reason=reason)
+    else:
         result.append(AssistantMessage("", reason))
+    result.append(AppEventEntry(ABORTED_RESPONSE_HISTORY))
     return result
 
 

@@ -31,6 +31,7 @@ import type { OptimizationProgressPoint } from '@/components/OptimizationProgres
 import { CURRENT_APP_VERSION } from '@/utils/version';
 
 export interface ToolActivity {
+  replayArguments?: string;
   toolCallId?: string;
   name: string;
   arguments: string;
@@ -84,8 +85,9 @@ export interface OptimizationProgressActivity {
 export interface ContextUsage {
   usedChars: number;
   maxChars: number;
-  // Tokens of the latest provider request. The limit is optional when model metadata is unavailable.
+  // Current LLM context tokens. The limit is optional when model metadata is unavailable.
   usedTokens?: number;
+  estimated?: boolean;
   maxTokens?: number;
 }
 
@@ -125,26 +127,38 @@ function parseModelSelection(body: unknown): ModelSelection {
   return selection as ModelSelection;
 }
 
+// The session's saved model settings, and whether an accepted run fixed the model.
+export interface SessionModelSelection {
+  selection: ModelSelection;
+  locked: boolean;
+}
+
+function parseSessionModelSelection(body: unknown): SessionModelSelection {
+  const { locked, ...selection } = (body ?? {}) as { locked?: unknown };
+  if (typeof locked !== 'boolean') throw new Error('The AI backend returned invalid model settings.');
+  return { selection: parseModelSelection(selection), locked };
+}
+
 export async function getSessionModelSelection(
   sessionId: string, signal: AbortSignal, authToken: string | null, endpoint: string,
-): Promise<ModelSelection> {
+): Promise<SessionModelSelection> {
   const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/model-selection`, {
     signal, credentials: 'include', headers: authorizedHeaders(authToken),
   });
   if (!response.ok) throw await responseError(response);
-  return parseModelSelection(await response.json());
+  return parseSessionModelSelection(await response.json());
 }
 
 export async function updateSessionModelSelection(
   sessionId: string, selection: ModelSelection, authToken: string | null, endpoint: string,
-): Promise<ModelSelection> {
+): Promise<SessionModelSelection> {
   const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/model-selection`, {
     method: 'PUT', credentials: 'include',
     headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
     body: JSON.stringify(selection),
   });
   if (!response.ok) throw await responseError(response);
-  return parseModelSelection(await response.json());
+  return parseSessionModelSelection(await response.json());
 }
 
 export interface AvailableModel {
@@ -204,7 +218,8 @@ function isModelInputMessage(value: unknown): value is ModelInputMessage {
   return typeof message.kind === 'string' && MODEL_INPUT_KINDS.has(message.kind)
     && typeof message.content === 'string'
     && (message.title === undefined || typeof message.title === 'string')
-    && (message.kind === 'app' ? Number.isSafeInteger(message.index) : message.index === undefined);
+    && (message.kind === 'app' ? Number.isSafeInteger(message.index)
+      : (message.kind === 'status' && message.index !== undefined ? Number.isSafeInteger(message.index) : message.index === undefined));
 }
 
 interface SessionResponse {
@@ -216,10 +231,19 @@ interface SessionStatusResponse {
 }
 
 interface SsePayload {
+  kind?: unknown;
+  characters?: unknown;
+  step?: unknown;
+  summary?: unknown;
+  keep_messages?: unknown;
+  replay_arguments?: unknown;
+  stop_reason?: unknown;
+  context_note?: unknown;
   reason?: unknown;
   tokens_before?: unknown;
   success?: unknown;
   aborted?: unknown;
+  skipped?: unknown;
   estimated_tokens_after?: unknown;
   call_id?: unknown;
   status?: unknown;
@@ -245,6 +269,7 @@ interface SsePayload {
   messages?: unknown;
   used_tokens?: unknown;
   max_tokens?: unknown;
+  estimated?: unknown;
   message_id?: unknown;
   tool_call_id?: unknown;
   run_id?: unknown;
@@ -555,16 +580,34 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
   const emit = (event: SessionEvent) => events.push(runId === undefined ? event : { ...event, runId });
   if (runId) emit({ type: 'run_context', runId });
 
-  if (eventType === 'compaction_start' || eventType === 'compaction_end') {
-    if (!['threshold', 'overflow'].includes(payload.reason as string)
+  if (eventType === 'generation_progress') {
+    if (!['compaction', 'tool_calls'].includes(payload.kind as string)
+      || !Number.isSafeInteger(payload.characters) || (payload.characters as number) < 0
+      || !Number.isSafeInteger(payload.step) || (payload.step as number) < 1) {
+      throw new Error('The AI backend returned invalid generation progress.');
+    }
+    emit({ type: 'generation_progress', kind: payload.kind as 'compaction' | 'tool_calls',
+      characters: payload.characters as number, step: payload.step as number });
+  } else if (eventType === 'compaction_start' || eventType === 'compaction_end') {
+    if (!['threshold', 'overflow', 'manual'].includes(payload.reason as string)
       || !Number.isSafeInteger(payload.tokens_before) || (payload.tokens_before as number) < 0
       || (eventType === 'compaction_end' && (typeof payload.success !== 'boolean' || typeof payload.aborted !== 'boolean'
-        || (payload.estimated_tokens_after !== undefined && (!Number.isSafeInteger(payload.estimated_tokens_after) || (payload.estimated_tokens_after as number) < 0))))) {
+        || (payload.skipped !== undefined && (typeof payload.skipped !== 'boolean' || (payload.skipped && (payload.success || payload.aborted))))
+        || (payload.estimated_tokens_after !== undefined && (!Number.isSafeInteger(payload.estimated_tokens_after) || (payload.estimated_tokens_after as number) < 0))
+        || (payload.summary !== undefined && typeof payload.summary !== 'string')
+        || (payload.characters !== undefined && (!Number.isSafeInteger(payload.characters) || (payload.characters as number) < 0))
+        || (payload.step !== undefined && (!Number.isSafeInteger(payload.step) || (payload.step as number) < 1))
+        || (payload.keep_messages !== undefined && (!Number.isSafeInteger(payload.keep_messages) || (payload.keep_messages as number) < 0))))) {
       throw new Error('The AI backend returned invalid compaction status.');
     }
-    const common = { reason: payload.reason as 'threshold' | 'overflow', tokensBefore: payload.tokens_before as number };
+    const common = { reason: payload.reason as 'threshold' | 'overflow' | 'manual', tokensBefore: payload.tokens_before as number };
     if (eventType === 'compaction_start') emit({ type: 'compaction_start', ...common });
     else emit({ type: 'compaction_end', ...common, success: payload.success as boolean, aborted: payload.aborted as boolean,
+      ...(payload.skipped === undefined ? {} : { skipped: payload.skipped as boolean }),
+      ...(payload.summary === undefined ? {} : { summary: payload.summary as string }),
+      ...(payload.keep_messages === undefined ? {} : { keepMessages: payload.keep_messages as number }),
+      ...(payload.characters === undefined ? {} : { characters: payload.characters as number }),
+      ...(payload.step === undefined ? {} : { step: payload.step as number }),
       ...(payload.estimated_tokens_after === undefined ? {} : { estimatedTokensAfter: payload.estimated_tokens_after as number }) });
   } else if (eventType === 'provider_call') {
     const call = { callId: payload.call_id, model: payload.model, reasoning: payload.reasoning,
@@ -591,6 +634,13 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
     emit({ type: 'delta', text: payload.text });
   } else if (eventType === 'reasoning' && typeof payload.text === 'string') {
     emit({ type: 'reasoning', text: payload.text });
+  } else if (eventType === 'response_end') {
+    if (!['stop', 'tool_use', 'length', 'error', 'aborted'].includes(payload.stop_reason as string)
+      || (payload.context_note !== undefined && typeof payload.context_note !== 'string')) {
+      throw new Error('The AI backend returned an invalid response boundary.');
+    }
+    emit({ type: 'response_end', stopReason: payload.stop_reason as 'stop' | 'tool_use' | 'length' | 'error' | 'aborted',
+      contextNote: payload.context_note as string | undefined });
   } else if (eventType === 'truncated') {
     emit({ type: 'truncated' });
   } else if (eventType === 'tool_start' && typeof payload.name === 'string') {
@@ -603,6 +653,9 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
       },
     });
   } else if (eventType === 'tool' && typeof payload.name === 'string') {
+    if (payload.replay_arguments !== undefined && typeof payload.replay_arguments !== 'string') {
+      throw new Error('The AI backend returned invalid tool replay arguments.');
+    }
     emit({
       type: 'tool',
       activity: {
@@ -610,6 +663,7 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
         name: payload.name,
         arguments: typeof payload.arguments === 'string' ? payload.arguments : '',
         result: typeof payload.result === 'string' ? payload.result : '',
+        ...(typeof payload.replay_arguments === 'string' ? { replayArguments: payload.replay_arguments } : {}),
         ok: payload.ok !== false,
         ...(isRecord(payload.schedule_check) && typeof payload.schedule_check.ok === 'boolean'
           && typeof payload.schedule_check.text === 'string'
@@ -695,9 +749,10 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
     if (Number.isSafeInteger(payload.used_chars) && (payload.used_chars as number) >= 0
       && Number.isSafeInteger(payload.max_chars) && (payload.max_chars as number) > 0
       && (payload.used_chars as number) <= (payload.max_chars as number)) {
-      const tokens: Pick<ContextUsage, 'usedTokens' | 'maxTokens'> = {};
+      const tokens: Pick<ContextUsage, 'usedTokens' | 'maxTokens' | 'estimated'> = {};
       if (Number.isSafeInteger(payload.used_tokens) && (payload.used_tokens as number) >= 0) {
         tokens.usedTokens = payload.used_tokens as number;
+        if (typeof payload.estimated === 'boolean') tokens.estimated = payload.estimated;
         if (Number.isSafeInteger(payload.max_tokens) && (payload.max_tokens as number) > 0) {
           tokens.maxTokens = payload.max_tokens as number;
         }
@@ -785,6 +840,15 @@ export async function sendMessage(
   endpoint = getAiBaseUrl(),
   { messageId, shouldStop, onConnectionChange, selection }: SendMessageOptions = { messageId: newMessageId() },
 ): Promise<string> {
+  return acceptRun(sessionId, signal, authToken, endpoint, { messageId, shouldStop, onConnectionChange },
+    connection => postMessage(sessionId, message, connection, authToken, endpoint, 'application/json', messageId, selection));
+}
+
+async function acceptRun(
+  sessionId: string, signal: AbortSignal, authToken: string | null, endpoint: string,
+  { messageId, shouldStop, onConnectionChange }: Omit<SendMessageOptions, 'selection'>,
+  post: (signal: AbortSignal) => Promise<Response>,
+): Promise<string> {
   let retries = 0;
   let stopSaved = false;
   while (true) {
@@ -807,9 +871,7 @@ export async function sendMessage(
       }
       let body: { run_id?: unknown };
       try {
-        const response = await postMessage(
-          sessionId, message, connection.signal, authToken, endpoint, 'application/json', messageId, selection,
-        );
+        const response = await post(connection.signal);
         body = await response.json() as { run_id?: unknown };
       } catch (error) {
         if (error instanceof SyntaxError) throw new Error('The AI backend returned an invalid run ID.');
@@ -940,11 +1002,29 @@ export async function getChatExportUrl(sessionId: string, authToken: string | nu
   });
   if (!response.ok) throw await responseError(response);
   const value: unknown = await response.json();
-  if (!isRecord(value) || (value.download_token !== null && (typeof value.download_token !== 'string'
+  if (!isRecord(value) || typeof value.download_id !== 'string' || !/^[a-f0-9]{32}$/.test(value.download_id)
+    || (value.download_token !== null && (typeof value.download_token !== 'string'
     || !/^[0-9]{1,20}\.[0-9a-f]{64}$/.test(value.download_token)))) {
     throw new Error('The AI backend returned an invalid chat download link.');
   }
-  return value.download_token === null ? path : `${path}?token=${encodeURIComponent(value.download_token)}`;
+  const preparedPath = `${path}?download=${value.download_id}`;
+  return value.download_token === null ? preparedPath : `${preparedPath}&token=${encodeURIComponent(value.download_token)}`;
+}
+
+/** Summarize an idle session without asking a new question. */
+export async function compactSession(
+  sessionId: string, messageId: string, authToken: string | null, endpoint: string,
+  options: Omit<SendMessageOptions, 'messageId' | 'selection'> & { signal: AbortSignal },
+): Promise<string> {
+  return acceptRun(sessionId, options.signal, authToken, endpoint, { ...options, messageId }, async signal => {
+    const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/compact`, {
+      method: 'POST', credentials: 'include', signal,
+      headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ message_id: messageId }),
+    });
+    if (!response.ok) throw await responseError(response);
+    return response;
+  });
 }
 
 /** Stop the named message's run, or every run of the session when no message is named. */

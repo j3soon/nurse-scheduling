@@ -29,6 +29,7 @@ from .agent_types import (
     AgentCompactionStart,
     AgentContextUsage,
     AgentEvent,
+    AgentGenerationProgress,
     AgentMessageEnd,
     AgentProposal,
     AgentReasoning,
@@ -61,6 +62,7 @@ class RunOutput:
     last_call: TokenUsage | None = None
     context_estimate: int | None = None
     compaction: AgentCompactionStart | None = None
+    compaction_progress: AgentGenerationProgress | None = None
     calls: dict[str, ProviderCall] = field(default_factory=dict)
     costs: CostTotals = field(default_factory=CostTotals)
 
@@ -82,7 +84,10 @@ class RunOutput:
         if isinstance(event, AgentMessageEnd):
             self.pending_text.clear()
             self.pending_reasoning.clear()
-            return {"type": "truncated"} if event.message.stop_reason == "length" else None
+            if not event.message.tool_calls and event.message.stop_reason in {"stop", "length"}:
+                # Validation and workspace cleanup can still reject the final answer.
+                return {"type": "truncated"} if event.message.stop_reason == "length" else None
+            return {"type": "response_end", "stop_reason": event.message.stop_reason}
         if isinstance(event, ProviderRetry):
             return {"type": "provider_retry", "message": event.message}
         if isinstance(event, AgentContextUsage):
@@ -90,7 +95,17 @@ class RunOutput:
             return None
         if isinstance(event, AgentCompactionStart):
             self.compaction = event
+            self.compaction_progress = None
             return {"type": "compaction_start", "reason": event.reason, "tokens_before": event.tokens_before}
+        if isinstance(event, AgentGenerationProgress):
+            if event.kind == "compaction":
+                self.compaction_progress = event
+            return {
+                "type": "generation_progress",
+                "kind": event.kind,
+                "characters": event.characters,
+                "step": event.step,
+            }
         if isinstance(event, AgentCompactionEnd):
             self.compaction = None
             if event.success:
@@ -105,6 +120,15 @@ class RunOutput:
             }
             if event.estimated_tokens_after is not None:
                 result["estimated_tokens_after"] = event.estimated_tokens_after
+            if event.skipped:
+                result["skipped"] = True
+            if self.compaction_progress is not None:
+                result["characters"] = self.compaction_progress.characters
+                result["step"] = self.compaction_progress.step
+                self.compaction_progress = None
+            if event.success and event.summary is not None:
+                result["summary"] = event.summary
+                result["keep_messages"] = event.keep_messages
             return result
         if isinstance(event, TokenUsage):
             self.context_estimate = None
@@ -128,6 +152,8 @@ class RunOutput:
             }
             if event.details and "schedule_check" in event.details:
                 tool_event["schedule_check"] = event.details["schedule_check"]
+            if event.details and "replay_arguments" in event.details:
+                tool_event["replay_arguments"] = event.details["replay_arguments"]
             return tool_event
         elif isinstance(event, AgentSteering):
             return {"type": "steering", "message_id": event.message_id, "message": event.text}
@@ -150,6 +176,7 @@ class RunEvents:
         self._publish = publish
         self._pending: TextEvent | None = None
         self._pending_usage: AgentSessionRunEvent | None = None
+        self._pending_progress: AgentSessionRunEvent | None = None
         self._timer: asyncio.TimerHandle | None = None
         self._terminal: AgentSessionTerminalEvent | None = None
 
@@ -163,6 +190,9 @@ class RunEvents:
         if self._pending_usage is not None:
             self._publish(self._pending_usage)
             self._pending_usage = None
+        if self._pending_progress is not None:
+            self._publish(self._pending_progress)
+            self._pending_progress = None
 
     def emit(self, event: AgentSessionRunEvent) -> SessionEvent | None:
         # Every replayable fragment identifies its run, even after run_start expires.
@@ -176,6 +206,8 @@ class RunEvents:
         ):
             self._terminal = event
         elif event["type"] == "delta" or event["type"] == "reasoning":
+            if self._pending_progress is not None:
+                self.flush()
             # Batch tiny provider fragments before the stream assigns publication IDs.
             if self._pending is not None and self._pending["type"] != event["type"]:
                 self.flush()
@@ -184,6 +216,15 @@ class RunEvents:
             if len(self._pending["text"]) >= 2048:
                 self.flush()
             elif self._timer is None:
+                self._timer = asyncio.get_running_loop().call_later(0.025, self.flush)
+        elif event["type"] == "generation_progress":
+            if self._pending is not None or (
+                self._pending_progress is not None
+                and (self._pending_progress["kind"], self._pending_progress["step"]) != (event["kind"], event["step"])
+            ):
+                self.flush()
+            self._pending_progress = event
+            if self._timer is None:
                 self._timer = asyncio.get_running_loop().call_later(0.025, self.flush)
         elif event["type"] == "context_usage" and self._pending is not None:
             # Publish the latest estimate with the same batch as its streamed text.

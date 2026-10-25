@@ -19,11 +19,59 @@
 
 // This code is mostly AI generated.
 
-import type { ActivityEntry } from './AssistantActivity';
-import type { ChatMessageContent } from './chatTranscript';
+import type { ActivityEntry, CompactionActivity } from './AssistantActivity';
+import type { ChatMessage, ChatMessageContent } from './chatTranscript';
+
+export type TranscriptMessage = ChatMessage & {
+  presentation?: 'notice' | 'summary' | 'context';
+  compaction?: CompactionActivity;
+};
+
+// Derive bubbles for display. Keep saved messages and execution ownership intact.
+export function transcriptMessages(message: ChatMessage): TranscriptMessage[] {
+  if (message.role !== 'assistant' || !message.activity?.some(entry => (
+    entry.kind === 'notice' || entry.kind === 'schedule-applied' || entry.kind === 'compaction'
+  ))) return [message];
+  const { activity, content, createdAt, responseStartedAt, responseCompletedAt, status, failureReason,
+    truncated, modelSelection, providerCalls, costSummary, downloadId, unsentFiles, ...base } = message;
+  const parts: TranscriptMessage[] = [];
+  const append = (entry: ActivityEntry, presentation?: 'notice') => {
+    let part = parts.at(-1);
+    if (!part || part.presentation !== presentation || part.role !== 'assistant') {
+      part = { ...base, content: '', activity: [], presentation };
+      parts.push(part);
+    }
+    part.activity!.push(entry);
+    if (entry.kind === 'response') part.content += entry.text;
+  };
+  if (content && !activity!.some(entry => entry.kind === 'response')) append({ kind: 'response', text: content });
+  for (const entry of activity!) {
+    if (entry.kind === 'compaction') {
+      const { summary, ...progress } = entry;
+      append(progress, 'notice');
+      if (summary !== undefined) parts.push({ ...base, role: 'user', source: 'app', content: `[Conversation summary]\n${summary}`,
+        presentation: 'summary', compaction: entry });
+    } else if (entry.kind === 'notice' && entry.text.startsWith('Sent in future model context: ')) {
+      parts.push({ ...base, role: 'user', source: 'app', title: 'Context notice',
+        content: entry.text.slice('Sent in future model context: '.length), presentation: 'context' });
+    } else append(entry, entry.kind === 'notice' || entry.kind === 'schedule-applied' ? 'notice' : undefined);
+  }
+  if (status === 'pending' && parts.at(-1)?.presentation && !activity!.some(entry => (
+    entry.kind === 'compaction' && (entry.state === 'running' || entry.reason === 'manual')
+  ))) parts.push({ ...base, content: '' });
+  const footer = parts.findLast(part => part.role === 'assistant' && part.presentation !== 'notice')
+    ?? parts.findLast(part => part.role === 'assistant') ?? parts.at(-1)!;
+  Object.assign(footer, { createdAt, responseStartedAt, responseCompletedAt, status, failureReason,
+    truncated, modelSelection, providerCalls, costSummary, downloadId, unsentFiles });
+  return parts;
+}
 
 export function formatCharacterCount(characters: number): string {
-  return characters >= 1000 ? `${(characters / 1000).toFixed(1)}k` : `${characters}`;
+  return characters.toLocaleString('en-US');
+}
+
+export function characterCount(text: string): number {
+  return Array.from(text).length;
 }
 
 export function formatResponseDuration(startedAt: number, completedAt: number): string {
@@ -37,14 +85,21 @@ export function formatResponseDuration(startedAt: number, completedAt: number): 
 
 export function activitySummary(entry: Exclude<ActivityEntry, { kind: 'response' }>): string {
   if (entry.kind === 'notice') return 'App notice';
-  if (entry.kind === 'compaction') return {
+  if (entry.kind === 'compaction' && entry.invalidated) return 'Conversation summary discarded';
+  if (entry.kind === 'compaction') return ({
     running: 'Summarizing conversation', completed: 'Conversation summarized',
     failed: 'Summarization failed', interrupted: 'Summarization interrupted',
-  }[entry.state];
-  if (entry.kind === 'reasoning') return `Reasoning · ${formatCharacterCount(entry.text.length)} characters`;
+    skipped: 'No compaction needed',
+  }[entry.state]) + (entry.characters === undefined ? ''
+    : `${(entry.step ?? 1) > 1 ? ` · pass ${entry.step}` : ''} · ${formatCharacterCount(entry.characters)} characters`);
+  if (entry.kind === 'reasoning') return `Reasoning · ${formatCharacterCount(characterCount(entry.text))} characters`;
   if (entry.kind === 'schedule-change') return 'schedule edit';
   if (entry.kind === 'schedule-check') return entry.ok ? 'Schedule check passed' : 'Schedule check failed';
   if (entry.kind === 'schedule-applied') return 'Applied to your schedule';
+  if (entry.argumentsCharacters !== undefined) {
+    const label = entry.state === 'preparing' ? 'Preparing tool calls' : `${entry.name} · ${entry.state}`;
+    return `${label} · ${formatCharacterCount(entry.argumentsCharacters)} characters`;
+  }
   if (entry.state === 'running') return `${entry.name} · running`;
   if (entry.state === 'interrupted') return `${entry.name} · interrupted`;
   return entry.ok ? entry.name : `${entry.name} · failed`;

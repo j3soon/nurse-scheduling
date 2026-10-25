@@ -107,9 +107,9 @@ was answering. Use <kbd>Ctrl</kbd>+<kbd>Z</kbd> to restore them.
 If the model provider has a temporary failure, the assistant retries the current
 model request automatically. A notice in the chat shows each retry and its delay.
 Retries keep completed tool results and files. They do not rerun completed commands
-or optimizer submissions. Partial text remains visible and is supplied as context
-for the continuation. The continuation can differ from what the interrupted request
-would have generated.
+or optimizer submissions. Partial text remains visible with a note that it is
+omitted from future model context. The retry starts a fresh answer to the same
+request.
 
 If the provider still fails after five attempts by default, or after two minutes,
 the response fails with the provider error. Earlier answers stay in the conversation,
@@ -130,8 +130,9 @@ A failed turn keeps its original question and provisional output visible. To
 continue, send a new message. If the files of a question did not finish uploading,
 the question was not sent. Attach the files again and send the question. Reconnecting
 an accepted request keeps the same message ID, so it does not send the question to
-the model twice. Failed and stopped output is excluded from the model's conversation
-context.
+the model twice. Incomplete responses are omitted from future model context.
+Completed tool exchanges remain, with a separate note when the temporary workspace
+was discarded.
 
 Recovery lasts until the session expires, normally after 30 days of inactivity.
 Hosted deployments use PostgreSQL to
@@ -145,23 +146,40 @@ Keep your original files.
 
 ## See what the assistant did
 
-You can change **Model** and **Reasoning** while an answer streams. The active
-turn keeps its original settings, including tool calls and steering. The session
-saves your new choice for later turns, including new optimizer reviews. Reloading
-the page restores that choice.
+Choose **Model** before the first message. It stays fixed for the conversation
+after the AI service accepts a message. A rejected message does not fix it.
+You can change **Reasoning** while an answer streams. The active turn keeps its
+original setting, including tool calls and steering. The new reasoning setting
+applies to later turns and optimizer reviews. Reloading restores the choice.
 
-**Context X% used** below the message box shows the portion of the server's
-conversation history budget selected for the next turn. It excludes instructions,
-schedule data, tools, and attachments. If the server does not report usage, the
-chat displays **unavailable**. Update the AI server to enable the percentage.
+**Context X% used** and **Tokens: X / N** below the message box describe the
+same current LLM context. X includes system instructions, tools, conversation
+messages, and streamed output. N is the model context limit reported by the
+provider. The percentage is X divided by N.
 
-When the provider reports token usage, the line also shows **Last: X / N**.
-X counts the latest model call’s input and output tokens, including instructions,
-tool output, and the reply. N is the model input limit. A turn with long tool output can
-therefore use many more tokens than its history percentage suggests.
-The server reads the limit from the provider's model metadata. If the provider
-does not report a limit, the chat shows **unavailable** for the limit. Hover over
-**Context**, **Last**, or **Est. cost** for a short description of that value.
+The app labels estimates with **(est.)** while streaming and after summarization.
+Provider-reported token usage replaces estimates when available. If the model
+limit is unknown, the token count remains visible and the percentage shows
+**unavailable**. Hover over either value for its description. **Est. cost** is
+separate from context usage.
+
+Select **Compact context** below the message box while the assistant is idle to
+summarize older conversation context. This action does not generate an answer.
+The chat records **You requested context compaction**. **No compaction needed**
+means that the conversation is short enough to keep unchanged, or a generated
+summary would not make the context smaller. Recent messages stay unchanged after
+the summary when older conversation context is compacted.
+Use **Stop** to cancel it. Failed or cancelled compaction keeps the original
+context.
+
+When the conversation is summarized, expand **Conversation summary** in the
+right-aligned **User · Conversation summary** bubble to read the text supplied to
+the assistant. The app generates this summary using the user role. Its details
+explain which recent messages remain unchanged. Compaction status and other app
+notices that are not supplied to the assistant appear in separate centered
+bubbles. Assistant output and tool activity stay on the left. A discarded summary stays visible and is
+marked as omitted from future context. Earlier messages remain in the visible
+transcript even when the summary replaces them in model context.
 
 Small grey rows under an answer record how it was produced. They stay collapsed
 until you select one.

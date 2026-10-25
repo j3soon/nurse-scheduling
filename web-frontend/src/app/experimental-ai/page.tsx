@@ -246,6 +246,8 @@ export default function ExperimentalAiPage() {
   const [selection, setSelection] = useState<ModelSelection>();
   const [savedChatExportEnabled, setSavedChatExportEnabled] = useState(false);
   const [isExportingChat, setIsExportingChat] = useState(false);
+  const [chatExportNotice, setChatExportNotice] = useState<string | null>(null);
+  const chatExportFrameRef = useRef<HTMLIFrameElement | null>(null);
   const [fileCapability, setFileCapability] = useState(DISABLED_FILE_CAPABILITY);
   const [selectedAttachments, setSelectedAttachments] = useState<SelectedAttachment[]>([]);
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
@@ -283,6 +285,9 @@ export default function ExperimentalAiPage() {
     setDownloadingOptimizationId(null);
     setCancellingOptimizationId(null);
     setIsExportingChat(false);
+    setChatExportNotice(null);
+    chatExportFrameRef.current?.remove();
+    chatExportFrameRef.current = null;
   }, []);
   const {
     messages, uploadedFiles, removingUploadId, removingDownloadId, contextUsage, costSummary, activeSessionId,
@@ -290,7 +295,7 @@ export default function ExperimentalAiPage() {
     isStreaming, isStopping, isReconnecting, activeOptimization, queuedMessages, steeringAssistantId,
     setSessionRetentionSeconds, restoreConversation,
     captureSession, newConversation, submitMessage, stop, removeUploadedFile,
-    removeGeneratedFiles,
+    removeGeneratedFiles, compactContext, isCompacting,
   } = useAiChat({
     scheduleYaml, aiEndpoint, authRequired, authToken, isClientReady, serverStatus, selection, modelSelectionEnabled,
     retainsUploads: fileCapability.retained ?? false, backendVersion, setError, reportRequestError,
@@ -432,6 +437,7 @@ export default function ExperimentalAiPage() {
         if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
       });
       if (optimizationDownloadUrlRef.current) URL.revokeObjectURL(optimizationDownloadUrlRef.current);
+      chatExportFrameRef.current?.remove();
   }, []);
 
   useEffect(() => {
@@ -733,24 +739,37 @@ export default function ExperimentalAiPage() {
     const session = captureSession();
     if (session === null) return;
     setIsExportingChat(true);
-    let downloadWindow: Window | null = null;
+    setError(null);
+    setChatExportNotice(null);
     try {
-      // Reserve the native download tab while this click still has user activation.
-      downloadWindow = window.open('about:blank', '_blank');
-      if (downloadWindow === null) throw new Error('Allow pop-ups for this site to export the chat, then try again.');
-      downloadWindow.opener = null;
-      downloadWindow.document.title = 'Export Chat';
-      downloadWindow.document.body.textContent = 'Preparing the chat download…';
       const url = await getChatExportUrl(session.id, authToken, session.endpoint);
-      if (!session.ownsConversation()) {
-        downloadWindow.close();
-        return;
-      }
-      if (downloadWindow.closed) return;
-      downloadWindow.document.body.textContent = 'The ZIP download will start when the archive is ready. You can close this tab after the download starts. Any server error will appear here.';
-      downloadWindow.location.replace(url);
+      if (!session.ownsConversation()) return;
+      chatExportFrameRef.current?.remove();
+      const frame = document.createElement('iframe');
+      frame.hidden = true;
+      frame.title = 'Chat export download';
+      let initialized = false;
+      const failed = () => {
+        if (chatExportFrameRef.current !== frame || !session.ownsConversation()) return;
+        setChatExportNotice(null);
+        reportRequestError(new Error('The chat download could not start. Please try Export Chat again.'), 'The chat could not be exported.');
+      };
+      frame.onload = () => {
+        if (!initialized) {
+          initialized = true;
+          frame.src = url;
+        } else {
+          // An attachment starts a native download. A loaded document is an error,
+          // including errors from another origin whose body the browser cannot read.
+          failed();
+        }
+      };
+      frame.onerror = failed;
+      frame.src = 'about:blank';
+      chatExportFrameRef.current = frame;
+      document.body.appendChild(frame);
+      setChatExportNotice('Chat download requested. Check your browser’s downloads.');
     } catch (exportError) {
-      downloadWindow?.close();
       if (session.ownsConversation()) reportRequestError(exportError, 'The chat could not be exported.');
     } finally {
       if (session.ownsConversation()) setIsExportingChat(false);
@@ -845,7 +864,7 @@ export default function ExperimentalAiPage() {
     }
   };
   const credentialsMissing = authRequired && authToken === null;
-  const composerUnavailable = credentialsMissing || conversationUnavailable || (modelSelectionEnabled && !selection);
+  const composerUnavailable = isCompacting || credentialsMissing || conversationUnavailable || (modelSelectionEnabled && !selection);
   const attachmentPickerDisabled = isStreaming
     || composerUnavailable
     || !fileCapability.enabled
@@ -877,9 +896,10 @@ export default function ExperimentalAiPage() {
   const hasVersionMismatch = backendVersion !== undefined && hasAppVersionMismatch(CURRENT_APP_VERSION, backendVersion);
   const serverLocked = activeSessionId !== null || messages.length > 0;
 
-  const contextDescription = contextUsage !== null
-    ? `${contextUsage.usedChars.toLocaleString()} of ${contextUsage.maxChars.toLocaleString()} characters in conversation context, including streamed output. Excludes fixed instructions and current status.`
-    : 'The AI server has not reported context usage.';
+  const tokenDescription = `${contextUsage?.estimated !== false ? 'Estimated current' : 'Current'} LLM context tokens / model context limit. Includes system instructions, tools, and conversation messages.`;
+  const contextDescription = contextUsage?.usedTokens !== undefined
+    ? tokenDescription
+    : 'The AI server has not reported context tokens.';
 
   // The Session files panel is fixed on the right at xl, so the chat and composer reserve
   // equal space on both sides to stay centered without overlapping it.
@@ -1009,6 +1029,7 @@ export default function ExperimentalAiPage() {
           )}
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-gray-500">
+          {chatExportNotice && <span role="status">{chatExportNotice}</span>}
           {messages.length > 0 && (
             <div className="ml-auto flex flex-wrap items-center gap-2">
               <FiDownload aria-hidden="true" className="h-3.5 w-3.5" />
@@ -1301,6 +1322,7 @@ export default function ExperimentalAiPage() {
         )}
         {modelSelectionEnabled && serverStatus === 'online' && (!authRequired || authToken) && <ModelControls
           endpoint={aiEndpoint} token={authToken} sessionId={activeSessionId} disabled={conversationUnavailable}
+          modelLocked={messages.some(message => message.request?.active)} runActive={isStreaming}
           onChange={setSelection}
         />}
         <div className="flex min-h-14 items-end gap-1 rounded-[1.75rem] border border-gray-300 bg-white p-2 shadow-sm transition focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-200">
@@ -1445,15 +1467,24 @@ export default function ExperimentalAiPage() {
         {(contextUsage !== null || messages.length > 0 || costSummary) && (
           <p className="mt-2 px-2 text-center text-[0.6875rem] text-gray-500" aria-live="polite">
             {(contextUsage !== null || messages.length > 0) && <span title={contextDescription}>
-              Context {contextUsage !== null
-                ? `${(100 * contextUsage.usedChars / contextUsage.maxChars).toFixed(1)}% used`
+              Context {contextUsage?.usedTokens !== undefined && contextUsage.maxTokens !== undefined
+                ? `${(100 * contextUsage.usedTokens / contextUsage.maxTokens).toFixed(1)}% used${contextUsage.estimated !== false ? ' (est.)' : ''}`
                 : 'unavailable'}
             </span>}
             {contextUsage?.usedTokens !== undefined && <>
               {' · '}
-              <span title="Current context tokens, estimated while streaming and after summarization / model input limit.">
-                Tokens: {contextUsage.usedTokens.toLocaleString('en-US')} / {contextUsage.maxTokens?.toLocaleString('en-US') ?? 'unavailable'}
+              <span title={tokenDescription}>
+                Tokens{contextUsage.estimated !== false ? ' (est.)' : ''}: {contextUsage.usedTokens.toLocaleString('en-US')} / {contextUsage.maxTokens?.toLocaleString('en-US') ?? 'unavailable'}
               </span>
+            </>}
+            {activeSessionId && <>
+              {' · '}
+              <button type="button" onClick={() => void compactContext()}
+                disabled={isStreaming || isCompacting || composerUnavailable}
+                className="underline disabled:cursor-not-allowed disabled:opacity-50"
+                title="Summarize older conversation context without generating an answer.">
+                Compact context
+              </button>
             </>}
             {costSummary && <>
               {(contextUsage !== null || messages.length > 0) && ' · '}

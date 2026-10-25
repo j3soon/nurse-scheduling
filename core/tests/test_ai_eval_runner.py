@@ -517,16 +517,22 @@ def test_a_correct_answer_passes_and_records_its_cost():
     assert run.seconds >= 0
 
 
-@pytest.mark.parametrize("case_id", ["current-time-frontend-taipei", "current-time-frontend-los-angeles"])
-def test_clock_cases_use_the_frontend_timezone_and_frozen_server_instant(case_id):
-    provider = ScriptedProvider([TextDelta(json.dumps(CASE_BY_ID[case_id].answer_json))])
+@pytest.mark.parametrize("case_id", ["local-date-from-instant-taipei", "local-date-from-instant-los-angeles"])
+def test_date_cases_use_the_vm_timezone_and_an_explicit_reference_instant(case_id):
+    provider = ScriptedProvider(
+        [
+            ToolCallRequest(
+                (ToolCall("date", "bash", json.dumps({"command": "date --date=2031-03-31T23:30:00+00:00"})),)
+            )
+        ],
+        [TextDelta(json.dumps(CASE_BY_ID[case_id].answer_json))],
+    )
     factory = _factory()
     run = _run(case_id, provider, factory)
     assert run.passed
-    context = provider.messages[0][-1]["content"]
-    assert CASE_BY_ID[case_id].frontend_timezone in context
-    assert "2031-" in context
-    assert factory.created == []
+    assert provider.messages[0][-1]["content"] == CASE_BY_ID[case_id].question
+    assert not any("[Current status]" in str(message.get("content")) for message in provider.messages[0])
+    assert factory.created[0].envs == {"TZ": CASE_BY_ID[case_id].frontend_timezone}
 
 
 def test_attachment_case_hydrates_generated_file_and_records_an_upload_event():
@@ -546,7 +552,7 @@ def test_attachment_case_hydrates_generated_file_and_records_an_upload_event():
     prompt = run.trajectory["prompt"]
     assert prompt[1]["content"].startswith("[App event] The user uploaded files.")
     assert '"path": "/workspace/attachments/01-ward-notes.xlsx"' in prompt[1]["content"]
-    assert prompt[-2] == {"role": "user", "content": CASE_BY_ID["read-second-xlsx-sheet"].question}
+    assert prompt[-1] == {"role": "user", "content": CASE_BY_ID["read-second-xlsx-sheet"].question}
 
 
 def test_optimizer_case_uses_controlled_production_tool_contract():
@@ -1025,8 +1031,8 @@ def test_a_multi_user_turn_case_preserves_the_conversation_history():
 
     assert run.passed
     assert len(provider.messages) == 2
-    assert provider.messages[1][-4:-1] == [
-        {"role": "user", "content": "Expand the range."},
+    assert provider.messages[1][: len(provider.messages[0])] == provider.messages[0]
+    assert provider.messages[1][-2:] == [
         {"role": "assistant", "content": "Renew Taiwan holidays?"},
         {"role": "user", "content": "No."},
     ]
@@ -1041,10 +1047,9 @@ def test_completion_only_case_seeds_history_without_counting_a_model_tool_call()
     assert run.turns == 1
     assert run.tools == []
     assert len(provider.messages) == 1
-    assert provider.messages[0][-4]["content"] == case.question
-    assert "Optimization is running in the background" in provider.messages[0][-3]["content"]
-    assert '"request_audit"' in provider.messages[0][-2]["content"]
-    assert provider.messages[0][-1]["content"].startswith("[Current status]")
+    assert provider.messages[0][-3]["content"] == case.question
+    assert "Optimization is running in the background" in provider.messages[0][-2]["content"]
+    assert '"request_audit"' in provider.messages[0][-1]["content"]
     assert not factory.created
 
 
@@ -1215,14 +1220,12 @@ def test_provider_timeout_case_checks_the_retried_request_and_complete_answer(mo
     provider = _transport_provider(monkeypatch, handle)
     run = asyncio.run(run_case(provider, replace(settings(), provider_retry_backoff_seconds=0), case, _factory()))
 
-    assert run.passed is (not repeats_prefix), run.failures
-    assert run.answer == case.provider_timeout_after_text + continuation
+    assert run.passed is repeats_prefix, run.failures
+    assert run.answer == continuation
     assert run.provider_attempts_per_turn == [2]
     assert len(requests) == 1
-    assert requests[0]["messages"][-2:] == [
-        {"role": "assistant", "content": case.provider_timeout_after_text},
-        {"role": "user", "content": "[App event] The response was interrupted after 6 text characters."},
-    ]
+    assert case.provider_timeout_after_text not in [message.get("content") for message in requests[0]["messages"]]
+    assert "[App event] The response was interrupted" not in str(requests[0]["messages"])
 
 
 def test_an_unknown_case_id_stops_the_run():

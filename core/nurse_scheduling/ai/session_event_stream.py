@@ -32,7 +32,14 @@ from .session_events import AgentSessionEvent
 DEFAULT_SESSION_REPLAY_BYTES = 4 * 1024 * 1024
 DEFAULT_TOTAL_REPLAY_BYTES = 64 * 1024 * 1024
 REPLACEABLE_EVENTS = frozenset(
-    {"optimization_progress", "context_usage", "schedule_change", "provider_call", "cost_summary"}
+    {
+        "optimization_progress",
+        "context_usage",
+        "schedule_change",
+        "provider_call",
+        "cost_summary",
+        "generation_progress",
+    }
 )
 # A restored stream continues this far past its last stored ID. A browser cursor from the
 # previous process can be ahead of storage, and must still fall inside the replaced range.
@@ -86,6 +93,8 @@ class _Replay:
 def _replacement_key(event: SessionEvent) -> tuple[str, object] | None:
     if event.type not in REPLACEABLE_EVENTS:
         return None
+    if event.type == "generation_progress":
+        return event.type, (event.data.get("run_id"), event.data.get("kind"))
     field = (
         "job_id" if event.type == "optimization_progress" else "call_id" if event.type == "provider_call" else "run_id"
     )

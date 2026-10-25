@@ -47,6 +47,7 @@ class FakeSandboxBackend:
     ) -> None:
         self._sandbox_id = sandbox_id
         self.files = dict(initial_files or {})
+        self.envs: dict[str, str] = {}
         self.command_handler = command_handler
         self.close_error = close_error
         self.commands: list[tuple[str, float | None]] = []
@@ -122,9 +123,10 @@ class FakeSandboxFactory:
         self.create_error = create_error
         self.created: list[FakeSandboxBackend] = []
 
-    async def create(self) -> FakeSandboxBackend:
+    async def create(self, *, envs: dict[str, str] | None = None) -> FakeSandboxBackend:
         if self.create_error is not None:
             raise self.create_error
         backend = self.backend_factory(f"fake-{len(self.created) + 1}")
+        backend.envs = dict(envs or {})
         self.created.append(backend)
         return backend

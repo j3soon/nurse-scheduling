@@ -59,13 +59,17 @@ def test_setup_failure_releases_session_and_the_next_request_can_run(monkeypatch
             session = app.state.session_store._sessions[session_id]
             assert not session.active
             assert provider.calls == []
-            assert session.transcript == [UserMessage("Question"), AssistantMessage("", "error")]
+            assert session.transcript == [
+                UserMessage("Question"),
+                AssistantMessage("", "error"),
+                AppEventEntry(ABORTED_RESPONSE_HISTORY),
+            ]
             monkeypatch.setattr(app.state.session_optimizer, "latest_result_artifact", original)
             response = await client.post(f"/sessions/{session_id}/messages", json={"message": "Retry"})
             assert "event: done" in response.text
             assert provider.calls[0][1:3] == [
                 {"role": "user", "content": "Question"},
-                {"role": "assistant", "content": ABORTED_RESPONSE_HISTORY},
+                {"role": "user", "content": ABORTED_RESPONSE_HISTORY},
             ]
 
     asyncio.run(exercise())

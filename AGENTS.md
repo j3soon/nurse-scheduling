@@ -38,9 +38,10 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   it, as `README.md` describes. If `gh auth status` reports no login, read the
   public repository through the GitHub REST API with `curl`. Unauthenticated
   requests are limited to 60 per hour, so batch them and save the responses.
-  They cannot download job logs or use GraphQL, which reports review thread
-  resolution. Reproduce a failing CI step locally, or ask the user to restart
-  the container with `GH_TOKEN`.
+  They cannot use GraphQL, which reports review thread resolution. For public
+  job logs, try the per-job download endpoint in `skills/fix-github-ci`.
+  If log access is denied, reproduce the failing CI step locally or ask the
+  user to restart the container with `GH_TOKEN`.
 - Keep edits scoped to the requested module. Preserve existing patterns.
 - When resuming another agent's session, verify compatibility claims and pending
   check results against current code, configuration, and saved outputs. Treat

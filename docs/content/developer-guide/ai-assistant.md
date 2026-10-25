@@ -163,7 +163,8 @@ queueing a message or synchronizing a changed schedule renews that window. The b
 tab and verify the session without extending its lifetime.
 The session records typed questions, assistant responses, app events, reasoning metadata,
 and tool exchanges. Tool images are released when a run ends. Stop and failed runs retain their questions with an interruption
-note. Later model context excludes claims from their discarded workspace.
+note. Later model context omits the incomplete response, retains completed
+exchanges, and explains that earlier tool results describe the discarded workspace.
 Recovery stores typed entries, including their origin and interruption state.
 Existing text history remains readable when the service restores older sessions.
 New questions receive a JSON acknowledgement with their `run_id`. Foreground and
@@ -323,12 +324,31 @@ and attempt number. Stop interrupts backoff and streaming. Each attempt keeps
 its own cost record and the same session ID. The adapter uses one retry budget
 instead of stacking SDK retries with whole-agent retries.
 
-After interrupted output, the next request receives the visible answer text and
-an interruption note. Failed reasoning metadata and partial tool arguments are
-discarded. Tools are released only after a clean response completion. A retry
+After interrupted output, the adapter retries the original request. Failed attempts
+stay in the audit transcript but are omitted from model requests. The frontend
+labels their partial text and reasoning as omitted from future context. Failed
+reasoning metadata and partial tool arguments are discarded. Tools are released only after a clean response completion. A retry
 after a completed tool exchange resends its result without executing it again.
+Summary generation also discards the failed draft before collecting the retry,
+matching Pi's `completeSummarization`. Each attempt retains its cost record, and
+the provider's cumulative output limits still apply.
 
 ## Automatic context compaction
+
+`POST /sessions/{id}/compact` accepts a client `message_id` and starts an idle,
+server-owned compaction run. It shares run admission, Stop, replay, and cost
+accounting with chat runs. It uses the session's selected model and reasoning
+settings. It saves no user question and generates no normal answer or workspace.
+Repeated IDs return the same run. Summary events use the `manual` reason.
+Migration 010 adds the compaction run kind. Failed and interrupted manual runs
+keep the original context without a workspace-discard notice.
+
+`generation_progress` events report draft character counts for compaction and
+tool-call arguments. Updates are coalesced with the stream's 25 ms batching.
+Compaction identifies each summary pass and resets its count on retry. Draft
+summary text and incomplete tool arguments stay private. Chat and exports count
+Unicode code points and show tool-result size after execution. These character
+counts are separate from provider-reported token usage and costs.
 
 `ContextCompactor` follows [Pi v1.0.0 compaction][pi-compaction]. Before a model
 request and after the final answer, it checks the discovered model context
@@ -339,19 +359,32 @@ Without model metadata, the history limits still trigger compaction. Summary
 requests use a 32,768-token fallback window. An explicit context-overflow
 rejection can also trigger compaction.
 
+Manual and automatic compaction use Pi's same cut-point algorithm. The retention
+target is 20,000 recent tokens, capped by one third of the model window and the
+server history budgets. The character budget caps it at `max_history_chars / 12`,
+and the message budget caps it at the estimated tokens in the latest
+`max_history_messages / 3` messages. A short conversation stays unchanged without
+a provider call. A split turn retains its recent messages with their tool pairs.
+If that tail cannot fit a smaller model window, a later safe boundary is used.
+A single tool batch that still cannot fit is summarized too. A generated summary
+that would increase context is discarded.
+
 The estimate uses the most recent completed same-model input and output usage,
 plus estimates for later messages. A characters/4 estimate covers missing usage,
 changed model settings, tool definitions, and current system and status content.
 Old usage is invalid after a summary replaces its original input. Cached tokens
 are already included in Chat Completions prompt usage.
 
-The composer footer shows Context, Tokens, and estimated cost during SSE streaming.
+The composer footer derives Context percentage and Tokens from the same backend
+token count and model context limit. It labels estimates with `(est.)` and shows
+an unavailable percentage when the model limit is unknown. Character and message
+limits remain internal retention safeguards. Estimated cost is separate.
 `AgentContextUsage` estimates include the current request and streamed reasoning or
 answer text. `RunEvents` coalesces these reports with text batches. Provider usage
 replaces token estimates, and provider cost updates replace each call's previous
 cost contribution. Estimates do not enter billed usage or invent missing prices.
 
-Replayable `compaction_start` and `compaction_end` events report threshold or
+Replayable `compaction_start` and `compaction_end` events report manual, threshold, or
 overflow recovery, success, and cancellation. The live transcript and saved
 exports show the same status. Successful compaction replaces the context meter
 with a fresh estimate until the next model call reports usage. Summary failures
@@ -403,7 +436,11 @@ context overflow permits one compact-and-retry attempt before reporting failure.
 Tool execution is not repeated by that retry.
 
 A successful summary appends a `CompactionEntry`, leaving earlier audit entries
-intact. Context projection replays its summary plus the referenced recent tail.
+intact. Its completion event includes the exact summary and retained-message count.
+The frontend displays the summary separately and marks every summary from a failed
+run as discarded, including summaries before steering replies. Saved chat exports
+use the same rule. Context projection replays a valid summary plus its referenced
+recent tail.
 Retention keeps the summary and that tail together. Hard service memory limits
 can still remove an entire older context unit. Failed, cancelled, and stale
 runs cannot replay their summaries of discarded workspace work. Migration 009
@@ -425,9 +462,10 @@ trim offsets. Tool image bytes
 remain transient.
 
 The provider boundary replays native metadata only when the endpoint, API, and
-configured model match its source. Switching models omits incompatible metadata
-and normalizes tool call IDs with matching result IDs. Switching back can reuse
-the original metadata. Reasoning never becomes assistant answer text. Historical
+configured model match its source. The first accepted message fixes the model for the conversation.
+The session model-selection response reports that saved lock as `locked`, so a resumed browser shows it. Reasoning effort
+can change for future runs. The provider boundary still omits incompatible native
+metadata and normalizes matching tool call IDs for historical or imported data. Reasoning never becomes assistant answer text. Historical
 unsigned reasoning without source metadata remains display-only. Retained
 reasoning can increase later input token usage.
 
@@ -439,10 +477,17 @@ support the replay fields it returns, as described in the
 Unknown fields are not guessed from model names. Provider rejection remains a
 normal provider error rather than silently dropping signed state.
 
-Aborted and errored responses are excluded from model replay. The existing
-interruption note describes discarded workspace changes. Timeout retries retain
-visible answer text as continuation context but discard incomplete native state.
-Missing tool results receive an explicit failure placeholder before the next
+Aborted and errored responses are excluded from model replay. Completed responses
+and tool exchanges remain. A separate app event explains when the run workspace
+was discarded and warns that earlier tool results describe that workspace.
+Timeout retries restart only the incomplete model call from the same request.
+Restart recovery saves interrupted tool results and the context-omission notice
+in the same transaction as the interrupted entries. A final answer awaiting
+validation is marked failed, and the run's summaries are marked as not applied.
+Earlier completed exchanges remain.
+Missing tool results receive an explicit failure placeholder that is also shown in
+the frontend. Truncated calls expose their original arguments and the empty
+arguments used for model replay. Tool pairs are repaired before the next
 turn, so each replayed tool call has a result.
 
 The `tool_start` event carries the tool name and arguments before execution, so
@@ -743,14 +788,16 @@ contain those decisions. They restore as the app events that the model received.
 A run that fails, is cancelled, or is abandoned retains its user message and
 an interrupted assistant entry. It discards its candidate and workspace
 changes. Its provisional activity may remain visible in the browser.
-Later model context replaces the interrupted assistant entry with
-`ABORTED_RESPONSE_HISTORY` and excludes discarded workspace claims. A successful
-run that only answers a question never changes the schedule.
+Later model context omits the interrupted assistant response and retains completed
+exchanges. A separate `ABORTED_RESPONSE_HISTORY` app event describes the discarded
+workspace. A successful run that only answers a question never changes the
+schedule.
 
 If the final candidate fails trusted validation, the UI reports that every
 schedule change from the turn was discarded and that the current schedule
 was not changed. The failed turn retains its question and an interrupted
-assistant entry, which later model context replaces with `ABORTED_RESPONSE_HISTORY`.
+assistant entry. Later model context omits that response and retains a separate
+`ABORTED_RESPONSE_HISTORY` app event.
 
 After a Bash command changes the candidate, the trusted application returns an
 intermediate validation result so the model can repair it. The backend reads
@@ -762,17 +809,11 @@ The provider boundary uses OpenAI-compatible chat completions. The
 [Cloudflare Tunnel example](https://github.com/j3soon/local-llm-notes/tree/main/examples/basic-secure-api/cloudflare)
 shows one compatible deployment pattern.
 
-A provider request gets three total attempts by default. Timeouts wait one
-second before the second attempt and two seconds before the third. If text has
-already reached the application, the next request includes that partial answer
-and asks the model to continue without repeating it. This starts a new completion,
-so continuation quality depends on the model. Reasoning is not sent back.
-Incomplete tool calls are discarded. Tools run only after a complete response,
-so an interrupted request cannot have executed them. Text and reasoning limits
-apply across all attempts. Exhausted attempts report either "The AI provider
-timed out before starting the response." or "The AI provider timed out while
-streaming the response." The complete sandbox-turn deadline still applies across
-provider attempts and may end a turn before every retry is available.
+Provider requests retry with bounded exponential backoff as described under
+[Provider retries](#provider-retries). A retry resends the original request and
+omits the failed partial response. Completed tool exchanges remain. Incomplete
+tool calls are discarded. Tools run only after a complete response. Text and
+reasoning limits and the sandbox-turn deadline apply across all attempts.
 
 Replay-safe E2B requests also get three total attempts with exponential
 backoff. This covers file reads and replacements, automatic resume, and sandbox
@@ -857,7 +898,9 @@ When a request names a session that is not in memory, the service restores it
 from storage for its owner cookie. As Pi's `buildSessionContext` does, restore
 rebuilds the conversation from saved entries: app events and the messages of
 committed runs. It then skips the entries that retention trimmed.
-Failed and interrupted runs can retain safe conversation context. Stale runs
+Failed and interrupted runs can retain safe conversation context. Run
+finalization and restart recovery save the interrupted state of entries that
+the run already saved, so restore uses the entries as stored. Stale runs
 stay in the audit record only. Runs left running are reconciled with their saved terminal event. If no terminal
 event was saved, they end with an error that names the restart. Their saved
 question and output remain visible. A restart does not rerun model
@@ -1108,7 +1151,6 @@ request therefore keeps earlier content unchanged and puts changing state last:
 1. The system message. It does not change during a chat.
 2. The chat history. Each entry stays unchanged once it is stored.
 3. The user's question, exactly as typed.
-4. A status message, only when needed. History never keeps it.
 
 The backend stores app events as separate `user` messages in history when they
 happen. Each event starts with `[App event]`. Events record uploads, removals,
@@ -1118,10 +1160,10 @@ each file. A schedule change is recorded only when the parsed schedule data
 changes. Filenames stay out of the system prompt because they are untrusted
 input.
 
-The status message starts with `[Current status]`. It reports the current time,
-the optimizer result path, and retained files whose upload event the
-request does not contain. That happens when history was trimmed or when a
-failed turn followed the upload.
+The backend does not append automatic status messages or restore workspace facts
+lost during compaction. Historical status messages remain unchanged. Each VM
+receives `TZ` once at creation from the browser timezone. The agent can use bash
+`date` when it needs the current date or time.
 
 When history passes `AI_MAX_HISTORY_CHARS`, the backend drops the oldest
 messages until about half the budget remains. It keeps the newest completed
@@ -1130,13 +1172,12 @@ exchange. This keeps the request prefix unchanged for many turns between cuts.
 Each assistant turn starts with a `model_input` event. Its `system` field
 contains the system message. Its `messages` field lists the request messages
 added since the last assistant reply, in order. Each entry has a `kind` of
-`app`, `question`, `optimizer`, or `status`. An `app` entry also has its
-absolute transcript entry `index`, so a client shows it once when a failed turn
-is retried. Compaction and retention preserve this index. App events and status
-messages also have a short `title`, such as
-`Files Uploaded` or `Optimizer Result`. The chat shows it after the role
-label and keeps the exact text collapsed. A foreground turn sends this event first in the message stream. A
-background turn publishes it on the session event stream after `turn_start`.
+`app`, `question`, or `optimizer`. Historical events may also contain `status`.
+An `app` entry also has its absolute transcript entry `index`, so a client shows it once when a failed turn
+is retried. Compaction and retention preserve this index. App events also have a
+short `title`, such as `Files Uploaded` or `Schedule Changed`. The chat shows it
+after the role label and keeps the exact text collapsed. Foreground and background
+runs publish this event on the session event stream after `run_start`.
 
 `GET /health`, `GET /ready`, and `GET /capabilities` stay public so deployment
 probes work and the frontend can discover authentication and attachment limits.
@@ -1210,8 +1251,8 @@ curl -H "Authorization: Bearer ${AI_AUTH_TOKEN}" \
   logs the upstream response body under that ID after redacting common
   credential forms.
 - A failed or cancelled turn retains its question and an interrupted assistant
-  entry. Later model context uses `ABORTED_RESPONSE_HISTORY` instead of partial
-  output and discarded workspace activity.
+  entry. Later model context omits the partial response, retains completed
+  exchanges, and appends the `ABORTED_RESPONSE_HISTORY` workspace notice.
 
 ## Troubleshoot local development
 
@@ -1225,11 +1266,12 @@ See the [capability discovery instructions](reproduce/core.md#attachment-capabil
 
 Follow the [AI test instructions](reproduce/core.md#ai-tests). The opt-in
 `test_ai_compaction_live.sh` command exercises the real session API and E2B with
-four concurrent long-chat scenarios. It forces compaction with a smaller history
-budget and checks constraints, complete tool exchanges, model switching, Stop,
-reconnect replay, and fresh sandbox filesystems. Its traces are synthetic test
-conversations. It does not change the production prompts or connect to a
-production database.
+five long-chat scenarios, at most four concurrently. A smaller history budget
+forces compaction. The scenarios check constraints, complete tool exchanges,
+manual compaction, Stop, reconnect replay, and fresh sandbox filesystems. They
+also check that model changes return HTTP 409 and supported reasoning-effort
+changes remain accepted. The command uses synthetic test conversations. It does
+not change the production prompts or connect to a production database.
 
 ## Mapping to Pi
 
@@ -1246,7 +1288,7 @@ Each row lists shared behavior first, then what only one side has.
 | `Agent` / `AgentState`<br/>Pi: [Agent][pi-agent], [AgentState][pi-state] | Streaming flag, pending tool call IDs, in-run messages, the steering queue, and refusal of a second concurrent prompt. | Context arrives per run, and the session commits its retained transcript after cleanup. `AgentRun`, not `Agent`, owns cancellation, so Stop also reaches queued runs and cannot interrupt cleanup. | State also holds the model, thinking level, tools, persistent transcript, and partial streaming message. The agent becomes idle only after awaited `agent_end` subscribers finish. |
 | `agent_loop`<br/>Pi: [agentLoop][pi-loop] | Repeats model responses and tool batches. Steering enters before each follow-up request, or continues the run when it arrives as the answer ends. Tool calls from a response cut off by the output limit fail without running. | A batch runs concurrently only when every call is read-only. Round and call budgets end with an answer-only request, and a refused truncated batch spends a round. Each request passes through one context projection. | Parallel execution by default. The whole batch runs sequentially if configured globally or required by any tool in it. Supports before and after tool-call hooks and context transform hooks. Tool-result early termination requires every finalized tool result in the batch to set `terminate: true`. |
 | `AgentTool` / `AgentToolOutcome`<br/>Pi: [AgentTool / AgentToolResult][pi-tools] | A model-facing definition bound to execution. Results carry model content, UI details, and explicit failure status. Start and end events correlate by tool call ID. | Tools receive raw JSON arguments, return text, an optional image, and an `ok` flag, and declare whether they are read-only. | Schema-validated parameters, the call ID, an abort signal, and partial-update callbacks. Tools throw or return `isError: true` on failure. `structuredContent` follows the tool's `outputSchema` for programmatic callers and is excluded from model input. |
-| `AgentSession` / `RunOutput` / `AgentMessage`<br/>Pi: [AgentSession][pi-session], [AgentMessage][pi-messages] | An application layer over `Agent`. Runs produce `UserMessage`, `AssistantMessage`, and `ToolResultMessage` records shaped like Pi's messages, with Pi's stop reasons, persisted in order. Later model input excludes aborted answer content. | Snapshot-versioned commits after sandbox cleanup, schedule revisions, and applied schedule entries. The in-memory session keeps prompts, native reasoning metadata, complete tool exchanges, assistant text and stop reasons, and schedule changes. A stopped run retains its prompt and aborted partial answer. Later model context replaces that answer with an interruption note. With PostgreSQL, a session continues after a restart or unload, but it cannot branch. | An append-only, branchable JSONL session with model and label entries, automatic compaction into summary entries, automatic retry of retryable errors, and extensions. Aborted and error assistant messages stay in session history, but [provider message transformation][pi-replay] omits them from later model replay. [Context-edit entries][pi-recovery] can omit recovery attempts and their tool results from subsequent context while retaining the raw history. |
+| `AgentSession` / `RunOutput` / `AgentMessage`<br/>Pi: [AgentSession][pi-session], [AgentMessage][pi-messages] | An application layer over `Agent`. Runs produce `UserMessage`, `AssistantMessage`, and `ToolResultMessage` records shaped like Pi's messages, with Pi's stop reasons, persisted in order. Later model input excludes aborted answer content. | Snapshot-versioned commits after sandbox cleanup, schedule revisions, and applied schedule entries. The in-memory session keeps prompts, native reasoning metadata, complete tool exchanges, assistant text and stop reasons, and schedule changes. A stopped run retains its prompt and aborted partial answer. Later model context omits only the failed response and appends a separate note describing the discarded workspace. With PostgreSQL, a session continues after a restart or unload, but it cannot branch. | An append-only, branchable JSONL session with model and label entries, automatic compaction into summary entries, automatic retry of retryable errors, and extensions. Aborted and error assistant messages stay in session history, but [provider message transformation][pi-replay] omits them from later model replay. [Context-edit entries][pi-recovery] can omit recovery attempts and their tool results from subsequent context while retaining the raw history. |
 | `SessionRuns` / `AgentRun` / `RunSnapshot`<br/>Pi: [ActiveRun and run lifecycle][pi-agent] | One active run with a cancellation handle, finishing before the next run starts. | Per-session FIFO execution, queued background runs, Stop that also cancels queued runs, and a versioned commit capability. A Stop can name a client message. It cancels only that message's run and also stops the message if it arrives later. Service shutdown leaves runs unfinished, so the restarted service reports them as interrupted. | The agent's own `AbortController`, passed to tools, with a single-run guard instead of a queue. |
 | Steering queue<br/>Pi: [steer / followUp][pi-agent] | Queued input reaches the model at a boundary without starting a new run. | One queue serves both roles. It drains every message, deduplicates retried POSTs by ID, and closes atomically with the answer. Optimizer wake-ups enter `SessionRuns` as fresh runs. | Separate steering and follow-up queues, each draining one message at a time or all at once. |
 | `WorkspaceTools` / `_LazySandboxTurn`<br/>Pi: [read, bash, edit, write][pi-coding-tools] | Pi's default `read`, `bash`, `edit`, and `write` contracts and output behavior, ported under `ai/pi`. | A lazy, disposable E2B VM per run with hydration, pause and resume, YAML validation after each change, and teardown before commit. A shorter `read` description, fixed image limits with a source-pixel bound, and server command timeouts. | Tools act on the user's local working directory, which persists across runs. Image resize options can follow the active model's limits. Built-in `powershell`, `find`, `grep`, and `ls` tools are available beyond the default active four. Nested calls through [`ctx.executeTool()`][pi-nested-tools] share validation and hooks and carry parent tool call IDs. |

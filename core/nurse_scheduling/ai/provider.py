@@ -102,7 +102,6 @@ class ChatMessage(TypedDict, total=False):
     _provider: dict[str, Any]
     _source_index: int
     _usage: dict[str, int | None]
-    _current_status: bool
     _compaction_summary: bool
     _tool_image: bool
 
@@ -132,6 +131,13 @@ class ReasoningReplay:
 
     native: dict[str, Any]
     provider: ProviderIdentity
+
+
+@dataclass(frozen=True)
+class ToolCallProgress:
+    """Combined argument size while tool calls are still incomplete and private."""
+
+    characters: int
 
 
 @dataclass(frozen=True)
@@ -217,6 +223,7 @@ ChatStreamEvent = (
     | ReasoningDelta
     | ReasoningReplay
     | ToolCallRequest
+    | ToolCallProgress
     | ResponseEnd
     | TokenUsage
     | ProviderAttempt
@@ -499,7 +506,6 @@ class OpenAiCompatibleProvider:
 
         original_estimate = estimate_context_tokens(messages, tools or [])
         stream_started = False
-        answer: list[str] = []
         text_chars = 0
         reasoning_chars = 0
         max_attempts = self._settings.provider_max_attempts
@@ -553,7 +559,6 @@ class OpenAiCompatibleProvider:
                                 raise ProviderResponseLimitError.for_user(
                                     "The AI provider returned more text than one answer may contain."
                                 )
-                            answer.append(event.text)
                         elif isinstance(event, ReasoningDelta):
                             reasoning_chars += len(event.text)
                             if reasoning_chars > MAX_RESPONSE_REASONING_CHARS:
@@ -610,17 +615,6 @@ class OpenAiCompatibleProvider:
                         f"The AI provider requested a retry delay above {MAX_RETRY_DELAY_SECONDS:g} seconds. "
                         f"{failure.user_message}"
                     ) from exc
-                if answer:
-                    # A fresh completion cannot resume transport state. Keep visible
-                    # text as context, but never replay reasoning or partial tool JSON.
-                    payload["messages"] = [
-                        *messages,
-                        ChatMessage(role="assistant", content="".join(answer)),
-                        ChatMessage(
-                            role="user",
-                            content=f"[App event] The response was interrupted after {text_chars} text characters.",
-                        ),
-                    ]
                 logger.warning(
                     "AI provider transient failure stream_started=%s attempt=%s max_attempts=%s retry_in_seconds=%.3f",
                     stream_started,
@@ -763,6 +757,8 @@ class OpenAiCompatibleProvider:
                         "The AI provider returned more reasoning metadata than one answer may contain."
                     )
                 _merge_tool_call_fragments(partial_calls, delta.get("tool_calls"))
+                if delta.get("tool_calls"):
+                    yield ToolCallProgress(sum(len(partial.arguments) for partial in partial_calls.values()))
             # Pi checks completion before releasing tools. Accept [DONE] for endpoints
             # that omit finish_reason, but never infer completion from HTTP EOF alone.
             logger.info(

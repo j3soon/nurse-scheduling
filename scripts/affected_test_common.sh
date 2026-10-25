@@ -4,6 +4,9 @@ affected_base=HEAD
 affected_full=false
 affected_list=false
 affected_paths=()
+# When true, the first undefined option and every later argument go to the test tool.
+affected_forward_options=false
+affected_tool_args=()
 
 affected_parse_args() {
   local root_dir="$1"
@@ -34,6 +37,10 @@ affected_parse_args() {
         break
         ;;
       -*)
+        if [[ "$affected_forward_options" == true ]]; then
+          affected_tool_args=("$@")
+          break
+        fi
         printf 'Unknown option: %s\n' "$1" >&2
         return 2
         ;;

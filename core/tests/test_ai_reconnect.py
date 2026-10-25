@@ -27,7 +27,7 @@ import httpx
 
 from nurse_scheduling.ai.provider import TextDelta
 from nurse_scheduling.ai.session_event_stream import RESTORE_CURSOR_GAP, SessionEvent, SessionEventStream
-from nurse_scheduling.ai.transcript import AssistantMessage, UserMessage
+from nurse_scheduling.ai.transcript import AppEventEntry, AssistantMessage, UserMessage
 
 from . import test_ai_basic as basic
 
@@ -66,6 +66,7 @@ def test_stop_before_message_arrives_prevents_provider_execution():
         assert app.state.session_store._sessions[session].transcript == [
             UserMessage("Original question"),
             AssistantMessage("", "aborted"),
+            AppEventEntry(basic.ABORTED_RESPONSE_HISTORY),
         ]
 
 
@@ -96,22 +97,22 @@ def test_message_receipts_refuse_new_execution_when_the_text_budget_is_full():
         from .test_ai_history import serving
 
         provider = basic.FakeProvider([["A1"], ["A2"]])
-        settings = basic.make_settings(max_session_bytes=130, max_history_messages=2)
+        settings = basic.make_settings(max_session_bytes=155, max_history_messages=2)
         app = basic.create_test_app(settings=settings, provider=provider)
         async with serving(app) as client:
             session_id = (await client.post("/sessions", json={"schedule_yaml": "description: test"})).json()["id"]
             path = f"/sessions/{session_id}/messages"
             first = None
             for question in ("Q1", "Q2"):
-                response = await client.post(path, json={"message": question, "message_id": question})
+                response = await client.post(path, json={"message": question, "message_id": question * 4})
                 assert response.status_code == 202
                 if first is None:
                     first = response.json()
                 while app.state.runs.busy(session_id):
                     await asyncio.sleep(0.01)
-            refused = await client.post(path, json={"message": "Q3", "message_id": "Q3"})
+            refused = await client.post(path, json={"message": "Q3", "message_id": "Q3" * 4})
             assert refused.status_code == 429
-            repeated = await client.post(path, json={"message": "Q1", "message_id": "Q1"})
+            repeated = await client.post(path, json={"message": "Q1", "message_id": "Q1" * 4})
             assert repeated.json() == first
             assert len(provider.calls) == 2
 
@@ -139,6 +140,7 @@ def test_stop_before_an_accepted_run_begins_publishes_its_stopped_outcome():
                     None,
                     # The run never begins, so it never reads the runtime.
                     runtime=cast(Any, None),
+                    requested_model="test-model",
                     runs=app.state.runs,
                     owner=session.owner_token,
                     credential_id=None,

@@ -21,8 +21,8 @@
 'use client';
 
 import { usePathname, useRouter } from 'next/navigation';
-import { useCallback, useEffect, useRef } from 'react';
-import { FiRotateCcw, FiRotateCw } from 'react-icons/fi';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { FiChevronLeft, FiChevronRight, FiRotateCcw, FiRotateCw } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { useUnsavedEditingState } from '@/utils/unsavedEditingState';
 
@@ -74,6 +74,48 @@ export default function Navigation() {
 
   const tabStripRef = useRef<HTMLDivElement>(null);
   const hasCenteredTabRef = useRef(false);
+  const [scrollEdges, setScrollEdges] = useState({ left: false, right: false });
+
+  useEffect(() => {
+    const strip = tabStripRef.current;
+    if (!strip) return;
+    const updateEdges = () => {
+      const left = strip.scrollLeft > 1;
+      const right = strip.scrollLeft + strip.clientWidth < strip.scrollWidth - 1;
+      setScrollEdges(previous => previous.left === left && previous.right === right ? previous : { left, right });
+    };
+    const handleWheel = (event: WheelEvent) => {
+      if (event.ctrlKey || event.metaKey || !event.deltaY
+        || Math.abs(event.deltaX) > Math.abs(event.deltaY)
+        || strip.scrollWidth <= strip.clientWidth) return;
+      // Firefox can report wheel movement in lines or pages instead of pixels.
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? strip.clientWidth : 1;
+      event.preventDefault();
+      strip.scrollLeft += event.deltaY * unit;
+    };
+    updateEdges();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateEdges);
+    observer?.observe(strip);
+    if (strip.firstElementChild) observer?.observe(strip.firstElementChild);
+    strip.addEventListener('scroll', updateEdges, { passive: true });
+    strip.addEventListener('wheel', handleWheel, { passive: false });
+    window.addEventListener('resize', updateEdges);
+    return () => {
+      observer?.disconnect();
+      strip.removeEventListener('scroll', updateEdges);
+      strip.removeEventListener('wheel', handleWheel);
+      window.removeEventListener('resize', updateEdges);
+    };
+  }, []);
+
+  const scrollTabs = (direction: number) => {
+    const strip = tabStripRef.current;
+    if (!strip) return;
+    strip.scrollBy({
+      left: direction * strip.clientWidth * 0.75,
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+    });
+  };
 
   // Phones show only a few tabs, so keep the current one and its neighbors in view.
   // Center again after a rotation or width change, or when the custom export indicator widens a tab.
@@ -186,34 +228,51 @@ export default function Navigation() {
   return (
     <div className="relative">
       <nav className="flex bg-white shadow-sm">
-        <div ref={tabStripRef} className="min-w-0 flex-1 overflow-x-auto">
-          <div className="flex justify-start px-4 sm:px-6 lg:px-8">
-            {TABS.map((tab, index) => {
-              const showCustomExportIndicator = Boolean(tab.exportLayout && hasCustomExportLayout);
-              return (
-                <button
-                  key={tab.path}
-                  onClick={() => navigateToTab(index)}
-                  aria-current={pathname === tab.path ? 'page' : undefined}
-                  title={showCustomExportIndicator ? CUSTOM_EXPORT_LAYOUT_TOOLTIP : undefined}
-                  className={`py-4 px-3 border-b-2 font-medium text-sm whitespace-nowrap ${
-                    pathname === tab.path
-                      ? 'border-blue-500 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                  }`}
-                >
-                  {showCustomExportIndicator && (
-                    <span
-                      aria-hidden="true"
-                      data-testid="custom-export-layout-indicator"
-                      className="mr-1.5 inline-block h-2 w-2 rounded-full bg-amber-500 align-middle"
-                    />
-                  )}
-                  {tab.name}
-                </button>
-              );
-            })}
+        <div className="relative min-w-0 flex-1">
+          <div id="navigation-tabs" ref={tabStripRef} className="navigation-tabs overflow-x-auto pb-1">
+            <div className="flex justify-start px-4 sm:px-6 lg:px-8">
+              {TABS.map((tab, index) => {
+                const showCustomExportIndicator = Boolean(tab.exportLayout && hasCustomExportLayout);
+                return (
+                  <button
+                    key={tab.path}
+                    onClick={() => navigateToTab(index)}
+                    aria-current={pathname === tab.path ? 'page' : undefined}
+                    title={showCustomExportIndicator ? CUSTOM_EXPORT_LAYOUT_TOOLTIP : undefined}
+                    className={`py-4 px-3 border-b-2 font-medium text-sm whitespace-nowrap ${
+                      pathname === tab.path
+                        ? 'border-blue-500 text-blue-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    }`}
+                  >
+                    {showCustomExportIndicator && (
+                      <span
+                        aria-hidden="true"
+                        data-testid="custom-export-layout-indicator"
+                        className="mr-1.5 inline-block h-2 w-2 rounded-full bg-amber-500 align-middle"
+                      />
+                    )}
+                    {tab.name}
+                  </button>
+                );
+              })}
+            </div>
           </div>
+          {[
+            { direction: -1, edge: 'left', visible: scrollEdges.left, Icon: FiChevronLeft },
+            { direction: 1, edge: 'right', visible: scrollEdges.right, Icon: FiChevronRight },
+          ].map(({ direction, edge, visible, Icon }) => visible && (
+            <button
+              key={edge}
+              type="button"
+              aria-label={`Scroll tabs ${edge}`}
+              aria-controls="navigation-tabs"
+              onClick={() => scrollTabs(direction)}
+              className={`absolute top-1 ${edge === 'left' ? 'left-0' : 'right-0'} flex h-11 w-7 items-center justify-center rounded bg-white/95 text-gray-500 shadow-sm hover:bg-gray-100 hover:text-gray-700`}
+            >
+              <Icon aria-hidden="true" className="h-4 w-4" />
+            </button>
+          ))}
         </div>
         {/* Keep Undo and Redo outside the scrolling strip, so phones without a keyboard can reach them. */}
         <div className="flex shrink-0 items-center border-l border-gray-200 px-1 sm:px-2">

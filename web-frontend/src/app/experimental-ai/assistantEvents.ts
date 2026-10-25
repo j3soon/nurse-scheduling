@@ -22,7 +22,7 @@
 import type { ActivityEntry } from './AssistantActivity';
 import type { ToolActivity, ToolStartActivity } from './aiClient';
 import type { SessionEvent } from './sessionEvents';
-import type { ChatMessageContent } from './chatTranscript';
+import type { ChatMessage, ChatMessageContent } from './chatTranscript';
 
 // Plain-HTTP LAN origins lack randomUUID, so build the same version 4 UUID form from random bytes.
 export function messageId(): string {
@@ -39,8 +39,9 @@ export function messageId(): string {
 export type AssistantEvent =
   | { type: 'delta'; text: string }
   | { type: 'reasoning'; text: string }
-  | Extract<SessionEvent, { type: 'compaction_start' | 'compaction_end' }>
+  | Extract<SessionEvent, { type: 'compaction_start' | 'compaction_end' | 'generation_progress' }>
   | { type: 'truncated' }
+  | Extract<SessionEvent, { type: 'response_end' }>
   | { type: 'provider_retry'; message: string }
   | { type: 'done' | 'stopped' }
   | { type: 'error' | 'stale'; message: string }
@@ -51,12 +52,23 @@ export type AssistantEvent =
 
 export function startsVisibleOutput(event: AssistantEvent): boolean {
   return event.type === 'tool_start' || event.type === 'tool' || event.type === 'schedule_change'
+    || (event.type === 'generation_progress' && event.kind === 'tool_calls')
     || ((event.type === 'delta' || event.type === 'reasoning') && event.text.length > 0);
+}
+
+export function invalidateRunSummaries(messages: ChatMessage[], runId: string): ChatMessage[] {
+  return messages.map(message => {
+    if (message.role !== 'assistant' || (message.runId ?? message.id) !== runId
+      || !message.activity?.some(entry => entry.kind === 'compaction' && entry.state === 'completed' && !entry.invalidated)) return message;
+    return { ...message, activity: message.activity.map(entry => (
+      entry.kind === 'compaction' && entry.state === 'completed' ? { ...entry, invalidated: true } : entry
+    )) };
+  });
 }
 
 function appendResponseActivity(entries: ActivityEntry[], text: string): ActivityEntry[] {
   const last = entries[entries.length - 1];
-  if (last?.kind === 'response') {
+  if (last?.kind === 'response' && last.context === undefined) {
     return [...entries.slice(0, -1), { ...last, text: last.text + text }];
   }
   return [...entries, { kind: 'response', text }];
@@ -65,7 +77,7 @@ function appendResponseActivity(entries: ActivityEntry[], text: string): Activit
 function appendReasoningActivity(entries: ActivityEntry[], text: string): ActivityEntry[] {
   const last = entries[entries.length - 1];
   // Consecutive reasoning belongs to one entry, so the order of work stays readable.
-  if (last?.kind === 'reasoning') {
+  if (last?.kind === 'reasoning' && last.context === undefined) {
     return [...entries.slice(0, -1), { ...last, text: last.text + text }];
   }
   return [...entries, { kind: 'reasoning', text }];
@@ -91,8 +103,22 @@ function finishToolActivity(entries: ActivityEntry[], result: ToolActivity): Act
 export function applyAssistantEvent<T extends ChatMessageContent>(message: T, event: AssistantEvent, occurredAt = Date.now()): T {
   const activity = message.activity ?? [];
   switch (event.type) {
+    case 'response_end': {
+      const context = event.stopReason === 'error' || event.stopReason === 'aborted' ? 'omitted' : 'complete';
+      const ended = activity.map(entry => (
+        event.contextNote && entry.kind === 'compaction' && entry.state === 'completed'
+          ? { ...entry, invalidated: true }
+          : (entry.kind === 'response' || entry.kind === 'reasoning') && entry.context === undefined
+          ? { ...entry, context } : entry
+      )) as ActivityEntry[];
+      if (event.contextNote) {
+        ended.push({ kind: 'notice', text: `Sent in future model context: ${event.contextNote}` });
+      }
+      return { ...message, activity: ended, ...(event.stopReason === 'length' ? { truncated: true } : {}) };
+    }
     case 'provider_retry':
-      return { ...message, activity: [...activity, { kind: 'notice', text: event.message }] };
+      return { ...message, activity: [...activity.filter(entry => entry.kind !== 'tool' || entry.state !== 'preparing'),
+        { kind: 'notice', text: event.message }] };
     case 'delta':
       return {
         ...message,
@@ -101,16 +127,40 @@ export function applyAssistantEvent<T extends ChatMessageContent>(message: T, ev
       };
     case 'reasoning':
       return { ...message, activity: appendReasoningActivity(activity, event.text) };
-    case 'compaction_start':
-      return { ...message, activity: [...activity, { kind: 'compaction', state: 'running', reason: event.reason,
+    case 'compaction_start': {
+      const notice: ActivityEntry[] = event.reason === 'manual'
+        ? [{ kind: 'notice', text: 'You requested context compaction.' }] : [];
+      return { ...message, activity: [...activity, ...notice, { kind: 'compaction', state: 'running', reason: event.reason,
         text: 'The conversation is being summarized.' }] };
+    }
+    case 'generation_progress': {
+      if (event.kind === 'compaction') {
+        const index = activity.findLastIndex(entry => entry.kind === 'compaction' && entry.state === 'running');
+        return { ...message, activity: activity.map((entry, i) => i === index
+          ? { ...entry, characters: event.characters, step: event.step } : entry) };
+      }
+      const entry: ActivityEntry = { kind: 'tool', name: 'Tool calls', arguments: '', result: '', ok: true,
+        state: 'preparing', argumentsCharacters: event.characters };
+      const index = activity.findLastIndex(item => item.kind === 'tool' && item.state === 'preparing');
+      return { ...message, activity: index < 0 ? [...activity, entry] : activity.map((item, i) => i === index ? entry : item) };
+    }
     case 'compaction_end': {
-      const state = event.success ? 'completed' : event.aborted ? 'interrupted' : 'failed';
+      const state = event.success ? 'completed' : event.aborted ? 'interrupted' : event.skipped ? 'skipped' : 'failed';
+      const notice: ActivityEntry[] = event.reason === 'manual'
+        && !activity.some(entry => entry.kind === 'compaction' && entry.reason === 'manual')
+        ? [{ kind: 'notice', text: 'You requested context compaction.' }] : [];
       const entry: ActivityEntry = { kind: 'compaction', state, reason: event.reason,
+        ...(event.summary === undefined ? {} : { summary: event.summary }),
+        ...(event.keepMessages === undefined ? {} : { keepMessages: event.keepMessages }),
         text: event.success ? 'The conversation was summarized.' : event.aborted
-          ? 'Summarization stopped. The original context was kept.' : 'Summarization failed. The original context was kept.' };
+          ? 'Summarization stopped. The original context was kept.' : event.skipped
+            ? 'Compaction would not reduce context. The original context was kept.' : 'Summarization failed. The original context was kept.' };
       const index = activity.findLastIndex(item => item.kind === 'compaction' && item.state === 'running');
-      return { ...message, activity: index < 0 ? [...activity, entry] : [...activity.slice(0, index), entry, ...activity.slice(index + 1)] };
+      const progress = index < 0 ? undefined : activity[index] as Extract<ActivityEntry, { kind: 'compaction' }>;
+      const characters = event.characters ?? progress?.characters;
+      const step = event.step ?? progress?.step;
+      const completed = { ...entry, ...(characters === undefined ? {} : { characters }), ...(step === undefined ? {} : { step }) };
+      return { ...message, activity: index < 0 ? [...activity, ...notice, completed] : [...activity.slice(0, index), completed, ...activity.slice(index + 1)] };
     }
     case 'truncated':
       return { ...message, truncated: true };
@@ -125,7 +175,8 @@ export function applyAssistantEvent<T extends ChatMessageContent>(message: T, ev
     case 'tool_start':
       return {
         ...message,
-        activity: [...activity, { kind: 'tool', ...event.activity, result: '', ok: true, state: 'running' }],
+        activity: [...activity.filter(entry => entry.kind !== 'tool' || entry.state !== 'preparing'),
+          { kind: 'tool', ...event.activity, result: '', ok: true, state: 'running' }],
       };
     case 'tool':
       return { ...message, activity: finishToolActivity(activity, event.activity) };
@@ -145,7 +196,7 @@ export function applyAssistantEvent<T extends ChatMessageContent>(message: T, ev
 
 export function interruptRunningTools(entries: ActivityEntry[]): ActivityEntry[] {
   return entries.map(entry => (
-    (entry.kind === 'tool' || entry.kind === 'compaction') && entry.state === 'running'
+    (entry.kind === 'tool' || entry.kind === 'compaction') && (entry.state === 'running' || entry.state === 'preparing')
       ? { ...entry, state: 'interrupted' as const }
       : entry
   ));
@@ -192,8 +243,8 @@ export function toAssistantEvent(
   browserSchedule: { readonly current: string },
 ): AssistantEvent | null {
   switch (event.type) {
-    case 'provider_retry': case 'delta': case 'reasoning': case 'truncated': case 'tool_start': case 'tool':
-    case 'compaction_start': case 'compaction_end':
+    case 'provider_retry': case 'delta': case 'reasoning': case 'truncated': case 'response_end': case 'tool_start': case 'tool':
+    case 'compaction_start': case 'compaction_end': case 'generation_progress':
       return event;
     case 'schedule_change': {
       const before = workingSchedule.current ?? browserSchedule.current;

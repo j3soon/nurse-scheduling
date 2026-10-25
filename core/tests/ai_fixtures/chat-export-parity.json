@@ -1,13 +1,13 @@
 {
   "_license": "SPDX-License-Identifier: AGPL-3.0-or-later; SPDX-FileCopyrightText: 2026 Johnson Sun",
-  "_comment": "This fixture is mostly AI generated. Expected hashes were captured from the TypeScript exporters at af57b49f. All 52 Python documents matched those exact reference bytes before capture. Later Python-only changes updated the HTML hashes. The AI input and app notice labels, tool sections, and notice activity came from the last TypeScript exporter, and the Python HTML changed exactly as its output did.",
+  "_comment": "This fixture is mostly AI generated. Expected hashes were captured from the TypeScript exporters at af57b49f. All 52 Python documents matched those exact reference bytes before capture. Later Python-only changes updated the HTML hashes. The AI input and app notice labels, tool sections, and notice activity came from the last TypeScript exporter, and the Python HTML changed exactly as its output did. Saved-case hashes now retain earlier status messages. Other projected messages remain identical.",
   "cases": [
     {
       "id": "paragraphs",
       "messages": [
         {
           "role": "assistant",
-          "content": "Text & \"quotes\"\nsoft break\n\nNew paragraph. \ud83c\udfe5 \u738b\u5c0f\u660e"
+          "content": "Text & \"quotes\"\nsoft break\n\nNew paragraph. 🏥 王小明"
         }
       ],
       "metadata": {
@@ -18,8 +18,8 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "8847284a7b1b1214bacdc73c343332d6fb7134af213f69bb9be541e13df729a9",
-        "markdown": "73a18f0ef989e918bea82bcd66270eb1716668cf0784ff7a598688dc2bd95b83"
+        "html": "8788f91858bf4256fe3866bb8ff77b60028809a1c17f21249b0e51e32abd3475",
+        "markdown": "3ab568f2d77c5e57cada9aeafe33eac4c69e36df0a1236c884de982cff55ad27"
       }
     },
     {
@@ -38,8 +38,8 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "54391ca760178c0e247d0462a0b810eb7dc8bf3f8640abd046b61678984ec85f",
-        "markdown": "a7209cad24c44307d470b8a739b6e636d16258bba0759d04366b649efc6eac2c"
+        "html": "ff9fc32e8985fca2d9a3f62129e4d08e1368c4332e06b65d33aec3099f5222d7",
+        "markdown": "bd53bb253ad28ca6c1d962573f4cdc76a9a0d50846000bbef64f25d0a8a8bc01"
       }
     },
     {
@@ -58,8 +58,8 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "ea6cd12b74211a0f19075c2d047636f51051b4b3ebe55608dee76a89b336b335",
-        "markdown": "cce58ebebba8075992a37ac00c9719831a93939c98a74e0d560acb45d3f906fa"
+        "html": "afe2c5eddc7e0d1088fb4d6201ba14481774cfb1d4ec4164a4d19b5b6117e10d",
+        "markdown": "9e745dca5104871466d393132644fb213c16fc9750cf0bf5ba71aeadc2978b55"
       }
     },
     {
@@ -78,8 +78,8 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "7bcae38735d19c93b1472a055136fb2e86fb14511921ed116e07169108810a63",
-        "markdown": "fd078763609566c070fd66cbf4d3e01f22d8349f5519ef6c15aa82906bb4afc2"
+        "html": "7c40113518688dd88a0ae8afd78f3f4bf52159d44774a86772fb06e35dac1d09",
+        "markdown": "1a307394856b24a568878a39d01e2c75e2e91e46ecff9e8acbb2e0dca182c07e"
       }
     },
     {
@@ -98,8 +98,8 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "9bc5deafd847a1804ce9120788aab0267228fad93f957f0a01981b48f9fbadcb",
-        "markdown": "54339e8c97df89f3a96e41bc937e17ad1b1ef8f885e6b65c13f515acc4f62c83"
+        "html": "f893a2dd5385b7df619a3c20b885cb797fd87a2dbdc93961e88f192b67f0e4d9",
+        "markdown": "4619ba46eff3b9bbcd7af6def3a7ba7f325afabe628765e15eb2c114b193ffe9"
       }
     },
     {
@@ -118,8 +118,8 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "fbe146a23f5b56b4ed347d2ffb47b0818029dc4184941f82f5bc930893a32a0c",
-        "markdown": "8f6fbeed76384e8e114de45a5966a51166181aebd4ac550ff7674883e28cfadf"
+        "html": "93a189d61adaa69aa6838097673b582ba6944a3102f178cb1e6efe04955f472f",
+        "markdown": "471157fb03c3c08a097f63ffafe1a936ffad75dde73c2bc03c9d2405133ee98c"
       }
     },
     {
@@ -138,8 +138,8 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "fb776e71baa04047621c3a47948cc661c161400a3a459e3a6348052fe3265808",
-        "markdown": "c6d8d30c0849c3162c9e23562fb0db1ff9700a2ecc496df42aadda6f2d2caa0f"
+        "html": "6b2d4a7192bcd4a060c5adbc556f80b896038268579a83df7019ab2e97e472d5",
+        "markdown": "e02716184c2cb3861d30a0602bc0c32b2ea7609e991e5fc382d438d0b5d22823"
       }
     },
     {
@@ -158,8 +158,8 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "c116016bbba92cb18b6609fa122a8e5c4293a7ff60b886508c85748abc7f671d",
-        "markdown": "c602c89d09f5d6e6bde227b14a4b7a84f173d59eb346d8ac6bcc986c50fbe1db"
+        "html": "87cf6bf843309a0fa50d7257e7bba1a3a34b248bcd07239c3ff2e87c7e8134e7",
+        "markdown": "637a48f3710a02137d1b98af047b6359341f9855f457ccfb530f2f3f74af2ec9"
       }
     },
     {
@@ -167,7 +167,7 @@
       "messages": [
         {
           "role": "assistant",
-          "content": "| Nurse | Day | Night |\n| :--- | :---: | ---: |\n| \u738b | **yes** | no |"
+          "content": "| Nurse | Day | Night |\n| :--- | :---: | ---: |\n| 王 | **yes** | no |"
         }
       ],
       "metadata": {
@@ -178,8 +178,8 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "4eddeb315a587354784301146b0a6045245c55fb1163cdb7941e78e6924fd9bd",
-        "markdown": "600ff31c28b5e97cff0f57dd768a717a83711f5903cc600c1877467f9a1c5097"
+        "html": "e6ed8fecb1356e999dc0f824fe39ccdd34a250adb6d254b83b99f265fceba596",
+        "markdown": "e94155ae250c153b4279799fbbe5f69797b17aaea7370837597850d1a91e2fdf"
       }
     },
     {
@@ -198,8 +198,8 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "afb54b64b51d4b3b21ed537858e6f2077b4f95d58fb93c39756c96bf200f88a3",
-        "markdown": "d7c4f47d94193774e4691f9ce26f7ce5d5c847e818d2f326b787eceeb6f9d5da"
+        "html": "51dc54f83f871110a38667a2d5738b6c33d2233b347b1ce894297d8d24414c8f",
+        "markdown": "acc48bda200b11cad0d1acc351eccffd26c3f62cacdcea2e05b725b513bde5a7"
       }
     },
     {
@@ -218,8 +218,8 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "b11edcb835a2c80731af872aff76491c99bd6e3f059b5b46a485da5960d67aff",
-        "markdown": "dc700460a9b5f918bf140e0527e511e93a1d019ec6840c5a5fd991bd0c1e1ffd"
+        "html": "a372538bd68d5b3659faaf6ba76f2ff4422914e30c0f8d3aff219a7e9fd0b8dd",
+        "markdown": "34f55e635920f4a6881800ca3d425adf6082e7eb5d308bcee764b91bfd9e58d8"
       }
     },
     {
@@ -238,8 +238,8 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "040f1fe82cc549f8404c6af36ee98d30fe0dc9921753356fe189ebd88c8488be",
-        "markdown": "6114e9e9aadf9819298673e4ae788b71e33e2a1705b6a8dc00aaae9133ae0da4"
+        "html": "7646eb57d223f0062891ddef9003b171fc7455fdd03a87d5698dd57a68ff2af7",
+        "markdown": "c3fe210a0dd10c70c545e02cf9dd05ce42cb5c548b8416695d0880f04949e884"
       }
     },
     {
@@ -258,8 +258,8 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "ab70e2480dca342aef95d49e18fe6d257e1f4beead922cda3ce15c0e953c2f1b",
-        "markdown": "c6caedf1fd6a5f657b26cf7f690d68bd1ded907b7c0b0ca8a589efcbf6c8e8f3"
+        "html": "342beb49fba067310ab7156a4f389abbcf728cf738a3b1895cfa787202a0a055",
+        "markdown": "71a0d0bb5376f8999c26e92075374bcea258839586fe395e5b568e12dc0db4e9"
       }
     },
     {
@@ -282,8 +282,8 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "16f4a248426227da139a256ed41b6eb5e43b655fd68240f0c97f7afb0faacdf2",
-        "markdown": "5b241806ba40a7910d7216fa72532d64da2fbac6c8a874a9f282468bf7fdf296"
+        "html": "f742b4f7ee043889a0b3d44d54c938cf4e696e736c00bd699901c4d78f935177",
+        "markdown": "e5573d11edcd86d7e2b697b1e593055798b575806ee00b3f5452895425053e21"
       }
     },
     {
@@ -306,8 +306,8 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "6a213c90f5bfcb9f5a37a71607e074c53329b6f15bea97c4926f0e9e38f4027b",
-        "markdown": "10755d6ea91598dce83504bfd8c4c70ef40cd6d9e0fe8c43f3863e7ccf7ecfba"
+        "html": "1cd6e9ee131d374e7705c97d65a3625e229bd01a0865fefdd3b353fe0aa058db",
+        "markdown": "a4107f1035677eca3a99c500489b9ba36f92ce336853b4f937212a6ccbf393e0"
       }
     },
     {
@@ -331,8 +331,8 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "070faded52e4b24de5d4716463e97ee2bdc275598deef0cfdc348b092ec8a027",
-        "markdown": "9700fee1ed58e9358fd7b74f0d4a9e90f98ec5d9550bb2a36798b7e2228f2e49"
+        "html": "f06a2ad955fcafcac26cfb3765cec4279d03f6cda7290e13eb72662be4d036f0",
+        "markdown": "e817ba96436de8d4c7d0c4c410fe22502c55bf3494c6c4175bad52ced342936e"
       }
     },
     {
@@ -356,8 +356,8 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "c28471092e75ed0d85880f7417389e3733dcd2debc06326954d3f2c1a00a51d7",
-        "markdown": "a79843233e7eeb7d56b4784027f4ed78296ab7d3665cf5aa296b88d645b59786"
+        "html": "f49fa8183aa6dd21c07b8e4077c470ea0ac1c401910b1ffa2f39250671cde6d5",
+        "markdown": "343155fe7cd5d28c8359b1a146af78f95eb94b3f8a79044d18b401f2f55d1185"
       }
     },
     {
@@ -381,8 +381,8 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "5e71361680d2a8ea888103ca423a95ad3263d52668bc5fd6fcf5cc5a3fce9455",
-        "markdown": "d3565031e72f0e9cf9ef6a15d2667dfbbc50b37695f4f65417c465ca5cda4ad5"
+        "html": "f3376c2dd85ba109daaec4061edf32e1e27265355a54c701427f6b8280aa73ab",
+        "markdown": "409486fdfebffb790603fb28c4f4d2510c078d2e320c77d6910d9dbbb2025e18"
       }
     },
     {
@@ -406,8 +406,8 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "5a6fdf5c29c72019ab1d9eb79000336d9ce49e7f1ca497153aa6d6aa4534c16e",
-        "markdown": "924feed4e078d448cd05c76a6dec9e6110b8819a24a9789d5724e371867d8e70"
+        "html": "f98706b7a11726b08bdcf3a457800e6f42ce0e85ecac22ba8a9218e9906e5315",
+        "markdown": "77082ebf12e03eed2539f1253af2316c2e28a028069ad5f3ad80918cc87ba27d"
       }
     },
     {
@@ -431,8 +431,8 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "495158d2291d79444c578b36eb538bdce2ba76900c80f71d6ee05062160c4d37",
-        "markdown": "9851c6bb1f629ad03a3240b586f7af4bb15f4680587860d87906405fa2f1eda9"
+        "html": "3aed1671d3064cef1c8aacafb6de6b10860936d72446696ec5bd4b3d89a8ed76",
+        "markdown": "403893489e4277dc32bf3aad59037bf1cd879dd98a0c08a16b3873742a2d29a6"
       }
     },
     {
@@ -456,8 +456,8 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "f9766132d505d246e88d67fcc78c8f915ffcf0610554e66c7d58d4b40450b2be",
-        "markdown": "f69147df24714eea592884b3a889b462f6ba25814b26bf584509cb41015bb060"
+        "html": "c4681a1d4f87ef7b6ca295d3d0de35e2a93626b0b2457173904c6b9c8bb2ec7d",
+        "markdown": "6392b2daa84dd3e4288bde583eaeb7fd5d5c8ec2c0d8ebcefc53b17328b55fc1"
       }
     },
     {
@@ -484,7 +484,7 @@
       "messages": [
         {
           "role": "system",
-          "content": "System \ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\ud83c\udfe5\n```text\n<unsafe>\n```"
+          "content": "System 🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥\n```text\n<unsafe>\n```"
         },
         {
           "role": "user",
@@ -552,40 +552,40 @@
         }
       ],
       "sha256": {
-        "html": "a094086aa1f41f566a0742176362891d8e1fffe0703a7d62df77974c80e400a2",
-        "markdown": "2b6b71ac1d23cac18e9c666d433c9ac1dfcdeb25c6e9dfdb4e79b2ae240811a1"
+        "html": "f497cc47f8935f69b843e893ea3a3a6e392aa3845365bdb2bdbe5b228df6bd7f",
+        "markdown": "7afb706019a5a70204908168e049c4debddaad6ce18845e86dc44b2bda1c7fa0"
       }
     },
     {
       "id": "saved-rich",
       "snapshot": "saved-rich",
       "sha256": {
-        "html": "79c14e3fde3601c9edf7e5fddbf090704caa170441d33709cb3fec15483ec7d7",
-        "markdown": "b9d2c505a9acfb97ad3c62b94ae6ab161c1e282f851e6893fd6b9481666f7ee2"
+        "html": "b563aac28722b17282a91bb11a9db024c2c517e33d66f20dd10bbd2f391b3821",
+        "markdown": "830b5245b7a3c503548e90f0d18306f084a88c116140d8758bd26de5e24b595d"
       }
     },
     {
       "id": "early-steering",
       "snapshot": "early-steering",
       "sha256": {
-        "html": "a8bbad5b77105a0c621e533a99f9150ec0f175cb1740b2b01190bd3d5bdc7e7a",
-        "markdown": "3f1af6becb94e81a3f3692149bc4332917d61e3883b0348abf2c69ac7163f4b3"
+        "html": "3fcdd022234a65051a7278902595b7bb3338035c6c30e4ccf9ea8daf6fbc1fd7",
+        "markdown": "9df7ed19f21c6ba7498a08ed88bde0a56a667270407d57479d905c6c8e1471e2"
       }
     },
     {
       "id": "missing-terminal",
       "snapshot": "missing-terminal",
       "sha256": {
-        "html": "a939d20bbf0eb7995b900377dfa09aa2e9152461bb22fc8c350a69dd03e65998",
-        "markdown": "1cd63155c9fa91fd42996b58b8c1bb3727f15dac29051cd928148c319760b531"
+        "html": "4d51ef3d7a7280a9b0fbfbd6d257914c2e35e3b666663ec5d3f5c64bf067bbde",
+        "markdown": "106c71e3daa3d138cf2599be3339104bbd62f353a24e4d7ae575ab099d7ec84a"
       }
     },
     {
       "id": "changed-system",
       "snapshot": "changed-system",
       "sha256": {
-        "html": "e3fd9d282e2b83042b0d8badc7d1111c4e7e7b2854ae8c2a839be8159127c6d8",
-        "markdown": "c8e9007f4c51d1f7e62e8521439308f9f74e3acd160c5c638367810cde2f7b08"
+        "html": "b3324f0f4ecd14f4f00adde7abf7e99ac8d71303e2460f5caea379c954b63d9c",
+        "markdown": "133e9e3ecd33a45f934296512eb7bd75d75c7e7aa778932e3d4031dbeb5b38ad"
       }
     },
     {
@@ -623,8 +623,8 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "06cfe6f97b3d457ae8d64783d1ac780a6d3f4fe34016fe1f6732785e62792d01",
-        "markdown": "14c2238a7c80ebd826b5d84f454e0e63ddf466b565fbe2ec0ba35ad09c665b16"
+        "html": "01356b9949f32ca05c958b13b54038811e8915f0d4dcfb7bc6175b0e94b27562",
+        "markdown": "b1b9bbea9fe195215f7f92c8e20b48eca6fc41848bbbbd1abd7972cbc532954a"
       }
     }
   ]

@@ -20,10 +20,9 @@
 # This file is mostly AI generated.
 
 import asyncio
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Sequence
 from contextlib import aclosing
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass, field, replace
 
 from .agent_loop import agent_loop
 from .agent_types import (
@@ -36,7 +35,7 @@ from .agent_types import (
     ToolBatchScope,
 )
 from .provider import ChatMessage, ToolCapableChatProvider
-from .transcript import AgentMessage, AssistantMessage
+from .transcript import AgentMessage, AssistantMessage, CompactionEntry
 
 
 @dataclass
@@ -117,7 +116,6 @@ class Agent:
         take_steering: SteeringSource | None = None,
         max_tool_rounds: int | None = None,
         max_tool_calls: int | None = None,
-        request_clock: Callable[[], datetime] | None = None,
         history_limit: int = 200_000,
         message_limit: int = 1000,
     ) -> AsyncIterator[AgentEvent]:
@@ -135,7 +133,6 @@ class Agent:
             max_tool_rounds=max_tool_rounds,
             max_tool_calls=max_tool_calls,
             run_messages=self.state.messages,
-            request_clock=request_clock,
             history_limit=history_limit,
             message_limit=message_limit,
         )
@@ -149,9 +146,16 @@ class Agent:
                     yield event
         except BaseException as exc:
             reason = "aborted" if isinstance(exc, (asyncio.CancelledError, GeneratorExit)) else "error"
-            last = self.state.messages[-1] if self.state.messages else None
-            if not isinstance(last, AssistantMessage) or last.stop_reason not in {"aborted", "error"}:
-                self.state.messages.append(AssistantMessage("", reason))
+            messages = self.state.messages
+            index = len(messages) - 1
+            while index >= 0 and isinstance(messages[index], CompactionEntry):
+                index -= 1
+            last = messages[index] if index >= 0 else None
+            if isinstance(last, AssistantMessage) and not last.tool_calls and last.stop_reason in {"stop", "length"}:
+                # Validation and workspace cleanup did not accept this final answer.
+                messages[index] = replace(last, stop_reason=reason)
+            elif not isinstance(last, AssistantMessage) or last.stop_reason not in {"aborted", "error"}:
+                messages.append(AssistantMessage("", reason))
             raise
         finally:
             self.state.is_streaming = False

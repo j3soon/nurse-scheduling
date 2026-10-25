@@ -1,0 +1,31 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later. Copyright (C) 2026 Johnson Sun.",
+  "_comment": "This testcase is mostly AI generated.",
+  "id": "local-date-from-instant-los-angeles",
+  "fixture": "small-clinic",
+  "question": "Use bash date to convert 2031-03-31T23:30:00+00:00 to my workspace timezone. Report its local date, local time, timezone, and the first date of the following month. Reply only with JSON: local_date (YYYY-MM-DD), local_time (HH:MM), timezone (IANA name), next_month_start (YYYY-MM-DD). Do not create files or edit the schedule.",
+  "expect_proposal": false,
+  "frontend_timezone": "America/Los_Angeles",
+  "answer_json": {
+    "local_date": "2031-03-31",
+    "local_time": "16:30",
+    "timezone": "America/Los_Angeles",
+    "next_month_start": "2031-04-01"
+  },
+  "tool_usage": {
+    "forbidden": [
+      "write",
+      "edit",
+      "optimizer"
+    ],
+    "max_total": 3,
+    "required": [
+      "bash"
+    ]
+  },
+  "tags": [
+    "app-ui",
+    "workspace-timezone"
+  ],
+  "note": "The user supplies a fixed instant. Bash date uses the browser timezone inherited by the VM. Grade the local date, local time, timezone and following month without injecting or freezing the current clock."
+}

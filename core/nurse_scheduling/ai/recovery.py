@@ -319,7 +319,7 @@ class SessionRecovery:
         self,
         session_id: str,
         run_id: str,
-        prompt: str,
+        prompt: str | None,
         prompt_seq: int,
         *,
         model: str,

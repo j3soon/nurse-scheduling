@@ -33,6 +33,7 @@ export interface ChatMessageContent {
   activity?: ActivityEntry[];
   status?: 'pending' | 'failed' | 'stopped';
   failureReason?: string;
+  truncated?: boolean;
   responseStartedAt?: number;
   responseCompletedAt?: number;
 }
@@ -67,8 +68,8 @@ export function applyModelInput(
   turn: { questionId: string | null; assistantId: string },
 ): ChatMessage[] {
   const statusId = `status-${turn.assistantId}`;
-  // History never keeps a status message, so only the latest request's status stays visible.
-  const result = messages.filter(message => message.source !== 'status');
+  // Replay can replace this request's status. Earlier requests remain visible.
+  const result = messages.filter(message => message.id !== statusId);
   const known = new Set(result.map(message => message.historyIndex));
   const lastSystem = [...result].reverse().find(message => message.role === 'system');
   const before: ChatMessage[] = lastSystem?.content === input.system
@@ -83,7 +84,8 @@ export function applyModelInput(
         id: `history-${entry.index}`, role: 'user', source: 'app', title: entry.title, historyIndex: entry.index, content: entry.content,
       });
     } else if (entry.kind === 'status') {
-      status = { id: statusId, role: 'user', source: 'status', title: entry.title, content: entry.content };
+      status = { id: statusId, role: 'user', source: 'status', title: entry.title, content: entry.content,
+        ...(entry.index === undefined ? {} : { historyIndex: entry.index }) };
     } else if (entry.kind === 'question') {
       questionText = entry.content;
     } else if (entry.kind === 'optimizer') {

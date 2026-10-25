@@ -42,6 +42,7 @@ from nurse_scheduling.ai.chat_archive import (
     FILE_CHUNK_BYTES,
     ChatArchiveResponse,
     ChatSessionNotFoundError,
+    PreparedChatArchives,
     create_chat_archive,
 )
 from nurse_scheduling.ai.chat_export import build_saved_chat_export
@@ -251,7 +252,7 @@ def test_native_download_link_is_scoped_to_the_session_and_expires(postgres_hist
         assert prepared.status_code == 200 and prepared.headers["cache-control"] == "no-store"
         token = prepared.json()["download_token"]
         assert token and basic.AI_AUTH_TOKEN not in token and owner not in token
-        url = f"/sessions/{session}/export?token={token}"
+        url = f"/sessions/{session}/export?download={prepared.json()['download_id']}&token={token}"
         downloaded = client.get(url, headers={"Authorization": ""})
         assert downloaded.status_code == 200
         assert downloaded.headers["content-type"] == "application/zip"
@@ -304,12 +305,16 @@ def test_native_download_link_works_for_a_session_that_is_not_loaded(postgres_hi
         basic.create_test_app(settings=settings, provider=basic.FakeProvider())
     ) as client:
         session = basic.create_session(client)
-        token = client.post(f"/sessions/{session}/export").json()["download_token"]
+        prepared = client.post(f"/sessions/{session}/export").json()
+        token = prepared["download_token"]
     # A restarted service has not loaded the session, and this browser sends no owner
     # cookie or another browser's owner cookie.
     restarted = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
     with basic.AuthenticatedTestClient(restarted, cookies=cookies) as client:
-        downloaded = client.get(f"/sessions/{session}/export?token={token}", headers={"Authorization": ""})
+        downloaded = client.get(
+            f"/sessions/{session}/export?download={prepared['download_id']}&token={token}",
+            headers={"Authorization": ""},
+        )
     assert downloaded.status_code == 200
     with ZipFile(io.BytesIO(downloaded.content)) as archive:
         assert json.loads(archive.read("manifest.json"))["session_id"] == session
@@ -339,7 +344,7 @@ def test_native_export_without_shared_auth_still_requires_owner(postgres_history
     )
     with basic.AuthenticatedTestClient(app) as client:
         session = basic.create_session(client)
-        assert client.post(f"/sessions/{session}/export").json() == {"download_token": None}
+        assert client.post(f"/sessions/{session}/export").json()["download_token"] is None
         assert client.get(f"/sessions/{session}/export").status_code == 200
 
 
@@ -376,3 +381,58 @@ def test_archive_documents_link_uploaded_files_without_touching_the_snapshot():
     solo_markdown = build_saved_chat_export(snapshot, "markdown")
     assert '<a href="attachments/upload/' not in solo_html
     assert "](attachments/upload/" not in solo_markdown
+
+
+def test_preparation_builds_the_archive_once_and_reports_build_errors(postgres_history, monkeypatch):
+    app = basic.create_test_app(
+        settings=basic.make_settings(history_postgres_url="test"), provider=basic.FakeProvider()
+    )
+    with basic.AuthenticatedTestClient(app) as client:
+        session = basic.create_session(client)
+        prepared = client.post(f"/sessions/{session}/export")
+        assert prepared.status_code == 200
+        link = prepared.json()
+
+        def fail_build(*_args, **_kwargs):
+            raise OSError("disk unavailable")
+
+        monkeypatch.setattr("nurse_scheduling.ai.app.create_chat_archive", fail_build)
+        downloaded = client.get(
+            f"/sessions/{session}/export?download={link['download_id']}&token={link['download_token']}",
+            headers={"Authorization": ""},
+        )
+        assert downloaded.status_code == 200
+        with ZipFile(io.BytesIO(downloaded.content)) as archive:
+            assert json.loads(archive.read("manifest.json"))["session_id"] == session
+        failed = client.post(f"/sessions/{session}/export")
+        assert failed.status_code == 503
+        assert failed.json()["detail"] == "The chat archive could not be created. Try again."
+
+
+def test_prepared_archives_bound_disk_files_and_close_on_expiry_failure_and_shutdown(monkeypatch):
+    now = 100.0
+    monkeypatch.setattr(chat_archive, "monotonic", lambda: now)
+    prepared = PreparedChatArchives(limit=1, ttl_seconds=300)
+    with prepared.reserve("chat") as (identity, entry):
+        first = entry.archive = io.BytesIO()
+    with pytest.raises(OSError, match="Too many pending"), prepared.reserve("another"):
+        pass
+    assert prepared.take("another", identity) is None
+    assert not first.closed
+    now += 301
+    prepared.prune()
+    assert first.closed and not prepared.pending
+    with pytest.raises(ValueError, match="failed"), prepared.reserve("chat") as (_, entry):
+        failed = entry.archive = io.BytesIO()
+        raise ValueError("failed")
+    assert failed.closed and not prepared.pending
+    with prepared.reserve("chat") as (identity, entry):
+        delivered = entry.archive = io.BytesIO()
+    assert prepared.take("chat", identity) is delivered
+    prepared.close()
+    assert not delivered.closed
+    delivered.close()
+    with prepared.reserve("chat") as (_, entry):
+        abandoned = entry.archive = io.BytesIO()
+    prepared.close()
+    assert abandoned.closed

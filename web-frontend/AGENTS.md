@@ -26,6 +26,8 @@ the other commands.
 
 Use `bun run test:affected` for routine changes. Run the full unit/component
 and browser suites when checking the full app or broad shared behavior.
+Run affected unit and browser commands sequentially in one checkout. They share
+a dependency-reconciliation lock, so parallel invocations wait on each other.
 After a large frontend change, such as a commit series or a change to shared
 components, layout, or global CSS, run `bun run test:e2e:affected --full` once
 before the branch is pushed. Changed-spec runs miss other specs that the change
@@ -37,9 +39,10 @@ Frontend unit/component tests use Vitest; browser integration tests use
 Playwright. Keep test files and runner configuration outside the production
 TypeScript project. Validate them with their respective test runners.
 
-For native downloads, open any download tab during the click before awaiting
-authorization. Test preparation and download failures separately. Keep large
-archives out of browser Blobs.
+Prepare chat archives before starting a native download in a hidden frame. Keep
+preparation and download errors on the chat page. Test both failure paths in
+Chrome and Firefox. Keep large archives out of browser Blobs. Retain the frame
+until the next export, conversation reset, or page unmount.
 
 For row reorder tests, drop inside the intended half of the target row. Its
 midpoint separates insertion before and after, so center drops are ambiguous.
@@ -61,6 +64,19 @@ initialization, such as loaded backend options enabling Optimize.
 Treat transcript visibility preferences as display settings. Saved exports retain
 reasoning, tool activity, model selections, and costs.
 
+Keep assistant output and tool activity, including tool results, left-aligned.
+Keep user, system, and app inputs to the model right-aligned with explicit role
+labels. Show the generated conversation summary on the right as
+`User · Conversation summary`. Keep display-only app events and notices in
+separate centered bubbles. Compaction progress and outcomes are app notices.
+Classify notices by their context provenance, because some report text supplied
+to the model. A discarded summary belongs with app notices and must say that it
+is omitted from future context. Derive these bubbles for display without changing
+saved message identity, execution ownership, or model inputs. Match chat exports
+to this convention.
+Invalidate summaries across every reply from a failed run, including replies
+before steering. Test foreground output, background replay, and reload.
+
 When comparing chat exports with the live transcript, identify the same message
 by its label or content. A foreground stream can prepend a system message after
 the export snapshot, so message position is not stable.
@@ -69,8 +85,11 @@ byte parity. Include steering before output and optimizer events between replies
 
 Both affected commands accept `--base REF` to include committed branch changes
 since the merge base with `REF`, `--list` to inspect selection, and `--full` to
-run their whole suite. `test:e2e:affected` cannot infer browser coverage from
-changed app source or public assets. Without explicit spec paths or `--full`,
+run their whole suite. `test:e2e:affected` passes its first undefined option
+and every later argument to Playwright. For example,
+`bun run test:e2e:affected e2e/experimental-ai-basic.spec.ts -g 'model'` runs
+the matching tests of that spec. `test:e2e:affected` cannot infer browser
+coverage from changed app source or public assets. Without explicit spec paths or `--full`,
 it fails rather than silently skipping those changes. Every Playwright run
 builds the current checkout, launches its own server on an OS-selected port,
 and shuts it down afterwards. Existing local servers are never reused.
@@ -139,9 +158,16 @@ Protect transient in-memory user work with `useTabSwitchWarning` when changing
 tabs would discard it. Add a `beforeunload` guard when reload or close also
 destroys that state.
 
+Derive the AI context percentage and token count from the same backend token
+value and model context limit. Label estimates. Keep character retention limits
+out of the context percentage.
+
 Experimental AI controls must follow backend `/capabilities` responses. The
 backend remains authoritative for feature enablement and input limits.
-Keep model and reasoning controls editable during streaming. Save the session's
+Show the model lock that the backend saves for the session, and read it again
+when a run starts or ends. Also lock the model control while a message is in
+flight. A rejected message leaves it editable. Keep reasoning effort editable
+during streaming for future runs. Enforce the same model lock on the backend. Save the session's
 current choice separately from the active turn's accepted choice. Restore the
 session choice after reload and serialize saves before submitting a new turn.
 For retained attachments, count existing uploads toward session limits. Keep
@@ -175,8 +201,9 @@ endpoint after a conversation creates a session. A self-hosted build may set ano
 capability-gated control is missing, inspect the capabilities request from the
 exact browser origin. A loopback-only browser check can miss CORS failures.
 Send the browser's IANA timezone on session creation, chat messages, and queued
-messages. The backend supplies the current time, so do not use the browser clock
-as the source of the current instant.
+messages. The backend sets the VM timezone once at creation. The agent gets the
+current time with `date`. Preserve historical status messages in replay. New
+requests use ordinary app events without an automatic status message.
 Replayable AI session events use `Last-Event-ID`, so include it in backend CORS
 preflight coverage. Keep object URLs for chat and workbook downloads alive until the
 download is replaced or the page unmounts.

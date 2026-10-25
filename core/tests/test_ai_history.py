@@ -193,6 +193,7 @@ def test_records_text_usage_and_sanitized_failure(recorded_history, failed):
         AssistantMessage(
             "Partial answer", "error" if failed else "stop", usage=None if failed else asdict(TokenUsage(1, 1, 2))
         ),
+        *([AppEventEntry(basic.ABORTED_RESPONSE_HISTORY)] if failed else []),
     ]
     if not failed:
         assert basic.parse_sse(response.text)[-1] == ("done", {"run_id": start["run_id"], "history_saved": True})
@@ -1191,7 +1192,7 @@ def test_postgres_duplicates_and_reconnection(postgres_history):
             *map(record, entries),
             record(app_event[2]),
         ]
-        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (9,)
+        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (10,)
     # Complete tool exchanges survive a process restart.
     assert restarted.load_session(session, owner)["entries"] == [
         UserMessage("What's next?"),
@@ -1413,7 +1414,7 @@ def test_postgres_upgrade_preserves_deployed_sessions_and_message_receipts(unini
     assert [(row[3], row[4].get("text")) for row in events] == [("delta", "Saved answer"), ("optimization", None)]
     assert events[0][4]["run_id"] == run_id
     with history._connect() as connection:
-        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (9,)
+        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (10,)
         assert connection.execute("SELECT auth_credential_id FROM chat_sessions").fetchone() == ("team-a",)
         assert connection.execute("SELECT model FROM chat_runs").fetchone() == ("saved-model",)
 
@@ -1480,6 +1481,7 @@ def test_postgres_recovery_keeps_operational_metadata(postgres_history):
             record(answer),
             record(UserMessage("Second")),
             record(AssistantMessage("Partial", "error")),
+            record(AppEventEntry(basic.ABORTED_RESPONSE_HISTORY)),
         ]
         stored_types = {kind for (kind,) in connection.execute("SELECT DISTINCT type FROM chat_session_events")}
     assert rows[0][:5] == (
@@ -1508,6 +1510,7 @@ def test_postgres_recovery_keeps_operational_metadata(postgres_history):
         answer,
         UserMessage("Second"),
         AssistantMessage("Partial", "error"),
+        AppEventEntry(basic.ABORTED_RESPONSE_HISTORY),
     ]
     assert "private detail" not in repr(rows)
 
@@ -1639,13 +1642,16 @@ def test_postgres_recovers_question_and_partial_output_from_interrupted_run(post
             frames = await read_events(app, session, owner, 1, until="session_reset")
             assert app.state.session_store._sessions[session].history == [
                 {"role": "user", "content": "Keep working"},
-                {"role": "assistant", "content": basic.ABORTED_RESPONSE_HISTORY},
+                {"role": "user", "content": basic.ABORTED_RESPONSE_HISTORY},
             ]
             return frames
 
     frames = asyncio.run(exercise())
     (reset,) = [data for _id, kind, data in frames if kind == "session_reset"]
     assert reset_text(frames) == "Saved partial output"
+    boundary = next(event for event in reset["events"] if event["type"] == "response_end")
+    assert boundary["data"]["stop_reason"] == "error"
+    assert boundary["data"]["context_note"] == basic.ABORTED_RESPONSE_HISTORY
     assert reset["events"][-1]["type"] == "error"
     assert "service restarted" in reset["events"][-1]["data"]["message"]
     assert provider.calls == []
@@ -1654,6 +1660,61 @@ def test_postgres_recovers_question_and_partial_output_from_interrupted_run(post
             "failed",
             "service_restart",
         )
+
+
+def test_postgres_restart_repairs_unfinished_tools_and_omits_the_last_incomplete_response(postgres_history):
+    session, run, owner = str(uuid4()), str(uuid4()), str(uuid4())
+    state = session_state(owner)
+    postgres_history.save_session(session, state)
+    postgres_history.start_run(run, session, state, "Inspect", 0, model="model", attachment_count=0)
+    call = ToolCall("pending", "bash", '{"command":"sleep 30"}')
+    postgres_history.append_entries(
+        session,
+        [
+            (1, run, AssistantMessage("Earlier", "tool_use", tool_calls=(call,))),
+            (2, run, ToolResultMessage(call.id, call.name, "Earlier result", True)),
+            (3, run, AssistantMessage("Checking", "tool_use", tool_calls=(call,))),
+        ],
+    )
+    postgres_history.recover_run(session, run)
+    loaded = postgres_history.load_session(session, owner)
+    repair = next(entry for entry in loaded["entries"] if isinstance(entry, ToolResultMessage) and not entry.ok)
+    assert repair.tool_call_id == call.id and not repair.ok
+    events = postgres_history.load_events(session, 0)
+    tool = next(data for _first, _last, _run, kind, data in events if kind == "tool")
+    assert tool["result"] == repair.text == "No result provided. The tool exchange was interrupted."
+    assert tool["arguments"] == call.arguments
+    assert loaded["entries"][1].stop_reason == "tool_use"
+    before = loaded["entries"]
+    postgres_history.recover_run(session, run)
+    assert postgres_history.load_session(session, owner)["entries"] == before
+
+
+@pytest.mark.parametrize("finished_answer", [True, False])
+def test_postgres_restart_omits_final_text_that_was_pending_validation(postgres_history, finished_answer):
+    from nurse_scheduling.ai.context import projected_history
+    from nurse_scheduling.ai.transcript import CompactionEntry
+
+    session, run, owner = str(uuid4()), str(uuid4()), str(uuid4())
+    state = session_state(owner)
+    postgres_history.save_session(session, state)
+    postgres_history.start_run(run, session, state, "First", 0, model="model", attachment_count=0)
+    saved = [AssistantMessage("Completed earlier exchange"), UserMessage("Now edit")]
+    if finished_answer:
+        saved.append(AssistantMessage("Provisional edit is saved"))
+    saved.append(CompactionEntry("Summary of the provisional edit", 1, 9000))
+    postgres_history.append_entries(session, [(seq, run, entry) for seq, entry in enumerate(saved, 1)])
+    postgres_history.recover_run(session, run)
+    entries = postgres_history.load_session(session, owner)["entries"]
+    assert entries[1].stop_reason == "stop"
+    if finished_answer:
+        assert entries[3].text == "Provisional edit is saved" and entries[3].stop_reason == "error"
+    assert next(entry for entry in entries if isinstance(entry, CompactionEntry)).valid is False
+    context = str(projected_history(entries))
+    assert "Completed earlier exchange" in context
+    assert "Provisional edit is saved" not in context
+    assert "Summary of the provisional edit" not in context
+    assert basic.ABORTED_RESPONSE_HISTORY in context
 
 
 def test_postgres_recovers_background_metadata_after_restart(postgres_history):
@@ -1692,7 +1753,7 @@ def test_postgres_recovers_background_metadata_after_restart(postgres_history):
     events = fold_recovery(
         SessionEvent(last, kind, data) for _f, last, _r, kind, data in postgres_history.load_events(session, 0)
     )
-    assert [event.type for event in events] == ["run_start", "delta", "error"]
+    assert [event.type for event in events] == ["run_start", "delta", "response_end", "error"]
     assert "background response" in events[-1].data["message"]
 
 
@@ -1737,7 +1798,10 @@ def test_postgres_evicted_session_restores_on_its_next_request(postgres_history)
             assert list(app.state.session_store._sessions) == [first]
             return app.state.session_store._sessions[first].transcript
 
-    assert asyncio.run(exercise()) == [UserMessage("Question"), AssistantMessage("Saved answer")]
+    assert asyncio.run(exercise()) == [
+        UserMessage("Question"),
+        AssistantMessage("Saved answer"),
+    ]
 
 
 def test_postgres_frontend_timezone_survives_a_service_restart(postgres_history):
@@ -1749,13 +1813,17 @@ def test_postgres_frontend_timezone_survives_a_service_restart(postgres_history)
         ).json()["id"]
         owner = client.cookies[basic.OWNER_COOKIE]
 
-    provider = basic.FakeProvider()
+    provider = basic.ScriptedToolProvider(
+        [basic.ToolCallRequest((basic.ToolCall("date", "bash", '{"command":"date"}'),))],
+        [basic.TextDelta("Today.")],
+    )
     restarted = basic.create_test_app(settings=settings, provider=provider)
     with basic.AuthenticatedTestClient(restarted) as client:
         client.cookies.set(basic.OWNER_COOKIE, owner)
         response = client.post(f"/sessions/{session_id}/messages", json={"message": "Today?"})
         assert basic.parse_sse(response.text)[-1][0] == "done"
-        assert '"timezone": "Asia/Taipei"' in provider.calls[0][-1]["content"]
+        assert restarted.state.sandbox_factory.created[0].envs == {"TZ": "Asia/Taipei"}
+        assert not any("[Current status]" in str(message.get("content")) for message in provider.calls[0])
         assert restarted.state.session_store._sessions[session_id].frontend_timezone == "Asia/Taipei"
 
 
@@ -1777,7 +1845,13 @@ def test_postgres_restored_conversation_matches_the_live_conversation(postgres_h
         live = app.state.session_store._sessions[session_id]
         expected = (list(live.transcript), live.dropped_entries, live.dropped_history_messages)
     # Retention trimmed the first exchange, both app events, and the interrupted second exchange.
-    assert expected == ([UserMessage("Q3"), AssistantMessage("A3"), UserMessage("Q4"), AssistantMessage("A4")], 6, 6)
+    assert [entry for entry in expected[0] if not isinstance(entry, AppEventEntry)] == [
+        UserMessage("Q3"),
+        AssistantMessage("A3"),
+        UserMessage("Q4"),
+        AssistantMessage("A4"),
+    ]
+    assert expected[1] > 0 and expected[2] > 0
 
     async def restarted():
         app = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
@@ -1842,7 +1916,7 @@ def test_postgres_saves_each_message_before_its_run_ends(postgres_history):
             session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
             await client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P1."})
             deadline = time.monotonic() + 5
-            while len(saved := await asyncio.to_thread(saved_types)) < 3 and time.monotonic() < deadline:
+            while "tool_result" not in (saved := await asyncio.to_thread(saved_types)) and time.monotonic() < deadline:
                 await asyncio.sleep(0.05)
             # A crash now would keep the finished tool call and its result.
             assert app.state.runs.busy(session_id)
@@ -1873,7 +1947,11 @@ def test_postgres_stop_before_message_arrival_survives_restart(postgres_history)
     frames, transcript = asyncio.run(exercise())
     assert frames[-1][1] == "stopped"
     assert provider.calls == []
-    assert transcript == [UserMessage("Original question"), AssistantMessage("", "aborted")]
+    assert transcript == [
+        UserMessage("Original question"),
+        AssistantMessage("", "aborted"),
+        AppEventEntry(basic.ABORTED_RESPONSE_HISTORY),
+    ]
 
     restored_provider = basic.FakeProvider()
     restored = basic.create_test_app(settings=settings, provider=restored_provider)
@@ -1883,7 +1961,7 @@ def test_postgres_stop_before_message_arrival_survives_restart(postgres_history)
         assert basic.parse_sse(response.text)[-1][0] == "done"
         assert restored_provider.calls[0][1:3] == [
             {"role": "user", "content": "Original question"},
-            {"role": "assistant", "content": basic.ABORTED_RESPONSE_HISTORY},
+            {"role": "user", "content": basic.ABORTED_RESPONSE_HISTORY},
         ]
 
 
@@ -1938,6 +2016,85 @@ def test_postgres_shutdown_reports_interrupted_run_as_restart(postgres_history, 
             "failed",
             "service_restart",
         )
+
+
+def test_postgres_shutdown_after_the_final_answer_omits_it_after_restart(postgres_history, monkeypatch):
+    from nurse_scheduling.ai.compaction import ContextCompactor
+
+    answered = asyncio.Event()
+    compact = ContextCompactor.compact
+
+    async def compact_after_answer(self, messages, *args, **kwargs):
+        if messages[-1]["role"] == "assistant":
+            # Hold the run in its post-answer compaction check until shutdown.
+            answered.set()
+            await asyncio.Event().wait()
+        async for event in compact(self, messages, *args, **kwargs):
+            yield event
+
+    settings = basic.make_settings(history_postgres_url="test")
+
+    async def exercise():
+        app = basic.create_test_app(settings=settings, provider=basic.FakeProvider([["Provisional edit is saved"]]))
+        async with serving(app) as client:
+            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            await client.post(f"/sessions/{session_id}/messages", json={"message": "Edit", "message_id": "m"})
+            await asyncio.wait_for(answered.wait(), timeout=5)
+            return session_id, client.cookies[basic.OWNER_COOKIE]
+
+    with monkeypatch.context() as patch:
+        patch.setattr(ContextCompactor, "compact", compact_after_answer)
+        session_id, owner = asyncio.run(exercise())
+    provider = basic.FakeProvider([["Next answer"]])
+
+    async def restarted():
+        app = basic.create_test_app(settings=settings, provider=provider)
+        async with serving(app, owner) as client:
+            response = await client.post(f"/sessions/{session_id}/messages", json={"message": "Next"})
+            assert response.status_code == 202
+            await read_events(app, session_id, owner)
+
+    asyncio.run(restarted())
+    context = str(provider.calls[0])
+    assert "Provisional edit is saved" not in context
+    assert basic.ABORTED_RESPONSE_HISTORY in context
+
+
+def test_postgres_saves_the_interrupted_state_of_entries_that_were_already_saved(postgres_history, monkeypatch):
+    from nurse_scheduling.ai.agent_types import AgentCompaction
+    from nurse_scheduling.ai.compaction import ContextCompactor
+    from nurse_scheduling.ai.transcript import CompactionEntry
+
+    compacted = asyncio.Event()
+    compact = ContextCompactor.compact
+
+    async def compact_after_answer(self, messages, *args, **kwargs):
+        if messages[-1]["role"] == "assistant":
+            # Save a summary after the final answer, then hold the run until Stop.
+            yield AgentCompaction(CompactionEntry("Summary", 0, 1000))
+            compacted.set()
+            await asyncio.Event().wait()
+        async for event in compact(self, messages, *args, **kwargs):
+            yield event
+
+    monkeypatch.setattr(ContextCompactor, "compact", compact_after_answer)
+    settings = basic.make_settings(history_postgres_url="test")
+
+    async def exercise():
+        app = basic.create_test_app(settings=settings, provider=basic.FakeProvider([["Provisional edit is saved"]]))
+        async with serving(app) as client:
+            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            await client.post(f"/sessions/{session_id}/messages", json={"message": "Edit", "message_id": "m"})
+            await asyncio.wait_for(compacted.wait(), timeout=5)
+            assert (await client.post(f"/sessions/{session_id}/stop")).status_code == 202
+            await read_events(app, session_id, client.cookies[basic.OWNER_COOKIE], until="stopped")
+
+    asyncio.run(exercise())
+    with postgres_history._connect() as connection:
+        stored = dict(entry for entry in session_entries(connection) if entry[0] in {"assistant", "compaction"})
+    # The saved entries hold the state that the live session used, as Pi's session file does.
+    assert stored["assistant"]["stop_reason"] == "aborted"
+    assert stored["compaction"]["valid"] is False
 
 
 def test_postgres_retries_a_final_outcome_that_failed_to_save(postgres_history, monkeypatch):
@@ -2301,7 +2458,7 @@ def test_postgres_upgrade_converts_old_trim_offsets(uninitialized_postgres_histo
 
 @pytest.mark.parametrize("status", ["completed", "cancelled", "failed"])
 def test_postgres_compaction_survives_restart_only_for_completed_runs(postgres_history, status):
-    from nurse_scheduling.ai.context import projected_history
+    from nurse_scheduling.ai.context import interrupted_entries, projected_history
     from nurse_scheduling.ai.transcript import CompactionEntry
 
     history = postgres_history
@@ -2311,12 +2468,17 @@ def test_postgres_compaction_survives_restart_only_for_completed_runs(postgres_h
     history.start_run(run, session, state, "Keep nights", 0, model="model", attachment_count=0)
     entries = [AssistantMessage("old"), CompactionEntry("Goal: keep nights", 1, 9000), AssistantMessage("Done")]
     history.append_entries(session, [(seq, run, entry) for seq, entry in enumerate(entries, 1)])
-    history.finish_run(run, status, None, None, True, session_id=session, state=state)
+    reason = "aborted" if status == "cancelled" else "error"
+    # Finalization saves the interrupted state of entries that the run already saved.
+    final = entries if status == "completed" else interrupted_entries(entries, reason)
+    saved = [(seq, run, entry) for seq, entry in enumerate(final, 1)]
+    history.finish_run(run, status, None, None, True, session_id=session, state=state, entries=saved)
     restarted = ChatHistory("test")
     restarted.initialize()
     restored = restarted.load_session(session, owner)["entries"]
     summary = next(entry for entry in restored if isinstance(entry, CompactionEntry))
     assert summary.valid == (status == "completed")
+    assert restored[3].stop_reason == ("stop" if status == "completed" else reason)
     assert ("Goal: keep nights" in str(projected_history(restored))) == (status == "completed")
 
 
@@ -2423,3 +2585,71 @@ def test_postgres_compacted_chat_replays_native_tools_events_and_costs_after_res
             ]
 
     asyncio.run(recover())
+
+
+def test_manual_compaction_recovery_has_no_prompt_or_workspace_interruption(postgres_history):
+    from uuid import uuid4
+
+    from nurse_scheduling.ai.transcript import CompactionEntry
+
+    session, run = str(uuid4()), str(uuid4())
+    state = session_state("owner")
+    postgres_history.start_run(
+        run, session, state, None, 0, model="model", attachment_count=0, kind="compaction", message_id="compact-request"
+    )
+    assert postgres_history.find_message(session, "compact-request") == (run, "/compact")
+    postgres_history.append_entries(session, [(0, run, CompactionEntry("Uncommitted summary", 0, 4000))])
+    postgres_history.recover_run(session, run)
+    postgres_history.recover_run(session, run)
+    restored = postgres_history.load_session(session, "owner")
+    assert restored["entries"] == []
+    with postgres_history._connect() as connection:
+        assert connection.execute("SELECT status, committed FROM chat_runs WHERE id = %s", (run,)).fetchone() == (
+            "failed",
+            False,
+        )
+        assert connection.execute(
+            "SELECT count(*) FROM chat_session_entries WHERE session_id = %s", (session,)
+        ).fetchone() == (1,)
+
+
+def test_manual_compaction_summary_and_request_id_survive_restart(postgres_history):
+    from nurse_scheduling.ai.transcript import CompactionEntry
+
+    from .test_ai_compaction import CompactionProvider
+
+    async def exercise():
+        provider = CompactionProvider()
+        provider.context_tokens = 131072
+        settings = basic.make_settings(history_postgres_url="test")
+        app = basic.create_test_app(settings=settings, provider=provider)
+        async with serving(app) as client:
+            sid = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            session = app.state.session_store._sessions[sid]
+            session._add_entry(UserMessage("Remember nights " + "x" * 12000))
+            session._add_entry(AssistantMessage("Earlier answer " + "y" * 70000))
+            response = await client.post(f"/sessions/{sid}/compact", json={"message_id": "manual"})
+            assert response.status_code == 202
+            run = app.state.runs._runs[sid][0]
+            await run.wait()
+            summary = session.transcript[-1]
+            assert isinstance(summary, CompactionEntry)
+            cookies = dict(client.cookies)
+        restarted = basic.create_test_app(settings=settings, provider=provider)
+        async with serving(restarted) as client:
+            client.cookies.update(cookies)
+            duplicate = await client.post(f"/sessions/{sid}/compact", json={"message_id": "manual"})
+            assert duplicate.json() == response.json()
+            session = restarted.state.session_store._sessions[sid]
+            assert session.transcript[-1] == summary
+            assert len(provider.summaries) == 1
+            assert [entry.text for entry in session.transcript if isinstance(entry, UserMessage)] == [
+                "Remember nights " + "x" * 12000
+            ]
+            assert restarted.state.sandbox_factory.created == []
+            with postgres_history._connect() as connection:
+                assert connection.execute(
+                    "SELECT kind, status, committed FROM chat_runs WHERE id = %s", (response.json()["run_id"],)
+                ).fetchone() == ("compaction", "completed", True)
+
+    asyncio.run(exercise())

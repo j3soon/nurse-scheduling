@@ -27,7 +27,7 @@ import sys
 from collections.abc import AsyncIterator
 from contextlib import aclosing, asynccontextmanager
 from dataclasses import replace
-from typing import Annotated, Literal, cast
+from typing import Annotated, BinaryIO, Literal, cast
 from uuid import UUID, uuid4
 
 import anyio
@@ -46,12 +46,12 @@ from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_regis
 from ..service_logging import configure_service_logging
 from ..version import get_app_version
 from .agent_session import AgentSession, SessionRuntime, schedule_data_changed
-from .chat_archive import ChatArchiveResponse, ChatSessionNotFoundError, create_chat_archive
+from .chat_archive import ChatArchiveResponse, ChatSessionNotFoundError, PreparedChatArchives, create_chat_archive
 from .config import AiSettings, validate_ai_auth_credentials
 from .context import validate_frontend_timezone
 from .history import ChatHistory, stop_maintenance
 from .lifecycle import TERMINAL_EVENTS, AgentRun, SessionRuns
-from .models import ModelCatalog, ModelSelection
+from .models import ModelCatalog, ModelSelection, SessionModelSelection
 from .optimizer import (
     OptimizerArtifact,
     OptimizerBackend,
@@ -325,6 +325,7 @@ def create_app(
     event_stream = SessionEventStream(max_sessions=settings.max_sessions)
     store = SessionStore(settings, event_stream=event_stream)
     recovery = SessionRecovery(history_log, store, event_stream)
+    prepared_exports = PreparedChatArchives()
     runs = SessionRuns()
     concurrency_limit = asyncio.Semaphore(settings.max_concurrent_requests)
     auth_registry = create_auth_registry(settings.auth_token, settings.auth_tokens)
@@ -481,6 +482,11 @@ def create_app(
             )
         )
 
+    async def maintain_prepared_exports() -> None:
+        while True:
+            await asyncio.sleep(30)
+            prepared_exports.prune()
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         prepare_sandbox = getattr(sandbox_factory, "prepare", None)
@@ -489,6 +495,7 @@ def create_app(
         if history_log is not None and not await history_log.write("initialize"):
             raise RuntimeError("AI history database initialization failed")
         maintenance = asyncio.create_task(history_log.maintain()) if history_log is not None else None
+        export_maintenance = asyncio.create_task(maintain_prepared_exports())
         try:
             async with managed_sandbox_factory(sandbox_factory):
                 try:
@@ -500,6 +507,8 @@ def create_app(
                     await session_optimizer.close()
                     await recovery.close()
         finally:
+            await stop_maintenance(export_maintenance)
+            prepared_exports.close()
             if maintenance is not None:
                 await stop_maintenance(maintenance)
 
@@ -636,43 +645,7 @@ def create_app(
         )
         return CreateSessionResponse(id=session.id)
 
-    @app.post("/sessions/{session_id}/export", dependencies=[Depends(require_auth), Depends(restore_session)])
-    async def prepare_export(
-        session_id: str,
-        request: Request,
-        response: Response,
-        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
-    ) -> dict[str, str | None]:
-        """Authorize a native download without putting a bearer credential in its URL."""
-        store.require_owned(session_id, owner)
-        if recovery.history is None:
-            raise HTTPException(status_code=409, detail="Chat export is unavailable on this server.")
-        credential = auth_registry.get(request.state.auth_credential_id)
-        token = (
-            None
-            if credential is None
-            else create_stream_token(
-                credential.token,
-                export_scope(session_id),
-                ttl_seconds=300,
-            )
-        )
-        response.headers["Cache-Control"] = "no-store"
-        return {"download_token": token}
-
-    @app.get("/sessions/{session_id}/export", dependencies=[Depends(require_session_auth), Depends(restore_session)])
-    async def export_session(
-        session_id: str,
-        request: Request,
-        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
-    ) -> Response:
-        """Stream the same complete ZIP that the administrator command writes."""
-        if getattr(request.state, "export_link", False):
-            # The signed link authorizes this session in place of browser ownership. The
-            # archive reads storage directly, so the session need not be loaded.
-            owner = None
-        else:
-            store.require_owned(session_id, owner)
+    async def build_chat_archive(session_id: str, owner: str | None) -> BinaryIO:
         if recovery.history is None:
             raise HTTPException(status_code=409, detail="Saved chat export requires PostgreSQL history.")
         release = recovery.pin(session_id)
@@ -697,6 +670,53 @@ def create_app(
             raise HTTPException(status_code=503, detail="The chat archive could not be created. Try again.") from exc
         finally:
             release()
+        return archive
+
+    @app.post("/sessions/{session_id}/export", dependencies=[Depends(require_auth), Depends(restore_session)])
+    async def prepare_export(
+        session_id: str,
+        request: Request,
+        response: Response,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> dict[str, str | None]:
+        """Prepare the ZIP before returning a short-lived native download link."""
+        store.require_owned(session_id, owner)
+        if recovery.history is None:
+            raise HTTPException(status_code=409, detail="Chat export is unavailable on this server.")
+        try:
+            with prepared_exports.reserve(session_id) as (download_id, entry):
+                entry.archive = await build_chat_archive(session_id, owner)
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        credential = auth_registry.get(request.state.auth_credential_id)
+        token = (
+            None
+            if credential is None
+            else create_stream_token(
+                credential.token,
+                export_scope(session_id),
+                ttl_seconds=300,
+            )
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return {"download_token": token, "download_id": download_id}
+
+    @app.get("/sessions/{session_id}/export", dependencies=[Depends(require_session_auth), Depends(restore_session)])
+    async def export_session(
+        session_id: str,
+        request: Request,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> Response:
+        """Stream the prepared ZIP, rebuilding after a restart or an expired cache."""
+        if getattr(request.state, "export_link", False):
+            # The signed link authorizes this session in place of browser ownership. The
+            # archive reads storage directly, so the session need not be loaded.
+            owner = None
+        else:
+            store.require_owned(session_id, owner)
+        archive = prepared_exports.take(session_id, request.query_params.get("download", ""))
+        if archive is None:
+            archive = await build_chat_archive(session_id, owner)
         return ChatArchiveResponse(archive, f"schedule-ai-chat-{session_id}.zip")
 
     @app.get("/sessions/{session_id}/events", dependencies=[Depends(require_auth), Depends(restore_session)])
@@ -878,27 +898,28 @@ def create_app(
 
     @app.get(
         "/sessions/{session_id}/model-selection",
-        response_model=ModelSelection,
+        response_model=SessionModelSelection,
         dependencies=[Depends(require_auth), Depends(restore_session)],
     )
     async def current_model_selection(
         session_id: str,
         request: Request,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
-    ) -> ModelSelection:
+    ) -> SessionModelSelection:
         session = store.require_owned(session_id, owner)
+        locked = session.locked_model is not None
         if session.model_selection is not None:
-            return ModelSelection.model_validate(session.model_selection)
+            return SessionModelSelection.model_validate({**session.model_selection, "locked": locked})
         default_model = (
             catalog.profile(request.state.auth_credential_id).default_model
             if catalog is not None
             else settings.provider_model
         )
-        return ModelSelection(model=default_model)
+        return SessionModelSelection(model=session.locked_model or default_model, locked=locked)
 
     @app.put(
         "/sessions/{session_id}/model-selection",
-        response_model=ModelSelection,
+        response_model=SessionModelSelection,
         dependencies=[Depends(require_auth), Depends(restore_session)],
     )
     async def update_model_selection(
@@ -907,13 +928,14 @@ def create_app(
         request: Request,
         response: Response,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
-    ) -> ModelSelection:
+    ) -> SessionModelSelection:
         session = store.require_owned(session_id, owner)
+        session.check_model(body.model)
         selection = await session.select_model(
             lambda: runtime_for(request.state.auth_credential_id, body), runtime=runtime
         )
         refresh_owner_cookie(response, owner)
-        return ModelSelection.model_validate(selection)
+        return SessionModelSelection.model_validate({**selection, "locked": session.locked_model is not None})
 
     @app.post(
         "/sessions/{session_id}/messages/queue",
@@ -944,6 +966,33 @@ def create_app(
         refresh_owner_cookie(response, owner)
         return response
 
+    @app.post(
+        "/sessions/{session_id}/compact",
+        status_code=status.HTTP_202_ACCEPTED,
+        dependencies=[Depends(require_auth), Depends(restore_session)],
+    )
+    async def compact_session(
+        session_id: str,
+        body: StopChatRequest,
+        request: Request,
+        response: Response,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> dict:
+        """Summarize an idle conversation without generating an assistant answer."""
+        session = store.require_owned(session_id, owner)
+        receipt = await session.accept_message(
+            "/compact",
+            body.message_id,
+            runtime=runtime,
+            runs=runs,
+            owner=owner,
+            credential_id=request.state.auth_credential_id,
+            compact_only=True,
+            prepare_runtime=lambda: runtime_for(request.state.auth_credential_id, session.model_selection),
+        )
+        refresh_owner_cookie(response, owner)
+        return {"run_id": receipt.run_id}
+
     @app.post("/sessions/{session_id}/messages", dependencies=[Depends(require_auth), Depends(restore_session)])
     async def send_message(
         session_id: str,
@@ -960,6 +1009,7 @@ def create_app(
         if request.client is not None:
             session.client_address = request.client.host
         cursor = event_stream.cursor(session_id)
+        selection = body.selection or session.model_selection
         receipt = await session.accept_message(
             question,
             body.message_id,
@@ -967,9 +1017,10 @@ def create_app(
             runs=runs,
             owner=owner,
             credential_id=request.state.auth_credential_id,
-            prepare_runtime=lambda: runtime_for(
-                request.state.auth_credential_id, body.selection or session.model_selection
-            ),
+            requested_model=selection.model
+            if isinstance(selection, ModelSelection)
+            else (selection or {}).get("model"),
+            prepare_runtime=lambda: runtime_for(request.state.auth_credential_id, selection),
         )
         run = receipt.run
         if run is not None:

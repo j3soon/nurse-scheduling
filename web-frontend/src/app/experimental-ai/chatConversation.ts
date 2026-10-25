@@ -59,6 +59,7 @@ function isActivityEntry(value: unknown): value is ActivityEntry {
   if (typeof value !== 'object' || value === null || !('kind' in value)) return false;
   if (value.kind === 'notice' || value.kind === 'response' || value.kind === 'reasoning' || value.kind === 'schedule-applied') {
     return 'text' in value && typeof value.text === 'string'
+      && (!('context' in value) || value.context === 'complete' || value.context === 'omitted')
       && (!('notice' in value) || typeof value.notice === 'string')
       && (!('runId' in value) || typeof value.runId === 'string');
   }
@@ -71,11 +72,19 @@ function isActivityEntry(value: unknown): value is ActivityEntry {
   }
   if (value.kind === 'compaction') {
     return 'state' in value && typeof value.state === 'string'
-      && ['running', 'completed', 'failed', 'interrupted'].includes(value.state)
-      && 'reason' in value && (value.reason === 'threshold' || value.reason === 'overflow')
-      && 'text' in value && typeof value.text === 'string';
+      && ['running', 'completed', 'failed', 'interrupted', 'skipped'].includes(value.state)
+      && 'reason' in value && (value.reason === 'threshold' || value.reason === 'overflow' || value.reason === 'manual')
+      && 'text' in value && typeof value.text === 'string'
+      && (!('summary' in value) || typeof value.summary === 'string')
+      && (!('keepMessages' in value) || (Number.isSafeInteger(value.keepMessages) && (value.keepMessages as number) >= 0))
+      && (!('characters' in value) || (Number.isSafeInteger(value.characters) && (value.characters as number) >= 0))
+      && (!('step' in value) || (Number.isSafeInteger(value.step) && (value.step as number) >= 1))
+      && (!('invalidated' in value) || typeof value.invalidated === 'boolean');
   }
   return value.kind === 'tool'
+    && (!('state' in value) || value.state === 'preparing' || value.state === 'running' || value.state === 'interrupted')
+    && (!('argumentsCharacters' in value) || (Number.isSafeInteger(value.argumentsCharacters) && (value.argumentsCharacters as number) >= 0))
+    && (!('replayArguments' in value) || typeof value.replayArguments === 'string')
     && 'name' in value && typeof value.name === 'string'
     && 'arguments' in value && typeof value.arguments === 'string'
     && 'result' in value && typeof value.result === 'string'
@@ -137,7 +146,8 @@ export function readStoredConversation(): StoredChatConversation | null {
         || value.contextUsage.usedChars < 0 || !Number.isSafeInteger(value.contextUsage.maxChars)
         || value.contextUsage.maxChars <= 0 || value.contextUsage.usedChars > value.contextUsage.maxChars
         || (value.contextUsage.usedTokens !== undefined && !Number.isSafeInteger(value.contextUsage.usedTokens))
-        || (value.contextUsage.maxTokens !== undefined && !Number.isSafeInteger(value.contextUsage.maxTokens))))
+        || (value.contextUsage.maxTokens !== undefined && !Number.isSafeInteger(value.contextUsage.maxTokens))
+        || (value.contextUsage.estimated !== undefined && typeof value.contextUsage.estimated !== 'boolean')))
       || (value.sessionEventId !== undefined
         && (!Number.isSafeInteger(value.sessionEventId) || value.sessionEventId < 0))
       || (value.trimmedHistoryCount !== undefined

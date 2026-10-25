@@ -25,7 +25,6 @@ import re
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -135,7 +134,6 @@ class EvalCase:
     note: str = ""
     semantic_check: str = ""
     frontend_timezone: str = ""
-    current_time: str = ""
     after_optimizer_turns: tuple[str, ...] = ()
     download_count: int | None = None
     optimizer_download_file: str = ""
@@ -235,7 +233,6 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         "after_optimizer_turns",
         "tags",
         "frontend_timezone",
-        "current_time",
         "attachments",
         "assert",
         "expected_diff",
@@ -347,14 +344,11 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     if not isinstance(raw_tags, list) or not all(isinstance(tag, str) and tag for tag in raw_tags):
         raise EvalCaseError(f"{source} `tags` must be a list of strings.")
     frontend_timezone = entry.get("frontend_timezone", "")
-    current_time = entry.get("current_time", "")
-    if not isinstance(frontend_timezone, str) or not isinstance(current_time, str):
-        raise EvalCaseError(f"{source} timezone and current_time must be strings.")
+    if not isinstance(frontend_timezone, str):
+        raise EvalCaseError(f"{source} `frontend_timezone` must be a string.")
     try:
         if frontend_timezone:
             ZoneInfo(frontend_timezone)
-        if current_time and datetime.fromisoformat(current_time).utcoffset() is None:
-            raise ValueError("current_time needs a UTC offset")
     except (ValueError, ZoneInfoNotFoundError) as error:
         raise EvalCaseError(f"{source} has invalid clock context: {error}") from error
     raw_attachments = entry.get("attachments", [])
@@ -489,7 +483,6 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         expected_diff=expected_diff,
         semantic_check=semantic_check,
         frontend_timezone=frontend_timezone,
-        current_time=current_time,
         after_optimizer_turns=tuple(after_optimizer_turns),
         download_count=download_count,
         optimizer_download_file=optimizer_download_file,

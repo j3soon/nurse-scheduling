@@ -25,6 +25,7 @@ from typing import Any, Literal
 
 # Pi's stop reasons. `tool_use` ends a response that requested tools.
 StopReason = Literal["stop", "length", "tool_use", "aborted", "error"]
+STATUS_PREFIX = "[Current status]"
 
 
 @dataclass(frozen=True)
@@ -161,6 +162,8 @@ def entry_from_record(entry_type: str, payload: dict[str, Any]) -> AgentMessage:
 
 def starts_exchange(entry: AgentMessage) -> bool:
     """Whether model context may start at this entry without an earlier answer it refers to."""
+    if isinstance(entry, AppEventEntry) and entry.text.startswith(STATUS_PREFIX):
+        return False
     return isinstance(entry, UserMessage | AppEventEntry | CompactionEntry)
 
 

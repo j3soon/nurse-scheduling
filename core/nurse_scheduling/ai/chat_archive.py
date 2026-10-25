@@ -23,10 +23,14 @@ import hashlib
 import json
 import re
 import tempfile
+from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
+from time import monotonic
 from typing import BinaryIO
 from urllib.parse import quote
+from uuid import uuid4
 from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile, ZipInfo
 
 from starlette.responses import StreamingResponse
@@ -36,6 +40,61 @@ from .history import ChatHistory, _owner_hash
 from .workspace import SandboxAttachment, attachment_path
 
 FILE_CHUNK_BYTES = 1024 * 1024
+
+
+@dataclass
+class PreparedChatArchive:
+    """A reserved preparation slot and its completed disk file."""
+
+    session_id: str
+    archive: BinaryIO | None = None
+    expires_at: float = 0
+
+
+class PreparedChatArchives:
+    """Bound pending disk files until download, expiry, or service shutdown."""
+
+    def __init__(self, *, limit: int = 16, ttl_seconds: int = 300) -> None:
+        self.limit = limit
+        self.ttl_seconds = ttl_seconds
+        self.pending: dict[str, PreparedChatArchive] = {}
+
+    @contextmanager
+    def reserve(self, session_id: str):
+        self.prune()
+        if len(self.pending) >= self.limit:
+            raise OSError("Too many pending chat exports. Try again shortly.")
+        identity = uuid4().hex
+        entry = PreparedChatArchive(session_id)
+        self.pending[identity] = entry
+        try:
+            yield identity, entry
+            entry.expires_at = monotonic() + self.ttl_seconds
+        except BaseException:
+            self.pending.pop(identity, None)
+            if entry.archive is not None:
+                entry.archive.close()
+            raise
+
+    def take(self, session_id: str, identity: str) -> BinaryIO | None:
+        self.prune()
+        entry = self.pending.get(identity)
+        if entry is None or entry.session_id != session_id or entry.archive is None:
+            return None
+        del self.pending[identity]
+        return entry.archive
+
+    def prune(self) -> None:
+        for identity, entry in list(self.pending.items()):
+            if entry.archive is not None and entry.expires_at <= monotonic():
+                entry.archive.close()
+                del self.pending[identity]
+
+    def close(self) -> None:
+        for entry in self.pending.values():
+            if entry.archive is not None:
+                entry.archive.close()
+        self.pending.clear()
 
 
 class ChatSessionNotFoundError(Exception):

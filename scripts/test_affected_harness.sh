@@ -296,6 +296,11 @@ output="$(PATH="$fixture_root/bin:$PATH" "$fixture_root/scripts/test_frontend_e2
   web-frontend/e2e/page.spec.ts)"
 assert_line "$output" 'mock bun: run lint'
 assert_line "$output" 'mock bunx: playwright test --reporter=dot --quiet --max-failures=1 e2e/page.spec.ts; reuse=unset'
+output="$(PATH="$fixture_root/bin:$PATH" "$fixture_root/scripts/test_frontend_e2e_affected.sh" \
+  web-frontend/e2e/page.spec.ts -g 'one test' --reporter=line)"
+assert_line "$output" 'mock bunx: playwright test --reporter=dot --quiet --max-failures=1 -g one test --reporter=line e2e/page.spec.ts; reuse=unset'
+output="$("$fixture_root/scripts/test_frontend_e2e_affected.sh" --list --full -g 'one test')"
+assert_line "$output" 'playwright args: -g one test'
 
 printf 'change\n' >> "$fixture_root/web-frontend/src/app/page.tsx"
 git -C "$fixture_root" add web-frontend/src/app/page.tsx

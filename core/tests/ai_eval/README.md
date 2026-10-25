@@ -70,6 +70,11 @@ tested prefix has no warm hits. Exit 2 means incomplete evidence.
 Missing cached-token details are recorded as `null` in evaluations, so uncached
 token comparisons remain unavailable rather than inventing cache misses.
 
+Use `frontend_timezone` to set the VM timezone. Put fixed reference instants in
+the user question, as the `local-date-from-instant-*` cases do. The case loader
+rejects the historical `current_time` field because the runner no longer injects
+clock values.
+
 Store one JSON object per case under `cases/<dataset>/<category>/<id>.json`. Existing synthetic coverage lives under
 `cases/basics/`, mirroring the normal YAML testcase layout under `tests/testcases/basics/`. Reserve sibling dataset
 directories such as `cases/real/` for cases derived from real user scenarios. Every case names a fixture, one question or a
@@ -155,7 +160,10 @@ criterion. Earlier runs with a weaker restore check and an ambiguous control
 command remain in local reports. The final comparisons use the corrected cases.
 
 Use `provider_timeout_after_text` to inject one partial assistant answer followed by a stream timeout.
-The production retry policy sends the retained answer and interruption status to the live provider.
+The production retry policy resends the original request to the live provider,
+without the failed partial answer or an interruption instruction. The final answer
+check grades only output from completed responses. Failed attempt text remains in
+the trajectory as `omitted_response`.
 Only that recovery request is live. The initial text and timeout are synthetic, so their timing does not measure
 a real provider outage. The ordinary response control runs without this field.
 Use `rejected_write_turn` to inject one malformed schedule write before a selected

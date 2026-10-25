@@ -113,7 +113,7 @@ class SandboxBackend(Protocol):
 class SandboxFactory(Protocol):
     """Create a fresh provider backend for one agent turn."""
 
-    async def create(self) -> SandboxBackend:
+    async def create(self, *, envs: dict[str, str] | None = None) -> SandboxBackend:
         """Create and return a new disposable sandbox."""
         ...
 
@@ -123,12 +123,13 @@ async def managed_sandbox(
     factory: SandboxFactory,
     *,
     cleanup_timeout_seconds: float = 10.0,
+    envs: dict[str, str] | None = None,
 ) -> AsyncIterator[SandboxBackend]:
     """Create one sandbox and destroy it without masking a turn failure."""
     if cleanup_timeout_seconds <= 0:
         raise ValueError("cleanup_timeout_seconds must be positive")
 
-    sandbox = await factory.create()
+    sandbox = await factory.create(**({"envs": envs} if envs is not None else {}))
     body_failed = False
     try:
         yield sandbox

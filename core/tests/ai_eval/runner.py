@@ -38,6 +38,7 @@ from ruamel.yaml import YAML
 
 from nurse_scheduling.ai.agent import Agent
 from nurse_scheduling.ai.agent_types import (
+    AgentMessageEnd,
     AgentProposal,
     AgentReasoning,
     AgentText,
@@ -392,7 +393,6 @@ async def run_case(
     optimizer_source = ""
     retained_optimizer_result = None
     retained_optimizer_context = None
-    request_clock = (lambda: datetime.fromisoformat(case.current_time)) if case.current_time else None
 
     async def execute_optimizer(_schedule_yaml: str, arguments: str) -> AgentToolOutcome:
         """Expose the production tool contract without submitting an actual job."""
@@ -492,15 +492,12 @@ async def run_case(
                 project_history(history, settings.max_history_chars),
                 text,
                 question,
-                attachments,
                 system_prompt=system_prompt,
                 max_download_bytes=settings.max_download_bytes,
-                optimizer_result_available=optimizer_result is not None,
-                frontend_timezone=case.frontend_timezone or "UTC",
-                now=request_clock() if request_clock else None,
             )
             prompt_messages.append(messages)
             turn_answer: list[str] = []
+            response_start = 0
             turn_proposal: AgentProposal | None = None
             stopped_on_limit = False
             turn_event_offset = len(events)
@@ -525,13 +522,18 @@ async def run_case(
                 optimizer_result=optimizer_result,
                 optimizer_context=optimizer_context,
                 agent=agent,
-                request_clock=request_clock,
+                timezone=case.frontend_timezone or "UTC",
             )
             async with aclosing(agent_events):
                 async for event in agent_events:
                     if isinstance(event, AgentText):
                         turn_answer.append(event.text)
                         _record_text(events, "text", event.text)
+                    elif isinstance(event, AgentMessageEnd):
+                        if event.message.stop_reason in {"error", "aborted"}:
+                            del turn_answer[response_start:]
+                            events.append({"kind": "omitted_response", "text": event.message.text})
+                        response_start = len(turn_answer)
                     elif isinstance(event, AgentReasoning):
                         reasoning += len(event.text)
                         _record_text(events, "reasoning", event.text)

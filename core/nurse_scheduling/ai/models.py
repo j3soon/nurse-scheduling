@@ -44,6 +44,12 @@ class ModelSelection(BaseModel):
     reasoning: str = Field(default="default", min_length=1, max_length=64)
 
 
+class SessionModelSelection(ModelSelection):
+    """A session's model settings and whether an accepted run fixed the model."""
+
+    locked: bool = False
+
+
 class ProviderProfile(BaseModel):
     """Server-only credentials for one AI access key."""
 

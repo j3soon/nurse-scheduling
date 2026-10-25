@@ -23,10 +23,11 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   AssistantEvent,
   applyAssistantEvent,
+  invalidateRunSummaries,
   messageId,
   toAssistantEvent,
 } from './assistantEvents';
-import type { ChatMessageContent } from './chatTranscript';
+import type { ChatMessage, ChatMessageContent } from './chatTranscript';
 
 const empty: ChatMessageContent = { role: 'assistant', content: '', status: 'pending' };
 
@@ -35,6 +36,102 @@ function reduce(events: AssistantEvent[]): ChatMessageContent {
 }
 
 describe('assistant events', () => {
+  it('updates one compaction counter across retries and passes, then retains its final count', () => {
+    const result = reduce([
+      { type: 'compaction_start', reason: 'manual', tokensBefore: 10000 },
+      { type: 'generation_progress', kind: 'compaction', characters: 50, step: 1 },
+      { type: 'generation_progress', kind: 'compaction', characters: 0, step: 1 },
+      { type: 'generation_progress', kind: 'compaction', characters: 2, step: 2 },
+      { type: 'compaction_end', reason: 'manual', tokensBefore: 10000, success: true, aborted: false, summary: '新😀' },
+    ]);
+    expect(result.activity?.filter(entry => entry.kind === 'compaction')).toEqual([
+      expect.objectContaining({ state: 'completed', characters: 2, step: 2, summary: '新😀' }),
+    ]);
+  });
+
+  it('replaces tool preparation with execution and drops a failed draft before retrying', () => {
+    const result = reduce([
+      { type: 'generation_progress', kind: 'tool_calls', characters: 100, step: 1 },
+      { type: 'provider_retry', message: 'Retrying' },
+      { type: 'generation_progress', kind: 'tool_calls', characters: 2, step: 1 },
+      { type: 'tool_start', activity: { name: 'read', arguments: '{}', toolCallId: 'one' } },
+      { type: 'tool', activity: { name: 'read', arguments: '{}', toolCallId: 'one', result: '新😀', ok: true } },
+    ]);
+    expect(result.activity).toEqual([
+      { kind: 'notice', text: 'Retrying' },
+      { kind: 'tool', name: 'read', arguments: '{}', toolCallId: 'one', result: '新😀', ok: true },
+    ]);
+    const stopped = reduce([{ type: 'generation_progress', kind: 'tool_calls', characters: 4, step: 1 }, { type: 'stopped' }]);
+    expect(stopped.activity?.[0]).toMatchObject({ state: 'interrupted', argumentsCharacters: 4 });
+  });
+
+  it('invalidates only summaries from the failed run while preserving earlier output', () => {
+    const messages: ChatMessage[] = ['other', 'failed', 'failed'].map((runId, index) => ({
+      id: `reply-${index}`, runId, role: 'assistant', content: 'Completed output.',
+      activity: [{ kind: 'compaction', reason: 'threshold', state: 'completed', summary: `Summary ${index}`, text: 'Summarized.' },
+        { kind: 'response', text: 'Completed output.', context: 'complete' }],
+    }));
+    const updated = invalidateRunSummaries(messages, 'failed');
+    expect(updated[0]).toBe(messages[0]);
+    for (const message of updated.slice(1)) {
+      expect(message.activity?.[0]).toMatchObject({ invalidated: true });
+      expect(message.activity?.[1]).toMatchObject({ text: 'Completed output.', context: 'complete' });
+      expect(message.status).toBeUndefined();
+    }
+    expect(messages[1].activity?.[0]).not.toHaveProperty('invalidated');
+  });
+  it.each([true, false])('records a manual request and skips unchanged context, with start=%s', withStart => {
+    const message = reduce([
+      ...(withStart ? [{ type: 'compaction_start' as const, reason: 'manual' as const, tokensBefore: 4000 }] : []),
+      { type: 'compaction_end', reason: 'manual', tokensBefore: 4000, success: false, aborted: false, skipped: true },
+      { type: 'done' },
+    ]);
+    expect(message.activity).toEqual([
+      { kind: 'notice', text: 'You requested context compaction.' },
+      { kind: 'compaction', reason: 'manual', state: 'skipped',
+        text: 'Compaction would not reduce context. The original context was kept.' },
+    ]);
+  });
+  it('preserves the exact compaction summary and marks it discarded after a failed run', () => {
+    const compacted = reduce([
+      { type: 'compaction_end', reason: 'threshold', tokensBefore: 25000, success: true, aborted: false,
+        summary: 'Keep P1 off nights.', keepMessages: 4 },
+    ]);
+    const failed = applyAssistantEvent(compacted, { type: 'response_end', stopReason: 'error', contextNote: 'Workspace discarded.' });
+    expect(failed.activity?.[0]).toMatchObject({ summary: 'Keep P1 off nights.', keepMessages: 4, invalidated: true });
+    expect(compacted.activity?.[0]).not.toHaveProperty('invalidated');
+  });
+  it('keeps completed exchanges and marks only the failed attempt omitted', () => {
+    const message = reduce([
+      { type: 'delta', text: 'Checking.' },
+      { type: 'response_end', stopReason: 'tool_use' },
+      { type: 'tool', activity: { name: 'read', arguments: '{}', result: 'File contents', ok: true } },
+      { type: 'delta', text: 'Partial attempt' },
+      { type: 'response_end', stopReason: 'error' },
+      { type: 'provider_retry', message: 'Retrying.' },
+      { type: 'delta', text: 'Recovered answer' },
+      { type: 'response_end', stopReason: 'stop' },
+      { type: 'done' },
+    ]);
+    expect(message.activity?.filter(entry => entry.kind === 'response')).toEqual([
+      { kind: 'response', text: 'Checking.', context: 'complete' },
+      { kind: 'response', text: 'Partial attempt', context: 'omitted' },
+      { kind: 'response', text: 'Recovered answer', context: 'complete' },
+    ]);
+    expect(message.activity?.find(entry => entry.kind === 'tool')).toMatchObject({ result: 'File contents' });
+  });
+
+  it('shows the exact workspace interruption note separately from failed output', () => {
+    const message = reduce([
+      { type: 'delta', text: 'Partial' },
+      { type: 'response_end', stopReason: 'aborted', contextNote: '[App event] Workspace discarded.' },
+      { type: 'stopped' },
+    ]);
+    expect(message.activity).toEqual([
+      { kind: 'response', text: 'Partial', context: 'omitted' },
+      { kind: 'notice', text: 'Sent in future model context: [App event] Workspace discarded.' },
+    ]);
+  });
   it.each([true, false])('replaces running compaction with its outcome: success=%s', success => {
     const message = reduce([
       { type: 'compaction_start', reason: 'threshold', tokensBefore: 25000 },

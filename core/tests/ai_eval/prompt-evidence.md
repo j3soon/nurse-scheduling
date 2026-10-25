@@ -50,6 +50,20 @@ unresolved. Manual
 review is still needed for facts and causal language beyond the conservative
 patterns. No cost or reliability improvement is claimed.
 
+## Historical retry continuation guidance
+
+Commit `f909cf9b` added `provider-timeout-continuation` for the earlier policy that
+sent partial answers and an interruption event to the model. Its named witness,
+`provider-text-timeout-continuation`, improved from 0/3 to 3/3 on
+`unsloth/Qwen3.8-27B-NVFP4`. The uninterrupted control passed 2/3 before and 3/3
+after. No infrastructure errors occurred. These counts describe the old policy.
+
+Retries now resend the original request and omit failed output. The continuation
+instruction no longer applies and is removed. The named witness now grades one
+complete answer from the successful attempt. The witness and uninterrupted
+control both pass a live smoke check before and after removal. This confirms the
+new request behavior without claiming a reliability or performance improvement.
+
 ## Repository and artifact boundary
 
 Keep prompt text, testcase definitions, hypotheses, concise scope notes, and the latest aggregate receipts tracked.

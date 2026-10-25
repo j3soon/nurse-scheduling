@@ -158,27 +158,43 @@ stderr. Do not replace an explicitly selected file with a fallback.
   Keep HTTP routes thin.
 - Keep conversation entries independent of provider wire messages. Derive model
   requests and retained history through `context.py`. Count retained partial text
-  in session byte budgets even when model context replaces it with an interruption
-  note. Retain completed tool exchanges and native reasoning metadata across runs.
+  in session byte budgets even when model requests omit the failed response.
+  Preserve completed exchanges and append a note when the workspace is discarded. Retain completed tool exchanges and native reasoning metadata across runs.
   Replay opaque metadata only to its original endpoint, API, and model. Keep the
-  stored metadata intact when switching models. Release tool images after session
+  stored metadata intact. Lock the model after the first accepted message, while
+  allowing reasoning-effort changes for future runs. Release tool images after session
   finalization and omit failed or incomplete native output from provider requests.
 - Keep compaction entries in the ordered transcript. Apply a summary only after
   every summary request completes, and invalidate summaries from failed or
   cancelled runs. Keep a summary and its referenced recent tool messages together
   during retention. Reset older usage estimates at each compaction boundary.
   Keep app-event indices tied to transcript entries across compaction and retention.
+  Keep a historical status message with its user question when choosing a
+  compaction boundary. A status message cannot stand in for the current request.
+  Manual compaction shares run admission, Stop, replay, and persistence. Keep
+  its request ID idempotent. Do not create a user question or allocate a workspace.
+  Cover short questions with longer completed replies. Treat a summary that does
+  not reduce context as unchanged context rather than a provider failure.
+  Use Pi's shared manual and automatic retention boundary. Keep recent messages
+  within the model and server limits, and skip a short conversation before calling
+  the provider when no older messages remain to summarize.
   Keep summary requests visible in provider cost records, but keep their text out
-  of the answer stream. Use `tests/test_ai_compaction.py` for these contracts.
+  of the answer stream. Test retries through each provider-stream consumer,
+  including compaction. Keep only the successful draft and retain all cost records.
+  Publish coalesced character counts for summary and tool-call generation without
+  exposing drafts. Count Unicode code points in chat, replay, and exports. Keep
+  character counts separate from provider token usage.
+  Use `tests/test_ai_compaction.py` for these contracts.
   Test chunked summaries through the provider's token-limit calculation, including
   updates with a previous split-turn summary and small model context windows.
   Coalesce streamed context estimates with text batches. Replace token estimates
   with provider usage without adding estimates to billed usage or cost totals.
   Test history character and message thresholds without model context metadata.
   For live cross-run checks, use `../scripts/test_ai_compaction_live.sh` with
-  `AI_ENV_FILE`. It runs four concurrent scenarios through the real session API
+  `AI_ENV_FILE`. It runs five scenarios, at most four concurrently through the real session API
   and prebuilt E2B sandboxes. A smaller history budget forces compaction.
-  Select two distinct available models that both report a context limit.
+  Select an available model with a reported context limit. Check that model
+  switching is rejected and supported reasoning-effort changes remain accepted.
   Check remembered file context separately from file availability in the new VM.
 - Apply queued steering before each follow-up provider request, including requests
   after refused tool batches. Reject conflicting provider finish reasons and any
@@ -233,7 +249,9 @@ stderr. Do not replace an explicitly selected file with a fallback.
   only where intended. Then update the hashes in
   `tests/ai_fixtures/chat-export-parity.json` and the golden archive in
   `tests/ai_fixtures/chat-export-archive.json` together. Verify browser download
-  bytes and native download authorization with a rich saved-event fixture.
+  bytes and native download authorization with a rich saved-event fixture. Prepare
+  browser archives before starting native downloads. Bound pending disk files and
+  close them after download, expiry, preparation failure, or service shutdown.
 - Retry temporary provider failures automatically inside the provider request,
   with exponential backoff and a bounded total time. Retry only the incomplete
   model request, never commands or optimizer submissions. Do not wait for the
@@ -252,6 +270,11 @@ stderr. Do not replace an explicitly selected file with a fallback.
 - Append database migrations without renaming previously applied files. Test an
   upgrade from the deployed schema with saved sessions, message IDs, and Stop
   requests. Document backup and rollback when the old code cannot read the new schema.
+  Do not add code that only preserves edge-case behavior for sessions saved by
+  earlier versions, such as their interrupted runs or a missing model lock.
+- Store all session data in PostgreSQL, as Pi stores its session file. Save the
+  final state of each entry, including the interruption marks of saved entries,
+  so restore reads the stored entries without inferring state from run status.
 - Deliver terminal and optimizer status events even when their recovery write
   fails. When a call that could not fail becomes an awaited write, check every
   caller's failure path. Each caller must still release the session and report
@@ -308,7 +331,7 @@ stderr. Do not replace an explicitly selected file with a fallback.
 - Put fixed model instructions in a manifest-tracked prompt segment under
   `ai/prompts/`, so they get a hash, linked cases, and a benefit witness.
   `build_provider_messages` appends only request-specific values, such as a
-  configured limit or the current time.
+  configured limit.
 - Keep model-facing prompts and intermediate messages concise. Avoid repeated
   warnings about malicious uploads or prescribed workbook-inspection commands.
   Rely on sandbox and server controls for security, and give generated artifacts
@@ -475,9 +498,11 @@ stderr. Do not replace an explicitly selected file with a fallback.
   whether the agent knows its role, rather than guessing from available tools
   or asking the user to inspect the UI. Keep navigation advice valid for someone
   on another page.
-- Supply the current server time in the frontend timezone as request-specific
-  status. Keep it out of retained history and the static prompt. Cover local
-  midnight and timezone changes when testing calendar context.
+- Set the sandbox `TZ` environment once at creation from the browser timezone.
+  Let the agent use `date` for the current instant. Do not inject automatic
+  status messages or reconstruct facts lost during compaction. Preserve historical
+  status entries and ordinary app events. Test that
+  separate provider requests preserve their shared prefix until compaction or trimming.
 - Keep reusable analysis in the single bounded `/workspace/analysis.md` file.
   Bind it to exact schedule and upload inputs, retain it only through the
   successful run commit, and count it in session memory. Invalidate it when
@@ -550,8 +575,8 @@ stderr. Do not replace an explicitly selected file with a fallback.
   ending mid-word does not prove a transport failure when the provider reports
   completion. Keep response content and credentials out of diagnostic logs.
 - Retry provider timeouts with bounded exponential backoff. After visible text,
-  continue with the partial answer as context instead of replaying the original
-  request. Discard incomplete tool calls and release tools only after confirmed
+  omit the failed attempt from model context and retry the original request.
+  Keep the partial output visible and label it as omitted from future context. Discard incomplete tool calls and release tools only after confirmed
   response completion. Keep output limits cumulative across attempts and use
   distinct errors for timeouts before and during streaming.
 

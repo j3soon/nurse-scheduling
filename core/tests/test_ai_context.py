@@ -19,8 +19,6 @@
 
 # This test is mostly AI generated.
 
-from datetime import UTC, datetime
-
 import pytest
 
 from nurse_scheduling.ai.context import (
@@ -52,30 +50,19 @@ from nurse_scheduling.ai.transcript import (
 from .test_ai_basic import make_settings, schedule_yaml
 
 
-def test_current_time_uses_frontend_timezone_and_keeps_the_cached_prefix():
-    instant = datetime(2031, 3, 31, 23, 30, tzinfo=UTC)
-    taipei = build_provider_messages([], schedule_yaml(), "Today?", frontend_timezone="Asia/Taipei", now=instant)
-    los_angeles = build_provider_messages(
-        [], schedule_yaml(), "Today?", frontend_timezone="America/Los_Angeles", now=instant
-    )
-    assert taipei[:-1] == los_angeles[:-1]
-    assert "2031-04-01T07:30:00+08:00" in taipei[-1]["content"]
-    assert "Asia/Taipei" in taipei[-1]["content"]
-    assert "2031-03-31T16:30:00-07:00" in los_angeles[-1]["content"]
-    utc = build_provider_messages([], schedule_yaml(), "Today?", frontend_timezone="UTC", now=instant)
-    assert "2031-03-31T23:30:00+00:00" in utc[-1]["content"]
+def test_new_requests_do_not_inject_workspace_status_or_clock_values():
+    messages = build_provider_messages([], schedule_yaml(), "Today?")
+    assert messages[-1] == {"role": "user", "content": "Today?"}
+    assert "[Current status]" not in str(messages)
+    assert "Current date and time:" not in str(messages)
 
 
-def test_tool_followup_refreshes_current_time_without_retaining_old_clock_context():
-    first = datetime(2031, 3, 31, 15, 59, 59, tzinfo=UTC)
-    second = datetime(2031, 3, 31, 16, 0, 0, tzinfo=UTC)
-    messages = build_provider_messages([], schedule_yaml(), "Today?", frontend_timezone="Asia/Taipei", now=first)
+def test_tool_followup_preserves_the_entire_existing_prefix():
+    messages = build_provider_messages([], schedule_yaml(), "Today?")
     entries = [AssistantMessage("Checking."), UserMessage("Continue.")]
-    request = prepare_provider_request(messages, entries, now=second)
-    assert "2031-04-01T00:00:00+08:00" in request[-1]["content"]
-    assert "2031-03-31T23:59:59+08:00" not in str(request)
-    assert request[-2]["content"] == "Continue."
-    assert messages[-1]["content"].endswith('"timezone": "Asia/Taipei"}')
+    request = prepare_provider_request(messages, entries, _preserve_native=True)
+    assert request[: len(messages)] == messages
+    assert request[-1]["content"] == "Continue."
 
 
 def test_frontend_timezone_is_reserved_with_the_run_and_restored_with_the_session():
@@ -92,22 +79,32 @@ def test_frontend_timezone_is_reserved_with_the_run_and_restored_with_the_sessio
     assert recovered._sessions[session.id].frontend_timezone == "America/Los_Angeles"
 
 
+def test_historical_status_is_unchanged_and_no_new_status_is_appended():
+    history = [
+        {"role": "user", "content": "[Current status]\nWorkspace timezone: Asia/Taipei."},
+        {"role": "user", "content": "[Current status]\nWorkspace timezone: America/Los_Angeles."},
+    ]
+    messages = build_provider_messages(history, schedule_yaml(), "Today?")
+    assert messages[1:-1] == history
+    assert messages[-1] == {"role": "user", "content": "Today?"}
+
+
 @pytest.mark.parametrize("reason", ["aborted", "error"])
-def test_interrupted_run_preserves_questions_and_steering_without_discarded_claims(reason):
+def test_interrupted_run_preserves_completed_exchanges_and_marks_discarded_workspace(reason):
     entries = interrupted_entries(
         [
             UserMessage("Edit P1"),
             AssistantMessage("Changed P1"),
             UserMessage("Also P2"),
-            AssistantMessage("Changed P2"),
+            AssistantMessage("Partial P2", reason),
         ],
         reason,
     )
     assert projected_history(retained_entries(entries)) == [
         {"role": "user", "content": "Edit P1"},
-        {"role": "assistant", "content": ABORTED_RESPONSE_HISTORY},
+        {"role": "assistant", "content": "Changed P1"},
         {"role": "user", "content": "Also P2"},
-        {"role": "assistant", "content": ABORTED_RESPONSE_HISTORY},
+        {"role": "user", "content": ABORTED_RESPONSE_HISTORY},
     ]
 
 
@@ -119,6 +116,7 @@ def test_later_context_keeps_responses_and_tools_but_releases_images():
         ToolResultMessage(call.id, call.name, "large tool result", True, ToolResultImage("image/png", b"image")),
         AssistantMessage("Done."),
     ]
+
     retained = retained_entries(entries)
     assert retained == [*entries[:2], ToolResultMessage(call.id, call.name, "large tool result", True), entries[-1]]
     assert projected_history(retained) == [
@@ -131,6 +129,22 @@ def test_later_context_keeps_responses_and_tools_but_releases_images():
         {"role": "tool", "tool_call_id": "read-1", "content": "large tool result"},
         {"role": "assistant", "content": "Done."},
     ]
+
+
+def test_interruption_retains_the_synthetic_result_for_an_unfinished_tool():
+    call = ToolCall("unfinished", "bash", '{"command":"sleep 30"}')
+    failed = interrupted_entries(
+        [
+            UserMessage("Inspect"),
+            AssistantMessage("Checking", "tool_use", tool_calls=(call,)),
+            AssistantMessage("", "error"),
+        ],
+        "error",
+    )
+    result = next(entry for entry in failed if isinstance(entry, ToolResultMessage))
+    assert result.tool_call_id == call.id and not result.ok
+    assert result.text == "No result provided. The tool exchange was interrupted."
+    assert projected_history(failed)[2] == {"role": "tool", "tool_call_id": call.id, "content": result.text}
 
 
 def test_provider_receives_all_tool_replies_before_images_and_steering():
@@ -154,6 +168,13 @@ def test_history_budget_drops_an_answer_without_its_prompt():
     assert selected.messages == []
     assert selected.used_chars == 0
     assert selected.dropped_messages == 2
+
+
+def test_retained_status_cannot_outlive_the_question_it_describes():
+    status = AppEventEntry("[Current status]\nWorkspace timezone: Asia/Taipei.")
+    entries = [UserMessage("q" * 300), status, AssistantMessage("Answer")]
+    budget = history_chars(projected_history(entries[1:]))
+    assert project_history(entries, budget).messages == []
 
 
 def test_history_budget_starts_at_an_app_event_and_counts_serialized_unicode():
@@ -194,6 +215,7 @@ def test_legacy_recovery_preserves_the_next_provider_request_after_app_events_an
     owner, expires, state = store.recovery_state(session.id)
     assert set(state) == {
         "model_selection",
+        "locked_model",
         "provider_credential_id",
         "cost_totals",
         "cost_totals_version",
@@ -290,7 +312,7 @@ def test_retained_byte_budget_counts_partial_text_hidden_from_model_context():
         snapshot=snapshot,
     )
     assert store.retained_bytes == len(b"scheduleq") + len(("新" * 2000).encode())
-    assert session.history[-1]["content"] == ABORTED_RESPONSE_HISTORY
+    assert session.history == [{"role": "user", "content": "q"}]
     # A later exchange releases the oversized failed turn and its accounted bytes.
     store.finish(session.id, [UserMessage("next"), AssistantMessage("done")], snapshot=store.begin(session.id, "owner"))
     assert store.retained_bytes == len(b"schedulenextdone")

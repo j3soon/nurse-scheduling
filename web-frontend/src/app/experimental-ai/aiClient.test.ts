@@ -24,6 +24,7 @@ import {
   decodeEvent,
   PRODUCTION_AI_API_URL,
   cancelOptimization,
+  compactSession,
   createSession,
   downloadGeneratedZip,
   downloadOptimization,
@@ -48,6 +49,24 @@ import {
   uploadFiles,
 } from './aiClient';
 
+it('decodes generation counts and rejects malformed counters before dispatch', () => {
+  expect(decodeEvent('generation_progress', { kind: 'compaction', characters: 4, step: 2, run_id: 'run' })).toEqual([
+    { type: 'run_context', runId: 'run' },
+    { type: 'generation_progress', kind: 'compaction', characters: 4, step: 2, runId: 'run' },
+  ]);
+  for (const invalid of [{ characters: -1 }, { characters: 0.5 }, { characters: '2' }, { step: 0 }, { kind: 'unknown' }]) {
+    expect(() => decodeEvent('generation_progress', { kind: 'tool_calls', characters: 4, step: 1, ...invalid })).toThrow('invalid generation progress');
+  }
+});
+
+it('decodes response boundaries and rejects malformed omission notes', () => {
+  expect(decodeEvent('response_end', { stop_reason: 'error', context_note: 'Workspace discarded.' })).toEqual([
+    { type: 'response_end', stopReason: 'error', contextNote: 'Workspace discarded.' },
+  ]);
+  expect(() => decodeEvent('response_end', { stop_reason: 'other' })).toThrow('invalid response boundary');
+  expect(() => decodeEvent('response_end', { stop_reason: 'stop', context_note: 3 })).toThrow('invalid response boundary');
+});
+
 it('decodes compaction status and rejects malformed estimates', () => {
   expect(decodeEvent('compaction_start', { reason: 'threshold', tokens_before: 25000 })).toEqual([
     { type: 'compaction_start', reason: 'threshold', tokensBefore: 25000 },
@@ -61,6 +80,16 @@ it('decodes compaction status and rejects malformed estimates', () => {
   expect(() => decodeEvent('compaction_end', {
     reason: 'overflow', tokens_before: 25000, success: true, aborted: false, estimated_tokens_after: -1,
   })).toThrow('invalid compaction');
+  expect(decodeEvent('compaction_end', {
+    reason: 'manual', tokens_before: 4000, success: false, aborted: false, skipped: true,
+  })).toEqual([
+    { type: 'compaction_end', reason: 'manual', tokensBefore: 4000, success: false, aborted: false, skipped: true },
+  ]);
+  for (const outcome of [{ skipped: 'yes' }, { skipped: true, success: true }, { skipped: true, aborted: true }]) {
+    expect(() => decodeEvent('compaction_end', {
+      reason: 'manual', tokens_before: 4000, success: false, aborted: false, ...outcome,
+    })).toThrow('invalid compaction');
+  }
 });
 
 function streamedResponse(chunks: string[]): Response {
@@ -131,14 +160,14 @@ describe('AI client', () => {
 
   it('loads and saves the authenticated session model choice', async () => {
     const selection = { model: 'deep', reasoning: 'high' };
-    const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify(selection)));
+    const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ ...selection, locked: true })));
     vi.stubGlobal('fetch', fetchMock);
     const signal = new AbortController().signal;
-    await expect(getSessionModelSelection('session/id', signal, 'chat-token', '/ai')).resolves.toEqual(selection);
+    await expect(getSessionModelSelection('session/id', signal, 'chat-token', '/ai')).resolves.toEqual({ selection, locked: true });
     expect(fetchMock).toHaveBeenLastCalledWith('/ai/sessions/session%2Fid/model-selection', {
       signal, credentials: 'include', headers: { Authorization: 'Bearer chat-token' },
     });
-    await expect(updateSessionModelSelection('session/id', selection, 'chat-token', '/ai')).resolves.toEqual(selection);
+    await expect(updateSessionModelSelection('session/id', selection, 'chat-token', '/ai')).resolves.toEqual({ selection, locked: true });
     expect(fetchMock).toHaveBeenLastCalledWith('/ai/sessions/session%2Fid/model-selection', {
       method: 'PUT', credentials: 'include',
       headers: { Authorization: 'Bearer chat-token', 'Content-Type': 'application/json' },
@@ -148,6 +177,8 @@ describe('AI client', () => {
 
   it('rejects malformed session choices and reports save errors', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ model: 'deep' }))));
+    await expect(getSessionModelSelection('s', new AbortController().signal, null, '/ai')).rejects.toThrow('invalid model settings');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ model: 'deep', reasoning: 'high' }))));
     await expect(getSessionModelSelection('s', new AbortController().signal, null, '/ai')).rejects.toThrow('invalid model settings');
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: 'Storage unavailable' }), { status: 503 })));
     await expect(updateSessionModelSelection('s', { model: 'deep', reasoning: 'high' }, null, '/ai')).rejects.toMatchObject({
@@ -507,6 +538,28 @@ describe('AI client', () => {
     expect(onConnectionChange.mock.calls).toEqual([[false], [true]]);
   });
 
+  it('retries compaction with its original ID and saves a pending Stop before retrying', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce(new Response(null, { status: 202 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ run_id: 'compact-run' }), { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const onConnectionChange = vi.fn();
+    await expect(compactSession('session-id', 'compact-id', 'token', '/ai', {
+      signal: new AbortController().signal, shouldStop: () => true, onConnectionChange,
+    })).resolves.toBe('compact-run');
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      '/ai/sessions/session-id/compact', '/ai/sessions/session-id/stop', '/ai/sessions/session-id/compact',
+    ]);
+    for (const [, request] of fetchMock.mock.calls) {
+      expect(request).toMatchObject({
+        credentials: 'include', headers: { Authorization: 'Bearer token' },
+        body: JSON.stringify({ message_id: 'compact-id' }), signal: expect.any(AbortSignal),
+      });
+    }
+    expect(onConnectionChange.mock.calls).toEqual([[false], [true]]);
+  });
+
   it('rejects a complete invalid JSON acknowledgement without retrying', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response('not JSON', { status: 202 }))
@@ -764,15 +817,15 @@ describe('AI client', () => {
 
   it('receives latest request tokens with context usage and drops invalid token fields', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
-      'event: context_usage\ndata: {"used_chars":250,"max_chars":1000,"used_tokens":4321,"max_tokens":131072}\n\n',
-      'event: context_usage\ndata: {"used_chars":250,"max_chars":1000,"used_tokens":4321}\n\n',
+      'event: context_usage\ndata: {"used_chars":250,"max_chars":1000,"used_tokens":4321,"max_tokens":131072,"estimated":true}\n\n',
+      'event: context_usage\ndata: {"used_chars":250,"max_chars":1000,"used_tokens":4321,"estimated":false}\n\n',
       'event: context_usage\ndata: {"used_chars":250,"max_chars":1000,"used_tokens":-5,"max_tokens":131072}\n\n',
     ])));
     const onEvent = vi.fn();
     await streamSessionEvents('session', { onEvent }, new AbortController().signal, null);
     expect(onEvent.mock.calls).toEqual([
-      [{ type: 'context_usage', usage: { usedChars: 250, maxChars: 1000, usedTokens: 4321, maxTokens: 131072 } }],
-      [{ type: 'context_usage', usage: { usedChars: 250, maxChars: 1000, usedTokens: 4321 } }],
+      [{ type: 'context_usage', usage: { usedChars: 250, maxChars: 1000, usedTokens: 4321, maxTokens: 131072, estimated: true } }],
+      [{ type: 'context_usage', usage: { usedChars: 250, maxChars: 1000, usedTokens: 4321, estimated: false } }],
       [{ type: 'context_usage', usage: { usedChars: 250, maxChars: 1000 } }],
     ]);
   });
@@ -1021,11 +1074,11 @@ describe('AI client', () => {
   });
 
   it.each([null, `1234567890.${'a'.repeat(64)}`])('requests a native chat download link (%s)', async token => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ download_token: token })));
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ download_token: token, download_id: "a".repeat(32) })));
     vi.stubGlobal('fetch', fetchMock);
     const path = 'https://ai.example.test/sessions/session%2Fid/export';
     await expect(getChatExportUrl('session/id', 'ai-token', 'https://ai.example.test'))
-      .resolves.toEqual(token === null ? path : `${path}?token=${token}`);
+      .resolves.toEqual(`${path}?download=${"a".repeat(32)}${token === null ? "" : `&token=${token}`}`);
     expect(fetchMock).toHaveBeenCalledExactlyOnceWith(path, {
       method: 'POST', credentials: 'include', headers: { Authorization: 'Bearer ai-token' },
     });

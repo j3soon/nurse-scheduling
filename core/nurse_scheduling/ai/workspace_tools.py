@@ -25,7 +25,6 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import aclosing
 from dataclasses import replace
-from datetime import datetime
 from functools import partial
 
 from .agent import Agent
@@ -159,9 +158,9 @@ async def run_workspace(
     optimizer_result: bytes | None = None,
     optimizer_context: bytes | None = None,
     agent: Agent | None = None,
-    request_clock: Callable[[], datetime] | None = None,
     load_attachment: AttachmentLoader | None = None,
     analysis: AgentAnalysis | None = None,
+    timezone: str = "UTC",
 ) -> AsyncIterator[AgentEvent | AgentScheduleChange | AgentDownload | AgentAnalysis]:
     """Hydrate, run, read, validate, and destroy one fresh sandbox run."""
     agent = agent or Agent()
@@ -178,6 +177,7 @@ async def run_workspace(
                 optimizer_context,
                 load_attachment,
                 analysis,
+                timezone,
             ) as sandbox:
                 toolset = WorkspaceTools(sandbox, schedule_yaml, limits, execute_optimizer)
                 events = agent.prompt(
@@ -189,7 +189,6 @@ async def run_workspace(
                     take_steering=take_steering,
                     max_tool_rounds=limits.max_tool_rounds,
                     max_tool_calls=limits.max_tool_calls,
-                    request_clock=request_clock,
                     history_limit=limits.history_limit,
                     message_limit=limits.message_limit,
                 )

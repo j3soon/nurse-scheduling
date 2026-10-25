@@ -22,16 +22,16 @@
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Sequence
 from contextlib import aclosing, asynccontextmanager
 from dataclasses import asdict
-from datetime import datetime
 from math import ceil
 
 from .agent_types import (
     AgentCompaction,
     AgentContextUsage,
     AgentEvent,
+    AgentGenerationProgress,
     AgentMessageEnd,
     AgentReasoning,
     AgentSteering,
@@ -59,6 +59,7 @@ from .provider import (
     TextDelta,
     TokenUsage,
     ToolCall,
+    ToolCallProgress,
     ToolCallRequest,
     ToolCapableChatProvider,
 )
@@ -88,7 +89,6 @@ async def agent_loop(
     max_tool_rounds: int | None = None,
     max_tool_calls: int | None = None,
     run_messages: list[AgentMessage] | None = None,
-    request_clock: Callable[[], datetime] | None = None,
     history_limit: int = 200_000,
     message_limit: int = 1000,
 ) -> AsyncIterator[AgentEvent]:
@@ -102,6 +102,7 @@ async def agent_loop(
         return await tool.execute(arguments)
 
     conversation = [] if run_messages is None else run_messages
+    prefix = list(messages)
     tool_rounds = 0
     tool_calls = 0
     final_answer_only = False
@@ -110,9 +111,7 @@ async def agent_loop(
     overflow_recovered = False
 
     def current_request():
-        return prepare_provider_request(
-            messages, conversation, now=request_clock() if request_clock else None, _preserve_native=True
-        )
+        return prepare_provider_request(prefix, conversation, _preserve_native=True)
 
     async def compact_context(*, force=False):
         events = compactor.compact(current_request(), [tool.definition for tool in tools], force=force)
@@ -138,9 +137,7 @@ async def agent_loop(
         usage = None
         request = current_request()
         definitions = [] if final_answer_only else [tool.definition for tool in tools]
-        request_chars = history_chars(
-            [message for message in request if message["role"] != "system" and not message.get("_current_status")]
-        )
+        request_chars = history_chars([message for message in request if message["role"] != "system"])
         request_tokens = compactor.tokens(request, definitions)
         response_chars = 0
         reported_chars = 0
@@ -168,7 +165,17 @@ async def agent_loop(
                         )
                     elif isinstance(event, ReasoningReplay):
                         replay = event
-                    elif isinstance(event, (TokenUsage, ProviderCall, ProviderRetry)):
+                    elif isinstance(event, ProviderRetry):
+                        # Preserve the failed attempt for audit, but restart from the
+                        # original request. Incomplete native output is never replayed.
+                        failed = AssistantMessage("".join(answer), "error", "".join(reasoning))
+                        conversation.append(failed)
+                        yield AgentMessageEnd(failed)
+                        answer, reasoning, calls = [], [], ()
+                        replay = usage = None
+                        finish_reason = None
+                        yield event
+                    elif isinstance(event, (TokenUsage, ProviderCall)):
                         if isinstance(event, TokenUsage):
                             usage = asdict(event)
                             request_tokens = event.prompt_tokens + event.completion_tokens
@@ -176,6 +183,8 @@ async def agent_loop(
                         yield event
                     elif isinstance(event, ToolCallRequest):
                         calls = event.calls
+                    elif isinstance(event, ToolCallProgress):
+                        yield AgentGenerationProgress("tool_calls", event.characters)
                     elif isinstance(event, ResponseEnd):
                         finish_reason = event.finish_reason
         except ProviderContextOverflowError:
@@ -240,7 +249,11 @@ async def agent_loop(
             # Even valid JSON can describe a different operation when cut short.
             for call in calls:
                 yield AgentToolStart(call.name, call.arguments, call.id)
-                yield _record_tool_result(conversation, call, AgentToolOutcome(TRUNCATED_TOOL_CALL_RESULT, False))
+                yield _record_tool_result(
+                    conversation,
+                    call,
+                    AgentToolOutcome(TRUNCATED_TOOL_CALL_RESULT, False, details={"replay_arguments": "{}"}),
+                )
             final_answer_only = (max_tool_rounds is not None and tool_rounds >= max_tool_rounds) or (
                 max_tool_calls is not None and tool_calls >= max_tool_calls
             )
