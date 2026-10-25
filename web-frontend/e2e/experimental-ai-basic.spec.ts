@@ -608,11 +608,18 @@ for (const trigger of ['user', 'optimizer'] as const) for (const terminal of ['e
     await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Continue with the constraints.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     const runId = trigger === 'user' ? 'answer-1' : 'optimizer-review';
+    const optimizerInputText = 'The optimizer finished. Review its schedule.';
+    const optimizerInput = page.getByText('User · Optimizer', { exact: true }).locator('xpath=ancestor::article');
     if (trigger === 'optimizer') {
       await expect(page.getByText('Previous run answer.', { exact: true })).toBeVisible();
       await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeVisible();
       captured.publishEvent('run_start', { run_id: runId, trigger });
+      captured.publishEvent('model_input', { run_id: runId, system: 'Mock system prompt',
+        messages: [{ kind: 'optimizer', content: optimizerInputText }] });
       for (const event of events) captured.publishEvent(event.type, { ...event.data, run_id: runId });
+      await expect(optimizerInput).toHaveClass(/ml-auto/);
+      await optimizerInput.getByText(/characters$/).click();
+      await expect(optimizerInput.getByText(optimizerInputText, { exact: true })).toBeVisible();
     }
     await expect(page.getByText('Partial second reply.', { exact: true })).toBeVisible();
     captured.publishEvent('response_end', { run_id: runId,
@@ -627,6 +634,10 @@ for (const trigger of ['user', 'optimizer'] as const) for (const terminal of ['e
     await expect(page.getByText('Discarded conversation summary', { exact: true })).toBeVisible();
     await expect(page.getByText('Earlier completed output.', { exact: true })).toBeVisible();
     await expect(page.getByText('Partial second reply.', { exact: true })).toBeVisible();
+    if (trigger === 'optimizer') {
+      await optimizerInput.getByText(/characters$/).click();
+      await expect(optimizerInput.getByText(optimizerInputText, { exact: true })).toBeVisible();
+    }
   });
 }
 
