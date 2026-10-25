@@ -139,6 +139,10 @@ Protect transient in-memory user work with `useTabSwitchWarning` when changing
 tabs would discard it. Add a `beforeunload` guard when reload or close also
 destroys that state.
 
+Derive the AI context percentage and token count from the same backend token
+value and model context limit. Label estimates. Keep character retention limits
+out of the context percentage.
+
 Experimental AI controls must follow backend `/capabilities` responses. The
 backend remains authoritative for feature enablement and input limits.
 Lock the model control after the first message. Keep reasoning effort editable

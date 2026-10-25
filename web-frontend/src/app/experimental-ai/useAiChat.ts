@@ -203,7 +203,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   const [costSummary, setCostSummary] = useState<CostSummary | null>(null);
   const updateContextUsage = useCallback((usage: ContextUsage) => setContextUsage(previous => (
     usage.usedTokens === undefined && previous?.usedTokens !== undefined
-      ? { ...usage, usedTokens: previous.usedTokens, maxTokens: previous.maxTokens }
+      ? { ...usage, usedTokens: previous.usedTokens, maxTokens: previous.maxTokens, estimated: previous.estimated }
       : usage
   )), []);
 

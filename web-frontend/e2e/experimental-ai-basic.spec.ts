@@ -323,7 +323,7 @@ async function mockAiBackend(
           'event: error\ndata: {"message":"The temporary AI sandbox failed."}\n\n',
         ].join('')
         : [
-          'event: context_usage\ndata: {"used_chars":500,"max_chars":2000}\n\n',
+          'event: context_usage\ndata: {"used_chars":500,"max_chars":2000,"used_tokens":8000,"max_tokens":32000,"estimated":false}\n\n',
           ...answerDeltas.map(text => `event: delta\ndata: ${JSON.stringify({ text })}\n\n`),
           ...answerEvents.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`),
           'event: done\ndata: {"run_id":"answer-id"}\n\n',
@@ -504,8 +504,8 @@ test('updates Context, Tokens, and estimated cost while the answer is still stre
     captured.publishEvent('cost_summary', {
       run_id: 'answer-1', conversation: { usd: index ? '0.02' : '0.01', calls: 1, pending: 1, unavailable: 0, version: 100 + index },
     });
-    await expect(footer).toContainText(index ? 'Context 40.0% used' : 'Context 30.0% used');
-    await expect(footer).toContainText(index ? 'Tokens: 1,200 / 32,000' : 'Tokens: 1,000 / 32,000');
+    await expect(footer).toContainText(index ? 'Context 3.8% used (est.)' : 'Context 3.1% used (est.)');
+    await expect(footer).toContainText(index ? 'Tokens (est.): 1,200 / 32,000' : 'Tokens (est.): 1,000 / 32,000');
     await expect(footer).toContainText(index ? 'Est. cost: $0.0200' : 'Est. cost: $0.0100');
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
   }
@@ -526,7 +526,7 @@ test('shows compaction status and the reduced context before an answer', async (
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Summarizing conversation', { exact: true })).toBeVisible();
   await expect(page.getByText('Thinking…', { exact: true })).toBeHidden();
-  await expect(page.getByText('Context 90.0% used')).toBeVisible();
+  await expect(page.getByText('Context 78.1% used (est.)')).toBeVisible();
   await page.screenshot({ path: '../artifacts/compaction-running.png', fullPage: true });
   captured.publishEvent('compaction_end', {
     run_id: 'answer-1', reason: 'threshold', tokens_before: 25000,
@@ -537,8 +537,8 @@ test('shows compaction status and the reduced context before an answer', async (
     run_id: 'answer-1', used_chars: 400, max_chars: 2000, used_tokens: 4000, max_tokens: 32000,
   });
   await expect(page.getByText('Conversation summarized', { exact: true })).toBeVisible();
-  await expect(page.getByText('Context 20.0% used')).toBeVisible();
-  await expect(page.getByText('Tokens: 4,000 / 32,000')).toBeVisible();
+  await expect(page.getByText('Context 12.5% used (est.)')).toBeVisible();
+  await expect(page.getByText('Tokens (est.): 4,000 / 32,000')).toBeVisible();
   captured.publishEvent('delta', { run_id: 'answer-1', text: 'The current constraints are preserved.' });
   captured.finishTurn();
   await expect(page.getByText('The current constraints are preserved.', { exact: true })).toBeVisible();
@@ -560,7 +560,7 @@ test('explains unavailable context usage when the backend omits it', async ({ pa
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   const usage = page.getByText('Context unavailable');
   await expect(usage).toBeVisible();
-  await expect(usage).toHaveAttribute('title', /The AI server has not reported context usage/);
+  await expect(usage).toHaveAttribute('title', /The AI server has not reported context tokens/);
 });
 
 test('returns to the top of a long chat on desktop and mobile', async ({ page }) => {

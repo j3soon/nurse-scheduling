@@ -85,8 +85,9 @@ export interface OptimizationProgressActivity {
 export interface ContextUsage {
   usedChars: number;
   maxChars: number;
-  // Tokens of the latest provider request. The limit is optional when model metadata is unavailable.
+  // Current LLM context tokens. The limit is optional when model metadata is unavailable.
   usedTokens?: number;
+  estimated?: boolean;
   maxTokens?: number;
 }
 
@@ -252,6 +253,7 @@ interface SsePayload {
   messages?: unknown;
   used_tokens?: unknown;
   max_tokens?: unknown;
+  estimated?: unknown;
   message_id?: unknown;
   tool_call_id?: unknown;
   run_id?: unknown;
@@ -717,9 +719,10 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
     if (Number.isSafeInteger(payload.used_chars) && (payload.used_chars as number) >= 0
       && Number.isSafeInteger(payload.max_chars) && (payload.max_chars as number) > 0
       && (payload.used_chars as number) <= (payload.max_chars as number)) {
-      const tokens: Pick<ContextUsage, 'usedTokens' | 'maxTokens'> = {};
+      const tokens: Pick<ContextUsage, 'usedTokens' | 'maxTokens' | 'estimated'> = {};
       if (Number.isSafeInteger(payload.used_tokens) && (payload.used_tokens as number) >= 0) {
         tokens.usedTokens = payload.used_tokens as number;
+        if (typeof payload.estimated === 'boolean') tokens.estimated = payload.estimated;
         if (Number.isSafeInteger(payload.max_tokens) && (payload.max_tokens as number) > 0) {
           tokens.maxTokens = payload.max_tokens as number;
         }

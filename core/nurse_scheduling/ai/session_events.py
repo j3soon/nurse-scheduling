@@ -185,6 +185,7 @@ class ContextUsageEvent(RunFields):
     # Latest request tokens, or an estimate after compaction. The limit needs model metadata.
     used_tokens: NotRequired[int]
     max_tokens: NotRequired[int]
+    estimated: NotRequired[bool]
 
 
 class HistoryTrimmedEvent(RunFields):

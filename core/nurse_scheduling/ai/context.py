@@ -182,7 +182,7 @@ def context_usage(
     provider: ToolCapableChatProvider | None = None,
     *,
     estimated_tokens: int | None = None,
-) -> dict[str, int]:
+) -> dict[str, int | bool]:
     """Report retained history size and the latest request's tokens with the provider's context limit.
 
     The latest provider call holds the whole conversation that the model saw, so its prompt and
@@ -194,6 +194,7 @@ def context_usage(
         usage["used_tokens"] = (
             estimated_tokens if estimated_tokens is not None else last_call.prompt_tokens + last_call.completion_tokens
         )
+        usage["estimated"] = estimated_tokens is not None
         limit = getattr(provider, "context_tokens", None)
         if type(limit) is int and limit > 0:
             usage["max_tokens"] = limit

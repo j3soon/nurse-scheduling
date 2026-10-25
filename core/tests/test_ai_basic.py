@@ -1962,6 +1962,8 @@ def test_context_usage_reports_the_latest_request_tokens_and_provider_limit(wind
     assert usage[0].get("used_tokens") is None
     assert any(payload.get("used_tokens", 0) > 0 for payload in usage[1:-1])
     assert usage[-1]["used_tokens"] == 180
+    assert usage[-1]["estimated"] is False
+    assert any(payload.get("estimated") is True for payload in usage[1:-1])
     assert usage[-1].get("max_tokens") == window_tokens
     assert usage[-1]["used_chars"] > usage[0]["used_chars"] == 0
 
@@ -1993,8 +1995,8 @@ def test_context_usage_reports_selected_history_before_and_after_each_run() -> N
         json.dumps(ChatMessage(role="assistant", content="Second answer."), ensure_ascii=False)
     )
     first_chars += len(json.dumps({"role": "user", "content": timezone_entry().text}))
-    assert first_usage[-1] == {"used_chars": first_chars, "max_chars": 320, "used_tokens": ANY}
-    assert second_usage[-1] == {"used_chars": second_chars, "max_chars": 320, "used_tokens": ANY}
+    assert first_usage[-1] == {"used_chars": first_chars, "max_chars": 320, "used_tokens": ANY, "estimated": True}
+    assert second_usage[-1] == {"used_chars": second_chars, "max_chars": 320, "used_tokens": ANY, "estimated": True}
 
 
 def test_session_budget_keeps_the_latest_exchange_and_reports_all_dropped_messages() -> None:

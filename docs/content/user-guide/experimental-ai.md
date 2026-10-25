@@ -151,18 +151,16 @@ You can change **Reasoning** while an answer streams. The active turn keeps its
 original setting, including tool calls and steering. The new reasoning setting
 applies to later turns and optimizer reviews. Reloading restores the choice.
 
-**Context X% used** below the message box shows the portion of the server's
-conversation history budget selected for the next turn. It excludes instructions,
-schedule data, tools, and attachments. If the server does not report usage, the
-chat displays **unavailable**. Update the AI server to enable the percentage.
+**Context X% used** and **Tokens: X / N** below the message box describe the
+same current LLM context. X includes system instructions, tools, conversation
+messages, and streamed output. N is the model context limit reported by the
+provider. The percentage is X divided by N.
 
-When the provider reports token usage, the line also shows **Last: X / N**.
-X counts the latest model call’s input and output tokens, including instructions,
-tool output, and the reply. N is the model input limit. A turn with long tool output can
-therefore use many more tokens than its history percentage suggests.
-The server reads the limit from the provider's model metadata. If the provider
-does not report a limit, the chat shows **unavailable** for the limit. Hover over
-**Context**, **Last**, or **Est. cost** for a short description of that value.
+The app labels estimates with **(est.)** while streaming and after summarization.
+Provider-reported token usage replaces estimates when available. If the model
+limit is unknown, the token count remains visible and the percentage shows
+**unavailable**. Hover over either value for its description. **Est. cost** is
+separate from context usage.
 
 When the conversation is summarized, expand **Conversation summarized** to read
 the summary sent to the assistant. A discarded summary stays visible and is

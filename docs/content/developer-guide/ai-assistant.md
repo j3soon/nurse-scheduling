@@ -346,7 +346,10 @@ changed model settings, tool definitions, and current system and status content.
 Old usage is invalid after a summary replaces its original input. Cached tokens
 are already included in Chat Completions prompt usage.
 
-The composer footer shows Context, Tokens, and estimated cost during SSE streaming.
+The composer footer derives Context percentage and Tokens from the same backend
+token count and model context limit. It labels estimates with `(est.)` and shows
+an unavailable percentage when the model limit is unknown. Character and message
+limits remain internal retention safeguards. Estimated cost is separate.
 `AgentContextUsage` estimates include the current request and streamed reasoning or
 answer text. `RunEvents` coalesces these reports with text batches. Provider usage
 replaces token estimates, and provider cost updates replace each call's previous

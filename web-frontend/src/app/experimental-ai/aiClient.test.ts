@@ -772,15 +772,15 @@ describe('AI client', () => {
 
   it('receives latest request tokens with context usage and drops invalid token fields', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
-      'event: context_usage\ndata: {"used_chars":250,"max_chars":1000,"used_tokens":4321,"max_tokens":131072}\n\n',
-      'event: context_usage\ndata: {"used_chars":250,"max_chars":1000,"used_tokens":4321}\n\n',
+      'event: context_usage\ndata: {"used_chars":250,"max_chars":1000,"used_tokens":4321,"max_tokens":131072,"estimated":true}\n\n',
+      'event: context_usage\ndata: {"used_chars":250,"max_chars":1000,"used_tokens":4321,"estimated":false}\n\n',
       'event: context_usage\ndata: {"used_chars":250,"max_chars":1000,"used_tokens":-5,"max_tokens":131072}\n\n',
     ])));
     const onEvent = vi.fn();
     await streamSessionEvents('session', { onEvent }, new AbortController().signal, null);
     expect(onEvent.mock.calls).toEqual([
-      [{ type: 'context_usage', usage: { usedChars: 250, maxChars: 1000, usedTokens: 4321, maxTokens: 131072 } }],
-      [{ type: 'context_usage', usage: { usedChars: 250, maxChars: 1000, usedTokens: 4321 } }],
+      [{ type: 'context_usage', usage: { usedChars: 250, maxChars: 1000, usedTokens: 4321, maxTokens: 131072, estimated: true } }],
+      [{ type: 'context_usage', usage: { usedChars: 250, maxChars: 1000, usedTokens: 4321, estimated: false } }],
       [{ type: 'context_usage', usage: { usedChars: 250, maxChars: 1000 } }],
     ]);
   });

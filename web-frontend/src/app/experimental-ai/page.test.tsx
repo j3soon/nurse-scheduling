@@ -483,11 +483,11 @@ describe('ExperimentalAiPage', () => {
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     const usage = await screen.findByText('Context unavailable');
-    expect(usage).toHaveAttribute('title', expect.stringContaining('The AI server has not reported context usage.'));
+    expect(usage).toHaveAttribute('title', expect.stringContaining('The AI server has not reported context tokens.'));
     expect(usage.closest('form')).toBeInTheDocument();
   });
 
-  it('shows the server history budget below the composer and clears it for a new chat', async () => {
+  it('does not use the character budget as a model context percentage', async () => {
     const user = userEvent.setup();
     mockRunEvents.mockImplementationOnce(async (_id, _message, callbacks) => {
       callbacks.onEvent({ type: 'context_usage', usage: { usedChars: 500, maxChars: 2000 } });
@@ -498,17 +498,17 @@ describe('ExperimentalAiPage', () => {
     expect(screen.queryByText(/Context /)).not.toBeInTheDocument();
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
-    const usage = await screen.findByText('Context 25.0% used');
-    expect(usage).toHaveAttribute('title', expect.stringContaining('500 of 2,000 characters'));
+    const usage = await screen.findByText('Context unavailable');
+    expect(usage).toHaveAttribute('title', expect.stringContaining('not reported context tokens'));
     expect(usage.closest('form')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Start new chat' }));
     expect(screen.queryByText(/Context /)).not.toBeInTheDocument();
   });
 
-  it.each([131072, undefined])('shows request tokens beside the history budget with limit %s', async maxTokens => {
+  it.each([131072, undefined])('uses the same context tokens for percentage and count with limit %s', async maxTokens => {
     const user = userEvent.setup();
     mockRunEvents.mockImplementationOnce(async (_id: string, _message: string, callbacks: SessionStreamOptions) => {
-      callbacks.onEvent({ type: 'context_usage', usage: { usedChars: 500, maxChars: 2000, usedTokens: 4321, maxTokens } });
+      callbacks.onEvent({ type: 'context_usage', usage: { usedChars: 500, maxChars: 2000, usedTokens: 4321, maxTokens, estimated: true } });
       // A report without tokens, such as the next run's first one, keeps the latest token figures.
       callbacks.onEvent({ type: 'context_usage', usage: { usedChars: 600, maxChars: 2000 } });
       callbacks.onEvent({ type: 'delta', text: 'Done.' });
@@ -517,10 +517,10 @@ describe('ExperimentalAiPage', () => {
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
-    const usage = await screen.findByText(/Context 30\.0% used/);
-    expect(usage).toHaveAttribute('title', expect.stringContaining('600 of 2,000 characters'));
-    const tokens = screen.getByText(`Tokens: 4,321 / ${maxTokens ? '131,072' : 'unavailable'}`);
-    expect(tokens).toHaveAttribute('title', 'Current context tokens, estimated while streaming and after summarization / model input limit.');
+    const usage = await screen.findByText(maxTokens ? 'Context 3.3% used (est.)' : 'Context unavailable');
+    expect(usage).toHaveAttribute('title', expect.stringContaining('current LLM context'));
+    const tokens = screen.getByText(`Tokens (est.): 4,321 / ${maxTokens ? '131,072' : 'unavailable'}`);
+    expect(tokens).toHaveAttribute('title', 'Estimated current LLM context tokens / model context limit. Includes system instructions, tools, and conversation messages.');
   });
 
   it('restores the transcript and live session after navigating away', async () => {

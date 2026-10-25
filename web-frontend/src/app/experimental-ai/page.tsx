@@ -877,9 +877,10 @@ export default function ExperimentalAiPage() {
   const hasVersionMismatch = backendVersion !== undefined && hasAppVersionMismatch(CURRENT_APP_VERSION, backendVersion);
   const serverLocked = activeSessionId !== null || messages.length > 0;
 
-  const contextDescription = contextUsage !== null
-    ? `${contextUsage.usedChars.toLocaleString()} of ${contextUsage.maxChars.toLocaleString()} characters in conversation context, including streamed output. Excludes fixed instructions.`
-    : 'The AI server has not reported context usage.';
+  const tokenDescription = `${contextUsage?.estimated !== false ? 'Estimated current' : 'Current'} LLM context tokens / model context limit. Includes system instructions, tools, and conversation messages.`;
+  const contextDescription = contextUsage?.usedTokens !== undefined
+    ? tokenDescription
+    : 'The AI server has not reported context tokens.';
 
   // The Session files panel is fixed on the right at xl, so the chat and composer reserve
   // equal space on both sides to stay centered without overlapping it.
@@ -1446,14 +1447,14 @@ export default function ExperimentalAiPage() {
         {(contextUsage !== null || messages.length > 0 || costSummary) && (
           <p className="mt-2 px-2 text-center text-[0.6875rem] text-gray-500" aria-live="polite">
             {(contextUsage !== null || messages.length > 0) && <span title={contextDescription}>
-              Context {contextUsage !== null
-                ? `${(100 * contextUsage.usedChars / contextUsage.maxChars).toFixed(1)}% used`
+              Context {contextUsage?.usedTokens !== undefined && contextUsage.maxTokens !== undefined
+                ? `${(100 * contextUsage.usedTokens / contextUsage.maxTokens).toFixed(1)}% used${contextUsage.estimated !== false ? ' (est.)' : ''}`
                 : 'unavailable'}
             </span>}
             {contextUsage?.usedTokens !== undefined && <>
               {' · '}
-              <span title="Current context tokens, estimated while streaming and after summarization / model input limit.">
-                Tokens: {contextUsage.usedTokens.toLocaleString('en-US')} / {contextUsage.maxTokens?.toLocaleString('en-US') ?? 'unavailable'}
+              <span title={tokenDescription}>
+                Tokens{contextUsage.estimated !== false ? ' (est.)' : ''}: {contextUsage.usedTokens.toLocaleString('en-US')} / {contextUsage.maxTokens?.toLocaleString('en-US') ?? 'unavailable'}
               </span>
             </>}
             {costSummary && <>
