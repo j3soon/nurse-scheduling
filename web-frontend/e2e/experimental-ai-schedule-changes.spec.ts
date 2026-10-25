@@ -193,8 +193,8 @@ test('applies the schedule a response finishes with as one undoable step', async
   await expect(page.getByText('The candidate passed trusted server-side validation.').last()).toBeVisible();
   await expect(page.getByText('schedule edit')).toBeVisible();
   await page.getByText('bash', { exact: true }).click();
-  await expect(page.getByRole('region', { name: 'Tool arguments' }).getByRole('heading', { name: 'Command' })).toBeVisible();
-  await expect(page.getByRole('region', { name: 'Tool result' }).getByRole('heading', { name: 'Result' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Tool arguments' }).getByRole('heading', { name: /^Command · / })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Tool result' }).getByRole('heading', { name: /^Result · / })).toBeVisible();
   await page.getByLabel('Chat messages').screenshot({ path: '../artifacts/tool-command-result.png' });
   await expect(page.getByRole('button', { name: 'Approve' })).toBeHidden();
 

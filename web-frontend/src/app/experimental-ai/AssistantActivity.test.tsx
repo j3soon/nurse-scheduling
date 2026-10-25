@@ -52,8 +52,10 @@ describe('AssistantActivity', () => {
     expect(screen.getByText('Summarizing conversation · pass 2 · 320 characters')).toBeVisible();
     expect(screen.getByText('Preparing tool calls · 54 characters')).toBeVisible();
     await user.click(screen.getByText('bash'));
-    expect(within(screen.getByLabelText('Tool arguments')).getByText('10 characters')).toBeVisible();
-    expect(within(screen.getByLabelText('Tool result')).getByText('2 characters')).toBeVisible();
+    expect(within(screen.getByLabelText('Tool arguments')).getByRole('heading', { name: 'Command · 10 characters' })).toBeVisible();
+    expect(within(screen.getByLabelText('Tool result')).getByRole('heading', { name: 'Result · 2 characters' })).toBeVisible();
+    expect(screen.getByText('Reasoning · 1,200 characters')).not.toHaveClass('select-none');
+    expect(screen.getByText('Summarizing conversation · pass 2 · 320 characters')).not.toHaveClass('select-none');
   });
   it('shows the exact user-role compaction summary and tool replay arguments', async () => {
     const user = userEvent.setup();
@@ -116,9 +118,9 @@ describe('AssistantActivity', () => {
 
     const argumentsSection = screen.getByRole('region', { name: 'Tool arguments' });
     const resultSection = screen.getByRole('region', { name: 'Tool result' });
-    expect(within(argumentsSection).getByRole('heading', { name: 'Command' })).toBeVisible();
+    expect(within(argumentsSection).getByRole('heading', { name: /^Command · / })).toBeVisible();
     expect(within(argumentsSection).getByText(/sed -i/)).toBeVisible();
-    expect(within(resultSection).getByRole('heading', { name: 'Result' })).toBeVisible();
+    expect(within(resultSection).getByRole('heading', { name: /^Result · / })).toBeVisible();
     expect(within(resultSection).getByText('exit_code: 0')).toBeVisible();
     expect(within(argumentsSection).queryByText('exit_code: 0')).not.toBeInTheDocument();
   });
@@ -127,7 +129,7 @@ describe('AssistantActivity', () => {
     const user = userEvent.setup();
     render(<AssistantActivity entries={[{ kind: 'tool', name: 'read', arguments: '{"path":"/workspace/schedule.yaml"}', result: '', ok: true, state: 'running' }]} />);
     await user.click(screen.getByText('read · running'));
-    expect(screen.getByRole('heading', { name: 'Arguments' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: /^Arguments · / })).toBeVisible();
     expect(screen.queryByRole('region', { name: 'Tool result' })).not.toBeInTheDocument();
   });
 

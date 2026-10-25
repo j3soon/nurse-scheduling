@@ -117,15 +117,19 @@ function ToolBody({ entry }: { entry: ToolEntry }) {
     <div className="space-y-2">
       {entry.arguments && entry.arguments !== '{}' && (
         <section aria-label="Tool arguments" className="rounded border border-gray-200 bg-white p-2">
-          <h3 className="mb-1 font-semibold text-gray-700">{entry.name === 'bash' ? 'Command' : 'Arguments'}</h3>
-          <p className="mb-1 text-gray-500">{formatCount(characterCount(entry.arguments))} characters</p>
+          <h3 className="mb-1 font-semibold text-gray-700">
+            {entry.name === 'bash' ? 'Command' : 'Arguments'}{' '}
+            <span className="font-normal text-gray-500">· {formatCount(characterCount(entry.arguments))} characters</span>
+          </h3>
           <ChunkedText text={entry.arguments} label="arguments" />
         </section>
       )}
       {entry.result && (
         <section aria-label="Tool result" className="rounded border border-gray-200 bg-white p-2">
-          <h3 className="mb-1 font-semibold text-gray-700">Result</h3>
-          <p className="mb-1 text-gray-500">{formatCount(characterCount(entry.result))} characters</p>
+          <h3 className="mb-1 font-semibold text-gray-700">
+            Result{' '}
+            <span className="font-normal text-gray-500">· {formatCount(characterCount(entry.result))} characters</span>
+          </h3>
           <ChunkedText text={entry.result} label="output" />
         </section>
       )}
@@ -200,7 +204,7 @@ export function AssistantActivity({ entries }: { entries: ActivityEntry[] }) {
             </>
           ) : (
             <details open={entry.kind === 'schedule-check' && !entry.ok ? true : undefined} className={`text-xs ${activityColor(entry)}`}>
-              <summary className="cursor-pointer select-none py-0.5 hover:text-gray-700">{activitySummary(entry)}</summary>
+              <summary className="cursor-pointer py-0.5 hover:text-gray-700">{activitySummary(entry)}</summary>
               {entry.kind === 'schedule-check' && <p>Validation result sent to AI.</p>}
               {entry.kind === 'schedule-applied' && <p>Not sent to AI.</p>}
               <div className="mt-1 rounded bg-gray-50 p-2">

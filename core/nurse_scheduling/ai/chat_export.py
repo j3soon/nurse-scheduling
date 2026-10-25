@@ -284,18 +284,18 @@ def _activity_html(entry):
         arguments = (
             '<section class="tool-section" aria-label="Tool arguments"><h3>'
             + ("Command" if entry["name"] == "bash" else "Arguments")
-            + '</h3><p class="character-count">'
+            + " <span>· "
             + _count(entry["arguments"])
-            + ' characters</p><pre class="activity-output">'
+            + ' characters</span></h3><pre class="activity-output">'
             + escape_html(entry["arguments"])
             + "</pre></section>"
             if entry.get("arguments") and entry["arguments"] != "{}"
             else ""
         )
         result = (
-            '<section class="tool-section" aria-label="Tool result"><h3>Result</h3><p class="character-count">'
+            '<section class="tool-section" aria-label="Tool result"><h3>Result <span>· '
             + _count(entry["result"])
-            + ' characters</p><pre class="activity-output">'
+            + ' characters</span></h3><pre class="activity-output">'
             + escape_html(entry["result"])
             + "</pre></section>"
             if entry.get("result")

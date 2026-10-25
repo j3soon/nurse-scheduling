@@ -619,8 +619,8 @@ test('shows character progress while preparing tools and preserves completed cou
   await expect(page.getByText('Preparing tool calls · 2 characters', { exact: true })).toBeHidden();
   captured.publishEvent('tool', { ...tool, result: '新😀', ok: true });
   await page.getByText('bash', { exact: true }).click();
-  await expect(page.getByLabel('Tool arguments').getByText('17 characters', { exact: true })).toBeVisible();
-  await expect(page.getByLabel('Tool result').getByText('2 characters', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Tool arguments').getByRole('heading', { name: 'Command · 17 characters' })).toBeVisible();
+  await expect(page.getByLabel('Tool result').getByRole('heading', { name: 'Result · 2 characters' })).toBeVisible();
   captured.publishEvent('delta', { run_id: 'answer-1', text: 'Done😀' });
   await expect(page.getByText('5 characters', { exact: true })).toBeVisible();
   captured.finishTurn();
@@ -630,7 +630,7 @@ test('shows character progress while preparing tools and preserves completed cou
   await expect(page.getByText('Reasoning · 2 characters', { exact: true })).toBeVisible();
   await expect(page.getByText('5 characters', { exact: true })).toBeVisible();
   await page.getByText('bash', { exact: true }).click();
-  await expect(page.getByLabel('Tool result').getByText('2 characters', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Tool result').getByRole('heading', { name: 'Result · 2 characters' })).toBeVisible();
 });
 
 test('can stop manual compaction while admission waits before run_start', async ({ page }) => {

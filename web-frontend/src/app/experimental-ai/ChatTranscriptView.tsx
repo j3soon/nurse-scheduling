@@ -130,7 +130,7 @@ export function ChatTranscriptView({
                 </p>
               )}
               {summary && <details className="text-xs">
-                <summary className="cursor-pointer select-none text-gray-500 hover:text-gray-700">Conversation summary</summary>
+                <summary className="cursor-pointer text-gray-500 hover:text-gray-700">Conversation summary</summary>
                 <CompactionSummary entry={summary} />
               </details>}
               {uploads.length > 0 && (

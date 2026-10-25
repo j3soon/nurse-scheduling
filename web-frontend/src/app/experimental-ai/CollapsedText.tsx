@@ -30,7 +30,7 @@ interface CollapsedTextProps {
 export default function CollapsedText({ summary, text }: CollapsedTextProps) {
   return (
     <details className="text-xs">
-      <summary className="cursor-pointer select-none text-gray-500 hover:text-gray-700">{summary}</summary>
+      <summary className="cursor-pointer text-gray-500 hover:text-gray-700">{summary}</summary>
       <pre className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap break-words font-mono leading-relaxed text-gray-700">
         {text}
       </pre>
