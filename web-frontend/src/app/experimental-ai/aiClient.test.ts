@@ -24,6 +24,7 @@ import {
   decodeEvent,
   PRODUCTION_AI_API_URL,
   cancelOptimization,
+  compactSession,
   createSession,
   downloadGeneratedZip,
   downloadOptimization,
@@ -524,6 +525,28 @@ describe('AI client', () => {
       { message: 'Question', message_id: 'message-1', frontend_version: CURRENT_APP_VERSION, frontend_timezone: FRONTEND_TIMEZONE },
       { message: 'Question', message_id: 'message-1', frontend_version: CURRENT_APP_VERSION, frontend_timezone: FRONTEND_TIMEZONE },
     ]);
+    expect(onConnectionChange.mock.calls).toEqual([[false], [true]]);
+  });
+
+  it('retries compaction with its original ID and saves a pending Stop before retrying', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce(new Response(null, { status: 202 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ run_id: 'compact-run' }), { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const onConnectionChange = vi.fn();
+    await expect(compactSession('session-id', 'compact-id', 'token', '/ai', {
+      signal: new AbortController().signal, shouldStop: () => true, onConnectionChange,
+    })).resolves.toBe('compact-run');
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      '/ai/sessions/session-id/compact', '/ai/sessions/session-id/stop', '/ai/sessions/session-id/compact',
+    ]);
+    for (const [, request] of fetchMock.mock.calls) {
+      expect(request).toMatchObject({
+        credentials: 'include', headers: { Authorization: 'Bearer token' },
+        body: JSON.stringify({ message_id: 'compact-id' }), signal: expect.any(AbortSignal),
+      });
+    }
     expect(onConnectionChange.mock.calls).toEqual([[false], [true]]);
   });
 

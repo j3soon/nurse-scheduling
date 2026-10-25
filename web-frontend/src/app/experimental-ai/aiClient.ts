@@ -825,6 +825,15 @@ export async function sendMessage(
   endpoint = getAiBaseUrl(),
   { messageId, shouldStop, onConnectionChange, selection }: SendMessageOptions = { messageId: newMessageId() },
 ): Promise<string> {
+  return acceptRun(sessionId, signal, authToken, endpoint, { messageId, shouldStop, onConnectionChange },
+    connection => postMessage(sessionId, message, connection, authToken, endpoint, 'application/json', messageId, selection));
+}
+
+async function acceptRun(
+  sessionId: string, signal: AbortSignal, authToken: string | null, endpoint: string,
+  { messageId, shouldStop, onConnectionChange }: Omit<SendMessageOptions, 'selection'>,
+  post: (signal: AbortSignal) => Promise<Response>,
+): Promise<string> {
   let retries = 0;
   let stopSaved = false;
   while (true) {
@@ -847,9 +856,7 @@ export async function sendMessage(
       }
       let body: { run_id?: unknown };
       try {
-        const response = await postMessage(
-          sessionId, message, connection.signal, authToken, endpoint, 'application/json', messageId, selection,
-        );
+        const response = await post(connection.signal);
         body = await response.json() as { run_id?: unknown };
       } catch (error) {
         if (error instanceof SyntaxError) throw new Error('The AI backend returned an invalid run ID.');
@@ -992,13 +999,17 @@ export async function getChatExportUrl(sessionId: string, authToken: string | nu
 /** Summarize an idle session without asking a new question. */
 export async function compactSession(
   sessionId: string, messageId: string, authToken: string | null, endpoint: string,
-): Promise<void> {
-  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/compact`, {
-    method: 'POST', credentials: 'include',
-    headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ message_id: messageId }),
+  options: Omit<SendMessageOptions, 'messageId' | 'selection'> & { signal: AbortSignal },
+): Promise<string> {
+  return acceptRun(sessionId, options.signal, authToken, endpoint, { ...options, messageId }, async signal => {
+    const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/compact`, {
+      method: 'POST', credentials: 'include', signal,
+      headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ message_id: messageId }),
+    });
+    if (!response.ok) throw await responseError(response);
+    return response;
   });
-  if (!response.ok) throw await responseError(response);
 }
 
 /** Stop the named message's run, or every run of the session when no message is named. */

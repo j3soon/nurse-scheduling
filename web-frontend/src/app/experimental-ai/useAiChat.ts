@@ -230,6 +230,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   const [isReconnecting, setIsReconnecting] = useState(false);
   const resumedRequestRef = useRef<string | null>(null);
   const currentRequestRef = useRef<{ id: string; stopped: boolean } | null>(null);
+  const backgroundEventRef = useRef<(event: SessionEvent) => void>(() => {});
   const [activeOptimization, setActiveOptimization] = useState<ActiveOptimization | null>(null);
   const [queuedMessages, setQueuedMessages] = useState<QueuedChatMessage[]>([]);
   const [steeringAssistantId, setSteeringAssistantId] = useState<string | null>(null);
@@ -617,6 +618,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       onHistoryTrimmed: setTrimmedHistoryCount,
       onError: failBackgroundTurn,
     };
+    backgroundEventRef.current = event => dispatchPageEvent(event, handlers, setMessages);
     sessionEvents.connect({
       sessionId, endpoint, authToken, resetReplay,
       onEventId: () => setIsReconnecting(false),
@@ -1033,15 +1035,60 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
 
   const compactContext = async () => {
     const sessionId = sessionIdRef.current;
-    if (!sessionId || isStreaming || compactionRequested) return;
-    const ownsConversation = lifecycle.capture();
+    if (!sessionId || lifecycle.busy) return;
+    const request = { id: messageId(), stopped: false };
+    currentRequestRef.current = request;
+    const operation = lifecycle.begin('foreground', request.id);
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
     setCompactionRequested(true);
+    const endpoint = sessionEndpointRef.current ?? aiEndpoint;
+    let runFinished = false;
+    let finishRun!: () => void;
+    let rejectRun!: (error: Error) => void;
+    const finished = new Promise<void>((resolve, reject) => {
+      finishRun = () => { runFinished = true; resolve(); };
+      rejectRun = reject;
+    });
+    void finished.catch(() => {});
+    const foreground = eventRouterRef.current.begin(event => {
+      if (!lifecycle.owns(operation)) return;
+      // Compaction has no user question, so use the background transcript projection.
+      backgroundEventRef.current(event);
+      if (['done', 'stopped', 'stale', 'error'].includes(event.type)) finishRun();
+    }, rejectRun, () => startSessionEventStream(sessionId, endpoint, true));
+    controller.signal.addEventListener('abort', finishRun, { once: true });
+    if (!sessionEvents.connected()) startSessionEventStream(sessionId, endpoint);
     try {
-      await compactSession(sessionId, messageId(), authToken, sessionEndpointRef.current ?? aiEndpoint);
+      const runId = await compactSession(sessionId, request.id, authToken, endpoint, {
+        signal: controller.signal,
+        shouldStop: () => request.stopped,
+        onConnectionChange: connected => { if (lifecycle.owns(operation)) setIsReconnecting(!connected); },
+      });
+      if (!lifecycle.owns(operation)) return;
+      eventRouterRef.current.acknowledge(foreground, runId, () => {});
+      if (!runFinished && lifecycle.getSnapshot().foreground?.phase === 'stopping') {
+        await stopSession(sessionId, authToken, endpoint, request.id).catch(stopError => {
+          if (!lifecycle.owns(operation)) return;
+          lifecycle.stopFailed([operation]);
+          reportRequestError(stopError, 'The AI response could not be stopped.');
+        });
+      }
+      await finished;
     } catch (compactError) {
-      if (ownsConversation()) reportRequestError(compactError, 'The conversation could not be compacted.');
+      if (lifecycle.owns(operation) && !controller.signal.aborted) {
+        reportRequestError(compactError, 'The conversation could not be compacted.');
+      }
     } finally {
-      if (ownsConversation()) setCompactionRequested(false);
+      controller.signal.removeEventListener('abort', finishRun);
+      eventRouterRef.current.finish(foreground);
+      if (lifecycle.owns(operation)) {
+        setCompactionRequested(false);
+        setIsReconnecting(false);
+        if (currentRequestRef.current === request) currentRequestRef.current = null;
+        if (abortControllerRef.current === controller) abortControllerRef.current = null;
+        lifecycle.finish(operation);
+      }
     }
   };
 

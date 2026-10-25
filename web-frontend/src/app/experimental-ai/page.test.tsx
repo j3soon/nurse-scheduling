@@ -187,7 +187,7 @@ describe('ExperimentalAiPage', () => {
       callbacks.onEvent({ type: 'delta', text: 'Alice' });
       callbacks.onEvent({ type: 'delta', text: ' works Monday.' });
     });
-    mockCompactSession.mockReset().mockResolvedValue(undefined);
+    mockCompactSession.mockReset().mockResolvedValue('compact-run');
     mockStreamSessionEvents.mockReset().mockImplementation(() => new Promise<void>(() => {}));
     // Run fixtures publish normalized events while POST returns only its acknowledgement.
     mockSendMessage.mockReset().mockImplementation(async (id, message, signal, token, endpoint) => {
@@ -537,7 +537,9 @@ describe('ExperimentalAiPage', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
     await user.click(screen.getByRole('button', { name: 'Compact context' }));
-    expect(mockCompactSession).toHaveBeenCalledWith('session-id', expect.any(String), null, '/ai');
+    expect(mockCompactSession).toHaveBeenCalledWith('session-id', expect.any(String), null, '/ai', {
+      signal: expect.any(AbortSignal), shouldStop: expect.any(Function), onConnectionChange: expect.any(Function),
+    });
     expect(mockRunEvents).toHaveBeenCalledTimes(1);
     const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
     await act(async () => {
@@ -559,6 +561,65 @@ describe('ExperimentalAiPage', () => {
     expect(screen.getByText('Tokens (est.): 1,000 / 10,000')).toBeInTheDocument();
     await user.click(screen.getByText('Conversation summary', { exact: true }));
     expect(screen.getByText(/\[Conversation summary\]\s+Keep the night constraints\./)).toBeInTheDocument();
+  });
+
+  it.each([true, false])('can stop compaction before run_start, with terminal before acceptance=%s', async terminalBeforeAcceptance => {
+    const user = userEvent.setup();
+    let accept: ((id: string) => void) | undefined;
+    mockCompactSession.mockImplementationOnce(() => new Promise<string>(resolve => { accept = resolve; }));
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Hello');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    await user.click(screen.getByRole('button', { name: 'Compact context' }));
+    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Stop' }));
+    const requestId = mockCompactSession.mock.calls[0][1] as string;
+    expect(mockStopSession).toHaveBeenLastCalledWith('session-id', null, '/ai', requestId);
+    const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
+    if (terminalBeforeAcceptance) act(() => stream.onEvent({ type: 'stopped', runId: 'compact-run' }));
+    await act(async () => accept?.('compact-run'));
+    if (!terminalBeforeAcceptance) {
+      await waitFor(() => expect(mockStopSession).toHaveBeenCalledTimes(2));
+      expect(mockStopSession).toHaveBeenLastCalledWith('session-id', null, '/ai', requestId);
+      act(() => stream.onEvent({ type: 'stopped', runId: 'compact-run' }));
+    }
+    expect(await screen.findByText('Stopped before completion.')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
+  });
+
+  it('keeps compaction busy when an unrelated optimizer review finishes', async () => {
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Hello');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    await user.click(screen.getByRole('button', { name: 'Compact context' }));
+    const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
+    act(() => {
+      stream.onEvent({ type: 'delta', runId: 'earlier-review', text: 'Earlier review.' });
+      stream.onEvent({ type: 'done', runId: 'earlier-review' });
+    });
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeVisible();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeDisabled();
+    await act(async () => stream.onEvent({ type: 'done', runId: 'compact-run' }));
+    expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
+  });
+
+  it('releases a rejected compaction and leaves the conversation available', async () => {
+    const user = userEvent.setup();
+    mockCompactSession.mockRejectedValueOnce(new Error('Compaction is unavailable.'));
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Hello');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    await user.click(screen.getByRole('button', { name: 'Compact context' }));
+    expect(await screen.findByText('Compaction is unavailable.')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Compact context' })).toBeEnabled();
   });
 
   it('restores the transcript and live session after navigating away', async () => {

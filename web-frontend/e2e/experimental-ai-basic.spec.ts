@@ -566,6 +566,41 @@ test('compacts context on demand and restores the summary after reload', async (
   await expect(page.getByText('Earlier answer.', { exact: true })).toBeVisible();
 });
 
+test('can stop manual compaction while admission waits before run_start', async ({ page }) => {
+  const captured = await mockAiBackend(page, ['Earlier answer.']);
+  let accept!: () => void;
+  const admission = new Promise<void>(resolve => { accept = resolve; });
+  let compactionMessageId: string | undefined;
+  let stoppedMessageId: string | undefined;
+  await page.route('**/sessions/browser-session/compact', async route => {
+    compactionMessageId = (route.request().postDataJSON() as { message_id: string }).message_id;
+    await admission;
+    await route.fulfill({ status: 202, contentType: 'application/json', body: JSON.stringify({ run_id: 'delayed-summary' }) });
+  });
+  await page.route('**/sessions/browser-session/stop', async route => {
+    stoppedMessageId = (route.request().postDataJSON() as { message_id: string }).message_id;
+    captured.publishEvent('stopped', { run_id: 'delayed-summary' });
+    accept();
+    await route.fulfill({ status: 202, body: '{}' });
+  });
+  await page.goto('/experimental-ai');
+  const input = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+  await input.fill('Keep the night constraints.');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('Earlier answer.', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Compact context', exact: true }).click();
+  await expect(input).toBeDisabled();
+  await expect.poll(() => compactionMessageId).toBeTruthy();
+  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
+  await page.screenshot({ path: '../artifacts/compaction-admission-stop.png', fullPage: true });
+  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  await expect(page.getByText('Stopped before completion.', { exact: true })).toBeVisible();
+  expect(stoppedMessageId).toBe(compactionMessageId);
+  await expect(input).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeHidden();
+  expect(captured.messageBodies).toHaveLength(1);
+});
+
 test('keeps short context with a manual request notice instead of a compaction failure', async ({ page }) => {
   const captured = await mockAiBackend(page, ['Hello.']);
   await page.goto('/experimental-ai');
