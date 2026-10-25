@@ -256,8 +256,9 @@ async function mockAiBackend(
         currentSelection = request.postDataJSON() as typeof currentSelection;
         captured.modelSelections.push(currentSelection);
       }
+      // Like the backend, report the model as fixed after the first accepted message.
       await route.fulfill({ status: 200, contentType: 'application/json', headers: corsHeaders,
-        body: JSON.stringify(currentSelection) });
+        body: JSON.stringify({ ...currentSelection, locked: captured.messageBodies.length > 0 }) });
       return;
     }
     if (request.url().endsWith('/sessions/browser-session/messages/queue')) {
@@ -1383,6 +1384,72 @@ test('locks the model and changes reasoning during streaming for future turns an
   await expect(page.getByLabel('AI model')).toHaveValue('deep');
   await expect(page.getByLabel('AI model')).toBeDisabled();
   await expect(page.getByLabel('Reasoning', { exact: true })).toBeEnabled();
+});
+
+
+test('keeps the model editable until the server accepts a message', async ({ page }) => {
+  const captured = await mockAiBackend(page, ['Accepted answer.'], false, undefined, [], true, [], {
+    default_model: 'fast', models: [
+      { id: 'fast', name: 'Fast', context_tokens: null, default_reasoning: 'default', reasoning_options: [{ id: 'default', label: 'Default' }] },
+      { id: 'deep', name: 'Deep', context_tokens: 32000, default_reasoning: 'off', reasoning_options: [{ id: 'off', label: 'Off' }] },
+    ],
+  });
+  let rejected = false;
+  await page.route('**/ai/sessions/browser-session/messages', async route => {
+    if (rejected || route.request().method() !== 'POST') return route.fallback();
+    rejected = true;
+    await route.fulfill({
+      status: 503, contentType: 'application/json',
+      headers: { 'Access-Control-Allow-Credentials': 'true', 'Access-Control-Allow-Origin': frontendOrigin() },
+      body: JSON.stringify({ detail: 'The AI service is busy. Try again later.' }),
+    });
+  });
+  await page.goto('/experimental-ai');
+  const composer = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+  await composer.fill('First question');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('The AI service is busy. Try again later.').first()).toBeVisible();
+  await expect(page.getByLabel('AI model')).toBeEnabled();
+  await page.reload();
+  await expect(page.getByText('First question', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('AI model')).toBeEnabled();
+  await page.getByLabel('AI model').selectOption('deep');
+  await expect.poll(() => captured.modelSelections.at(-1)).toEqual({ model: 'deep', reasoning: 'off' });
+  await composer.fill('Second question');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('Accepted answer.')).toBeVisible();
+  expect(JSON.parse(captured.messageBodies[0]).selection).toEqual({ model: 'deep', reasoning: 'off' });
+  await expect(page.getByLabel('AI model')).toBeDisabled();
+});
+
+
+test('follows the saved model lock after a question stops before its run starts', async ({ page }) => {
+  const captured = await mockAiBackend(page, ['Accepted answer.'], false, undefined, [], true, [], {
+    default_model: 'fast', models: [
+      { id: 'fast', name: 'Fast', context_tokens: null, default_reasoning: 'default', reasoning_options: [{ id: 'default', label: 'Default' }] },
+      { id: 'deep', name: 'Deep', context_tokens: 32000, default_reasoning: 'off', reasoning_options: [{ id: 'off', label: 'Off' }] },
+    ],
+  });
+  let accepted = false;
+  await page.route('**/ai/sessions/browser-session/messages', async route => {
+    if (accepted || route.request().method() !== 'POST') return route.fallback();
+    accepted = true;
+    // The server accepted the question, but Stop arrived before its run started, so the model stays unlocked.
+    captured.publishEvent('stopped', { run_id: 'never-started' });
+    await route.fulfill({
+      status: 202, contentType: 'application/json',
+      headers: { 'Access-Control-Allow-Credentials': 'true', 'Access-Control-Allow-Origin': frontendOrigin() },
+      body: JSON.stringify({ run_id: 'never-started' }),
+    });
+  });
+  await page.goto('/experimental-ai');
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('First question');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('Stopped before completion.')).toBeVisible();
+  await expect(page.getByLabel('AI model')).toBeEnabled();
+  await page.reload();
+  await expect(page.getByText('First question', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('AI model')).toBeEnabled();
 });
 
 

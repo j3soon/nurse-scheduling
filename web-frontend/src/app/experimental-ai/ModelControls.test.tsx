@@ -72,7 +72,8 @@ it('loads models with the new credential and resets choices that it cannot use',
 it('locks the model while reasoning remains editable for later turns', async () => {
   vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string, request?: RequestInit) => ({
     ok: true, json: async () => url.endsWith('/models') ? catalog
-      : request?.method === 'PUT' ? JSON.parse(request.body as string) : { model: 'deep', reasoning: 'high' },
+      : request?.method === 'PUT' ? { ...JSON.parse(request.body as string), locked: false }
+        : { model: 'deep', reasoning: 'high', locked: false },
   })));
   const onChange = vi.fn();
   render(<ModelControls endpoint="https://ai.example" token="chat-key" sessionId="session"
@@ -82,6 +83,38 @@ it('locks the model while reasoning remains editable for later turns', async () 
   expect(screen.getByLabelText('Reasoning')).toBeEnabled();
   await userEvent.setup().selectOptions(screen.getByLabelText('Reasoning'), 'off');
   await waitFor(() => expect(onChange).toHaveBeenLastCalledWith({ model: 'deep', reasoning: 'off' }));
+});
+
+it('shows the saved model lock and reads it again when the run state changes', async () => {
+  let locked = false;
+  const fetch = vi.fn().mockImplementation(async (url: string) => ({
+    ok: true, json: async () => url.endsWith('/models') ? catalog : { model: 'deep', reasoning: 'high', locked },
+  }));
+  vi.stubGlobal('fetch', fetch);
+  const onChange = vi.fn();
+  const controls = (runActive: boolean) => <ModelControls endpoint="https://ai.example" token="chat-key"
+    sessionId="session" runActive={runActive} disabled={false} onChange={onChange} />;
+  const view = render(controls(false));
+  await waitFor(() => expect(screen.getByLabelText('AI model')).toBeEnabled());
+  expect(onChange).toHaveBeenLastCalledWith({ model: 'deep', reasoning: 'high' });
+  // An accepted run fixes the model on the server.
+  locked = true;
+  view.rerender(controls(true));
+  expect(screen.getByLabelText('AI model')).toBeDisabled();
+  view.rerender(controls(false));
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(4));
+  expect(screen.getByLabelText('AI model')).toBeDisabled();
+  expect(screen.getByText(/Model fixed for this conversation/)).toBeInTheDocument();
+  // A new chat on the same control has no saved lock.
+  locked = false;
+  view.rerender(<ModelControls endpoint="https://ai.example" token="chat-key"
+    sessionId="next-session" disabled={false} onChange={onChange} />);
+  await waitFor(() => expect(screen.getByLabelText('AI model')).toBeEnabled());
+  // A run that stopped before it started leaves the model unlocked.
+  view.rerender(<ModelControls endpoint="https://ai.example" token="chat-key"
+    sessionId="next-session" runActive disabled={false} onChange={onChange} />);
+  expect(screen.getByLabelText('AI model')).toBeDisabled();
+  await waitFor(() => expect(screen.getByLabelText('AI model')).toBeEnabled());
 });
 
 it('reports discovery errors and allows retry without accepting a stale selection', async () => {
@@ -103,11 +136,11 @@ it('restores the session choice and saves rapid edits in order while controls st
   const writes: object[] = [];
   vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string, request?: RequestInit) => {
     if (url.endsWith('/models')) return { ok: true, json: async () => catalog };
-    if (request?.method !== 'PUT') return { ok: true, json: async () => ({ model: 'deep', reasoning: 'high' }) };
+    if (request?.method !== 'PUT') return { ok: true, json: async () => ({ model: 'deep', reasoning: 'high', locked: false }) };
     const selection = JSON.parse(request.body as string);
     writes.push(selection);
     if (writes.length === 1) return new Promise(resolve => { finishFirst = resolve; });
-    return { ok: true, json: async () => selection };
+    return { ok: true, json: async () => ({ ...selection, locked: false }) };
   }));
   render(<ModelControls endpoint="https://ai.example" token="chat-key" sessionId="session" disabled={false} onChange={onChange} />);
   await waitFor(() => expect(screen.getByLabelText('Reasoning')).toHaveValue('high'));
@@ -117,7 +150,7 @@ it('restores the session choice and saves rapid edits in order while controls st
   expect(writes).toEqual([{ model: 'deep', reasoning: 'off' }]);
   expect(screen.getByLabelText('AI model')).toBeEnabled();
   expect(onChange).toHaveBeenLastCalledWith(undefined);
-  finishFirst({ ok: true, json: async () => ({ model: 'deep', reasoning: 'off' }) });
+  finishFirst({ ok: true, json: async () => ({ model: 'deep', reasoning: 'off', locked: false }) });
   await waitFor(() => expect(writes).toEqual([
     { model: 'deep', reasoning: 'off' }, { model: 'fast', reasoning: 'default' },
   ]));
@@ -130,7 +163,7 @@ it('blocks new submissions after a save failure until the session choice reloads
   vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string, request?: RequestInit) => {
     if (url.endsWith('/models')) return { ok: true, json: async () => catalog };
     if (request?.method === 'PUT') throw new Error('Choice could not be saved');
-    return { ok: true, json: async () => ({ model: 'deep', reasoning: 'high' }) };
+    return { ok: true, json: async () => ({ model: 'deep', reasoning: 'high', locked: false }) };
   }));
   render(<ModelControls endpoint="https://ai.example" token="chat-key" sessionId="session" disabled={false} onChange={onChange} />);
   await waitFor(() => expect(screen.getByLabelText('Reasoning')).toHaveValue('high'));
@@ -148,7 +181,7 @@ it('saves edits made before session creation finishes instead of restoring its o
   const writes: object[] = [];
   vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string, request?: RequestInit) => {
     if (url.endsWith('/models')) return { ok: true, json: async () => catalog };
-    if (request?.method !== 'PUT') return { ok: true, json: async () => ({ model: 'deep', reasoning: 'off' }) };
+    if (request?.method !== 'PUT') return { ok: true, json: async () => ({ model: 'deep', reasoning: 'off', locked: false }) };
     writes.push(JSON.parse(request.body as string));
     return new Promise(resolve => { finishSave = resolve; });
   }));
@@ -160,7 +193,7 @@ it('saves edits made before session creation finishes instead of restoring its o
   view.rerender(<ModelControls endpoint="https://ai.example" token="chat-key" sessionId="session" disabled={false} onChange={onChange} />);
   await waitFor(() => expect(writes).toEqual([{ model: 'fast', reasoning: 'default' }]));
   expect(onChange).toHaveBeenLastCalledWith(undefined);
-  await act(async () => finishSave({ ok: true, json: async () => ({ model: 'fast', reasoning: 'default' }) }));
+  await act(async () => finishSave({ ok: true, json: async () => ({ model: 'fast', reasoning: 'default', locked: false }) }));
   await waitFor(() => expect(onChange).toHaveBeenLastCalledWith({ model: 'fast', reasoning: 'default' }));
   expect(screen.getByLabelText('AI model')).toHaveValue('fast');
 });

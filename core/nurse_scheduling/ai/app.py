@@ -51,7 +51,7 @@ from .config import AiSettings, validate_ai_auth_credentials
 from .context import validate_frontend_timezone
 from .history import ChatHistory, stop_maintenance
 from .lifecycle import TERMINAL_EVENTS, AgentRun, SessionRuns
-from .models import ModelCatalog, ModelSelection
+from .models import ModelCatalog, ModelSelection, SessionModelSelection
 from .optimizer import (
     OptimizerArtifact,
     OptimizerBackend,
@@ -878,27 +878,28 @@ def create_app(
 
     @app.get(
         "/sessions/{session_id}/model-selection",
-        response_model=ModelSelection,
+        response_model=SessionModelSelection,
         dependencies=[Depends(require_auth), Depends(restore_session)],
     )
     async def current_model_selection(
         session_id: str,
         request: Request,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
-    ) -> ModelSelection:
+    ) -> SessionModelSelection:
         session = store.require_owned(session_id, owner)
+        locked = session.locked_model is not None
         if session.model_selection is not None:
-            return ModelSelection.model_validate(session.model_selection)
+            return SessionModelSelection.model_validate({**session.model_selection, "locked": locked})
         default_model = (
             catalog.profile(request.state.auth_credential_id).default_model
             if catalog is not None
             else settings.provider_model
         )
-        return ModelSelection(model=default_model)
+        return SessionModelSelection(model=session.locked_model or default_model, locked=locked)
 
     @app.put(
         "/sessions/{session_id}/model-selection",
-        response_model=ModelSelection,
+        response_model=SessionModelSelection,
         dependencies=[Depends(require_auth), Depends(restore_session)],
     )
     async def update_model_selection(
@@ -907,14 +908,14 @@ def create_app(
         request: Request,
         response: Response,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
-    ) -> ModelSelection:
+    ) -> SessionModelSelection:
         session = store.require_owned(session_id, owner)
         session.check_model(body.model)
         selection = await session.select_model(
             lambda: runtime_for(request.state.auth_credential_id, body), runtime=runtime
         )
         refresh_owner_cookie(response, owner)
-        return ModelSelection.model_validate(selection)
+        return SessionModelSelection.model_validate({**selection, "locked": session.locked_model is not None})
 
     @app.post(
         "/sessions/{session_id}/messages/queue",

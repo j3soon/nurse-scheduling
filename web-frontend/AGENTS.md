@@ -145,7 +145,9 @@ out of the context percentage.
 
 Experimental AI controls must follow backend `/capabilities` responses. The
 backend remains authoritative for feature enablement and input limits.
-Lock the model control after the first message. Keep reasoning effort editable
+Show the model lock that the backend saves for the session, and read it again
+when a run starts or ends. Also lock the model control while a message is in
+flight. A rejected message leaves it editable. Keep reasoning effort editable
 during streaming for future turns. Enforce the same model lock on the backend. Save the session's
 current choice separately from the active turn's accepted choice. Restore the
 session choice after reload and serialize saves before submitting a new turn.

@@ -22,14 +22,28 @@
 import { useEffect, useRef, useState } from 'react';
 import { getModels, getSessionModelSelection, updateSessionModelSelection, type AvailableModel, type ModelSelection } from './aiClient';
 
-export function ModelControls({ endpoint, token, disabled, modelLocked = false, sessionId = null, onChange }: {
+export function ModelControls({
+  endpoint, token, disabled, modelLocked = false, runActive = false, sessionId = null, onChange,
+}: {
   endpoint: string; token: string | null; disabled: boolean;
   sessionId?: string | null;
+  // Lock while a message that the server may still accept is in flight.
   modelLocked?: boolean;
+  // A run can fix the model on the server, so each run state change re-reads the saved lock.
+  runActive?: boolean;
   onChange: (selection: ModelSelection | undefined) => void;
 }) {
   const [models, setModels] = useState<AvailableModel[]>([]);
   const [selection, setSelection] = useState<ModelSelection>();
+  const [savedLock, setSavedLock] = useState(false);
+  // Each run state change requests a new read of the saved lock. Keep the model fixed until it finishes.
+  const [lockRunState, setLockRunState] = useState(runActive);
+  const [lockReads, setLockReads] = useState(0);
+  const [finishedLockReads, setFinishedLockReads] = useState(0);
+  if (lockRunState !== runActive) {
+    setLockRunState(runActive);
+    setLockReads(reads => reads + 1);
+  }
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
   const [reload, setReload] = useState(0);
@@ -43,6 +57,7 @@ export function ModelControls({ endpoint, token, disabled, modelLocked = false, 
   const requestScope = `${scope}\n${sessionId ?? ''}\n${reload}`;
   const ready = loadedScope === requestScope;
   const model = models.find(item => item.id === selection?.model);
+  const locked = modelLocked || savedLock || (sessionId !== null && finishedLockReads !== lockReads);
   useEffect(() => {
     const controller = new AbortController();
     generation.current += 1;
@@ -51,8 +66,9 @@ export function ModelControls({ endpoint, token, disabled, modelLocked = false, 
     Promise.all([
       getModels(controller.signal, token, endpoint),
       sessionId ? getSessionModelSelection(sessionId, controller.signal, token, endpoint) : Promise.resolve(null),
-    ]).then(async ([result, current]) => {
+    ]).then(async ([result, stored]) => {
       if (controller.signal.aborted) return;
+      const current = stored?.selection;
       const pending = pendingChoices.current.get(scope);
       const saved = pending ?? current ?? choices.current.get(scope);
       const selected = result.models.find(item => item.id === saved?.model)
@@ -63,13 +79,14 @@ export function ModelControls({ endpoint, token, disabled, modelLocked = false, 
       if (sessionId && pending) {
         if (next.model !== current?.model || next.reasoning !== current?.reasoning) {
           setSaving(true);
-          next = await updateSessionModelSelection(sessionId, next, token, endpoint);
+          next = (await updateSessionModelSelection(sessionId, next, token, endpoint)).selection;
           if (controller.signal.aborted) return;
         }
         pendingChoices.current.delete(scope);
       }
       setModels(result.models);
       setSelection(next);
+      setSavedLock(stored?.locked ?? false);
       setLoadedScope(requestScope);
       setError(undefined);
       setSaving(false);
@@ -83,6 +100,20 @@ export function ModelControls({ endpoint, token, disabled, modelLocked = false, 
     });
     return () => { controller.abort(); generation.current += 1; };
   }, [endpoint, token, sessionId, scope, requestScope, onChange]);
+
+  useEffect(() => {
+    if (!sessionId || lockReads === 0) return;
+    const controller = new AbortController();
+    getSessionModelSelection(sessionId, controller.signal, token, endpoint).then(stored => {
+      if (controller.signal.aborted) return;
+      setSavedLock(stored.locked);
+      setFinishedLockReads(lockReads);
+    }, () => {
+      // Keep the last saved lock. The backend still rejects a change to a fixed model.
+      if (!controller.signal.aborted) setFinishedLockReads(lockReads);
+    });
+    return () => controller.abort();
+  }, [endpoint, token, sessionId, lockReads]);
 
   const select = (next: ModelSelection) => {
     choices.current.set(`${scope}\n${next.model}`, next);
@@ -103,7 +134,8 @@ export function ModelControls({ endpoint, token, disabled, modelLocked = false, 
       if (generation.current === currentGeneration && change === latestChange.current) {
         setError(undefined);
         setSaving(false);
-        onChange(saved);
+        setSavedLock(saved.locked);
+        onChange(saved.selection);
       }
     }).catch((failure: unknown) => {
       if (generation.current === currentGeneration && change === latestChange.current) {
@@ -115,7 +147,7 @@ export function ModelControls({ endpoint, token, disabled, modelLocked = false, 
   return <div className="flex flex-wrap items-center gap-3 px-2 text-xs text-gray-700">
     <label className="flex min-w-0 max-w-full items-center gap-2">Model
       <select aria-label="AI model" className="min-w-0 max-w-64 rounded-lg border border-gray-300 bg-white p-2"
-        disabled={disabled || modelLocked || !ready || !!error} value={selection?.model ?? ''}
+        disabled={disabled || locked || !ready || !!error} value={selection?.model ?? ''}
         onChange={event => {
           const target = models.find(item => item.id === event.target.value)!;
           const saved = choices.current.get(`${scope}\n${target.id}`);
@@ -134,7 +166,7 @@ export function ModelControls({ endpoint, token, disabled, modelLocked = false, 
     </label>}
     {error && <span role="alert">{error} <button type="button" className="underline" onClick={() => setReload(value => value + 1)}>Retry</button></span>}
     {saving && <span role="status">Saving model choice…</span>}
-    <span className="text-gray-500">{modelLocked
+    <span className="text-gray-500">{locked
       ? 'Model fixed for this conversation. Reasoning changes apply to future turns.'
       : 'Choose a model before the first message.'}</span>
   </div>;

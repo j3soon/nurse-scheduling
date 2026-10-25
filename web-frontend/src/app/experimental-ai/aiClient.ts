@@ -127,26 +127,38 @@ function parseModelSelection(body: unknown): ModelSelection {
   return selection as ModelSelection;
 }
 
+// The session's saved model settings, and whether an accepted run fixed the model.
+export interface SessionModelSelection {
+  selection: ModelSelection;
+  locked: boolean;
+}
+
+function parseSessionModelSelection(body: unknown): SessionModelSelection {
+  const { locked, ...selection } = (body ?? {}) as { locked?: unknown };
+  if (typeof locked !== 'boolean') throw new Error('The AI backend returned invalid model settings.');
+  return { selection: parseModelSelection(selection), locked };
+}
+
 export async function getSessionModelSelection(
   sessionId: string, signal: AbortSignal, authToken: string | null, endpoint: string,
-): Promise<ModelSelection> {
+): Promise<SessionModelSelection> {
   const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/model-selection`, {
     signal, credentials: 'include', headers: authorizedHeaders(authToken),
   });
   if (!response.ok) throw await responseError(response);
-  return parseModelSelection(await response.json());
+  return parseSessionModelSelection(await response.json());
 }
 
 export async function updateSessionModelSelection(
   sessionId: string, selection: ModelSelection, authToken: string | null, endpoint: string,
-): Promise<ModelSelection> {
+): Promise<SessionModelSelection> {
   const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/model-selection`, {
     method: 'PUT', credentials: 'include',
     headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
     body: JSON.stringify(selection),
   });
   if (!response.ok) throw await responseError(response);
-  return parseModelSelection(await response.json());
+  return parseSessionModelSelection(await response.json());
 }
 
 export interface AvailableModel {

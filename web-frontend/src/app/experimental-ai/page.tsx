@@ -1302,7 +1302,7 @@ export default function ExperimentalAiPage() {
         )}
         {modelSelectionEnabled && serverStatus === 'online' && (!authRequired || authToken) && <ModelControls
           endpoint={aiEndpoint} token={authToken} sessionId={activeSessionId} disabled={conversationUnavailable}
-          modelLocked={messages.some(message => message.role === 'user' && message.source === undefined)}
+          modelLocked={messages.some(message => message.request?.active)} runActive={isStreaming}
           onChange={setSelection}
         />}
         <div className="flex min-h-14 items-end gap-1 rounded-[1.75rem] border border-gray-300 bg-white p-2 shadow-sm transition focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-200">

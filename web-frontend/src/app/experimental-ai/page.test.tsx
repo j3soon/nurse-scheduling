@@ -2415,9 +2415,9 @@ describe('ExperimentalAiPage', () => {
         { id: 'off', label: 'Off' }, { id: 'high', label: 'High' },
       ] },
     ] });
-    mockGetSessionModelSelection.mockResolvedValue(original);
+    mockGetSessionModelSelection.mockResolvedValue({ selection: original, locked: false });
     let finishStream!: () => void;
-    let finishSave!: (selection: typeof current) => void;
+    let finishSave!: (saved: { selection: typeof current; locked: boolean }) => void;
     mockUpdateSessionModelSelection.mockImplementation(() => new Promise(resolve => { finishSave = resolve; }));
     mockRunEvents.mockImplementationOnce(async (_session: string, _question: string, callbacks: SessionStreamOptions) => {
       callbacks.onEvent({ type: 'model_selection', selection: original });
@@ -2441,7 +2441,7 @@ describe('ExperimentalAiPage', () => {
     expect(mockUpdateSessionModelSelection).toHaveBeenCalledWith('session-id', current, null, '/ai');
     await act(async () => finishStream());
     expect(mockSendMessage).toHaveBeenCalledTimes(1);
-    await act(async () => finishSave(current));
+    await act(async () => finishSave({ selection: current, locked: true }));
     await waitFor(() => expect(mockSendMessage).toHaveBeenCalledTimes(2));
     expect(mockCreateSession).toHaveBeenCalledWith('description: current schedule\n', null, '/ai', original);
     expect(mockSendMessage.mock.calls[0][5].selection).toEqual(original);

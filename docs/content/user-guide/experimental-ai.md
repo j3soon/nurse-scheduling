@@ -146,7 +146,8 @@ Keep your original files.
 
 ## See what the assistant did
 
-Choose **Model** before the first message. It stays fixed for the conversation.
+Choose **Model** before the first message. It stays fixed for the conversation
+after the AI service accepts a message. A rejected message does not fix it.
 You can change **Reasoning** while an answer streams. The active turn keeps its
 original setting, including tool calls and steering. The new reasoning setting
 applies to later turns and optimizer reviews. Reloading restores the choice.

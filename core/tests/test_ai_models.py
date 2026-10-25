@@ -346,17 +346,18 @@ def test_current_session_selection_is_authorized_validated_and_saved(monkeypatch
     with basic.AuthenticatedTestClient(app, headers={"Authorization": "Bearer institution-a-ai-token"}) as client:
         session_id = basic.create_session(client)
         path = f"/sessions/{session_id}/model-selection"
-        assert client.get(path).json() == {"model": "fast", "reasoning": "default"}
+        assert client.get(path).json() == {"model": "fast", "reasoning": "default", "locked": False}
         selection = {"model": "deep", "reasoning": "off"}
-        assert client.put(path, json=selection).json() == selection
-        assert client.get(path).json() == selection
+        unlocked = {**selection, "locked": False}
+        assert client.put(path, json=selection).json() == unlocked
+        assert client.get(path).json() == unlocked
         assert client.get(path, headers={"Authorization": "Bearer wrong"}).status_code == 401
         assert client.put(path, json=selection, headers={"Authorization": "Bearer wrong"}).status_code == 401
         assert client.get(path, headers={"Authorization": "Bearer person-b-ai-token"}).status_code == 404
         assert client.put(path, json=selection, headers={"Cookie": f"{basic.OWNER_COOKIE}=other"}).status_code == 404
         assert client.put(path, json={"model": "unknown"}).status_code == 422
         assert client.put(path, json={"model": "fast", "reasoning": "high"}).status_code == 422
-        assert client.get(path).json() == selection
+        assert client.get(path).json() == unlocked
 
         async def unavailable(*_args):
             return False
@@ -366,7 +367,7 @@ def test_current_session_selection_is_authorized_validated_and_saved(monkeypatch
             failed = client.put(path, json={"model": "fast"})
             assert failed.status_code == 503
             assert "could not be saved" in failed.json()["detail"]
-        assert client.get(path).json() == selection
+        assert client.get(path).json() == unlocked
         assert (
             client.post(f"/sessions/{session_id}/messages", json={"message": "Use the saved model"}).status_code == 200
         )
@@ -441,7 +442,7 @@ def test_midstream_selection_changes_only_future_turns(monkeypatch):
             assert len(app.state.runs._runs[session_id]) == 2
             assert (await client.put(path, json={"model": "deep", "reasoning": "off"})).status_code == 200
             assert (await client.put(path, json={"model": "fast", "reasoning": "default"})).status_code == 409
-            current = {"model": "deep", "reasoning": "off"}
+            current = {"model": "deep", "reasoning": "off", "locked": True}
             assert app.state.session_store.get(session_id).active
             release.set()
 
@@ -489,11 +490,31 @@ def test_postgres_restores_current_model_choice_after_restart(monkeypatch, postg
     with basic.AuthenticatedTestClient(
         restored, headers={**headers, "Cookie": f"{basic.OWNER_COOKIE}={owner}"}
     ) as client:
-        assert client.get(f"/sessions/{session_id}/model-selection").json() == selection
+        # The restarted service reports the saved lock, so a resumed browser shows it.
+        assert client.get(f"/sessions/{session_id}/model-selection").json() == {**selection, "locked": True}
         assert client.put(f"/sessions/{session_id}/model-selection", json={"model": "fast"}).status_code == 409
         assert client.post(f"/sessions/{session_id}/messages", json={"message": "Continue"}).status_code == 200
     assert calls[0][1]["model"] == "deep"
     assert calls[0][1]["thinking"] == {"type": "disabled"}
+
+
+def test_rejected_first_message_leaves_the_reported_model_unlocked(monkeypatch):
+    gateway(monkeypatch)
+    app = basic.create_test_app(settings=settings(), provider=None)
+    with basic.AuthenticatedTestClient(app, headers={"Authorization": "Bearer institution-a-ai-token"}) as client:
+        session_id = basic.create_session(client)
+        path = f"/sessions/{session_id}/model-selection"
+
+        async def unavailable(*_args):
+            raise HTTPException(503, "The selected model is temporarily unavailable.")
+
+        with monkeypatch.context() as failed_discovery:
+            failed_discovery.setattr(ModelCatalog, "resolve", unavailable)
+            rejected = client.post(f"/sessions/{session_id}/messages", json={"message": "Help"})
+        assert rejected.status_code == 503
+        assert client.get(path).json()["locked"] is False
+        assert client.post(f"/sessions/{session_id}/messages", json={"message": "Help"}).status_code == 200
+        assert client.get(path).json()["locked"] is True
 
 
 @pytest.mark.parametrize("status", [422, 503])
