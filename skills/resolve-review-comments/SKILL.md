@@ -31,16 +31,19 @@ fallback. Do not assume an integration has the same access as the CLI.
    `gh api graphql --paginate`, the query must accept `$endCursor: String` and
    request `pageInfo { hasNextPage endCursor }` on the paginated connection.
 5. Fetch Markdown `body` and replies for unresolved threads. An outdated
-   thread can still contain a valid finding. Fetch review summaries or general
-   discussion separately when they may contain additional findings or explain
-   a thread. Avoid a merged timeline that repeats the inline comments.
-6. Save raw responses under the ignored repository-root `artifacts/` directory
+   thread can still contain a valid finding.
+6. Fetch and inspect every review's separate `PullRequestReview.body` in a
+   paginated `reviews` query, including reviews with no unresolved threads.
+   These bodies can contain findings outside the diff that have no thread.
+   Fetch general discussion separately when it may add findings or explain a
+   thread. Avoid a merged timeline that repeats the inline comments.
+7. Save raw responses under the ignored repository-root `artifacts/` directory
    and reuse them during triage. Use `--json` and `--jq`, or filter an
    integration response before returning it to the model. Print a compact
    unresolved-thread summary first, then read the relevant bodies. Do not request
    duplicate HTML versions of Markdown bodies or repeat bot walkthroughs and
    embedded agent prompts.
-7. Without authenticated CLI or integration access, use the public REST API for
+8. Without authenticated CLI or integration access, use the public REST API for
    PR metadata, review comments, issue comments, and reviews. Paginate and cache
    those responses too. REST review comments do not expose thread resolution,
    so corroborate unresolved status from replies, current code,
