@@ -167,7 +167,7 @@ export function ModelControls({
     {error && <span role="alert">{error} <button type="button" className="underline" onClick={() => setReload(value => value + 1)}>Retry</button></span>}
     {saving && <span role="status">Saving model choice…</span>}
     <span className="text-gray-500">{locked
-      ? 'Model fixed for this conversation. Reasoning changes apply to future turns.'
+      ? 'Model fixed for this conversation. Reasoning changes apply to future runs.'
       : 'Choose a model before the first message.'}</span>
   </div>;
 }

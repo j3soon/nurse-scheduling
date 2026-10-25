@@ -1344,7 +1344,7 @@ test('keeps the composer above a reduced visual viewport and ignores pinch zoom'
 });
 
 
-test('locks the model and changes reasoning during streaming for future turns and reload', async ({ page }) => {
+test('locks the model and changes reasoning during streaming for future runs and reload', async ({ page }) => {
   const captured = await mockAiBackend(page, ['Selected model answered.'], false, undefined, [], true, [], {
     default_model: 'fast', models: [
       { id: 'fast', name: 'Fast', context_tokens: null, default_reasoning: 'default', reasoning_options: [{ id: 'default', label: 'Default' }] },
@@ -1369,7 +1369,7 @@ test('locks the model and changes reasoning during streaming for future turns an
   await page.getByLabel('Reasoning', { exact: true }).selectOption('off');
   await expect.poll(() => captured.modelSelections.at(-1)).toEqual({ model: 'deep', reasoning: 'off' });
   await expect(page.getByLabel('AI model')).toBeDisabled();
-  await expect(page.getByText('Model fixed for this conversation. Reasoning changes apply to future turns.')).toBeVisible();
+  await expect(page.getByText('Model fixed for this conversation. Reasoning changes apply to future runs.')).toBeVisible();
   await page.screenshot({ path: '../artifacts/model-locked.png', fullPage: true });
   expect(JSON.parse(captured.messageBodies[0]).selection).toEqual({ model: 'deep', reasoning: 'high' });
   await expect(page.getByLabel('Reasoning', { exact: true })).toHaveValue('off');
