@@ -602,6 +602,7 @@ class AgentSession:
                     try:
                         runtime.store.remember_message(self.id, accepted)
                     except HTTPException:
+                        self.locked_model = previous_lock
                         run.cancel()
                         await asyncio.shield(run.done)
                         raise

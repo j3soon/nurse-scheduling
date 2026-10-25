@@ -517,6 +517,25 @@ def test_rejected_first_message_leaves_the_reported_model_unlocked(monkeypatch):
         assert client.get(path).json()["locked"] is True
 
 
+def test_rejected_first_receipt_leaves_model_choice_available(monkeypatch):
+    calls = gateway(monkeypatch)
+    app = basic.create_test_app(settings=replace(settings(), max_session_bytes=100), provider=None)
+    with basic.AuthenticatedTestClient(app, headers={"Authorization": "Bearer institution-a-ai-token"}) as client:
+        session_id = basic.create_session(client)
+        path = f"/sessions/{session_id}/model-selection"
+        rejected = client.post(
+            f"/sessions/{session_id}/messages", json={"message": "Help", "message_id": "rejected" * 10}
+        )
+        assert rejected.status_code == 429
+        assert not app.state.runs.busy(session_id)
+        assert calls == []
+        assert client.get(path).json()["locked"] is False
+        assert client.put(path, json={"model": "deep", "reasoning": "high"}).status_code == 200
+        assert client.post(f"/sessions/{session_id}/messages", json={"message": "Help"}).status_code == 200
+        assert client.get(path).json()["locked"] is True
+        assert client.put(path, json={"model": "fast"}).status_code == 409
+
+
 @pytest.mark.parametrize("status", [422, 503])
 def test_optimizer_review_reports_model_discovery_failure(monkeypatch, status, recorded_history):
     calls = gateway(monkeypatch)
