@@ -177,6 +177,15 @@ class CompactionEndEvent(CompactionFields):
     estimated_tokens_after: NotRequired[int]
     summary: NotRequired[str]
     keep_messages: NotRequired[int]
+    characters: NotRequired[int]
+    step: NotRequired[int]
+
+
+class GenerationProgressEvent(RunFields):
+    type: Literal["generation_progress"]
+    kind: Literal["compaction", "tool_calls"]
+    characters: int
+    step: int
 
 
 class ContextUsageEvent(RunFields):
@@ -247,6 +256,7 @@ AgentSessionRunEvent = (
     | ContextUsageEvent
     | CompactionStartEvent
     | CompactionEndEvent
+    | GenerationProgressEvent
     | HistoryTrimmedEvent
 )
 AgentSessionEvent = AgentSessionRunEvent | OptimizationEvent | OptimizationProgressEvent

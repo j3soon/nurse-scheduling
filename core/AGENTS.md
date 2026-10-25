@@ -181,6 +181,9 @@ stderr. Do not replace an explicitly selected file with a fallback.
   Keep summary requests visible in provider cost records, but keep their text out
   of the answer stream. Test retries through each provider-stream consumer,
   including compaction. Keep only the successful draft and retain all cost records.
+  Publish coalesced character counts for summary and tool-call generation without
+  exposing drafts. Count Unicode code points in chat, replay, and exports. Keep
+  character counts separate from provider token usage.
   Use `tests/test_ai_compaction.py` for these contracts.
   Test chunked summaries through the provider's token-limit calculation, including
   updates with a previous split-turn summary and small model context windows.

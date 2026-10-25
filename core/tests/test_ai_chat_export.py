@@ -73,6 +73,68 @@ def test_saved_compaction_status_matches_live_activity_and_exports(success, abor
         assert rendered.count("You requested context compaction.") == (1 if reason == "manual" else 0)
 
 
+def test_saved_character_progress_survives_recovery_and_matches_export_counts():
+    from nurse_scheduling.ai.session_event_stream import SessionEvent, fold_recovery
+
+    snapshot = saved_case("saved-rich")
+    run = snapshot["runs"][0]
+    snapshot["runs"] = [run]
+    rows = [
+        ("compaction_start", {"reason": "manual", "tokens_before": 10000}),
+        ("generation_progress", {"kind": "compaction", "characters": 50, "step": 1}),
+        (
+            "compaction_end",
+            {
+                "reason": "manual",
+                "tokens_before": 10000,
+                "success": True,
+                "aborted": False,
+                "characters": 50,
+                "step": 1,
+            },
+        ),
+        ("compaction_start", {"reason": "threshold", "tokens_before": 10000}),
+        ("generation_progress", {"kind": "compaction", "characters": 2, "step": 2}),
+        (
+            "compaction_end",
+            {
+                "reason": "threshold",
+                "tokens_before": 10000,
+                "success": True,
+                "aborted": False,
+                "characters": 2,
+                "step": 2,
+            },
+        ),
+        ("generation_progress", {"kind": "tool_calls", "characters": 90, "step": 1}),
+        ("provider_retry", {"message": "Retrying"}),
+        ("generation_progress", {"kind": "tool_calls", "characters": 2, "step": 1}),
+        ("tool_start", {"name": "read", "arguments": "{}", "tool_call_id": "call"}),
+        ("tool", {"name": "read", "arguments": "{}", "tool_call_id": "call", "result": "新😀", "ok": True}),
+        ("reasoning", {"text": "新😀"}),
+        ("delta", {"text": "新😀"}),
+        ("done", {}),
+    ]
+    events = [SessionEvent(index + 1, kind, {"run_id": run["id"], **data}) for index, (kind, data) in enumerate(rows)]
+
+    def project(events):
+        snapshot["events"] = [
+            {"type": event.type, "data": event.data, "occurred_at": snapshot["snapshot_at"]} for event in events
+        ]
+        return project_saved_chat(snapshot)[0]
+
+    original = project(events)
+    assert project(fold_recovery(events)) == original
+    activity = original[-1]["activity"]
+    assert [entry["characters"] for entry in activity if entry["kind"] == "compaction"] == [50, 2]
+    assert not any(entry.get("state") == "preparing" for entry in activity)
+    for format in ("html", "markdown"):
+        rendered = build_saved_chat_export(snapshot, format)
+        assert "Reasoning · 2 characters" in rendered and "50 characters" in rendered
+        assert "pass 2 · 2 characters" in rendered
+        assert "新😀" in rendered
+
+
 def test_saved_summary_and_tool_repair_match_model_context_in_both_exports():
     snapshot = saved_case("saved-rich")
     run = snapshot["runs"][0]

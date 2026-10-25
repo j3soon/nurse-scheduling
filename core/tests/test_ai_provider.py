@@ -48,6 +48,7 @@ from nurse_scheduling.ai.provider import (
     TextDelta,
     TokenUsage,
     ToolCall,
+    ToolCallProgress,
     ToolCallRequest,
 )
 
@@ -230,6 +231,53 @@ def _events(provider: OpenAiCompatibleProvider, tools: list[dict] | None = None)
 
 
 TOOLS = [{"type": "function", "function": {"name": "schedule_patch", "parameters": {"type": "object"}}}]
+
+
+def test_argument_progress_does_not_release_tool_calls_before_the_stream_completes(monkeypatch):
+    async def exercise():
+        release = asyncio.Event()
+        progressed = asyncio.Event()
+        seen = []
+
+        class Stream(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                yield (
+                    "data: "
+                    + json.dumps(
+                        _delta_chunk(
+                            {
+                                "tool_calls": [
+                                    {"index": 0, "id": "one", "function": {"name": "read", "arguments": "新😀"}}
+                                ]
+                            }
+                        )
+                    )
+                    + "\n\n"
+                ).encode()
+                await release.wait()
+                yield _sse_body(
+                    _delta_chunk(
+                        {"tool_calls": [{"index": 1, "id": "two", "function": {"name": "read", "arguments": "{}"}}]}
+                    )
+                ).encode()
+
+        provider = _transport_provider(monkeypatch, lambda _request: httpx.Response(200, stream=Stream()))
+
+        async def consume():
+            async for event in provider.stream_events([], TOOLS):
+                seen.append(event)
+                if isinstance(event, ToolCallProgress):
+                    progressed.set()
+
+        task = asyncio.create_task(consume())
+        await asyncio.wait_for(progressed.wait(), timeout=1)
+        assert seen == [ToolCallProgress(2)]
+        release.set()
+        await asyncio.wait_for(task, timeout=1)
+        assert [event.characters for event in seen if isinstance(event, ToolCallProgress)] == [2, 4]
+        assert len(next(event for event in seen if isinstance(event, ToolCallRequest)).calls) == 2
+
+    asyncio.run(exercise())
 
 
 @pytest.mark.parametrize("status", [408, 409, 429, 500, 502, 503, 504, 524])
@@ -655,6 +703,9 @@ def test_reconstructs_one_tool_call_from_streamed_fragments(monkeypatch: pytest.
     events = _events(_streaming_provider(monkeypatch, body), TOOLS)
 
     assert events == [
+        ToolCallProgress(0),
+        ToolCallProgress(14),
+        ToolCallProgress(17),
         ToolCallRequest((ToolCall(id="call_1", name="schedule_patch", arguments='{"operations":[]}'),)),
         ResponseEnd(None),
     ]
@@ -668,7 +719,8 @@ def test_reconstructs_parallel_tool_calls_in_index_order(monkeypatch: pytest.Mon
 
     events = _events(_streaming_provider(monkeypatch, body), TOOLS)
 
-    assert [call.name for call in events[0].calls] == ["a", "b"]
+    assert events[:2] == [ToolCallProgress(2), ToolCallProgress(4)]
+    assert [call.name for call in events[2].calls] == ["a", "b"]
 
 
 def test_separates_tool_calls_when_the_provider_omits_the_index(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -680,7 +732,8 @@ def test_separates_tool_calls_when_the_provider_omits_the_index(monkeypatch: pyt
 
     events = _events(_streaming_provider(monkeypatch, body), TOOLS)
 
-    assert [(call.id, call.name, call.arguments) for call in events[0].calls] == [
+    assert events[:3] == [ToolCallProgress(5), ToolCallProgress(7), ToolCallProgress(9)]
+    assert [(call.id, call.name, call.arguments) for call in events[3].calls] == [
         ("call_1", "a", '{"x":1}'),
         ("call_2", "b", "{}"),
     ]
@@ -696,7 +749,8 @@ def test_streams_text_before_the_tool_call_it_ends_with(monkeypatch: pytest.Monk
     events = _events(provider, TOOLS)
 
     assert events[0] == TextDelta("Checking. ")
-    assert isinstance(events[1], ToolCallRequest)
+    assert events[1] == ToolCallProgress(2)
+    assert isinstance(events[2], ToolCallRequest)
 
 
 def test_stream_chat_yields_text_only(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -959,7 +1013,11 @@ def test_completion_is_checked_before_releasing_tool_calls(monkeypatch, finish_r
         assert not any(isinstance(event, ToolCallRequest) for event in seen)
     else:
         asyncio.run(consume())
-        assert seen == [ToolCallRequest((ToolCall("edit", "edit", "{}"),)), ResponseEnd(finish_reason)]
+        assert seen == [
+            ToolCallProgress(2),
+            ToolCallRequest((ToolCall("edit", "edit", "{}"),)),
+            ResponseEnd(finish_reason),
+        ]
 
 
 @pytest.mark.parametrize("chunk", [[], {"choices": [None]}, {"choices": [{"delta": None}]}])

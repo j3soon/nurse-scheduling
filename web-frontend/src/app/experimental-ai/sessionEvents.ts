@@ -44,7 +44,8 @@ export type SessionEvent = (
   | { type: 'truncated' }
   | { type: 'response_end'; stopReason: 'stop' | 'tool_use' | 'length' | 'error' | 'aborted'; contextNote?: string }
   | { type: 'compaction_start'; reason: 'threshold' | 'overflow' | 'manual'; tokensBefore: number }
-  | { type: 'compaction_end'; reason: 'threshold' | 'overflow' | 'manual'; tokensBefore: number; success: boolean; aborted: boolean; skipped?: boolean; estimatedTokensAfter?: number; summary?: string; keepMessages?: number }
+  | { type: 'compaction_end'; reason: 'threshold' | 'overflow' | 'manual'; tokensBefore: number; success: boolean; aborted: boolean; skipped?: boolean; estimatedTokensAfter?: number; summary?: string; keepMessages?: number; characters?: number; step?: number }
+  | { type: 'generation_progress'; kind: 'compaction' | 'tool_calls'; characters: number; step: number }
   | { type: 'tool_start'; activity: ToolStartActivity }
   | { type: 'tool'; activity: ToolActivity }
   | { type: 'steering'; messageId: string; message: string }

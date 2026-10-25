@@ -36,6 +36,35 @@ function reduce(events: AssistantEvent[]): ChatMessageContent {
 }
 
 describe('assistant events', () => {
+  it('updates one compaction counter across retries and passes, then retains its final count', () => {
+    const result = reduce([
+      { type: 'compaction_start', reason: 'manual', tokensBefore: 10000 },
+      { type: 'generation_progress', kind: 'compaction', characters: 50, step: 1 },
+      { type: 'generation_progress', kind: 'compaction', characters: 0, step: 1 },
+      { type: 'generation_progress', kind: 'compaction', characters: 2, step: 2 },
+      { type: 'compaction_end', reason: 'manual', tokensBefore: 10000, success: true, aborted: false, summary: '新😀' },
+    ]);
+    expect(result.activity?.filter(entry => entry.kind === 'compaction')).toEqual([
+      expect.objectContaining({ state: 'completed', characters: 2, step: 2, summary: '新😀' }),
+    ]);
+  });
+
+  it('replaces tool preparation with execution and drops a failed draft before retrying', () => {
+    const result = reduce([
+      { type: 'generation_progress', kind: 'tool_calls', characters: 100, step: 1 },
+      { type: 'provider_retry', message: 'Retrying' },
+      { type: 'generation_progress', kind: 'tool_calls', characters: 2, step: 1 },
+      { type: 'tool_start', activity: { name: 'read', arguments: '{}', toolCallId: 'one' } },
+      { type: 'tool', activity: { name: 'read', arguments: '{}', toolCallId: 'one', result: '新😀', ok: true } },
+    ]);
+    expect(result.activity).toEqual([
+      { kind: 'notice', text: 'Retrying' },
+      { kind: 'tool', name: 'read', arguments: '{}', toolCallId: 'one', result: '新😀', ok: true },
+    ]);
+    const stopped = reduce([{ type: 'generation_progress', kind: 'tool_calls', characters: 4, step: 1 }, { type: 'stopped' }]);
+    expect(stopped.activity?.[0]).toMatchObject({ state: 'interrupted', argumentsCharacters: 4 });
+  });
+
   it('invalidates only summaries from the failed run while preserving earlier output', () => {
     const messages: ChatMessage[] = ['other', 'failed', 'failed'].map((runId, index) => ({
       id: `reply-${index}`, runId, role: 'assistant', content: 'Completed output.',

@@ -26,6 +26,8 @@ the other commands.
 
 Use `bun run test:affected` for routine changes. Run the full unit/component
 and browser suites when checking the full app or broad shared behavior.
+Run affected unit and browser commands sequentially in one checkout. They share
+a dependency-reconciliation lock, so parallel invocations wait on each other.
 After a large frontend change, such as a commit series or a change to shared
 components, layout, or global CSS, run `bun run test:e2e:affected --full` once
 before the branch is pushed. Changed-spec runs miss other specs that the change

@@ -38,7 +38,7 @@ def _finish(message: dict, kind: str, at: int, reason: str = "") -> None:
             message["failureReason"] = reason
     if kind != "done":
         for entry in message.get("activity", []):
-            if entry["kind"] in {"tool", "compaction"} and entry.get("state") == "running":
+            if entry["kind"] in {"tool", "compaction"} and entry.get("state") in {"running", "preparing"}:
                 entry["state"] = "interrupted"
 
 
@@ -129,6 +129,7 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
         "response_end",
         "compaction_start",
         "compaction_end",
+        "generation_progress",
         "done",
         "stopped",
         "error",
@@ -181,7 +182,42 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
         turn = turns[run_id]
         assistant = turn["assistant"]
         activity = assistant.setdefault("activity", [])
-        if kind in {"compaction_start", "compaction_end"}:
+        if kind == "generation_progress":
+            if data["kind"] == "compaction":
+                entry = next(
+                    (
+                        item
+                        for item in reversed(activity)
+                        if item["kind"] == "compaction" and item["state"] == "running"
+                    ),
+                    None,
+                )
+                if entry is not None:
+                    entry.update(characters=data["characters"], step=data["step"])
+            else:
+                entry = {
+                    "kind": "tool",
+                    "name": "Tool calls",
+                    "arguments": "",
+                    "result": "",
+                    "ok": True,
+                    "state": "preparing",
+                    "argumentsCharacters": data["characters"],
+                }
+                index = next(
+                    (
+                        i
+                        for i, item in enumerate(activity)
+                        if item["kind"] == "tool" and item.get("state") == "preparing"
+                    ),
+                    None,
+                )
+                if index is None:
+                    activity.append(entry)
+                else:
+                    activity[index] = entry
+                turn["has_output"] = True
+        elif kind in {"compaction_start", "compaction_end"}:
             if data["reason"] == "manual" and not any(
                 entry["kind"] == "compaction" and entry["reason"] == "manual" for entry in activity
             ):
@@ -222,8 +258,14 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
                 None,
             )
             if kind == "compaction_end" and index is not None:
+                for key in ("characters", "step"):
+                    if key in data or key in activity[index]:
+                        entry[key] = data.get(key, activity[index].get(key))
                 activity[index] = entry
             else:
+                for key in ("characters", "step"):
+                    if key in data:
+                        entry[key] = data[key]
                 activity.append(entry)
         elif kind == "model_selection":
             selection = {key: data[key] for key in ("model", "reasoning")}
@@ -327,6 +369,7 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
             if "tool_call_id" in data:
                 entry["toolCallId"] = data["tool_call_id"]
             if kind == "tool_start":
+                activity[:] = [item for item in activity if item["kind"] != "tool" or item.get("state") != "preparing"]
                 entry["state"] = "running"
                 activity.append(entry)
             else:
@@ -363,6 +406,7 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
             turn["working"] = data["schedule_yaml"]
             turn["has_output"] = True
         elif kind == "provider_retry":
+            activity[:] = [item for item in activity if item["kind"] != "tool" or item.get("state") != "preparing"]
             activity.append({"kind": "notice", "text": data["message"]})
         elif kind == "schedule_applied":
             activity[:] = [a for a in activity if a["kind"] != "schedule-applied" or a.get("runId") != run_id]

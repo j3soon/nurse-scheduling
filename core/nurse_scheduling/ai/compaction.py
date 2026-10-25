@@ -24,7 +24,7 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import aclosing
 from pathlib import Path
 
-from .agent_types import AgentCompaction, AgentCompactionEnd, AgentCompactionStart
+from .agent_types import AgentCompaction, AgentCompactionEnd, AgentCompactionStart, AgentGenerationProgress
 from .context import STATUS_PREFIX, SUMMARY_PREFIX, apply_compaction, history_chars
 from .context_tokens import context_safety_tokens, estimate_context_tokens, estimate_tokens
 from .provider import (
@@ -94,6 +94,7 @@ class ContextCompactor:
         self.history_limit = history_limit
         self.message_limit = message_limit
         self.failed = False
+        self._summary_step = 0
 
     async def prepare(self) -> None:
         prepare = getattr(self.provider, "prepare_context", None)
@@ -125,7 +126,9 @@ class ContextCompactor:
 
     async def compact(
         self, messages: Sequence[ChatMessage], tools: Sequence[dict], *, force: bool = False, manual: bool = False
-    ) -> AsyncIterator[ProviderCall | AgentCompaction | AgentCompactionStart | AgentCompactionEnd]:
+    ) -> AsyncIterator[
+        ProviderCall | AgentCompaction | AgentCompactionStart | AgentCompactionEnd | AgentGenerationProgress
+    ]:
         if not force and not self.needed(messages, tools):
             return
         body = _conversation(messages)
@@ -191,12 +194,13 @@ class ContextCompactor:
         reason = "manual" if manual else "overflow" if force else "threshold"
         tokens_before = self.tokens(messages, tools)
         yield AgentCompactionStart(reason, tokens_before)
+        self._summary_step = 0
         try:
             if history:
                 events = self._summarize(history, prompts, input_chars, max_summary_chars, summary)
                 async with aclosing(events):
                     async for event in events:
-                        if isinstance(event, ProviderCall):
+                        if isinstance(event, (ProviderCall, AgentGenerationProgress)):
                             yield event
                         else:
                             summary = event
@@ -212,7 +216,7 @@ class ContextCompactor:
                 )
                 async with aclosing(events):
                     async for event in events:
-                        if isinstance(event, ProviderCall):
+                        if isinstance(event, (ProviderCall, AgentGenerationProgress)):
                             yield event
                         else:
                             summary = f"{history_text}\n\n---\n\n**Turn Context (split turn):**\n\n{event}"
@@ -247,7 +251,7 @@ class ContextCompactor:
         summary: str = "",
         *,
         initial_prompt: str = "context-compaction",
-    ) -> AsyncIterator[ProviderCall | str]:
+    ) -> AsyncIterator[ProviderCall | AgentGenerationProgress | str]:
         """Use Pi's initial or update instructions with explicit conversation data."""
         serialized = _serialize(messages)
         # Retain bounded chunking when a history cannot fit in one request.
@@ -269,6 +273,8 @@ class ContextCompactor:
                 ChatMessage(role="user", content=content),
             ]
             text, finish, ended, text_chars = [], None, False, 0
+            self._summary_step += 1
+            yield AgentGenerationProgress("compaction", 0, self._summary_step)
             bind_limit = getattr(self.provider, "with_output_limit", None)
             reserve = min(16384, (self.window or 32768) // 4)
             summary_provider = bind_limit(max(1, int(0.8 * reserve))) if bind_limit is not None else self.provider
@@ -280,11 +286,13 @@ class ContextCompactor:
                     elif isinstance(event, ProviderRetry):
                         # Pi's completeSummarization accepts only the completed attempt.
                         text, finish, ended, text_chars = [], None, False, 0
+                        yield AgentGenerationProgress("compaction", 0, self._summary_step)
                     elif isinstance(event, TextDelta):
                         text.append(event.text)
                         text_chars += len(event.text)
                         if text_chars > max_summary_chars:
                             raise ProviderError("Compaction summary exceeded its size limit")
+                        yield AgentGenerationProgress("compaction", text_chars, self._summary_step)
                     elif isinstance(event, ToolCallRequest) and event.calls:
                         raise ProviderError("Compaction requested a tool")
                     elif isinstance(event, ResponseEnd):

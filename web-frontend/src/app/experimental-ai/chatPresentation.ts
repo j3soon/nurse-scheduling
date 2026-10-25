@@ -67,7 +67,11 @@ export function transcriptMessages(message: ChatMessage): TranscriptMessage[] {
 }
 
 export function formatCharacterCount(characters: number): string {
-  return characters >= 1000 ? `${(characters / 1000).toFixed(1)}k` : `${characters}`;
+  return characters.toLocaleString('en-US');
+}
+
+export function characterCount(text: string): number {
+  return Array.from(text).length;
 }
 
 export function formatResponseDuration(startedAt: number, completedAt: number): string {
@@ -82,15 +86,20 @@ export function formatResponseDuration(startedAt: number, completedAt: number): 
 export function activitySummary(entry: Exclude<ActivityEntry, { kind: 'response' }>): string {
   if (entry.kind === 'notice') return 'App notice';
   if (entry.kind === 'compaction' && entry.invalidated) return 'Conversation summary discarded';
-  if (entry.kind === 'compaction') return {
+  if (entry.kind === 'compaction') return ({
     running: 'Summarizing conversation', completed: 'Conversation summarized',
     failed: 'Summarization failed', interrupted: 'Summarization interrupted',
     skipped: 'No compaction needed',
-  }[entry.state];
-  if (entry.kind === 'reasoning') return `Reasoning · ${formatCharacterCount(entry.text.length)} characters`;
+  }[entry.state]) + (entry.characters === undefined ? ''
+    : `${(entry.step ?? 1) > 1 ? ` · pass ${entry.step}` : ''} · ${formatCharacterCount(entry.characters)} characters`);
+  if (entry.kind === 'reasoning') return `Reasoning · ${formatCharacterCount(characterCount(entry.text))} characters`;
   if (entry.kind === 'schedule-change') return 'schedule edit';
   if (entry.kind === 'schedule-check') return entry.ok ? 'Schedule check passed' : 'Schedule check failed';
   if (entry.kind === 'schedule-applied') return 'Applied to your schedule';
+  if (entry.argumentsCharacters !== undefined) {
+    const label = entry.state === 'preparing' ? 'Preparing tool calls' : `${entry.name} · ${entry.state}`;
+    return `${label} · ${formatCharacterCount(entry.argumentsCharacters)} characters`;
+  }
   if (entry.state === 'running') return `${entry.name} · running`;
   if (entry.state === 'interrupted') return `${entry.name} · interrupted`;
   return entry.ok ? entry.name : `${entry.name} · failed`;

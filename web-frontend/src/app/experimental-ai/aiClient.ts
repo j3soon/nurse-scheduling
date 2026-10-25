@@ -231,6 +231,9 @@ interface SessionStatusResponse {
 }
 
 interface SsePayload {
+  kind?: unknown;
+  characters?: unknown;
+  step?: unknown;
   summary?: unknown;
   keep_messages?: unknown;
   replay_arguments?: unknown;
@@ -577,13 +580,23 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
   const emit = (event: SessionEvent) => events.push(runId === undefined ? event : { ...event, runId });
   if (runId) emit({ type: 'run_context', runId });
 
-  if (eventType === 'compaction_start' || eventType === 'compaction_end') {
+  if (eventType === 'generation_progress') {
+    if (!['compaction', 'tool_calls'].includes(payload.kind as string)
+      || !Number.isSafeInteger(payload.characters) || (payload.characters as number) < 0
+      || !Number.isSafeInteger(payload.step) || (payload.step as number) < 1) {
+      throw new Error('The AI backend returned invalid generation progress.');
+    }
+    emit({ type: 'generation_progress', kind: payload.kind as 'compaction' | 'tool_calls',
+      characters: payload.characters as number, step: payload.step as number });
+  } else if (eventType === 'compaction_start' || eventType === 'compaction_end') {
     if (!['threshold', 'overflow', 'manual'].includes(payload.reason as string)
       || !Number.isSafeInteger(payload.tokens_before) || (payload.tokens_before as number) < 0
       || (eventType === 'compaction_end' && (typeof payload.success !== 'boolean' || typeof payload.aborted !== 'boolean'
         || (payload.skipped !== undefined && (typeof payload.skipped !== 'boolean' || (payload.skipped && (payload.success || payload.aborted))))
         || (payload.estimated_tokens_after !== undefined && (!Number.isSafeInteger(payload.estimated_tokens_after) || (payload.estimated_tokens_after as number) < 0))
         || (payload.summary !== undefined && typeof payload.summary !== 'string')
+        || (payload.characters !== undefined && (!Number.isSafeInteger(payload.characters) || (payload.characters as number) < 0))
+        || (payload.step !== undefined && (!Number.isSafeInteger(payload.step) || (payload.step as number) < 1))
         || (payload.keep_messages !== undefined && (!Number.isSafeInteger(payload.keep_messages) || (payload.keep_messages as number) < 0))))) {
       throw new Error('The AI backend returned invalid compaction status.');
     }
@@ -593,6 +606,8 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
       ...(payload.skipped === undefined ? {} : { skipped: payload.skipped as boolean }),
       ...(payload.summary === undefined ? {} : { summary: payload.summary as string }),
       ...(payload.keep_messages === undefined ? {} : { keepMessages: payload.keep_messages as number }),
+      ...(payload.characters === undefined ? {} : { characters: payload.characters as number }),
+      ...(payload.step === undefined ? {} : { step: payload.step as number }),
       ...(payload.estimated_tokens_after === undefined ? {} : { estimatedTokensAfter: payload.estimated_tokens_after as number }) });
   } else if (eventType === 'provider_call') {
     const call = { callId: payload.call_id, model: payload.model, reasoning: payload.reasoning,

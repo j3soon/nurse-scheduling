@@ -343,6 +343,13 @@ Repeated IDs return the same run. Summary events use the `manual` reason.
 Migration 010 adds the compaction run kind. Failed and interrupted manual runs
 keep the original context without a workspace-discard notice.
 
+`generation_progress` events report draft character counts for compaction and
+tool-call arguments. Updates are coalesced with the stream's 25 ms batching.
+Compaction identifies each summary pass and resets its count on retry. Draft
+summary text and incomplete tool arguments stay private. Chat and exports count
+Unicode code points and show tool-result size after execution. These character
+counts are separate from provider-reported token usage and costs.
+
 `ContextCompactor` follows [Pi v1.0.0 compaction][pi-compaction]. Before a model
 request and after the final answer, it checks the discovered model context
 window. It reserves up to 16,384 tokens for output, reduced to one quarter of a

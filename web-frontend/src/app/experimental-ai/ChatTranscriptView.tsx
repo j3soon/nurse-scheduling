@@ -24,7 +24,7 @@ import { FiDownload } from 'react-icons/fi';
 import { AssistantActivity, CompactionSummary } from './AssistantActivity';
 import { CostDetails } from './CostDetails';
 import CollapsedText from './CollapsedText';
-import { messageLabel, messageUploadedFileLines, transcriptMessages } from './chatPresentation';
+import { characterCount, messageLabel, messageUploadedFileLines, transcriptMessages } from './chatPresentation';
 import { formatResponseDuration, formatResponseTime, formatSessionExpiration, retentionLabel } from './chatPresentation';
 import { parseOptimizerMessage } from './optimizerMessage';
 
@@ -153,10 +153,10 @@ export function ChatTranscriptView({
                 message.activity?.some(entry => entry.kind === 'compaction' && entry.state === 'running') ? null
                   : steeringAssistantId === message.id ? <p className="text-xs text-gray-500">Steering…</p> : <ThinkingIndicator />
               ) : message.role === 'system' ? (
-                <CollapsedText summary={`${message.content.length.toLocaleString('en-US')} characters`} text={message.content} />
+                <CollapsedText summary={`${characterCount(message.content).toLocaleString('en-US')} characters`} text={message.content} />
               ) : message.source !== undefined ? (
                 // The label names the topic, so the exact text starts collapsed.
-                <CollapsedText summary={`${message.content.length.toLocaleString('en-US')} characters`} text={message.content} />
+                <CollapsedText summary={`${characterCount(message.content).toLocaleString('en-US')} characters`} text={message.content} />
               ) : message.role === 'user' ? (
                 <p className="whitespace-pre-wrap break-words">{message.content}</p>
               ) : optimizer ? (

@@ -61,8 +61,7 @@ def _fixed(value: float, places: int) -> str:
 
 
 def _count(text: str) -> str:
-    count = len(text.encode("utf-16-le")) // 2
-    return _fixed(count / 1000, 1) + "k" if count >= 1000 else str(count)
+    return f"{len(text):,}"
 
 
 def _duration(start, end) -> str:
@@ -180,13 +179,18 @@ def _summary(entry):
     if kind == "compaction":
         if entry.get("invalidated"):
             return "Conversation summary discarded"
-        return {
+        label = {
             "running": "Summarizing conversation",
             "completed": "Conversation summarized",
             "failed": "Summarization failed",
             "interrupted": "Summarization interrupted",
             "skipped": "No compaction needed",
         }[entry["state"]]
+        if "characters" in entry:
+            if entry.get("step", 1) > 1:
+                label += f" · pass {entry['step']}"
+            label += f" · {entry['characters']:,} characters"
+        return label
     if kind == "schedule-check":
         return "Schedule check passed" if entry["ok"] else "Schedule check failed"
     if kind == "schedule-applied":
@@ -194,17 +198,24 @@ def _summary(entry):
     if kind == "notice":
         return "App notice"
     state = entry.get("state")
+    if "argumentsCharacters" in entry:
+        label = "Preparing tool calls" if state == "preparing" else f"{entry['name']} · {state}"
+        return label + f" · {entry['argumentsCharacters']:,} characters"
     suffix = state if state in {"running", "interrupted"} else "failed" if not entry["ok"] else ""
     return entry["name"] + (" · " + suffix if suffix else "")
 
 
 def _activity_label(entry):
     kind = entry["kind"]
+    if kind == "reasoning":
+        return _summary(entry)
     if kind in {"reasoning", "response", "schedule-change"}:
         return {"reasoning": "Reasoning", "response": "Response", "schedule-change": "Schedule change"}[kind]
     if kind in {"notice", "schedule-check", "schedule-applied", "compaction"}:
         return _summary(entry)
     state = entry.get("state")
+    if "argumentsCharacters" in entry:
+        return _summary(entry)
     suffix = state if state in {"running", "interrupted"} else "failed" if not entry["ok"] else ""
     return entry["name"] + (f" ({suffix})" if suffix else "")
 
@@ -234,7 +245,7 @@ def _activity_text(entry):
         return f"Before:\n{entry['before']}\n\nAfter:\n{entry['after']}"
     if kind == "tool":
         text = "\n\n".join(
-            label + ":\n" + entry[key]
+            label + " (" + _count(entry[key]) + " characters):\n" + entry[key]
             for label, key in (("Arguments", "arguments"), ("Result", "result"))
             if entry.get(key)
         )
@@ -271,14 +282,18 @@ def _activity_html(entry):
         arguments = (
             '<section class="tool-section" aria-label="Tool arguments"><h3>'
             + ("Command" if entry["name"] == "bash" else "Arguments")
-            + '</h3><pre class="activity-output">'
+            + '</h3><p class="character-count">'
+            + _count(entry["arguments"])
+            + ' characters</p><pre class="activity-output">'
             + escape_html(entry["arguments"])
             + "</pre></section>"
             if entry.get("arguments") and entry["arguments"] != "{}"
             else ""
         )
         result = (
-            '<section class="tool-section" aria-label="Tool result"><h3>Result</h3><pre class="activity-output">'
+            '<section class="tool-section" aria-label="Tool result"><h3>Result</h3><p class="character-count">'
+            + _count(entry["result"])
+            + ' characters</p><pre class="activity-output">'
             + escape_html(entry["result"])
             + "</pre></section>"
             if entry.get("result")
@@ -610,6 +625,7 @@ def build_markdown_chat(messages, metadata):
             for entry in _timeline(message):
                 if entry["kind"] == "response":
                     lines += ["", _activity_text(entry) or "[No message text]"]
+                    lines += ["", _count(entry["text"]) + " characters"]
                 else:
                     lines += ["", "### " + _activity_label(entry), "", "```text", _activity_text(entry), "```"]
         details = _model_cost_lines(message)
@@ -685,7 +701,11 @@ def build_html_chat(messages, metadata):
                     else ""
                 )
                 content = (
-                    '<div class="content">' + render_markdown_html(_activity_text(entry)) + "</div>"
+                    '<div class="content">'
+                    + render_markdown_html(_activity_text(entry))
+                    + '</div><p class="character-count">'
+                    + _count(entry["text"])
+                    + " characters</p>"
                     if entry["kind"] == "response"
                     else _activity_html(entry)
                 )

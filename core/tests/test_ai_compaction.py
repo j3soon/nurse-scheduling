@@ -117,6 +117,29 @@ async def collect(stream):
     return [event async for event in stream]
 
 
+def test_summary_progress_counts_only_the_current_draft_and_identifies_each_pass():
+    from nurse_scheduling.ai.agent_types import AgentGenerationProgress
+    from nurse_scheduling.ai.provider import ProviderRetry
+
+    class Provider:
+        async def stream_events(self, _messages, _tools):
+            yield TextDelta("failed")
+            yield ProviderRetry("Retrying")
+            yield TextDelta("新😀")
+            yield ResponseEnd("stop")
+
+    async def exercise():
+        compactor = ContextCompactor(Provider())
+        prompts = {"compaction-system": "System", "context-compaction": "Summarize"}
+        messages = [{"role": "user", "content": "Earlier question"}]
+        for step in (1, 2):
+            events = await collect(compactor._summarize(messages, prompts, 1000, 100))
+            assert events[:-1] == [AgentGenerationProgress("compaction", n, step) for n in (0, 6, 0, 2)]
+            assert events[-1] == "新😀"
+
+    asyncio.run(exercise())
+
+
 def test_app_event_indices_survive_compaction_retention_and_restore():
     from nurse_scheduling.ai.context import SCHEDULE_CHANGED_EVENT
     from nurse_scheduling.ai.session_event_projection import RunEvents
@@ -691,6 +714,9 @@ def test_closing_after_a_summary_cost_event_closes_the_provider_before_returning
         agent = Agent()
         stream = agent.prompt(Provider(), history(), [])
         assert isinstance(await anext(stream), AgentCompactionStart)
+        from nurse_scheduling.ai.agent_types import AgentGenerationProgress
+
+        assert isinstance(await anext(stream), AgentGenerationProgress)
         assert isinstance(await anext(stream), ProviderCall)
         await stream.aclose()
         assert closed
@@ -861,9 +887,13 @@ def test_manual_compaction_uses_session_events_without_a_question_or_workspace(f
             yield ProviderCall("summary-1", "model", cost_usd=pending_cost)
             async for event in super().stream_events(messages, tools):
                 yield event
+                if isinstance(event, TextDelta) and failure is None:
+                    await self.release_summary.wait()
 
     async def exercise():
         provider = Provider(fail_summary=failure)
+        provider.release_summary = asyncio.Event()
+        progressed = asyncio.Event()
         provider.context_tokens = 131072
         app = basic.create_test_app(settings=basic.make_settings(), provider=provider)
         async with (
@@ -883,11 +913,24 @@ def test_manual_compaction_uses_session_events_without_a_question_or_workspace(f
             for entry in original:
                 session._add_entry(entry)
             publications = []
-            session.subscribe(publications.append)
+
+            def publish(event):
+                publications.append(event)
+                if event["type"] == "generation_progress" and event["characters"] > 0:
+                    progressed.set()
+
+            session.subscribe(publish)
             request = {"message_id": "manual-compact"}
             response = await client.post(f"/sessions/{sid}/compact", json=request)
             assert response.status_code == 202, response.text
             await asyncio.wait_for(provider.summary_started.wait(), 2)
+            if failure is None:
+                await asyncio.wait_for(progressed.wait(), 2)
+                assert not any(event["type"] == "compaction_end" for event in publications)
+                progress = [event for event in publications if event["type"] == "generation_progress"][-1]
+                assert progress["kind"] == "compaction" and progress["characters"] > 0
+                assert "text" not in progress and "summary" not in progress
+                provider.release_summary.set()
             if failure == "cancel":
                 busy = await client.post(f"/sessions/{sid}/compact", json={"message_id": "another"})
                 assert busy.status_code == 409

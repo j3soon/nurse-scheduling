@@ -93,6 +93,7 @@ interface StreamCallbacks {
   onProviderRetry?: (message: string) => void;
   onToolStart?: (activity: ToolStartActivity) => void;
   onTool?: (activity: ToolActivity) => void;
+  onGenerationProgress?: (event: Extract<SessionEvent, { type: 'generation_progress' }>) => void;
   onSteering?: (messageId: string, message: string) => void;
   onScheduleChange?: (scheduleYaml: string) => void;
   onScheduleApplied?: (applied: ScheduleApplied) => void;
@@ -124,6 +125,7 @@ function dispatchPageEvent(event: SessionEvent, callbacks: StreamCallbacks, setM
     case 'reasoning': callbacks.onReasoning?.(event.text); break;
     case 'provider_retry': callbacks.onProviderRetry?.(event.message); break;
     case 'compaction_start': case 'compaction_end': callbacks.onCompaction?.(event); break;
+    case 'generation_progress': callbacks.onGenerationProgress?.(event); break;
     case 'truncated': callbacks.onTruncated?.(); break;
     case 'response_end': callbacks.onResponseEnd?.(event); break;
     case 'tool_start': callbacks.onToolStart?.(event.activity); break;
@@ -152,12 +154,13 @@ function assistantEventCallbacks(
   applySchedule: (applied: ScheduleApplied) => string | null,
 ): Required<Pick<StreamCallbacks,
   'onDelta' | 'onReasoning' | 'onCompaction' | 'onTruncated' | 'onResponseEnd' | 'onProviderRetry' | 'onToolStart' | 'onTool' | 'onScheduleChange'
-  | 'onScheduleApplied'>> {
+  | 'onScheduleApplied' | 'onGenerationProgress'>> {
   return {
     onProviderRetry: message => apply({ type: 'provider_retry', message }),
     onDelta: text => apply({ type: 'delta', text }),
     onReasoning: text => apply({ type: 'reasoning', text }),
     onCompaction: event => apply(event),
+    onGenerationProgress: event => apply(event),
     onTruncated: () => apply({ type: 'truncated' }),
     onResponseEnd: event => apply(event),
     onToolStart: activity => apply({ type: 'tool_start', activity }),

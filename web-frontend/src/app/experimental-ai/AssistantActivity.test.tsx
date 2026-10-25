@@ -38,6 +38,23 @@ const scheduleChangeEntry: ActivityEntry = {
 };
 
 describe('AssistantActivity', () => {
+  it('shows exact Unicode character counts for responses, reasoning, tools, and compaction', async () => {
+    const user = userEvent.setup();
+    render(<AssistantActivity entries={[
+      { kind: 'response', text: '新😀' },
+      { kind: 'reasoning', text: '😀'.repeat(1200) },
+      { kind: 'compaction', reason: 'manual', state: 'running', text: 'Summarizing', characters: 320, step: 2 },
+      { kind: 'tool', name: 'Tool calls', state: 'preparing', argumentsCharacters: 54, arguments: '', result: '', ok: true },
+      { ...bashEntry, arguments: '{"x":"新😀"}', result: '新😀' },
+    ]} />);
+    expect(screen.getAllByText('2 characters')[0]).toBeVisible();
+    expect(screen.getByText('Reasoning · 1,200 characters')).toBeVisible();
+    expect(screen.getByText('Summarizing conversation · pass 2 · 320 characters')).toBeVisible();
+    expect(screen.getByText('Preparing tool calls · 54 characters')).toBeVisible();
+    await user.click(screen.getByText('bash'));
+    expect(within(screen.getByLabelText('Tool arguments')).getByText('10 characters')).toBeVisible();
+    expect(within(screen.getByLabelText('Tool result')).getByText('2 characters')).toBeVisible();
+  });
   it('shows the exact user-role compaction summary and tool replay arguments', async () => {
     const user = userEvent.setup();
     render(<AssistantActivity entries={[

@@ -31,6 +31,7 @@ from .agent_types import (
     AgentCompaction,
     AgentContextUsage,
     AgentEvent,
+    AgentGenerationProgress,
     AgentMessageEnd,
     AgentReasoning,
     AgentSteering,
@@ -58,6 +59,7 @@ from .provider import (
     TextDelta,
     TokenUsage,
     ToolCall,
+    ToolCallProgress,
     ToolCallRequest,
     ToolCapableChatProvider,
 )
@@ -181,6 +183,8 @@ async def agent_loop(
                         yield event
                     elif isinstance(event, ToolCallRequest):
                         calls = event.calls
+                    elif isinstance(event, ToolCallProgress):
+                        yield AgentGenerationProgress("tool_calls", event.characters)
                     elif isinstance(event, ResponseEnd):
                         finish_reason = event.finish_reason
         except ProviderContextOverflowError:

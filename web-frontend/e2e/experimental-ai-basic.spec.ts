@@ -537,9 +537,16 @@ test('compacts context on demand and restores the summary after reload', async (
   await expect(input).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Compact context', exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
+  captured.publishEvent('generation_progress', { run_id: 'manual-summary', kind: 'compaction', characters: 1200, step: 1 });
+  await expect(page.getByText('Summarizing conversation · 1,200 characters', { exact: true })).toBeVisible();
+  captured.publishEvent('generation_progress', { run_id: 'manual-summary', kind: 'compaction', characters: 0, step: 1 });
+  await expect(page.getByText('Summarizing conversation · 0 characters', { exact: true })).toBeVisible();
+  captured.publishEvent('generation_progress', { run_id: 'manual-summary', kind: 'compaction', characters: 24, step: 2 });
+  await expect(page.getByText('Summarizing conversation · pass 2 · 24 characters', { exact: true })).toBeVisible();
+  await page.screenshot({ path: '../artifacts/compaction-character-progress.png', fullPage: true });
   captured.publishEvent('compaction_end', { run_id: 'manual-summary', reason: 'manual', tokens_before: 8000,
     success: true, aborted: false, estimated_tokens_after: 1000,
-    summary: 'Keep the night constraints.', keep_messages: 2 });
+    summary: 'Keep the night constraints.', keep_messages: 2, characters: 27, step: 2 });
   captured.publishEvent('context_usage', { run_id: 'manual-summary', used_chars: 500, max_chars: 200000,
     used_tokens: 1000, max_tokens: 32000, estimated: true });
   const costSummary = { usd: '0.02', calls: 1, pending: 0, unavailable: 0, version: 10 };
@@ -550,7 +557,7 @@ test('compacts context on demand and restores the summary after reload', async (
   await expect(page.getByText('Tokens (est.): 1,000 / 32,000')).toBeVisible();
   await expect(page.getByText('You requested context compaction.').locator('xpath=ancestor::article')).toHaveClass(/mx-auto/);
   await expect(page.getByText('User · Conversation summary', { exact: true }).locator('xpath=ancestor::article')).toHaveClass(/ml-auto/);
-  const notice = page.getByText('Conversation summarized', { exact: true }).locator('xpath=ancestor::article');
+  const notice = page.getByText('Conversation summarized · pass 2 · 27 characters', { exact: true }).locator('xpath=ancestor::article');
   await expect(notice.getByText(/^Estimated turn cost:/)).toBeVisible();
   await expect(notice.locator('time')).toBeVisible();
   await expect(page.getByText('User · Conversation summary', { exact: true }).locator('xpath=ancestor::article').locator('time')).toHaveCount(0);
@@ -560,10 +567,47 @@ test('compacts context on demand and restores the summary after reload', async (
   await page.screenshot({ path: '../artifacts/manual-compaction.png', fullPage: true });
   await page.reload();
   await expect(page.getByText('You requested context compaction.', { exact: true })).toBeVisible();
-  await expect(page.getByText('Conversation summarized', { exact: true })).toBeVisible();
+  await expect(page.getByText('Conversation summarized · pass 2 · 27 characters', { exact: true })).toBeVisible();
   await expect(notice.getByText(/^Estimated turn cost:/)).toBeVisible();
   await expect(notice.locator('time')).toBeVisible();
   await expect(page.getByText('Earlier answer.', { exact: true })).toBeVisible();
+});
+
+test('shows character progress while preparing tools and preserves completed counts after reload', async ({ page }) => {
+  const captured = await mockAiBackend(page, [], false, undefined, [], true, [
+    { type: 'generation_progress', data: { kind: 'tool_calls', characters: 3, step: 1 } },
+  ]);
+  captured.holdNextTurn();
+  await page.goto('/experimental-ai');
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Inspect the ward.');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('Preparing tool calls · 3 characters', { exact: true })).toBeVisible();
+  captured.publishEvent('generation_progress', { run_id: 'answer-1', kind: 'tool_calls', characters: 8, step: 1 });
+  await expect(page.getByText('Preparing tool calls · 8 characters', { exact: true })).toBeVisible();
+  captured.publishEvent('provider_retry', { run_id: 'answer-1', message: 'Retrying the provider request.' });
+  captured.publishEvent('generation_progress', { run_id: 'answer-1', kind: 'tool_calls', characters: 2, step: 1 });
+  await expect(page.getByText('Preparing tool calls · 2 characters', { exact: true })).toBeVisible();
+  await expect(page.getByText('Preparing tool calls · 8 characters', { exact: true })).toBeHidden();
+  captured.publishEvent('reasoning', { run_id: 'answer-1', text: '新😀' });
+  await expect(page.getByText('Reasoning · 2 characters', { exact: true })).toBeVisible();
+  const tool = { run_id: 'answer-1', tool_call_id: 'one', name: 'bash', arguments: '{"command":"pwd"}' };
+  captured.publishEvent('tool_start', tool);
+  await expect(page.getByText('bash · running', { exact: true })).toBeVisible();
+  await expect(page.getByText('Preparing tool calls · 2 characters', { exact: true })).toBeHidden();
+  captured.publishEvent('tool', { ...tool, result: '新😀', ok: true });
+  await page.getByText('bash', { exact: true }).click();
+  await expect(page.getByLabel('Tool arguments').getByText('17 characters', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Tool result').getByText('2 characters', { exact: true })).toBeVisible();
+  captured.publishEvent('delta', { run_id: 'answer-1', text: 'Done😀' });
+  await expect(page.getByText('5 characters', { exact: true })).toBeVisible();
+  captured.finishTurn();
+  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeHidden();
+  await page.screenshot({ path: '../artifacts/tool-character-progress.png', fullPage: true });
+  await page.reload();
+  await expect(page.getByText('Reasoning · 2 characters', { exact: true })).toBeVisible();
+  await expect(page.getByText('5 characters', { exact: true })).toBeVisible();
+  await page.getByText('bash', { exact: true }).click();
+  await expect(page.getByLabel('Tool result').getByText('2 characters', { exact: true })).toBeVisible();
 });
 
 test('can stop manual compaction while admission waits before run_start', async ({ page }) => {

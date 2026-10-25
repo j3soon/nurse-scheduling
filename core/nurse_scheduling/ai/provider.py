@@ -134,6 +134,13 @@ class ReasoningReplay:
 
 
 @dataclass(frozen=True)
+class ToolCallProgress:
+    """Combined argument size while tool calls are still incomplete and private."""
+
+    characters: int
+
+
+@dataclass(frozen=True)
 class ToolCallRequest:
     """The tool calls an assistant turn ended with."""
 
@@ -216,6 +223,7 @@ ChatStreamEvent = (
     | ReasoningDelta
     | ReasoningReplay
     | ToolCallRequest
+    | ToolCallProgress
     | ResponseEnd
     | TokenUsage
     | ProviderAttempt
@@ -749,6 +757,8 @@ class OpenAiCompatibleProvider:
                         "The AI provider returned more reasoning metadata than one answer may contain."
                     )
                 _merge_tool_call_fragments(partial_calls, delta.get("tool_calls"))
+                if delta.get("tool_calls"):
+                    yield ToolCallProgress(sum(len(partial.arguments) for partial in partial_calls.values()))
             # Pi checks completion before releasing tools. Accept [DONE] for endpoints
             # that omit finish_reason, but never infer completion from HTTP EOF alone.
             logger.info(

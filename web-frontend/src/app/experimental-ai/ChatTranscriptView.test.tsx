@@ -49,6 +49,11 @@ function renderTranscript(messages: ChatMessage[], showTools = false) {
 
 const reason = 'The AI provider failed (HTTP 525). Error ID: provider-123.';
 
+it('counts Unicode characters in collapsed model inputs', () => {
+  renderTranscript([{ id: 'system', role: 'system', content: '新😀' }]);
+  expect(screen.getByText('2 characters')).toBeVisible();
+});
+
 it.each<{ label: string; content: string; activity: ActivityEntry[] }>([
   { label: 'no output', content: '', activity: [] },
   { label: 'hidden reasoning', content: '', activity: [{ kind: 'reasoning', text: 'Inspecting the result.' }] },

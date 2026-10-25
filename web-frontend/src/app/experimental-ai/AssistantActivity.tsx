@@ -21,7 +21,7 @@
 
 'use client';
 
-import { activitySummary, formatCharacterCount as formatCount, scheduleChangeLines } from './chatPresentation';
+import { activitySummary, characterCount, formatCharacterCount as formatCount, scheduleChangeLines } from './chatPresentation';
 
 import { useState } from 'react';
 import AssistantMarkdown from './AssistantMarkdown';
@@ -46,7 +46,8 @@ export interface ToolEntry {
   arguments: string;
   result: string;
   ok: boolean;
-  state?: 'running' | 'interrupted';
+  state?: 'preparing' | 'running' | 'interrupted';
+  argumentsCharacters?: number;
 }
 
 export interface ScheduleChangeEntry {
@@ -78,6 +79,8 @@ export interface CompactionActivity {
   summary?: string;
   keepMessages?: number;
   invalidated?: boolean;
+  characters?: number;
+  step?: number;
 }
 
 export type ActivityEntry =
@@ -102,7 +105,7 @@ function ChunkedText({ text, label }: { text: string; label: string }) {
           onClick={() => setShown(shown + CHUNK_CHARS)}
           className="mt-1 text-xs text-gray-500 underline underline-offset-2 hover:text-gray-700"
         >
-          Show more {label} ({formatCount(remaining)} characters left)
+          Show more {label} ({formatCount(characterCount(text.slice(shown)))} characters left)
         </button>
       )}
     </div>
@@ -115,12 +118,14 @@ function ToolBody({ entry }: { entry: ToolEntry }) {
       {entry.arguments && entry.arguments !== '{}' && (
         <section aria-label="Tool arguments" className="rounded border border-gray-200 bg-white p-2">
           <h3 className="mb-1 font-semibold text-gray-700">{entry.name === 'bash' ? 'Command' : 'Arguments'}</h3>
+          <p className="mb-1 text-gray-500">{formatCount(characterCount(entry.arguments))} characters</p>
           <ChunkedText text={entry.arguments} label="arguments" />
         </section>
       )}
       {entry.result && (
         <section aria-label="Tool result" className="rounded border border-gray-200 bg-white p-2">
           <h3 className="mb-1 font-semibold text-gray-700">Result</h3>
+          <p className="mb-1 text-gray-500">{formatCount(characterCount(entry.result))} characters</p>
           <ChunkedText text={entry.result} label="output" />
         </section>
       )}
@@ -189,7 +194,10 @@ export function AssistantActivity({ entries }: { entries: ActivityEntry[] }) {
           {entry.kind === 'notice' ? (
             <p role="status" className="my-2 text-sm text-amber-800">{entry.text}</p>
           ) : entry.kind === 'response' ? (
-            <AssistantMarkdown content={entry.text} />
+            <>
+              <AssistantMarkdown content={entry.text} />
+              <p className="mt-1 text-xs text-gray-500">{formatCount(characterCount(entry.text))} characters</p>
+            </>
           ) : (
             <details open={entry.kind === 'schedule-check' && !entry.ok ? true : undefined} className={`text-xs ${activityColor(entry)}`}>
               <summary className="cursor-pointer select-none py-0.5 hover:text-gray-700">{activitySummary(entry)}</summary>
