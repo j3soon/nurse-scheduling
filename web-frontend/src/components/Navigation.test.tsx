@@ -206,6 +206,31 @@ describe('Navigation', () => {
     expect(mockPush).not.toHaveBeenCalled();
   });
 
+  it('maps vertical wheel movement to the tab strip and preserves native gestures', () => {
+    renderNavigation();
+    const strip = screen.getByRole('button', { name: '2. People' }).closest('.overflow-x-auto')!;
+    Object.defineProperties(strip, {
+      scrollWidth: { value: 1800, configurable: true },
+      clientWidth: { value: 600, configurable: true },
+    });
+    const wheel = (options: WheelEventInit) => {
+      const event = new WheelEvent('wheel', { bubbles: true, cancelable: true, ...options });
+      strip.dispatchEvent(event);
+      return event;
+    };
+    expect(wheel({ deltaY: 120 }).defaultPrevented).toBe(true);
+    expect(strip.scrollLeft).toBe(120);
+    wheel({ deltaY: 3, deltaMode: 1 });
+    expect(strip.scrollLeft).toBe(168);
+    wheel({ deltaY: 1, deltaMode: 2 });
+    expect(strip.scrollLeft).toBe(768);
+    expect(wheel({ deltaY: 100, ctrlKey: true }).defaultPrevented).toBe(false);
+    expect(wheel({ deltaX: 80, deltaY: 2 }).defaultPrevented).toBe(false);
+    expect(strip.scrollLeft).toBe(768);
+    Object.defineProperty(strip, 'scrollWidth', { value: 600 });
+    expect(wheel({ deltaY: 100 }).defaultPrevented).toBe(false);
+  });
+
   it('centers the current tab in the strip, smoothly after the first page', () => {
     const scrollTo = vi.fn();
     Object.defineProperty(HTMLElement.prototype, 'scrollTo', { value: scrollTo, configurable: true });

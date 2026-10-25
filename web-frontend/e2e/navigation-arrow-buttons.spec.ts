@@ -50,3 +50,29 @@ test('navigation arrow buttons move between neighboring tabs with the expected b
   await expect(page.getByRole('button', { name: 'New Schedule', exact: true })).toBeVisible();
   await expect(page.getByTitle('Previous tab (←)')).toHaveCount(0);
 });
+
+
+test('the tab strip scrolls with the wheel and its own buttons without changing pages', async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 360 });
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: 'New Schedule', exact: true })).toBeVisible();
+  const strip = page.locator('#navigation-tabs');
+  const left = () => strip.evaluate(element => element.scrollLeft);
+  await expect(page.getByRole('button', { name: 'Scroll tabs right', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Scroll tabs left', exact: true })).toHaveCount(0);
+  await strip.hover({ position: { x: 200, y: 20 } });
+  await page.mouse.wheel(0, 240);
+  await expect.poll(left).toBeGreaterThan(100);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  await page.getByRole('button', { name: 'Scroll tabs left', exact: true }).click();
+  await expect.poll(left).toBe(0);
+  await page.getByRole('button', { name: 'Scroll tabs right', exact: true }).click();
+  await expect.poll(left).toBeGreaterThan(300);
+  await expect(page).toHaveURL(/\/$/);
+  await strip.evaluate(element => { element.scrollLeft = element.scrollWidth; });
+  await expect(page.getByRole('button', { name: 'Scroll tabs right', exact: true })).toHaveCount(0);
+  await strip.hover({ position: { x: 200, y: 20 } });
+  await page.mouse.wheel(0, 240);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  await page.screenshot({ path: '../artifacts/navigation-wheel.png' });
+});

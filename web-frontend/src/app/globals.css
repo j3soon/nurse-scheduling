@@ -59,6 +59,17 @@ body > main {
   color: dodgerblue;
 }
 
+.navigation-tabs {
+  scrollbar-width: thin;
+  scrollbar-color: #64748b #f1f5f9;
+}
+
+@media (forced-colors: active) {
+  .navigation-tabs {
+    scrollbar-color: auto;
+  }
+}
+
 /* Keep phone form controls readable without Safari zooming the page on focus. */
 @media (max-width: 639px) {
   input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="file"]):not([type="range"]),
