@@ -560,32 +560,32 @@
       "id": "saved-rich",
       "snapshot": "saved-rich",
       "sha256": {
-        "html": "a5d6b5658cc01c638e902d05092e9753c8a9c69bfedf12cc160ff501d41b926d",
-        "markdown": "db2731e98e7498c9e6ca3cd1585829716cf008c8260a32643b76129e9cd1a5ca"
+        "html": "f815249fc69671a6c612afe70b2debbd2ac17706f41186de04fe452baa4f5678",
+        "markdown": "49792c972cd1e7977b245a1be91fd4c950d0a55993e12cb60bce27c57034634d"
       }
     },
     {
       "id": "early-steering",
       "snapshot": "early-steering",
       "sha256": {
-        "html": "ebb1bc1af4c34df258578c1d956134abc0415db95c9a509efb7fc0f03564d860",
-        "markdown": "c36a76097687fc934d639548d4d517cf0d0b51e6b843d4c48931bf04778445ff"
+        "html": "0dcf106c4f198a8ebd4d1683b502f7063d44a476d511dd4d6266e0bae3b7eeef",
+        "markdown": "824fa048e481a5d6c06af80c2aff5a135024b5f2e097ee156567b2fffca03301"
       }
     },
     {
       "id": "missing-terminal",
       "snapshot": "missing-terminal",
       "sha256": {
-        "html": "2f7a92f33512e55facb606483ca8ef3d6ed6f0662f6cb4c58d2e4a7ac6bad7fc",
-        "markdown": "70be62fea4c9d467abe89a667a40548fd57e1ddf1fde8903e746240c7e84cfe5"
+        "html": "b01e8de145e7923e7b0cfc9c988e258914f679734f0d3b2889596ff91ad28c38",
+        "markdown": "0c096fbcaeb52948790a153aeca631887d2bdfe9c57d05adb2ed9d70436e11e7"
       }
     },
     {
       "id": "changed-system",
       "snapshot": "changed-system",
       "sha256": {
-        "html": "5ac4e26b8039176c99bda4e30fb17495470b3cf44d36e83cff61b05833ac6169",
-        "markdown": "41448cba5a6bb21a9bf519b96dee3abbae600401b447df385d4b7d20446f74dd"
+        "html": "d8a008ac281ab714012d729785716c3a68f532e23345124b5d06f651d5f64d17",
+        "markdown": "05f2900fe91c98856abc96c871791387528d9d442df861e06e2717f2e27c6aef"
       }
     },
     {

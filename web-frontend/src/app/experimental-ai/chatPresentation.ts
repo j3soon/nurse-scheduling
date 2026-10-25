@@ -59,7 +59,7 @@ export function transcriptMessages(message: ChatMessage): TranscriptMessage[] {
   if (status === 'pending' && parts.at(-1)?.presentation && !activity!.some(entry => (
     entry.kind === 'compaction' && (entry.state === 'running' || entry.reason === 'manual')
   ))) parts.push({ ...base, content: '' });
-  const footer = parts.findLast(part => part.role === 'assistant') ?? parts.at(-1)!;
+  const footer = parts.findLast(part => part.role === 'assistant' && part.presentation !== 'notice') ?? parts.at(-1)!;
   Object.assign(footer, { createdAt, responseStartedAt, responseCompletedAt, status, failureReason,
     truncated, modelSelection, providerCalls, costSummary, downloadId, unsentFiles });
   return parts;

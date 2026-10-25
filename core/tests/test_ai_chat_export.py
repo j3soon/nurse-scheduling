@@ -213,7 +213,55 @@ def test_export_separates_notices_and_summary_without_changing_saved_messages(ke
         )
         assert rendered.count("You requested context compaction.") == 1
         assert "User · Conversation summary" in rendered
+        assert "[No message text]" not in rendered
     assert messages == original
+
+
+def test_export_keeps_the_placeholder_on_the_last_assistant_part_without_response_text():
+    messages = [
+        {
+            "role": "assistant",
+            "content": "",
+            "activity": [
+                {"kind": "tool", "name": "read", "arguments": "{}", "result": "First output", "ok": True},
+                {"kind": "notice", "text": "Workspace changed."},
+                {"kind": "tool", "name": "read", "arguments": "{}", "result": "Last output", "ok": True},
+            ],
+        }
+    ]
+    metadata = {"exportedAt": 1792919105509, "frontendVersion": "test", "endpoint": "https://ai.example"}
+    for build in (build_html_chat, build_markdown_chat):
+        rendered = build(messages, metadata)
+        assert rendered.count("[No message text]") == 1
+        assert rendered.index("Last output") < rendered.index("[No message text]")
+
+
+@pytest.mark.parametrize("status", [None, "failed", "stopped"])
+def test_export_keeps_answer_metadata_before_a_trailing_app_notice(status):
+    messages = [
+        {
+            "role": "assistant",
+            "content": "Updated.",
+            "status": status,
+            "failureReason": "The provider failed.",
+            "modelSelection": {"model": "test-model", "reasoning": "high"},
+            "costSummary": {"usd": "0.02", "calls": 1, "pending": 0, "unavailable": 0},
+            "activity": [
+                {"kind": "response", "text": "Updated."},
+                {"kind": "schedule-applied", "text": "The schedule was applied."},
+            ],
+        }
+    ]
+    metadata = {"exportedAt": 1792919105509, "frontendVersion": "test", "endpoint": "https://ai.example"}
+    html = build_html_chat(messages, metadata)
+    answer, notice = html.split('<article class="')[1:]
+    assert "Model: test-model" in answer and "Estimated turn cost" in answer
+    assert "Model: test-model" not in notice and "Estimated turn cost" not in notice
+    if status:
+        assert ("The provider failed." if status == "failed" else "Stopped before completion.") in answer
+    markdown = build_markdown_chat(messages, metadata)
+    assert markdown.index("Model: test-model") < markdown.index("## App notice")
+    assert markdown.index("Estimated turn cost") < markdown.index("## App notice")
 
 
 def saved_case(variant):

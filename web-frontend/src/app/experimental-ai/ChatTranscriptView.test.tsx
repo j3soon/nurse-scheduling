@@ -117,6 +117,27 @@ it.each([0, 4])('separates compaction notices, summary, and assistant activity w
   expect(message).toEqual(saved);
 });
 
+it.each([undefined, 'failed', 'stopped'] as const)('keeps footer details on the answer before a trailing notice with status %s', status => {
+  renderTranscript([{
+    id: 'answer', role: 'assistant', content: 'Updated.', status, failureReason: 'The provider failed.',
+    createdAt: 1000, responseStartedAt: 1000, responseCompletedAt: 2500,
+    modelSelection: { model: 'test-model', reasoning: 'high' },
+    costSummary: { usd: '0.02', calls: 1, pending: 0, unavailable: 0 },
+    downloadId: 'download-one',
+    activity: [
+      { kind: 'response', text: 'Updated.' },
+      { kind: 'schedule-applied', text: 'The schedule was applied.' },
+    ],
+  }]);
+  const answer = screen.getByText('Updated.').closest('article');
+  expect(screen.getByText('test-model · high').closest('article')).toBe(answer);
+  expect(screen.getByText(/^Estimated turn cost:/).closest('article')).toBe(answer);
+  expect(screen.getByRole('button', { name: 'Download files (ZIP)' }).closest('article')).toBe(answer);
+  expect(screen.getByText(/1\.5s/).closest('article')).toBe(answer);
+  if (status) expect(screen.getByText(status === 'failed' ? 'The provider failed.' : 'Stopped before completion.')
+    .closest('article')).toBe(answer);
+});
+
 it('keeps failed-summary details and context notices separate from the assistant', () => {
   renderTranscript([{ id: 'answer', role: 'assistant', content: 'Partial.', status: 'failed', failureReason: 'Failed.', activity: [
     { kind: 'compaction', reason: 'threshold', state: 'completed', text: 'Summarized.', summary: 'Old summary.', invalidated: true },
