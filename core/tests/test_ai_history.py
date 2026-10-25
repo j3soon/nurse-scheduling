@@ -1195,7 +1195,7 @@ def test_postgres_duplicates_and_reconnection(postgres_history):
             *map(record, entries),
             record(app_event[2]),
         ]
-        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (9,)
+        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (10,)
     # Complete tool exchanges survive a process restart.
     assert restarted.load_session(session, owner)["entries"] == [
         UserMessage("What's next?"),
@@ -1417,7 +1417,7 @@ def test_postgres_upgrade_preserves_deployed_sessions_and_message_receipts(unini
     assert [(row[3], row[4].get("text")) for row in events] == [("delta", "Saved answer"), ("optimization", None)]
     assert events[0][4]["run_id"] == run_id
     with history._connect() as connection:
-        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (9,)
+        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (10,)
         assert connection.execute("SELECT auth_credential_id FROM chat_sessions").fetchone() == ("team-a",)
         assert connection.execute("SELECT model FROM chat_runs").fetchone() == ("saved-model",)
 
@@ -2502,3 +2502,71 @@ def test_postgres_compacted_chat_replays_native_tools_events_and_costs_after_res
             ]
 
     asyncio.run(recover())
+
+
+def test_manual_compaction_recovery_has_no_prompt_or_workspace_interruption(postgres_history):
+    from uuid import uuid4
+
+    from nurse_scheduling.ai.transcript import CompactionEntry
+
+    session, run = str(uuid4()), str(uuid4())
+    state = session_state("owner")
+    postgres_history.start_run(
+        run, session, state, None, 0, model="model", attachment_count=0, kind="compaction", message_id="compact-request"
+    )
+    assert postgres_history.find_message(session, "compact-request") == (run, "/compact")
+    postgres_history.append_entries(session, [(0, run, CompactionEntry("Uncommitted summary", 0, 4000))])
+    postgres_history.recover_run(session, run)
+    postgres_history.recover_run(session, run)
+    restored = postgres_history.load_session(session, "owner")
+    assert restored["entries"] == []
+    with postgres_history._connect() as connection:
+        assert connection.execute("SELECT status, committed FROM chat_runs WHERE id = %s", (run,)).fetchone() == (
+            "failed",
+            False,
+        )
+        assert connection.execute(
+            "SELECT count(*) FROM chat_session_entries WHERE session_id = %s", (session,)
+        ).fetchone() == (1,)
+
+
+def test_manual_compaction_summary_and_request_id_survive_restart(postgres_history):
+    from nurse_scheduling.ai.transcript import CompactionEntry
+
+    from .test_ai_compaction import CompactionProvider
+
+    async def exercise():
+        provider = CompactionProvider()
+        provider.context_tokens = 131072
+        settings = basic.make_settings(history_postgres_url="test")
+        app = basic.create_test_app(settings=settings, provider=provider)
+        async with serving(app) as client:
+            sid = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            session = app.state.session_store._sessions[sid]
+            session._add_entry(UserMessage("Remember nights " + "x" * 12000))
+            session._add_entry(AssistantMessage("Earlier answer"))
+            response = await client.post(f"/sessions/{sid}/compact", json={"message_id": "manual"})
+            assert response.status_code == 202
+            run = app.state.runs._runs[sid][0]
+            await run.wait()
+            summary = session.transcript[-1]
+            assert isinstance(summary, CompactionEntry)
+            cookies = dict(client.cookies)
+        restarted = basic.create_test_app(settings=settings, provider=provider)
+        async with serving(restarted) as client:
+            client.cookies.update(cookies)
+            duplicate = await client.post(f"/sessions/{sid}/compact", json={"message_id": "manual"})
+            assert duplicate.json() == response.json()
+            session = restarted.state.session_store._sessions[sid]
+            assert session.transcript[-1] == summary
+            assert len(provider.summaries) == 1
+            assert [entry.text for entry in session.transcript if isinstance(entry, UserMessage)] == [
+                "Remember nights " + "x" * 12000
+            ]
+            assert restarted.state.sandbox_factory.created == []
+            with postgres_history._connect() as connection:
+                assert connection.execute(
+                    "SELECT kind, status, committed FROM chat_runs WHERE id = %s", (response.json()["run_id"],)
+                ).fetchone() == ("compaction", "completed", True)
+
+    asyncio.run(exercise())

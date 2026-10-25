@@ -73,7 +73,7 @@ function isActivityEntry(value: unknown): value is ActivityEntry {
   if (value.kind === 'compaction') {
     return 'state' in value && typeof value.state === 'string'
       && ['running', 'completed', 'failed', 'interrupted'].includes(value.state)
-      && 'reason' in value && (value.reason === 'threshold' || value.reason === 'overflow')
+      && 'reason' in value && (value.reason === 'threshold' || value.reason === 'overflow' || value.reason === 'manual')
       && 'text' in value && typeof value.text === 'string'
       && (!('summary' in value) || typeof value.summary === 'string')
       && (!('keepMessages' in value) || (Number.isSafeInteger(value.keepMessages) && (value.keepMessages as number) >= 0))

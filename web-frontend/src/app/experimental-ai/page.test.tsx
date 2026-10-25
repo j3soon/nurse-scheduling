@@ -24,6 +24,7 @@ import userEvent from '@testing-library/user-event';
 import ExperimentalAiPage from './page';
 import type { SessionEvent, SessionEventHandler, SessionStreamOptions } from './sessionEvents';
 
+const mockCompactSession = vi.hoisted(() => vi.fn());
 const mockCreateSession = vi.hoisted(() => vi.fn());
 const mockGetUploads = vi.hoisted(() => vi.fn());
 const mockRemoveUpload = vi.hoisted(() => vi.fn());
@@ -70,6 +71,7 @@ vi.mock('./aiClient', async importOriginal => {
   LOCAL_AI_API_URL: 'http://localhost:8001',
   PRODUCTION_AI_API_URL: 'https://api.nursescheduling.org/ai',
   createSession: mockCreateSession,
+  compactSession: mockCompactSession,
   downloadOptimization: mockDownloadOptimization,
   cancelOptimization: mockCancelOptimization,
   downloadGeneratedZip: mockDownloadGeneratedZip,
@@ -185,6 +187,7 @@ describe('ExperimentalAiPage', () => {
       callbacks.onEvent({ type: 'delta', text: 'Alice' });
       callbacks.onEvent({ type: 'delta', text: ' works Monday.' });
     });
+    mockCompactSession.mockReset().mockResolvedValue(undefined);
     mockStreamSessionEvents.mockReset().mockImplementation(() => new Promise<void>(() => {}));
     // Run fixtures publish normalized events while POST returns only its acknowledgement.
     mockSendMessage.mockReset().mockImplementation(async (id, message, signal, token, endpoint) => {
@@ -521,6 +524,36 @@ describe('ExperimentalAiPage', () => {
     expect(usage).toHaveAttribute('title', expect.stringContaining('current LLM context'));
     const tokens = screen.getByText(`Tokens (est.): 4,321 / ${maxTokens ? '131,072' : 'unavailable'}`);
     expect(tokens).toHaveAttribute('title', 'Estimated current LLM context tokens / model context limit. Includes system instructions, tools, and conversation messages.');
+  });
+
+  it('compacts an idle conversation through the session stream without sending a question', async () => {
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Who works Monday?');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    await user.click(screen.getByRole('button', { name: 'Compact context' }));
+    expect(mockCompactSession).toHaveBeenCalledWith('session-id', expect.any(String), null, '/ai');
+    expect(mockRunEvents).toHaveBeenCalledTimes(1);
+    const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
+    await act(async () => {
+      stream.onEvent!({ type: 'run_start', runId: 'compact-run', trigger: 'compaction' });
+      stream.onEvent!({ type: 'compaction_start', runId: 'compact-run', reason: 'manual', tokensBefore: 12000 });
+    });
+    expect(screen.getByRole('button', { name: 'Compact context' })).toBeDisabled();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeDisabled();
+    await act(async () => {
+      stream.onEvent!({ type: 'compaction_end', runId: 'compact-run', reason: 'manual', tokensBefore: 12000,
+        success: true, aborted: false, summary: 'Keep the night constraints.', keepMessages: 2, estimatedTokensAfter: 1000 });
+      stream.onEvent!({ type: 'context_usage', runId: 'compact-run', usage: { usedChars: 1000, maxChars: 200000,
+        usedTokens: 1000, maxTokens: 10000, estimated: true } });
+      stream.onEvent!({ type: 'done', runId: 'compact-run' });
+    });
+    expect(screen.getByRole('button', { name: 'Compact context' })).toBeEnabled();
+    expect(screen.getByText('Context 10.0% used (est.)')).toBeInTheDocument();
+    expect(screen.getByText('Tokens (est.): 1,000 / 10,000')).toBeInTheDocument();
+    await user.click(screen.getByText('Conversation summarized'));
+    expect(screen.getByText(/\[Conversation summary\]\s+Keep the night constraints\./)).toBeInTheDocument();
   });
 
   it('restores the transcript and live session after navigating away', async () => {

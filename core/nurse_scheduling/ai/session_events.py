@@ -29,7 +29,7 @@ class RunFields(TypedDict):
 
 class RunStartEvent(RunFields):
     type: Literal["run_start"]
-    trigger: Literal["user", "optimizer"]
+    trigger: Literal["user", "optimizer", "compaction"]
 
 
 class ModelSelectionEvent(RunFields):
@@ -161,7 +161,7 @@ class ModelInputEvent(RunFields):
 
 
 class CompactionFields(RunFields):
-    reason: Literal["threshold", "overflow"]
+    reason: Literal["threshold", "overflow", "manual"]
     tokens_before: int
 
 

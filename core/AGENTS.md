@@ -171,6 +171,8 @@ stderr. Do not replace an explicitly selected file with a fallback.
   Keep app-event indices tied to transcript entries across compaction and retention.
   Keep a trailing status message with its user question when choosing a
   compaction boundary. A status message cannot stand in for the current request.
+  Manual compaction shares run admission, Stop, replay, and persistence. Keep
+  its request ID idempotent. Do not create a user question or allocate a workspace.
   Keep summary requests visible in provider cost records, but keep their text out
   of the answer stream. Use `tests/test_ai_compaction.py` for these contracts.
   Test chunked summaries through the provider's token-limit calculation, including
@@ -179,7 +181,7 @@ stderr. Do not replace an explicitly selected file with a fallback.
   with provider usage without adding estimates to billed usage or cost totals.
   Test history character and message thresholds without model context metadata.
   For live cross-run checks, use `../scripts/test_ai_compaction_live.sh` with
-  `AI_ENV_FILE`. It runs four concurrent scenarios through the real session API
+  `AI_ENV_FILE`. It runs five scenarios, at most four concurrently through the real session API
   and prebuilt E2B sandboxes. A smaller history budget forces compaction.
   Select an available model with a reported context limit. Check that model
   switching is rejected and supported reasoning-effort changes remain accepted.

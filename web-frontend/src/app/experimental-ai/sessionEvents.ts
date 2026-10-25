@@ -43,8 +43,8 @@ export type SessionEvent = (
   | { type: 'delta' | 'reasoning'; text: string }
   | { type: 'truncated' }
   | { type: 'response_end'; stopReason: 'stop' | 'tool_use' | 'length' | 'error' | 'aborted'; contextNote?: string }
-  | { type: 'compaction_start'; reason: 'threshold' | 'overflow'; tokensBefore: number }
-  | { type: 'compaction_end'; reason: 'threshold' | 'overflow'; tokensBefore: number; success: boolean; aborted: boolean; estimatedTokensAfter?: number; summary?: string; keepMessages?: number }
+  | { type: 'compaction_start'; reason: 'threshold' | 'overflow' | 'manual'; tokensBefore: number }
+  | { type: 'compaction_end'; reason: 'threshold' | 'overflow' | 'manual'; tokensBefore: number; success: boolean; aborted: boolean; estimatedTokensAfter?: number; summary?: string; keepMessages?: number }
   | { type: 'tool_start'; activity: ToolStartActivity }
   | { type: 'tool'; activity: ToolActivity }
   | { type: 'steering'; messageId: string; message: string }

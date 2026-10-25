@@ -290,7 +290,7 @@ export default function ExperimentalAiPage() {
     isStreaming, isStopping, isReconnecting, activeOptimization, queuedMessages, steeringAssistantId,
     setSessionRetentionSeconds, restoreConversation,
     captureSession, newConversation, submitMessage, stop, removeUploadedFile,
-    removeGeneratedFiles,
+    removeGeneratedFiles, compactContext, isCompacting,
   } = useAiChat({
     scheduleYaml, aiEndpoint, authRequired, authToken, isClientReady, serverStatus, selection, modelSelectionEnabled,
     retainsUploads: fileCapability.retained ?? false, backendVersion, setError, reportRequestError,
@@ -845,7 +845,7 @@ export default function ExperimentalAiPage() {
     }
   };
   const credentialsMissing = authRequired && authToken === null;
-  const composerUnavailable = credentialsMissing || conversationUnavailable || (modelSelectionEnabled && !selection);
+  const composerUnavailable = isCompacting || credentialsMissing || conversationUnavailable || (modelSelectionEnabled && !selection);
   const attachmentPickerDisabled = isStreaming
     || composerUnavailable
     || !fileCapability.enabled
@@ -1456,6 +1456,15 @@ export default function ExperimentalAiPage() {
               <span title={tokenDescription}>
                 Tokens{contextUsage.estimated !== false ? ' (est.)' : ''}: {contextUsage.usedTokens.toLocaleString('en-US')} / {contextUsage.maxTokens?.toLocaleString('en-US') ?? 'unavailable'}
               </span>
+            </>}
+            {activeSessionId && <>
+              {' · '}
+              <button type="button" onClick={() => void compactContext()}
+                disabled={isStreaming || isCompacting || composerUnavailable}
+                className="underline disabled:cursor-not-allowed disabled:opacity-50"
+                title="Summarize older conversation context without generating an answer.">
+                Compact context
+              </button>
             </>}
             {costSummary && <>
               {(contextUsage !== null || messages.length > 0) && ' · '}

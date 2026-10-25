@@ -162,6 +162,11 @@ limit is unknown, the token count remains visible and the percentage shows
 **unavailable**. Hover over either value for its description. **Est. cost** is
 separate from context usage.
 
+Select **Compact context** below the message box while the assistant is idle to
+summarize older conversation context. This action does not generate an answer.
+Use **Stop** to cancel it. Failed or cancelled compaction keeps the original
+context.
+
 When the conversation is summarized, expand **Conversation summarized** to read
 the summary sent to the assistant. A discarded summary stays visible and is
 marked as omitted from future context. Earlier messages remain in the visible

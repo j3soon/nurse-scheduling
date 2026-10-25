@@ -202,7 +202,7 @@ def test_live_compaction_validates_models_before_starting_paid_cases(monkeypatch
     monkeypatch.setattr(live, "run_live_case", run_case)
     if invalid is None:
         live.test_real_chat_runs_preserve_context_through_compaction(monkeypatch)
-        assert started == ["threshold", "repeated", "model-lock", "cancellation"]
+        assert started == ["threshold", "repeated", "model-lock", "cancellation", "manual"]
         return
     expected = "unavailable" if invalid == "unavailable" else "context limit"
     with pytest.raises(AssertionError, match=expected):
@@ -736,3 +736,68 @@ def test_failed_split_turn_summary_leaves_original_context_intact(monkeypatch):
     assert not any(isinstance(event, AgentCompaction) for event in events)
     assert compactor.failed
     assert json.dumps(messages) == before
+
+
+@pytest.mark.parametrize("failure", [None, "error", "cancel"])
+def test_manual_compaction_uses_session_events_without_a_question_or_workspace(failure):
+    import httpx
+
+    from . import test_ai_basic as basic
+
+    async def exercise():
+        provider = CompactionProvider(fail_summary=failure)
+        provider.context_tokens = 131072
+        app = basic.create_test_app(settings=basic.make_settings(), provider=provider)
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://testserver", headers=basic.AI_AUTH_HEADERS
+            ) as client,
+        ):
+            sid = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            session = app.state.session_store._sessions[sid]
+            original = [UserMessage("Keep nights " + "x" * 12000), AssistantMessage("Earlier answer")]
+            for entry in original:
+                session._add_entry(entry)
+            publications = []
+            session.subscribe(publications.append)
+            request = {"message_id": "manual-compact"}
+            response = await client.post(f"/sessions/{sid}/compact", json=request)
+            assert response.status_code == 202, response.text
+            await asyncio.wait_for(provider.summary_started.wait(), 2)
+            if failure == "cancel":
+                busy = await client.post(f"/sessions/{sid}/compact", json={"message_id": "another"})
+                assert busy.status_code == 409
+                queued = await client.post(
+                    f"/sessions/{sid}/messages/queue", json={"message": "hello", "message_id": "steer"}
+                )
+                assert queued.status_code == 409
+                assert (await client.post(f"/sessions/{sid}/stop")).status_code == 202
+            async with asyncio.timeout(3):
+                while app.state.runs.busy(sid):
+                    await asyncio.sleep(0)
+            repeated = await client.post(f"/sessions/{sid}/compact", json=request)
+            assert repeated.json() == response.json()
+            assert len(provider.summaries) == 1
+            assert not provider.requests
+            assert app.state.sandbox_factory.created == []
+            assert not session.active
+            assert session.transcript[:2] == original
+            assert not any(entry.text == "/compact" for entry in session.transcript if isinstance(entry, UserMessage))
+            assert not any(
+                event["type"] in {"delta", "reasoning", "tool_start", "tool", "response_end"} for event in publications
+            )
+            assert publications[0]["trigger"] == "compaction"
+            end = next(event for event in publications if event["type"] == "compaction_end")
+            assert end["reason"] == "manual"
+            assert end["success"] is (failure is None)
+            assert end["aborted"] is (failure == "cancel")
+            if failure is None:
+                assert isinstance(session.transcript[-1], CompactionEntry)
+                assert end["summary"] == session.transcript[-1].summary
+                assert any(event["type"] == "context_usage" and event["estimated"] for event in publications)
+            else:
+                assert session.transcript == original
+            assert publications[-1]["type"] == ("stopped" if failure == "cancel" else "done")
+
+    asyncio.run(exercise())

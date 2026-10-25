@@ -298,6 +298,14 @@ async function mockAiBackend(
       return;
     }
 
+    if (request.url().endsWith('/sessions/browser-session/compact')) {
+      publish('run_start', { run_id: 'manual-summary', trigger: 'compaction' });
+      publish('compaction_start', { run_id: 'manual-summary', reason: 'manual', tokens_before: 8000 });
+      await route.fulfill({ status: 202, contentType: 'application/json', headers: corsHeaders,
+        body: JSON.stringify({ run_id: 'manual-summary' }) });
+      return;
+    }
+
     captured.messageBody = request.postData() ?? '';
     captured.messageBodies.push(captured.messageBody);
     captured.messageContentType = request.headers()['content-type'] ?? '';
@@ -513,6 +521,36 @@ test('updates Context, Tokens, and estimated cost while the answer is still stre
   await page.screenshot({ path: '../artifacts/streaming-conversation-metrics.png', fullPage: true });
   captured.finishTurn();
   await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeHidden();
+});
+
+test('compacts context on demand and restores the summary after reload', async ({ page }) => {
+  const captured = await mockAiBackend(page, ['Earlier answer.']);
+  await page.goto('/experimental-ai');
+  const input = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+  await input.fill('Keep the night constraints.');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('Earlier answer.', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Compact context', exact: true }).click();
+  await expect(page.getByText('Summarizing conversation', { exact: true })).toBeVisible();
+  await expect(input).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Compact context', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
+  captured.publishEvent('compaction_end', { run_id: 'manual-summary', reason: 'manual', tokens_before: 8000,
+    success: true, aborted: false, estimated_tokens_after: 1000,
+    summary: 'Keep the night constraints.', keep_messages: 2 });
+  captured.publishEvent('context_usage', { run_id: 'manual-summary', used_chars: 500, max_chars: 200000,
+    used_tokens: 1000, max_tokens: 32000, estimated: true });
+  captured.publishEvent('done', { run_id: 'manual-summary' });
+  await expect(input).toBeEnabled();
+  await expect(page.getByText('Context 3.1% used (est.)')).toBeVisible();
+  await expect(page.getByText('Tokens (est.): 1,000 / 32,000')).toBeVisible();
+  await page.getByText('Conversation summarized', { exact: true }).click();
+  await expect(page.getByText('[Conversation summary]\nKeep the night constraints.', { exact: true })).toBeVisible();
+  expect(captured.messageBodies).toHaveLength(1);
+  await page.screenshot({ path: '../artifacts/manual-compaction.png', fullPage: true });
+  await page.reload();
+  await expect(page.getByText('Conversation summarized', { exact: true })).toBeVisible();
+  await expect(page.getByText('Earlier answer.', { exact: true })).toBeVisible();
 });
 
 test('shows compaction status and the reduced context before an answer', async ({ page }) => {

@@ -52,7 +52,7 @@ from .workspace import SandboxAttachment, attachment_path
 
 logger = logging.getLogger("nurse_scheduling.ai.history")
 RunStatus = Literal["completed", "failed", "cancelled", "stale"]
-RunKind = Literal["foreground", "background"]
+RunKind = Literal["foreground", "background", "compaction"]
 # The owner token, expiry in epoch seconds, and JSON state that restore needs.
 SessionState = tuple[str, float, dict[str, Any]]
 # One stored stream event: first and last event ID, run ID, type, and data.
@@ -225,7 +225,7 @@ class ChatHistory:
         run_id: str,
         session_id: str,
         state: SessionState,
-        prompt: str,
+        prompt: str | None,
         prompt_seq: int,
         *,
         model: str,
@@ -251,7 +251,7 @@ class ChatHistory:
                 "ON CONFLICT (id) DO NOTHING RETURNING id",
                 (run_id, session_id, model, attachment_count, kind, message_id, credential_id, session_id),
             ).fetchone()
-            if inserted is not None:
+            if inserted is not None and prompt is not None:
                 _insert_entries(connection, session_id, [(prompt_seq, run_id, UserMessage(prompt))])
 
     def finish_run(
@@ -320,8 +320,8 @@ class ChatHistory:
         """Return the run ID and prompt of an accepted client message."""
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT r.id, e.payload->>'text' FROM chat_runs r "
-                "JOIN chat_session_entries e ON e.run_id = r.id AND e.type = 'user' "
+                "SELECT r.id, CASE WHEN r.kind = 'compaction' THEN '/compact' ELSE e.payload->>'text' END FROM chat_runs r "
+                "LEFT JOIN chat_session_entries e ON e.run_id = r.id AND e.type = 'user' "
                 "WHERE r.session_id = %s AND r.message_id = %s ORDER BY e.seq LIMIT 1",
                 (session_id, message_id),
             ).fetchone()
@@ -332,7 +332,7 @@ class ChatHistory:
         with self._connect() as connection:
             connection.execute("SELECT id FROM chat_sessions WHERE id = %s FOR UPDATE", (session_id,))
             run = connection.execute(
-                "SELECT status, message_id FROM chat_runs WHERE id = %s AND session_id = %s FOR UPDATE",
+                "SELECT status, message_id, kind FROM chat_runs WHERE id = %s AND session_id = %s FOR UPDATE",
                 (run_id, session_id),
             ).fetchone()
             if run is None or run[0] != "running":
@@ -350,7 +350,7 @@ class ChatHistory:
             ).fetchone()
             kind = terminal[0] if terminal is not None else None
             status = {"done": "completed", "stopped": "cancelled", "stale": "stale"}.get(kind, "failed")
-            committed = kind == "done" or (kind != "stale" and not stopped_before_work)
+            committed = kind == "done" or (run[2] != "compaction" and kind != "stale" and not stopped_before_work)
             if committed and kind != "done":
                 _recover_run_context(connection, session_id, run_id)
             connection.execute(

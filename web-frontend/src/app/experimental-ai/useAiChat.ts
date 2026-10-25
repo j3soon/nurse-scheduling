@@ -44,6 +44,7 @@ import {
   type ModelSelection,
   ToolActivity,
   createSession,
+  compactSession,
   removeGeneratedZip,
   getUploads,
   removeUpload,
@@ -199,6 +200,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [removingUploadId, setRemovingUploadId] = useState<string | null>(null);
   const [removingDownloadId, setRemovingDownloadId] = useState<string | null>(null);
+  const [compactionRequested, setCompactionRequested] = useState(false);
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
   const [costSummary, setCostSummary] = useState<CostSummary | null>(null);
   const updateContextUsage = useCallback((usage: ContextUsage) => setContextUsage(previous => (
@@ -270,6 +272,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
     sessionEvents.reset();
+    setCompactionRequested(false);
     sessionIdRef.current = null;
     sessionEndpointRef.current = null;
     setSessionEndpoint(null);
@@ -1019,6 +1022,23 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     await sendRequest(question, attachments, true);
   };
 
+  const isCompacting = compactionRequested || messages.some(message => message.status === 'pending'
+    && message.activity?.some(entry => entry.kind === 'compaction' && entry.reason === 'manual' && entry.state === 'running'));
+
+  const compactContext = async () => {
+    const sessionId = sessionIdRef.current;
+    if (!sessionId || isStreaming || compactionRequested) return;
+    const ownsConversation = lifecycle.capture();
+    setCompactionRequested(true);
+    try {
+      await compactSession(sessionId, messageId(), authToken, sessionEndpointRef.current ?? aiEndpoint);
+    } catch (compactError) {
+      if (ownsConversation()) reportRequestError(compactError, 'The conversation could not be compacted.');
+    } finally {
+      if (ownsConversation()) setCompactionRequested(false);
+    }
+  };
+
   const stop = () => {
     if (isStopping) return;
     const stopping = lifecycle.stop();
@@ -1127,7 +1147,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     activeOptimization, queuedMessages, steeringAssistantId,
     setSessionRetentionSeconds, restoreConversation, captureSession,
     newConversation, submitMessage, stop, removeUploadedFile,
-    removeGeneratedFiles,
+    removeGeneratedFiles, compactContext, isCompacting,
     sessionEndpoint: sessionEndpoint ?? aiEndpoint,
   };
 }

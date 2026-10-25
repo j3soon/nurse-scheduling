@@ -68,7 +68,7 @@ class AgentCompaction:
 class AgentCompactionStart:
     """A context summary is about to call the provider."""
 
-    reason: Literal["threshold", "overflow"]
+    reason: Literal["threshold", "overflow", "manual"]
     tokens_before: int
 
 
@@ -76,7 +76,7 @@ class AgentCompactionStart:
 class AgentCompactionEnd:
     """A summary finished, with a fresh estimate only when it was applied."""
 
-    reason: Literal["threshold", "overflow"]
+    reason: Literal["threshold", "overflow", "manual"]
     success: bool
     tokens_before: int
     estimated_tokens_after: int | None = None

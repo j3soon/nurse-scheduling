@@ -945,6 +945,33 @@ def create_app(
         refresh_owner_cookie(response, owner)
         return response
 
+    @app.post(
+        "/sessions/{session_id}/compact",
+        status_code=status.HTTP_202_ACCEPTED,
+        dependencies=[Depends(require_auth), Depends(restore_session)],
+    )
+    async def compact_session(
+        session_id: str,
+        body: StopChatRequest,
+        request: Request,
+        response: Response,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> dict:
+        """Summarize an idle conversation without generating an assistant answer."""
+        session = store.require_owned(session_id, owner)
+        receipt = await session.accept_message(
+            "/compact",
+            body.message_id,
+            runtime=runtime,
+            runs=runs,
+            owner=owner,
+            credential_id=request.state.auth_credential_id,
+            compact_only=True,
+            prepare_runtime=lambda: runtime_for(request.state.auth_credential_id, session.model_selection),
+        )
+        refresh_owner_cookie(response, owner)
+        return {"run_id": receipt.run_id}
+
     @app.post("/sessions/{session_id}/messages", dependencies=[Depends(require_auth), Depends(restore_session)])
     async def send_message(
         session_id: str,

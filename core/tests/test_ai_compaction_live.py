@@ -182,6 +182,21 @@ async def run_live_case(name, settings, controls, output):
             assert not any(event["type"] == "compaction_start" for event in report["events"]), (
                 "First turn compacted too early"
             )
+            if name == "manual":
+                before = len(factory.created)
+                receipt = await client.post(f"/sessions/{session}/compact", json={"message_id": "manual-summary"})
+                assert receipt.status_code == 202, receipt.text
+                while app.state.runs.busy(session):
+                    await asyncio.sleep(0.02)
+                assert len(factory.created) == before, "Manual compaction created a sandbox"
+                duplicate = await client.post(f"/sessions/{session}/compact", json={"message_id": "manual-summary"})
+                assert duplicate.json() == receipt.json()
+                assert any(
+                    event["type"] == "compaction_end"
+                    and event["data"]["reason"] == "manual"
+                    and event["data"]["success"]
+                    for event in report["events"]
+                )
             if name == "model-lock":
                 other = next((model for model in models if model != primary), "different-model")
                 response = await client.put(f"/sessions/{session}/model-selection", json={"model": other})
@@ -213,7 +228,7 @@ async def run_live_case(name, settings, controls, output):
                 control["block_summary"] = False
                 await check_facts(FOLLOW_UP, "resume")
             else:
-                await check_facts(FOLLOW_UP + FILLER, "follow-up")
+                await check_facts(FOLLOW_UP if name == "manual" else FOLLOW_UP + FILLER, "follow-up")
                 if name == "repeated":
                     await check_facts(FOLLOW_UP + FILLER, "repeat")
                 elif name == "model-lock":
@@ -222,7 +237,7 @@ async def run_live_case(name, settings, controls, output):
             successful = [
                 event for event in report["events"] if event["type"] == "compaction_end" and event["data"]["success"]
             ]
-            assert successful, "No automatic compaction occurred"
+            assert successful, "No compaction occurred"
             assert all(event["data"]["estimated_tokens_after"] < event["data"]["tokens_before"] for event in successful)
             for request in report["requests"]:
                 assert request["session_id"] == session
@@ -311,12 +326,14 @@ def test_real_chat_runs_preserve_context_through_compaction(monkeypatch):
         primary = settings.provider_model
         assert primary in models, f"Live compaction model is unavailable: {primary}"
         assert models[primary].context_tokens is not None, "Live compaction requires a reported context limit"
-        return await asyncio.gather(
+        reports = await asyncio.gather(
             *(
                 run_live_case(name, settings, controls, output)
                 for name in ("threshold", "repeated", "model-lock", "cancellation")
             )
         )
+        reports.append(await run_live_case("manual", settings, controls, output))
+        return reports
 
     reports = asyncio.run(exercise())
     summaries = [

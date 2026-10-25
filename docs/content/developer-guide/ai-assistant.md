@@ -331,6 +331,14 @@ after a completed tool exchange resends its result without executing it again.
 
 ## Automatic context compaction
 
+`POST /sessions/{id}/compact` accepts a client `message_id` and starts an idle,
+server-owned compaction run. It shares run admission, Stop, replay, and cost
+accounting with chat runs. It uses the session's selected model and reasoning
+settings. It saves no user question and generates no normal answer or workspace.
+Repeated IDs return the same run. Summary events use the `manual` reason.
+Migration 010 adds the compaction run kind. Failed and interrupted manual runs
+keep the original context without a workspace-discard notice.
+
 `ContextCompactor` follows [Pi v1.0.0 compaction][pi-compaction]. Before a model
 request and after the final answer, it checks the discovered model context
 window. It reserves up to 16,384 tokens for output, reduced to one quarter of a
@@ -355,7 +363,7 @@ answer text. `RunEvents` coalesces these reports with text batches. Provider usa
 replaces token estimates, and provider cost updates replace each call's previous
 cost contribution. Estimates do not enter billed usage or invent missing prices.
 
-Replayable `compaction_start` and `compaction_end` events report threshold or
+Replayable `compaction_start` and `compaction_end` events report manual, threshold, or
 overflow recovery, success, and cancellation. The live transcript and saved
 exports show the same status. Successful compaction replaces the context meter
 with a fresh estimate until the next model call reports usage. Summary failures
@@ -1232,7 +1240,7 @@ See the [capability discovery instructions](reproduce/core.md#attachment-capabil
 
 Follow the [AI test instructions](reproduce/core.md#ai-tests). The opt-in
 `test_ai_compaction_live.sh` command exercises the real session API and E2B with
-four concurrent long-chat scenarios. It forces compaction with a smaller history
+five long-chat scenarios, at most four concurrently. It forces compaction with a smaller history
 budget and checks constraints, complete tool exchanges, model switching, Stop,
 reconnect replay, and fresh sandbox filesystems. Its traces are synthetic test
 conversations. It does not change the production prompts or connect to a

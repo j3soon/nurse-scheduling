@@ -122,7 +122,7 @@ class ContextCompactor:
         )
 
     async def compact(
-        self, messages: Sequence[ChatMessage], tools: Sequence[dict], *, force: bool = False
+        self, messages: Sequence[ChatMessage], tools: Sequence[dict], *, force: bool = False, manual: bool = False
     ) -> AsyncIterator[ProviderCall | AgentCompaction | AgentCompactionStart | AgentCompactionEnd]:
         if not force and not self.needed(messages, tools):
             return
@@ -179,7 +179,7 @@ class ContextCompactor:
             )
         history = older if turn_start is None else body[:turn_start]
         summary = previous_summary
-        reason = "overflow" if force else "threshold"
+        reason = "manual" if manual else "overflow" if force else "threshold"
         tokens_before = self.tokens(messages, tools)
         yield AgentCompactionStart(reason, tokens_before)
         try:

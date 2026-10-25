@@ -73,7 +73,7 @@ export interface ScheduleAppliedEntry {
 export interface CompactionActivity {
   kind: 'compaction';
   state: 'running' | 'completed' | 'failed' | 'interrupted';
-  reason: 'threshold' | 'overflow';
+  reason: 'threshold' | 'overflow' | 'manual';
   text: string;
   summary?: string;
   keepMessages?: number;

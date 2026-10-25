@@ -565,7 +565,7 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
   if (runId) emit({ type: 'run_context', runId });
 
   if (eventType === 'compaction_start' || eventType === 'compaction_end') {
-    if (!['threshold', 'overflow'].includes(payload.reason as string)
+    if (!['threshold', 'overflow', 'manual'].includes(payload.reason as string)
       || !Number.isSafeInteger(payload.tokens_before) || (payload.tokens_before as number) < 0
       || (eventType === 'compaction_end' && (typeof payload.success !== 'boolean' || typeof payload.aborted !== 'boolean'
         || (payload.estimated_tokens_after !== undefined && (!Number.isSafeInteger(payload.estimated_tokens_after) || (payload.estimated_tokens_after as number) < 0))
@@ -573,7 +573,7 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
         || (payload.keep_messages !== undefined && (!Number.isSafeInteger(payload.keep_messages) || (payload.keep_messages as number) < 0))))) {
       throw new Error('The AI backend returned invalid compaction status.');
     }
-    const common = { reason: payload.reason as 'threshold' | 'overflow', tokensBefore: payload.tokens_before as number };
+    const common = { reason: payload.reason as 'threshold' | 'overflow' | 'manual', tokensBefore: payload.tokens_before as number };
     if (eventType === 'compaction_start') emit({ type: 'compaction_start', ...common });
     else emit({ type: 'compaction_end', ...common, success: payload.success as boolean, aborted: payload.aborted as boolean,
       ...(payload.summary === undefined ? {} : { summary: payload.summary as string }),
@@ -970,6 +970,18 @@ export async function getChatExportUrl(sessionId: string, authToken: string | nu
     throw new Error('The AI backend returned an invalid chat download link.');
   }
   return value.download_token === null ? path : `${path}?token=${encodeURIComponent(value.download_token)}`;
+}
+
+/** Summarize an idle session without asking a new question. */
+export async function compactSession(
+  sessionId: string, messageId: string, authToken: string | null, endpoint: string,
+): Promise<void> {
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/compact`, {
+    method: 'POST', credentials: 'include',
+    headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ message_id: messageId }),
+  });
+  if (!response.ok) throw await responseError(response);
 }
 
 /** Stop the named message's run, or every run of the session when no message is named. */
